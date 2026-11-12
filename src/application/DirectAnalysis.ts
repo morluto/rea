@@ -1,3 +1,9 @@
+import {
+  admitOneShotOperation,
+  type DirectAnalysisTool,
+} from "./oneShotOperationInput.js";
+import { admitCompletedAnalysis } from "./investigation/admitCompletedAnalysis.js";
+import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import type {
@@ -15,9 +21,19 @@ import {
 import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import {
+  tryParseEvidence,
+  withEvidenceCallerInputPath,
+} from "../domain/evidence.js";
 import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
-import { retainAnalysisResultSources } from "./investigation/recordEvidenceSources.js";
+import {
+  retainAnalysisResultSources,
+  type AnalysisResultWithSources,
+} from "./investigation/recordEvidenceSources.js";
+import {
+  createInvestigationEvidenceClosureChecker,
+  collectInvestigationEvidenceClosure,
+} from "./investigation/InvestigationEvidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
@@ -34,15 +50,18 @@ import {
   AnalysisSnapshotMismatchError,
   type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { access, stat } from "node:fs/promises";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { requiresNativeSourceAdmissionBeforeReplay } from "./binary/AnalysisSnapshotCache.js";
+import {
+  requestsFreshIndependentDecompile,
+  requiresNativeSourceAdmissionBeforeReplay,
+} from "./binary/AnalysisSnapshotCache.js";
 import { classifyBinaryTargetFilesystemFailure } from "./BinaryTargetResolver.js";
 import {
+  snapshotBindingMismatch,
   snapshotEvidenceForQuery,
-  snapshotMatchesTarget,
 } from "../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { profilelessNativeDispatchProfile } from "./binary/ProfilelessNativeWorkflowSnapshot.js";
@@ -59,6 +78,7 @@ import {
   composedLimitationBudget,
   executeComposedWorkflow,
   createWorkflowEvidence,
+  retainPartialWorkflowEvidence,
   workflowSnapshotRecord,
   recordWorkflowUnknowns,
 } from "./WorkflowEvidence.js";
@@ -73,34 +93,12 @@ import type { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
   directAnalysisCleanupFailure,
   projectDirectAnalysisFailure,
+  projectInvocationFailure,
   managedAnalysisCleanupFailure,
   withSessionCleanup,
 } from "./DirectAnalysisCleanup.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
 import { BUNDLE_RESOURCE_OPERATIONS } from "./binary/BundleResourceSession.js";
-
-type DirectAnalysisTool =
-  | "annotate_native_function"
-  | "inspect_native_load_image"
-  | "read_bytes"
-  | "search_bytes"
-  | "address_to_file_offset"
-  | "binary_overview"
-  | "procedure_pseudo_code"
-  | "read_function_instructions"
-  | "inspect_native_instruction"
-  | "inspect_native_data_type"
-  | "resolve_native_call_targets"
-  | "analyze_function"
-  | "inspect_native_api"
-  | "inspect_native_dispatch_metadata"
-  | "search_strings"
-  | "search_procedures"
-  | "xrefs"
-  | "trace_feature"
-  | "trace_native_ui_action"
-  | "trace_native_values"
-  | "decompile_all";
 
 // These one-shot CLI questions require native utilities, not a deep engine.
 // Runtime observation retains the ordinary session and authority checks.
@@ -118,7 +116,10 @@ const ARTIFACT_ANALYSIS_OPERATION_SET: ReadonlySet<string> = new Set(
 /**
  * Open one binary, execute one tool, and always release provider resources.
  * Unlike MCP mode, every CLI invocation is intentionally isolated and does not
- * retain a target or provider client for a subsequent command.
+ * retain a target, provider session or runtime setting for a subsequent
+ * command. Failures are projected for that invocation lifetime, so they never
+ * offer same-session reuse or runtime updates; a new invocation's launch
+ * environment or arguments carry any changed limit.
  */
 export const runDirectAnalysis = async (
   dependencies: DirectAnalysisDependencies,
@@ -133,32 +134,72 @@ export const runDirectAnalysis = async (
     readonly formatHint?: ExecutableFormatHint;
     readonly architecture?: BinaryArchitecture;
     readonly entryPoint?: string;
+    readonly espFlash?: EspFlashSelection;
+    readonly includeEvidenceSources?: boolean;
   } = {},
-): Promise<Result<Evidence, JsonValue>> =>
-  withProcessCancellation(options.signal, (signal) =>
-    runAnalysis(dependencies, path, tool, arguments_, {
-      logger: options.logger ?? silentLogger,
-      snapshotPath: options.snapshotPath,
-      signal,
-      ...(options.formatHint === undefined
-        ? {}
-        : { formatHint: options.formatHint }),
-      ...(options.architecture === undefined
-        ? {}
-        : { architecture: options.architecture }),
-      ...(options.entryPoint === undefined
-        ? {}
-        : { entryPoint: options.entryPoint }),
-      ...(options.providerId === undefined
-        ? {}
-        : { providerId: options.providerId }),
-    }),
-  );
+): Promise<AnalysisResultWithSources<Evidence, JsonValue>> =>
+  withProcessCancellation(options.signal, (signal) => {
+    const admitted = admitOneShotOperation(tool, arguments_, signal);
+    if (!admitted.ok)
+      return Promise.resolve(err(cliError(admitted.error, path)));
+    return runAnalysis(
+      dependencies,
+      path,
+      admitted.value.name,
+      admitted.value.input,
+      {
+        evidenceParameters: arguments_,
+        logger: options.logger ?? silentLogger,
+        snapshotPath: options.snapshotPath,
+        signal,
+        ...(options.includeEvidenceSources === true
+          ? { includeEvidenceSources: true }
+          : {}),
+        ...targetSelection(options),
+        ...(options.providerId === undefined
+          ? {}
+          : { providerId: options.providerId }),
+      },
+    );
+  });
+
+/** How the caller asks an artifact target to be read. */
+export interface ArtifactTargetSelection {
+  readonly formatHint?: ExecutableFormatHint;
+  readonly espFlash?: EspFlashSelection;
+}
+
+/** The caller's target interpretation, forwarded unchanged to every open. */
+const targetSelection = (options: {
+  readonly formatHint?: ExecutableFormatHint;
+  readonly architecture?: BinaryArchitecture;
+  readonly entryPoint?: string;
+  readonly espFlash?: EspFlashSelection;
+}) => ({
+  ...(options.formatHint === undefined
+    ? {}
+    : { formatHint: options.formatHint }),
+  ...(options.architecture === undefined
+    ? {}
+    : { architecture: options.architecture }),
+  ...(options.entryPoint === undefined
+    ? {}
+    : { entryPoint: options.entryPoint }),
+  ...(options.espFlash === undefined ? {} : { espFlash: options.espFlash }),
+});
 
 /** Execute one provider-native semantic operation with atomic provenance. */
 export const runProviderAnalysis = async (
   dependencies: DirectAnalysisDependencies,
-  ...[path, tool, arguments_, logger = silentLogger, signal, delivery]:
+  ...[
+    path,
+    tool,
+    arguments_,
+    logger = silentLogger,
+    signal,
+    delivery,
+    selection,
+  ]:
     | readonly [
         path: string,
         tool: NativeToolName | ArtifactAnalysisOperation | ManagedToolName,
@@ -176,6 +217,15 @@ export const runProviderAnalysis = async (
           readonly detail?: "complete" | "summary";
           readonly evidenceBundlePath?: string;
         },
+      ]
+    | readonly [
+        path: string,
+        tool: ArtifactAnalysisOperation,
+        arguments_: Readonly<Record<string, JsonValue>>,
+        logger: Logger | undefined,
+        signal: AbortSignal | undefined,
+        delivery: undefined,
+        selection: ArtifactTargetSelection,
       ]
 ): Promise<Result<Evidence, JsonValue>> => {
   if (delivery !== undefined && tool !== "inspect_managed_members")
@@ -208,8 +258,7 @@ export const runProviderAnalysis = async (
       ),
     );
   return withProcessCancellation(signal, async (operationSignal) => {
-    // The selected CLI path is a request fact. Keep it out of provider inputs
-    // and target identity, which may use the resolved executable instead.
+    // Preserve the selected path and original arguments as request facts.
     const evidenceParameters = { ...arguments_, input_path: path };
     if (isManagedToolName(tool)) {
       const original = await runManagedProviderAnalysis(
@@ -221,7 +270,13 @@ export const runProviderAnalysis = async (
         operationSignal,
       );
       await dispatchQueuedInterrupts();
-      if (!original.ok) return err(cliError(original.error, path));
+      if (!original.ok)
+        return err(
+          cliError(
+            retainFinalCancellation(original.error, tool, operationSignal),
+            path,
+          ),
+        );
       const evidence = withEvidenceCallerInputPath(original.value, path);
       if (operationSignal.aborted)
         return err(
@@ -243,17 +298,26 @@ export const runProviderAnalysis = async (
             );
       return result.ok ? ok(result.value) : err(cliError(result.error, path));
     }
-    return runAnalysis(dependencies, path, tool, arguments_, {
-      logger,
-      snapshotPath: undefined,
-      signal: operationSignal,
-      evidenceParameters,
-      ...(ARTIFACT_ANALYSIS_OPERATION_SET.has(tool)
-        ? { createSession: dependencies.createArtifactBinarySession }
-        : NATIVE_INSPECTION_OPERATIONS.has(tool)
-          ? { createSession: dependencies.createNativeBinarySession }
-          : {}),
-    });
+    const admitted = admitOneShotOperation(tool, arguments_, operationSignal);
+    if (!admitted.ok) return err(cliError(admitted.error, path));
+    return runAnalysis(
+      dependencies,
+      path,
+      admitted.value.name,
+      admitted.value.input,
+      {
+        logger,
+        snapshotPath: undefined,
+        signal: operationSignal,
+        evidenceParameters,
+        ...targetSelection(selection ?? {}),
+        ...(ARTIFACT_ANALYSIS_OPERATION_SET.has(tool)
+          ? { createSession: dependencies.createArtifactBinarySession }
+          : NATIVE_INSPECTION_OPERATIONS.has(tool)
+            ? { createSession: dependencies.createNativeBinarySession }
+            : {}),
+      },
+    );
   });
 };
 
@@ -264,17 +328,27 @@ export const runManagedProviderExecution = async (
   tool: ManagedToolName,
   signal?: AbortSignal,
   parameters: Readonly<Record<string, JsonValue>> = {},
+  recoveryParameters?: Readonly<Record<string, JsonValue>>,
 ): Promise<Result<AnalysisExecution, AnalysisError>> =>
   withProcessCancellation(signal, async (operationSignal) => {
+    const admitted = admitOneShotOperation(tool, parameters, operationSignal);
+    if (!admitted.ok) return admitted;
     const session = await dependencies.createManagedBinarySession();
     return withSessionCleanup(
       session,
       async () => {
         const opened = await session.open(path, { signal: operationSignal });
         if (!opened.ok) return opened;
-        return await session.execute(tool, parameters, {
-          signal: operationSignal,
-        });
+        return recoveryParameters === undefined
+          ? await session.execute(admitted.value.name, admitted.value.input, {
+              signal: operationSignal,
+            })
+          : await session.executeForDirectObservation(
+              admitted.value.name,
+              admitted.value.input,
+              recoveryParameters,
+              { signal: operationSignal },
+            );
       },
       managedAnalysisCleanupFailure,
     );
@@ -295,6 +369,7 @@ const runManagedProviderAnalysis = async (
     tool,
     signal,
     arguments_,
+    evidenceParameters,
   );
   if (!execution.ok) return execution;
   const value = execution.value;
@@ -324,12 +399,14 @@ const runAnalysis = async (
     readonly signal: AbortSignal;
     readonly evidenceParameters?: Readonly<Record<string, JsonValue>>;
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
+    readonly includeEvidenceSources?: boolean;
     readonly providerId?: AnalysisProviderSelector;
     readonly formatHint?: ExecutableFormatHint;
     readonly architecture?: BinaryArchitecture;
     readonly entryPoint?: string;
+    readonly espFlash?: EspFlashSelection;
   },
-): Promise<Result<Evidence, JsonValue>> => {
+): Promise<AnalysisResultWithSources<Evidence, JsonValue>> => {
   const { logger, signal, snapshotPath } = options;
   const evidenceParameters = options.evidenceParameters ?? arguments_;
   let session: BinarySession;
@@ -345,6 +422,25 @@ const runAnalysis = async (
     )(config.value, logger);
   }
   let publishedSnapshot: PublishedEvidenceFile | undefined;
+  let sourceEvidence: readonly Evidence[] | undefined;
+  const captureSources = (
+    evidence: Evidence,
+    supplied: readonly Evidence[] = [],
+  ): Result<null, AnalysisError> => {
+    if (!options.includeEvidenceSources) return ok(null);
+    const records = new Map(
+      supplied.map((record) => [record.evidence_id, record]),
+    );
+    const collected = collectInvestigationEvidenceClosure(
+      {
+        evidenceForAnalysis: (id) =>
+          records.get(id) ?? session.evidenceForAnalysis(id),
+      },
+      evidence.evidence_links,
+    );
+    sourceEvidence = collected.records;
+    return collected.result;
+  };
   const execute = async (): Promise<Result<Evidence, AnalysisError>> => {
     let isDirectory = false;
     if (BUNDLE_RESOURCE_OPERATIONS.has(tool)) {
@@ -374,15 +470,7 @@ const runAnalysis = async (
       path,
       snapshotPath,
       signal,
-      ...(options.formatHint === undefined
-        ? {}
-        : { formatHint: options.formatHint }),
-      ...(options.architecture === undefined
-        ? {}
-        : { architecture: options.architecture }),
-      ...(options.entryPoint === undefined
-        ? {}
-        : { entryPoint: options.entryPoint }),
+      ...targetSelection(options),
     });
     if (!prepared.ok) return err(prepared.error);
     const { snapshot } = prepared.value;
@@ -391,15 +479,7 @@ const runAnalysis = async (
       const preview = await session.previewTarget(prepared.value.target, {
         signal,
         snapshot,
-        ...(options.formatHint === undefined
-          ? {}
-          : { formatHint: options.formatHint }),
-        ...(options.architecture === undefined
-          ? {}
-          : { architecture: options.architecture }),
-        ...(options.entryPoint === undefined
-          ? {}
-          : { entryPoint: options.entryPoint }),
+        ...targetSelection(options),
         ...(options.providerId === undefined
           ? {}
           : { providerId: options.providerId }),
@@ -420,6 +500,7 @@ const runAnalysis = async (
         ) &&
         tool !== "trace_native_ui_action" &&
         tool !== "decompile_all" &&
+        !requestsFreshIndependentDecompile(tool, arguments_) &&
         routeAllowsSnapshotReplay(route, tool)
       ) {
         const cached = snapshotEvidenceForQuery(snapshot, {
@@ -432,21 +513,32 @@ const runAnalysis = async (
             : routeProviderIdentity(route, tool),
           evidenceProfile,
         });
-        if (cached !== undefined)
-          return ok(withEvidenceCallerInputPath(cached, path));
+        if (cached !== undefined) {
+          const records = new Map(
+            snapshot.evidence_bundle.records.map((record) => [
+              record.evidence_id,
+              record,
+            ]),
+          );
+          const checkClosure = createInvestigationEvidenceClosureChecker({
+            evidenceForAnalysis: (id) => records.get(id),
+          });
+          if (checkClosure(cached.evidence_links)) {
+            const evidence = withEvidenceCallerInputPath(cached, path);
+            const captured = captureSources(
+              evidence,
+              snapshot.evidence_bundle.records,
+            );
+            if (!captured.ok)
+              return err(captured.error.retainPartialObservation(evidence));
+            return ok(evidence);
+          }
+        }
       }
     }
     const openOptions = {
       signal,
-      ...(options.formatHint === undefined
-        ? {}
-        : { formatHint: options.formatHint }),
-      ...(options.architecture === undefined
-        ? {}
-        : { architecture: options.architecture }),
-      ...(options.entryPoint === undefined
-        ? {}
-        : { entryPoint: options.entryPoint }),
+      ...targetSelection(options),
       ...(snapshot === undefined ? {} : { snapshot }),
       ...(options.providerId === undefined
         ? {}
@@ -466,13 +558,27 @@ const runAnalysis = async (
       evidenceParameters,
       signal,
       evidenceProfile,
+      saveSnapshot: snapshotPath !== undefined,
     });
-    if (!executed.ok) return executed;
+    if (!executed.ok) {
+      if (options.includeEvidenceSources) {
+        const partial = tryParseEvidence(executed.error.partialObservation);
+        if (partial !== undefined) {
+          const captured = captureSources(partial);
+          if (!captured.ok)
+            executed.error.retainSecondaryFailure(captured.error);
+        }
+      }
+      return executed;
+    }
     const { cachePolicy } = executed.value;
     const evidence = withEvidenceCallerInputPath(executed.value.evidence, path);
     // Provider execution may have already recorded the same semantic Evidence
     // without this invocation's request path. Import replaces that metadata
     // while retaining the authenticated result and snapshot binding.
+    const captured = captureSources(evidence);
+    if (!captured.ok)
+      return err(captured.error.retainPartialObservation(evidence));
     const recorded = session.importEvidenceBundle(
       createImmutableEvidenceBundle([evidence]),
     );
@@ -484,6 +590,7 @@ const runAnalysis = async (
         result: evidence.normalized_result,
         evidenceId: evidence.evidence_id,
         recordUnknown: (unknown) => session.recordUnknown(unknown),
+        evidenceRetained: true,
       });
       if (!unknowns.ok)
         return err(unknowns.error.retainPartialObservation(evidence));
@@ -540,13 +647,35 @@ const runAnalysis = async (
     readonly cleanupError?: AnalysisError;
   }>(
     session,
-    async () => ({ result: await execute() }),
+    async () => {
+      const result = await execute();
+      if (
+        !result.ok &&
+        result.error.sourcePublicationRecovery?.completed.kind ===
+          "retained-evidence"
+      ) {
+        const retained = session.evidenceForAnalysis(
+          result.error.sourcePublicationRecovery.completed.evidence_id,
+        );
+        if (retained !== undefined)
+          result.error.sourcePublicationRecovery = {
+            ...result.error.sourcePublicationRecovery,
+            completed: {
+              kind: "inline-evidence",
+              retention: "one-shot-session",
+              source_closure: "not-established",
+              evidence: retained,
+            },
+          };
+      }
+      return { result };
+    },
     (value, cleanupError) => ({ ...value, cleanupError }),
   );
   await dispatchQueuedInterrupts();
   const result = outcome.result.ok
     ? completeProviderEvidence(outcome.result.value, signal)
-    : outcome.result;
+    : err(retainFinalCancellation(outcome.result.error, tool, signal));
   if (!result.ok && publishedSnapshot !== undefined)
     result.error.retainDiagnostics({
       analysis_snapshot: { ...publishedSnapshot },
@@ -557,12 +686,29 @@ const runAnalysis = async (
       outcome.cleanupError.retainDiagnostics({
         analysis_snapshot: { ...publishedSnapshot },
       });
-    return err(
-      directAnalysisCleanupFailure(result, outcome.cleanupError, path),
-    );
+    return {
+      ...err(directAnalysisCleanupFailure(result, outcome.cleanupError, path)),
+      ...(sourceEvidence === undefined ? {} : { sourceEvidence }),
+    };
   }
-  return result.ok ? ok(result.value) : err(cliError(result.error, path));
+  return {
+    ...(result.ok ? ok(result.value) : err(cliError(result.error, path))),
+    ...(sourceEvidence === undefined ? {} : { sourceEvidence }),
+  };
 };
+
+/** Preserve an earlier failure and a cancellation observed during final cleanup. */
+const retainFinalCancellation = (
+  failure: AnalysisError,
+  tool: string,
+  signal: AbortSignal,
+): AnalysisError =>
+  signal.aborted
+    ? analysisErrorWithCancellation(
+        failure,
+        new AnalysisCancelledError(tool, { cause: signal.reason }),
+      )
+    : failure;
 
 const executeAnalysisTool = async (input: {
   readonly session: BinarySession;
@@ -576,6 +722,7 @@ const executeAnalysisTool = async (input: {
   readonly evidenceParameters: Readonly<Record<string, JsonValue>>;
   readonly signal: AbortSignal;
   readonly evidenceProfile: AnalysisProfileCommitment | undefined;
+  readonly saveSnapshot: boolean;
 }): Promise<
   Result<
     {
@@ -610,6 +757,12 @@ const executeAnalysisTool = async (input: {
         new EnhancedTools(observed).execute(tool, input.arguments, signal),
       composedLimitationBudget(tool),
     );
+    retainPartialWorkflowEvidence(result, {
+      target: input.openedTarget,
+      operation: tool,
+      parameters: input.evidenceParameters,
+      upstreamProfile: evidenceProfile,
+    });
     result = retainAnalysisResultSources(
       tool,
       (source) => session.recordEvidence(source),
@@ -634,7 +787,17 @@ const executeAnalysisTool = async (input: {
         : { cachePolicy: result.value.cachePolicy }),
     });
   }
-  let result = await session.execute(tool, input.arguments, { signal });
+  let result = await session.executeForDirectObservation(
+    tool,
+    input.arguments,
+    input.evidenceParameters,
+    {
+      signal,
+      ...(input.saveSnapshot && tool === "procedure_pseudo_code"
+        ? { snapshotContext: "one-shot-target" as const }
+        : {}),
+    },
+  );
   if (
     tool === "xrefs" &&
     typeof input.arguments.address === "string" &&
@@ -656,23 +819,32 @@ const executeAnalysisTool = async (input: {
     );
     if (!address.ok) return address;
     if (address.value !== input.arguments.address)
-      result = await session.execute(
+      result = await session.executeForDirectObservation(
         tool,
         { ...input.arguments, address: address.value },
+        input.evidenceParameters,
         { signal },
       );
   }
   if (!result.ok) return result;
+  const observation = {
+    ...result.value,
+    subject:
+      result.value.subject === undefined
+        ? input.openedTarget
+        : result.value.subject,
+  };
+  const admitted = admitCompletedAnalysis(
+    tool,
+    input.evidenceParameters,
+    observation,
+    session.admitRecoveryObservation.bind(session),
+  );
+  if (!admitted.ok) return admitted;
   const evidence = createAnalysisExecutionEvidence(
     tool,
     input.evidenceParameters,
-    {
-      ...result.value,
-      subject:
-        result.value.subject === undefined
-          ? input.openedTarget
-          : result.value.subject,
-    },
+    observation,
     "observed",
   );
   return ok({ evidence });
@@ -706,6 +878,7 @@ const prepareSnapshot = async (options: {
   readonly formatHint?: ExecutableFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
+  readonly espFlash?: EspFlashSelection;
   readonly snapshotPath: string | undefined;
   readonly signal: AbortSignal;
 }): Promise<
@@ -724,21 +897,19 @@ const prepareSnapshot = async (options: {
   if (!loaded.ok) return loaded;
   const target = await session.resolveTarget(path, {
     signal: options.signal,
-    ...(options.formatHint === undefined
-      ? {}
-      : { formatHint: options.formatHint }),
-    ...(options.architecture === undefined
-      ? {}
-      : { architecture: options.architecture }),
-    ...(options.entryPoint === undefined
-      ? {}
-      : { entryPoint: options.entryPoint }),
+    ...targetSelection(options),
   });
   if (!target.ok) return target;
-  if (!snapshotMatchesTarget(loaded.value.target, target.value))
+  const mismatch = snapshotBindingMismatch(
+    loaded.value,
+    target.value,
+    undefined,
+  );
+  if (mismatch?.target !== undefined)
     return err(
       new AnalysisSnapshotMismatchError(
         "Analysis snapshot target does not match the requested binary",
+        mismatch,
       ),
     );
   return ok({ snapshot: loaded.value, target: target.value });
@@ -842,6 +1013,6 @@ const cliError = (
 ): JsonValue => ({
   error: "Analysis failed",
   ...(callerInputPath === undefined
-    ? projectAnalysisError(error)
+    ? projectInvocationFailure(error)
     : projectDirectAnalysisFailure(error, callerInputPath)),
 });

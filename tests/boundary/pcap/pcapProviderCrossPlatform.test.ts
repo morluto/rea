@@ -48,12 +48,13 @@ const capinfosStub = isWindows
   ? join(stubDir, "capinfos-stub.cmd")
   : join(stubDir, "capinfos-stub.sh");
 
-const providerOver = (): PcapProvider => {
+const providerOver = (launcher?: PcapCommandLauncher): PcapProvider => {
   const provider = new PcapProvider({
     environment: {
       REA_TSHARK_COMMAND: tsharkStub,
       REA_CAPINFOS_COMMAND: capinfosStub,
     },
+    ...(launcher === undefined ? {} : { launcher }),
   });
   onTestFinished(() => provider.close());
   return provider;
@@ -315,6 +316,7 @@ exit 2
     if (!result.ok)
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "artifact_changed",
+        details: { path: tshark },
       });
   },
 );
@@ -471,7 +473,10 @@ it("reports a missing binary as a capability gap", async () => {
 it("cancels before spawning anything", async () => {
   const controller = new AbortController();
   controller.abort();
-  const result = await providerOver().execute(
+  const launcher = vi.fn<NonNullable<PcapCommandLauncher>>(async () => {
+    throw new Error("Cancelled analysis must not launch a tool");
+  });
+  const result = await providerOver(launcher).execute(
     { operation: "inspect_pcap_capture", input: { path: "/any/capture.pcap" } },
     { signal: controller.signal },
   );
@@ -480,6 +485,7 @@ it("cancels before spawning anything", async () => {
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "cancelled",
   });
+  expect(launcher).not.toHaveBeenCalled();
 });
 
 it.runIf(!hasNativeBound)(

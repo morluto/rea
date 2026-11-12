@@ -3,6 +3,7 @@ import type { AnalysisError } from "../analysisErrorBase.js";
 import { parseExactJson } from "../exactJsonNumber.js";
 import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
 import {
+  addOffsetDateTimeMilliseconds,
   compareOffsetDateTimeInstants,
   readRecordedStart,
 } from "../offsetDateTime.js";
@@ -11,7 +12,6 @@ import {
   WEB_NETWORK_CAPTURE_LIMITS,
   type WebNetworkCaptureRecord,
 } from "../webNetworkCapture.js";
-import type { UnsignedAnalysisView } from "./analysisView.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
 import { isJsonLike, mediaTypeEssence } from "./recordedMediaType.js";
 import { readRecordedRequestBody } from "./recordedExchangeBody.js";
@@ -30,6 +30,7 @@ import {
   base64PrefixChars,
   readRecordedResponseBody,
   readRecordedResponseDeclaration,
+  recordedResponseStatus,
   recordedResponseBodyIsEmpty,
   type RecordedResponseBody,
 } from "./recordedResponseBody.js";
@@ -40,29 +41,15 @@ import {
   textBytes,
 } from "./webNetworkRouteTemplates.js";
 
-type StateView = Extract<UnsignedAnalysisView, { kind: "environment-state" }>;
-type StateFields = Pick<
-  StateView,
-  | "origin"
-  | "name"
-  | "timeline"
-  | "types"
-  | "entities"
-  | "documents"
-  | "views"
-  | "writes"
-  | "write_clock"
-  | "unknowns"
-  | "coverage"
-  | "limitations"
->;
-
 /**
  * Levels the state's own nesting adds above a recorded value: Evidence, a `data/get` reply and a
  * JSON-RPC response hold a body's members about ten levels down, so a body must leave this much
  * room under the JSON depth limit to be sealed and served.
  */
 const STATE_NESTING_DEPTH = 16;
+// Number.MIN_VALUE milliseconds needs this many decimal places in seconds;
+// this also covers the whole-second digits of every finite number duration.
+const DURATION_DIGITS = 3 - Math.floor(Math.log10(Number.MIN_VALUE));
 
 /** A recorded response body as state JSON: a JSON-like media type, complete UTF-8 text within the state body limit, exact numbers; otherwise undefined. */
 export const stateBodyJson = (
@@ -87,14 +74,14 @@ export const stateBodyJson = (
 
 const startSchema = z.object({ startedDateTime: z.string() });
 const durationSchema = z.object({ time: z.number().nonnegative() });
-const redactedWriteSchema = z.object({
+const unlocatedWriteSchema = z.object({
   request: z.object({ method: z.string() }),
-  response: z.object({ status: z.number() }).optional(),
 });
 interface RecordEntry {
   readonly facts: StateRecordFacts;
-  /** Null for a write whose URL was redacted: its target is unknown, so it bounds every type. */
+  /** Null for a write without a usable URL: its unknown target bounds every type. */
   readonly origin: string | null;
+  readonly targetExclusion?: "url-redacted" | "url-unparseable";
   readonly contentType: string;
   readonly startInterpretation:
     | NonNullable<ReturnType<typeof readRecordedStart>>["interpretation"]
@@ -102,19 +89,19 @@ interface RecordEntry {
   readonly record: WebNetworkCaptureRecord;
 }
 
-const UNKNOWNS: StateView["unknowns"] = [
+const UNKNOWNS = [
   {
-    kind: "authorization-model",
+    kind: "authorization-model" as const,
     statement:
       "Authorization headers and cookies are structurally excluded from captures; the state states no authorization model.",
   },
   {
-    kind: "response-semantics",
+    kind: "response-semantics" as const,
     statement:
       "Views reproduce their recorded responses from the state; they do not establish how the application computes responses, derived values or values copied outside entity objects.",
   },
   {
-    kind: "state-transition",
+    kind: "state-transition" as const,
     statement:
       "The state is one snapshot from before the first related recorded write; write effects are modelled only from the calls the capture recorded, and served only where its later reads confirmed them.",
   },
@@ -137,10 +124,10 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     return false;
   }
 
-  protected override onRecordedRequestLine(
+  protected override prepareRecordedRequestLine(
     record: WebNetworkCaptureRecord,
     line: RecordedRequestLine,
-  ): Result<void, AnalysisError> {
+  ): Result<() => void, AnalysisError> {
     const started = startSchema.safeParse(record.reported);
     const duration = durationSchema.safeParse(record.reported);
     // Admit normalization and fraction parsing before materializing their strings.
@@ -166,28 +153,52 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       startMs === undefined || !duration.success
         ? undefined
         : startMs + duration.data.time;
+    // Exact completion keeps arbitrary source precision. Reserve digit-array and
+    // string expansion before the shared decimal addition allocates them.
+    if (
+      startInstant !== undefined &&
+      duration.success &&
+      duration.data.time !== 0 &&
+      !this.scratch(
+        RECORD_SCRATCH_BYTES +
+          textBytes(Math.max(startInstant.fraction.length, DURATION_DIGITS)) *
+            3,
+      )
+    )
+      return this.overBudget();
+    const endInstant =
+      startInstant === undefined || !duration.success
+        ? undefined
+        : addOffsetDateTimeMilliseconds(startInstant, duration.data.time);
     const timing: StateRecordFacts["timing"] = {
       start:
         startInstant === undefined || startMs === undefined
           ? undefined
           : { instant: startInstant, ms: startMs },
+      end: endInstant,
       endMs: end !== undefined && Number.isFinite(end) ? end : undefined,
     };
     // A fraction substring may retain its normalized timestamp's backing store,
     // including trailing zeroes removed from the exact comparison value.
     const instantBytes =
-      started.success && startInstant !== undefined
+      (started.success && startInstant !== undefined
         ? ENTRY_BYTES + textBytes(started.data.startedDateTime.length + 6)
-        : 0;
+        : 0) +
+      (endInstant !== undefined && endInstant !== startInstant
+        ? ENTRY_BYTES + textBytes(endInstant.fraction.length)
+        : 0);
     if (line.kind === "excluded")
-      return line.reason === "url-redacted"
-        ? this.#redactedWrite(
+      return line.reason === "url-redacted" ||
+        line.reason === "url-unparseable" ||
+        line.reason === "request-unavailable"
+        ? this.#unlocatedWrite(
             record,
+            line.reason === "url-redacted" ? "url-redacted" : "url-unparseable",
             timing,
             instantBytes,
             reading?.interpretation,
           )
-        : ok(undefined);
+        : ok(() => undefined);
     // The entry keeps the line's strings and a reference to the already admitted record.
     if (
       !this.retain(
@@ -203,56 +214,62 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       )
     )
       return this.overBudget();
-    this.#entries.set(record.ordinal, {
-      facts: {
-        ordinal: record.ordinal,
-        method: line.method,
-        path: line.path,
-        query: line.query === "" ? undefined : line.query,
-        status: line.status,
-        timing,
-      },
-      origin: line.origin,
-      contentType: line.rawMime,
-      startInterpretation: reading?.interpretation,
-      record,
+    return ok(() => {
+      this.#entries.set(record.ordinal, {
+        facts: {
+          ordinal: record.ordinal,
+          method: line.method,
+          path: line.path,
+          query: line.query === "" ? undefined : line.query,
+          status: line.status,
+          timing,
+        },
+        origin: line.origin,
+        contentType: line.rawMime,
+        startInterpretation: reading?.interpretation,
+        record,
+      });
     });
-    return ok(undefined);
   }
 
-  /** Keep a successful write whose URL was redacted, with an empty path whose root relates to every type. */
-  #redactedWrite(
+  /** Prepare a successful write with unknown target, whose empty root relates to every type. */
+  #unlocatedWrite(
     record: WebNetworkCaptureRecord,
+    reason: "url-redacted" | "url-unparseable",
     timing: StateRecordFacts["timing"],
     instantBytes: number,
     startInterpretation: RecordEntry["startInterpretation"],
-  ): Result<void, AnalysisError> {
-    const parsed = redactedWriteSchema.safeParse(record.reported);
-    if (!parsed.success) return ok(undefined);
-    const status = parsed.data.response?.status ?? 0;
+  ): Result<() => void, AnalysisError> {
+    const parsed = unlocatedWriteSchema.safeParse(record.reported);
+    if (!parsed.success) return ok(() => undefined);
+    const status = recordedResponseStatus(
+      readRecordedResponseDeclaration(record.reported),
+    );
     const facts: StateRecordFacts = {
       ordinal: record.ordinal,
       method: parsed.data.request.method,
       path: "",
       query: undefined,
-      status: status > 0 ? status : null,
+      status,
       timing,
     };
-    if (!isStateWrite(facts)) return ok(undefined);
+    if (!isStateWrite(facts)) return ok(() => undefined);
     if (
       !this.retain(
         ENTRY_BYTES * 8 + textBytes(facts.method.length) + instantBytes,
       )
     )
       return this.overBudget();
-    this.#entries.set(record.ordinal, {
-      facts,
-      origin: null,
-      contentType: "",
-      startInterpretation,
-      record,
+    return ok(() => {
+      this.#entries.set(record.ordinal, {
+        facts,
+        origin: null,
+        targetExclusion: reason,
+        contentType: "",
+        startInterpretation,
+        record,
+      });
     });
-    return ok(undefined);
   }
 
   /** Parse one retained response body as state JSON, charging its decoding and tree as temporary work. */
@@ -340,7 +357,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   }
 
   /** Project the init state of the manifest's primary origin; records keep timeline order. */
-  finishState(): Result<StateFields, AnalysisError> {
+  finishState() {
     const manifest = this.finish();
     if (!manifest.ok) return manifest;
     const entries = [...this.#entries.values()].filter(
@@ -348,7 +365,10 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
         entry.origin === manifest.value.origin || entry.origin === null,
     );
     const redactedWrites = entries.filter(
-      (entry) => entry.origin === null,
+      (entry) => entry.targetExclusion === "url-redacted",
+    ).length;
+    const unparseableWrites = entries.filter(
+      (entry) => entry.targetExclusion === "url-unparseable",
     ).length;
     const timeline: StateTimeline =
       entries.length > 0 &&
@@ -379,7 +399,8 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       },
     }).run();
     if (state === null) return this.overBudget();
-    const limitations = this.addLimitations([
+    const limitations = this.snapshotLimitations([
+      ...manifest.value.limitations,
       ...(entries.some((entry) => entry.startInterpretation === "native-date")
         ? [
             "Some recorded start spellings use native Date parsing at millisecond precision; spellings without an explicit zone depend on the host timezone.",
@@ -388,6 +409,11 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       ...(redactedWrites > 0
         ? [
             `${String(redactedWrites)} of the recorded writes had a redacted URL; each ends the initial state of every type, since its target is unknown.`,
+          ]
+        : []),
+      ...(unparseableWrites > 0
+        ? [
+            `${String(unparseableWrites)} of the recorded writes had an unusable URL; each ends the initial state of every type, since its target is unknown.`,
           ]
         : []),
       ...(timeline === "record-order"
@@ -415,7 +441,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       ...state,
       unknowns: UNKNOWNS.map((unknown) => ({ ...unknown })),
       coverage: manifest.value.coverage,
-      limitations: this.sortedLimitations(),
+      limitations: limitations.value,
     });
   }
 }

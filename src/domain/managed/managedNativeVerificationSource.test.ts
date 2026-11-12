@@ -30,8 +30,9 @@ describe("managed/native verification source", () => {
     if (!source.ok) throw source.error;
     const [observation] = source.value.nativeObservations;
     expect(observation?.supported).toBe(true);
-    expect(observation?.symbols.map(({ name }) => name)).toEqual(
-      legacy.exports.items.map(({ name }) => name),
-    );
+    expect(observation?.platform).toBeNull();
+    expect(observation?.symbols.map(({ name }) => name)).toEqual([
+      "open_native",
+    ]);
   });
 });

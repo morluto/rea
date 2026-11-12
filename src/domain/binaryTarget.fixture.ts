@@ -171,3 +171,12 @@ export const dosMz = (moduleSize = 128): Buffer => {
   if (size >= 64) bytes.writeUInt32LE(0xfedcba98, 60);
   return bytes;
 };
+
+/** MZ stub declaring a non-PE Windows signature; not a complete NE/LE/LX image. */
+export const nonPeWindowsMz = (signature: "NE" | "LE" | "LX"): Buffer => {
+  const bytes = dosMz(480);
+  bytes.writeUInt16LE(4, 8);
+  bytes.writeUInt32LE(128, 60);
+  bytes.write(signature, 128, "ascii");
+  return bytes;
+};

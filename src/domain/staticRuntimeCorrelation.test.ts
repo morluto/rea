@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
-import { INVESTIGATION_EXAMPLES } from "../contracts/investigationExamples.js";
+import {
+  INVESTIGATION_EXAMPLES,
+  FUNCTION_COMPARISON_EVIDENCE,
+} from "../contracts/investigationExamples.js";
 import {
   artifactComparisonResultSchema,
   compareArtifacts,
@@ -20,10 +23,7 @@ import {
   staticRuntimeCorrelationResultSchema,
 } from "./staticRuntimeCorrelation.js";
 
-const staticComparison =
-  INVESTIGATION_EXAMPLES.find_changed_behavior.comparisons[0];
-if (staticComparison === undefined)
-  throw new Error("Missing static comparison fixture");
+const staticComparison = FUNCTION_COMPARISON_EVIDENCE;
 
 const artifactComparison = createEvidence(
   undefined,

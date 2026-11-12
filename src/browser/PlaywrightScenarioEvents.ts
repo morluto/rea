@@ -19,8 +19,10 @@ import {
   type BrowserScenarioEventOmissions,
 } from "../domain/browserScenarioCaptureValues.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
-import type { BrowserNetworkContentSelection } from "../domain/browserNetworkEvidence.js";
-import type { BrowserNetworkHeaders } from "../domain/browserNetworkEvidence.js";
+import type {
+  BrowserNetworkContentSelection,
+  BrowserNetworkHeaders,
+} from "../domain/browserNetworkEvidence.js";
 import type { BrowserScenarioCaptureLimits } from "../domain/browserScenarioCaptureLimits.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
 import { captureNetworkBody } from "./network/PlaywrightNetworkContent.js";
@@ -904,11 +906,7 @@ export class PlaywrightScenarioEvents {
 
   private popup(page: Page): void {
     if (this.pages.has(page)) return;
-    if (
-      !this.admitOwner("popup-opened") ||
-      !this.admitText("popup-opened", page.url())
-    )
-      return;
+    if (!this.admitOwner("popup-opened")) return;
     this.pages.add(page);
     for (const family of [
       "frames",
@@ -917,12 +915,14 @@ export class PlaywrightScenarioEvents {
       "downloads",
     ] as const)
       if (this.enabled.has(family)) this.incompleteFamilies.add(family);
-    const opened = {
-      url: page.url() === "" ? null : this.safeUrl(page.url()),
-      name: null,
-    };
     if (this.enabled.has("popups")) {
-      this.push({ kind: "popup-opened", ...opened });
+      const url = page.url();
+      if (this.admitText("popup-opened", url))
+        this.push({
+          kind: "popup-opened",
+          url: url === "" ? null : this.safeUrl(url),
+          name: null,
+        });
       const onClose = () => {
         if (!this.admitText("popup-closed", page.url())) return;
         this.push({

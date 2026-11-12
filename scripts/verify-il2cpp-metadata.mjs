@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { absoluteCallerPath } from "../dist/filesystem/callerPath.js";
 import { toolContract } from "../dist/contracts/toolContracts.js";
+import { il2cppMetadataViewRequestSchema } from "../dist/domain/analysisView/il2cppMetadataView.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import {
   requireMcpOutput,
@@ -17,7 +18,7 @@ import { hashVerifierFile } from "./lib/verifier-file-resources.mjs";
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
   console.log(
-    "Usage: npm run verify:il2cpp:metadata -- [--metadata PATH]\nPATH is a caller-owned, unencrypted global-metadata.dat (version 24, 27, 29, 31 or 39). Without --metadata, only the advertised contract is verified.",
+    "Usage: npm run verify:il2cpp:metadata -- [--metadata PATH]\nPATH is a caller-owned, unencrypted global-metadata.dat (version 24, 27, 29, 31 or 39). Without --metadata, only the MCP tool name is checked.",
   );
   process.exit(0);
 }
@@ -79,6 +80,32 @@ await withVerifierCleanup(async () => {
       assert.equal(error.code, "resource_constraint");
       assert.equal(error.details.reported_limits.boundary, "mcp-response");
       assert.match(error.details.reported_limits.evidence_id, /^ev_/u);
+      const collections = il2cppMetadataViewRequestSchema.options.map(
+        (option) => option.shape.collection.value,
+      );
+      const collection =
+        ["methods", ...collections].find(
+          (name) => Array.isArray(report[name]) && report[name].length > 0,
+        ) ?? "methods";
+      const expectedRows = report[collection].slice(0, 16);
+      const retained = (
+        await call("inspect_analysis_view", {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: error.details.reported_limits.evidence_id,
+          },
+          view: { kind: "il2cpp-metadata", collection, limit: 16 },
+        })
+      ).normalized_result;
+      assert.deepEqual(
+        retained.items,
+        expectedRows.map((row, index) => ({ ...row, index })),
+        "Failed complete delivery must retain its exact Evidence before reanalysis",
+      );
+      if (expectedRows.length === 0)
+        console.log(
+          "[unverified] Retention lookup succeeded, but empty queryable tables provide no nonempty row-content witness",
+        );
       console.log(
         `[ok] MCP complete delivery refused at the stdio budget (${error.details.reported_limits.response_bytes_at_least} bytes) with retained Evidence`,
       );
@@ -178,4 +205,8 @@ await withVerifierCleanup(async () => {
     );
   }
 }, [() => client.close(), () => transport.close(), () => resources.close()]);
-console.log("All asserted IL2CPP metadata CLI/MCP checks passed");
+console.log(
+  path === null
+    ? "IL2CPP metadata MCP tool presence check passed"
+    : "All asserted IL2CPP metadata CLI/MCP checks passed",
+);

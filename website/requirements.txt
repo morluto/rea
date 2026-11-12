@@ -2,3 +2,6 @@
 CairoSVG==2.9.1
 # Standard gettext PO/POT catalogs; no translation service is used by builds.
 polib==1.2.0
+# Build Markdown reading pages and parse the maintained skill's YAML metadata.
+markdownify==1.2.3
+PyYAML==6.0.3

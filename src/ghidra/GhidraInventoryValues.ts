@@ -1,3 +1,8 @@
+import {
+  type GhidraNamingRequest,
+  parseGhidraAddressNameResult,
+} from "./GhidraAddressNameValues.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { nativeSearchFields } from "../domain/native/nativeSearch.js";
 import { nativeSymbolMetadataSchema } from "../domain/native/nativeSymbol.js";
 import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
@@ -30,35 +35,13 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 
-/**
- * Direct inventory operations admitted by the Ghidra adapter. All are reads
- * except the naming operations, which edit the ephemeral session database.
- */
-export const GHIDRA_INVENTORY_OPERATIONS = [
-  "read_binary_inventory_summary",
-  "inspect_native_load_image",
-  "read_bytes",
-  "search_bytes",
-  "address_to_file_offset",
-  "address_name",
-  "list_documents",
-  "list_names",
-  "list_procedures",
-  "list_segments",
-  "list_strings",
-  "procedure_address",
-  "resolve_containing_procedure",
-  "search_procedures",
-  "search_strings",
-  "set_address_name",
-  "set_addresses_names",
-] as const;
-
 /** Inventory operations that write analyst names into the session database. */
 export const GHIDRA_NAMING_OPERATIONS = [
   "set_address_name",
   "set_addresses_names",
 ] as const satisfies readonly GhidraInventoryOperation[];
+
+type GhidraNamingOperation = (typeof GHIDRA_NAMING_OPERATIONS)[number];
 
 /** One direct inventory operation implemented by the packaged Java bridge. */
 export type GhidraInventoryOperation =
@@ -137,19 +120,52 @@ const inputSchemas = {
     ),
 } satisfies Readonly<Record<GhidraInventoryOperation, z.ZodType>>;
 
+/** Parsed naming identity accompanies wire parameters without crossing the socket. */
+type GhidraInventoryInputAdmission =
+  | {
+      readonly ok: true;
+      readonly value: Readonly<Record<string, JsonValue>>;
+      readonly namingRequest: GhidraNamingRequest | null;
+    }
+  | { readonly ok: false; readonly error: AnalysisInputError };
+
 /** Validate and default one provider request before it crosses the socket. */
 export const parseGhidraInventoryInput = (
   operation: GhidraInventoryOperation,
   value: Readonly<Record<string, JsonValue>>,
-): Result<Readonly<Record<string, JsonValue>>, AnalysisInputError> => {
+): GhidraInventoryInputAdmission => {
+  const failure = (
+    issues: readonly z.core.$ZodIssue[],
+    cause: unknown,
+  ): Extract<GhidraInventoryInputAdmission, { readonly ok: false }> => ({
+    ok: false,
+    error: analysisInputErrorFromIssues(operation, issues, value, { cause }),
+  });
+
+  if (operation === "set_address_name") {
+    const parsed = inputSchemas.set_address_name.safeParse(value);
+    return parsed.success
+      ? {
+          ok: true,
+          value: parsed.data,
+          namingRequest: { keys: [parsed.data.address] },
+        }
+      : failure(parsed.error.issues, parsed.error);
+  }
+  if (operation === "set_addresses_names") {
+    const parsed = inputSchemas.set_addresses_names.safeParse(value);
+    return parsed.success
+      ? {
+          ok: true,
+          value: parsed.data,
+          namingRequest: { keys: Object.keys(parsed.data.names) },
+        }
+      : failure(parsed.error.issues, parsed.error);
+  }
   const parsed = inputSchemas[operation].safeParse(value);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(operation, parsed.error.issues, value, {
-        cause: parsed.error,
-      }),
-    );
-  return ok(parsed.data);
+  return parsed.success
+    ? { ok: true, value: parsed.data, namingRequest: null }
+    : failure(parsed.error.issues, parsed.error);
 };
 
 const symbolFacts = z
@@ -221,6 +237,10 @@ const addressedItem = z
   .object({ ...baseItem, symbol: symbolFacts.exactOptional() })
   .strict();
 const procedureItem = addressedItem.extend({ procedure: procedureFacts });
+/** Other symbols at the exact entry that matched; value stays the primary name. */
+const procedureMatchItem = procedureItem.extend({
+  matched_aliases: z.array(z.string().min(1)).min(1).exactOptional(),
+});
 const stringItem = z.object({ ...baseItem, string: stringFacts }).strict();
 
 const availablePermissions = z
@@ -314,6 +334,7 @@ const resultSchemas = {
       blocks: z.array(canonicalByteCoverage),
       skipped_uninitialized: z.array(canonicalByteCoverage),
       skipped_not_loaded: z.array(canonicalByteCoverage),
+      skipped_overlays: z.array(canonicalByteCoverage),
     }),
   }),
   inspect_native_load_image: nativeLoadImageObservationSchema,
@@ -332,11 +353,11 @@ const resultSchemas = {
   list_strings: z.array(stringItem),
   procedure_address: nativeAddressObservationSchema,
   resolve_containing_procedure: containingProcedure,
-  search_procedures: z.array(addressedItem),
-  search_strings: z.array(addressedItem),
-  set_address_name: z.boolean(),
-  set_addresses_names: z.record(z.string(), z.boolean()),
-} satisfies Readonly<Record<GhidraInventoryOperation, z.ZodType>>;
+  search_procedures: z.array(procedureMatchItem),
+  search_strings: z.array(stringItem),
+} satisfies Readonly<
+  Record<Exclude<GhidraInventoryOperation, GhidraNamingOperation>, z.ZodType>
+>;
 
 /** The format owner retains raw output only when projection omits reported facts. */
 export interface ParsedGhidraInventoryResult<Value = JsonValue> {
@@ -348,6 +369,7 @@ export interface ParsedGhidraInventoryResult<Value = JsonValue> {
 export function parseGhidraInventoryResult(
   operation: "inspect_native_load_image",
   value: JsonValue,
+  namingRequest: GhidraNamingRequest | null,
 ): Result<
   ParsedGhidraInventoryResult<NativeLoadImageObservation>,
   AnalysisOutputError
@@ -355,10 +377,12 @@ export function parseGhidraInventoryResult(
 export function parseGhidraInventoryResult(
   operation: GhidraInventoryOperation,
   value: JsonValue,
+  namingRequest: GhidraNamingRequest | null,
 ): Result<ParsedGhidraInventoryResult, AnalysisOutputError>;
 export function parseGhidraInventoryResult(
   operation: GhidraInventoryOperation,
   value: JsonValue,
+  namingRequest: GhidraNamingRequest | null,
 ): Result<
   ParsedGhidraInventoryResult<JsonValue | NativeLoadImageObservation>,
   AnalysisOutputError
@@ -368,6 +392,9 @@ export function parseGhidraInventoryResult(
     return parsed.success
       ? ok({ value: normalizeNativeLoadImageObservation(parsed.data) })
       : err(inventoryOutputFailure(operation, parsed.error));
+  }
+  if (operation === "set_address_name" || operation === "set_addresses_names") {
+    return parseGhidraAddressNameResult(operation, value, namingRequest);
   }
   const parsed = resultSchemas[operation].safeParse(value);
   return parsed.success

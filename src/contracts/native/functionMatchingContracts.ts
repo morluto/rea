@@ -1,14 +1,15 @@
 import { z } from "zod";
-import { evidenceInputSchema } from "../../domain/evidenceReference.js";
+import {
+  borrowEvidenceInput,
+  borrowEvidenceArray,
+} from "../../domain/evidenceReference.js";
 
 // Borrow inline payloads until application admission; advertise the exact public
 // Evidence/reference union without a pre-admission recursive SDK clone.
-const input = z.unknown().nonoptional();
-input._zod.processJSONSchema = evidenceInputSchema._zod.processJSONSchema;
+const input = borrowEvidenceInput();
 // Borrow the outer selections too: admission must account for their width before
 // any array traversal/copy. The owner authenticates each selected carrier later.
-const observations = z.custom<unknown[]>(Array.isArray);
-observations._zod.processJSONSchema = z.array(input)._zod.processJSONSchema;
+const observations = borrowEvidenceArray();
 
 /** Inventories stay portable; optional observations avoid all-function decompilation. */
 export const matchNativeFunctionsInputSchema = z.strictObject({

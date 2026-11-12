@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { emptyArraySchema } from "../emptyArraySchema.js";
-import { evidenceSchema } from "../evidence.js";
 import {
   isValidatedImmutableJavaScriptApplicationGraph,
   javascriptApplicationGraphSchema,
@@ -57,16 +56,6 @@ export const applicationVersionIdentitiesSchema = z
     right: evidenceIdentitySchema,
     left_native_observations: z.array(evidenceIdentitySchema),
     right_native_observations: z.array(evidenceIdentitySchema),
-  })
-  .superRefine(validateApplicationVersionIdentities);
-
-/** Two authenticated application versions and their native observations. */
-export const compareApplicationVersionsInputSchema = z
-  .strictObject({
-    left: evidenceSchema,
-    right: evidenceSchema,
-    left_native_observations: z.array(evidenceSchema).default([]),
-    right_native_observations: z.array(evidenceSchema).default([]),
   })
   .superRefine(validateApplicationVersionIdentities);
 

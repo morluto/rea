@@ -59,7 +59,7 @@ describe("process trace specification", () => {
     expect(result.error.issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          message: "happens-before graph must be acyclic",
+          message: expect.stringMatching(/happens-before.*acyclic/u),
         }),
         expect.objectContaining({
           path: ["language", "not_before", 0, "event"],
@@ -133,11 +133,11 @@ describe("process trace ordering validation", () => {
     expect(rejected.error.issues).toEqual([
       expect.objectContaining({
         path: ["language", "not_before", 0],
-        message: "not-before constraint conflicts with happens-before order",
+        message: expect.stringMatching(/not-before.*happens-before/u),
       }),
       expect.objectContaining({
         path: ["language", "unordered_groups", 0],
-        message: "ordered events cannot also be declared unordered",
+        message: expect.stringMatching(/ordered.*unordered/u),
       }),
     ]);
   });
@@ -166,7 +166,7 @@ describe("process trace ordering validation", () => {
     expect(result.error.issues).toEqual([
       expect.objectContaining({
         path: ["language"],
-        message: "event pair b/d must be explicitly ordered or unordered",
+        message: expect.stringContaining("b/d"),
       }),
     ]);
   });
@@ -192,7 +192,7 @@ describe("process trace ordering validation", () => {
     expect(result.error.issues).toEqual([
       expect.objectContaining({
         path: ["language", "unordered_groups", 1],
-        message: "unordered event pairs must be declared once",
+        message: expect.stringMatching(/unordered.*once/u),
       }),
     ]);
   });
@@ -226,11 +226,11 @@ describe("malformed process trace declarations", () => {
       expect.arrayContaining([
         expect.objectContaining({
           path: ["events", 1, "id"],
-          message: "event ids must be unique",
+          message: expect.stringMatching(/event ids.*unique/u),
         }),
         expect.objectContaining({
           path: ["language", "unordered_groups", 0, "events", 1],
-          message: "unknown event id: b",
+          message: expect.stringMatching(/unknown.*\bb\b/u),
         }),
       ]),
     );
@@ -256,15 +256,15 @@ describe("malformed process trace declarations", () => {
       expect.arrayContaining([
         expect.objectContaining({
           path: ["language", "happens_before", 0, "after"],
-          message: "unknown event id: missing",
+          message: expect.stringMatching(/unknown.*missing/u),
         }),
         expect.objectContaining({
           path: ["language", "not_before", 0, "anchor"],
-          message: "unknown event id: missing",
+          message: expect.stringMatching(/unknown.*missing/u),
         }),
         expect.objectContaining({
           path: ["language", "not_before", 0],
-          message: "not-before constraint conflicts with happens-before order",
+          message: expect.stringMatching(/not-before.*happens-before/u),
         }),
       ]),
     );
@@ -347,7 +347,7 @@ describe("finite trace specification validation", () => {
     ).toEqual(
       [1, 5].map((index) => ({
         path: ["language", "variants", index, "trace"],
-        message: "finite trace variants must not duplicate a trace",
+        message: expect.stringMatching(/duplicate.*trace/u),
       })),
     );
   });

@@ -4,13 +4,13 @@ import {
   sourceToBundleComparisonResultSchema,
   type SourceToBundleComparisonResult,
 } from "../javascript/sourceToBundleComparisonSchemas.js";
-import { err, ok, type Result } from "../result.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -102,16 +102,21 @@ const columns = (
   row: object,
   fields: readonly string[],
 ): Record<string, JsonValue> => {
-  const source = row as Record<string, JsonValue>;
-  return Object.fromEntries(fields.map((field) => [field, source[field]!]));
+  const selected = new Set(fields);
+  return Object.fromEntries(
+    Object.entries(row).filter(([field]) => selected.has(field)),
+  );
 };
 
 /** Page facts owned by a complete comparison; page exhaustion does not upgrade source coverage. */
 export const projectSourceToBundleView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "source-to-bundle")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof sourceToBundleViewRequestSchema>
+  >(admitted, "summary", "source-to-bundle");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -153,7 +158,7 @@ export const projectSourceToBundleView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: context,
@@ -234,7 +239,7 @@ export const projectSourceToBundleView = (
     }
   }
   return ok({
-    kind: "source-to-bundle",
+    kind: "source-to-bundle" as const,
     view,
     ...shared,
     ...context,

@@ -3,10 +3,12 @@ import { Cli, z } from "incur";
 import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
+  projectProcessCliInputCleanupError,
 } from "../application/process/ProcessCli.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 
 /** Register direct process capture and comparison commands. */
@@ -17,21 +19,24 @@ export const registerProcessCommands = (
 ): void => {
   cli.command(CLI_COMMANDS.captureProcess, {
     description: "Capture one caller-selected process scenario",
-    args: z.object({ scenario: z.string().describe("Scenario JSON path") }),
+    args: z.object({
+      scenario: localPathStringSchema.describe("Scenario JSON path"),
+    }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "capture-process", () =>
-          captureProcessScenarioFile(args.scenario, environment, signal),
+          captureProcessScenarioFile(args.scenario, environment, signal).catch(
+            projectProcessCliInputCleanupError,
+          ),
         ),
       ),
   });
   cli.command(CLI_COMMANDS.compareProcessCaptures, {
     description: "Compare two process capture Evidence JSON files",
     args: z.object({
-      left: z.string().describe("Left capture Evidence JSON path"),
-      right: z.string().describe("Right capture Evidence JSON path"),
-      traceSpec: z
-        .string()
+      left: localPathStringSchema.describe("Left capture Evidence JSON path"),
+      right: localPathStringSchema.describe("Right capture Evidence JSON path"),
+      traceSpec: localPathStringSchema
         .optional()
         .describe("Optional partial-order or finite-trace specification path"),
     }),
@@ -43,7 +48,7 @@ export const registerProcessCommands = (
             args.right,
             args.traceSpec,
             signal,
-          ),
+          ).catch(projectProcessCliInputCleanupError),
         ),
       ),
   });

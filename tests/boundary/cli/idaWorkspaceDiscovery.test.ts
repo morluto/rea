@@ -9,16 +9,18 @@ cliTest.skipIf(process.platform === "win32")(
   "reports the same headless workspace readiness through discovery and doctor",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-ida-discovery-cli-");
+    const home = join(root, "home");
     const writable = join(root, "writable");
     const file = join(root, "file");
     const marker = join(root, "launched");
     const command = join(root, "fixture-ida");
+    await mkdir(home);
     await mkdir(writable);
     await writeFile(file, "caller data");
     await writeFile(command, `#!/bin/sh\nprintf launched > '${marker}'\n`);
     await chmod(command, 0o700);
     const registration = join(root, "ida.json");
-    const before = await readdir(root);
+    const before = (await readdir(root)).sort();
     for (const [workspaceRoot, usable] of [
       [join(root, "missing"), false],
       [file, false],
@@ -34,7 +36,7 @@ cliTest.skipIf(process.platform === "win32")(
         }),
       );
       const environment = {
-        HOME: root,
+        HOME: home,
         REA_IDA_MCP_CONFIG: registration,
       };
       for (const command of ["providers", "capabilities"] as const) {
@@ -94,9 +96,9 @@ cliTest.skipIf(process.platform === "win32")(
         ]),
       });
     }
-    expect((await readdir(root)).filter((name) => name !== "ida.json")).toEqual(
-      before,
-    );
+    expect(
+      (await readdir(root)).filter((name) => name !== "ida.json").sort(),
+    ).toEqual(before);
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

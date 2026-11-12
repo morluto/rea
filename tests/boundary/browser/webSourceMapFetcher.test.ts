@@ -3,6 +3,8 @@ import { createServer } from "node:http";
 
 import { describe, expect, it } from "vitest";
 
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
 import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -765,16 +767,15 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
         });
     }
   });
+});
 
+describe("source-map response cancellation", () => {
   it("cancels a pending response reader on caller abort", async () => {
     let markPullStarted: (() => void) | undefined;
     const pullStarted = new Promise<void>((resolve) => {
       markPullStarted = resolve;
     });
-    let markCancelled: (() => void) | undefined;
-    const cancelled = new Promise<void>((resolve) => {
-      markCancelled = resolve;
-    });
+    let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new TextEncoder().encode("{"));
@@ -783,7 +784,7 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
         markPullStarted?.();
       },
       cancel() {
-        markCancelled?.();
+        cancelled = true;
       },
     });
     const controller = new AbortController();
@@ -792,13 +793,23 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
       fetch: async () => new Response(body),
     });
 
-    await pullStarted;
-    controller.abort(abortReason);
-
-    const result = await pending;
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.cause).toBe(abortReason);
-    await cancelled;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(
+        pullStarted,
+        pending,
+        "source-map response pull",
+      );
+      controller.abort(abortReason);
+      const result = await pending;
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.cause).toBe(abortReason);
+      await expect.poll(() => cancelled).toBe(true);
+    }, [
+      () => controller.abort(),
+      async () => {
+        await pending;
+      },
+    ]);
   });
 });
 
@@ -810,10 +821,7 @@ describe("completed source-map cancellation", () => {
       const pullStarted = new Promise<void>((resolve) => {
         markPullStarted = resolve;
       });
-      let markCancelled: (() => void) | undefined;
-      const cancelled = new Promise<void>((resolve) => {
-        markCancelled = resolve;
-      });
+      let cancelled = false;
       const secondBody = new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(new TextEncoder().encode("{"));
@@ -822,7 +830,7 @@ describe("completed source-map cancellation", () => {
           markPullStarted?.();
         },
         cancel() {
-          markCancelled?.();
+          cancelled = true;
         },
       });
       const firstBody = JSON.stringify({
@@ -857,32 +865,42 @@ describe("completed source-map cancellation", () => {
         },
       );
 
-      await pullStarted;
-      controller.abort(reason);
-
-      const result = await pending;
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      const failure = result.error;
-      expect(failure).toBeInstanceOf(AnalysisCancelledError);
-      expect(failure.cause).toBe(reason);
-      expect(failure.partialObservation).toMatchObject({
-        kind: "web-source-map-fetch",
-        source_maps: {
-          requested: 2,
-          processed: 1,
-          items: [
-            {
-              status: "included",
-              artifact: {
-                text: firstBody,
-                sha256: createHash("sha256").update(firstBody).digest("hex"),
+      await withVerifierCleanup(async () => {
+        await awaitAcknowledgement(
+          pullStarted,
+          pending,
+          "second source-map response pull",
+        );
+        controller.abort(reason);
+        const result = await pending;
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        const failure = result.error;
+        expect(failure).toBeInstanceOf(AnalysisCancelledError);
+        expect(failure.cause).toBe(reason);
+        expect(failure.partialObservation).toMatchObject({
+          kind: "web-source-map-fetch",
+          source_maps: {
+            requested: 2,
+            processed: 1,
+            items: [
+              {
+                status: "included",
+                artifact: {
+                  text: firstBody,
+                  sha256: createHash("sha256").update(firstBody).digest("hex"),
+                },
               },
-            },
-          ],
+            ],
+          },
+        });
+        await expect.poll(() => cancelled).toBe(true);
+      }, [
+        () => controller.abort(),
+        async () => {
+          await pending;
         },
-      });
-      await cancelled;
+      ]);
     },
   );
 });
@@ -1030,11 +1048,16 @@ describe("source-map operation deadline observations", () => {
     ];
     const result = await fetchWebSourceMapsOk(requests, input(), undefined, {
       timeoutMs: 100,
-      fetch: () => {
+      fetch: (_url, options) => {
         calls += 1;
         return calls === 1
           ? Promise.resolve(validMapResponse())
-          : new Promise<Response>(() => undefined);
+          : new Promise<Response>((_resolve, reject) => {
+              const signal = options?.signal;
+              signal?.addEventListener("abort", () => reject(signal.reason), {
+                once: true,
+              });
+            });
       },
     });
 
@@ -1511,7 +1534,9 @@ describe("web source-map collection", () => {
       "included",
       "fetch_failed",
     ]);
-    expect(result.items[1]?.limitation).toContain("262144-record");
+    expect(result.items[1]?.limitation).toContain(
+      "source_map_limits.decoded_records is 262144",
+    );
   });
 
   it("rejects deeply nested indexed maps before recursive flattening", async () => {
@@ -1536,7 +1561,9 @@ describe("web source-map collection", () => {
       status: "fetch_failed",
       artifact: null,
     });
-    expect(result.items[0]?.limitation).toContain("64-level");
+    expect(result.items[0]?.limitation).toContain(
+      "source_map_limits.section_depth is 64",
+    );
   });
 
   it("retains every mapping from a sectioned source map", async () => {
@@ -1920,7 +1947,7 @@ describe("expanded source-map evidence budget", () => {
       original_sources: [],
     });
     expect(result.items[0]?.limitation).toContain(
-      "Resolved source-map identities exceed the 64 MiB decoder representation budget",
+      "source_map_limits.fetch_bytes is 67108864",
     );
   });
 });
@@ -1944,7 +1971,9 @@ describe("raw source-map structure preflight", () => {
       status: "fetch_failed",
       artifact: null,
     });
-    expect(result.items[0]?.limitation).toContain("262144-record");
+    expect(result.items[0]?.limitation).toContain(
+      "source_map_limits.decoded_records is 262144",
+    );
   });
 });
 

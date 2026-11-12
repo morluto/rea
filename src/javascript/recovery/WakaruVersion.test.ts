@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { admitWakaruVersion } from "./WakaruVersion.js";
-import { WAKARU_RELEASE } from "./WakaruRelease.js";
+import { WAKARU_RELEASE } from "./WakaruProviderIdentity.js";
 
 describe("Wakaru release range", () => {
   it("accepts the verified banner without an extra limitation", () => {

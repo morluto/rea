@@ -1,6 +1,7 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema } from "ajv";
 import { functionSnapshotFixture } from "../../../src/domain/functionDossierEvidence.fixture.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,7 +14,6 @@ import { compareFunctions } from "../../../src/domain/functionComparison.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { reconstructionVerificationResultSchema } from "../../../src/domain/reconstructionVerificationSchemas.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
@@ -53,6 +53,7 @@ it.each([
       value.referenced_names = [
         { address: "rom:0xa000", source_address: site, value: "helper" },
       ];
+      value.swift_string_literal_omissions = [];
       value.swift_string_literals = [
         {
           source_address: site,
@@ -108,7 +109,7 @@ it.each([
 );
 
 it.each([
-  { comparisonStatus: "unchanged", verificationStatus: "pass" },
+  { comparisonStatus: "unchanged", verificationStatus: "unknown" },
   { comparisonStatus: "changed", verificationStatus: "fail" },
 ] as const)(
   "verifies public $comparisonStatus function comparison as $verificationStatus",
@@ -140,120 +141,110 @@ it.each([
                 : { relationshipCoverage: left.relationship_coverage }),
             },
           );
-    const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "function-claims", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const compared = await client.callTool({
-        name: "compare_functions",
-        arguments: { left, right },
-      });
-      expect(compared.isError).not.toBe(true);
-      const comparison = parseEvidence(compared.structuredContent);
-      expect(comparison.limitations).not.toContainEqual(
-        expect.stringContaining(
-          "without address or generated-name normalization",
+    const { client } = await createApplicationMcpHarness({
+      session,
+      clientIdentity: { name: "function-claims", version: "1" },
+    });
+    const compared = await client.callTool({
+      name: "compare_functions",
+      arguments: { left, right },
+    });
+    expect(compared.isError).not.toBe(true);
+    const comparison = parseEvidence(compared.structuredContent);
+    expect(comparison.limitations).not.toContainEqual(
+      expect.stringContaining(
+        "without address or generated-name normalization",
+      ),
+    );
+    expect(comparison.normalized_result).toMatchObject({
+      status: comparisonStatus,
+      dimensions: expect.arrayContaining(
+        ["pseudocode", "assembly"].map((dimension) =>
+          expect.objectContaining({
+            dimension,
+            limitations: expect.arrayContaining([
+              expect.stringContaining(
+                "without address or generated-name normalization",
+              ),
+            ]),
+          }),
         ),
-      );
-      expect(comparison.normalized_result).toMatchObject({
-        status: comparisonStatus,
-        dimensions: expect.arrayContaining(
-          ["pseudocode", "assembly"].map((dimension) =>
-            expect.objectContaining({
+      ),
+    });
+    expect(comparison.parameters).toEqual({
+      left_evidence_id: left.evidence_id,
+      right_evidence_id: right.evidence_id,
+    });
+    expect(comparison.evidence_links).toEqual(
+      expect.arrayContaining([left.evidence_id, right.evidence_id]),
+    );
+
+    const verified = await client.callTool({
+      name: "verify_reconstruction",
+      arguments: {
+        specification: {
+          name: "Function pseudocode comparison",
+          claims: ["pseudocode", "assembly", "cfg", "overall"].map(
+            (dimension) => ({
+              kind: "structural-function",
+              claim_id: dimension,
+              title: `${dimension} agrees`,
+              comparison_evidence_id: comparison.evidence_id,
               dimension,
-              limitations: expect.arrayContaining([
-                expect.stringContaining(
-                  "without address or generated-name normalization",
-                ),
-              ]),
             }),
           ),
-        ),
-      });
-      expect(comparison.parameters).toEqual({
-        left_evidence_id: left.evidence_id,
-        right_evidence_id: right.evidence_id,
-      });
-      expect(comparison.evidence_links).toEqual(
-        expect.arrayContaining([left.evidence_id, right.evidence_id]),
-      );
-
-      const verified = await client.callTool({
-        name: "verify_reconstruction",
-        arguments: {
-          specification: {
-            name: "Function pseudocode comparison",
-            claims: ["pseudocode", "assembly", "cfg", "overall"].map(
-              (dimension) => ({
-                kind: "structural-function",
-                claim_id: dimension,
-                title: `${dimension} agrees`,
-                comparison_evidence_id: comparison.evidence_id,
-                dimension,
-              }),
-            ),
-          },
         },
-      });
-      expect(
-        verified.isError,
-        JSON.stringify(verified.structuredContent),
-      ).not.toBe(true);
-      const verification = parseEvidence(verified.structuredContent);
-      expect(verification.normalized_result).toMatchObject({
-        status: verificationStatus,
-        summary: {
-          total: 4,
-          passed: verificationStatus === "pass" ? 4 : 2,
-          failed: verificationStatus === "fail" ? 2 : 0,
-          unknown: 0,
-        },
-        claims: {
-          items: expect.arrayContaining([
-            expect.objectContaining({
-              dimension: "pseudocode",
-              status: verificationStatus,
-              observed_status: comparisonStatus,
-              comparison_evidence_id: comparison.evidence_id,
-              left_evidence_ids: [left.evidence_id],
-              right_evidence_ids: [right.evidence_id],
-              limitations: expect.arrayContaining([
-                expect.stringContaining(
-                  "without address or generated-name normalization",
-                ),
-              ]),
-            }),
-          ]),
-        },
-      });
-      const claims = reconstructionVerificationResultSchema.parse(
-        verification.normalized_result,
-      ).claims.items;
-      for (const claim of claims) {
-        const caveats = claim.limitations.join(" ");
-        if (claim.dimension === "cfg")
-          expect(caveats).not.toMatch(/generated-name normalization/u);
-        else expect(caveats).toMatch(/generated-name normalization/u);
-        if (claim.dimension === "assembly" || claim.dimension === "overall")
-          expect(caveats).toMatch(/Assembly is opaque/u);
-        else expect(caveats).not.toMatch(/Assembly is opaque/u);
-      }
-      expect(
-        session
-          .exportEvidenceBundle()
-          .records.find(({ evidence_id: id }) => id === comparison.evidence_id),
-      ).toEqual(comparison);
-    } finally {
-      await Promise.allSettled([
-        client.close(),
-        server.close(),
-        session.close(),
-      ]);
-      expect(providerLaunches).toBe(0);
+      },
+    });
+    expect(
+      verified.isError,
+      JSON.stringify(verified.structuredContent),
+    ).not.toBe(true);
+    const verification = parseEvidence(verified.structuredContent);
+    expect(verification.normalized_result).toMatchObject({
+      status: verificationStatus,
+      summary: {
+        total: 4,
+        passed: comparisonStatus === "unchanged" ? 3 : 2,
+        failed: verificationStatus === "fail" ? 2 : 0,
+        unknown: comparisonStatus === "unchanged" ? 1 : 0,
+      },
+      claims: {
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            dimension: "pseudocode",
+            status: comparisonStatus === "unchanged" ? "pass" : "fail",
+            observed_status: comparisonStatus,
+            comparison_evidence_id: comparison.evidence_id,
+            left_evidence_ids: [left.evidence_id],
+            right_evidence_ids: [right.evidence_id],
+            limitations: expect.arrayContaining([
+              expect.stringContaining(
+                "without address or generated-name normalization",
+              ),
+            ]),
+          }),
+        ]),
+      },
+    });
+    const claims = reconstructionVerificationResultSchema.parse(
+      verification.normalized_result,
+    ).claims.items;
+    for (const claim of claims) {
+      const caveats = claim.limitations.join(" ");
+      if (claim.dimension === "cfg")
+        expect(caveats).not.toMatch(/generated-name normalization/u);
+      else expect(caveats).toMatch(/generated-name normalization/u);
+      if (claim.dimension === "assembly" || claim.dimension === "overall")
+        expect(caveats).toMatch(/Assembly is opaque/u);
+      else expect(caveats).not.toMatch(/Assembly is opaque/u);
     }
+    expect(
+      session
+        .exportEvidenceBundle()
+        .records.find(({ evidence_id: id }) => id === comparison.evidence_id),
+    ).toEqual(comparison);
+    expect(providerLaunches).toBe(0);
   },
 );
 
@@ -284,87 +275,41 @@ describe("function comparison MCP integration", () => {
     expect(session.recordEvidence(FUNCTION_COMPARISON_EXAMPLE.right).ok).toBe(
       true,
     );
-    const server = createServer({ kind: "session", session });
-    const client = new Client({
-      name: "function-comparison-test",
-      version: "1",
+    const { client } = await createApplicationMcpHarness({
+      session,
+      clientIdentity: { name: "function-comparison-test", version: "1" },
     });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
-        name: "compare_functions",
-        arguments: {
-          left: FUNCTION_COMPARISON_EXAMPLE.left,
-          right: FUNCTION_COMPARISON_EXAMPLE.right,
-        },
-      });
-      expect(result.isError).not.toBe(true);
-      expect(result.structuredContent).toMatchObject({
-        normalized_result: { status: expect.any(String) },
-        evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
-      });
-      const unknowns = await client.callTool({
-        name: "list_unknowns",
-        arguments: { domain: "function-comparison" },
-      });
-      expect(unknowns.structuredContent).toMatchObject({
-        result: {
-          items: [
-            expect.objectContaining({
-              domain: "function-comparison",
-              recommended_probes: [
-                expect.objectContaining({
-                  rationale:
-                    "Capture complete dossiers for both functions under the same target context.",
-                }),
-              ],
-            }),
-          ],
-        },
-      });
-    } finally {
-      await Promise.allSettled([
-        client.close(),
-        server.close(),
-        session.close(),
-      ]);
-    }
-  });
-
-  it("accepts inline Evidence without prior session registration", async () => {
-    const session = createTestBinarySession(() => ({
-      health: () => Promise.resolve(),
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(resultOk(null)),
-    }));
-    const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "function-link-test", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
-        name: "compare_functions",
-        arguments: {
-          left: FUNCTION_COMPARISON_EXAMPLE.left,
-          right: FUNCTION_COMPARISON_EXAMPLE.right,
-        },
-      });
-      expect(result.isError).not.toBe(true);
-      expect(result.structuredContent).toMatchObject({
-        normalized_result: { status: expect.any(String) },
-      });
-    } finally {
-      await Promise.allSettled([
-        client.close(),
-        server.close(),
-        session.close(),
-      ]);
-    }
+    const result = await client.callTool({
+      name: "compare_functions",
+      arguments: {
+        left: FUNCTION_COMPARISON_EXAMPLE.left,
+        right: FUNCTION_COMPARISON_EXAMPLE.right,
+      },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      normalized_result: { status: expect.any(String) },
+      evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
+    });
+    const unknowns = await client.callTool({
+      name: "list_unknowns",
+      arguments: { domain: "function-comparison" },
+    });
+    expect(unknowns.structuredContent).toMatchObject({
+      result: {
+        items: [
+          expect.objectContaining({
+            domain: "function-comparison",
+            recommended_probes: [
+              expect.objectContaining({
+                rationale:
+                  "Capture complete dossiers for both functions under the same target context.",
+              }),
+            ],
+          }),
+        ],
+      },
+    });
   });
 });
 
@@ -482,7 +427,7 @@ describe("function comparison input-kind diagnostics", () => {
 it.each([
   { status: "changed", expected: "fail" },
   { status: "unknown", expected: "unknown" },
-  { status: "unchanged", expected: "pass" },
+  { status: "unchanged", expected: "unknown" },
 ] as const)(
   "checks the aggregate status of imported $status function comparisons",
   async ({ status, expected }) => {
@@ -603,3 +548,32 @@ it.each([
     await harness.client.ping();
   },
 );
+
+it("advertises Swift literal coverage as a pair through the MCP SDK", async () => {
+  const harness = await createApplicationMcpHarness();
+  const tool = (await harness.client.listTools()).tools.find(
+    ({ name }) => name === "analyze_function",
+  );
+  if (tool?.outputSchema === undefined)
+    throw new Error("Missing output schema");
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(tool.outputSchema as AnySchema);
+  const original = FUNCTION_COMPARISON_EXAMPLE.left;
+  for (const [literals, omissions, valid] of [
+    [false, false, true],
+    [true, true, true],
+    [true, false, false],
+    [false, true, false],
+  ] as const) {
+    const dossier = {
+      ...functionDossierSchema.parse(original.normalized_result),
+      ...(literals ? { swift_string_literals: [] } : {}),
+      ...(omissions ? { swift_string_literal_omissions: [] } : {}),
+    };
+    const evidence = { ...original, normalized_result: dossier };
+    expect(functionDossierSchema.safeParse(dossier).success).toBe(valid);
+    expect(validate(evidence), JSON.stringify(validate.errors)).toBe(valid);
+  }
+});

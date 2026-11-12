@@ -92,8 +92,8 @@ it.each(
   async ({ url, body }) => {
     const result = await manifest([url], body);
     expect(result.records).toEqual([]);
-    expect(result.limitations).toContain(
-      "1 retained records without a usable request line are not represented in the manifest.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/1.*request line.*not represented.*manifest/iu),
     );
     expect(
       result.limitations.filter((limitation) =>
@@ -125,3 +125,59 @@ it.each(["absent", "redacted"] as const)(
     ]);
   },
 );
+
+it("does not derive a tool from conflicting header-only MIME evidence through the CLI handler", async () => {
+  for (const values of [
+    ["application/json", "application/octet-stream"],
+    ["application/octet-stream", "application/json"],
+    ["application/json", null],
+    ["application/json", "application/json"],
+  ]) {
+    const capture = scenarioCaptureFixture([
+      {
+        method: "GET",
+        url: "/download",
+        status: 200,
+        responseHeaders: values.map((value) => ({
+          name: "Content-Type",
+          value,
+        })),
+      },
+    ]);
+    const cli = Cli.create("scenario-mime", { sync: false });
+    registerAnalysisViewCommands(cli, silentLogger);
+    let stdout = "";
+    let exitCode = 0;
+    await cli.serve(
+      [
+        "inspect-analysis-view",
+        JSON.stringify({
+          source: {
+            kind: "inline",
+            evidence: scenarioCaptureEvidence(capture),
+          },
+          view: { kind: "environment-manifest" },
+        }),
+        "--json",
+      ],
+      {
+        env: {},
+        stdout: (text) => {
+          stdout += text;
+        },
+        exit: (code) => {
+          exitCode = code;
+        },
+      },
+    );
+    expect(exitCode, stdout).toBe(0);
+    const result = (
+      JSON.parse(stdout) as {
+        normalized_result: { tools: unknown[] };
+      }
+    ).normalized_result;
+    expect(result.tools, JSON.stringify(values)).toHaveLength(
+      values.every((value) => value === "application/json") ? 1 : 0,
+    );
+  }
+});

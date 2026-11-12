@@ -76,7 +76,11 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
     Promise.resolve(ok(releasesFor(new Uint8Array([1, 2, 3]))[family]));
   download = (url: string): Promise<HopperDownload> => {
     this.downloads.push(url);
-    return Promise.resolve({ ok: this.archiveOk, bytes: this.archive });
+    return Promise.resolve(
+      this.archiveOk
+        ? ok(this.archive)
+        : err({ url, kind: "http_status", httpStatus: 503 }),
+    );
   };
   createTemporaryDirectory = (): Promise<string> =>
     Promise.resolve("/tmp/rea test");
@@ -394,7 +398,19 @@ describe("Linux Hopper installation failure classification", () => {
       ...(scenario === "package manager failure"
         ? { packageFailure: host.packageFailure }
         : {}),
+      ...(scenario === "package request failure"
+        ? {
+            download: {
+              request: "package",
+              url: host.downloads[0],
+              kind: "http_status",
+              httpStatus: 503,
+            },
+          }
+        : {}),
     });
+    if (scenario === "package request failure")
+      expect(host.cleaned).toEqual([]);
     if (host.installed.length > 0)
       expect(host.cleaned).toEqual(["/tmp/rea test"]);
   });
@@ -629,4 +645,70 @@ it("reports missing ldd as unresolved launcher inspection while retaining actual
   } finally {
     await host.close?.();
   }
+});
+
+it.each(["physical", "abort-name", "caller", "node-wrapper"] as const)(
+  "attributes a rejected archive write through cleanup (%s)",
+  async (kind) => {
+    const host = new RecordingLinuxHost();
+    const controller = new AbortController();
+    const reason = { caller: "stop during archive write" };
+    const physical = Object.assign(new Error("archive write denied"), {
+      code: "EACCES",
+      name: kind === "abort-name" ? "AbortError" : "Error",
+    });
+    const wrapped = Object.assign(
+      new Error("operation aborted", { cause: reason }),
+      {
+        name: "AbortError",
+        code: "ABORT_ERR",
+      },
+    );
+    host.writeArchive = async () => {
+      controller.abort(reason);
+      throw kind === "caller"
+        ? reason
+        : kind === "node-wrapper"
+          ? wrapped
+          : physical;
+    };
+    host.cleanupFails = true;
+    const result = await installLinuxHopper(host, {
+      signal: controller.signal,
+    });
+    const cancelled = kind === "caller" || kind === "node-wrapper";
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: cancelled ? "cancelled" : "archive_write",
+      cleanupFailure: {
+        path: "/tmp/rea test",
+        reason: "temporary path is busy",
+      },
+    });
+    if (result.status !== "failed") throw new Error("Expected failed write");
+    if (cancelled) expect(result.cancellationReason).toBe(reason);
+    else
+      expect(result.operationFailure).toMatchObject({
+        operation: "archive_write",
+        systemCode: "EACCES",
+        detail: physical.message,
+      });
+    expect(host.installed).toEqual([]);
+    expect(host.cleaned).toEqual(["/tmp/rea test"]);
+  },
+);
+
+it("preserves the package producer's cancellation when a later caller reason differs", async () => {
+  const host = new RecordingLinuxHost();
+  const controller = new AbortController();
+  const producerReason = { producer: "package operation cancelled" };
+  host.installPackage = async () => {
+    controller.abort({ caller: "later stop" });
+    return { status: "cancelled", cause: producerReason };
+  };
+  const result = await installLinuxHopper(host, { signal: controller.signal });
+  expect(result).toMatchObject({ status: "failed", reason: "cancelled" });
+  if (result.status !== "failed") throw new Error("Expected cancellation");
+  expect(result.cancellationReason).toBe(producerReason);
+  expect(host.cleaned).toEqual(["/tmp/rea test"]);
 });

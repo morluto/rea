@@ -22,7 +22,11 @@ import {
   safetensorsFixture,
 } from "../fixtures/model/model.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, createSharedMcpSession } from "../support/cli/cliFixture.js";
+import {
+  cliTest,
+  createSharedMcpSession,
+  runFileCli,
+} from "../support/cli/cliFixture.js";
 
 // Model queries are target-free; share immutable registration and schema setup.
 // Portable export keeps its separate post-CLI connection below.
@@ -109,7 +113,7 @@ cliTest(
       });
       const bytes = Buffer.concat([fixture.bytes, Buffer.alloc(16)]);
       await writeFile(path, bytes);
-      const cliResult = await cli.run({
+      const cliResult = await runFileCli(cli, {
         arguments: [
           "inspect-model-artifact",
           path,
@@ -361,7 +365,7 @@ cliTest(
         tensors,
       });
       await writeFile(path, fixture.bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-model-artifact",
           path,
@@ -440,7 +444,7 @@ cliTest(
 );
 
 cliTest(
-  "preserves exact large safetensors dimensions while bounding actual offsets",
+  "preserves exact large safetensors dimensions while rejecting impossible file offsets",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-shape-precision-");
     const path = join(root, "empty.safetensors");
@@ -516,10 +520,15 @@ cliTest(
     const offsetFailure = parseMcpToolError(
       await call("inspect_model_artifact", { path }),
     );
+    // The raw extent is outside this empty file, and that check runs before
+    // the offset is converted to a host number.
     expect(offsetFailure.error).toMatchObject({
-      code: "resource_constraint",
+      code: "target_unavailable",
+      category: "unsupported_target",
       details: {
-        reported_limits: { maximum_exact_offset: Number.MAX_SAFE_INTEGER },
+        constraint: "file_format_rejected",
+        path,
+        reason: "Declared extent is outside the file",
       },
     });
   },
@@ -990,7 +999,7 @@ cliTest(
     ] as const) {
       const path = join(root, name);
       await writeFile(path, bytes);
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "inspect-model-artifact",
           path,
@@ -1038,7 +1047,7 @@ cliTest(
         Buffer.alloc(0),
       ).bytes,
     );
-    const mapCli = await cli.run({
+    const mapCli = await runFileCli(cli, {
       arguments: [
         "inspect-model-artifact",
         mapPath,
@@ -1075,7 +1084,7 @@ cliTest(
         safetensorsFixture(`{"__metadata__":${numeric}}`, Buffer.alloc(0))
           .bytes,
       );
-      const malformedCli = await cli.run({
+      const malformedCli = await runFileCli(cli, {
         arguments: ["inspect-model-artifact", malformedPath, "--json"],
       });
       expect(malformedCli.exitCode).toBe(1);

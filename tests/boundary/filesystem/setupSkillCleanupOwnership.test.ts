@@ -28,6 +28,8 @@ import {
   systemUninstallHost,
 } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -247,11 +249,12 @@ describe("skill regular-file cleanup ownership", () => {
       return handle;
     });
 
-    try {
-      const reading = readSkillFile(manifest, resources);
-      await readStarted;
+    const reading = readSkillFile(manifest, resources);
+    let closing: Promise<void> | undefined;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(readStarted, reading, "skill read");
       let closed = false;
-      const closing = resources.close().then(() => {
+      closing = resources.close().then(() => {
         closed = true;
       });
       await Promise.resolve();
@@ -260,10 +263,16 @@ describe("skill regular-file cleanup ownership", () => {
       expect(await reading).toBe("stale managed skill\n");
       await closing;
       expect(closed).toBe(true);
-    } finally {
-      unblockRead();
-      await resources.close();
-    }
+    }, [
+      unblockRead,
+      async () => {
+        await reading;
+      },
+      async () => {
+        await closing;
+      },
+      () => resources.close(),
+    ]);
   });
 });
 
@@ -350,11 +359,42 @@ describe("skill cleanup diagnostics", () => {
           detail: expect.stringContaining(manifest),
         }),
       );
+      expect(result.cleanup?.resources).toEqual([manifest]);
+      const primary = new ConfigurationError(
+        "Controlled uninstall discovery failure",
+        {
+          settings: [
+            { setting: "fixture", constraint: "Controlled primary failure" },
+          ],
+        },
+      );
+      const failure = await runUninstall(false, {
+        ...host,
+        clients: async () => {
+          throw primary;
+        },
+      }).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(AnalysisError);
+      if (!(failure instanceof AnalysisError))
+        throw new Error("Expected typed uninstall and cleanup failure");
+      expect(failure.cleanupIncomplete).toBe(true);
+      expect(failure.cleanupResources).toEqual([manifest]);
+      expect(failure.diagnostics?.primary_error).toEqual(
+        projectAnalysisError(primary),
+      );
       expect(close.attempts.length).toBeGreaterThan(0);
       expect(new Set(close.attempts).size).toBe(1);
       const attemptsBeforeClose = close.attempts.length;
       close.release();
       expect(await host.close?.()).toBeUndefined();
+      expect(result.cleanup).toBeUndefined();
+      expect(failure.cleanupIncomplete).toBe(false);
+      expect(projectAnalysisError(failure)).toMatchObject(
+        projectAnalysisError(primary),
+      );
       expect(close.attempts.length).toBeGreaterThan(attemptsBeforeClose);
       expect(new Set(close.attempts).size).toBe(1);
       expect(close.attempts[0]?.fd).toBe(-1);

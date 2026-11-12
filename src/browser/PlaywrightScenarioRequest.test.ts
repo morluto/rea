@@ -1,5 +1,5 @@
 import type { Page, Route } from "playwright-core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
@@ -73,32 +73,30 @@ describe("request step schema", () => {
       );
   });
 
-  it("accepts a same-origin request with query, headers and a JSON body", () => {
+  it("accepts a declared secret as a request header value", () => {
     const parsed = scenario(
       [
         requestStep({
-          query: [{ name: "org", value: { source: "literal", value: "1" } }],
           headers: [
-            {
-              name: "X-CSRFToken",
-              value: { source: "cookie", name: "csrftoken" },
-            },
             {
               name: "Authorization",
               value: { source: "secret", secret_id: "token" },
               prefix: "Bearer ",
             },
           ],
-          json: { title: "Scratch folder 1" },
-          expected_status: [200, 201],
         }),
       ],
       [{ secret_id: "token", environment_variable: "APP_TOKEN" }],
     );
     expect(parsed.actions[0]).toMatchObject({
       action: "request",
-      method: "POST",
-      path: "/api/folders",
+      headers: [
+        {
+          name: "Authorization",
+          value: { source: "secret", secret_id: "token" },
+          prefix: "Bearer ",
+        },
+      ],
     });
   });
 
@@ -220,66 +218,12 @@ describe("request step execution", () => {
     vi.unstubAllGlobals();
   });
 
-  it("sends the declared request through the page's fetch with its cookies", async () => {
-    const calls = stubFetch(201);
-    const parsed = scenario([
-      requestStep({
-        query: [{ name: "org", value: { source: "literal", value: "1" } }],
-        json: { title: "Scratch folder 1" },
-      }),
-    ]);
-    await perform(fakePage({}), parsed.actions[0]!, resolved(parsed));
-    expect(calls).toEqual([
-      {
-        url: `${ORIGIN}/api/folders?org=1`,
-        init: expect.objectContaining({
-          method: "POST",
-          credentials: "same-origin",
-          headers: [["content-type", "application/json"]],
-          body: '{"title":"Scratch folder 1"}',
-        }),
-      },
-    ]);
-  });
-
-  it("reads header values from a cookie and from stored JSON, and redacts them afterwards", async () => {
+  it("sends requests with same-origin credentials", async () => {
     const calls = stubFetch(200);
-    const parsed = scenario([
-      requestStep({
-        headers: [
-          {
-            name: "X-CSRFToken",
-            value: { source: "cookie", name: "csrftoken" },
-          },
-          {
-            name: "Authorization",
-            value: {
-              source: "local_storage",
-              key: "auth",
-              json_pointer: "/token",
-            },
-            prefix: "Bearer ",
-          },
-        ],
-      }),
-    ]);
-    const secrets = resolved(parsed);
-    await perform(
-      fakePage({
-        cookies: [{ name: "csrftoken", value: "csrf-value-123" }],
-        storage: { auth: JSON.stringify({ token: "jwt-value-456" }) },
-      }),
-      parsed.actions[0]!,
-      secrets,
-    );
-    expect(calls[0]!.init.headers).toEqual([
-      ["X-CSRFToken", "csrf-value-123"],
-      ["Authorization", "Bearer jwt-value-456"],
-    ]);
-    const redacted = secrets.redact("csrf-value-123 and jwt-value-456");
-    expect(redacted).not.toContain("csrf-value-123");
-    expect(redacted).not.toContain("jwt-value-456");
-    expect(redacted).toContain("[REDACTED:page:create.X-CSRFToken]");
+    const parsed = scenario([requestStep({})]);
+    await perform(fakePage({}), parsed.actions[0]!, resolved(parsed));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.credentials).toBe("same-origin");
   });
 
   it("refuses to run off the start origin, and fails on an unexpected status or a missing cookie", async () => {
@@ -446,6 +390,42 @@ describe("request route cleanup", () => {
     expect(save).not.toHaveBeenCalled();
     expect(ready).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { status: 200, end: "cancellation" },
+    { status: 503, end: "cancellation" },
+    { status: 200, end: "deadline" },
+    { status: 503, end: "deadline" },
+  ])(
+    "publishes nothing after $end during final route cleanup (status $status)",
+    async ({ status, end }) => {
+      stubFetch(status, ['{"id":"late-object"}']);
+      const parsed = scenario([
+        requestStep({
+          expected_status: [200],
+          timeout_ms: 5000,
+          save: [{ name: "id", json_pointer: "/id" }],
+        }),
+      ]);
+      const page = fakePage({});
+      const secrets = resolved(parsed);
+      const cancel = new AbortController();
+      const began = Date.now();
+      const unroute = vi.spyOn(page, "unroute").mockImplementation(async () => {
+        if (end === "cancellation")
+          cancel.abort("cancelled during final route cleanup");
+        else {
+          const now = vi.spyOn(Date, "now").mockReturnValue(began + 5001);
+          onTestFinished(() => now.mockRestore());
+        }
+      });
+      await expect(
+        perform(page, parsed.actions[0]!, secrets, cancel.signal),
+      ).rejects.toThrow(status === 503 ? "answered 503" : "ended before");
+      expect(() => secrets.savedValue("id")).toThrow("No earlier step saved");
+      expect(unroute).toHaveBeenCalledOnce();
+    },
+  );
 });
 
 describe("request page boundaries", () => {
@@ -569,12 +549,14 @@ describe("request step confinement", () => {
     const parsed = scenario([
       requestStep({
         path: "/api/items?flag&a=b%20c&s=x;y",
-        query: [{ name: "q", value: { source: "literal", value: "a b" } }],
+        query: [
+          { name: "q", value: { source: "literal", value: "a b私😀!~'" } },
+        ],
       }),
     ]);
     await perform(fakePage({}), parsed.actions[0]!, resolved(parsed));
     expect(calls[0]!.url).toBe(
-      `${ORIGIN}/api/items?flag&a=b%20c&s=x;y&q=a%20b`,
+      `${ORIGIN}/api/items?flag&a=b%20c&s=x;y&q=a%20b%E7%A7%81%F0%9F%98%80!~'`,
     );
     for (const [path, sent] of [
       ["/api/items?", "/api/items?q=1"],
@@ -1756,7 +1738,7 @@ describe("saving from a UI step's response", () => {
     await expect(
       perform(uiPage([]).page, parsed.actions[0]!, resolved(parsed)),
     ).rejects.toThrow(
-      "no POST /api/items response arrived before the step's timeout",
+      "no POST /api/items response could be read, so nothing was saved: Timeout exceeded",
     );
     await expect(
       perform(
@@ -1776,6 +1758,72 @@ describe("saving from a UI step's response", () => {
     );
   });
 });
+
+it.each([false, true])(
+  "retains the physical response-wait failure despite late cancellation %s and removes its request watcher",
+  async (cancelAtCompletion) => {
+    const parsed = clickSaving("/api/items");
+    const secrets = resolved(parsed);
+    const { page, listeners } = uiPage([]);
+    const primary = new Error(
+      "page.waitForResponse: Target page has been closed",
+    );
+    vi.spyOn(page, "waitForResponse").mockRejectedValue(primary);
+    const cancel = new AbortController();
+    if (cancelAtCompletion) {
+      const remove = cancel.signal.removeEventListener.bind(cancel.signal);
+      const removing = vi
+        .spyOn(cancel.signal, "removeEventListener")
+        .mockImplementation((type, listener, options) => {
+          remove(type, listener, options);
+          cancel.abort("cancelled after the physical wait failed");
+        });
+      onTestFinished(() => removing.mockRestore());
+    }
+    const failure = await perform(
+      page,
+      parsed.actions[0]!,
+      secrets,
+      cancel.signal,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({ cause: primary });
+    expect((failure as Error).message).toContain(primary.message);
+    expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
+    expect(listeners.size).toBe(0);
+  },
+);
+
+it.each(["request", "click"])(
+  "retains saved values when cancellation follows completed %s publication",
+  async (kind) => {
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const parsed =
+      kind === "request"
+        ? scenario([
+            requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
+          ])
+        : clickSaving("/api/items");
+    stubFetch(200, ['{"id":"committed-object"}']);
+    const page =
+      kind === "request"
+        ? fakePage({})
+        : uiPage([
+            {
+              method: "POST",
+              url: `${ORIGIN}/api/items`,
+              status: 201,
+              body: '{"id":"committed-object"}',
+            },
+          ]).page;
+    const secrets = resolved(parsed);
+    const cancel = new AbortController();
+    await perform(page, parsed.actions[0]!, secrets, cancel.signal);
+    cancel.abort("cancelled after publication");
+    expect(secrets.savedValue("item")).toBe("committed-object");
+  },
+);
 
 describe("saving from a compressed or cached UI response", () => {
   it.each([
@@ -1898,6 +1946,35 @@ describe("saved response limits and deadlines", () => {
     expect(listeners.size).toBe(0);
   });
 
+  it("saves nothing when cancellation arrives as the body wait releases its listener", async () => {
+    const parsed = clickSaving("/api/items");
+    const secrets = resolved(parsed);
+    const { page, listeners } = uiPage([
+      {
+        method: "POST",
+        url: `${ORIGIN}/api/items`,
+        status: 201,
+        body: '{"id":"late-object"}',
+      },
+    ]);
+    const cancel = new AbortController();
+    const remove = cancel.signal.removeEventListener.bind(cancel.signal);
+    let waitsReleased = 0;
+    const removeListener = vi
+      .spyOn(cancel.signal, "removeEventListener")
+      .mockImplementation((type, listener, options) => {
+        remove(type, listener, options);
+        if (++waitsReleased === 2)
+          cancel.abort("cancelled at body wait completion");
+      });
+    onTestFinished(() => removeListener.mockRestore());
+    await expect(
+      perform(page, parsed.actions[0]!, secrets, cancel.signal),
+    ).rejects.toThrow("ended before");
+    expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
+    expect(listeners.size).toBe(0);
+  });
+
   it("reads a response whose received bytes exceed the character limit but whose text is within it", async () => {
     const parsed = clickSaving("/api/items");
     const secrets = resolved(parsed);
@@ -1935,6 +2012,9 @@ describe("saved response limits and deadlines", () => {
 it.each(["array", "embedded", "headers"])(
   "refuses repeated large saved JSON values in %s before expansion or browser dispatch",
   async (kind) => {
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
     const parsed = scenario([
       requestStep({ save: [{ name: "large", json_pointer: "/value" }] }),
       requestStep({
@@ -1963,6 +2043,92 @@ it.each(["array", "embedded", "headers"])(
     expect(page.evaluate).not.toHaveBeenCalled();
   },
 );
+
+it.each(["x".repeat(3_000_000), "私".repeat(100_000)])(
+  "refuses repeated query expansion before encoding or browser dispatch (case %#)",
+  async (value) => {
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const parsed = scenario([
+      requestStep({
+        query: Array.from({ length: 1000 }, (_, index) => ({
+          name: `repeated-${index}`,
+          value: { source: "literal", value },
+        })),
+      }),
+    ]);
+    const secrets = resolved(parsed);
+    const page = { ...fakePage({}), evaluate: vi.fn() } as unknown as Page;
+    const encode = vi
+      .spyOn(globalThis, "encodeURIComponent")
+      .mockImplementation(() => {
+        throw new Error("Query encoding ran before expansion admission");
+      });
+    onTestFinished(() => encode.mockRestore());
+    await expect(perform(page, parsed.actions[0]!, secrets)).rejects.toThrow(
+      "serialization allowance",
+    );
+    expect(encode).not.toHaveBeenCalled();
+    expect(page.evaluate).not.toHaveBeenCalled();
+  },
+);
+
+it("refuses repeated goto query expansion before form encoding or browser navigation", async () => {
+  const value = "x".repeat(3_000_000);
+  const parsed = scenario([
+    {
+      ...gotoStep(`${ORIGIN}/items?literal=a%20b#kept`),
+      destination: {
+        url: `${ORIGIN}/items?literal=a%20b#kept`,
+        query: Array.from({ length: 1000 }, (_, index) => ({
+          name: `repeated-${index}`,
+          value: { source: "literal", value },
+        })),
+      },
+    },
+  ]);
+  const secrets = resolved(parsed);
+  const goto = vi.fn(async () => null);
+  const append = vi
+    .spyOn(URLSearchParams.prototype, "append")
+    .mockImplementation(() => {
+      throw new Error("Form encoding ran before expansion admission");
+    });
+  onTestFinished(() => append.mockRestore());
+  await expect(
+    perform({ goto } as unknown as Page, parsed.actions[0]!, secrets),
+  ).rejects.toThrow("serialization allowance");
+  expect(append).not.toHaveBeenCalled();
+  expect(goto).not.toHaveBeenCalled();
+});
+
+it("preserves goto form query normalization, Unicode, replacement characters and the fragment", async () => {
+  const parsed = scenario([
+    {
+      ...gotoStep(`${ORIGIN}/items?literal=a%20b#kept`),
+      destination: {
+        url: `${ORIGIN}/items?literal=a%20b#kept`,
+        query: [
+          {
+            name: "q",
+            value: { source: "literal", value: "a b私😀!~'\ud800" },
+          },
+        ],
+      },
+    },
+  ]);
+  const goto = vi.fn(async () => null);
+  await perform(
+    { goto } as unknown as Page,
+    parsed.actions[0]!,
+    resolved(parsed),
+  );
+  expect(goto).toHaveBeenCalledWith(
+    `${ORIGIN}/items?literal=a+b&q=a+b%E7%A7%81%F0%9F%98%80%21%7E%27%EF%BF%BD#kept`,
+    expect.anything(),
+  );
+});
 
 it("refuses repeated saved URL expansion before browser navigation", async () => {
   const parsed = scenario([

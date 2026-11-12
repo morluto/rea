@@ -1,3 +1,4 @@
+import { createIdaMcpConnection } from "./IdaMcpConnection.js";
 import {
   mkdir,
   readFile,
@@ -127,7 +128,6 @@ it.each([
       producer,
     );
     const result = await client.execute("list_procedures", {});
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected connection failure");
     expect(result.error.diagnostics).toMatchObject({ endpoint: selected });
     expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
@@ -162,7 +162,6 @@ it.each([
       producer,
     );
     const result = await client.execute("list_procedures", {});
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected connection failure");
     const output = JSON.stringify(projectAnalysisError(result.error));
     expect(output).not.toContain("fixture-secret");
@@ -189,14 +188,14 @@ it.each(["initialize", "transport"])(
         applies_at: "next_operation",
         agent_editable: true,
         scope: "rea-runtime",
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
       diagnostics: { producer_fact: "retained" },
     });
     const connect = vi.spyOn(producer, "connect").mockRejectedValue(source);
     for (const requested of ["list_procedures", "list_strings"] as const) {
       const result = await client.execute(requested, {});
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected startup failure");
       expect(result.error).toBeInstanceOf(ProviderAdapterError);
       expect(result.error).toMatchObject({
@@ -283,7 +282,9 @@ describe("headless IDA producer pagination", () => {
         classification: null,
         body: {
           available: false,
-          reason: "IDA MCP does not report complete function body ranges.",
+          reason: expect.stringMatching(
+            /does not report complete function body ranges/iu,
+          ),
         },
       },
       native_api: null,
@@ -663,10 +664,26 @@ describe("attached IDA function observations", () => {
       const found = await client.execute("search_strings", { pattern, mode });
       expect(found.ok && found.value.result).toHaveLength(count);
     }
-    expect(
-      (await client.execute("search_strings", { pattern: "[", mode: "regex" }))
-        .ok,
-    ).toBe(false);
+    const invalid = await client.execute("search_strings", {
+      pattern: "[",
+      mode: "regex",
+    });
+    if (invalid.ok) throw new Error("Expected invalid-pattern refusal");
+    expect(projectAnalysisError(invalid.error)).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("Invalid regex pattern"),
+      remediation: { action: expect.stringMatching(/pattern.*mode literal/u) },
+      details: {
+        operation: "search_strings",
+        issues: [
+          {
+            path: ["pattern"],
+            reason: "invalid_format",
+            message: expect.stringContaining("Invalid regular expression"),
+          },
+        ],
+      },
+    });
     await client.close();
   });
 });
@@ -1212,7 +1229,6 @@ describe("IDA compatibility profile mismatch", () => {
     const { producer, client } = await fixture("attached", 1000, "native");
     producer.tools = [];
     const result = await client.execute("health", {});
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected incompatible native catalog");
     expect(projectAnalysisError(result.error).details).toMatchObject({
       diagnostics: {
@@ -1938,9 +1954,11 @@ describe("headless IDA cleanup verification", () => {
   });
   it("releases a privately owned worker after malformed open output using verified session inventory", async () => {
     const { producer, client, root } = await fixture("headless");
+    let ownedId: string | undefined;
     producer.beforeCall = async (name, args) => {
       if (name === "idb_open") {
-        producer.database = z.string().parse(args.preferred_session_id);
+        ownedId = z.string().parse(args.preferred_session_id);
+        producer.database = ownedId;
         producer.inputPath = z.string().parse(args.input_path);
       }
     };
@@ -1953,9 +1971,10 @@ describe("headless IDA cleanup verification", () => {
         : undefined;
     expect((await client.execute("health", {})).ok).toBe(false);
     expect((await client.close()).ok).toBe(true);
+    expect(ownedId).toEqual(expect.any(String));
     expect(
       producer.calls.find(({ name }) => name === "idb_close")?.args.database,
-    ).toMatch(/^rea-/u);
+    ).toBe(ownedId);
     expect(await readdir(root)).toEqual(["target.elf"]);
   });
 });
@@ -2010,7 +2029,6 @@ it.each(["unavailable", "malformed"] as const)(
         throw new Error("inventory unavailable");
     };
     const result = await client.close();
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained cleanup");
     expect(result.error).not.toHaveProperty("diagnostics.upstream_sessions");
   },
@@ -2078,7 +2096,7 @@ it("binds retained transport diagnostics to the requested operation and recovery
       operation: "list_procedures",
       diagnostics: {
         reason: "upstream closed",
-        recovery: expect.stringContaining("docs/ida-provider.md"),
+        recovery: expect.stringContaining("docs/providers/ida-provider.md"),
       },
       captured_output: { stderr: "IDA diagnostic" },
     },
@@ -2266,4 +2284,73 @@ it("attributes native IDA metadata timeout to the requested analysis operation",
   });
   expect(result.error.cause).toBe(timeout);
   await expectCleanClose(producer, client);
+});
+
+it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and body settle", async () => {
+  const { root, target } = await createIdaTarget();
+  roots.push(root);
+  let deliver!: (response: Response) => void;
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const response = new Promise<Response>((resolve) => {
+    deliver = resolve;
+  });
+  let release!: () => void;
+  const bodyCleanup = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cancel = vi.fn(() => bodyCleanup);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => {
+      entered();
+      return response;
+    }),
+  );
+  const config = {
+    url: "http://127.0.0.1:12345/mcp",
+    headers: {},
+    mode: "attached" as const,
+    timeoutMs: 30,
+  };
+  const client = new IdaSessionClient(
+    config,
+    target,
+    createIdaMcpConnection(config, {}),
+  );
+  const executing = client.execute("health", {});
+  try {
+    await started;
+    const result = await executing;
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisTimeoutError" },
+    });
+    const firstClose = await client.close();
+    expect(firstClose).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    deliver(new Response(new ReadableStream<Uint8Array>({ cancel })));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(await client.close()).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(await client.close()).toMatchObject({ ok: true });
+    if (firstClose.ok) throw new Error("Expected retained outer cleanup");
+    expect(firstClose.error.cleanupIncomplete).toBe(false);
+  } finally {
+    deliver(new Response(null, { status: 500 }));
+    release();
+    await executing;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await client.close();
+    vi.unstubAllGlobals();
+  }
 });

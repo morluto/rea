@@ -197,7 +197,7 @@ describe.skipIf(process.platform === "win32")(
           const result = await run(analyze);
           expect(result.signal).toBeNull();
           const raw = await readFile(join(reports, "analysis.json"), "utf8");
-          expect(await readdir(reports)).toEqual([
+          expect((await readdir(reports)).sort()).toEqual([
             "analysis.json",
             "analysis.stderr",
             "exit-code.txt",

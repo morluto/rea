@@ -87,7 +87,7 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
     },
     open_binary: {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -95,7 +95,7 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: false,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     start_gdb_session: {
       readOnlyHint: false,

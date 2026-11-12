@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -88,6 +88,55 @@ describe.skipIf(process.platform !== "darwin")(
           },
         });
       },
+    );
+  },
+);
+
+describe.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
+  "native signature CLI for a universal arm64e binary",
+  () => {
+    cliTest(
+      "inspects the selected arm64e slice whatever its pointer-authentication ABI version",
+      async ({ cli }) => {
+        const directory = await createTestTempDirectory(
+          "rea-signature-arm64e-",
+        );
+        const source = join(directory, "main.c");
+        await writeFile(source, "int main(void) { return 0; }\n");
+        // Current clang marks arm64e slices with ABI version 1 (arm64e.v1).
+        const program = join(directory, "universal");
+        await run("/usr/bin/xcrun", [
+          "clang",
+          "-arch",
+          "arm64e",
+          "-arch",
+          "x86_64",
+          source,
+          "-o",
+          program,
+        ]);
+        const { stderr } = await run("/usr/bin/codesign", [
+          "-d",
+          "-a",
+          "arm64e",
+          "--verbose=4",
+          program,
+        ]);
+        const cdhash = /^CDHash=([0-9a-f]+)$/mu.exec(stderr)?.[1];
+        expect(cdhash).toBeDefined();
+        const result = await cli.run({
+          arguments: ["inspect-signature", program, "--json"],
+          environment: {
+            REA_LOG_LEVEL: "silent",
+            REA_ANALYSIS_PROVIDER: "auto",
+          },
+        });
+        expect(result.exitCode, result.stdout).toBe(0);
+        expect(result.json).toMatchObject({
+          normalized_result: { signed: true, cdhashes: [cdhash] },
+        });
+      },
+      60_000,
     );
   },
 );

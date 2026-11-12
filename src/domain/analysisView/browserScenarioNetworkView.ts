@@ -4,15 +4,23 @@ import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { compareAsciiStrings } from "../canonicalOrdering.js";
 
 const count = z.int().nonnegative();
-const statusClass = z.enum([
-  "1xx",
-  "2xx",
-  "3xx",
-  "4xx",
-  "5xx",
-  "failed",
-  "unknown",
-]);
+const statusClass = z
+  .enum([
+    "1xx",
+    "2xx",
+    "3xx",
+    "4xx",
+    "5xx",
+    "6xx",
+    "7xx",
+    "8xx",
+    "9xx",
+    "failed",
+    "unknown",
+  ])
+  .describe(
+    "Numeric hundreds bucket of the recorded three-digit status. The 6xx through 9xx buckets retain nonstandard source values without assigning standard HTTP semantics.",
+  );
 
 /** Counts concern retained transaction identities, including those without a request event. */
 export const browserScenarioNetworkSummarySchema = z.strictObject({
@@ -107,9 +115,7 @@ export const browserScenarioTransactionGroups = (
             : null,
         status_class:
           group.statuses.size === 1 && status !== undefined
-            ? (`${String(Math.floor(status / 100))}xx` as z.infer<
-                typeof statusClass
-              >)
+            ? statusClass.parse(`${String(Math.floor(status / 100))}xx`)
             : group.statuses.size === 0 && group.failed
               ? "failed"
               : "unknown",

@@ -21,11 +21,8 @@ import {
   type JavaScriptRouteInventorySource,
 } from "../javascript/javascriptRouteInventory.js";
 import { javaScriptRouteMechanismSchema } from "../javascript/javascriptRouteFacts.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { assertOwnedView, type AdmittedView } from "./analysisViewShape.js";
 import {
   ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
   analysisViewInputError,
@@ -319,10 +316,14 @@ const captureIdentity = z.object({
 /** Historical projection: no source file reads, browser connection or reanalysis. */
 export const projectJavaScriptRoutesView = (
   parent: AnalysisViewParent,
-  selected: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  selected: AdmittedView,
+) => {
   if (selected.kind !== "javascript-routes")
     return err(inputError("Select a javascript-routes view."));
+  assertOwnedView<z.output<typeof javaScriptRoutesViewRequestSchema>>(
+    selected,
+    "javascript-routes",
+  );
   const operation = parent.operation;
   if (
     operation !== "analyze_javascript_application" &&
@@ -452,7 +453,7 @@ export const projectJavaScriptRoutesView = (
       item: Record<string, JsonValue>;
       sources: readonly string[];
     },
-  ): Result<UnsignedAnalysisView, AnalysisError> => {
+  ) => {
     const rows = candidates(source, ids).filter(predicate),
       items: Record<string, JsonValue>[] = [],
       refs = new Map<string, JavaScriptRouteInventorySource>();

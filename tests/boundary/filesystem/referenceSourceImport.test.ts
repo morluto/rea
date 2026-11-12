@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createHistoricalSourceSummary } from "../../../src/domain/referenceSourceSummary.js";
 import fs from "node:fs";
 import {
@@ -234,7 +235,6 @@ describe("reference source ignore policy read failures", () => {
           new ArtifactResourceScope(),
         );
         expect(intercepted).toBe(true);
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected ignore policy read failure");
         expect(result.error.code).toBe(expected);
         expect(result.error.cause).toBe(
@@ -309,7 +309,6 @@ describe("reference source ignore policy cleanup ownership", () => {
         resources,
       );
       expect(interceptedRead).toBe(true);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected ignore policy read failure");
       expect(result.error.code).toBe("io");
       expect(result.error.cause).toBe(physical);
@@ -373,7 +372,6 @@ describe("reference source ignore policy cleanup ownership", () => {
         new ArtifactResourceScope(),
       );
       expect(intercepted).toBe(true);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected ignore policy read failure");
       expect(result.error.code).toBe("io");
       expect(result.error.cause).toBe(reason);
@@ -746,6 +744,7 @@ describe("reference source import behavior", () => {
           kind: "file",
           size,
           content_state: "hashed",
+          sha256: createHash("sha256").update("a".repeat(size)).digest("hex"),
         }),
       );
     }
@@ -803,6 +802,18 @@ describe("reference source import behavior", () => {
       await rm(outside, { recursive: true, force: true });
     }
   });
+
+  it.each([null, "stop import", { requested: "stop import" }])(
+    "preserves the caller's pre-admission cancellation reason %j",
+    async (reason) => {
+      const controller = new AbortController();
+      controller.abort(reason);
+      const result = await importTree("unopened-source", controller.signal);
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error.code).toBe("cancelled");
+      expect(result.error.cause).toBe(reason);
+    },
+  );
 
   it("records bounded local Git state without invoking Git", async () => {
     const parent = await createTestTempDirectory("rea-reference-git-");

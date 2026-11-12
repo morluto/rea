@@ -14,11 +14,23 @@ import {
   resolveOccurrenceParents,
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
+import { createAsarHeaderSignatureProbe } from "../AsarHeader.js";
+import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
+import { dfuseFile } from "../../domain/firmware/dfuse.fixture.js";
+import {
+  RP2040_FAMILY,
+  patternBytes,
+  uf2File,
+  uf2Image,
+} from "../../domain/firmware/uf2.fixture.js";
 
 import { classifyArtifactBytesAtPath } from "../../../tests/fixtures/artifactClassification.js";
+import { asarHeaderBytes } from "../../../tests/fixtures/asarHeader.js";
 import {
   ESP32C3_APP_SEGMENTS,
   esp8266Image,
@@ -66,6 +78,42 @@ it("classifies original DOS header padding as an executable", () => {
   });
 });
 
+it("projects the parsed ASAR header size when admission rejects an archive", () => {
+  const bytes = asarHeaderBytes("{}", { padding: Buffer.alloc(8, 0x20) });
+  const headerBytes = bytes.readUInt32LE(4);
+  const probe = createAsarHeaderSignatureProbe({
+    maximumBytes: headerBytes - 1,
+    source: "setting",
+  });
+  probe.write(bytes);
+  const asarHeader = probe.finish(bytes.length);
+  expect(asarHeader).toMatchObject({
+    state: "limit",
+    extents: { headerBytes },
+  });
+
+  let failure: unknown;
+  try {
+    classifyArtifactContent(
+      "app.asar",
+      { prefix: bytes, asarHeader },
+      bytes.length,
+    );
+  } catch (cause) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  if (!(failure instanceof ArtifactReaderFailure))
+    throw new Error("ASAR admission failure was not classified");
+
+  const projected = projectAnalysisError(
+    translateArtifactFailure("inspect_artifact", failure),
+  );
+  expect(projected.details?.limit).toMatchObject({
+    required_value: headerBytes,
+  });
+});
+
 const entry = (path: string, kind: ArtifactEntry["kind"]): ArtifactEntry => ({
   path,
   kind,
@@ -109,7 +157,7 @@ it.each(["directory", "symlink"] as const)(
   },
 );
 
-it.each(["directory", "zip", "node-sea"] as const)(
+it.each(["directory", "zip", "node-sea", "deno-standalone"] as const)(
   "omits false storage declarations for %s readers",
   (sourceFormat) => {
     const occurrence = createOccurrence(
@@ -212,11 +260,11 @@ describe("source-map artifact relationships", () => {
       );
       sourceMap.artifact_id = contentId("3");
 
-      const result = createArtifactEdges(contentId("4"), [
-        directory,
-        ...targets,
-        sourceMap,
-      ]);
+      const result = createArtifactEdges(
+        contentId("4"),
+        [directory, ...targets, sourceMap],
+        "complete",
+      );
       const edge = result.edges.find(
         ({ occurrence_id }) => occurrence_id === sourceMap.occurrence_id,
       );
@@ -250,11 +298,11 @@ describe("source-map artifact relationships", () => {
     );
     directory.artifact_id = contentId("3");
 
-    const { edges, limitations } = createArtifactEdges(contentId("4"), [
-      archive,
-      script,
-      directory,
-    ]);
+    const { edges, limitations } = createArtifactEdges(
+      contentId("4"),
+      [archive, script, directory],
+      "complete",
+    );
 
     expect(directory).toMatchObject({
       artifact_kind: "container",
@@ -489,6 +537,63 @@ it("classifies nested ESP images as containers by bytes", () => {
   // An unsupported ESP8266 image is a plain file, not a container.
   expect(classifyArtifactBytesAtPath("esp8266.bin", esp8266Image())).toEqual({
     kind: "resource",
+    format: "file",
+  });
+});
+
+it("classifies nested UF2 by block magics and DfuSe by prefix and suffix", () => {
+  const uf2 = uf2File(uf2Image(RP2040_FAMILY, 0x1000_0000, patternBytes(300)));
+  expect(classifyArtifactBytesAtPath("firmware/update.bin", uf2)).toEqual({
+    kind: "container",
+    format: "uf2",
+  });
+  expect(
+    classifyArtifactBytesAtPath("firmware/short.uf2", uf2.subarray(0, 511)),
+  ).toEqual({ kind: "resource", format: "file" });
+  const dfu = dfuseFile({
+    targets: [{ alternateSetting: 0, elements: [{ address: 0, data: [1] }] }],
+  });
+  // The prefix alone is not DfuSe; the suffix is observed at the stream end.
+  expect(classifyArtifactBytesAtPath("firmware/update.dfu", dfu)).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+  const probe = createArtifactClassificationProbe();
+  for (let offset = 0; offset < dfu.length; offset += 5)
+    probe.write(dfu.subarray(offset, offset + 5));
+  expect(
+    classifyArtifactContent(
+      "firmware/update.bin",
+      probe.finish(dfu.length),
+      dfu.length,
+    ),
+  ).toMatchObject({ kind: "container", format: "dfuse" });
+  // Bytes the probe never saw may follow, so it reports no suffix at all.
+  const partial = probe.finish(dfu.length + 1);
+  expect(partial.suffix).toBeUndefined();
+  expect(
+    classifyArtifactContent("firmware/update.bin", partial, dfu.length + 1),
+  ).toMatchObject({ format: "file" });
+});
+
+it("classifies a $MFT stream by its FILE record header, under any name", () => {
+  const mft = Buffer.alloc(2_048);
+  mft.write("FILE", 0, "latin1");
+  mft.writeUInt32LE(1024, 28);
+  for (const path of ["evidence/$MFT", "evidence/mft.raw", "evidence/records"])
+    expect(classifyArtifactBytesAtPath(path, mft)).toEqual({
+      kind: "executable",
+      format: "ntfs-mft",
+    });
+});
+
+it("leaves plain content beginning with FILE unclassified as MFT", () => {
+  const text = Buffer.from(
+    "FILE is a plain text prefix, not an NTFS record header",
+  );
+  expect(
+    classifyArtifactBytesAtPath("evidence/readme.txt", text),
+  ).toMatchObject({
     format: "file",
   });
 });

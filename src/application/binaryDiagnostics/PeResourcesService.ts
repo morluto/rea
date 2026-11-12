@@ -9,7 +9,6 @@ import {
   type PeResources,
   type PeResourceIdentity,
 } from "../../domain/native/peResources.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   BYTE_PRESERVING_CODE_PAGE,
   DEFAULT_CODE_PAGE,

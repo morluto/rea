@@ -32,6 +32,7 @@ const withLoadRanges = (
     readonly offset: number;
     readonly size: number;
     readonly zeroFill?: number;
+    readonly address?: bigint;
   }[],
 ): Buffer => {
   const headers: Buffer[] = [];
@@ -47,7 +48,7 @@ const withLoadRanges = (
     header.writeUInt32LE(1);
     header.writeUInt32LE(7, 4);
     header.writeBigUInt64LE(BigInt(range.offset), 8);
-    const address = FIXTURE_BINARY_BASE + BigInt(range.offset);
+    const address = range.address ?? FIXTURE_BINARY_BASE + BigInt(range.offset);
     header.writeBigUInt64LE(address, 16);
     header.writeBigUInt64LE(address, 24);
     header.writeBigUInt64LE(BigInt(range.size), 32);
@@ -60,6 +61,74 @@ const withLoadRanges = (
   result.writeUInt16LE(headers.length, 56);
   return result;
 };
+
+it.each([183, 62])(
+  "keeps file-backed relocation writes on their virtual owner despite physical aliases (machine %s)",
+  (machine) => {
+    const original = createElfFixture(createIl2cppBinaryFixture(), { machine });
+    // RELA restores the zero stored at 0x308, but must not change the same
+    // file bytes independently mapped at base + 0x2000. A single file copy
+    // cannot represent those two different loader values.
+    expect(original.readBigUInt64LE(0x308)).toBe(0n);
+    for (const [offset, size] of [
+      [0x308, 8],
+      [0x307, 2],
+      [0x30f, 2],
+    ] as const) {
+      const bytes = withLoadRanges(original, [
+        { offset: 0, size: original.length },
+        {
+          offset,
+          size,
+          address: FIXTURE_BINARY_BASE + 0x2000n,
+        },
+      ]);
+      const snapshot = Buffer.from(bytes);
+      const image = open(bytes);
+      expect(readSlot(image, FIXTURE_BINARY_BASE + 0x308n)).toBe(
+        FIXTURE_BINARY_BASE + 0x200n,
+      );
+      if (offset === 0x308 && size === 8)
+        expect(readSlot(image, FIXTURE_BINARY_BASE + 0x2000n)).toBe(0n);
+      expect(Buffer.compare(bytes, snapshot)).toBe(0);
+    }
+  },
+);
+
+it.each([183, 62])(
+  "keeps unresolved symbol writes from changing another virtual mapping (machine %s)",
+  (machine) => {
+    const source = createIl2cppBinaryFixture();
+    source.writeBigUInt64LE(0x1234n, 0x700);
+    const original = createElfFixture(source, {
+      machine,
+      unresolvedRelocations: [
+        { offset: 0x700, kind: machine === 183 ? 257 : 1 },
+      ],
+    });
+    const bytes = withLoadRanges(original, [
+      { offset: 0, size: original.length },
+      { offset: 0x700, size: 8, address: FIXTURE_BINARY_BASE + 0x2000n },
+    ]);
+    const image = open(bytes);
+    expect(readSlot(image, FIXTURE_BINARY_BASE + 0x700n)).toBe("unknown");
+    expect(readSlot(image, FIXTURE_BINARY_BASE + 0x2000n)).toBe(0x1234n);
+  },
+);
+
+it("keeps consistent aliases and distinct virtual mappings of untouched file bytes", () => {
+  const original = createElfFixture(createIl2cppBinaryFixture());
+  for (const alias of [
+    { offset: 0x300, size: 0x28 },
+    { offset: 0x200, size: 0x20, address: FIXTURE_BINARY_BASE + 0x2000n },
+  ]) {
+    const bytes = withLoadRanges(original, [
+      { offset: 0, size: original.length },
+      alias,
+    ]);
+    expect(link(bytes)).toEqual(link(original));
+  }
+});
 
 it("reuses admitted mappings for repeated file-backed loader reads", () => {
   const original = createIl2cppBinaryFixture();
@@ -93,7 +162,9 @@ it("links one code-loaded type table among short runs across many mappings", () 
   });
   expect(result.types_field).toBeNull();
   expect(result.types_count).toBe(4);
-  expect(result.return_types.every((row) => row.name === "int")).toBe(true);
+  expect(result.return_types.map((row) => row.name)).toEqual(
+    Array.from({ length: 5 }, () => "int"),
+  );
   expect(Buffer.compare(bytes, snapshot)).toBe(0);
 });
 
@@ -220,4 +291,79 @@ it("keeps mapped-span admission consistent with pointer reads across zero-fill a
     expect(readPointer(image, address)).toBe(conflict ? null : 0n);
     expect(isMapped(image, FIXTURE_BINARY_BASE + 0xc00n, 4)).toBe(true);
   }
+});
+
+it("reads both halves of a relocated word without changing a physical alias's UInt32 fields", () => {
+  const original = createElfFixture(createIl2cppBinaryFixture());
+  const bytes = withLoadRanges(original, [
+    { offset: 0, size: original.length },
+    { offset: 0x304, size: 16, address: FIXTURE_BINARY_BASE + 0x2000n },
+  ]);
+  const image = open(bytes);
+  expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x308n)).toBe(0x200);
+  expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x30cn)).toBe(1);
+  expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x2004n)).toBe(0);
+  expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x2008n)).toBe(0);
+  expect(image.bytes.equals(bytes)).toBe(true);
+});
+
+it.each([183, 62])(
+  "retains independent relocated values for two virtual aliases (machine %s)",
+  (machine) => {
+    const original = createElfFixture(createIl2cppBinaryFixture(), { machine });
+    // Redirect a separate existing RELA record to the alias, retaining the write
+    // to the original 0x308 slot and the same immutable source word.
+    const dynamic = Number(original.readBigUInt64LE(128));
+    const count = Number(original.readBigUInt64LE(dynamic + 24)) / 24;
+    for (let i = 0; i < count; i++) {
+      const at = 0x1000 + i * 24;
+      if (original.readBigUInt64LE(at) === FIXTURE_BINARY_BASE + 0x308n)
+        continue;
+      original.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x2000n, at);
+      original.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x333n, at + 16);
+      break;
+    }
+    const bytes = withLoadRanges(original, [
+      { offset: 0, size: original.length },
+      { offset: 0x308, size: 8, address: FIXTURE_BINARY_BASE + 0x2000n },
+    ]);
+    const image = open(bytes);
+    expect(readSlot(image, FIXTURE_BINARY_BASE + 0x308n)).toBe(
+      FIXTURE_BINARY_BASE + 0x200n,
+    );
+    expect(readSlot(image, FIXTURE_BINARY_BASE + 0x2000n)).toBe(
+      FIXTURE_BINARY_BASE + 0x333n,
+    );
+    expect(image.bytes.equals(bytes)).toBe(true);
+  },
+);
+
+it.each([183, 62])(
+  "keeps an untouched UInt32 half known after a same-start narrow unknown write (machine %s)",
+  (machine) => {
+    const bytes = createElfFixture(createIl2cppBinaryFixture(), {
+      machine,
+      unresolvedRelocations: [
+        { offset: 0x308, kind: machine === 183 ? 258 : 10 },
+      ],
+    });
+    const image = open(bytes);
+    expect(readSlot(image, FIXTURE_BINARY_BASE + 0x308n)).toBe("unknown");
+    expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x308n)).toBe("unknown");
+    expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x30cn)).toBe(1);
+  },
+);
+
+it("composes a UInt32 crossing a known relocation edge with unchanged source bytes", () => {
+  const source = createIl2cppBinaryFixture();
+  source.writeUInt32LE(0xaabbccdd, 0x310);
+  const bytes = createElfFixture(source);
+  const image = open(bytes);
+  expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x306n)).toBe(
+    bytes.readUInt16LE(0x306) + 0x02000000,
+  );
+  // The relocated word at 0x308 is 0x0000000100000200. Its final two
+  // bytes are followed by the original dd cc bytes at 0x310.
+  expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x30en)).toBe(0xccdd0000);
+  expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x30cn)).toBe(1);
 });

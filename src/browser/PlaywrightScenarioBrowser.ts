@@ -1,4 +1,8 @@
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import {
+  chromiumLaunchRemediation,
+  chromiumSandboxEnabled,
+} from "./ChromiumSandbox.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
@@ -851,6 +855,7 @@ export const openPlaywrightScenarioBrowser = async (
     readonly retainCleanup?: (lease: AnalysisCleanupLease) => void;
   } = {},
 ): Promise<OpenedScenarioBrowser> => {
+  throwIfScenarioCancelled(options.signal);
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
     options.launcher ?? (await import("playwright-core")).chromium;
@@ -865,13 +870,16 @@ export const openPlaywrightScenarioBrowser = async (
       commandTimeoutMs,
     );
 
+  throwIfScenarioCancelled(options.signal);
   const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
   let context: BrowserContext;
   const executablePath = scenario.browser.executable_path;
   const headless = scenario.browser.headless;
+  const chromiumSandbox = chromiumSandboxEnabled(environment);
   let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
+    throwIfScenarioCancelled(options.signal);
     launchStarted = true;
     context = await withScenarioCommandDeadline(
       () =>
@@ -894,13 +902,11 @@ export const openPlaywrightScenarioBrowser = async (
           handleSIGINT: false,
           handleSIGTERM: false,
           timeout: commandTimeoutMs,
+          chromiumSandbox,
           // Termux's Chromium cannot create its renderer process through Android's
           // executable boundary. Single-process mode keeps the browser and page in
           // the Termux-launched process so scenario navigation remains available.
-          args:
-            process.platform === "android"
-              ? ["--no-sandbox", "--single-process"]
-              : [],
+          args: process.platform === "android" ? ["--single-process"] : [],
         }),
       commandTimeoutMs,
       "launch",
@@ -923,8 +929,7 @@ export const openPlaywrightScenarioBrowser = async (
             {
               cause,
               userMessage: "The selected browser could not start.",
-              remediationAction:
-                "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.",
+              remediationAction: chromiumLaunchRemediation(chromiumSandbox),
               diagnostics: {
                 executable_path: executablePath,
                 startup_error:
@@ -948,10 +953,12 @@ export const openPlaywrightScenarioBrowser = async (
       rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
   });
   try {
+    throwIfScenarioCancelled(options.signal);
     const browser = context.browser();
     if (browser === null)
       throw new BrowserObservationError(OPERATION, "protocol_error");
     const page = context.pages()[0] ?? (await context.newPage());
+    throwIfScenarioCancelled(options.signal);
     return {
       context,
       page,

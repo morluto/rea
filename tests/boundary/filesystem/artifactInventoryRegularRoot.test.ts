@@ -135,7 +135,7 @@ it("retains root identity without asserting absent children for an unclassified 
   ]);
   expect(inventory.coverage).toEqual({ scope: "root", status: "complete" });
   expect(inventory.limitations).toEqual([
-    "Inventory covers root bytes only; child container entries were not examined.",
+    expect.stringMatching(/root bytes only.*child.*not examined/iu),
   ]);
 });
 

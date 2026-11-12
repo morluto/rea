@@ -1,6 +1,15 @@
 import { z } from "zod";
 import { webTextArtifactSchema } from "./webContentArtifact.js";
 
+/**
+ * Zero-based UTF-16 column in a resource, as CDP reports it. CDP declares
+ * columns as plain integers. Chrome reports a negative start column for some
+ * inline scripts, and positions on a script's first line include that start
+ * column, so a negative column is kept as reported. It does not locate a
+ * column in the resource.
+ */
+export const cdpResourceColumnSchema = z.int();
+
 /** Structural DOM facts shared by passive web and Electron observations. */
 export const cdpDomNodeSchema = z.object({
   index: z.number().int().min(0),

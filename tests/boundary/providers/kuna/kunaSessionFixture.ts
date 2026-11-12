@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
+
+import { onTestFinished } from "vitest";
+
 import type { AnalysisClient } from "../../../../src/application/AnalysisProvider.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
@@ -32,18 +37,23 @@ export const session = async (
   environment: Readonly<Record<string, string>> = {},
   launcher?: KunaProcessLauncher,
   singleFunctionRuns?: number,
+  image: {
+    readonly bytes: Uint8Array | string;
+    readonly format: "elf" | "mach-o";
+    readonly architecture: "x86_64" | "arm64";
+  } = { bytes: "program bytes", format: "elf", architecture: "x86_64" },
 ) => {
   const root = await createTestTempDirectory(prefix);
   const kuna = await writeFakeKuna(root, { functions: FUNCTIONS, ...behavior });
   const targetPath = join(root, "program");
-  await writeFile(targetPath, "program bytes");
+  await writeFile(targetPath, image.bytes);
   const target: BinaryTarget = {
     path: targetPath,
-    sha256: createHash("sha256").update("program bytes").digest("hex"),
+    sha256: createHash("sha256").update(image.bytes).digest("hex"),
     kind: "executable",
-    format: "elf",
-    architecture: "x86_64",
-    availableArchitectures: ["x86_64"],
+    format: image.format,
+    architecture: image.architecture,
+    availableArchitectures: [image.architecture],
   };
   const cacheRoot = join(root, "cache");
   const provider = new KunaProvider(
@@ -54,13 +64,25 @@ export const session = async (
       ...(singleFunctionRuns === undefined ? {} : { singleFunctionRuns }),
     },
   );
+  // Finished hooks run in reverse order: clients, shared cache, then root.
+  onTestFinished(async () => {
+    const closed = await provider.closeOwnedResources();
+    if (!closed.ok) throw closed.error;
+  });
   const profile = await withKunaResourceScope((resourceScope) =>
     provider.resolveAnalysisProfile(target, { resourceScope }),
   );
   if (!profile.ok || profile.value.profile === null)
     throw new Error("profile did not resolve");
   const resolved = profile.value.profile;
-  const open = () => provider.createClient(target, resolved);
+  const open = () => {
+    const client = provider.createClient(target, resolved);
+    onTestFinished(async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    });
+    return client;
+  };
   return { root, kuna, target, cacheRoot, provider, profile: resolved, open };
 };
 
@@ -104,4 +126,33 @@ export const unprovenCleanupLauncher = (subcommand: string) => {
     };
   };
   return { launcher, release: () => (proven = true) };
+};
+
+/** Wait for a real child invocation, while preserving an early operation failure. */
+export const awaitKunaCommand = async (
+  kuna: string,
+  command: string,
+  operation: Promise<unknown>,
+): Promise<void> => {
+  let waiting = true;
+  const acknowledged = (async () => {
+    while (waiting) {
+      if ((await fakeKunaCalls(kuna)).some(({ argv }) => argv[0] === command))
+        return;
+      await delay(10);
+    }
+  })();
+  try {
+    // Cold installation, workspace and inventory preparation precede decompile.
+    // The phase probe took over two seconds with the two-core resource bound.
+    await awaitAcknowledgement(
+      acknowledged,
+      operation,
+      `Kuna ${command} child`,
+      5_000,
+    );
+  } finally {
+    waiting = false;
+    await Promise.allSettled([acknowledged]);
+  }
 };

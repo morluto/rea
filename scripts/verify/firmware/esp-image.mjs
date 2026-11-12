@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
+import { withVerifierWorkspace } from "../../lib/verifier-workspace.mjs";
 import {
   assertAgrees,
   buildElf,
@@ -17,6 +17,7 @@ import {
   imageInfo,
   inspect,
   options,
+  refusal,
   source,
   spell,
   tool,
@@ -26,7 +27,7 @@ import {
 let workspace;
 const path = (name) => join(workspace, name);
 
-await withVerifierCleanup(async () => {
+const verify = async () => {
   const { compilerVersion, esptoolVersion, xtensaVersion } = await checkTools();
   workspace = await mkdtemp(join(tmpdir(), "rea-esp-image-proof-"));
   const report = {
@@ -392,7 +393,7 @@ await withVerifierCleanup(async () => {
   const v3Oracle = await imageInfo(path("esp8266-v3.bin"), "esp8266");
   assert.ok((v3Oracle.segments[0]?.address ?? 0) >= 0x4020_0000);
   assert.match(
-    (await inspect(path("esp8266-v3.bin"))).refused ?? "",
+    await refusal(path("esp8266-v3.bin")),
     /ESP8266 firmware images are not supported/u,
   );
   report.images.push({ name: "esp8266-v3.bin", refused: true });
@@ -400,19 +401,12 @@ await withVerifierCleanup(async () => {
   // ESP8266 v1: esptool falls back to ESP8266; REA refuses it by name.
   const esp8266Image = path("esp8266-0x00000.bin");
   assert.equal((await imageInfo(esp8266Image)).detected, "ESP8266");
-  const refused = await inspect(esp8266Image);
   assert.match(
-    refused.refused ?? "",
+    await refusal(esp8266Image),
     /ESP8266 firmware images are not supported/u,
   );
   report.images.push({ name: "esp8266-0x00000.bin", refused: true });
   console.log(JSON.stringify(report, null, 2));
-}, [
-  // Remove outputs only after every owned command tree has stopped; a failed
-  // close keeps the workspace for inspection.
-  async () => {
-    await commands.close();
-    if (workspace !== undefined)
-      await rm(workspace, { recursive: true, force: true });
-  },
-]);
+};
+
+await withVerifierWorkspace(verify, commands, () => workspace);

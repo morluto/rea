@@ -25,6 +25,7 @@ import {
 import { pageBound } from "../../domain/analysisView/environmentStatePaging.js";
 import { replayReason } from "../../domain/analysisView/environmentStateVariants.js";
 import { isAbsence } from "../../domain/analysisView/environmentStateWriteChecks.js";
+import { updatedEntity } from "../../domain/analysisView/environmentStateWriteApply.js";
 import {
   evaluateQuery,
   renderQueryList,
@@ -291,16 +292,6 @@ export const softDeleteFlag = (
   return undefined;
 };
 
-/** Fields as an application that soft-deletes shows them once deleted: with the type's deleted flag set, when it has one. */
-const deletedFields = (
-  serving: StateServing,
-  type: string,
-  fields: JsonObject,
-): JsonObject => {
-  const flag = softDeleteFlag(serving, type);
-  return flag === undefined ? fields : { ...fields, [flag]: true };
-};
-
 /** Fields as a delete's answer shows them: with the type's deleted flag as its recorded answer `shown` gave it, if it did. */
 export const deleteAnswerFields = (
   serving: StateServing,
@@ -326,9 +317,11 @@ const deletedEntity = (
     call,
     (collection, id) => store.deleted(type, collection, id),
   );
-  return entity === undefined
-    ? undefined
-    : { ...entity, fields: deletedFields(serving, type, entity.fields) };
+  if (entity === undefined) return undefined;
+  const flag = softDeleteFlag(serving, type);
+  return flag === undefined
+    ? entity
+    : updatedEntity(entity, { ...entity.fields, [flag]: true });
 };
 
 /** The answer for an entity the state does not hold: the tool's latest recorded 400, 404 or 410, else a tool error. */

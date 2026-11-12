@@ -60,7 +60,8 @@ vi.mock("./CdpTargetSession.js", () => ({
   }),
 }));
 
-vi.mock("./PlaywrightScenarioBrowser.js", () => ({
+vi.mock("./PlaywrightScenarioBrowser.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./PlaywrightScenarioBrowser.js")>()),
   openPlaywrightScenarioBrowser: mocks.openBrowser,
   failBrowserScenarioOperation: async (
     cleanup: { release(): Promise<void> },
@@ -118,6 +119,7 @@ vi.mock("./PlaywrightScenarioEvents.js", () => ({
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { PlaywrightScenarioSession } from "./PlaywrightScenarioSession.js";
+import { PlaywrightScenarioBrowserCleanupOwner } from "./PlaywrightScenarioBrowser.js";
 
 const scenario = browserScenarioSchema.parse({
   browser: { mode: "launch", executable_path: process.execPath },
@@ -211,13 +213,14 @@ const fixture = () => {
       return browserClosed;
     },
   };
-  mocks.openBrowser.mockResolvedValue({
+  const opened = {
     page,
     context,
     browser,
     cleanup,
     profilePath: "/tmp/profile",
-  });
+  };
+  mocks.openBrowser.mockResolvedValue(opened);
   mocks.storage = {
     initialize: vi.fn<PlaywrightScenarioStorage["initialize"]>(
       async () => undefined,
@@ -230,7 +233,7 @@ const fixture = () => {
       }),
     ),
   };
-  return { cleanup, page, storage: mocks.storage };
+  return { cleanup, page, context, storage: mocks.storage, opened };
 };
 
 const policyResponse = (method: string): unknown =>
@@ -721,14 +724,11 @@ it("retries a failed connected-page stop when service workers are allowed", asyn
   cancellation.abort();
   const concurrentClose = session.close();
   finishEvents();
-  await expect(
-    Promise.allSettled([firstClose, concurrentClose]),
-  ).resolves.toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ status: "rejected" }),
-      expect.objectContaining({ status: "rejected" }),
-    ]),
-  );
+  const outcomes = await Promise.allSettled([firstClose, concurrentClose]);
+  expect(outcomes.map(({ status }) => status)).toEqual([
+    "rejected",
+    "rejected",
+  ]);
 
   expect(cleanup.browserClosed).toBe(false);
   await expect(session.close()).resolves.toBe("disconnected-external");
@@ -1151,6 +1151,138 @@ it("retains a detached policy connection until the main realm is restored", asyn
   ).toHaveLength(1);
   expect(mocks.policyTransportClose).toHaveBeenCalledTimes(1);
   expect(cleanup.close).toHaveBeenCalledTimes(1);
+});
+
+it("finishes initialization cleanup independently of request cancellation", async () => {
+  const { context, opened } = fixture();
+  const controller = new AbortController();
+  const closeBrowser = vi.fn(async () => undefined);
+  const removeProfile = vi.fn(async () => undefined);
+  mocks.openBrowser.mockResolvedValue({
+    ...opened,
+    cleanup: new PlaywrightScenarioBrowserCleanupOwner({
+      closeBrowser,
+      removeProfile,
+    }),
+  });
+  context.addCookies.mockImplementationOnce(async () => {
+    controller.abort();
+  });
+  const retainCleanup = vi.fn();
+
+  await expect(
+    PlaywrightScenarioSession.open(
+      scenario,
+      {},
+      {
+        signal: controller.signal,
+        retainCleanup,
+      },
+    ),
+  ).rejects.toMatchObject({ _tag: "AnalysisCancelledError" });
+  expect(closeBrowser).toHaveBeenCalledTimes(1);
+  expect(removeProfile).toHaveBeenCalledTimes(1);
+  expect(retainCleanup).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "joins pending cookie setup before releasing an attached browser (late rejection: %s)",
+  async (rejectCookies) => {
+    const { context, cleanup, storage } = fixture();
+    const controller = new AbortController();
+    const reason = { stop: "during cookie setup" };
+    const started = deferred();
+    const cookies = deferred();
+    context.addCookies.mockImplementationOnce(async () => {
+      started.resolve();
+      await cookies.promise;
+      if (rejectCookies)
+        throw new Error("cookie setup rejected after cancellation");
+    });
+    const input = browserScenarioSchema.parse({
+      ...connectedScenario("allow"),
+      storage: {
+        cookies: [
+          {
+            name: "session",
+            http_only: true,
+            secure: true,
+            same_site: "Lax",
+            value: { source: "literal", value: "selected" },
+            destination: { url: "https://storage.example.test/" },
+          },
+        ],
+      },
+    });
+    const provider = new PlaywrightBrowserScenarioProvider(
+      (scenario, options) =>
+        PlaywrightScenarioSession.open(scenario, {}, options),
+    );
+    const result = provider.captureScenario(input, {
+      signal: controller.signal,
+    });
+    try {
+      await started.promise;
+      controller.abort(reason);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(cleanup.close).not.toHaveBeenCalled();
+      cookies.resolve();
+      const outcome = await result;
+      if (outcome.ok)
+        throw new Error("Expected cancelled cookie initialization");
+      expect(outcome.error._tag).toBe("AnalysisCancelledError");
+      expect(outcome.error.cause).toBe(reason);
+      expect(outcome.error.cleanupIncomplete).toBe(false);
+      expect(cleanup.close).toHaveBeenCalledOnce();
+      expect(storage?.initialize).not.toHaveBeenCalled();
+    } finally {
+      cookies.resolve();
+      await result;
+      await provider.close();
+    }
+  },
+);
+
+it("can retry cleanup of a browser that opened after request cancellation", async () => {
+  const { opened } = fixture();
+  const closeBrowser = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("transport close failed"))
+    .mockResolvedValueOnce(undefined);
+  const removeProfile = vi.fn(async () => undefined);
+  const lateOpened = {
+    ...opened,
+    cleanup: new PlaywrightScenarioBrowserCleanupOwner({
+      closeBrowser,
+      removeProfile,
+    }),
+  };
+  let resolveOpening: ((value: typeof lateOpened) => void) | undefined;
+  const opening = new Promise<typeof lateOpened>((resolve) => {
+    resolveOpening = resolve;
+  });
+  mocks.openBrowser.mockReturnValueOnce(opening);
+  const controller = new AbortController();
+  const retained: AnalysisCleanupLease[] = [];
+  const result = PlaywrightScenarioSession.open(
+    scenario,
+    {},
+    {
+      signal: controller.signal,
+      retainCleanup: (close) => retained.push(close),
+    },
+  );
+  const cancelled = expect(result).rejects.toMatchObject({
+    _tag: "AnalysisCancelledError",
+  });
+  controller.abort();
+  await cancelled;
+  resolveOpening?.(lateOpened);
+  await vi.waitFor(() => expect(closeBrowser).toHaveBeenCalledTimes(1));
+  expect(retained).toHaveLength(1);
+  await expect(retained[0]?.release()).resolves.toBeUndefined();
+  expect(closeBrowser).toHaveBeenCalledTimes(2);
+  expect(removeProfile).toHaveBeenCalledTimes(1);
 });
 
 it("uses browser disconnect as terminal storage release after detach failure", async () => {

@@ -16,6 +16,12 @@ import {
 } from "./ClientConfigurationDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  AnalysisError,
+  type AnalysisCleanupObservation,
+} from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { copyFile, lstat, realpath, rm, rmdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
@@ -23,8 +29,11 @@ import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { basename, dirname } from "node:path";
 import {
   defaultKunaCacheDirectory,
+  hasParentTraversal,
   sameLexicalDirectory,
+  withinLexicalDirectory,
 } from "../config/kunaCacheDirectory.js";
+import { defaultDarwinHelperCacheDirectory } from "../process/DarwinHelperCache.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
@@ -51,7 +60,9 @@ import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   InvalidUtf8FileError,
   readRegularFileText,
+  bindRegularFileCleanup,
 } from "./RegularFileRead.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   appDataRedirection,
@@ -129,6 +140,7 @@ export interface UninstallItem extends UninstallAction {
 export interface UninstallResult {
   readonly status: "complete" | "failed";
   readonly items: readonly UninstallItem[];
+  readonly cleanup?: AnalysisCleanupObservation | undefined;
 }
 
 /** Applicability established once from product-specific discovery evidence. */
@@ -148,8 +160,29 @@ export interface UninstallHost {
   inspectSkill?(): Promise<UninstallItem | undefined>;
   removeSkill(): Promise<UninstallItem>;
   purgeData(): Promise<readonly UninstallItem[]>;
-  close?(): Promise<string | undefined>;
+  close?(): Promise<AnalysisError | undefined>;
 }
+
+/** Preserve the resource owner's explicit retry capabilities through uninstall reporting. */
+const uninstallCleanupError = (cause: unknown): AnalysisError => {
+  if (
+    cause instanceof AnalysisError &&
+    (cause.cleanupIncomplete ||
+      cause.hasCleanupOwner ||
+      cause.cleanup !== undefined ||
+      cause instanceof ProviderCleanupError)
+  )
+    return cause;
+  const cleanup = ArtifactReaderFailure.cleanupObservation(cause, []);
+  const error = new ProviderCleanupError(
+    "uninstall",
+    cleanup.resources,
+    { reason: cleanup.reason },
+    { cause, cleanup, operation: "uninstall" },
+  );
+  bindRegularFileCleanup(cause, error);
+  return error;
+};
 
 /**
  * Remove only REA-owned registrations and managed files, optionally including
@@ -203,19 +236,30 @@ export const runUninstall = async (
     failed = true;
     primaryFailure = cause;
   }
-  let cleanupFailure: string | undefined;
+  let cleanupFailure: AnalysisError | undefined;
   try {
-    cleanupFailure = await host.close?.();
+    const report = await host.close?.();
+    cleanupFailure =
+      report === undefined ? undefined : uninstallCleanupError(report);
   } catch (cause: unknown) {
-    cleanupFailure = `Uninstall resource cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+    cleanupFailure = uninstallCleanupError(cause);
   }
+  if (cleanupFailure !== undefined && !cleanupFailure.cleanupIncomplete)
+    cleanupFailure = undefined;
   if (failed) {
-    if (cleanupFailure !== undefined)
+    if (cleanupFailure !== undefined) {
+      if (primaryFailure instanceof AnalysisError)
+        throw analysisErrorWithCleanupFailure(
+          primaryFailure,
+          cleanupFailure,
+          "uninstall",
+        ).bindCleanupDependencies([primaryFailure, cleanupFailure]);
       throw new AggregateError(
-        [primaryFailure, new Error(cleanupFailure)],
+        [primaryFailure, cleanupFailure],
         "Uninstall failed and its resource cleanup remains incomplete.",
         { cause: primaryFailure },
       );
+    }
     throw primaryFailure;
   }
   if (result === undefined)
@@ -223,14 +267,30 @@ export const runUninstall = async (
   if (cleanupFailure === undefined) return result;
   const items = collapseUninstallItems([
     ...result.items,
-    item("uninstall_cleanup", "failed", cleanupFailure),
+    item(
+      "uninstall_cleanup",
+      "failed",
+      `Uninstall resource cleanup failed: ${cleanupFailure.cleanup?.reason ?? cleanupFailure.message}${cleanupFailure.cleanupResources.length === 0 ? "" : ` (${cleanupFailure.cleanupResources.join(", ")})`}`,
+    ),
   ]);
-  return { status: "failed", items };
+  const retained = cleanupFailure;
+  return {
+    status: "failed",
+    items,
+    get cleanup() {
+      return retained.cleanupIncomplete
+        ? {
+            reason: retained.cleanup?.reason ?? retained.message,
+            resources: retained.cleanupResources,
+          }
+        : undefined;
+    },
+  };
 };
 
 /**
- * Each client is reread when it is edited, so a concurrent change is never
- * overwritten. A client that fails then still stops the remaining removals.
+ * Reread each client when editing and refuse detected changes before publication.
+ * A client that fails still stops the remaining removals.
  */
 const removeAll = async (
   clients: readonly UninstallClient[],
@@ -238,20 +298,22 @@ const removeAll = async (
   host: UninstallHost,
 ): Promise<UninstallItem[]> => {
   const items: UninstallItem[] = [];
+  const stopped = (): UninstallItem[] => [
+    ...items,
+    item(
+      "uninstall",
+      "skipped",
+      "Uninstall stopped at this failure; the items above report what changed. Repair the failed removal, then rerun uninstall.",
+    ),
+  ];
   for (const client of clients) {
     const removed = await host.removeClient(client);
     items.push({ ...removed, configuration_path: client.configPath });
-    if (removed.status === "failed")
-      return [
-        ...items,
-        item(
-          "uninstall",
-          "skipped",
-          "Uninstall stopped at this failure; the items above report what changed. Repair the failed configuration, then rerun uninstall.",
-        ),
-      ];
+    if (removed.status === "failed") return stopped();
   }
-  items.push(await host.removeSkill());
+  const skill = await host.removeSkill();
+  items.push(skill);
+  if (skill.status === "failed") return stopped();
   if (purgeData) items.push(...(await host.purgeData()));
   return items;
 };
@@ -716,7 +778,7 @@ export const systemUninstallHost = (
         await resources.close();
         return undefined;
       } catch (cause: unknown) {
-        return `Uninstall resource cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return uninstallCleanupError(cause);
       }
     },
   };
@@ -1143,10 +1205,11 @@ const purgeSelectedData = async (
 ): Promise<readonly UninstallItem[]> => {
   const items: UninstallItem[] = [];
   const directories: string[] = [];
+  let custom: string | undefined;
   if (platform === "darwin" || platform === "linux") {
     const defaultCache = defaultKunaCacheDirectory(home, environment, platform);
     directories.push(defaultCache);
-    const custom = environment.REA_KUNA_CACHE_DIR;
+    custom = environment.REA_KUNA_CACHE_DIR;
     // Lexical spellings identify the default namespace for reporting.
     // Removal still uses the owned-path checks below. Other selections
     // remain separately reported without resolving symbolic links.
@@ -1162,27 +1225,94 @@ const purgeSelectedData = async (
           `Caller-selected Kuna cache ${custom} was retained because purge does not establish ownership of that entire directory.`,
         ),
       );
+    else custom = undefined;
   }
+  // The ownership helper cache has no caller-selected location to retain.
+  if (platform === "darwin")
+    directories.push(defaultDarwinHelperCacheDirectory(home));
   if (platform === "linux") {
     const hopper = linuxHopperReleaseCacheDirectory(environment, home);
     if (hopper.ok) directories.push(hopper.value);
     else items.push(item("hopper-releases", "failed", hopper.error.message));
   }
   // Resolve selections before a managed namespace removal can delete cwd.
-  // Keep the existing result and removal order after planning those facts.
-  items.unshift(
-    ...(await purgeManagedData(appendCallerPath(home, ".rea"), fileSystem, [
-      "cache",
-      "state",
-    ])),
-  );
-  for (const directory of directories)
-    items.push(
-      ...(await purgeManagedData(dirname(directory), fileSystem, [
-        basename(directory),
-      ])),
+  // A namespace that contains the caller-selected cache is kept whole, so
+  // the retained report is true.
+  const reaRoot = appendCallerPath(home, ".rea");
+  // A spelling with `..` is judged only where the filesystem resolves it,
+  // because collapsing it lexically is wrong after a symbolic link.
+  // `undefined` means the location could not be established.
+  const resolve = async (path: string): Promise<string[] | undefined> => {
+    const resolved = await existingRealpath(fileSystem, path);
+    return resolved === undefined
+      ? undefined
+      : [...(hasParentTraversal(path) ? [] : [path]), ...resolved];
+  };
+  const selections = custom === undefined ? [] : await resolve(custom);
+  const purge = async (root: string, names: readonly string[]) => {
+    const kept: { readonly name: string; readonly unknown: boolean }[] = [];
+    for (const name of names) {
+      const targets = await resolve(appendCallerPath(root, name));
+      // An unestablished selection or namespace may contain the selection,
+      // so it is kept rather than treated as absent.
+      const contains =
+        custom !== undefined &&
+        (selections === undefined ||
+          targets === undefined ||
+          targets.some((target) =>
+            selections.some((selection) =>
+              withinLexicalDirectory(selection, target, platform),
+            ),
+          ));
+      if (contains)
+        kept.push({
+          name,
+          unknown: selections === undefined || targets === undefined,
+        });
+    }
+    const keptItems = kept.map(({ name, unknown }) =>
+      item(
+        name,
+        "retained",
+        unknown
+          ? `${appendCallerPath(root, name)} was retained because purge could not establish whether it contains the caller-selected Kuna cache ${custom}.`
+          : `${appendCallerPath(root, name)} was retained because it contains the caller-selected Kuna cache ${custom}, which purge does not remove.`,
+      ),
     );
+    const owned = names.filter(
+      (name) => !kept.some((entry) => entry.name === name),
+    );
+    return async () => [
+      ...keptItems,
+      ...(await purgeManagedData(root, fileSystem, owned)),
+    ];
+  };
+  const reaPlan = await purge(reaRoot, ["cache", "state"]);
+  const plans: (() => Promise<readonly UninstallItem[]>)[] = [];
+  for (const directory of directories)
+    plans.push(await purge(dirname(directory), [basename(directory)]));
+  items.unshift(...(await reaPlan()));
+  for (const plan of plans) items.push(...(await plan()));
   return items;
+};
+
+/**
+ * Canonical spelling of an existing path, nothing when the path is absent,
+ * or `undefined` when its location cannot be established (for example an
+ * inaccessible parent, or `..` without a realpath to judge it).
+ */
+const existingRealpath = async (
+  fileSystem: UninstallFileSystem,
+  path: string,
+): Promise<string[] | undefined> => {
+  if (fileSystem.realpath === undefined)
+    return hasParentTraversal(path) ? undefined : [];
+  try {
+    return [await fileSystem.realpath(path)];
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? [] : undefined;
+  }
 };
 
 const purgeManagedData = async (

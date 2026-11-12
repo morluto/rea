@@ -77,7 +77,7 @@ describe("NativeAOT indexed MethodTable closure", () => {
       SUMMARY_BUDGET,
     );
     expect(parsed.summary.method_tables).toBe(0);
-    expect(parsed.summary.reason).toContain("unique System.Object");
+    expect(parsed.summary.reason).toEqual({ code: "no_system_object_root" });
   });
 });
 
@@ -162,8 +162,7 @@ describe("read-only NativeAOT PE parser", () => {
     );
     expect(parsed.summary).toMatchObject({
       status: "not_applicable",
-      reason:
-        "No supported ReadyToRun directory signature was found in initialized non-executable PE sections.",
+      reason: { code: "no_rtr_directory" },
       method_tables: 0,
     });
   });
@@ -215,7 +214,7 @@ describe("read-only NativeAOT PE parser", () => {
         SUMMARY_BUDGET,
         "0x180000000",
       ).summary.reason,
-    ).toMatch(/preferred image base/iu);
+    ).toEqual({ code: "rebased_image" });
   });
 
   it("reports an unsupported hydration opcode as partial without mutating the snapshot", () => {
@@ -231,18 +230,21 @@ describe("read-only NativeAOT PE parser", () => {
     expect(parsed.summary).toMatchObject({
       status: "partial",
       derived_overlay: null,
-      diagnostics: [
-        expect.stringContaining("Unsupported DEHYDRATED_DATA command"),
-      ],
+      reason: {
+        code: "hydration_failed",
+        detail: "unsupported_command",
+        command: 6,
+      },
+      diagnostics: ["unsupported_command"],
     });
   });
 });
 
 describe("NativeAOT PE signature admission", () => {
   it.each([
-    ["MZ", "Not a PE image"],
-    ["PE", "MZ header does not declare a PE image"],
-  ])(
+    ["MZ", { code: "not_pe_image" }],
+    ["PE", { code: "mz_header_not_pe" }],
+  ] as const)(
     "rejects a high-bit lookalike of the %s signature",
     (signature, reason) => {
       const bytes = nativeAotPeFixture();

@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { devicetreeSchema } from "../firmware/devicetree.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -57,8 +57,8 @@ export const devicetreePageContextSchema = devicetreeSchema
 const readReport = createAnalysisViewResultReader(devicetreeSchema);
 export const projectDevicetreeView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   const invalid = (message: string) =>
     err(
       analysisViewInputError([
@@ -69,6 +69,9 @@ export const projectDevicetreeView = (
     return invalid(
       "Devicetree Evidence supports summary and devicetree views.",
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof devicetreeViewRequestSchema>
+  >(view, "summary", "devicetree");
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   const r = parsed.value;
@@ -99,7 +102,7 @@ export const projectDevicetreeView = (
   if (view.kind === "summary")
     return ok({
       ...shared,
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary: { ...context, summary: r.summary },
       coverage: completeWithinViewCoverage(r.nodes.length, r.nodes.length),
@@ -148,7 +151,7 @@ export const projectDevicetreeView = (
   const { items, total } = selected;
   return ok({
     ...shared,
-    kind: "devicetree",
+    kind: "devicetree" as const,
     view,
     devicetree: { ...context, alias_count: r.summary.aliases.length },
     items,

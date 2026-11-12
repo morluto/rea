@@ -1,9 +1,13 @@
 /** Owned offline Ethernet/IPv4/TCP fixture; no traffic or external input. */
-export const offlineHttpCapture = (uri: string, packets = 1): Buffer => {
+export const offlineHttpCapture = (
+  uri: string,
+  packets = 1,
+  host: string | null = "example.test",
+): Buffer => {
   if (!Number.isSafeInteger(packets) || packets < 1 || packets > 40_000)
     throw new RangeError("Offline test captures support 1..40000 packets");
   const payload = Buffer.from(
-    `GET ${uri} HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n`,
+    `GET ${uri} HTTP/${host === null ? "1.0" : "1.1"}\r\n${host === null ? "" : `Host: ${host}\r\n`}Connection: close\r\n\r\n`,
   );
   const checksum = (bytes: Buffer): number => {
     let total = 0;

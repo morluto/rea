@@ -6,12 +6,16 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { z } from "incur";
 import { wasmArtifactModule } from "../composition/wasm.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import {
+  evidenceBundleOption,
+  runEvidenceInputCommand,
+} from "./evidenceInputCommand.js";
 import {
   inspectWasmArtifactInputSchema,
   wasmArtifactPathsSchema,
@@ -30,10 +34,11 @@ export const registerWasmCommands = (
       input: z
         .string()
         .describe(
-          "Inline JSON or input file containing left/right complete Evidence and required scope",
+          "Inline JSON or input file containing left/right Evidence or retained references and required scope",
         ),
     }),
-    run: ({ args }) =>
+    options: z.object({ evidenceBundle: evidenceBundleOption }),
+    run: ({ args, options }) =>
       withCommandCancellation(async (signal) =>
         logCliCommand(logger, CLI_COMMANDS.compareWasmInterfaces, async () => {
           const input = await parseCliJsonInput(
@@ -42,8 +47,21 @@ export const registerWasmCommands = (
             signal,
           );
           if (!input.ok) return input.error;
-          const result = await compareWasmInterfaces(input.value, { signal });
-          return result.ok ? result.value : projectAnalysisError(result.error);
+          return runEvidenceInputCommand(
+            "compare_wasm_interfaces",
+            options.evidenceBundle,
+            signal,
+            async (lookup) => {
+              const result = await compareWasmInterfaces(
+                input.value,
+                { signal },
+                lookup,
+              );
+              return result.ok
+                ? { ok: true, value: result.value.evidence }
+                : result;
+            },
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -54,7 +72,24 @@ export const registerWasmCommands = (
       path: localPathStringSchema.describe("Local WASM artifact"),
     }),
     options: z.object({
-      commandTimeoutMs: inspectWasmArtifactInputSchema.shape.command_timeout_ms,
+      commandTimeoutMs: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.command_timeout_ms,
+      ),
+      maxInterfaceBytes: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.max_interface_bytes,
+      ),
+      maxArtifactPaths: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.max_artifact_paths,
+      ),
+      maxInputBytes: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.max_input_bytes,
+      ),
+      maxToolBytes: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.max_tool_bytes,
+      ),
+      maxOutputBytes: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.max_output_bytes,
+      ),
       glue_paths: wasmArtifactPathsSchema(localPathStringSchema)
         .optional()
         .describe("Selected local JavaScript glue paths"),
@@ -74,6 +109,21 @@ export const registerWasmCommands = (
                   ...(options.commandTimeoutMs === undefined
                     ? {}
                     : { command_timeout_ms: options.commandTimeoutMs }),
+                  ...(options.maxInterfaceBytes === undefined
+                    ? {}
+                    : { max_interface_bytes: options.maxInterfaceBytes }),
+                  ...(options.maxArtifactPaths === undefined
+                    ? {}
+                    : { max_artifact_paths: options.maxArtifactPaths }),
+                  ...(options.maxInputBytes === undefined
+                    ? {}
+                    : { max_input_bytes: options.maxInputBytes }),
+                  ...(options.maxToolBytes === undefined
+                    ? {}
+                    : { max_tool_bytes: options.maxToolBytes }),
+                  ...(options.maxOutputBytes === undefined
+                    ? {}
+                    : { max_output_bytes: options.maxOutputBytes }),
                   glue_paths: options.glue_paths?.map((path) =>
                     absoluteCallerPath(path),
                   ),
@@ -87,6 +137,17 @@ export const registerWasmCommands = (
             "wabt-artifact",
             "inspect_wasm_artifact",
             signal,
+            options.glue_paths === undefined &&
+              options.candidate_paths === undefined
+              ? undefined
+              : {
+                  ...(options.glue_paths === undefined
+                    ? {}
+                    : { glue_paths: options.glue_paths }),
+                  ...(options.candidate_paths === undefined
+                    ? {}
+                    : { candidate_paths: options.candidate_paths }),
+                },
           ).then(projectCliAnalysisResult),
         ),
       ),
