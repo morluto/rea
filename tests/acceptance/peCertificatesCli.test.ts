@@ -13,6 +13,66 @@ import {
 import { repeatedCertificateSignedData } from "../fixtures/peCertificateAllowance.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+
+cliTest.for([false, true])(
+  "rejects incomplete certificate alignment and recovers through CLI/MCP (PE32+ = %s)",
+  async (plus, { cli }) => {
+    const root = await createTestTempDirectory("rea-pe-alignment-cli-");
+    const path = join(root, "signed.exe");
+    const valid = peCertificateFixture(plus);
+    const directoryAt = 0x98 + (plus ? 112 : 96) + 4 * 8;
+    const tableSize = valid.readUInt32LE(directoryAt + 4);
+    const length = valid.readUInt32LE(0x200);
+    expect(length).toBeLessThan(tableSize);
+    const truncated = Buffer.from(valid.subarray(0, valid.length - 1));
+    truncated.writeUInt32LE(tableSize - 1, directoryAt + 4);
+    await writeFile(path, truncated);
+    const invalid = await runFileCli(cli, {
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    const error = {
+      code: "invalid_request",
+      details: {
+        operation: "inspect_pe_certificates",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining("alignment padding is truncated"),
+          }),
+        ],
+      },
+    };
+    expect.soft(invalid.exitCode, invalid.stdout).toBe(1);
+    expect.soft(invalid.json).toMatchObject(error);
+    const call = await cli.sharedMcpCall!();
+    const rejected = await call("inspect_pe_certificates", { path });
+    expect.soft(rejected.isError, JSON.stringify(rejected)).toBe(true);
+    if (rejected.isError)
+      expect(parseMcpToolError(rejected).error).toMatchObject(error);
+    expect((await readFile(path)).equals(truncated)).toBe(true);
+    // The same session and selected path must recover after the source is
+    // repaired, preserving the complete source identity and payload facts.
+    await writeFile(path, valid);
+    const recovered = await runFileCli(cli, {
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect(recovered.exitCode, recovered.stderr).toBe(0);
+    const response = await call("inspect_pe_certificates", { path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    for (const value of [recovered.json, response.structuredContent]) {
+      const report = toolContract("inspect_pe_certificates").outputSchema.parse(
+        value,
+      ).normalized_result;
+      expect(report.coverage.status).toBe("complete");
+      expect(report.artifact.sha256).toBe(
+        createHash("sha256").update(valid).digest("hex"),
+      );
+      expect(report.entries[0]?.length).toBe(length);
+    }
+  },
+);
 
 cliTest.for(["extra-field", "empty-rdn"] as const)(
   "rejects a malformed certificate name %s through CLI and MCP",
