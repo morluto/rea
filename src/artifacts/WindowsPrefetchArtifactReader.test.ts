@@ -126,6 +126,23 @@ it("refuses a MAM container without calling it corrupt", async () => {
   }
 });
 
+it("recognizes a checksum-bearing MAM header as the same container", async () => {
+  // The wrapper sets the high bit of the compression byte when it records a
+  // checksum; the low seven bits still select XPRESS Huffman, so this is the
+  // same unsupported container rather than an unrecognized file.
+  const reader = await readerFor(
+    prefetchFixture({ version: "23", compressed: true, checksum: true }),
+  );
+  try {
+    await expect(inventory(reader)).rejects.toMatchObject({
+      reason: "unavailable",
+      message: expect.stringContaining("MAM") as unknown,
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
 it("calls a file that ends inside the MAM header malformed, not unsupported", async () => {
   const reader = await readerFor(
     prefetchFixture({ version: "23", compressed: true }).subarray(0, 5),
@@ -263,7 +280,7 @@ it("rejects Prefetch sizes the parser cannot report", async () => {
     file_bytes: 84,
     declared_file_bytes: 0,
     executable_name: null,
-    executable_path_hash: null,
+    executable_path_hash: "1a2b3c4d",
     run_count: null,
     run_time_slots: null,
   } as const;
@@ -293,9 +310,11 @@ it("rejects a name hash that is not eight lowercase hex digits", async () => {
       executable_path_hash: "1a2b3c4d",
     }),
   ).toMatchObject({ executable_path_hash: "1a2b3c4d" });
-  expect(
+  // A successful parse always reaches the hash word, so null is impossible
+  // Evidence rather than an absent fact.
+  expect(() =>
     prefetchMetadataSchema.parse({ ...facts, executable_path_hash: null }),
-  ).toMatchObject({ executable_path_hash: null });
+  ).toThrow();
   for (const invalid of ["not-a-hash", "1A2B3C4D", "1a2b3c4", "1a2b3c4d5"])
     expect(() =>
       prefetchMetadataSchema.parse({ ...facts, executable_path_hash: invalid }),

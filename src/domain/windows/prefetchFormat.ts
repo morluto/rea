@@ -53,8 +53,9 @@ export interface PrefetchMetadata {
   readonly declaredFileBytes: number;
   /** The NUL-terminated executable name, exactly as recorded. */
   readonly executableName: string | null;
-  /** The recorded name-hash, as lowercase hexadecimal, or null. */
-  readonly executablePathHash: string | null;
+  /** The recorded name-hash, as lowercase hexadecimal. The common header is
+   * required, so the hash word is reachable and this is never null. */
+  readonly executablePathHash: string;
   /** Declared number of recorded runs; v17 files do not report one. */
   readonly runCount: number | null;
   /**
@@ -99,11 +100,14 @@ export const hasPrefetchSignature = (prefix: Uint8Array): boolean =>
  * provenance from a header it does not carry.
  */
 const MAM_VERSION_OFFSET = MAM_MAGIC.length;
+/** The compression byte carries the algorithm in its low bits; the high bit is
+ * an optional checksum flag, so the container is still XPRESS Huffman. */
+const MAM_ALGORITHM_MASK = 0x7f;
 const MAM_VERSION = 4;
 const hasMamMagic = (bytes: Uint8Array): boolean =>
   bytes.length > MAM_MAGIC.length &&
   Buffer.from(bytes.subarray(0, MAM_MAGIC.length)).equals(MAM_MAGIC) &&
-  bytes[MAM_VERSION_OFFSET] === MAM_VERSION;
+  ((bytes[MAM_VERSION_OFFSET] ?? 0) & MAM_ALGORITHM_MASK) === MAM_VERSION;
 
 /**
  * Whether a prefix carries MAM ownership. The four-byte signature is enough:
@@ -141,8 +145,8 @@ const utf16Name = (bytes: Uint8Array): string | null => {
   return text.length === 0 ? null : text;
 };
 
-const hexHash = (value: number | null): string | null =>
-  value === null ? null : value.toString(16).padStart(8, "0");
+/** The caller has already established that the common header is present. */
+const hexHash = (value: number): string => value.toString(16).padStart(8, "0");
 
 const NOT_DECODED_LIMITATION =
   "This reader reports the executable name, its name hash, the declared file size, the recorded run count and whether a last-run timestamp is present. The timestamp value, the volume list and the read-ahead file list are not decoded; their contents remain unknown.";
@@ -231,7 +235,7 @@ export const parsePrefetchFile = (
     fileBytes: bytes.length,
     declaredFileBytes,
     executableName,
-    executablePathHash: hexHash(u32(view, EXECUTABLE_HASH_OFFSET, end)),
+    executablePathHash: hexHash(view.getUint32(EXECUTABLE_HASH_OFFSET, true)),
     runCount,
     runTimeSlots,
     limitations,

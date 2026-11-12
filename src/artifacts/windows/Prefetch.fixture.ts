@@ -9,6 +9,7 @@ export const PREFETCH_VERSIONS = ["17", "23", "26"] as const;
 const SIGNATURE = Buffer.from("SCCA", "ascii");
 const MAM = Buffer.from("MAM", "ascii");
 const MAM_VERSION = 4;
+const MAM_CHECKSUM_FLAG = 0x80;
 const NAME_BYTES = 60;
 const RUN_COUNT_OFFSET = 0x98;
 
@@ -18,8 +19,12 @@ export interface PrefetchFixtureOptions {
   readonly hash?: number;
   readonly runCount?: number;
   readonly runTimeSlots?: number;
-  /** Replace the header with a MAM container. */
+  /**
+   * Replace the header with a MAM container. `checksum` sets the wrapper's
+   * optional checksum flag beside the XPRESS Huffman algorithm.
+   */
   readonly compressed?: boolean;
+  readonly checksum?: boolean;
 }
 
 /**
@@ -33,13 +38,14 @@ export const prefetchFixture = ({
   runCount = 7,
   runTimeSlots = 8,
   compressed = false,
+  checksum = false,
 }: PrefetchFixtureOptions): Buffer => {
   const bytes = Buffer.alloc(512);
   if (compressed) {
     MAM.copy(bytes, 0);
     // The wrapper's own version byte; the reader uses it to tell a MAM
     // container from a file that merely starts with these three letters.
-    bytes[MAM.length] = MAM_VERSION;
+    bytes[MAM.length] = MAM_VERSION | (checksum ? MAM_CHECKSUM_FLAG : 0);
     return bytes;
   }
   bytes.writeUInt32LE(Number(version), 0);

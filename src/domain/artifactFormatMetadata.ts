@@ -407,10 +407,9 @@ export const prefetchMetadataSchema = z.strictObject({
   file_bytes: prefetchFileBytesSchema,
   declared_file_bytes: uint32,
   executable_name: z.string().nullable(),
-  executable_path_hash: z
-    .string()
-    .regex(/^[0-9a-f]{8}$/u)
-    .nullable(),
+  // A successful parse always holds the complete 84-byte header, so the hash
+  // word is reachable and renders as eight hex digits, zero included.
+  executable_path_hash: z.string().regex(/^[0-9a-f]{8}$/u),
   run_count: uint32.nullable(),
   // The single last-run FILETIME this reader decodes is either reachable or
   // not; the metrics array holds more slots but their times are not decoded.
