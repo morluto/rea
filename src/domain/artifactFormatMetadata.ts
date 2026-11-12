@@ -7,6 +7,7 @@ import {
 } from "./windows/ntfsMftAttributes.js";
 import { z } from "zod";
 import { MFT_INLINE_HEADER_LIMIT } from "./windows/ntfsMft.js";
+import { prefetchFileBytesSchema } from "./windows/prefetchFormat.js";
 
 import { jsonRecordSchema } from "./jsonRecord.js";
 import { jsonValueSchema } from "./jsonValue.js";
@@ -403,8 +404,8 @@ export type FitMetadata = z.infer<typeof fitMetadataSchema>;
 export const prefetchMetadataSchema = z.strictObject({
   kind: z.literal("windows-prefetch"),
   version: z.enum(["17", "23"]),
-  file_bytes: offset,
-  declared_file_bytes: uint32.nullable(),
+  file_bytes: prefetchFileBytesSchema,
+  declared_file_bytes: uint32,
   executable_name: z.string().nullable(),
   executable_path_hash: z
     .string()

@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../result.js";
+import { z } from "zod";
 
 /**
  * An uncompressed Prefetch file starts with a little-endian DWORD generation
@@ -48,8 +49,8 @@ export interface PrefetchMetadata {
   readonly version: ParsedPrefetchVersion;
   /** Bytes the file holds. */
   readonly fileBytes: number;
-  /** Bytes the header declares, or null when that field is unreadable. */
-  readonly declaredFileBytes: number | null;
+  /** Bytes the header declares. The common header is required, so this is readable. */
+  readonly declaredFileBytes: number;
   /** The NUL-terminated executable name, exactly as recorded. */
   readonly executableName: string | null;
   /** The recorded name-hash, as lowercase hexadecimal, or null. */
@@ -103,12 +104,33 @@ const hasMamMagic = (bytes: Uint8Array): boolean =>
   bytes.length > MAM_MAGIC.length &&
   Buffer.from(bytes.subarray(0, MAM_MAGIC.length)).equals(MAM_MAGIC) &&
   bytes[MAM_VERSION_OFFSET] === MAM_VERSION;
-export const isMamContainer = (bytes: Uint8Array): boolean =>
-  bytes.length >= MAM_HEADER_BYTES && hasMamMagic(bytes);
+
+/**
+ * Whether a prefix carries MAM ownership. The four-byte signature is enough:
+ * a capture that ends inside the fixed header is a truncated container, and
+ * `parsePrefetchFile()` reports that truncation. Requiring the whole header
+ * here would instead route it to executable parsing, where the reader's
+ * "ends inside the MAM container header" failure is unreachable.
+ */
+export const hasMamSignature = hasMamMagic;
 
 /** Prefetch header fields are little-endian. */
 const u32 = (view: DataView, offset: number, end: number): number | null =>
   offset + 4 <= end ? view.getUint32(offset, true) : null;
+
+/** The common header is required before the declared size at 0x0c is reachable. */
+const MIN_FILE_BYTES = COMMON_HEADER_BYTES;
+
+/**
+ * Bytes a parsed capture holds. The producer accepts 84 bytes through the
+ * Prefetch allowance, so the metadata schema constrains the field to that range
+ * instead of accepting sizes no successful parse can report.
+ */
+export const prefetchFileBytesSchema = z
+  .number()
+  .int()
+  .min(MIN_FILE_BYTES)
+  .max(PREFETCH_MAX_FILE_BYTES);
 
 /** The executable name is a NUL-terminated UTF-16LE string in a 60-byte field. */
 const utf16Name = (bytes: Uint8Array): string | null => {
@@ -169,7 +191,9 @@ export const parsePrefetchFile = (
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const end = bytes.byteLength;
   const limitations: string[] = [];
-  const declaredFileBytes = u32(view, FILE_SIZE_OFFSET, end);
+  // The common-header check above guarantees the DWORD at 0x0c is present, so a
+  // successful parse always reports a declared size.
+  const declaredFileBytes = view.getUint32(FILE_SIZE_OFFSET, true);
   const executableName = utf16Name(
     bytes.subarray(
       EXECUTABLE_NAME_OFFSET,
@@ -180,7 +204,7 @@ export const parsePrefetchFile = (
     limitations.push(
       "The header records no executable name, so the recorded program is unknown.",
     );
-  if (declaredFileBytes !== null && declaredFileBytes !== bytes.length)
+  if (declaredFileBytes !== bytes.length)
     limitations.push(
       `The header declares ${String(declaredFileBytes)} bytes but the file holds ${String(bytes.length)}.`,
     );

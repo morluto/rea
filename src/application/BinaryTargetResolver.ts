@@ -99,8 +99,8 @@ import {
 import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
 import { hasMftFileRecordHeader } from "../domain/windows/ntfsMft.js";
 import {
+  hasMamSignature,
   hasPrefetchSignature,
-  isMamContainer,
 } from "../domain/windows/prefetchFormat.js";
 import {
   locateEspFlashLayout,
@@ -841,7 +841,7 @@ const detectArtifactFormat = async (
   if (hasFitImagesNode(magic)) return "fit";
   // A MAM container carries no generation at offset 0, so the signature probe
   // alone would route it to executable parsing instead of the refusal.
-  if (hasPrefetchSignature(magic) || isMamContainer(magic))
+  if (hasPrefetchSignature(magic) || hasMamSignature(magic))
     return "windows-prefetch";
   if (hasMftFileRecordHeader(magic)) return "ntfs-mft";
   // Binary plists, including keyed archives, often use other extensions.

@@ -12,8 +12,8 @@ import { hasUf2Block } from "../../domain/firmware/uf2.js";
 import { isDfuSeFile } from "../../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../../domain/firmware/fitImage.js";
 import {
+  hasMamSignature,
   hasPrefetchSignature,
-  isMamContainer,
 } from "../../domain/windows/prefetchFormat.js";
 import { hasMftFileRecordHeader } from "../../domain/windows/ntfsMft.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
@@ -649,7 +649,7 @@ export const classifyArtifactBytes = (
   if (hasFitImagesNode(prefix)) return "fit";
   // A Prefetch generation and its signature are the format, not corruption. A
   // MAM container has no generation at offset 0, so it is probed separately.
-  if (hasPrefetchSignature(prefix) || isMamContainer(prefix))
+  if (hasPrefetchSignature(prefix) || hasMamSignature(prefix))
     return "windows-prefetch";
   if (hasMftFileRecordHeader(prefix)) return "ntfs-mft";
   if (hasBinaryPlistSignature(prefix)) return "plist";

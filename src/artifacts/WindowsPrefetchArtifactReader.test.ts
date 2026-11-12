@@ -153,6 +153,33 @@ it("does not read a MAM prefix without the container version byte as Prefetch", 
 });
 
 it.each([
+  ["inside the version byte", 4],
+  ["inside the uncompressed-size field", 5],
+] as const)(
+  "routes a MAM capture truncated %s to the Prefetch reader",
+  async (_label, length) => {
+    // The four-byte signature establishes MAM ownership; a capture that ends
+    // inside the fixed header is a truncated container, not an executable. A
+    // signature-only probe falls through to executable parsing, where this
+    // truncation is indistinguishable from corruption.
+    const bytes = prefetchFixture({ version: "23", compressed: true }).subarray(
+      0,
+      length,
+    );
+    await expect(
+      scanCanonicalArtifactInventory(
+        await writePrefetch("MAM-truncated.bin", bytes),
+      ),
+    ).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining(
+        "ends inside the MAM container header",
+      ) as unknown,
+    });
+  },
+);
+
+it.each([
   ["17", 0x78],
   ["23", 0x80],
 ] as const)(
@@ -226,6 +253,27 @@ it("inventories a .pf file as windows-prefetch end to end", async () => {
   ).toBe(true);
 });
 
+it("rejects Prefetch sizes the parser cannot report", async () => {
+  // A successful parse always holds the 84-byte common header and stays within
+  // the 64 MiB allowance, so a persisted size outside that range is impossible
+  // Evidence rather than a fact to accept at the boundary.
+  const facts = {
+    kind: "windows-prefetch",
+    version: "23",
+    file_bytes: 84,
+    declared_file_bytes: 0,
+    executable_name: null,
+    executable_path_hash: null,
+    run_count: null,
+    run_time_slots: null,
+  } as const;
+  expect(prefetchMetadataSchema.parse(facts)).toMatchObject({ file_bytes: 84 });
+  for (const invalid of [0, 83, 64 * 1024 * 1024 + 1, -1, 1.5])
+    expect(() =>
+      prefetchMetadataSchema.parse({ ...facts, file_bytes: invalid }),
+    ).toThrow();
+});
+
 it("rejects a name hash that is not eight lowercase hex digits", async () => {
   // A persisted or client-supplied inventory parses `format_metadata` through
   // this schema, so a value the producer never emits must fail at the boundary
@@ -233,8 +281,8 @@ it("rejects a name hash that is not eight lowercase hex digits", async () => {
   const facts = {
     kind: "windows-prefetch",
     version: "23",
-    file_bytes: 1,
-    declared_file_bytes: null,
+    file_bytes: 84,
+    declared_file_bytes: 0,
     executable_name: null,
     run_count: null,
     run_time_slots: null,
