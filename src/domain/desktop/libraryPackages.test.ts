@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { err, ok } from "../result.js";
-import type { ElfDependencies } from "./elfDependencies.js";
+import {
+  elfLibraryIdentityMatches,
+  type ElfLibraryIdentity,
+  type ElfDependencies,
+} from "./elfDependencies.js";
 import {
   installableLibraryPackages,
   libraryClosure,
@@ -27,18 +31,47 @@ const elf = (
 ): ElfDependencies => ({
   machine: 183,
   bits: 64,
+  byte_order: "little",
   needed,
   runpath,
   rpath: runpath === undefined ? rpath : [],
 });
 
 const TYPORA = "/usr/share/typora/Typora";
+const app = (dependencies: ElfDependencies) => ({
+  path: "/opt/app/bin/app",
+  dependencies,
+});
 
 /** Typora's start: libffmpeg.so from its own folder through RPATH $ORIGIN, the rest from the cache. */
-const host = (images: Readonly<Record<string, ElfDependencies | string>>) => ({
-  dependencies: async (path: string) => {
+const host = (
+  images: Readonly<
+    Record<
+      string,
+      | ElfDependencies
+      | { identity: ElfLibraryIdentity | null; reason: string }
+      | string
+    >
+  >,
+) => ({
+  dependencies: async (path: string, expected: ElfLibraryIdentity) => {
     const image = images[path];
-    return typeof image === "object" ? ok(image) : err(image ?? "missing");
+    if (typeof image !== "object")
+      return err({
+        kind: "unreadable" as const,
+        identity: null,
+        reason: image ?? "missing",
+      });
+    const identity = "reason" in image ? image.identity : image;
+    if (identity !== null && !elfLibraryIdentityMatches(expected, identity))
+      return err({
+        kind: "incompatible" as const,
+        identity,
+        reason: "incompatible ELF",
+      });
+    return "reason" in image
+      ? err({ kind: "unreadable" as const, ...image })
+      : ok(image);
   },
   isFile: async (path: string) => path in images,
 });
@@ -102,7 +135,10 @@ describe("libraryClosure", () => {
       parseLinkerCache(LINKER_CACHE),
       host({
         "/usr/share/typora/libffmpeg.so": elf([]),
-        "/lib/aarch64-linux-gnu/libnss3.so": "the file could not be read",
+        "/lib/aarch64-linux-gnu/libnss3.so": {
+          identity: elf([]),
+          reason: "the file could not be read",
+        },
       }),
       2,
     );
@@ -120,12 +156,175 @@ describe("libraryClosure", () => {
   });
 });
 
-describe("libraryClosure search paths", () => {
-  const app = (dependencies: ElfDependencies) => ({
-    path: "/opt/app/bin/app",
-    dependencies,
+describe("libraryClosure candidate identity", () => {
+  it.each([
+    { machine: 62, bits: 64 as const },
+    { machine: 183, bits: 32 as const },
+    { machine: 183, bits: 64 as const, byte_order: "big" as const },
+  ])(
+    "skips an incompatible search-path candidate ($machine / $bits) before selecting its owner or walking its dependencies",
+    async (identity) => {
+      const closure = await libraryClosure(
+        app(elf(["libcore.so"], [], ["/foreign", "/native"])),
+        [],
+        host({
+          "/foreign/libcore.so": { ...elf(["libdecoy.so"]), ...identity },
+          "/native/libcore.so": elf(["libhelper.so"], [], ["/native"]),
+          "/native/libhelper.so": elf([]),
+        }),
+        10,
+      );
+      expect(closure).toEqual({
+        libraries: [
+          { soname: "libcore.so", path: "/native/libcore.so" },
+          { soname: "libhelper.so", path: "/native/libhelper.so" },
+        ],
+        missing: [],
+        unreadable: [],
+        truncated: false,
+      });
+    },
+  );
+
+  it("uses the cache after an incompatible candidate even when its dependency table is unreadable", async () => {
+    const closure = await libraryClosure(
+      app(elf(["libcore.so"], ["/foreign"])),
+      [
+        {
+          soname: "libcore.so",
+          path: "/cached/libcore.so",
+          flags: ["AArch64"],
+        },
+      ],
+      host({
+        "/foreign/libcore.so": {
+          identity: { machine: 62, bits: 64, byte_order: "little" },
+          reason: "bad dynamic table",
+        },
+        "/cached/libcore.so": elf([]),
+      }),
+      10,
+    );
+    expect(closure).toEqual({
+      libraries: [{ soname: "libcore.so", path: "/cached/libcore.so" }],
+      missing: [],
+      unreadable: [],
+      truncated: false,
+    });
+  });
+});
+
+describe("libraryClosure unresolved candidates", () => {
+  it("does not turn unknown candidate identity into a selected library or search past it", async () => {
+    const closure = await libraryClosure(
+      app(elf(["libcore.so"], [], ["/unreadable", "/native"])),
+      [],
+      host({
+        "/unreadable/libcore.so": "cannot read header",
+        "/native/libcore.so": elf([]),
+      }),
+      10,
+    );
+    expect(closure).toEqual({
+      libraries: [],
+      missing: [],
+      unreadable: [
+        { path: "/unreadable/libcore.so", reason: "cannot read header" },
+      ],
+      truncated: false,
+    });
   });
 
+  it("refuses an incompatible explicit path without claiming its package was selected", async () => {
+    const path = "/foreign/libcore.so";
+    const closure = await libraryClosure(
+      app(elf([path])),
+      [],
+      host({ [path]: { ...elf([]), machine: 62 } }),
+      10,
+    );
+    expect(closure).toMatchObject({
+      libraries: [],
+      missing: [],
+      unreadable: [
+        { path, reason: expect.stringContaining("incompatible ELF") },
+      ],
+      truncated: false,
+    });
+  });
+
+  it("continues to another matching cache candidate after foreign identity", async () => {
+    const closure = await libraryClosure(
+      app(elf(["libcore.so"])),
+      [
+        {
+          soname: "libcore.so",
+          path: "/foreign/libcore.so",
+          flags: ["AArch64"],
+        },
+        { soname: "libcore.so", path: "/valid/libcore.so", flags: ["AArch64"] },
+      ],
+      host({
+        "/foreign/libcore.so": { ...elf([]), machine: 62 },
+        "/valid/libcore.so": elf([]),
+      }),
+      10,
+    );
+    expect(closure).toMatchObject({
+      libraries: [{ soname: "libcore.so", path: "/valid/libcore.so" }],
+      missing: [],
+    });
+  });
+
+  it("keeps an unreadable first cache candidate unresolved", async () => {
+    const closure = await libraryClosure(
+      app(elf(["libcore.so"])),
+      [
+        {
+          soname: "libcore.so",
+          path: "/unknown/libcore.so",
+          flags: ["AArch64"],
+        },
+        { soname: "libcore.so", path: "/valid/libcore.so", flags: ["AArch64"] },
+      ],
+      host({
+        "/unknown/libcore.so": "cannot read header",
+        "/valid/libcore.so": elf([]),
+      }),
+      10,
+    );
+    expect(closure).toMatchObject({
+      libraries: [],
+      missing: [],
+      unreadable: [
+        { path: "/unknown/libcore.so", reason: "cannot read header" },
+      ],
+    });
+  });
+
+  it("does not trust a cache architecture flag over the candidate's own ELF identity", async () => {
+    const closure = await libraryClosure(
+      app(elf(["libcore.so"])),
+      [
+        {
+          soname: "libcore.so",
+          path: "/cached/libcore.so",
+          flags: ["AArch64"],
+        },
+      ],
+      host({ "/cached/libcore.so": { ...elf([]), machine: 62 } }),
+      10,
+    );
+    expect(closure).toEqual({
+      libraries: [],
+      missing: ["libcore.so"],
+      unreadable: [],
+      truncated: false,
+    });
+  });
+});
+
+describe("libraryClosure search paths", () => {
   it("normalizes $ORIGIN/.. before telling the app's own folder from system libraries", async () => {
     const closure = await libraryClosure(
       {

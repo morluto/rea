@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
+  captureDecoderHeapContinuingRecovery,
   captureDecoderHeapRecovery,
   DEFAULT_CAPTURE_DECODER_HEAP,
 } from "../../config/captureDecoderHeap.js";
@@ -74,7 +75,7 @@ it.each([
       retryable: false,
       remediation: {
         action: expect.stringContaining(
-          captureDecoderHeapRecovery(DEFAULT_CAPTURE_DECODER_HEAP),
+          captureDecoderHeapContinuingRecovery(DEFAULT_CAPTURE_DECODER_HEAP),
         ),
       },
       details: {

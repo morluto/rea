@@ -99,13 +99,21 @@ describe("web deadline controls", () => {
     ).toBe(true);
   });
 
-  it("names each deadline and the fixed budgets it does not raise", () => {
+  it("names each deadline and the independent budgets it does not raise", () => {
     expect(webBundleScriptTimeoutRecovery(30_000).userMessage).toContain(
       "analysis_timeout_ms",
     );
-    expect(
-      webNetworkCaptureTimeoutRecovery(30_000).remediationAction,
-    ).toContain("no runtime override");
+    const captureRecovery = webNetworkCaptureTimeoutRecovery(30_000);
+    for (const control of [
+      "max_input_bytes",
+      "max_reply_bytes",
+      "max_nesting_depth",
+    ]) {
+      expect(captureRecovery.remediationAction).toContain(control);
+    }
+    expect(captureRecovery.remediationAction).toContain(
+      "capture_timeout_ms does not raise them",
+    );
     expect(webSourceMapDecodeTimeoutRecovery(20_000).userMessage).toContain(
       "decode_timeout_ms",
     );

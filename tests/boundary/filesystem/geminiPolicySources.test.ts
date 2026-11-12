@@ -4,7 +4,10 @@ import { expect, it } from "vitest";
 
 import { readConfigurationFile } from "../../../src/application/ClientConfigurationFiles.js";
 import { readClientPolicyBlock } from "../../../src/application/GeminiClientSettings.js";
-import type { SetupClient } from "../../../src/application/SupportedClients.js";
+import {
+  supportedClientRegistrationProfile,
+  type SetupClient,
+} from "../../../src/application/SupportedClients.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const fixture = async () => {
@@ -13,6 +16,7 @@ const fixture = async () => {
   await mkdir(dirname(configPath), { recursive: true });
   const client: SetupClient = {
     name: "gemini_cli",
+    registrationProfile: supportedClientRegistrationProfile("gemini_cli"),
     configPath,
     format: "json",
     geminiSettings: {

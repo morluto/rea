@@ -1,3 +1,4 @@
+import { inspectAnalysisSettingSeeds } from "../config/analysisSettings.js";
 import { isMap, isSeq, type Node, type YAMLMap } from "yaml";
 import {
   parseEnvironment,
@@ -267,13 +268,22 @@ export class DshCordisDocument {
       validation === "fragment"
         ? parseEnvironmentValues(runtimeEnvironment, unresolved)
         : parseEnvironment(runtimeEnvironment, unresolved);
-    return validated.ok
-      ? ok({
-          values: literals,
-          configuration: validated.value,
-          unresolvedSettings: unresolved,
-        })
-      : validated;
+    if (!validated.ok) return validated;
+    const seedIssues = inspectAnalysisSettingSeeds(
+      runtimeEnvironment,
+      unresolved,
+    );
+    if (seedIssues.length > 0)
+      return err(
+        new ConfigurationError("Invalid REA environment configuration", {
+          settings: seedIssues,
+        }),
+      );
+    return ok({
+      values: literals,
+      configuration: validated.value,
+      unresolvedSettings: unresolved,
+    });
   }
 
   desired(

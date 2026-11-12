@@ -201,3 +201,82 @@ it("refreshes cached returned targets after the shared member index settles", ()
     }),
   ]);
 });
+
+it.each([
+  ["const box={set make(value){return module}};box.make()", false],
+  ["const box={get make(){return module}};box.make()", false],
+  ["const box={get make(){return ()=>module}};box.make()", true],
+  [
+    "const box={get make(){return ()=>module},set make(value){}};box.make()",
+    true,
+  ],
+  ["const box={get make(){return ()=>module},make:()=>({})};box.make()", false],
+  ["const box={__proto__:{make:()=>module}};box.make()", true],
+  ["const box={__proto__:{make:()=>module},make:()=>({})};box.make()", false],
+] as const)(
+  "uses property-read ownership before invoking a returned callable: %s",
+  (expression, expected) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `${expression}.require('./shared.cjs');`,
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual(
+      expected
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);
+
+it.each([
+  ["class C{make(){return module}};C.make()", false],
+  ["class C{static make(){return module}};new C().make()", false],
+  ["class C{static make(){return module}};C.make()", true],
+  ["class C{make(){return module}};new C().make()", true],
+  ["class C{make(){return module}};C.prototype.make()", true],
+  ["class C{get make(){return ()=>module}};new C().make()", true],
+  ["class C{set make(value){return module}};new C().make()", false],
+  [
+    "class Base{static make(){return module}};class C extends Base{};C.make()",
+    true,
+  ],
+  [
+    "class Base{make(){return module}};class C extends Base{make=()=>({})};new C().make()",
+    false,
+  ],
+] as const)(
+  "preserves the class property receiver before invoking its value: %s",
+  (expression, expected) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `${expression}.require('./shared.cjs');`,
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual(
+      expected
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);
+
+it.each([
+  ["C.first:new C().second", false],
+  ["C.second:new C().first", true],
+] as const)(
+  "keeps static and instance selector alternatives correlated: %s",
+  (selection, expected) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+    class C {
+      static first(){return {}} first(){return module}
+      static second(){return module} second(){return {}}
+    }
+    const selected=flag?${selection};selected().require('./shared.cjs');
+  `);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual(
+      expected
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);

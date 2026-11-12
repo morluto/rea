@@ -75,6 +75,21 @@ export const registerWasmCommands = (
       commandTimeoutMs: cliDecimalField(
         inspectWasmArtifactInputSchema.shape.command_timeout_ms,
       ),
+      maxInterfaceBytes: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.max_interface_bytes,
+      ),
+      maxArtifactPaths: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.max_artifact_paths,
+      ),
+      maxInputBytes: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.max_input_bytes,
+      ),
+      maxToolBytes: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.max_tool_bytes,
+      ),
+      maxOutputBytes: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.max_output_bytes,
+      ),
       glue_paths: wasmArtifactPathsSchema(localPathStringSchema)
         .optional()
         .describe("Selected local JavaScript glue paths"),
@@ -94,6 +109,21 @@ export const registerWasmCommands = (
                   ...(options.commandTimeoutMs === undefined
                     ? {}
                     : { command_timeout_ms: options.commandTimeoutMs }),
+                  ...(options.maxInterfaceBytes === undefined
+                    ? {}
+                    : { max_interface_bytes: options.maxInterfaceBytes }),
+                  ...(options.maxArtifactPaths === undefined
+                    ? {}
+                    : { max_artifact_paths: options.maxArtifactPaths }),
+                  ...(options.maxInputBytes === undefined
+                    ? {}
+                    : { max_input_bytes: options.maxInputBytes }),
+                  ...(options.maxToolBytes === undefined
+                    ? {}
+                    : { max_tool_bytes: options.maxToolBytes }),
+                  ...(options.maxOutputBytes === undefined
+                    ? {}
+                    : { max_output_bytes: options.maxOutputBytes }),
                   glue_paths: options.glue_paths?.map((path) =>
                     absoluteCallerPath(path),
                   ),

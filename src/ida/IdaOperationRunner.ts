@@ -29,7 +29,11 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
-import { readCallGraphCallees, unavailableCallGraph } from "./IdaCallGraph.js";
+import {
+  readCallGraphCallees,
+  IDA_CALLEE_DISCOVERY,
+  unavailableCallGraph,
+} from "./IdaCallGraph.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import type { IdaOperation } from "./IdaProviderCapabilities.js";
 import {
@@ -551,21 +555,24 @@ export class IdaOperationRunner {
         this.limitations.push(
           "Upstream callees capped results at 500; additional callees remain unknown.",
         );
-      coverage =
-        page.more === true
+      coverage = {
+        ...(page.more === undefined
           ? {
-              status: "partial",
-              limitations: [
-                "Upstream callees capped results at 500; additional callees remain unknown.",
-              ],
+              status: "unknown" as const,
+              reason:
+                "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
             }
-          : page.more === false
-            ? { status: "complete" }
-            : {
-                status: "unknown",
-                reason:
-                  "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
-              };
+          : page.more
+            ? {
+                status: "partial" as const,
+                limitations: [
+                  "Upstream callees capped results at 500; additional callees remain unknown.",
+                ],
+                limited_directions: ["callees"] as const,
+              }
+            : { status: "complete" as const }),
+        discovery: IDA_CALLEE_DISCOVERY,
+      };
       for (const item of page.callees) {
         if ("type" in item && item.type === "external")
           result.set(

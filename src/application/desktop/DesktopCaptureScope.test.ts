@@ -1,4 +1,4 @@
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -107,6 +107,102 @@ describe("captureScope", () => {
       expect.objectContaining({ path: `${database}-journal`, kind: "created" }),
     ]);
   });
+
+  it("records each selected path as named beside the physical path it walks, so a link keeps what its name means", async () => {
+    const root = await realpath(
+      await createTestTempDirectory("desktop-scope-"),
+    );
+    const home = join(root, "home/ada");
+    const settings = join(home, "settings/MuseScore");
+    const linked = join(home, ".config/MuseScore");
+    const score = join(home, "Documents/song.mscz");
+    await mkdir(settings, { recursive: true });
+    await mkdir(dirname(linked));
+    await symlink(settings, linked);
+
+    const { scope, selectedPaths } = await captureScope(
+      { ...request([`${linked}/MuseScore3.ini`]), statePaths: [linked, score] },
+      inventory(),
+      home,
+      join(root, "out"),
+    );
+
+    expect(selectedPaths).toEqual([
+      { path: linked, physical: settings, kind: "directory" },
+      { path: score, physical: score, kind: "file" },
+      {
+        path: `${linked}/MuseScore3.ini`,
+        physical: `${settings}/MuseScore3.ini`,
+        kind: "file",
+      },
+    ]);
+    expect(scope.contentRoots).toEqual(
+      expect.arrayContaining([settings, score]),
+    );
+    expect(scope.contentRoots).not.toContain(linked);
+  });
+
+  it("follows a selected symlink before its parent segment for capture and exclusion", async () => {
+    const root = await realpath(
+      await createTestTempDirectory("desktop-scope-parent-"),
+    );
+    const home = join(root, "home");
+    await mkdir(home);
+    await mkdir(join(root, "physical", "child"), { recursive: true });
+    await mkdir(join(root, "named"));
+    await symlink(join(root, "physical", "child"), join(root, "named", "link"));
+    await writeFile(join(root, "physical", "selected"), "selected");
+    await writeFile(join(root, "named", "selected"), "decoy");
+    const selected = `${root}/named/link/../selected`;
+    const { scope, selectedPaths } = await captureScope(
+      { ...request([]), statePaths: [selected], excludes: [selected] },
+      inventory(),
+      home,
+      join(root, "out"),
+    );
+    expect(selectedPaths).toEqual([
+      {
+        path: selected,
+        physical: join(root, "physical", "selected"),
+        kind: "file",
+      },
+    ]);
+    expect(scope.contentRoots).toContain(join(root, "physical", "selected"));
+    expect(scope.excluded).toContain(join(root, "physical", "selected"));
+    expect(scope.excluded).not.toContain(join(root, "named", "selected"));
+  });
+});
+
+it("keeps discovered state directories whose physical path cannot be established", async () => {
+  const root = await realpath(
+    await createTestTempDirectory("desktop-scope-unknown-"),
+  );
+  const home = join(root, "home");
+  const dangling = join(home, ".config/notes-link");
+  const file = join(root, "outside/not-a-directory");
+  const throughFile = join(file, "child");
+  await mkdir(dirname(dangling), { recursive: true });
+  await symlink(join(home, "missing-notes"), dangling);
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, "not a directory");
+  const { scope } = await captureScope(
+    request([]),
+    inventory({
+      state_directories: [
+        { path: dangling, exists_at_start: true },
+        {
+          path: throughFile,
+          exists_at_start: null,
+          existence_error: "ENOTDIR",
+        },
+      ],
+    }),
+    home,
+    join(root, "out"),
+  );
+  expect(scope.stateDirectories).toEqual([dangling, throughFile]);
+  expect(scope.contentRoots).toEqual([dangling, throughFile]);
+  expect(scope.roots).toEqual([home, throughFile]);
 });
 
 describe("applicationWindowMatching", () => {

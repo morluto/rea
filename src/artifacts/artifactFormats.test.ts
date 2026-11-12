@@ -25,6 +25,7 @@ type FormatsWithReaders =
   | ZipPackageFormat
   | "dotnet-bundle"
   | "bun-standalone"
+  | "deno-standalone"
   | "dmg"
   | "asar"
   | "ines"
@@ -42,7 +43,8 @@ type FormatsWithReaders =
   | "uf2"
   | "dfuse"
   | "esp-flash-image"
-  | "fit";
+  | "fit"
+  | "ntfs-mft";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =
   true;

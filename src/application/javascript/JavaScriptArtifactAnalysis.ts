@@ -486,6 +486,10 @@ export const createJavaScriptPackageTypeLookup = (
         const type = document.packageFields.type;
         return type === "module" || type === "commonjs" ? type : "unspecified";
       }
+      // An unvisited nearer manifest may override an observed ancestor's type.
+      const coverage = fileSet.unanalyzed_files?.coverage;
+      if (coverage !== undefined && coverage.status !== "complete")
+        return "unknown";
       if (directory === "." || directory === "" || directory === "/") break;
     }
     return "unknown";
@@ -775,7 +779,8 @@ const findingCount = (analysis: JavaScriptStaticAnalysis): number =>
   analysis.electron.sender_validations.length +
   analysis.electron.utility_processes.length +
   analysis.electron.native_addon_bindings.length +
-  analysis.electron.protocols.length;
+  analysis.electron.protocols.length +
+  (analysis.electron.dynamic_code ?? []).length;
 
 const optionalString = (value: unknown): string | null =>
   typeof value === "string" && value.length > 0 ? value : null;
