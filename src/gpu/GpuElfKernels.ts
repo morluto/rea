@@ -43,7 +43,7 @@ const sectionBytes = (
   section: NativeSection,
   budget?: CudaMetadataBudget,
 ): Promise<Buffer> => {
-  if (!section.file_backed || (section.flags & 0x800n) !== 0n)
+  if (!section.file_backed || section.compressed)
     rejectGpu("GPU metadata section has no supported uncompressed file range");
   budget?.read(gpuCount(section.size));
   return source.read(gpuCount(section.offset), gpuCount(section.size));

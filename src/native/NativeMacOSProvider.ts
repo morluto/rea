@@ -868,6 +868,7 @@ class NativeMacOSClient implements AnalysisClient {
       executablePaths,
     );
     const displayFailure = codeSignCaptureFailure(
+      this.#signatureResources,
       display.value,
       binding.snapshotPath,
       executablePaths,
@@ -881,6 +882,7 @@ class NativeMacOSClient implements AnalysisClient {
     );
     if (!requirements.ok) return requirements;
     const requirementsFailure = codeSignCaptureFailure(
+      this.#signatureResources,
       requirements.value,
       binding.snapshotPath,
       executablePaths,
@@ -894,6 +896,7 @@ class NativeMacOSClient implements AnalysisClient {
     );
     if (!entitlements.ok) return entitlements;
     const entitlementsFailure = codeSignCaptureFailure(
+      this.#signatureResources,
       entitlements.value,
       binding.snapshotPath,
       executablePaths,
@@ -1004,6 +1007,7 @@ class NativeMacOSClient implements AnalysisClient {
       captures.push(slice.value);
       if (slice.value.exitCode === 0) continue;
       const failure = codeSignCaptureFailure(
+        this.#signatureResources,
         slice.value,
         binding.snapshotPath,
         executablePaths,
@@ -1055,6 +1059,19 @@ class NativeMacOSClient implements AnalysisClient {
     // Verify failed captures too: a disappearing target is not a codesign
     // execution failure, and later captures must never use another version.
     const after = await verifySignatureTarget(this.target, binding, signal);
+    if (!capture.ok && !after.ok) {
+      const primary =
+        after.error instanceof AnalysisCancelledError
+          ? analysisErrorWithCancellation(capture.error, after.error)
+          : after.error;
+      return err(
+        nativeFailureWithCommandCleanup(
+          primary,
+          capture.error,
+          "inspect_signature",
+        ),
+      );
+    }
     return after.ok ? capture : after;
   }
 
@@ -1624,6 +1641,7 @@ class NativeMacOSClient implements AnalysisClient {
                 truncated: false,
               },
             ),
+            this.#machoOperandResources,
           ),
         );
       return captured;
@@ -1632,6 +1650,7 @@ class NativeMacOSClient implements AnalysisClient {
       translateNativeCommandFailure(
         operation,
         captured.error,
+        this.#machoOperandResources,
         options.timeoutMs,
       ),
     );
@@ -1817,6 +1836,7 @@ const nativeMachoCompletion = (
       : new AnalysisCancelledError(operation, {
           cause: completion.cancellation.reason,
           ...(completedFailure === undefined ||
+          completedFailure.cleanupIncomplete ||
           (cause instanceof ArtifactReaderFailure &&
             cause.cleanup !== undefined)
             ? {}
@@ -1831,6 +1851,40 @@ const nativeMachoCompletion = (
   return { observation, completedFailure, completionCancellation };
 };
 
+/** Every native reclassification retains the command and independent file owners. */
+const nativeFailureWithCommandCleanup = (
+  primary: AnalysisError,
+  producer: AnalysisError,
+  operation: string,
+  descriptorCleanup?: AnalysisError,
+): AnalysisError => {
+  if (!producer.cleanupIncomplete) return primary;
+  const cleanup = descriptorCleanup ?? producer;
+  return cleanup === primary
+    ? primary
+    : analysisErrorWithCleanupFailure(
+        primary,
+        cleanup,
+        operation,
+      ).bindCleanupDependencies([
+        primary,
+        producer,
+        ...(descriptorCleanup === undefined ? [] : [descriptorCleanup]),
+      ]);
+};
+
+/** The exact callback error remains an owner even if verification reclassifies it. */
+const nativeMachoProducerFailure = (
+  cause: unknown,
+): AnalysisError | undefined => {
+  if (cause instanceof AnalysisError) return cause;
+  if (!(cause instanceof NativeMachoSourceVerificationFailure))
+    return undefined;
+  return cause.outcome.kind === "failed"
+    ? nativeMachoProducerFailure(cause.outcome.cause)
+    : nativeMachoCompletedFailure(cause.outcome.value);
+};
+
 const nativeMachoSourceFailure = (
   cause: unknown,
   target: BinaryTarget,
@@ -1839,6 +1893,31 @@ const nativeMachoSourceFailure = (
 ): AnalysisError => {
   const { observation, completedFailure, completionCancellation } =
     nativeMachoCompletion(cause, target, parameters, operation);
+  const source = artifactFilePrimaryFacts(cause);
+  const producerFailure =
+    completedFailure ?? nativeMachoProducerFailure(source.cause);
+  // Classification and ownership are independent: neither a changed source nor
+  // a released descriptor settles the command's retained cleanup capability.
+  const retainOwnedCleanup = (
+    selected: AnalysisError,
+    descriptorCleanup?: AnalysisError,
+  ): AnalysisError => {
+    if (!producerFailure?.cleanupIncomplete) return selected;
+    const primary =
+      selected === descriptorCleanup
+        ? (descriptorCleanup.cleanupPrimary ?? producerFailure)
+        : selected === completionCancellation
+          ? producerFailure
+          : selected;
+    if (completionCancellation !== undefined)
+      analysisErrorWithCancellation(primary, completionCancellation);
+    return nativeFailureWithCommandCleanup(
+      primary,
+      producerFailure,
+      operation,
+      descriptorCleanup,
+    );
+  };
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
     const physical =
       cause instanceof ArtifactFileCleanupFailure
@@ -1887,17 +1966,15 @@ const nativeMachoSourceFailure = (
     if (observation !== undefined)
       completionCancellation?.retainPartialObservation(observation);
     bindArtifactFileCleanup(cause, failure);
-    return failure;
+    return retainOwnedCleanup(failure, failure);
   }
   if (completionCancellation !== undefined) {
     if (observation !== undefined)
       completionCancellation.retainPartialObservation(observation);
-    return completionCancellation;
+    return retainOwnedCleanup(completionCancellation);
   }
-  return nativeMachoSourcePrimary(
-    artifactFilePrimaryFacts(cause),
-    target.path,
-    operation,
+  return retainOwnedCleanup(
+    nativeMachoSourcePrimary(source, target.path, operation),
   );
 };
 
@@ -1914,6 +1991,7 @@ const isNativeOperation = (
 
 const translateCodeSignExitFailure = (
   capture: NativeCommandCapture,
+  resources: ArtifactResourceScope,
 ): AnalysisError =>
   translateNativeCommandFailure(
     "inspect_signature",
@@ -1925,6 +2003,7 @@ const translateCodeSignExitFailure = (
       // Accepted output stays complete until the provider decides it failed.
       failureCapture(capture, false),
     ),
+    resources,
   );
 
 /**
@@ -1969,6 +2048,7 @@ const canonicalPath = async (path: string): Promise<string[]> => {
 };
 
 const codeSignCaptureFailure = (
+  resources: ArtifactResourceScope,
   capture: NativeCommandCapture,
   snapshotPath: string,
   executablePaths: readonly string[],
@@ -1976,7 +2056,7 @@ const codeSignCaptureFailure = (
   capture.exitCode === 0 ||
   isNonzeroUnsignedObservation(capture, snapshotPath, executablePaths)
     ? null
-    : translateCodeSignExitFailure(capture);
+    : translateCodeSignExitFailure(capture, resources);
 
 const codeSignArchitectures = (
   format: string | null,

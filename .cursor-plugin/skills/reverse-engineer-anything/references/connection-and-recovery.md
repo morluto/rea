@@ -108,11 +108,13 @@ is not a recommendation to change it. Do not invent a setting. Host memory and
 - Capacity, when the result is `resource_constraint` and `retryable` is true:
   wait for the active admission to finish, then retry within the reported
   limits. Do not restart REA to free the slot.
-- `configuration_invalid`: correct the named setting in the environment that
-  starts REA (the shell or the MCP registration), then restart REA. Run
-  `rea doctor` to see the `runtime-configuration:` check. Re-run `rea setup`
-  for that client when the registration must carry the new setting, then
-  reconnect.
+- `configuration_invalid`: when the error reports `update_mode: "runtime"`,
+  call `update_analysis_settings` for that setting. When it reports
+  `update_mode: "parameter"`, change that call's argument; the setter does not
+  accept it. Otherwise correct the named setting in the environment that starts
+  REA (the shell or the MCP registration) and start REA again. Run `rea doctor`
+  to see the `runtime-configuration:` check. Re-run `rea setup` for that client
+  when the registration must carry the new setting, then reconnect.
 - `invalid_request`: correct the reported fields from the current schema. Do
   not repeat the unchanged call.
 

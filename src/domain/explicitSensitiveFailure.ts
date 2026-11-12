@@ -226,6 +226,9 @@ const redactFailure = (
     return new AnalysisCancelledError(error.operation, {
       ...context,
       cause: error.cause,
+      ...(error.userMessage === undefined
+        ? {}
+        : { userMessage: text(error.userMessage) }),
     });
   if (error instanceof AnalysisTimeoutError)
     return new AnalysisTimeoutError(error.operation, error.timeoutMs, {
@@ -236,6 +239,7 @@ const redactFailure = (
       ...(error.remediationAction === undefined
         ? {}
         : { remediationAction: text(error.remediationAction) }),
+      ...(error.limit === undefined ? {} : { limit: error.limit }),
     });
   if (error instanceof AnalysisAccessDeniedError)
     return new AnalysisAccessDeniedError(
@@ -317,7 +321,11 @@ const redactFailure = (
       error.resource,
       text(error.reason),
       error.reportedLimits === null ? null : diagnostics(error.reportedLimits),
-      { ...context, ...resourceConstraintRecovery(error, text) },
+      {
+        ...context,
+        ...resourceConstraintRecovery(error, text),
+        ...(error.limit === undefined ? {} : { limit: error.limit }),
+      },
     );
   if (error instanceof ProviderCleanupError)
     return new ProviderCleanupError(

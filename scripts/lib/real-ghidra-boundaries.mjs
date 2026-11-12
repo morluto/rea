@@ -212,7 +212,12 @@ export async function verifyGhidraBoundaries(
   );
   const names = await call("list_names");
   const batchIdentity = await verifyGhidraBatchIdentity(call, names);
-  const instructionFlow = await verifyGhidraInstructionFlow(call, names, cli);
+  const instructionFlow = await verifyGhidraInstructionFlow(
+    call,
+    names,
+    cli,
+    target,
+  );
   const leaf = names.find((item) =>
     item.value.endsWith("rea_ghidra_inventory_leaf"),
   );

@@ -480,10 +480,8 @@ export const createJavaScriptSemanticGraphProjection = (
           limit,
         );
       }
-      state.fileNodeBudget = Math.min(
-        fileNodeCeiling,
-        Math.max(0, nodeCeiling - state.nodes.size),
-      );
+      const remainingTreeBudget = Math.max(0, nodeCeiling - state.nodes.size);
+      state.fileNodeBudget = Math.min(fileNodeCeiling, remainingTreeBudget);
       const module = retainNode(state, file, {
         kind: "module",
         roleKey: "module",
@@ -493,6 +491,14 @@ export const createJavaScriptSemanticGraphProjection = (
       });
       state.fileNodeBudget = null;
       if (module !== null) state.roots.add(module.node_id);
+      else {
+        truncatedFiles += 1;
+        noteSemanticCeilingReached(
+          nodeCeilingsReached,
+          remainingTreeBudget,
+          fileNodeCeiling,
+        );
+      }
       const evidence = {
         ...observedSemanticEvidence(file, null),
         authority: "unknown" as const,

@@ -6,8 +6,6 @@ export interface ReferenceSourcePathLookup {
   readonly has: (path: string) => boolean;
   readonly resolve: (path: string) => string | undefined;
   readonly resolveCandidates: (paths: readonly string[]) => string | undefined;
-  /** Resolve a path to the closest recorded parent identity. */
-  readonly resolveAncestor: (path: string) => string | undefined;
 }
 
 /**
@@ -35,17 +33,6 @@ export const createReferenceSourcePathLookup = (
     resolveCandidates: (candidates) =>
       candidates.find((path) => exact.has(path)) ??
       candidates.map(equivalent).find((path) => path !== undefined),
-    resolveAncestor: (path) => {
-      for (
-        let candidate = path;
-        candidate !== "." && candidate !== "/";
-        candidate = posix.dirname(candidate)
-      ) {
-        const found = resolve(candidate);
-        if (found !== undefined) return found;
-      }
-      return undefined;
-    },
   };
 };
 

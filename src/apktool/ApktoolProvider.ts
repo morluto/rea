@@ -1,3 +1,4 @@
+import { processInspectionCancellationError } from "../providers/OwnedCommandCleanup.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
@@ -170,6 +171,12 @@ const apktoolCommandFailure = (
   limits: DecodeLimits,
 ): AnalysisError => {
   const capturedOutput = capturedApktoolFailureOutput(cause);
+  const inspectionCancellation =
+    !(cause instanceof OwnedCommandFailure) ||
+    cause.preparationFailure !== undefined
+      ? processInspectionCancellationError(cause, operation)
+      : undefined;
+  if (inspectionCancellation !== undefined) return inspectionCancellation;
   if (!(cause instanceof OwnedCommandFailure))
     return new ProviderAdapterError("apktool", operation, {
       cause,
@@ -181,9 +188,9 @@ const apktoolCommandFailure = (
     });
 
   const output = cause.snapshot;
-  if (cause.reason === "cancelled")
+  if (cause.reason === "cancelled" && cause.cancellation !== undefined)
     return new AnalysisCancelledError(operation, {
-      cause: cause.cancellation?.reason,
+      cause: cause.cancellation.reason,
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
     });
   if (cause.reason === "timeout")
