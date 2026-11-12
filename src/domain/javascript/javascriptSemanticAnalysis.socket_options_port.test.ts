@@ -170,3 +170,27 @@ it.each([
 ] as const)("emits no acquisition when Node has no usable port: %s", (call) => {
   expect(acquisitionsFor(call)).toEqual([]);
 });
+
+it.each([
+  // A unary operator over a BigInt or over `undefined` is still not a port. Measured on Node
+  // 24.22.1.
+  [`net.connect({ port: -1n })`],
+  [`net.connect({ port: ~1n })`],
+  [`net.connect({ port: +undefined })`],
+] as const)(
+  "emits no acquisition for a unary port operand Node refuses: %s",
+  (call) => {
+    expect(acquisitionsFor(call)).toEqual([]);
+  },
+);
+
+it.each([
+  // `-0` is port zero and connects; the sign alone does not decide.
+  [`net.connect({ port: -0 })`],
+  [`net.connect({ port: 8080 })`],
+] as const)(
+  "keeps the acquisition for a unary port Node accepts: %s",
+  (call) => {
+    expect(acquisitionsFor(call)).toHaveLength(1);
+  },
+);
