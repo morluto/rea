@@ -12,6 +12,7 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -164,43 +165,87 @@ const processAlive = (pid) => {
   }
 };
 
-/** Exclusive install lock; reclaim only when the recorded holder is gone. */
-const tryAcquireInstallLock = (lockPath) => {
-  try {
-    mkdirSync(lockPath, { mode: 0o700 });
-  } catch (cause) {
-    const exists =
-      cause !== null &&
-      typeof cause === "object" &&
-      "code" in cause &&
-      cause.code === "EEXIST";
-    if (!exists) throw cause;
-    let holder = NaN;
-    try {
-      verifyOwnedCachePath(lockPath, "lock");
-      holder = Number.parseInt(readFileSync(join(lockPath, "pid"), "utf8"), 10);
-    } catch {
-      return false;
-    }
-    if (processAlive(holder)) return false;
-    rmSync(lockPath, { recursive: true, force: true });
-    try {
-      mkdirSync(lockPath, { mode: 0o700 });
-    } catch (retryCause) {
-      const retryExists =
-        retryCause !== null &&
-        typeof retryCause === "object" &&
-        "code" in retryCause &&
-        retryCause.code === "EEXIST";
-      if (!retryExists) throw retryCause;
-      return false;
-    }
-  }
+const isPathExistsError = (cause) =>
+  cause !== null &&
+  typeof cause === "object" &&
+  "code" in cause &&
+  cause.code === "EEXIST";
+
+const claimInstallLock = (lockPath) => {
+  mkdirSync(lockPath, { mode: 0o700 });
   verifyOwnedCachePath(lockPath, "lock");
   writeFileSync(join(lockPath, "pid"), `${String(process.pid)}\n`, {
     mode: 0o600,
   });
-  return true;
+};
+
+const readLockHolder = (lockPath) => {
+  verifyOwnedCachePath(lockPath, "lock");
+  return Number.parseInt(readFileSync(join(lockPath, "pid"), "utf8"), 10);
+};
+
+/**
+ * Exclusive install lock; reclaim only when the recorded holder is gone.
+ * Stale cleanup is serialized through a sibling recovery directory, matching
+ * OwnedLease: never delete the lock pathname from an earlier PID read alone.
+ */
+const tryAcquireInstallLock = (lockPath) => {
+  try {
+    claimInstallLock(lockPath);
+    return true;
+  } catch (cause) {
+    if (!isPathExistsError(cause)) throw cause;
+  }
+
+  let holder = NaN;
+  try {
+    holder = readLockHolder(lockPath);
+  } catch {
+    return false;
+  }
+  if (processAlive(holder)) return false;
+
+  // Serialize stale cleanup through the replacement mkdir: otherwise two
+  // recoverers can unlink the lock that one of them has just acquired.
+  const recoveryPath = `${lockPath}.recovery`;
+  try {
+    mkdirSync(recoveryPath, { mode: 0o700 });
+  } catch (cause) {
+    if (isPathExistsError(cause)) return false;
+    throw cause;
+  }
+
+  try {
+    try {
+      claimInstallLock(lockPath);
+      return true;
+    } catch (cause) {
+      if (!isPathExistsError(cause)) throw cause;
+    }
+
+    let current = NaN;
+    try {
+      current = readLockHolder(lockPath);
+    } catch {
+      current = NaN;
+    }
+    if (processAlive(current)) return false;
+
+    rmSync(lockPath, { recursive: true, force: true });
+    try {
+      claimInstallLock(lockPath);
+      return true;
+    } catch (cause) {
+      if (!isPathExistsError(cause)) throw cause;
+      return false;
+    }
+  } finally {
+    try {
+      rmdirSync(recoveryPath);
+    } catch {
+      // Retain a recovery directory whose removal failed.
+    }
+  }
 };
 
 const releaseInstallLock = (lockPath) => {

@@ -373,6 +373,197 @@ writeFileSync(
   await access(join(prefix, READY_MARKER));
 });
 
+it("leaves a stale install lock unchanged while another process reserves recovery", async () => {
+  const version = "6.8.0-published-recovery-busy";
+  const prefix = installPrefix(version);
+  const lockPath = join(cacheRootFor(), `${version}.lock`);
+  const recoveryPath = `${lockPath}.recovery`;
+  await rm(prefix, { recursive: true, force: true });
+  await rm(lockPath, { recursive: true, force: true });
+  await rm(recoveryPath, { recursive: true, force: true });
+  await mkdir(cacheRootFor(), { recursive: true, mode: 0o700 });
+  if (uid !== undefined)
+    await chmod(cacheRootFor(), 0o700).catch(() => undefined);
+  await mkdir(lockPath, { mode: 0o700 });
+  if (uid !== undefined) await chmod(lockPath, 0o700);
+  await writeFile(join(lockPath, "pid"), "2147483647\n", { mode: 0o600 });
+  await mkdir(recoveryPath, { mode: 0o700 });
+  onTestFinished(async () => {
+    await rm(prefix, { recursive: true, force: true });
+    await rm(lockPath, { recursive: true, force: true });
+    await rm(recoveryPath, { recursive: true, force: true });
+  });
+  const workspace = await createTestTempDirectory(
+    "rea-published-recovery-busy-",
+  );
+  const bin = join(workspace, "bin");
+  await mkdir(bin);
+  const npmEntry = join(bin, "npm-cli.cjs");
+  const counterPath = join(workspace, "install-count");
+  await writeFile(counterPath, "0", { mode: 0o600 });
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const counterPath = ${JSON.stringify(counterPath)};
+writeFileSync(counterPath, String(Number(readFileSync(counterPath, "utf8")) + 1));
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.exitCode = 0;", { mode: 0o600 });
+`,
+  );
+  const stale = await lstat(lockPath);
+  const { child, closed } = start([version], {
+    ...process.env,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  expect(child.exitCode).toBeNull();
+  expect(await readFile(counterPath, "utf8")).toBe("0");
+  expect((await lstat(lockPath)).ino).toBe(stale.ino);
+  expect(await readFile(join(lockPath, "pid"), "utf8")).toBe("2147483647\n");
+  await rm(recoveryPath, { recursive: true, force: true });
+  child.stdin.end();
+  const result = await closed;
+  expect(result.code).toBe(0);
+  expect(await readFile(counterPath, "utf8")).toBe("1");
+  await access(join(prefix, READY_MARKER));
+});
+
+it("serializes stale install-lock recovery so concurrent recoverers share one publication", async () => {
+  const version = "6.8.0-published-stale-recovery";
+  const prefix = installPrefix(version);
+  const lockPath = join(cacheRootFor(), `${version}.lock`);
+  const recoveryPath = `${lockPath}.recovery`;
+  await rm(prefix, { recursive: true, force: true });
+  await rm(lockPath, { recursive: true, force: true });
+  await rm(recoveryPath, { recursive: true, force: true });
+  await mkdir(cacheRootFor(), { recursive: true, mode: 0o700 });
+  if (uid !== undefined)
+    await chmod(cacheRootFor(), 0o700).catch(() => undefined);
+  await mkdir(lockPath, { mode: 0o700 });
+  if (uid !== undefined) await chmod(lockPath, 0o700);
+  await writeFile(join(lockPath, "pid"), "2147483647\n", { mode: 0o600 });
+  onTestFinished(async () => {
+    await rm(prefix, { recursive: true, force: true });
+    await rm(lockPath, { recursive: true, force: true });
+    await rm(recoveryPath, { recursive: true, force: true });
+  });
+  const workspace = await createTestTempDirectory(
+    "rea-published-stale-recovery-",
+  );
+  const bin = join(workspace, "bin");
+  await mkdir(bin);
+  const npmEntry = join(bin, "npm-cli.cjs");
+  const counterPath = join(workspace, "install-count");
+  const releasePath = join(workspace, "release");
+  const startedPath = join(workspace, "started");
+  const runtimeHoldPath = join(workspace, "runtime-hold");
+  await writeFile(counterPath, "0", { mode: 0o600 });
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const counterPath = ${JSON.stringify(counterPath)};
+const startedPath = ${JSON.stringify(startedPath)};
+const releasePath = ${JSON.stringify(releasePath)};
+const runtimeHoldPath = ${JSON.stringify(runtimeHoldPath)};
+const sleep = (ms) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const count = Number(readFileSync(counterPath, "utf8")) + 1;
+writeFileSync(counterPath, String(count));
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.stdout.write('imported-too-early');", { mode: 0o600 });
+writeFileSync(startedPath, prefix);
+for (;;) {
+  try {
+    readFileSync(releasePath);
+    break;
+  } catch {
+    sleep(20);
+  }
+}
+writeFileSync(
+  entry,
+  [
+    'import { readFileSync } from "node:fs";',
+    "const hold = " + JSON.stringify(runtimeHoldPath) + ";",
+    "const sleep = (ms) =>",
+    "  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);",
+    "process.stdout.write(JSON.stringify({ installs: " + count + " }));",
+    "for (;;) {",
+    "  try {",
+    "    readFileSync(hold);",
+    "    break;",
+    "  } catch {",
+    "    sleep(20);",
+    "  }",
+    "}",
+  ].join("\\n"),
+  { mode: 0o600 },
+);
+`,
+  );
+  const first = start([version], {
+    ...process.env,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+  });
+  const second = start([version], {
+    ...process.env,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+  });
+  // Keep the published runtime alive while both clients import it: a second
+  // recoverer that deleted this lock would republish and remove the prefix.
+  const sawImport = Promise.all([
+    new Promise<void>((resolve, reject) => {
+      first.child.stdout.once("data", () => resolve());
+      first.child.once("exit", (code) =>
+        reject(new Error(`first exited before import: ${String(code)}`)),
+      );
+    }),
+    new Promise<void>((resolve, reject) => {
+      second.child.stdout.once("data", () => resolve());
+      second.child.once("exit", (code) =>
+        reject(new Error(`second exited before import: ${String(code)}`)),
+      );
+    }),
+  ]);
+  const stagingPrefix = (await waitForFile(startedPath)).trim();
+  expect(basename(stagingPrefix)).toMatch(
+    new RegExp(`^${version}\\.staging-\\d+$`, "u"),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  expect(first.child.exitCode).toBeNull();
+  expect(second.child.exitCode).toBeNull();
+  expect(await readFile(counterPath, "utf8")).toBe("1");
+  first.child.stdin.end();
+  second.child.stdin.end();
+  await writeFile(releasePath, "go", { mode: 0o600 });
+  await sawImport;
+  expect(await readFile(counterPath, "utf8")).toBe("1");
+  await access(join(prefix, READY_MARKER));
+  await writeFile(runtimeHoldPath, "done", { mode: 0o600 });
+  const [firstResult, secondResult] = await Promise.all([
+    first.closed,
+    second.closed,
+  ]);
+  expect(firstResult.code).toBe(0);
+  expect(secondResult.code).toBe(0);
+  expect(firstResult.stdout).toBe(JSON.stringify({ installs: 1 }));
+  expect(secondResult.stdout).toBe(JSON.stringify({ installs: 1 }));
+  expect(firstResult.stdout).not.toContain("imported-too-early");
+  expect(secondResult.stdout).not.toContain("imported-too-early");
+  expect(await readFile(counterPath, "utf8")).toBe("1");
+});
+
 it.skipIf(uid === undefined)(
   "refuses a group/other-writable executable cache entry",
   async () => {
