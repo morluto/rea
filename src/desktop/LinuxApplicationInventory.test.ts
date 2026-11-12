@@ -627,6 +627,29 @@ const inventoryOf = async (
 };
 
 describe.skipIf(process.platform === "win32")(
+  "inspectLinuxApplication working directory",
+  () => {
+    it("starts an entry with an empty Path in the home directory", async () => {
+      const installed = await fixture();
+      const { home } = installed;
+      await mkdir(join(home, ".local/share/applications"), { recursive: true });
+      await writeFile(join(home, "notes"), "#!/bin/sh\nexit 0\n");
+      await chmod(join(home, "notes"), 0o755);
+      // GLib and KIO launch an entry with an empty `Path=` as if it were unset.
+      await writeFile(
+        join(home, ".local/share/applications/org.example.unset.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Unset\nPath=\nExec=./notes\n",
+      );
+
+      const inventory = await inventoryOf("org.example.unset", installed);
+
+      expect(inventory.working_directory).toBe(home);
+      expect(inventory.executable.path).toBe(join(home, "notes"));
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
   "inspectLinuxApplication state and environment",
   () => {
     it("finds the program on the PATH an env prefix sets, not the host's", async () => {
