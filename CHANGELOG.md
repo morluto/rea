@@ -42,6 +42,7 @@
 
 ### Fixes
 
+- Keep UnityFS directory and payload reads within the declared bundle, reject undersized declarations, and prevent appended bytes from replacing the inventory or increasing its work budget. [58a0511660](https://github.com/morluto/rea/commit/58a051166047442b947c604c3f7ccde6707ee9df).
 - Validate runtime configuration before doctor reports readiness or registration writes files; preserve the source of malformed stored settings and proposed overrides. [#10102](https://github.com/morluto/rea/pull/10102).
 - Retry owned inspection descriptors before fresh process queries, preserve physical failures alongside cancellation, and retain cleanup authority until release succeeds. [#10113](https://github.com/morluto/rea/pull/10113), [#10141](https://github.com/morluto/rea/pull/10141), [#10109](https://github.com/morluto/rea/pull/10109).
 - Keep distinct linker-map occurrences when source-map declarations overlap, including path spellings that normalize to the same location. [aa017c61ff](https://github.com/morluto/rea/commit/aa017c61ff3803dea3b823664ae255c4059c19d4), [f668c86271](https://github.com/morluto/rea/commit/f668c862717fd1c63c649a04709191bbe86e4479).
@@ -139,7 +140,7 @@
 - `inspect_ntfs_journal` omits detailed `mftMetadata.record_headers` by default and leaves continuation at the first omitted record. Select `mft_record_limit` from 1 to 32 when those details are needed; inventory counts and explicit coverage remain inline. [1a8a9b749a](https://github.com/morluto/rea/commit/1a8a9b749a86e4b065a6b3ee6b8bad3b2761bac6). Thanks @gensokyo-dev, @N0zoM1z0.
 - Desktop state directories now use `application.state_directories[].exists_at_start: null` plus `existence_error` when inspection fails (for example, access denial). Accept the tri-state field and preserve unknown instead of treating it as absence. [#9899](https://github.com/morluto/rea/pull/9899).
 
-Full contribution record: [1846 commits and 1073 merged PRs](https://github.com/morluto/rea/blob/rea-agents-6.9.0/docs/releases/6.9.0.contributions.json).
+Full contribution record: [1848 commits and 1073 merged PRs](https://github.com/morluto/rea/blob/rea-agents-6.9.0/docs/releases/6.9.0.contributions.json).
 
 ## [6.8.0](https://github.com/morluto/rea/compare/rea-agents-6.7.0...rea-agents-6.8.0) (2026-10-25)
 

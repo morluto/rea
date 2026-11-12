@@ -3,7 +3,7 @@
   "repository": "morluto/rea",
   "version": "6.9.0",
   "base": "160d821ac9a0310afcb8d1fc427862dd6508add5",
-  "target": "a01674377f1f2a0fed467035fddc25e90e74d75a",
+  "target": "3a36b3e6d6ac8895358060ae7182cb8931daf5a7",
   "commits": [
     {
       "sha": "bc143125edd223b7e0d315d5ea7efdc270c29f9e",
@@ -36552,6 +36552,40 @@
         }
       ],
       "pullRequests": [10086]
+    },
+    {
+      "sha": "58a051166047442b947c604c3f7ccde6707ee9df",
+      "subject": "fix(artifacts): enforce UnityFS declared container bounds",
+      "body": "fix(artifacts): enforce UnityFS declared container bounds\n",
+      "parents": ["a01674377f1f2a0fed467035fddc25e90e74d75a"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": []
+    },
+    {
+      "sha": "3a36b3e6d6ac8895358060ae7182cb8931daf5a7",
+      "subject": "test(ci): scope Electron scenario schema validation",
+      "body": "test(ci): scope Electron scenario schema validation\n",
+      "parents": ["58a051166047442b947c604c3f7ccde6707ee9df"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": []
     }
   ],
   "pullRequests": [
