@@ -439,8 +439,7 @@ const collectResponseConsumers = (
         .sort(compareUnicodeCodePoints),
       endpoint: soleWrite ? (uniqueRequest?.operation.endpoint ?? null) : null,
       fields: [],
-      resolution:
-        uniqueRequest === undefined || otherKinds ? "partial" : "complete",
+      resolution: !soleWrite || otherKinds ? "partial" : "complete",
     });
   });
   return output;
