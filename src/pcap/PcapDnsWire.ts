@@ -432,7 +432,10 @@ export const parseDnsMessageRaw = (
   );
   // A structurally complete packet can carry only part of the DNS response.
   // RFC 1035 section 4.1.1 makes TC an explicit producer truncation fact.
-  if ((flags & 0x0200) === 0) return facts;
+  // RFC 6762 section 18.5 gives mDNS TC distinct semantics: multicast responses
+  // ignore it; queries signal further Known Answers. This owner has no transport
+  // context to identify legacy unicast responses, so do not infer that reading.
+  if (family === "mdns" || (flags & 0x0200) === 0) return facts;
   return {
     ...facts,
     incomplete: true,
