@@ -255,6 +255,43 @@ export const rtSparkBootEvidence = {
     portLimit: 9,
     basis: "instruction",
   },
+  exceptionVectors: [
+    { index: 1, name: "Reset", word: "0x0800c6b5" },
+    { index: 2, name: "NMI", word: "0x0800c701" },
+    { index: 3, name: "HardFault", word: "0x080002d1" },
+    { index: 4, name: "MemManage", word: "0x0800c701" },
+    { index: 5, name: "BusFault", word: "0x0800c701" },
+    { index: 6, name: "UsageFault", word: "0x0800c701" },
+    { index: 11, name: "SVCall", word: "0x0800c701" },
+    { index: 12, name: "DebugMonitor", word: "0x0800c701" },
+    { index: 14, name: "PendSV", word: "0x08000213" },
+    { index: 15, name: "SysTick", word: "0x0800ca31" },
+  ],
+  // Aligned literals in the used image. USART2, USART3, UART4, UART5, I2C1,
+  // I2C2, I2C3, CAN1, CAN2, and FSMC have none.
+  controllerLoads: [
+    { site: "0x08009ca0", address: "0x40023c00" },
+    { site: "0x0800ac44", address: "0x40023c00" },
+    { site: "0x0800aec8", address: "0x40023c00" },
+    { site: "0x0800a35c", address: "0x40013800" },
+    { site: "0x0800a554", address: "0x40013800" },
+    { site: "0x0800a380", address: "0x40013c00" },
+    { site: "0x0800a578", address: "0x40013c00" },
+    { site: "0x0800a60c", address: "0x40013c00" },
+    { site: "0x0800a8d8", address: "0x40007000" },
+    { site: "0x0800aa84", address: "0x40007000" },
+    { site: "0x0800c94c", address: "0x40007000" },
+    { site: "0x0800b0a4", address: "0x40010000" },
+    { site: "0x0800b154", address: "0x40010000" },
+    { site: "0x0800b81c", address: "0x40010000" },
+    { site: "0x0800b920", address: "0x40010000" },
+    { site: "0x0800ba0c", address: "0x40010000" },
+    { site: "0x0800baf4", address: "0x40010000" },
+    { site: "0x0800bba0", address: "0x40010000" },
+    { site: "0x0800c5c8", address: "0x40011400" },
+    { site: "0x080aee94", address: "0x40040000" },
+    { site: "0x080ccfb4", address: "0x50000000" },
+  ],
   unresolved: [
     {
       subject: "spi-flash-part",
@@ -300,7 +337,11 @@ export const rtSparkImageObservations: ImageHardwareDecodeInput = {
     stride: BigInt(rtSparkBootEvidence.pinDecode.stride),
     portLimit: rtSparkBootEvidence.pinDecode.portLimit,
   },
-  vectors: [{ index: 1, rule: "architecture-register", name: "Reset" }],
+  vectors: rtSparkBootEvidence.exceptionVectors.map((entry) => ({
+    index: entry.index,
+    rule: "architecture-register" as const,
+    name: entry.name,
+  })),
   observations: [
     ...rtSparkBootEvidence.spiFlashInit.registerWrites.map((write) => ({
       kind: "loaded-address" as const,
@@ -464,7 +505,17 @@ export const rtSparkImageObservations: ImageHardwareDecodeInput = {
       fields: pllFields,
       clockSwitch: null,
     },
-    { kind: "vector-slot", site: "0x08000004", index: 1 },
+    ...rtSparkBootEvidence.exceptionVectors.map((entry) => ({
+      kind: "vector-slot" as const,
+      site: `0x${(0x08000000 + entry.index * 4).toString(16).padStart(8, "0")}`,
+      index: entry.index,
+    })),
+    ...rtSparkBootEvidence.controllerLoads.map((load) => ({
+      kind: "loaded-address" as const,
+      site: load.site,
+      address: BigInt(load.address),
+      fromRoundedPage: false,
+    })),
     ...rtSparkBootEvidence.registerWrites.flatMap((write) => {
       if (write.register === "RCC_PLLCFGR") return [];
       const immediate = /0x[0-9a-f]+/i.exec(write.operation);

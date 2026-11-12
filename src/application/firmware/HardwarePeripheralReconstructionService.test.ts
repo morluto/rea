@@ -473,6 +473,53 @@ describe("captured RT-Spark image", () => {
   });
 });
 
+describe("captured RT-Spark vectors and extra loads", () => {
+  it("names the other exception slots and the extra controller loads", () => {
+    const report = reconstructHardwareFromReferences(
+      [],
+      "cortex-m",
+      "rt_spark_vectors",
+      null,
+      "stm32f407-rt-spark",
+    );
+    expect(
+      report.hardwareClaims.find((claim) => claim.subject === "NMI"),
+    ).toMatchObject({
+      rule: "architecture-register",
+      source: "0x08000008",
+      settled: true,
+    });
+    expect(
+      report.hardwareClaims.find((claim) => claim.subject === "HardFault"),
+    ).toMatchObject({ source: "0x0800000c" });
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "USART6" && claim.source === "0x0800c5c8",
+      ),
+    ).toMatchObject({ basis: "chip_manual" });
+    expect(
+      report.hardwareClaims.find(
+        (claim) =>
+          claim.subject === "USB_OTG_FS" && claim.source === "0x080ccfb4",
+      ),
+    ).toMatchObject({ basis: "chip_manual" });
+    expect(
+      report.hardwareClaims.find(
+        (claim) =>
+          claim.subject === "USB_OTG_HS" && claim.source === "0x080aee94",
+      ),
+    ).toMatchObject({ basis: "chip_manual" });
+    for (const subject of ["USART2", "I2C1", "CAN1", "FSMC"]) {
+      expect(
+        report.hardwareClaims.find(
+          (claim) =>
+            claim.subject === subject && claim.rule === "chip-manual-name",
+        ),
+      ).toBeUndefined();
+    }
+  });
+});
+
 describe("RT-Spark platform mismatch", () => {
   it("does not apply RT-Spark devices when the caller platform is a different family", () => {
     const report = reconstructHardwareFromReferences(

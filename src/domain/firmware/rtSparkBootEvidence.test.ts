@@ -114,4 +114,29 @@ describe("RT-Spark boot evidence", () => {
       "gpio-role",
     ]);
   });
+
+  it("keeps the observed exception handlers and the missing controller bases", () => {
+    expect(
+      rtSparkBootEvidence.exceptionVectors.find(
+        (entry) => entry.name === "HardFault",
+      ),
+    ).toEqual({ index: 3, name: "HardFault", word: "0x080002d1" });
+    expect(
+      rtSparkBootEvidence.exceptionVectors.find(
+        (entry) => entry.name === "SysTick",
+      )?.word,
+    ).toBe("0x0800ca31");
+    expect(
+      rtSparkBootEvidence.controllerLoads.find(
+        (load) => load.site === "0x0800c5c8",
+      ),
+    ).toEqual({ site: "0x0800c5c8", address: "0x40011400" });
+    expect(
+      rtSparkBootEvidence.controllerLoads.some((load) =>
+        ["0x40004400", "0x40005400", "0x40006400", "0xa0000000"].includes(
+          load.address,
+        ),
+      ),
+    ).toBe(false);
+  });
 });
