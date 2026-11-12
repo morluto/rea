@@ -147,6 +147,9 @@ it("retains DNS answers and exposes declared truncation as partial coverage", as
   expect(result.value.limitations).toContain(
     "DNS wire parsing: DNS message declares truncation (TC); captured records are incomplete",
   );
+  expect(result.value.limitations).toContainEqual(
+    expect.stringContaining("DNS messages declare truncation"),
+  );
 });
 
 it.each([0, 1])(
