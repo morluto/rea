@@ -30,6 +30,16 @@ const bytes32 = (value: number): readonly number[] => [
 const flatten = (parts: readonly (readonly number[])[]): number[] =>
   parts.reduce<number[]>((all, part) => all.concat(part), []);
 
+/**
+ * ResStringPool length prefix. A value of 0x8000 or more carries its high bits
+ * in the first word (marker bit set, low 15 bits of the value) and its low bits
+ * in a second word; smaller values use one word. Both forms are public AXML.
+ */
+const lengthPrefix16 = (units: number): readonly number[] =>
+  units >= 0x8000
+    ? [...bytes16((units >> 16) | 0x8000), ...bytes16(units & 0xffff)]
+    : bytes16(units);
+
 const chunk = (
   type: number,
   headerSize: number,
@@ -47,7 +57,7 @@ const stringPool = (values: readonly string[]): number[] => {
   for (const value of values) {
     offsets.push(data.length);
     const encoded = Buffer.from(value, "utf16le");
-    data.push(...bytes16(value.length), ...Array.from(encoded), 0, 0);
+    data.push(...lengthPrefix16(value.length), ...Array.from(encoded), 0, 0);
   }
   const headerSize = 28;
   return chunk(0x0001, headerSize, [

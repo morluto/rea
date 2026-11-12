@@ -68,19 +68,32 @@ const decode = (
   }
 };
 
-/** One or two UTF-8 bytes: the high bit selects the two-byte form. */
-const utf8Length = (
+/**
+ * A string-pool length prefix. ResStringPool encodes both lengths the same
+ * way: a word whose high bit says whether a continuation word follows, with
+ * the payload's high bits carried in it. UTF-8 uses bytes, UTF-16 uses 16-bit
+ * code units, so callers need the word width to translate the raw value.
+ */
+const readLengthPrefix = (
   reader: BinaryReader,
   at: number,
   end: number,
+  wordBytes: 1 | 2,
 ): { readonly value: number; readonly consumed: number } | null => {
-  if (at >= end) return null;
-  const first = reader.bytes[at] ?? 0;
-  if ((first & 0x80) === 0) return { value: first, consumed: 1 };
-  if (at + 1 >= end) return null;
+  const readWord = (offset: number): number | null => {
+    if (offset + wordBytes > end) return null;
+    return wordBytes === 1 ? (reader.bytes[offset] ?? 0) : reader.u16(offset);
+  };
+  const first = readWord(at);
+  if (first === null) return null;
+  const highBit = wordBytes === 1 ? 0x80 : 0x8000;
+  const payloadMask = highBit - 1;
+  if ((first & highBit) === 0) return { value: first, consumed: wordBytes };
+  const continuation = readWord(at + wordBytes);
+  if (continuation === null) return null;
   return {
-    value: ((first & 0x7f) << 8) | (reader.bytes[at + 1] ?? 0),
-    consumed: 2,
+    value: ((first & payloadMask) << 16) | continuation,
+    consumed: wordBytes * 2,
   };
 };
 
@@ -123,18 +136,19 @@ const readStringPool = (
     let dataLength: number;
     let skip: number;
     if (!utf8) {
-      if (at + 2 > dataEnd) {
+      const units = readLengthPrefix(reader, at, dataEnd, 2);
+      if (units === null) {
         fail();
         continue;
       }
-      dataLength = reader.u16(at) * 2;
-      skip = 2;
+      dataLength = units.value * 2;
+      skip = units.consumed;
     } else {
-      const units = utf8Length(reader, at, dataEnd);
+      const units = readLengthPrefix(reader, at, dataEnd, 1);
       const byteUnits =
         units === null
           ? null
-          : utf8Length(reader, at + units.consumed, dataEnd);
+          : readLengthPrefix(reader, at + units.consumed, dataEnd, 1);
       if (units === null || byteUnits === null) {
         fail();
         continue;

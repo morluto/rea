@@ -506,3 +506,30 @@ it("treats a duplicated split attribute as ambiguous instead of first-one-wins",
     },
   });
 });
+
+it("decodes a UTF-16 string whose length needs the two-word prefix", () => {
+  // ResStringPool stores a length of 0x8000 or more as two words, so the
+  // string data starts after the continuation word. Reading only the first
+  // word would slice from inside that word and return a truncated literal as
+  // if it were complete.
+  const declared = Array.from(
+    { length: 4096 },
+    (_, index) => `part${String(index)}`,
+  ).join(",");
+  expect(declared.length).toBeGreaterThanOrEqual(0x8000);
+  const facts = readAndroidBinaryManifestSplitFacts(
+    binaryManifestFixture({
+      attributes: [
+        android("requiredSplitTypes", {
+          resourceId: 0x0101064c,
+          stringValue: declared,
+        }),
+      ],
+    }),
+  );
+  expect(facts.ok && facts.value.required_split_types).toMatchObject({
+    types: declared.split(",").slice(0, 64),
+    declared_count: 4096,
+    truncated: true,
+  });
+});
