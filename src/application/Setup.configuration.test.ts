@@ -877,7 +877,13 @@ it("discloses the selected catalog profile before applying it with the family sc
   const host = new FakeSetupHost();
   host.doctorHealthy = true;
   host.skill = "unchanged";
-  host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+  host.clients = [
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath: "/cursor.json",
+    },
+  ];
   const selection = {
     clientIds: ["cursor"],
     toolCatalogProfile: "hot-cold" as const,
