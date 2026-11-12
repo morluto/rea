@@ -10,7 +10,7 @@ export const JADX_RELEASE = Object.freeze({
 /** Identity of REA's metadata bridge, distinct from the producing engine. */
 export const JADX_BRIDGE_IDENTITY = Object.freeze({
   name: "rea-jadx-bridge",
-  version: "10",
+  version: "11",
 });
 
 /** Remediation when `REA_JADX_MCP_JAR` is missing or not an absolute path. */
@@ -42,6 +42,14 @@ export const JADX_PROVIDER_IDENTITY = Object.freeze({
   name: "JADX headless",
   version: JADX_RELEASE.version,
 });
+
+/** Coverage of the raw kotlin.Metadata reader, which never loads the decompiler. */
+export const JADX_KOTLIN_METADATA_LIMITATIONS = [
+  "Kotlin metadata is read from kotlin.Metadata annotations on classes in the APK's standard root classes*.dex members; the APK is never executed, and runtime-loaded or non-standard DEX members are not examined.",
+  "Metadata records declarations as the Kotlin compiler wrote them. Shrinking or obfuscation can remove or rewrite it, so a class without metadata is not proof that it was not written in Kotlin, and decoded names are not display aliases.",
+  "Markers are candidates only: kotlin_module entries are file names in the APK ZIP directory (contents unread), and class-prefix counts are classes whose names start with androidx.compose., kotlinx.coroutines. or kotlin.coroutines. in root DEX members. They do not establish runtime use, completeness or versions, and shrinking can remove them.",
+  "Rows carry raw annotation facts. A declaration is decoded only for the one exact class the caller selected, using the bundled kotlin-metadata-jvm reader's lenient mode.",
+] as const;
 
 /** Audited engine coverage, kept outside portable Android semantics. */
 export const JADX_LIMITATIONS = [

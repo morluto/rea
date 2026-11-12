@@ -4,6 +4,9 @@ import com.android.tools.smali.dexlib2.Opcodes;
 import com.android.tools.smali.dexlib2.dexbacked.DexBackedDexFile;
 import com.android.tools.smali.dexlib2.dexbacked.DexBackedClassDef;
 import com.android.tools.smali.dexlib2.dexbacked.DexBackedMethod;
+import com.android.tools.smali.dexlib2.iface.value.ArrayEncodedValue;
+import com.android.tools.smali.dexlib2.iface.value.IntEncodedValue;
+import com.android.tools.smali.dexlib2.iface.value.StringEncodedValue;
 import io.modelcontextprotocol.kotlin.sdk.server.*;
 import io.modelcontextprotocol.kotlin.sdk.types.*;
 import jadx.api.*;
@@ -308,9 +311,24 @@ class ReaJadxBridge {
     return bytes;
   }
 
-  /** Raw DEX ownership precedes JADX's duplicate-class selection and aliases. */
-  static Map<String, Object> nativeDeclarations(Path apk) {
-    NativeInventory inventory = new NativeInventory();
+  /** Per-member accounting the shared root-DEX reader reports back to its caller. */
+  private interface RootDexAccounting {
+    void dexEntryFound();
+    void unknown(String reason);
+    void dexExamined();
+  }
+
+  private interface RootDexVisitor {
+    /** Return false to stop reading; the caller has already recorded why. */
+    boolean visit(String path, int entryIndex, DexBackedDexFile dex);
+  }
+
+  /**
+   * Single owner of root DEX admission: standard member names, duplicate refusal,
+   * size allowances and the ZIP CRC check, all before JADX's class selection and aliases.
+   */
+  private static void readRootDexMembers(Path apk, String subject, String closeFailure,
+      RootDexAccounting accounting, RootDexVisitor visitor) {
     try (ZipFile archive = new ZipFile(apk.toFile())) {
       Map<String, Integer> names = new HashMap<>();
       var directory = archive.entries();
@@ -318,7 +336,7 @@ class ReaJadxBridge {
         checkNativeInterrupted();
         ZipEntry entry = directory.nextElement();
         if (!entry.isDirectory() && nativeDexEntry(entry.getName())) {
-          inventory.dexEntries++;
+          accounting.dexEntryFound();
           names.merge(entry.getName(), 1, Integer::sum);
         }
       }
@@ -332,17 +350,44 @@ class ReaJadxBridge {
         String path = entry.getName();
         if (entry.isDirectory() || !nativeDexEntry(path)) continue;
         if (names.get(path) != 1) {
-          inventory.unknown("Duplicate root DEX entry name cannot be selected uniquely by the ZIP reader: " + path);
+          accounting.unknown("Duplicate root DEX entry name cannot be selected uniquely by the ZIP reader: " + path);
           continue;
         }
         if (entry.getSize() < 0 || entry.getSize() > NATIVE_DEX_BYTES
             || entry.getSize() > NATIVE_TOTAL_DEX_BYTES - totalBytes) {
-          inventory.unknown("Root DEX member exceeds the 64 MiB member or 256 MiB total read allowance: " + path);
+          accounting.unknown("Root DEX member exceeds the 64 MiB member or 256 MiB total read allowance: " + path);
           continue;
         }
         totalBytes += entry.getSize();
         try {
           DexBackedDexFile dex = new NativeDex(readNativeDex(archive, entry));
+          if (!visitor.visit(path, entryIndex, dex)) return;
+          accounting.dexExamined();
+        } catch (IOException | RuntimeException failure) {
+          if (failure instanceof java.util.concurrent.CancellationException) throw (RuntimeException) failure;
+          accounting.unknown("Root DEX " + subject + " could not be fully read from " + path + ": "
+              + failure.getClass().getSimpleName()
+              + (failure.getMessage() == null ? "" : " (" + failure.getMessage() + ")"));
+        }
+      }
+    } catch (IOException failure) {
+      // A failed archive close must fail the operation so the provider retires
+      // its owned JVM; do not cache a result with lost file-resource ownership.
+      throw new IllegalArgumentException(closeFailure, failure);
+    }
+  }
+
+  /** Raw DEX ownership precedes JADX's duplicate-class selection and aliases. */
+  static Map<String, Object> nativeDeclarations(Path apk) {
+    NativeInventory inventory = new NativeInventory();
+    readRootDexMembers(apk, "native declarations",
+        "APK ZIP native declaration inventory could not finish its reader",
+        new RootDexAccounting() {
+          @Override public void dexEntryFound() { inventory.dexEntries++; }
+          @Override public void unknown(String reason) { inventory.unknown(reason); }
+          @Override public void dexExamined() { inventory.examinedDexEntries++; }
+        },
+        (path, entryIndex, dex) -> {
           var classes = dex.getClassSection();
           for (int classIndex = 0; classIndex < classes.size(); classIndex++) {
             checkNativeInterrupted();
@@ -369,7 +414,7 @@ class ReaJadxBridge {
                     + path.length() + characters);
                 if (inventory.retainedBytes + bytes > NATIVE_JSON_BYTES - 4096) {
                   inventory.unknown("Native declarations exceed the 4 MiB retained JSON allowance; remaining declarations are unknown.");
-                  return inventory.result();
+                  return false;
                 }
                 StringBuilder descriptor = new StringBuilder((int) characters).append('(');
                 for (CharSequence parameter : method.getParameterTypes()) descriptor.append(parameter);
@@ -378,25 +423,299 @@ class ReaJadxBridge {
                     "class_name", className, "method_name", methodName, "descriptor", descriptor.toString(),
                     "dex_entry", path, "dex_entry_index", entryIndex, "class_index", classIndex,
                     "method_index", method.getMethodIndex());
-                if (!inventory.retain(row, bytes)) return inventory.result();
+                if (!inventory.retain(row, bytes)) return false;
               }
             }
             inventory.examinedClasses++;
           }
-          inventory.examinedDexEntries++;
-        } catch (IOException | RuntimeException failure) {
-          if (failure instanceof java.util.concurrent.CancellationException) throw (RuntimeException) failure;
-          inventory.unknown("Root DEX native declarations could not be fully read from " + path + ": "
-              + failure.getClass().getSimpleName()
-              + (failure.getMessage() == null ? "" : " (" + failure.getMessage() + ")"));
-        }
+          return true;
+        });
+    return inventory.result();
+  }
+
+  // ---- Kotlin metadata -------------------------------------------------------
+  /** Candidate markers: class-name prefixes counted over every examined class. */
+  private static final String[][] KOTLIN_CLASS_PREFIXES = {
+    {"compose", "androidx.compose."},
+    {"kotlinx_coroutines", "kotlinx.coroutines."},
+    {"kotlin_coroutines", "kotlin.coroutines."},
+  };
+  private static final int KOTLIN_MODULE_NAME_LIMIT = 64;
+  private static final int KOTLIN_MODULE_NAME_CHARS = 256;
+
+  /** Root META-INF/*.kotlin_module file names from the ZIP directory; contents are not read. */
+  private static Map<String, Object> kotlinModuleEntries(Path apk) {
+    List<String> names = new ArrayList<>();
+    int count = 0;
+    try (ZipFile archive = new ZipFile(apk.toFile())) {
+      var directory = archive.entries();
+      while (directory.hasMoreElements()) {
+        checkNativeInterrupted();
+        ZipEntry entry = directory.nextElement();
+        String name = entry.getName();
+        if (entry.isDirectory() || !name.startsWith("META-INF/") || !name.endsWith(".kotlin_module")
+            || name.indexOf('/', "META-INF/".length()) >= 0) continue;
+        count++;
+        if (names.size() < KOTLIN_MODULE_NAME_LIMIT && name.length() <= KOTLIN_MODULE_NAME_CHARS) names.add(name);
       }
     } catch (IOException failure) {
-      // A failed archive close must fail the operation so the provider retires
-      // its owned JVM; do not cache a result with lost file-resource ownership.
-      throw new IllegalArgumentException("APK ZIP native declaration inventory could not finish its reader", failure);
+      throw new IllegalArgumentException("APK ZIP Kotlin module listing could not finish its reader", failure);
     }
-    return inventory.result();
+    return Map.of("count", count, "names", List.copyOf(names), "truncated", count > names.size());
+  }
+
+  /** Rows are bounded by the retained JSON allowance as well as by the caller's limit. */
+  private static final int KOTLIN_ROW_LIMIT = 100_000;
+  private static final int KOTLIN_MEMBER_LIMIT = 200;
+
+  /** Raw `k` value of kotlin.Metadata; unrecognized values stay visible as "unknown". */
+  private static String kotlinMetadataKind(int kind) {
+    return switch (kind) {
+      case 1 -> "class";
+      case 2 -> "file_facade";
+      case 3 -> "synthetic_class";
+      case 4 -> "multi_file_class_facade";
+      case 5 -> "multi_file_class_part";
+      default -> "unknown";
+    };
+  }
+
+  private static int metadataInt(String element, com.android.tools.smali.dexlib2.iface.value.EncodedValue value) {
+    if (value instanceof IntEncodedValue number) return number.getValue();
+    throw new IllegalArgumentException("kotlin.Metadata element " + element + " is not an int");
+  }
+
+  private static String metadataString(String element, com.android.tools.smali.dexlib2.iface.value.EncodedValue value) {
+    if (value instanceof StringEncodedValue text) return text.getValue();
+    throw new IllegalArgumentException("kotlin.Metadata element " + element + " is not a string");
+  }
+
+  private static int[] metadataInts(String element, com.android.tools.smali.dexlib2.iface.value.EncodedValue value) {
+    if (!(value instanceof ArrayEncodedValue array))
+      throw new IllegalArgumentException("kotlin.Metadata element " + element + " is not an array");
+    return array.getValue().stream().mapToInt(item -> metadataInt(element, item)).toArray();
+  }
+
+  private static String[] metadataStrings(String element, com.android.tools.smali.dexlib2.iface.value.EncodedValue value) {
+    if (!(value instanceof ArrayEncodedValue array))
+      throw new IllegalArgumentException("kotlin.Metadata element " + element + " is not an array");
+    return array.getValue().stream().map(item -> metadataString(element, item)).toArray(String[]::new);
+  }
+
+  private static String versionText(int[] version) {
+    return Arrays.stream(version).mapToObj(Integer::toString).collect(Collectors.joining("."));
+  }
+
+  private static Map<String, Object> kotlinTypeFacts(kotlin.metadata.KmType type) {
+    Map<String, Object> facts = new LinkedHashMap<>();
+    kotlin.metadata.KmClassifier classifier = type.getClassifier();
+    if (classifier instanceof kotlin.metadata.KmClassifier.Class named) {
+      facts.put("classifier", "class");
+      facts.put("name", named.getName());
+    } else if (classifier instanceof kotlin.metadata.KmClassifier.TypeAlias alias) {
+      facts.put("classifier", "type_alias");
+      facts.put("name", alias.getName());
+    } else if (classifier instanceof kotlin.metadata.KmClassifier.TypeParameter parameter) {
+      facts.put("classifier", "type_parameter");
+      facts.put("name", "T" + parameter.getId());
+    } else {
+      facts.put("classifier", "unknown");
+    }
+    facts.put("nullable", kotlin.metadata.Attributes.isNullable(type));
+    return facts;
+  }
+
+  private static Map<String, Object> kotlinFunctionFacts(kotlin.metadata.KmFunction function) {
+    Map<String, Object> facts = new LinkedHashMap<>();
+    facts.put("name", function.getName());
+    kotlin.metadata.jvm.JvmMethodSignature signature = kotlin.metadata.jvm.JvmExtensionsKt.getSignature(function);
+    // Absent facts are omitted, never encoded as null: the JSON writer drops nulls.
+    if (signature != null) {
+      facts.put("jvm_name", signature.getName());
+      facts.put("dex_descriptor", signature.getDescriptor());
+    }
+    facts.put("is_suspend", kotlin.metadata.Attributes.isSuspend(function));
+    facts.put("is_inline", kotlin.metadata.Attributes.isInline(function));
+    facts.put("is_operator", kotlin.metadata.Attributes.isOperator(function));
+    if (function.getReceiverParameterType() != null)
+      facts.put("receiver_type", kotlinTypeFacts(function.getReceiverParameterType()));
+    facts.put("return_type", kotlinTypeFacts(function.getReturnType()));
+    return facts;
+  }
+
+  private static Map<String, Object> kotlinPropertyFacts(kotlin.metadata.KmProperty property) {
+    Map<String, Object> facts = new LinkedHashMap<>();
+    facts.put("name", property.getName());
+    facts.put("is_var", kotlin.metadata.Attributes.isVar(property));
+    facts.put("is_const", kotlin.metadata.Attributes.isConst(property));
+    if (property.getReceiverParameterType() != null)
+      facts.put("receiver_type", kotlinTypeFacts(property.getReceiverParameterType()));
+    facts.put("return_type", kotlinTypeFacts(property.getReturnType()));
+    return facts;
+  }
+
+  /** Declarations are decoded for one selected class only; rows stay raw otherwise. */
+  private static Map<String, Object> kotlinDeclaration(kotlin.metadata.jvm.KotlinClassMetadata decoded) {
+    Map<String, Object> declaration = new LinkedHashMap<>();
+    List<kotlin.metadata.KmFunction> functions;
+    List<kotlin.metadata.KmProperty> properties;
+    if (decoded instanceof kotlin.metadata.jvm.KotlinClassMetadata.Class kotlinClass) {
+      kotlin.metadata.KmClass model = kotlinClass.getKmClass();
+      declaration.put("class_kind", kotlin.metadata.Attributes.getKind(model).name().toLowerCase(Locale.ROOT));
+      declaration.put("modality", kotlin.metadata.Attributes.getModality(model).name().toLowerCase(Locale.ROOT));
+      declaration.put("visibility", kotlin.metadata.Attributes.getVisibility(model).name().toLowerCase(Locale.ROOT));
+      declaration.put("is_data", kotlin.metadata.Attributes.isData(model));
+      declaration.put("is_value", kotlin.metadata.Attributes.isValue(model));
+      declaration.put("is_fun_interface", kotlin.metadata.Attributes.isFunInterface(model));
+      declaration.put("is_inner", kotlin.metadata.Attributes.isInner(model));
+      declaration.put("name", model.getName());
+      functions = model.getFunctions();
+      properties = model.getProperties();
+    } else if (decoded instanceof kotlin.metadata.jvm.KotlinClassMetadata.FileFacade facade) {
+      kotlin.metadata.KmPackage model = facade.getKmPackage();
+      functions = model.getFunctions();
+      properties = model.getProperties();
+    } else if (decoded instanceof kotlin.metadata.jvm.KotlinClassMetadata.MultiFileClassPart part) {
+      kotlin.metadata.KmPackage model = part.getKmPackage();
+      declaration.put("facade_class_name", part.getFacadeClassName());
+      functions = model.getFunctions();
+      properties = model.getProperties();
+    } else {
+      return declaration;
+    }
+    declaration.put("functions_total", functions.size());
+    declaration.put("functions", functions.stream().limit(KOTLIN_MEMBER_LIMIT)
+        .map(ReaJadxBridge::kotlinFunctionFacts).toList());
+    declaration.put("properties_total", properties.size());
+    declaration.put("properties", properties.stream().limit(KOTLIN_MEMBER_LIMIT)
+        .map(ReaJadxBridge::kotlinPropertyFacts).toList());
+    return declaration;
+  }
+
+  /**
+   * Observed kotlin.Metadata annotations from root DEX members. Rows are raw
+   * annotation facts; decoded declarations are produced only for an exact class.
+   */
+  static Map<String, Object> kotlinMetadata(Path apk, String selectedClass, String packagePrefix, int limit) {
+    int rowLimit = Math.max(0, Math.min(limit, KOTLIN_ROW_LIMIT));
+    List<Map<String, Object>> rows = new ArrayList<>();
+    List<String> unknowns = new ArrayList<>();
+    Map<String, Integer> versions = new TreeMap<>();
+    Map<String, Integer> kinds = new TreeMap<>();
+    int[] counters = new int[6]; // entries, examined entries, classes, with metadata, undecodable, matching
+    long[] retainedBytes = {2048};
+    boolean[] allowanceReached = {false};
+    int[] prefixCounts = new int[KOTLIN_CLASS_PREFIXES.length];
+    readRootDexMembers(apk, "Kotlin metadata", "APK ZIP Kotlin metadata inventory could not finish its reader",
+        new RootDexAccounting() {
+          @Override public void dexEntryFound() { counters[0]++; }
+          @Override public void unknown(String reason) { if (unknowns.size() < 16) unknowns.add(reason); }
+          @Override public void dexExamined() { counters[1]++; }
+        },
+        (path, entryIndex, dex) -> {
+          for (DexBackedClassDef cls : dex.getClasses()) {
+            checkNativeInterrupted();
+            String type = cls.getType();
+            if (!type.startsWith("L") || !type.endsWith(";"))
+              throw new IllegalArgumentException("Class definition has no reference type");
+            counters[2]++;
+            String className = type.substring(1, type.length() - 1).replace('/', '.');
+            for (int prefix = 0; prefix < KOTLIN_CLASS_PREFIXES.length; prefix++)
+              if (className.startsWith(KOTLIN_CLASS_PREFIXES[prefix][1])) prefixCounts[prefix]++;
+            for (com.android.tools.smali.dexlib2.iface.Annotation annotation : cls.getAnnotations()) {
+              if (!annotation.getType().equals("Lkotlin/Metadata;")) continue;
+              counters[3]++;
+              Map<String, com.android.tools.smali.dexlib2.iface.value.EncodedValue> elements = new HashMap<>();
+              for (var element : annotation.getElements()) elements.put(element.getName(), element.getValue());
+              Map<String, Object> row = new LinkedHashMap<>();
+              row.put("class_name", className);
+              row.put("dex_entry", path);
+              String failure = null;
+              kotlin.metadata.jvm.KotlinClassMetadata decoded = null;
+              try {
+                // Absent elements are the annotation's own defaults, not an error.
+                int kind = elements.containsKey("k") ? metadataInt("k", elements.get("k")) : 1;
+                int[] mv = elements.containsKey("mv") ? metadataInts("mv", elements.get("mv")) : new int[0];
+                String[] d1 = elements.containsKey("d1") ? metadataStrings("d1", elements.get("d1")) : new String[0];
+                String[] d2 = elements.containsKey("d2") ? metadataStrings("d2", elements.get("d2")) : new String[0];
+                String xs = elements.containsKey("xs") ? metadataString("xs", elements.get("xs")) : "";
+                String pn = elements.containsKey("pn") ? metadataString("pn", elements.get("pn")) : "";
+                int xi = elements.containsKey("xi") ? metadataInt("xi", elements.get("xi")) : 0;
+                String kindName = kotlinMetadataKind(kind);
+                String version = mv.length == 0 ? null : versionText(mv);
+                kinds.merge(kindName, 1, Integer::sum);
+                versions.merge(version == null ? "absent" : version, 1, Integer::sum);
+                row.put("metadata_kind", kind);
+                row.put("kind", kindName);
+                if (version != null) row.put("metadata_version", version);
+                if (!pn.isEmpty()) row.put("package_name", pn);
+                row.put("extra_int", xi);
+                row.put("data_strings", d1.length);
+                row.put("has_d2", d2.length != 0);
+                if (className.equals(selectedClass)) {
+                  try {
+                    decoded = kotlin.metadata.jvm.KotlinClassMetadata.Companion.readLenient(
+                        kotlin.metadata.jvm.JvmMetadataUtil.Metadata(kind, mv, d1, d2, xs, pn, xi));
+                  } catch (RuntimeException | LinkageError error) {
+                    failure = error.getClass().getSimpleName()
+                        + (error.getMessage() == null ? "" : ": " + error.getMessage());
+                  }
+                }
+              } catch (IllegalArgumentException malformed) {
+                failure = malformed.getMessage();
+              }
+              if (failure != null) {
+                counters[4]++;
+                row.put("decode", "undecodable");
+                row.put("decode_failure", failure);
+              } else if (decoded != null) {
+                row.put("decode", "decoded");
+                row.put("declaration", kotlinDeclaration(decoded));
+              } else {
+                row.put("decode", "not_requested");
+              }
+              boolean selected = selectedClass != null ? className.equals(selectedClass)
+                  : packagePrefix == null || className.startsWith(packagePrefix);
+              if (selected) {
+                counters[5]++;
+                if (rows.size() < rowLimit && !allowanceReached[0]) {
+                  // The serialized row is escaped again inside the MCP frame, which doubles quoting.
+                  long bytes = 2L * JSON.toJson(row).length();
+                  if (retainedBytes[0] + bytes > NATIVE_JSON_BYTES - 4096) {
+                    allowanceReached[0] = true;
+                    if (unknowns.size() < 16) unknowns.add(
+                        "Kotlin metadata rows exceed the 4 MiB retained JSON allowance; remaining matching classes are counted but not listed. Narrow with package_prefix to list them.");
+                  } else {
+                    retainedBytes[0] += bytes;
+                    rows.add(row);
+                  }
+                }
+              }
+            }
+          }
+          return true;
+        });
+    boolean partial = counters[1] != counters[0] || !unknowns.isEmpty();
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("scope", "apk-root-dex-kotlin-metadata");
+    result.put("coverage", Map.of("status", partial ? "partial" : "complete",
+        "dex_entries", counters[0], "examined_dex_entries", counters[1],
+        "examined_classes", counters[2], "classes_with_metadata", counters[3],
+        "undecodable_classes", counters[4]));
+    result.put("versions", versions.entrySet().stream()
+        .map(entry -> Map.<String, Object>of("version", entry.getKey(), "classes", entry.getValue())).toList());
+    result.put("kinds", kinds.entrySet().stream()
+        .map(entry -> Map.<String, Object>of("kind", entry.getKey(), "classes", entry.getValue())).toList());
+    result.put("matching_classes", counters[5]);
+    result.put("classes", List.copyOf(rows));
+    List<Map<String, Object>> prefixes = new ArrayList<>();
+    for (int prefix = 0; prefix < KOTLIN_CLASS_PREFIXES.length; prefix++)
+      prefixes.add(Map.of("marker", KOTLIN_CLASS_PREFIXES[prefix][0],
+          "prefix", KOTLIN_CLASS_PREFIXES[prefix][1], "classes", prefixCounts[prefix]));
+    result.put("markers", Map.of("basis", "candidate-static-markers",
+        "kotlin_module_entries", kotlinModuleEntries(apk), "class_prefixes", List.copyOf(prefixes)));
+    result.put("unknowns", List.copyOf(unknowns));
+    return result;
   }
 
   /** Original archive identity, never a deobfuscated basename or name suffix. */
@@ -887,6 +1206,11 @@ class ReaJadxBridge {
         "metadata_scope", "parsed_members"));
     if (name.equals("rea_native_declarations"))
       return json(nativeDeclarations(Path.of(string(args, "path"))));
+    if (name.equals("rea_kotlin_metadata"))
+      return json(kotlinMetadata(Path.of(string(args, "path")),
+          args.has("class_name") ? string(args, "class_name") : null,
+          args.has("package_prefix") ? string(args, "package_prefix") : null,
+          integer(args, "limit", 100)));
     JadxSession current = session();
     if (name.equals("get_app_info")) return json(manifest(current).summary());
     if (name.equals("get_android_manifest"))
@@ -1007,7 +1331,7 @@ class ReaJadxBridge {
     SessionHolder holder = new SessionHolder(defaults);
     ServerCapabilities capabilities = new ServerCapabilities(
         new ServerCapabilities.Tools(null), null, null, null, null, null, null, Map.of());
-    Server server = new Server(new Implementation("rea-jadx-bridge", "10", null, null, null),
+    Server server = new Server(new Implementation("rea-jadx-bridge", "11", null, null, null),
         new ServerOptions(capabilities), "", ignored -> Unit.INSTANCE);
     SessionToolsKt.registerSessionTools(server, holder);
     ClassToolsKt.registerClassTools(server, holder);
@@ -1032,6 +1356,14 @@ class ReaJadxBridge {
             new kotlinx.serialization.json.JsonObject(Map.of("type",
                 kotlinx.serialization.json.JsonElementKt.JsonPrimitive("string"))))), List.of("path"), null),
         "Original ACC_NATIVE declarations from the admitted APK's standard root DEX members, without loading or decompiling the APK.");
+    kotlinx.serialization.json.JsonElement stringType = new kotlinx.serialization.json.JsonObject(Map.of("type",
+        kotlinx.serialization.json.JsonElementKt.JsonPrimitive("string")));
+    registerBridgeTool(server, bridge, "rea_kotlin_metadata",
+        new ToolSchema(null, new kotlinx.serialization.json.JsonObject(Map.of(
+            "path", stringType, "class_name", stringType, "package_prefix", stringType,
+            "limit", new kotlinx.serialization.json.JsonObject(Map.of("type",
+                kotlinx.serialization.json.JsonElementKt.JsonPrimitive("integer"))))), List.of("path"), null),
+        "Observed kotlin.Metadata annotations from the admitted APK's standard root DEX members: coverage, version and kind histograms, raw rows, and a decoded declaration for one exact class.");
     for (String name : List.of("get_app_info", "get_android_manifest")) {
       String description = name.equals("get_app_info")
           ? "Namespace-aware summary of the exact root AndroidManifest.xml resource."

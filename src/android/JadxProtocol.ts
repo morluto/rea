@@ -11,9 +11,13 @@ import {
   dexTypeSchema,
 } from "../domain/android/dexTypes.js";
 import { androidNativeDeclarationsSchema } from "../domain/android/androidNativeDeclarations.js";
+import { androidKotlinMetadataFactsSchema } from "../domain/android/androidKotlinMetadata.js";
 
 /** Native-only raw DEX facts authored before decompiler deduplication. */
 export const jadxNativeDeclarationsSchema = androidNativeDeclarationsSchema;
+
+/** Observed kotlin.Metadata annotations, authored from the same raw root DEX reader. */
+export const jadxKotlinMetadataSchema = androidKotlinMetadataFactsSchema;
 
 const count = z.int().nonnegative();
 /** Typed allocation failures authored before upstream erases the JVM exception. */

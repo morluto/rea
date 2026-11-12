@@ -15,6 +15,10 @@ import {
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { AndroidNativeDeclarations } from "../domain/android/androidNativeDeclarations.js";
+import type {
+  AndroidKotlinMetadataFacts,
+  AndroidKotlinMetadataSelection,
+} from "../domain/android/androidKotlinMetadata.js";
 import type { AndroidJniLibraries } from "./AndroidJniLibraries.js";
 import {
   ANDROID_JNI_REPORT_BYTES,
@@ -62,6 +66,10 @@ export interface JadxAnalysisContext {
     readonly inventory: () => Promise<AndroidNativeDeclarations>;
     readonly libraries: () => Promise<AndroidJniLibraries>;
   };
+  /** Raw kotlin.Metadata reader over the admitted APK; it does not load the decompiler. */
+  readonly kotlinMetadata?: (
+    selection: AndroidKotlinMetadataSelection,
+  ) => Promise<AndroidKotlinMetadataFacts>;
 }
 
 const observedPackageSchema =
@@ -144,7 +152,8 @@ type ClassRequest = Exclude<
     operation:
       | "inspect_android_package"
       | "search_android_classes"
-      | "inspect_android_jni_bindings";
+      | "inspect_android_jni_bindings"
+      | "inspect_android_kotlin_metadata";
   }
 >;
 type ReferenceSummary = Pick<ClassSummary, "full_name" | "methods"> & {
@@ -474,6 +483,26 @@ export const analyzeJadxRequest = async (
       );
     return androidResultSchemas.inspect_android_jni_bindings.parse({
       ...projected.value,
+      engine,
+    });
+  }
+  if (request.operation === "inspect_android_kotlin_metadata") {
+    if (context.kotlinMetadata === undefined)
+      throw new AnalysisOutputError(
+        request.operation,
+        "The raw Kotlin metadata reader is unavailable.",
+      );
+    if (
+      request.input.class_name !== undefined &&
+      request.input.package_prefix !== undefined
+    )
+      return inputFailure(
+        request,
+        "package_prefix",
+        "class_name selects one exact class; omit package_prefix.",
+      );
+    return androidResultSchemas.inspect_android_kotlin_metadata.parse({
+      ...(await context.kotlinMetadata(request.input)),
       engine,
     });
   }

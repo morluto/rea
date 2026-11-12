@@ -233,7 +233,8 @@ rea trace-android-references /path/Example.apk example.MainActivity --method-nam
 ```
 
 Equivalent MCP methods are `inspect_android_package`, `search_android_classes`,
-`inspect_android_class`, `inspect_android_method` and `trace_android_references`.
+`inspect_android_class`, `inspect_android_method` and `trace_android_references`;
+[Kotlin metadata](#inspect-kotlin-metadata) has its own method.
 Every request includes `path`. Class/method operations use `class_name`,
 `method_name` and optional `overload_index` as applicable. For example:
 
@@ -475,6 +476,90 @@ selection are cached within the immutable APK session. Changing ABI/library
 selection replaces the scan; class/method selection reuses it. Fresh analysis
 still validates current caller APK bytes. Idle/close releases the caches;
 retained Evidence remains historical and independently readable.
+
+## Inspect Kotlin metadata
+
+When advertised, `inspect_android_kotlin_metadata` reports which classes carry a
+`kotlin.Metadata` annotation and what Kotlin declared. It reads the annotations
+from standard root `classes*.dex` members with the same raw DEX reader as the JNI
+inventory, so it does not load the APK into the decompiler or execute it.
+
+```bash
+# Coverage, version and kind histograms, and the first 100 Kotlin classes.
+rea inspect-android-kotlin-metadata /path/Example.apk
+# List one package, up to 50 classes.
+rea inspect-android-kotlin-metadata /path/Example.apk --package-prefix com.example --limit 50
+# Decode one exact class.
+rea inspect-android-kotlin-metadata /path/Example.apk --class-name com.example.api.ApiService
+```
+
+The MCP arguments are `path` and optional `class_name`, `package_prefix`,
+`limit`, `detail` and `view`. `class_name` and `package_prefix` cannot be
+combined. Complete delivery (the default) lists at most 500 classes inline,
+`limit` defaulting to 100.
+
+### Page a large inventory
+
+Select `detail: "summary"` to retain the complete inventory and read it in
+pages. The analysis then lists as many classes as a 4 MiB retained allowance
+holds (`limit` defaults to that maximum), the tool returns a bounded summary with
+the whole-APK histograms and a 64-class preview, and the complete Evidence stays
+retained. If the allowance stops the listing early, `coverage.status` is
+`partial` and `unknowns` says so; every matching class is still counted in
+`matching_classes`, and narrowing with `package_prefix` lists the rest.
+
+```bash
+rea inspect-android-kotlin-metadata /path/Example.apk --detail summary --evidence_output kotlin.json
+rea inspect-analysis-view '{"source":{"kind":"retained-evidence","evidence_id":"ev_..."},"view":{"kind":"android-kotlin","collection":"classes","offset":500,"limit":500,"fields":["class_name","kind"]}}' --evidence-bundle kotlin.json
+```
+
+Use the summary's `parent_evidence_id` with `inspect_analysis_view` on the same
+connection, or the exported bundle offline; views never reopen the APK or rerun
+the DEX reader. A page accepts `offset`, `limit`, exact `indices` and
+`class_names`, a literal `package_prefix`, `kinds` and `fields`; filters combine
+with AND and an explicit empty array matches nothing. Every row carries its
+`row_index` in the retained inventory. Follow `coverage.next_offset` until
+`coverage.exhausted`. With `detail: "summary"` and `view` on the first call, the
+requested page is returned directly, as the other Android operations do; complete
+detail rejects a view.
+
+- `coverage` counts DEX members, examined classes and classes with metadata.
+  `versions` and `kinds` always cover every class; `matching_classes` counts the
+  selection, and `classes` lists at most `limit` of them.
+- `markers` are static candidates, reported with `basis:
+  "candidate-static-markers"`. `kotlin_module_entries` counts the root
+  `META-INF/*.kotlin_module` entries in the APK ZIP directory and lists up to 64
+  of their names; their contents are not read. `class_prefixes` counts examined
+  classes whose names start with `androidx.compose.`, `kotlinx.coroutines.` or
+  `kotlin.coroutines.`, whether or not they carry metadata. A count shows that
+  classes with those names are present in the root DEX members. It does not show
+  that the app uses Compose or coroutines at runtime, which library version it
+  has, or that nothing else is present, and shrinking can remove these entries
+  and rename classes. For example, an APK can contain thousands of
+  `androidx.compose.` classes and no `kotlin_module` entries.
+- Each listed class carries raw annotation facts: `metadata_kind` (`k`), `kind`
+  (class, file facade, synthetic class, multi-file facade or part, or unknown),
+  `metadata_version` (`mv`), `package_name` (`pn`), `extra_int` (`xi`),
+  `data_strings` (the number of `d1` strings) and `has_d2`. Absent elements are
+  omitted. If an element has the wrong type, the row has `decode: "undecodable"`
+  and a `decode_failure`, and the facts that could not be read are omitted.
+- Selecting `class_name` decodes that class with the bundled `kotlin-metadata-jvm`
+  reader in lenient mode. The `declaration` gives class kind, modality and
+  visibility, the data, value and fun-interface flags, and each function with
+  `is_suspend`, `is_inline`, `is_operator`, its nullable return and receiver
+  types, and its JVM `dex_descriptor`. Properties report `is_var`, `is_const` and
+  types. Functions and properties are limited to 200 each, with
+  `functions_total` and `properties_total` giving the full counts. Other listed
+  rows have `decode: "not_requested"`; the payload strings are not returned.
+- A function's `jvm_name` and `dex_descriptor` match the name and
+  `dex_descriptor` that `inspect_android_class` reports. A Kotlin
+  `suspend fun fetch(id: String): User?` appears there as
+  `fetch(Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;`.
+- Metadata is what the compiler recorded. Shrinking can remove or rewrite it, so
+  a class without metadata, or a selected class with no match, does not show that
+  it was not written in Kotlin. `undecodable_classes` counts malformed
+  annotations and a selected class that failed to decode, not classes whose
+  decoding was not requested.
 
 ## Interpret the result
 

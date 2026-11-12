@@ -24,6 +24,14 @@ This reads DEX/ELF bytes without loading the APK into the decompiler or executin
 target code. Runtime registration and loading remain unknown. See the
 [JNI guide](https://github.com/morluto/rea/blob/main/docs/guides/android/android-analysis.md#link-native-declarations-to-jni-candidates).
 
+To learn which classes are Kotlin and what they declared, use
+`inspect_android_kotlin_metadata`. The histograms cover every class; narrow the
+listing with `package_prefix` and `limit`, then select an exact `class_name` to
+decode its `suspend` functions, nullability and data/value/sealed flags with DEX
+prototypes that match `inspect_android_class`. Shrunk builds may have no
+metadata, and a class without it is not proof it was not Kotlin. See the
+[Kotlin metadata guide](https://github.com/morluto/rea/blob/main/docs/guides/android/android-analysis.md#inspect-kotlin-metadata).
+
 For an R8/ProGuard release build with its `mapping.txt`, pass the absolute
 `mapping_path` to `inspect_android_class` or `inspect_android_method`. Prefer
 `detail: "summary"` to receive normalized symbols or the selected body without
