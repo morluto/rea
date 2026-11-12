@@ -103,6 +103,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "dfuse",
   "esp-flash-image",
   "fit",
+  "ntfs-mft",
   "unknown",
 ] as const;
 
@@ -124,6 +125,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "uf2",
   "dfuse",
   "fit",
+  "ntfs-mft",
   "mach-o-universal",
   "mach-o",
   "elf",
@@ -171,6 +173,8 @@ export const artifactOccurrenceSchema = z.object({
   occurrence_id: occurrenceIdSchema,
   artifact_id: artifactIdSchema.nullable(),
   parent_occurrence_id: occurrenceIdSchema.nullable(),
+  /** Producer coverage of this occurrence's modeled relationships. Historical omission is unknown. */
+  relationship_coverage: z.enum(["complete", "unknown"]).exactOptional(),
   logical_path: boundedRelativePathSchema,
   entry_kind: z.enum(["file", "directory", "symlink", "slice", "metadata"]),
   artifact_kind: artifactKindSchema,
@@ -315,6 +319,12 @@ export type ArtifactEdge = z.infer<typeof artifactEdgeSchema>;
 
 /** Parsed artifact occurrence. */
 export type ArtifactOccurrence = z.infer<typeof artifactOccurrenceSchema>;
+
+/** Read relationship coverage without changing authenticated historical rows. */
+export const artifactOccurrenceRelationshipCoverage = (
+  occurrence: ArtifactOccurrence,
+) => occurrence.relationship_coverage ?? "unknown";
+
 export type IntegrityContradiction = z.infer<
   typeof integrityContradictionSchema
 >;

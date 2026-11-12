@@ -247,6 +247,7 @@ it("retains a completed hash when cancellation arrives after successful descript
     cleanupIncomplete: false,
     diagnostics: { completed_hash: { sha256: target.sha256 } },
   });
+  expect(result.error.cause).toBe(reason);
   expect(trace).not.toHaveBeenCalled();
 });
 
@@ -274,5 +275,6 @@ it("does not adopt an arbitrary thrown tracer cleanup marker", async () => {
     cause: marker,
     cleanupIncomplete: false,
   });
+  expect(result.error.cause).toBe(marker);
   expect(result.error.cleanupResources).toEqual([]);
 });

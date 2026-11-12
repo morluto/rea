@@ -85,9 +85,10 @@ describe("artifact inventory snapshot", () => {
           kind: "artifact-inventory",
           inventory: {
             manifest: { occurrence_count: 2 },
-            occurrences: expect.arrayContaining([
-              expect.objectContaining({ logical_path: "observed.txt" }),
-            ]),
+            occurrences: [
+              { logical_path: "." },
+              { logical_path: "observed.txt" },
+            ],
           },
         },
       },

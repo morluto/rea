@@ -135,7 +135,7 @@ it("reports a failed package list download with apt's own message", async () => 
 });
 
 it("downloads the package lists again when an update exits 0 with no list", async () => {
-  const { client } = await fakes({
+  const { client, rea } = await fakes({
     env: { FAKE_APT_EMPTY: "1", FAKE_APT_IGNORE_ERROR_MODE: "1" },
   });
   const id = await startBuildComputer(client, BUILD_REQUEST);
@@ -148,12 +148,13 @@ it("downloads the package lists again when an update exits 0 with no list", asyn
     expect(value.package_lists_error, `start ${String(attempt)}`).toContain(
       "without a package list",
     );
+    expect(await rea.notes("apt.jsonl")).toHaveLength(attempt);
     await callOk(client, "stop_build_capture", { computer_id: id });
   }
 });
 
 it("retries an empty apt update that Error-Mode turns into a failure", async () => {
-  const { client } = await fakes({ env: { FAKE_APT_EMPTY: "1" } });
+  const { client, rea } = await fakes({ env: { FAKE_APT_EMPTY: "1" } });
   const id = await startBuildComputer(client, BUILD_REQUEST);
   for (const attempt of [1, 2]) {
     const value = toolContract("start_build_capture").outputSchema.parse(
@@ -164,12 +165,13 @@ it("retries an empty apt update that Error-Mode turns into a failure", async () 
     expect(value.package_lists_error, `start ${String(attempt)}`).toContain(
       "exited 100",
     );
+    expect(await rea.notes("apt.jsonl")).toHaveLength(attempt);
     await callOk(client, "stop_build_capture", { computer_id: id });
   }
 });
 
 it("downloads the package lists again on the next start after an update that fetched some and failed", async () => {
-  const { client } = await fakes({
+  const { client, rea } = await fakes({
     env: { FAKE_APT_EXIT: "100", FAKE_APT_PARTIAL: "1" },
   });
   const id = await startBuildComputer(client, BUILD_REQUEST);
@@ -182,6 +184,7 @@ it("downloads the package lists again on the next start after an update that fet
     expect(value.package_lists_error, `start ${String(attempt)}`).toContain(
       "exited 100",
     );
+    expect(await rea.notes("apt.jsonl")).toHaveLength(attempt);
     await callOk(client, "stop_build_capture", { computer_id: id });
   }
 });
@@ -237,7 +240,7 @@ it("cancels a capture's start when the computer closes while it waits for the op
   expect(parseMcpToolError(await started).error.code).toBe("cancelled");
 }, 60_000);
 
-it("returns the bundle an export saved when the computer closes while it commits", async () => {
+it("reports cancellation and the published bundle when the computer closes during commit", async () => {
   const { client } = await fakes();
   const id = await startBuildComputer(client, BUILD_REQUEST);
   await captureSeedAndEnd(client, id);
@@ -252,10 +255,13 @@ it("returns the bundle an export saved when the computer closes while it commits
     tasks: [{ task: BUILD_TASK }],
     directory,
   });
-  expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
-  expect(exported.structuredContent).toMatchObject({
-    computer_id: id,
-    directory,
+  expect(parseMcpToolError(exported).error).toMatchObject({
+    code: "cancelled",
+    details: {
+      diagnostics: {
+        published_bundle: { directory, files: expect.any(Number) },
+      },
+    },
   });
   expect((await readdir(directory)).length).toBeGreaterThan(0);
   await closed;

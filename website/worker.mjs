@@ -46,12 +46,25 @@ function advertiseMarkdown(response, path) {
   return response;
 }
 
+/**
+ * Answer with HTML when the Markdown route is absent.
+ *
+ * Reevaluate HTML only when probing removed conditional or range headers.
+ * Otherwise the existing response already answers the caller's request.
+ */
+const htmlFallback = async (original, request, probeChanged, env) => {
+  if (!probeChanged) return original;
+  await original.body?.cancel();
+  return env.ASSETS.fetch(request);
+};
+
 export default {
   async fetch(request, env) {
     const useMarkdown = prefersMarkdown(request.headers.get("Accept"));
     // HTML validators describe a different representation. Probe the route first,
     // then let the asset service evaluate validators/ranges against the Markdown.
     const probe = new Request(request);
+    let probeChanged = false;
     if (useMarkdown) {
       for (const name of [
         "If-None-Match",
@@ -60,8 +73,10 @@ export default {
         "If-Unmodified-Since",
         "If-Range",
         "Range",
-      ])
+      ]) {
+        probeChanged ||= probe.headers.has(name);
         probe.headers.delete(name);
+      }
     }
     const original = await env.ASSETS.fetch(probe);
     if (
@@ -85,7 +100,7 @@ export default {
     );
     if (!candidate.ok && ![304, 412, 416].includes(candidate.status)) {
       await candidate.body?.cancel();
-      return original;
+      return htmlFallback(original, request, probeChanged, env);
     }
     const response = new Response(
       useMarkdown ? candidate.body : original.body,

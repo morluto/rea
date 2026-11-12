@@ -1,3 +1,4 @@
+import { isPortableBundleName } from "../../domain/portableBundleName.js";
 import { describe, expect, it } from "vitest";
 
 import { timedCaptureEvidence } from "../../../tests/fixtures/analysisView.js";
@@ -15,7 +16,6 @@ import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
   BUNDLE_BASE_IMAGE,
   bundleDockerfile,
-  isPortableBundleName,
   ENVIRONMENT_EXPORT_OPERATION,
   planEnvironmentBundle,
   registryPackageSource,

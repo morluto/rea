@@ -195,12 +195,14 @@ struct Resource {
 struct File : Resource {
   std::wstring requestedPath;
   std::wstring path;
+  std::wstring filesystem;
   std::vector<Handle> handles;
   explicit File(std::wstring path) : Resource(Kind::File), requestedPath(path), path(std::move(path)) {}
   HANDLE get() const { return handles.back().get(); }
 };
 struct Runtime : Resource {
   std::wstring path;
+  std::wstring filesystem;
   std::vector<Handle> parents;
   Handle directory;
   std::vector<Handle> immutableFiles;
@@ -251,7 +253,8 @@ Resource& resource(napi_env env, napi_value value, Kind kind);
 std::unique_ptr<File> openFile(const std::wstring& path, DWORD access = GENERIC_READ,
                              bool directory = false,
                              DWORD finalSharing = FILE_SHARE_READ);
-napi_value identity(napi_env env, HANDLE handle, const std::wstring& path);
+napi_value identity(napi_env env, HANDLE handle, const std::wstring& path,
+                    const std::wstring& filesystem);
 void createRuntime(const std::wstring& parent, const std::wstring& prefix,
                    std::unique_ptr<Runtime>& owner);
 void cleanupFailedRuntime(std::unique_ptr<Runtime>& owner, Failure& primary);

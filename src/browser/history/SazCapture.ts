@@ -22,6 +22,7 @@ type SessionMemberKind =
   (typeof SESSION_MEMBER_KINDS)[keyof typeof SESSION_MEMBER_KINDS];
 interface SessionMember {
   readonly entry: ArtifactEntry;
+  readonly sourcePath: string;
   readonly kind: SessionMemberKind;
 }
 
@@ -41,6 +42,7 @@ export const decodeSazCapture = async (
     const paths = new Set<string>();
     let declaredBytes = 0;
     for await (const entry of reader.entries()) {
+      const sourcePath = entry.sourcePath ?? entry.path;
       if (paths.has(entry.path))
         throw new CaptureFormatError(
           "format",
@@ -68,9 +70,13 @@ export const decodeSazCapture = async (
           `SAZ expanded members exceed max_input_bytes (${String(captureBudgets().inputBytes)} bytes); raise that per-call allowance and retry.`,
         );
       inventory.push({
-        path: entry.path,
+        path: sourcePath,
+        ...(entry.sourcePath === undefined ? {} : { logical_path: entry.path }),
         kind: entry.kind,
         bytes: entry.declaredSize,
+        ...(entry.limitations.length === 0
+          ? {}
+          : { limitations: [...entry.limitations] }),
       });
       if (entry.kind !== "file") continue;
       const match = /^raw\/(\d+)_(.+)$/.exec(entry.path);
@@ -82,6 +88,7 @@ export const decodeSazCapture = async (
         const group = groups.get(match[1]) ?? [];
         group.push({
           entry,
+          sourcePath,
           kind: SESSION_MEMBER_KINDS[
             match[2] as keyof typeof SESSION_MEMBER_KINDS
           ],
@@ -110,7 +117,8 @@ export const decodeSazCapture = async (
         grpc: null,
       };
       const limitations: string[] = [];
-      for (const { entry, kind } of entries) {
+      for (const { entry, sourcePath, kind } of entries) {
+        limitations.push(...entry.limitations);
         const stream = await reader.open(entry);
         const chunks: Buffer[] = [];
         let length = 0;
@@ -142,17 +150,17 @@ export const decodeSazCapture = async (
             );
           else
             source[kind] = {
-              member: entry.path,
+              member: sourcePath,
               ...decodeSazHttp(bytes, kind === "request"),
             };
         } else if (kind === "metadata")
           source.metadata = {
-            member: entry.path,
+            member: sourcePath,
             document: decodeSazMetadata(bytes),
           };
         else
           source[kind] = {
-            member: entry.path,
+            member: sourcePath,
             messages: bytes,
           };
       }
@@ -160,7 +168,7 @@ export const decodeSazCapture = async (
         ordinal: records.length,
         location: {
           kind: "archive-members",
-          members: entries.map(({ entry }) => entry.path),
+          members: entries.map(({ sourcePath }) => sourcePath),
         },
         ...projectSazRecord(source, sensitiveValues),
         limitations,

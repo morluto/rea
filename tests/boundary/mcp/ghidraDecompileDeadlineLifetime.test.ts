@@ -72,7 +72,8 @@ const enforcedLimit = {
   minimum: 1,
   maximum: 2_147_483,
   agent_editable: true,
-  rea_restart_required: false,
+  update_mode: "runtime",
+  pending_restart: false,
 };
 /** A finished invocation can act only through a new invocation's launch value. */
 const invocationLimit = {

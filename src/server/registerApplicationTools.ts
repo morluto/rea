@@ -1,6 +1,7 @@
 import { registerPlaywrightTraceTool } from "./registerApplicationTools/playwrightTrace.js";
 import { registerOtlpTraceTool } from "./registerApplicationTools/otlpTrace.js";
 import { registerApiContractTool } from "./registerApplicationTools/apiContract.js";
+import { registerNtfsJournalTool } from "./registerApplicationTools/ntfsJournal.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import { registerTraceFeatureTool } from "./registerApplicationTools/traceFeature.js";
@@ -29,6 +30,7 @@ export const registerApplicationTools = (
   registerCompareApplicationVersionsTool(server, options);
   registerCompareEndpointsTool(server, options);
   registerApiContractTool(server, options);
+  registerNtfsJournalTool(server, options);
   registerPlaywrightTraceTool(server, options);
   registerOtlpTraceTool(server, options);
   registerCompareSourceToBundleTool(server, options);

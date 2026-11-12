@@ -194,5 +194,6 @@ it("reports cancellation that arrives during the final close without retaining t
     _tag: "AnalysisCancelledError",
     cleanupIncomplete: false,
   });
+  expect(result.error.cause).toBe(reason);
   expectRetainedReport(result.error);
 });

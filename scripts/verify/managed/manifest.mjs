@@ -1,5 +1,10 @@
 import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { readFile } from "node:fs/promises";
+import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import {
+  readManagedSnapshot,
+  verifyManagedSourceIdentity,
+} from "../../../dist/dotnet/ManagedSnapshot.js";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 
 import { parseBinaryTarget } from "../../../dist/application/BinaryTargetResolver.js";
 import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifactInspector.js";
@@ -14,22 +19,49 @@ import {
   parseManagedAppManifest,
 } from "./manifest-parser.mjs";
 
+// Preserve fs.readFile admission: Node internal kIoMaxLength is 2 GiB minus one.
+// https://nodejs.org/api/errors.html#err_fs_file_too_large
+const READ_FILE_MAX_BYTES = 0x7fff_ffff;
+
 export async function verifyManagedAppManifest(rawManifest, manifestPath) {
+  const resources = new ArtifactResourceScope();
+  return withVerifierCleanup(
+    () =>
+      resources.run(() =>
+        verifyManifestSnapshot(rawManifest, manifestPath, resources),
+      ),
+    [() => resources.close()],
+  );
+}
+
+async function verifyManifestSnapshot(rawManifest, manifestPath, resources) {
   const manifest = parseManagedAppManifest(rawManifest);
   const targetPath = isAbsolute(manifest.target.path)
     ? manifest.target.path
     : resolve(dirname(manifestPath), manifest.target.path);
-  const parsedTarget = await parseBinaryTarget(targetPath);
-  ensure(
-    parsedTarget.ok,
-    `target ${targetPath} could not be parsed as a binary target`,
-  );
+  const parsedTarget = await parseBinaryTarget(targetPath, { resources });
+  if (!parsedTarget.ok) throw parsedTarget.error;
   const target = parsedTarget.value;
   ensure(
     target.sha256 === manifest.target.sha256,
     `target sha256 mismatch: expected ${manifest.target.sha256}, observed ${target.sha256}`,
   );
-  const bytes = await readFile(targetPath);
+  const snapshot = await readManagedSnapshot(
+    target.path,
+    "verify_managed_conformance",
+    {
+      expectedSha256: target.sha256,
+      maxBytes: READ_FILE_MAX_BYTES,
+      resources,
+    },
+  );
+  const identity = verifyManagedSourceIdentity(
+    target,
+    snapshot,
+    "verify_managed_conformance",
+  );
+  if (!identity.ok) throw identity.error;
+  const bytes = snapshot.bytes;
   const artifact = inspectManagedArtifactBytes(bytes, target);
   verifyManifestTarget(manifest, artifact);
   const methodVerification = verifyManifestMethods(manifest, bytes, target);

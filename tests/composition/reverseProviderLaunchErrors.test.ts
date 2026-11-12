@@ -20,7 +20,11 @@ import {
   type WindowsNativeAuthority,
 } from "../../src/windows/WindowsNativeLoader.js";
 import { WindowsOwnedProcess } from "../../src/windows/WindowsOwnedProcess.js";
-import { AnalysisCapabilityUnavailableError } from "../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisTimeoutError,
+} from "../../src/domain/analysisErrorCore.js";
+import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
   createArtifact,
@@ -429,10 +433,7 @@ it("preserves Darwin process ownership inspection error with cleanup state witho
         "REA_RIZIN_COMMAND does not need to change",
       );
       expect(result.error.cleanupIncomplete).toBe(true);
-      expect(result.error.cleanup).toMatchObject({
-        reason: expect.stringContaining("staging cleanup failed"),
-        resources: ["/tmp/helper"],
-      });
+      expect(result.error.cleanup).toEqual(cleanupError.cleanup);
     }
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {
@@ -480,18 +481,15 @@ it("preserves command deadline timeout when macOS helper preparation aborts and 
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error._tag).toBe("AnalysisTimeoutError");
+      expect(primaryAnalysisError(result.error)).toBeInstanceOf(
+        AnalysisTimeoutError,
+      );
       const projected = projectAnalysisError(result.error);
       expect(projected.code).toBe("cleanup_incomplete");
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(projected.remediation.action).toContain("command_timeout_ms");
       expect(projected.remediation.action).not.toContain("REA_OBJDUMP_COMMAND");
-      expect(result.error.cleanup).toMatchObject({
-        reason: expect.stringContaining(
-          "helper staging directory cleanup failed",
-        ),
-        resources: ["/tmp/helper"],
-      });
+      expect(result.error.cleanup).toEqual(cleanupError.cleanup);
     }
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {
@@ -690,7 +688,7 @@ it("preserves provider-launch ENOENT when configured command path contains ps su
 });
 
 it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
-  "preserves Linux process ownership admission failure in baseline capture (%s) without blaming objdump command",
+  "preserves host process ownership admission failure in baseline capture (%s) without blaming objdump command",
   async (code) => {
     const { directory } = await createArtifact();
     const command = resolve(directory, "configured-objdump");
@@ -727,7 +725,7 @@ it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
         );
         expect(projected.message).toContain(code);
         expect(projected.remediation.action).toContain(
-          processOwnershipAdmissionRecovery(code, "linux"),
+          processOwnershipAdmissionRecovery(code, process.platform),
         );
         expect(projected.remediation.action).toContain(
           "REA_OBJDUMP_COMMAND does not need to change",
@@ -742,7 +740,7 @@ it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
   },
 );
 
-it("preserves Linux process ownership admission failure in baseline capture without blaming rizin command", async () => {
+it("preserves host process ownership admission failure in baseline capture without blaming rizin command", async () => {
   const { directory, path } = await createArtifact();
   const command = resolve(directory, "configured-rizin");
   const captureSpy = vi
@@ -776,7 +774,7 @@ it("preserves Linux process ownership admission failure in baseline capture with
       expect(projected.remediation.action).toContain(
         processOwnershipAdmissionRecovery(
           "identity_snapshot_unavailable",
-          "linux",
+          process.platform,
         ),
       );
       expect(projected.remediation.action).toContain(

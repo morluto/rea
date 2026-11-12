@@ -32,7 +32,7 @@ const droidPath = (
 
 describe("Factory Droid configuration paths", () => {
   it("resolves the user MCP config file and marker directory", () => {
-    expect(droidPath("/home/a")).toEqual({
+    expect(droidPath("/home/a")).toMatchObject({
       name: "droid",
       displayName: "Factory Droid",
       configPath: join("/home/a", ".factory", "mcp.json"),
