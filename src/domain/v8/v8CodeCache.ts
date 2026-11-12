@@ -40,6 +40,15 @@ export const V8_CODE_CACHE_COMPILE_FUNCTION_BIT = 0x20000000;
  * `0x1fffffff`, so this bit and the function bit are both outside it.
  */
 export const V8_CODE_CACHE_MODULE_BIT = 0x40000000;
+/**
+ * Bit 31 of the source-length word marks a module cache written by V8 before 13.4.
+ *
+ * Those builds compute the word as `source_length | kModuleFlagMask` with
+ * `kModuleFlagMask = 1 << 31` (`SerializedCodeData::SourceHash`); 13.4 moved the flag to
+ * bit 30. Measured on Electron 30.1.2 (V8 12.4.254.20): a 23-unit module source reads
+ * `0x80000017`. Node 22 runs V8 12.4, so its module caches carry this bit.
+ */
+export const V8_CODE_CACHE_LEGACY_MODULE_BIT = 0x80000000;
 /** Source length occupies the low bits of that word. */
 export const V8_CODE_CACHE_SOURCE_LENGTH_MASK = 0x1fffffff;
 
