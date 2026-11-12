@@ -106,7 +106,7 @@ const headerSchema = z.strictObject({
   /** High half of the magic, the only part stable across V8 builds. */
   magic_build_stable: uint,
   /** Every header word, in container order. */
-  fields: z.array(headerFieldSchema).length(8),
+  fields: z.array(headerFieldSchema).min(7).max(8),
   /** Bytes this reader treats as header before the payload begins. */
   header_bytes: uint,
   /** Source length in UTF-16 code units, as recorded by the producer, if determinable. */
@@ -169,11 +169,15 @@ export const v8CodeCacheSchema = z
     limitations: z.array(z.string().min(1)).min(1),
   })
   .superRefine((report, context) => {
-    if (report.header.header_bytes !== V8_CODE_CACHE_HEADER_BYTES)
+    if (
+      report.header.header_bytes !== 28 &&
+      report.header.header_bytes !== V8_CODE_CACHE_HEADER_BYTES
+    )
       context.addIssue({
         code: "custom",
         path: ["header", "header_bytes"],
-        message: "This reader only accepts its pinned container header size.",
+        message:
+          "This reader only accepts its pinned container header sizes (28-byte 32-bit or 32-byte 64-bit).",
       });
     if (report.header.magic_build_stable !== V8_CODE_CACHE_MAGIC_HIGH)
       context.addIssue({
