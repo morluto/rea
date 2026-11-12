@@ -1,6 +1,9 @@
 import * as t from "@babel/types";
 
-import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
+import {
+  BUILTIN_RESOURCE_METHODS,
+  BUILTIN_RESOURCE_SPECIFIERS,
+} from "./javascriptBuiltinResourceMethods.js";
 import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
 import {
   semanticRequireOrigin,
@@ -11,6 +14,7 @@ import {
 } from "./javascriptSemanticRequireOrigin.js";
 import type {
   JavaScriptModuleOrigin,
+  JavaScriptSemanticResourceOperation,
   JavaScriptSemanticProjectedResultBinding,
 } from "./javascriptSemanticIr.js";
 import {
@@ -1231,3 +1235,37 @@ export const dataEffectMemberCallee = (
   t.isMemberExpression(node.callee) || t.isOptionalMemberExpression(node.callee)
     ? node.callee
     : null;
+
+export interface BuiltinResourceAcquisition {
+  readonly builtinAuthority?: "candidate";
+  readonly specifier: string;
+  readonly method: JavaScriptSemanticResourceOperation["method"];
+}
+
+/** Shared resource identity for mutation-path retention and acquisition facts. */
+export const builtinResourceAcquisition = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): BuiltinResourceAcquisition | null => {
+  for (const specifier of BUILTIN_RESOURCE_SPECIFIERS) {
+    const identity = builtinDataEffectIdentity(callee, state, [specifier]);
+    const method =
+      identity?.path.length === 1 ? (identity.path[0] ?? null) : null;
+    if (
+      method !== null &&
+      (
+        BUILTIN_RESOURCE_METHODS[
+          specifier as keyof typeof BUILTIN_RESOURCE_METHODS
+        ] as readonly string[]
+      ).includes(method)
+    )
+      return {
+        specifier,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
+        method: method as JavaScriptSemanticResourceOperation["method"],
+      };
+  }
+  return null;
+};

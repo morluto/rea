@@ -1,10 +1,10 @@
 import * as t from "@babel/types";
-
 import {
-  BUILTIN_RESOURCE_SPECIFIERS,
-  BUILTIN_RESOURCE_METHODS,
-  BUILTIN_RESOURCE_RELEASE_METHODS,
-} from "./javascriptBuiltinResourceMethods.js";
+  semanticPropertyPathKeyMatches,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
+
+import { BUILTIN_RESOURCE_RELEASE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import type {
   JavaScriptSemanticCallable,
   JavaScriptSemanticResourceOperation,
@@ -21,14 +21,18 @@ import {
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
-  builtinDataEffectIdentity,
+  builtinResourceAcquisition,
+  type BuiltinResourceAcquisition,
   dataEffectMemberCallee,
   outerDataEffectBinding,
   traverseDataEffects,
@@ -337,7 +341,9 @@ const rejectsOpenModeLiteral = (
 };
 
 /** `fs.open`, `fs.openSync` and `fs/promises.open` take the flag in slot 1. */
-const openFlagInFirstArgument = (reference: AcquisitionReference): boolean =>
+const openFlagInFirstArgument = (
+  reference: BuiltinResourceAcquisition,
+): boolean =>
   reference.method === "open" || reference.method === "openSync"
     ? reference.specifier === "fs" || reference.specifier === "fs/promises"
     : false;
@@ -349,7 +355,7 @@ const collectAcquisitions = (
   const output: ResourceCandidate[] = [];
   traverseDataEffects(program, context, (node) => {
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
-    const reference = acquisitionMethod(node.callee, context.state);
+    const reference = builtinResourceAcquisition(node.callee, context.state);
     if (reference === null) return;
     if (openFlagInFirstArgument(reference)) {
       if (rejectsOpenFlagLiteral(node, context)) return;
@@ -450,6 +456,7 @@ const collectReleases = (
         : {}),
       resolution:
         !opaqueReceiver &&
+        !releaseMethodMayHaveChanged(binding, method, node, context.state) &&
         linked.length === 1 &&
         (binding.kind !== "parameter" ||
           semanticBindingAtRead(binding, member.object, context.state)
@@ -460,6 +467,33 @@ const collectReleases = (
     });
   });
   return output;
+};
+
+/** Receiver identity alone cannot prove a release method survived mutation. */
+const releaseMethodMayHaveChanged = (
+  binding: JavaScriptSemanticBindingState,
+  method: string,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const prototype = (key: JavaScriptSemanticPropertyPath[number]) =>
+    semanticPropertyPathKeyMatches(key, "__proto__");
+  return (
+    binding.memberWrites.some(
+      ({ path, node }) =>
+        (path.length === 0 ||
+          (path.length === 1 &&
+            semanticPropertyPathKeyMatches(path[0]!, method)) ||
+          prototype(path[0]!)) &&
+        semanticEffectTiming(read, node, state) !== "after",
+    ) ||
+    binding.escapedPaths.some(
+      ({ path, node }) =>
+        // Passing the function itself cannot replace its native [[Call]].
+        (path.length === 0 || prototype(path[0]!)) &&
+        semanticEffectTiming(read, node, state) !== "after",
+    )
+  );
 };
 
 /** Unwrap only direct awaits; a standalone await does not write its operand. */
@@ -537,38 +571,6 @@ const immutableAcquisition = (
   resolution: "complete",
 });
 
-interface AcquisitionReference {
-  readonly builtinAuthority?: "candidate";
-  readonly specifier: string;
-  readonly method: JavaScriptSemanticResourceOperation["method"];
-}
-
-const acquisitionMethod = (
-  callee: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): AcquisitionReference | null => {
-  for (const specifier of BUILTIN_RESOURCE_SPECIFIERS) {
-    const identity = builtinDataEffectIdentity(callee, state, [specifier]);
-    const method =
-      identity?.path.length === 1 ? (identity.path[0] ?? null) : null;
-    if (
-      method !== null &&
-      (
-        BUILTIN_RESOURCE_METHODS[
-          specifier as keyof typeof BUILTIN_RESOURCE_METHODS
-        ] as readonly string[]
-      ).includes(method)
-    )
-      return {
-        specifier,
-        ...(identity?.builtinAuthority === undefined
-          ? {}
-          : { builtinAuthority: identity.builtinAuthority }),
-        method: method as JavaScriptSemanticResourceOperation["method"],
-      };
-  }
-  return null;
-};
 const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
 
@@ -832,5 +834,5 @@ const rejectsTlsProtocolVersionLiteral = (
 
 /** Only `net`/`tls` sockets take a port in argument 0. */
 const socketPortInFirstArgument = (
-  candidate: Pick<AcquisitionReference, "specifier">,
+  candidate: Pick<BuiltinResourceAcquisition, "specifier">,
 ): boolean => candidate.specifier === "net" || candidate.specifier === "tls";

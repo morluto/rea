@@ -1,3 +1,5 @@
+import { builtinResourceAcquisition } from "./javascriptSemanticDataEffectHelpers.js";
+import { BUILTIN_RESOURCE_RELEASE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import {
@@ -2305,6 +2307,22 @@ const observableMutationPaths = (
         const selected = pendingExpressions.pop();
         if (selected === undefined) break;
         const { expression, observer } = selected;
+        if (
+          t.isCallExpression(expression) ||
+          t.isOptionalCallExpression(expression)
+        ) {
+          const resource = builtinResourceAcquisition(expression.callee, state);
+          const methods: Readonly<Record<string, readonly string[]>> =
+            BUILTIN_RESOURCE_RELEASE_METHODS;
+          // Resource-returning built-ins have observable receiver slots even
+          // though there is no source-owned object allocation for their result.
+          if (
+            resource !== null &&
+            (methods[`${resource.specifier}:${resource.method}`]?.length ?? 0) >
+              0
+          )
+            (observer.origins ??= new Set()).add("opaque");
+        }
         if (t.isFunction(expression))
           // Keep own-member writes precise without replacing the existing
           // links to references handed to a function's eventual caller.
