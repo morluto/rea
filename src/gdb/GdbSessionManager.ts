@@ -240,7 +240,7 @@ const gdbMiGroupsListSpan = (
             cursor += 1;
             digits += 1;
           }
-        } else if (!/^[abfnrtv\\'"?]$/u.test(escaped)) return undefined;
+        } else if (!/^[abefnrtv\\'"?]$/u.test(escaped)) return undefined;
       } else if (mi.charCodeAt(cursor) < 0x20) return undefined;
     }
     return undefined;
@@ -2418,6 +2418,8 @@ export const miStringField = (
     const simple: Readonly<Record<string, number>> = {
       a: 7,
       b: 8,
+      // GDB's ui_file::printchar writes ESC (0x1b) as \e.
+      e: 27,
       f: 12,
       n: 10,
       r: 13,

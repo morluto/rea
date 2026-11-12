@@ -76,6 +76,11 @@ it.each([
     1,
   ],
   [
+    "thread name with GDB's ESC escape",
+    '1^done,groups=[{id="i1",pid="123",threads=[{id="1",target-id="Thread 123",name="\\e[31mworker",state="stopped"}]}]',
+    1,
+  ],
+  [
     "unquoted nested groups field",
     '1^done,groups=[{id="i1",children=[{id="i2",groups=[{id="i3"}]}]}]',
     undefined,
@@ -129,6 +134,7 @@ it.each([
   ['1^done,inferior_tty_terminal="line\\nnext"', "line\nnext"],
   ['1^done,inferior_tty_terminal="\\x41\\101"', "AA"],
   ['1^done,inferior_tty_terminal="\\7"', "\u0007"],
+  ['1^done,inferior_tty_terminal="\\e[0m"', "\u001b[0m"],
   ['1^done,inferior_tty_terminal="emoji 🚀"', "emoji 🚀"],
   ['1^done,inferior_tty_terminal="\\xFF"', undefined],
   ['1^done,inferior_tty_terminal="\\x"', undefined],
