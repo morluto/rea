@@ -975,8 +975,14 @@ reports `busy` at stage `launch`; `analysis_activity` describes bridge requests
 and can remain idle until the socket is ready. Cleanup work reports `busy` at
 stage `connection`.
 
-If macOS denies Apple Events, allow the application that starts REA under
-**System Settings → Privacy & Security → Automation**, then retry. REA releases
+If macOS denies Apple Events, the denial names two different causes and the
+launcher's stderr does not separate them. If the application that starts REA is
+listed under **System Settings → Privacy & Security → Automation**, allow it
+there and reopen the target. A hardened-runtime application without
+`com.apple.security.automation.apple-events` is never prompted and never
+listed in that pane; for it, start REA from a client macOS can authorize, or add
+that entitlement to the responsible application, then reopen the target.
+Repeating the call without either change reproduces the denial. REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,
