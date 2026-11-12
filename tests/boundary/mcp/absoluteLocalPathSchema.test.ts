@@ -87,6 +87,7 @@ const standaloneAnalysisCases = (
       name: "decode_signal_recording",
       input: { decoders: "uart:rx=RX:baudrate=9600" },
     },
+    { name: "inspect_nuget_package", input: {} },
   ].map(({ name, input }) => ({
     name,
     field: "path",

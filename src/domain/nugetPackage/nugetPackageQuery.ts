@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import {
   NUGET_PACKAGE_MAX_ENTRIES,
   NUGET_PACKAGE_MAX_FILE_BYTES,
 } from "./nugetPackage.js";
 
 export const inspectNugetPackageInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute path to one local NuGet package (.nupkg) file",
   ),
   format: z.literal("nupkg").default("nupkg"),
