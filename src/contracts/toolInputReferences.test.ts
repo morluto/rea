@@ -886,4 +886,52 @@ describe("root union default presentation", () => {
       ).toBe(false);
     },
   );
+
+  it.each(["draft-2020-12", "draft-07"] as const)(
+    "keeps a nested default a reference inside its resource targets in %s",
+    (target) => {
+      const schema = z.union([
+        z.strictObject({ before: z.string(), after: z.string() }),
+        z.strictObject({
+          before_scenario: z.string(),
+          after_scenario: z.string(),
+          normalization: z
+            .object({ rules: z.array(z.string()).optional() })
+            .default({ rules: [] }),
+        }),
+      ]);
+      const canonical = z.toJSONSchema(schema, { io: "input", target }) as {
+        anyOf: Record<string, unknown>[];
+      };
+      // A nested resource keeps the group, so the union still flattens. Its
+      // sibling reference points into the default the flattening would drop.
+      canonical.anyOf[1] = {
+        ...canonical.anyOf[1],
+        properties: {
+          ...(canonical.anyOf[1].properties as Record<string, unknown>),
+          normalization: {
+            $id: "https://example.test/normalization",
+            ...(canonical.anyOf[1].properties as Record<string, unknown>)
+              .normalization,
+            properties: {
+              ...((canonical.anyOf[1].properties as Record<string, any>)
+                .normalization.properties as Record<string, unknown>),
+              alias: { $ref: "#/default/rules" },
+            },
+          },
+        },
+      };
+      const advertised = presentInputJsonSchema(
+        canonical,
+        (property) => property,
+      );
+      expect(advertised).not.toHaveProperty("anyOf");
+      const ajv =
+        target === "draft-2020-12"
+          ? new Ajv2020({ strict: false })
+          : new Ajv({ strict: false });
+      const validate = ajv.compile(advertised);
+      expect(validate({ before: "first", after: "second" })).toBe(true);
+    },
+  );
 });

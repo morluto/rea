@@ -180,36 +180,77 @@ const isBooleanSchema = (schema: unknown): boolean =>
   isObject(schema) &&
   (schema.type === "boolean" || isBooleanLiteralSchema(schema));
 
+const isObjectKeyword = (key: string) => schemaMaps.has(key);
+const isArrayKeyword = (key: string) => schemaArrays.has(key);
+const isChildKeyword = (key: string) => schemaChildren.has(key);
+
 /**
  * Remove every instance default below a schema, not only the one this keyword
- * carries. A default nested in a property belongs to the group that declares
- * it; outside that group a client that fills nested defaults would send an
- * object a strict sibling refuses.
+ * carries, keeping the entries at `kept`. A nested default belongs to the group
+ * that declares it: outside that group a client that fills it would send an
+ * object a strict sibling refuses. A default a reference still targets stays
+ * caller data; dropping it would leave that reference dangling.
  */
-const omitNestedDefaults = (schema: unknown): unknown => {
-  if (Array.isArray(schema)) return schema.map(omitNestedDefaults);
+const omitNestedDefaults = (
+  schema: unknown,
+  kept: ReadonlySet<string> = new Set(),
+  path: readonly string[] = [],
+): unknown => {
+  if (Array.isArray(schema))
+    return schema.map((child, index) =>
+      omitNestedDefaults(child, kept, [...path, String(index)]),
+    );
   if (!isObject(schema)) return schema;
   return Object.fromEntries(
-    Object.entries(schema)
-      .filter(([key]) => key !== "default")
-      .map(([key, value]) => [
-        key,
-        schemaMaps.has(key) && isObject(value)
-          ? Object.fromEntries(
-              Object.entries(value).map(([name, child]) => [
-                name,
-                omitNestedDefaults(child),
-              ]),
-            )
-          : schemaArrays.has(key) && Array.isArray(value)
-            ? value.map(omitNestedDefaults)
-            : schemaChildren.has(key)
-              ? Array.isArray(value)
-                ? value.map(omitNestedDefaults)
-                : omitNestedDefaults(value)
-              : value,
-      ]),
+    Object.entries(schema).flatMap(([key, value]) => {
+      const childPath = [...path, key];
+      if (kept.has(JSON.stringify(childPath))) return [[key, value]];
+      if (key === "default") return [];
+      return [
+        [
+          key,
+          isObjectKeyword(key) && isObject(value)
+            ? Object.fromEntries(
+                Object.entries(value).map(([name, child]) => [
+                  name,
+                  omitNestedDefaults(child, kept, [...childPath, name]),
+                ]),
+              )
+            : isArrayKeyword(key) && Array.isArray(value)
+              ? value.map((child, index) =>
+                  omitNestedDefaults(child, kept, [
+                    ...childPath,
+                    String(index),
+                  ]),
+                )
+              : isChildKeyword(key)
+                ? Array.isArray(value)
+                  ? value.map((child, index) =>
+                      omitNestedDefaults(child, kept, [
+                        ...childPath,
+                        String(index),
+                      ]),
+                    )
+                  : omitNestedDefaults(value, kept, childPath)
+                : value,
+        ],
+      ];
+    }),
   );
+};
+
+/** Every path into a `default` that a reference inside `schema` targets. */
+const referencedDefaultPaths = (
+  schema: Readonly<Record<string, unknown>>,
+): ReadonlySet<string> => {
+  const kept = new Set<string>();
+  for (const { target } of new JsonSchemaReferences(schema).references()) {
+    if (target.kind !== "target") continue;
+    const defaultAt = target.path.indexOf("default");
+    if (defaultAt < 0) continue;
+    kept.add(JSON.stringify(target.path.slice(0, defaultAt + 1)));
+  }
+  return kept;
 };
 
 const preserveSharedDefault = (
@@ -658,7 +699,7 @@ const flattenRootObjectUnion = (
               Object.entries(schema).filter(([key]) => key !== "default"),
             )
           : schema
-        : omitNestedDefaults(schema);
+        : omitNestedDefaults(schema, referencedDefaultPaths(schema));
       if (
         !withoutDefaults.some((known) =>
           isDeepStrictEqual(known, withoutDefault),
