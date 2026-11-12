@@ -154,6 +154,16 @@ describe("Delphi form object tree", () => {
     );
     expect(root.flags).toEqual(["ffInherited", "ffInline"]);
   });
+
+  it("stops on a reserved filer flag bit instead of dropping it", () => {
+    // Only bits 0-2 are defined by TFilerFlag. A crafted or newer prefix with
+    // bit 3 set must not be reported as a fully decoded component.
+    const root = rootOf(
+      form(component("TForm1", "Form1", [], { prefix: [0xf8] })),
+    );
+    expect(root.class_name).toBeNull();
+    expect(root.unknown?.reason).toContain("filer flag bit 0x08");
+  });
 });
 
 describe("Delphi form property values", () => {
@@ -581,7 +591,8 @@ describe("Delphi form truncation and limits", () => {
 
   it("charges every retained item against the decode budget", () => {
     // An empty collection item costs two input bytes, so a small payload can
-    // otherwise produce unbounded retained objects.
+    // otherwise produce unbounded retained objects. The item that exceeds the
+    // value budget stops the collection without dropping earlier items.
     const items = Array.from({ length: 40000 }, () => bytes(1, 0));
     const payload = form(
       component("TForm1", "Form1", [
@@ -591,7 +602,9 @@ describe("Delphi form truncation and limits", () => {
     const root = rootOf(payload);
     expect(root.unknown?.reason).toContain("budget exhausted");
     const column = propertyOf(root, "Columns").value;
-    expect(column.kind).toBe("unknown");
+    expect(column.kind).toBe("collection");
+    if (column.kind !== "collection") throw new Error("Expected a collection");
+    expect(column.items).toHaveLength(32767);
   });
 
   it("reports a truncated stream as an unknown on the object", () => {
@@ -858,6 +871,30 @@ describe("Delphi form partial collections", () => {
     expect(property.value.items).toHaveLength(1);
     expect(property.value.items[0]?.properties[0]?.name.text).toBe("Width");
     expect(root.unknown?.reason).toContain("Payload ended");
+  });
+
+  it("keeps an opened item when the property budget expires", () => {
+    // 8,191 scalar properties plus the collection fill the form property
+    // budget; the collection item's own property then exceeds it after the
+    // item has been observed.
+    const properties = Array.from({ length: 8191 }, (_, index) =>
+      property_(`P${String(index)}`, int8(0)),
+    );
+    const item = Buffer.concat([bytes(1), property_("X", int8(0)), bytes(0)]);
+    const payload = form(
+      component("TForm1", "Form1", [
+        ...properties,
+        property_("Columns", Buffer.concat([bytes(14), item, bytes(0)])),
+      ]),
+    );
+    const root = rootOf(payload);
+    expect(root.unknown?.reason).toContain("budget exhausted");
+    const property = propertyOf(root, "Columns");
+    expect(property.value.kind).toBe("collection");
+    if (property.value.kind !== "collection")
+      throw new Error("Expected a collection");
+    expect(property.value.items).toHaveLength(1);
+    expect(property.value.items[0]?.properties).toEqual([]);
   });
 });
 

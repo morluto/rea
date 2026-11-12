@@ -599,7 +599,14 @@ function readValue(
         if (nextItem === 0) break;
         // An empty collection item costs two input bytes, so charge every item
         // before it is retained rather than measuring the whole form afterwards.
-        spend(budget, "values");
+        // A budget failure is still a partial collection: keep the items decoded
+        // before it instead of collapsing the property to one unknown.
+        try {
+          spend(budget, "values");
+        } catch (error) {
+          if (!(error instanceof StreamEnd)) throw error;
+          stop(error.message);
+        }
         const itemAt = stream.position;
         let position: string | null = null;
         try {
@@ -640,7 +647,19 @@ function readValue(
           }
           if (nextProperty === 0) break;
           const propertyAt = stream.position;
-          spend(budget, "properties");
+          try {
+            spend(budget, "properties");
+          } catch (error) {
+            if (!(error instanceof StreamEnd)) throw error;
+            // The item was opened; keep it with the properties decoded so far
+            // before the property budget ends the collection.
+            items.push({
+              position,
+              properties,
+              location: range(itemAt, stream.position),
+            });
+            stop(error.message);
+          }
           let name: DelphiFormText;
           try {
             name = readShortString(stream, codePage, budget);
@@ -770,6 +789,12 @@ function readObject(
       stream.byte();
       for (const [bit, name] of FILER_FLAGS.entries())
         if ((prefix & (1 << bit)) !== 0) flags.push(name);
+      // Only bits 0-2 are defined by TFilerFlag. Dropping a reserved low bit
+      // would present a malformed or newer stream as fully decoded.
+      if ((prefix & 0x08) !== 0)
+        throw new StreamEnd(
+          "Unsupported filer flag bit 0x08 in the component prefix.",
+        );
       if ((prefix & 0x02) !== 0) {
         const width = stream.byte();
         if (width !== 2 && width !== 3 && width !== 4)
