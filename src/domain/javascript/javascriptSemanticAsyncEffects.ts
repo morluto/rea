@@ -376,6 +376,36 @@ const schedulesWithNonFunctionCallback = (
   return t.isUnaryExpression(value);
 };
 
+// Node converts timeout and interval delays to numbers before creating a handle.
+// BigInt and Symbol values throw there. A spread can shift the delay slot, and
+// shadowed or replaced constructors cannot establish the argument's type.
+const schedulesWithInvalidDelay = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    node.arguments.slice(0, 2).some((argument) => t.isSpreadElement(argument))
+  )
+    return false;
+  const argument = node.arguments[1];
+  if (argument === undefined) return false;
+  const value = unwrapJavaScriptExpression(argument).node;
+  if (t.isBigIntLiteral(value)) return true;
+  if (
+    t.isUnaryExpression(value) &&
+    ["+", "-", "~"].includes(value.operator) &&
+    t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node)
+  )
+    return true;
+  return (
+    t.isCallExpression(value) &&
+    t.isIdentifier(value.callee) &&
+    ["BigInt", "Symbol"].includes(value.callee.name) &&
+    isUnmodifiedGlobalReference(value.callee, state, value.callee.name) &&
+    !semanticOpaqueNameMayHaveChanged(value.callee, state)
+  );
+};
+
 const collectTimer = (input: TimerCollectionInput): void => {
   const { node, ownerCallableId, state, output, ancestors } = input;
   const identity = timerMethod(node.callee, state);
@@ -384,7 +414,9 @@ const collectTimer = (input: TimerCollectionInput): void => {
   if (
     TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method) &&
     nodeBuiltinTimerMethod(node.callee, state) !== null &&
-    schedulesWithNonFunctionCallback(node, input.state)
+    (schedulesWithNonFunctionCallback(node, state) ||
+      ((method === "setTimeout" || method === "setInterval") &&
+        schedulesWithInvalidDelay(node, state)))
   )
     return;
   const kind = TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method)
