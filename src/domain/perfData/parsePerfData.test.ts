@@ -230,6 +230,23 @@ describe("parsePerfData rejection diagnostics", () => {
     ]);
   });
 
+  it("rejects ids that point into a section the header already owns", () => {
+    // The ids extent here lands on the attribute section, so decoding it would
+    // publish attribute bytes as identifiers. An entry may share one ids extent
+    // with another entry, but not a range another section owns.
+    const bytes = buildPerfRecording();
+    bytes.writeBigUInt64LE(
+      BigInt(PERF_HEADER_BYTES),
+      PERF_HEADER_BYTES + PERF_ATTR_BYTES,
+    );
+    const archive = parsed(bytes);
+    expect(archive.events[0]?.ids).toEqual([]);
+    expect(archive.summary.identifiers_present).toBe(false);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "invalid-ids-section", ordinal: 0 }),
+    ]);
+  });
+
   it("marks the inventory incomplete when an ids section cannot be located", () => {
     const bytes = buildPerfRecording();
     // An offset above the safe-integer range is unreadable, not absent: the

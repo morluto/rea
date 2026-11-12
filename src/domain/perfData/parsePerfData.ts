@@ -82,6 +82,23 @@ const digest = (prefix: string, ...parts: (string | number)[]) =>
 const withinFile = (fileBytes: number, offset: number, size: number): boolean =>
   offset + size <= fileBytes;
 
+/**
+ * Whether [offset, offset + size) overlaps any byte another section owns. An
+ * empty extent owns nothing, so it can be shared without conflict.
+ */
+const overlapsOwned = (
+  offset: number,
+  size: number,
+  owners: readonly Section[],
+): boolean =>
+  size > 0 &&
+  owners.some(
+    (owner) =>
+      owner.size > 0 &&
+      offset < owner.offset + owner.size &&
+      owner.offset < offset + size,
+  );
+
 const diagnose = (
   state: DecodeState,
   ordinal: number | null,
@@ -191,6 +208,9 @@ const readEvents = (
   state: DecodeState,
   section: Section,
   stride: number,
+  // Ranges the header already owns. An ids extent inside one of them would
+  // decode those bytes as identifiers, so it is rejected instead.
+  ownedSections: readonly Section[],
 ): void => {
   const end = section.offset + section.size;
   let cursor = section.offset;
@@ -263,7 +283,17 @@ const readEvents = (
     } else {
       // The writer places the id arrays outside the attribute entries, so an
       // offset inside the entry is not required; containment in the file is.
-      if (ids.size % 8 !== 0 || !ids.within_file) {
+      if (overlapsOwned(ids.offset, ids.size, ownedSections)) {
+        // Entries may share one ids extent, which stays legitimate, but bytes
+        // the header already assigned to the header, attributes, data or event
+        // types are not an identifier array.
+        diagnose(
+          state,
+          ordinal,
+          "invalid-ids-section",
+          `The entry at ${cursor} declares ids at ${ids.offset} for ${ids.size} bytes, which overlaps a section the header already owns.`,
+        );
+      } else if (ids.size % 8 !== 0 || !ids.within_file) {
         diagnose(
           state,
           ordinal,
@@ -303,7 +333,14 @@ const readEvents = (
           state.identified.push(id);
         }
       }
-      if (ids.size % 8 !== 0 || !ids.within_file)
+      // An extent that was rejected rather than decoded leaves this group's
+      // identifiers unknown, the same as one that is not a whole number of
+      // identifiers, so the summary cannot report a complete inventory.
+      if (
+        ids.size % 8 !== 0 ||
+        !ids.within_file ||
+        overlapsOwned(ids.offset, ids.size, ownedSections)
+      )
         state.identifiersPresent = false;
       else state.identifiers += idsList.length;
     }
@@ -643,7 +680,16 @@ export const parsePerfData = (
         "The attribute section is empty; the recording states no events.",
       );
     else if (strideFitsEntry)
-      readEvents(bytes, read, state, attributeSection, stride);
+      readEvents(bytes, read, state, attributeSection, stride, [
+        {
+          offset: 0,
+          size: headerBytes ?? HEADER_BYTES_WITHOUT_FEATURES,
+          within_file: true,
+        },
+        attributeSection,
+        dataSection,
+        ...(eventTypes === null ? [] : [eventTypes]),
+      ]);
   }
   if (state.diagnosticsSuppressed)
     state.diagnostics.push({
