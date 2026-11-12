@@ -1273,6 +1273,12 @@ it("rejects malformed and repeated certificate extensions", () => {
       ),
     ),
   ).toThrow(/repeats extension 2\.5\.29\.14/u);
+
+  // An explicitly empty Extensions sequence ([3] wrapping an empty SEQUENCE)
+  // is malformed even though the field itself is present.
+  expect(() => parseCertificate(certificate())).toThrow(
+    /TBSCertificate extensions are explicitly empty/u,
+  );
   expect(
     parseCertificate(
       certificate(

@@ -1099,8 +1099,9 @@ describe("export inventory review regressions", () => {
     "rejects nonzero reserved fields in the ELF%s null symbol",
     (bits) => {
       for (const little of [true, false]) {
-        // ELF32/64 symbol records have no padding: every field in entry zero
-        // is reserved as zero by the ABI, independently of host endianness.
+        // ELF32/64 symbol records have no padding. Entry zero's st_name (first
+        // u32) may be nonzero on real shared libraries and is never read;
+        // st_info, st_other, st_shndx, st_value, st_size are reserved as zero.
         const width = bits === 64 ? 24 : 16;
         for (let byte = 0; byte < width; byte++) {
           const bytes = elfExportImage({
@@ -1109,9 +1110,18 @@ describe("export inventory review regressions", () => {
             symbols: [{ name: "kept_export" }],
           });
           bytes[0x100 + byte] = 1;
-          expect(() => parseNativeExports(bytes, artifact)).toThrow(
-            BinaryFormatFailure,
-          );
+          if (byte < 4) {
+            // st_name: nonzero is accepted and never dereferenced.
+            expect(parseNativeExports(bytes, artifact).exports).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({ name: "kept_export" }),
+              ]),
+            );
+          } else {
+            expect(() => parseNativeExports(bytes, artifact)).toThrow(
+              BinaryFormatFailure,
+            );
+          }
         }
         expect(
           parse(
@@ -1123,6 +1133,30 @@ describe("export inventory review regressions", () => {
           ).exports.map(({ name }) => name),
         ).toEqual(["kept_export"]);
       }
+    },
+  );
+
+  it.each([
+    [32, true, 0x956],
+    [32, true, 0xffffffff],
+    [32, false, 0x956],
+    [64, true, 0x956],
+    [64, true, 0xffffffff],
+    [64, false, 0x956],
+  ] as const)(
+    "accepts ELF%s null symbol with nonzero st_name %#x",
+    (bits, little, stName) => {
+      const bytes = elfExportImage({
+        bits,
+        little,
+        symbols: [{ name: "kept_export" }],
+      });
+      // st_name is the first u32 of the null entry.
+      const view = new DataView(bytes.buffer, bytes.byteOffset);
+      view.setUint32(0x100, stName, little);
+      const result = parseNativeExports(bytes, artifact);
+      expect(result.format).toBe("elf");
+      expect(result.exports.map(({ name }) => name)).toEqual(["kept_export"]);
     },
   );
 
