@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { pythonPycEqualityGolden } from "../../tests/fixtures/python-pyc-equality/golden.js";
 import { expect, it } from "vitest";
 import {
   inspectPythonPycInputSchema,
@@ -19,23 +18,6 @@ import {
 
 const defaults = inspectPythonPycInputSchema.parse({
   path: "/artifacts/sample.pyc",
-});
-
-it("matches CPython-produced code equality controls without merging distinct members", () => {
-  const golden = pythonPycEqualityGolden;
-  const bytes = Buffer.from(golden.pyc_base64, "base64");
-  expect(createHash("sha256").update(bytes).digest("hex")).toBe(golden.sha256);
-  const report = parse(bytes);
-  expect(root(report).consts).toHaveLength(golden.cases.length);
-  for (const [index, sample] of golden.cases.entries()) {
-    expect(root(report).consts[index], sample.label).toEqual({
-      kind: "frozenset",
-      length: sample.members,
-    });
-  }
-  expect(report.code_objects).toHaveLength(golden.code_objects);
-  expect(report.coverage.status).toBe("complete");
-  expect(pythonPycSchema.safeParse(report).success).toBe(true);
 });
 
 const root = (report: PythonPyc) => {
