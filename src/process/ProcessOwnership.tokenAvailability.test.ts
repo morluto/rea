@@ -7,7 +7,8 @@ const source = vi.hoisted(() => ({
   runId: undefined as string | undefined,
   reads: [] as number[][],
 }));
-vi.mock("./ExecFileOutput.js", () => ({
+vi.mock("./ExecFileOutput.js", async (original) => ({
+  ...(await original<typeof import("./ExecFileOutput.js")>()),
   execFileOutput: async () => ({
     stdout: source.present ? "100 1 100 501 S fixture" : "",
   }),

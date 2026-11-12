@@ -392,6 +392,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           environment,
           signal,
           deadline,
+          resources: this.#files.resources,
           retainCleanup: (supervisor) => {
             this.#pendingCleanup.set(ownedRoot.path, {
               supervisor,

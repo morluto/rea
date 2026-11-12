@@ -445,6 +445,7 @@ it("pages every retained dossier collection and the native API record", () => {
     page("swift_string_literals", {
       ...original,
       swift_string_literals: [literal],
+      swift_string_literal_omissions: [],
     }),
   ).toMatchObject({ item: [literal], coverage: { total: 1 } });
   expect(page("swift_string_literals")).toMatchObject({

@@ -4,8 +4,10 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
+  projectProcessCliInputCleanupError,
 } from "../../../src/application/process/ProcessCli.js";
 import * as scenarioPreparation from "../../../src/application/process/ProcessScenarioPreparation.js";
+import * as captureCapability from "../../../src/process/capture/ProcessCaptureCapability.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
@@ -18,6 +20,7 @@ import {
 } from "../../../src/contracts/errorSchemas.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { err } from "../../../src/domain/result.js";
 import * as jsonFiles from "../../../src/application/JsonFiles.js";
 
@@ -25,6 +28,25 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 import { failFileReadAfterAbort } from "../../support/failFileReadAfterAbort.js";
 import { JsonInputPhysicalReadFailure } from "../../../src/application/JsonInputFile.js";
+
+const inputCleanupFailure = (cause: unknown): unknown => {
+  expect(cause).toBeInstanceOf(ProviderAdapterError);
+  const error = cause as ProviderAdapterError;
+  const output = analysisCliErrorEnvelopeSchema.parse(
+    projectProcessCliInputCleanupError(error),
+  );
+  expect(output).toMatchObject({ details: { cleanup: "incomplete" } });
+  return error.cause;
+};
+
+const mockDryRunOwnershipAdmission = (): void => {
+  const probe = vi
+    .spyOn(captureCapability, "processCaptureOwnershipUnavailableReason")
+    .mockReturnValue(undefined);
+  onTestFinished(() => {
+    probe.mockRestore();
+  });
+};
 
 describe("process CLI error projection", () => {
   it.each([
@@ -423,6 +445,7 @@ describe("process CLI final cleanup cancellation", () => {
   ] as const)(
     "preserves the $kind outcome through final input cleanup (cancelled: $cancel)",
     async ({ kind, cancel }) => {
+      if (kind === "plan") mockDryRunOwnershipAdmission();
       const root = await createTestTempDirectory(
         "rea-process-cli-final-close-",
       );
@@ -556,7 +579,7 @@ describe("process CLI file cleanup", () => {
             await captureProcessScenarioFile(path, process.env, signal);
           else await compareProcessEvidenceFiles(path, path, undefined, signal);
         } catch (cause: unknown) {
-          failure = cause;
+          failure = inputCleanupFailure(cause);
         }
         expect(failure).toBeInstanceOf(ArtifactReaderFailure);
         if (!(failure instanceof ArtifactReaderFailure))
@@ -645,6 +668,7 @@ it.each([
 ])(
   "keeps the typed plan failure through final input close (fails: $cleanupFails; cancelled: $cancel)",
   async ({ cleanupFails, cancel }) => {
+    mockDryRunOwnershipAdmission();
     const root = await createTestTempDirectory(
       "rea-process-cli-primary-close-",
     );
@@ -697,7 +721,7 @@ it.each([
           controller.signal,
         );
       } catch (cause) {
-        failure = cause;
+        failure = inputCleanupFailure(cause);
       }
       expect(primary).toMatchObject({ _tag: "AnalysisInputError" });
       if (!cleanupFails) {
@@ -740,6 +764,7 @@ it.each([
 it.each(["plan", "invalid"] as const)(
   "retains %s and cancellation while final descriptor cleanup fails",
   async (kind) => {
+    mockDryRunOwnershipAdmission();
     const root = await createTestTempDirectory("rea-process-mixed-final-");
     const path = join(root, "scenario.json");
     await writeFile(
@@ -774,7 +799,7 @@ it.each(["plan", "invalid"] as const)(
       try {
         await captureProcessScenarioFile(path, process.env, controller.signal);
       } catch (cause) {
-        thrown = cause;
+        thrown = inputCleanupFailure(cause);
       }
       expect(thrown).toBeInstanceOf(ArtifactReaderFailure);
       if (!(thrown instanceof ArtifactReaderFailure))
@@ -853,7 +878,7 @@ it("retains both prior process and input cleanup authority", async () => {
     try {
       await captureProcessScenarioFile(path);
     } catch (cause) {
-      failure = cause;
+      failure = inputCleanupFailure(cause);
     }
     expect(failure).toBeInstanceOf(ArtifactReaderFailure);
     if (!(failure instanceof ArtifactReaderFailure))
@@ -872,6 +897,7 @@ it("retains both prior process and input cleanup authority", async () => {
 });
 
 it("retains prior error and late cancellation with successful cleanup", async () => {
+  mockDryRunOwnershipAdmission();
   const root = await createTestTempDirectory("rea-process-cli-late-success-");
   const path = join(root, "scenario.json");
   await writeFile(
@@ -970,7 +996,7 @@ it("retains independent process and input owners after mixed cleanup failure", a
     try {
       await captureProcessScenarioFile(path);
     } catch (cause) {
-      failure = cause;
+      failure = inputCleanupFailure(cause);
     }
     expect(failure).toBeInstanceOf(ArtifactReaderFailure);
     if (!(failure instanceof ArtifactReaderFailure))
@@ -1157,7 +1183,7 @@ it("keeps unknown primary cleanup coverage when late cancellation wraps mixed ow
     try {
       await captureProcessScenarioFile(path, process.env, controller.signal);
     } catch (cause) {
-      failure = cause;
+      failure = inputCleanupFailure(cause);
     }
     expect(failure).toBeInstanceOf(ArtifactReaderFailure);
     if (!(failure instanceof ArtifactReaderFailure))

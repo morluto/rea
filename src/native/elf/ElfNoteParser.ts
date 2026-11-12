@@ -450,6 +450,13 @@ const decodeCoreFile = (
     totalPathBytes += nullIdx - strPos;
     strPos = nullIdx + 1;
   }
+  if (
+    cachedScan === undefined &&
+    descriptor.subarray(strPos).some((byte) => byte !== 0)
+  ) {
+    text.scans.set(scanKey, -1);
+    return null;
+  }
   text.scans.set(scanKey, count);
 
   const pathBytes = totalPathBytes * 3;

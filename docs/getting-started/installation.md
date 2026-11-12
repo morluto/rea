@@ -683,6 +683,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Codex              | `codex`          |
 | Cursor             | `cursor`         |
 | CodeBuddy          | `codebuddy`      |
+| Cline CLI          | `cline`          |
 | Gemini CLI         | `gemini_cli`     |
 | Windsurf           | `windsurf`       |
 | Devin              | `devin`          |
@@ -1198,7 +1199,7 @@ require Hopper; Windows P0 remains read-only.
 Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs,
 [DOS MZ executables](../providers/ghidra-dos.md), plus explicitly
 selected [raw NMOS 6502 images](../providers/raw-binary.md#nmos-6502) with a caller-supplied
-entry at file offset 0, on fixed local NTFS volumes. Other raw CPU families remain
+entry at file offset 0, on fixed local NTFS/ReFS volumes. Other raw CPU families remain
 unsupported on Windows.
 The npm package bundles native Job Object ownership, protected private runtime
 DACLs, and handle-based path admission; no separate addon installation is needed.
@@ -1926,7 +1927,7 @@ terminal, use the package runner at the version the plugin pins:
 <!-- x-release-please-start-version -->
 
 ```bash
-npx -y rea-agents@6.8.0 doctor --provider ghidra --json
+npx -y rea-agents@6.9.0 doctor --provider ghidra --json
 ```
 
 <!-- x-release-please-end -->
@@ -1959,7 +1960,7 @@ therefore runs the published package instead of a local build:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@6.8.0", "mcp"]
+      "args": ["-y", "rea-agents@6.9.0", "mcp"]
     }
   }
 }
