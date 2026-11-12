@@ -1,3 +1,4 @@
+import { BOUNDED_PRODUCER_LIMITS } from "../domain/producerResourceLimits.js";
 import { selectArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import {
   pcapCaptureHostSupported,
@@ -16,16 +17,13 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import type { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResources.js";
-import {
-  BOUNDED_PRODUCER_LIMITS,
-  prlimitCeilingArguments,
-} from "../process/LinuxResourceLimits.js";
+import { prlimitCeilingArguments } from "../process/LinuxResourceLimits.js";
 import type { runPcapCommand } from "./PcapCommand.js";
 import type { ArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 
 const PRLIMIT_COMMAND_ENV = "REA_TSHARK_PRLIMIT_COMMAND";
 /** Repair for an unusable selected capture limiter; readiness and admission share it. */
-export const PCAP_LIMITER_REMEDIATION = `Check that ${PRLIMIT_COMMAND_ENV} (default /usr/bin/prlimit) names an absolute, executable util-linux prlimit.`;
+const PCAP_LIMITER_REMEDIATION = `Check that ${PRLIMIT_COMMAND_ENV} (default /usr/bin/prlimit) names an absolute, executable util-linux prlimit.`;
 /** Capture CPU ceiling, in seconds. */
 const PCAP_CPU_SECONDS = 300;
 

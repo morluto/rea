@@ -42,7 +42,13 @@ import {
 import { KunaProjectCache } from "./KunaProjectCache.js";
 import { kunaCapabilities } from "./KunaProviderCapabilities.js";
 import { KUNA_PROVIDER_IDENTITY } from "./KunaProviderMetadata.js";
-import { KUNA_COMMAND_REMEDIATION, KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import {
+  KUNA_COMMAND_REMEDIATION,
+  KUNA_PROVIDER_ID,
+  KUNA_RELEASE_VERIFICATION_EXPLANATION,
+  KUNA_UNVERIFIED_VERSION_REMEDIATION,
+  KUNA_VERIFIED_VERSION,
+} from "./KunaRelease.js";
 import { KunaRunSlots } from "./KunaRunSlots.js";
 import { KunaSessionClient } from "./KunaSessionClient.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
@@ -258,6 +264,18 @@ export class KunaProvider implements AnalysisProviderCandidate {
     }
     const { value } = installation;
     return ok({
+      releaseVerification: {
+        status: value.verified
+          ? ("verified" as const)
+          : ("unverified" as const),
+        basis: "reported_version" as const,
+        reported_version: value.version,
+        verified_version: KUNA_VERIFIED_VERSION,
+        explanation: KUNA_RELEASE_VERIFICATION_EXPLANATION,
+        remediation: value.verified
+          ? null
+          : KUNA_UNVERIFIED_VERSION_REMEDIATION,
+      },
       profile: createAnalysisProfile(
         { ...KUNA_PROVIDER_IDENTITY, version: value.version },
         {
@@ -272,8 +290,14 @@ export class KunaProvider implements AnalysisProviderCandidate {
             schema_version: 4,
             bodies: false,
             edge_kind: "call",
+            discovery: "body-classification-v1",
           },
-          xrefs: { command: "xrefs", direction: "to", exact_address: true },
+          xrefs: {
+            command: "xrefs",
+            direction: "to",
+            exact_address: true,
+            stored_pointers: true,
+          },
           strings: {
             command: "strings",
             encoding: "all",
@@ -281,6 +305,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
             termination: "any",
             xrefs: false,
           },
+          value_flow: "explicitly-unavailable-v1",
           cache_policy: "live",
         },
       ),

@@ -1,3 +1,6 @@
+import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "./playwrightTraceToolContracts.js";
+import { API_CONTRACT_TOOL_CONTRACTS } from "./apiContractToolContracts.js";
+import { NTFS_JOURNAL_TOOL_CONTRACTS } from "./ntfsJournalToolContracts.js";
 import { applicationInventoryProjectionInputSchema } from "../domain/mobileApplicationGraphProjection.js";
 import { z } from "zod";
 import {
@@ -5,7 +8,11 @@ import {
   featureTraceViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  endpointComparisonSummaryViewResultSchema,
+  endpointComparisonPageViewResultSchema,
 } from "../domain/analysisView/analysisView.js";
+import { staticObservedEndpointComparisonSchema } from "../domain/javascript/staticObservedEndpointSchemas.js";
+import { STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE } from "./javascript/staticObservedEndpointExample.js";
 import { applicationVersionComparisonResultSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { applicationFeatureTraceResultSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { javaScriptSemanticTraceResultSchema } from "../domain/javascript/javascriptSemanticTraceSchemas.js";
@@ -13,6 +20,7 @@ import { javaScriptExportShapeComparisonResultSchema } from "../domain/javascrip
 import { sourceToBundleComparisonResultSchema } from "../domain/javascript/sourceToBundleComparisonSchemas.js";
 import {
   compareApplicationVersionsRequestSchema,
+  compareStaticObservedEndpointsRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
   compareSourceToBundleRequestSchema,
   traceApplicationFeatureToolRequestSchema,
@@ -87,11 +95,14 @@ const retained = (evidence_id: string) => ({
 
 /** Provider-neutral graph workflow contracts shared by MCP and CLI adapters. */
 export const APPLICATION_TOOL_CONTRACTS = [
+  ...API_CONTRACT_TOOL_CONTRACTS,
+  ...NTFS_JOURNAL_TOOL_CONTRACTS,
+  ...PLAYWRIGHT_TRACE_TOOL_CONTRACTS,
   {
     name: "search_guidance",
     ...toolContractMetadata("search_guidance"),
     description:
-      "Search only the installed REA workflow guidance. Every non-generic query word must occur in a section; sections holding every word in their own text rank before parents whose words are spread across subsections. Returns ranked sections, bounded pages, and locators for read_guidance_section. No target or provider is accessed.",
+      "Find installed REA workflow guidance by query words. Returns ranked sections, pages and locators for read_guidance_section; every non-generic word must match, with direct section matches ranked before matches spread across children. Reads documentation only, without accessing a target or provider.",
     kind: "application",
     inputSchema: searchGuidanceInputSchema,
     outputSchema: searchGuidanceOutputSchema,
@@ -184,7 +195,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "compare_application_versions",
     ...toolContractMetadata("compare_application_versions"),
     description:
-      "Compare two authenticated JavaScript Application Graph versions supplied as inline Evidence or exact same-session retained references. Uses unique-only exact digest, module source digest, source-map identity, structural fingerprint, and non-module semantic-key tiers. Reports added, removed, changed, ambiguous, and unknown entities plus the complete matching changed_from graph without fuzzy or module-ordinal pairing.",
+      "Compare two authenticated JavaScript Application Graph versions, supplied inline or by exact retained reference. Returns added, removed, changed, ambiguous and unknown entities with the full changed_from graph. Pairing uses unique exact digest, source-map, structural or semantic-key tiers; no fuzzy or module-ordinal pairing.",
     kind: "application",
     inputSchema: compareApplicationVersionsRequestSchema,
     outputSchema: comparisonOutputSchema,
@@ -208,10 +219,31 @@ export const APPLICATION_TOOL_CONTRACTS = [
     ],
   },
   {
+    name: "compare_static_and_observed_endpoints",
+    ...toolContractMetadata("compare_static_and_observed_endpoints"),
+    description:
+      "Compare static JavaScript endpoints with requests recorded in HAR Evidence, supplied inline or retained; acquires no files, targets or URLs. Returns exact or inferred template pairings and explicit unknowns; root-relative targets need a declared origin. Not-observed requires an exercised origin, all parent records retained and none excluded; it never means hidden, unused or inaccessible. Default summary retains the full comparison for inspect_analysis_view kind endpoint-comparison (static-endpoints, observed-groups, matches); a selected view overrides detail, and detail complete returns all facts. Copies no query strings, fragments, headers or bodies. Sensitive-declaration parents are refused; the 96 MiB representation budget covers source admission and derived state.",
+    kind: "application",
+    inputSchema: compareStaticObservedEndpointsRequestSchema,
+    outputSchema: evidenceResultOf(
+      z.union([
+        staticObservedEndpointComparisonSchema,
+        endpointComparisonSummaryViewResultSchema,
+        endpointComparisonPageViewResultSchema,
+      ]),
+    ),
+    examples: [
+      {
+        title: "Compare retained static endpoints with an offline HAR",
+        input: STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE,
+      },
+    ],
+  },
+  {
     name: "compare_source_to_bundle",
     ...toolContractMetadata("compare_source_to_bundle"),
     description:
-      "Compare a cryptographically committed HistoricalSourceGraph supplied inline or as reference {kind:file,path:absolute-local-JSON-path} with authenticated JavaScript Application Graph Evidence supplied inline or by exact same-session retained reference. Omitted view preserves the full report. Optional view {kind:summary} or {kind:source-to-bundle,collection:mappings|candidates,source_paths?,mapping_ids?,statuses?,fields?,offset?,limit?} retains the full parent and returns selected facts. Query it again using inspect_analysis_view. Empty filters select none; identity fields always remain. Candidate signals are opt-in; classifications use the full comparison. Page coverage never upgrades source coverage. Uses explicit exact-digest, source-map path, current-path, suffix, and basename signals with stable weights. Classifies unchanged, modified, removed, split, merged, duplicated, and unknown; incomplete coverage and ambiguous weak signals never become absence or forced matches.",
+      'Map committed historical source to an authenticated JavaScript Application Graph. Supply HistoricalSourceGraph inline or as {kind:"file",path:"/absolute/source.json"}, and graph Evidence inline or retained. Uses explicit digest, source-map and path signals to classify unchanged, modified, removed, split, merged, duplicated or unknown; incomplete coverage and ambiguous weak matches never establish absence or force pairing. Candidate signals are opt-in. Omitted view returns the full report; view {kind:"summary"} or {kind:"source-to-bundle",collection:"mappings"} retains it for later inspect_analysis_view pages. Filters intersect, empty filters select none, and page coverage never upgrades source coverage.',
     kind: "application",
     inputSchema: compareSourceToBundleRequestSchema,
     outputSchema: sourceToBundleOutputSchema,
@@ -227,7 +259,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "compare_javascript_export_shapes",
     ...toolContractMetadata("compare_javascript_export_shapes"),
     description:
-      "Compare static return shapes for one exact module/export selector on each authenticated JavaScript Application Graph supplied as inline Evidence or exact same-session retained references. Variants pair only by reciprocal unique literal discriminants. Each retained variant lists observed return-property names even when values stay unknown. Presence (present, absent, or unknown-coverage) is separate from value resolution: a name present on only one paired shape is added or removed when parent-property coverage is complete on both sides, including when the static value is unresolved. Dynamic values, incomplete parent coverage, and unpaired variants remain unknown. Reports JSON Pointer changes without executing JavaScript; runtime behavior requires a separate agent-run probe.",
+      "Compare static return-property shapes for one exact module/export on each authenticated JavaScript Application Graph, inline or retained. Variants pair only by reciprocal unique literal discriminants. Returns JSON Pointer changes while keeping property presence separate from value resolution: complete property coverage can establish an addition/removal even when values are unresolved. Dynamic values, incomplete coverage and unpaired variants stay unknown. Does not execute JavaScript; runtime behavior needs a separate probe.",
     kind: "application",
     inputSchema: compareJavaScriptExportShapesRequestSchema,
     outputSchema: exportShapeComparisonOutputSchema,
@@ -255,7 +287,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "build_reconstruction_obligation_ledger",
     ...toolContractMetadata("build_reconstruction_obligation_ledger"),
     description:
-      "Generate the complete deterministic ReconstructionObligationLedger from an authenticated Evidence bundle, reviewed obligations, and an explicit reconstruction manifest. Static candidates remain candidates; duplicate ownership, missing original or reconstruction cases, missing parser/type, weak verifier authority, unenumerated claims, contradictions, dependencies, and residual unknowns fail closed. The inline result carries the full-ledger closure digest and typed per-obligation diagnostics.",
+      "Build a deterministic reconstruction-obligation ledger from an authenticated Evidence bundle, reviewed obligations and an explicit reconstruction manifest. Returns the complete ledger, closure digest and typed diagnostics. Duplicate owners, missing cases or parser/type, weak verifier authority, unenumerated claims, contradictions, dependencies and residual unknowns fail closed; static candidates remain candidates.",
     kind: "application",
     inputSchema: reconstructionObligationLedgerInputSchema,
     outputSchema: reconstructionObligationLedgerOutputSchema,
@@ -285,7 +317,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "evaluate_reconstruction_coverage",
     ...toolContractMetadata("evaluate_reconstruction_coverage"),
     description:
-      "Evaluate inline evidence-backed reconstruction coverage against one named boundary. Missing ownership or inventory is partial; stale, weak, truncated, skipped, unresolved, or conflicting tied verifier proof is unknown; contradictions, failed proof, missing owners, and authority routing fail closed.",
+      "Check evidence-backed reconstruction coverage for one named boundary. Missing ownership or inventory is partial; stale, weak, truncated, skipped, unresolved or conflicting verifier proof is unknown. Contradictions, failed proof, missing owners and authority-routing failures fail closed.",
     kind: "application",
     inputSchema: reconstructionCoverageEvaluationInputSchema,
     outputSchema: reconstructionClosureResultSchema,
@@ -336,7 +368,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "project_android_application_graph",
     ...toolContractMetadata("project_android_application_graph"),
     description:
-      "Project authenticated APK inventory_artifact Evidence into an execution-free Android application inventory. Reports exact component paths and hashes, runtime-family hints, and path-based bridge hypotheses without decoding DEX, executing the APK, or claiming observed runtime calls.",
+      "Build a static Android application inventory from the authenticated nested inventory Evidence returned by inspect_artifact for an APK. Returns component paths/hashes, runtime-family hints and path-based bridge hypotheses. Does not decode DEX, execute the APK or establish runtime calls.",
     kind: "application",
     inputSchema: applicationInventoryProjectionInputSchema,
     outputSchema: evidenceResultOf(androidApplicationProjectionResultSchema),
@@ -352,7 +384,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "project_apple_application_graph",
     ...toolContractMetadata("project_apple_application_graph"),
     description:
-      "Project authenticated IPA, macOS .app directory, ZIP, or DMG inventory Evidence into an execution-free Apple application inventory. Reports application roots, nested bundles with path-convention roles (app extensions, XPC services, login items, privileged helpers, system extensions, frameworks), launchd plists, exact component paths and hashes, runtime-family hints, and path-based bridge hypotheses without parsing plist/CMS semantics or claiming observed runtime calls.",
+      "Build a static Apple application inventory from the authenticated nested inventory Evidence returned by inspect_artifact for an IPA, .app directory, ZIP or DMG. Returns application roots, nested-bundle roles, launchd plists, component paths/hashes, runtime hints and bridge hypotheses. Roles follow path conventions; plist/CMS semantics and runtime calls are not established.",
     kind: "application",
     inputSchema: applicationInventoryProjectionInputSchema,
     outputSchema: evidenceResultOf(appleApplicationProjectionResultSchema),
@@ -372,7 +404,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "project_harmony_application_graph",
     ...toolContractMetadata("project_harmony_application_graph"),
     description:
-      "Project authenticated HarmonyOS HAP, HSP, or App Pack inventory Evidence into an execution-free application inventory. Reports packaging-model hints (Stage module.json versus FA config.json), exact component paths and hashes (manifests, Ark bytecode, resources, native libraries, JavaScript, signing), App Pack child packages, runtime-family hints, and path-based N-API bridge hypotheses without decoding Ark bytecode, parsing manifest semantics, or claiming observed runtime calls.",
+      "Build a static HarmonyOS inventory from the authenticated nested inventory Evidence returned by inspect_artifact for a HAP, HSP or App Pack. Returns packaging hints, component paths/hashes, child packages, runtime hints, unclassified components and path-based N-API bridge hypotheses. Does not decode Ark bytecode, parse manifest semantics or establish runtime calls.",
     kind: "application",
     inputSchema: applicationInventoryProjectionInputSchema,
     outputSchema: evidenceResultOf(harmonyApplicationProjectionResultSchema),

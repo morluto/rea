@@ -1,6 +1,6 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import { expect, it, onTestFinished } from "vitest";
+import { afterAll, expect, it, onTestFinished } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { WebRuntimeService } from "../../../src/application/WebRuntimeService.js";
 import { recordingWebRuntimePort } from "../../../src/application/WebRuntimeService.fixture.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
@@ -18,6 +18,9 @@ import {
   startRuntimeBrowser,
 } from "../../fixtures/webRuntime.js";
 
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
+
 it("advertises actual SDK schemas, instrumentation effects and session-owned inline runtime evidence", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("Binary provider must not start");
@@ -28,7 +31,10 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
       webRuntime: new WebRuntimeService(recordingWebRuntimePort()),
     },
   );
-  const client = new Client({ name: "web-runtime-contract", version: "1" });
+  const client = new Client(
+    { name: "web-runtime-contract", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -39,7 +45,7 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   const tools = (await client.listTools()).tools;
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const ajv = schemaValidation.assertions;
   const input = {
     cdp_endpoint: "http://127.0.0.1:9222",
     target_id: "allowed-page",
@@ -118,7 +124,10 @@ cliTest(
       { kind: "session", session },
       { webRuntime: new WebRuntimeService(provider) },
     );
-    const client = new Client({ name: "runtime-frame-identity", version: "1" });
+    const client = new Client(
+      { name: "runtime-frame-identity", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();
@@ -193,10 +202,10 @@ cliTest(
       { kind: "session", session },
       { webRuntime: new WebRuntimeService(provider) },
     );
-    const client = new Client({
-      name: "runtime-negative-columns",
-      version: "1",
-    });
+    const client = new Client(
+      { name: "runtime-negative-columns", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();
@@ -224,7 +233,7 @@ cliTest(
       },
     });
     expect(response.isError).not.toBe(true);
-    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const ajv = schemaValidation.assertions;
     expect(
       ajv.validate(outputSchema, response.structuredContent),
       JSON.stringify(ajv.errors),
@@ -293,7 +302,10 @@ it.each([
       { kind: "session", session },
       { webRuntime: new WebRuntimeService(new CdpWebRuntimeProvider()) },
     );
-    const client = new Client({ name: "web-runtime-partial", version: "1" });
+    const client = new Client(
+      { name: "web-runtime-partial", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();

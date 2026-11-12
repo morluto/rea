@@ -20,6 +20,7 @@ import type {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  BinaryStringReadLimitFailure,
 } from "../native/metadata/BinaryContainer.js";
 import {
   readElfSectionDirectory,
@@ -193,10 +194,7 @@ export class GpuInventory {
             continue;
           }
           if (!isGpuSection(section.name)) continue;
-          if (
-            !section.file_backed ||
-            (directory.format === "elf" && (section.flags & 0x800n) !== 0n)
-          ) {
+          if (!section.file_backed || section.compressed) {
             this.discovery = "partial";
             const message = `GPU section ${section.index} has no supported uncompressed file range`;
             this.#retain(message);
@@ -295,7 +293,8 @@ export class GpuInventory {
     )
       throw cause;
     row.inspection =
-      cause instanceof BinaryResourceFailure
+      cause instanceof BinaryResourceFailure ||
+      cause instanceof BinaryStringReadLimitFailure
         ? "capacity"
         : cause.kind === "unsupported"
           ? "unsupported"

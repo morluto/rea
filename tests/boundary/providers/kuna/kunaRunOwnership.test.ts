@@ -104,7 +104,7 @@ it("keeps an admission lease until retained native cleanup is proven", async () 
     installation: installed.value,
     operation: "lease-probe",
     arguments: (input) => ["functions", input, "--json"],
-    deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+    deadline: { setting: "REA_KUNA_TIMEOUT_MS", source: "setting", ms: 10_000 },
     outputBytes: 16384,
     signal: caller.signal,
     releaseRun: lease!,

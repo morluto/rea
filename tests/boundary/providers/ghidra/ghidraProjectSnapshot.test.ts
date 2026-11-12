@@ -15,6 +15,7 @@ import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourc
 import {
   copyExistingGhidraProject,
   fingerprintGhidraProject,
+  GHIDRA_PROJECT_PROFILE_MISMATCH,
   resolveGhidraProject,
 } from "../../../../src/ghidra/GhidraProjectSnapshot.js";
 import { parseConfig } from "../../../../src/config/parseConfig.js";
@@ -85,7 +86,9 @@ it("rejects a project whose copied content differs from the committed analysis p
     }),
   ).rejects.toMatchObject({
     _tag: "AnalysisArtifactChangedError",
-    cause: { name: "RegularFileChangedError" },
+    operation: "open_binary",
+    path: source,
+    reason: GHIDRA_PROJECT_PROFILE_MISMATCH,
   });
 });
 

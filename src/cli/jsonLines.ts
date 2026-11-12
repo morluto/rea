@@ -41,7 +41,7 @@ const RECORD_BOUNDARY_PATHS = [
 ] as const;
 
 /** Recovery for every JSON Lines selection refusal; the analysis result itself is valid. */
-export const JSON_LINES_SELECTION_REMEDIATION =
+const JSON_LINES_SELECTION_REMEDIATION =
   "Use --format json for the complete document, or select one record collection with --filter-output.";
 
 interface Collection {

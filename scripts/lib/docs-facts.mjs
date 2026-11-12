@@ -121,14 +121,19 @@ export const documentationFactIssues = async (root, catalog) => {
         issues,
         path,
         content,
-        "(docs/installation.md#supported-agents)",
+        "(docs/getting-started/installation.md#supported-agents)",
       );
-      requireText(issues, path, content, "(docs/installation.md#mcp-registry)");
       requireText(
         issues,
         path,
         content,
-        "(docs/mcp-contracts.md#generated-catalog)",
+        "(docs/getting-started/installation.md#mcp-registry)",
+      );
+      requireText(
+        issues,
+        path,
+        content,
+        "(docs/reference/mcp-contracts.md#generated-catalog)",
       );
     }
   }
@@ -156,7 +161,7 @@ export const documentationFactIssues = async (root, catalog) => {
     )
       issues.push(`${path}: documentation links differ from README.md`);
 
-  const installationPath = "docs/installation.md";
+  const installationPath = "docs/getting-started/installation.md";
   const installation = await readFile(join(root, installationPath), "utf8");
   for (const client of catalog.setup_clients)
     requireText(issues, installationPath, installation, client.display_name);

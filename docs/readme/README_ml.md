@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · **മലയാളം** · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · **മലയാളം** · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: എന്തും Reverse Engineer ചെയ്യുക
 
@@ -10,7 +10,7 @@
 **നിങ്ങൾക്ക് ഇഷ്ടപ്പെട്ട ഒരു feature കണ്ടോ? അത് എങ്ങനെ പ്രവർത്തിക്കുന്നു എന്ന് binary തലത്തിലേക്ക് വരെ മനസ്സിലാക്കൂ.**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
+[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#എന്തൊക്കെ-വിശകലനം-ചെയ്യാം)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
@@ -70,7 +70,7 @@ Setup നിങ്ങളുടെ agent-ിൽ REA രജിസ്റ്റർ �
 
 ## ദ്രുതാരംഭം
 
-Linux-ൽ Ghidra, JADX, firmware tool launches, static JavaScript/Electron analysis എന്നിവയ്ക്ക് process ownership പരിശോധിക്കാൻ REA-യുടെ `PATH`-ൽ procps-compatible `ps` ആവശ്യമാണ്. പരിഹാര നടപടികൾ `docs/installation.md`-യിലെ "Linux owned-process prerequisite" എന്ന വിഭാഗത്തിൽ ലഭ്യമാണ്.
+Linux-ൽ Ghidra, JADX, firmware tool launches, static JavaScript/Electron analysis എന്നിവയ്ക്ക് process ownership പരിശോധിക്കാൻ REA-യുടെ `PATH`-ൽ procps-compatible `ps` ആവശ്യമാണ്. പരിഹാര നടപടികൾ `docs/getting-started/installation.md`-യിലെ "Linux owned-process prerequisite" എന്ന വിഭാഗത്തിൽ ലഭ്യമാണ്.
 
 ### നിങ്ങളുടെ agent സജ്ജമാക്കുക
 
@@ -82,9 +82,13 @@ npx rea-agents setup
 
 നിങ്ങൾ ഉപയോഗിക്കുന്ന agents തിരഞ്ഞെടുക്കുക, നിർദ്ദേശിച്ച മാറ്റങ്ങൾ പരിശോധിക്കുക, തുടർന്ന് അവയ്ക്ക് അനുമതി നൽകുക. നിലവിലുള്ള configuration-ന്റെ backup-ുകൾ സൂക്ഷിച്ചുകൊണ്ട് setup, REA-യുടെ MCP server-ഉം അനുയോജ്യമായ workflow നിർദ്ദേശങ്ങളും ചേർക്കും. അതിനുശേഷം നിങ്ങളുടെ agent വീണ്ടും ആരംഭിക്കുക.
 
-Claude Code, Codex, Cursor, Gemini CLI, Grok Build, കൂടാതെ [മറ്റ് agents](../installation.md#supported-agents) എന്നിവയെ setup പിന്തുണയ്ക്കുന്നു. provider configuration-നും manual MCP registration-നും [installation and setup](../installation.md) കാണുക.
+Claude Code, Codex, Cursor, Gemini CLI, Grok Build, കൂടാതെ [മറ്റ് agents](../getting-started/installation.md#supported-agents) എന്നിവയെ setup പിന്തുണയ്ക്കുന്നു. provider configuration-നും manual MCP registration-നും [installation and setup](../getting-started/installation.md) കാണുക.
 
 MCP സാധാരണയായി compact input schemas ഉപയോഗിക്കുന്നു. പൂർണ്ണ field guidance-ഉം nested validation details-ഉം വേണമെങ്കിൽ MCP registration-ൽ `REA_MCP_INPUT_SCHEMA_PROFILE=full` സജ്ജമാക്കുക. രണ്ടു profiles-ലും എല്ലാ tools-ഉം ഒരേ canonical server validation-ഉം നിലനിൽക്കും; MCP contracts guide കാണുക.
+
+തിരഞ്ഞെടുത്ത runtime-ഉം REA entry script-ഉം setup നേരിട്ട് രജിസ്റ്റർ ചെയ്യുന്നു. Package runner ഉപയോഗിക്കുമ്പോൾ അതിന്റെ cache entry-യും runtime-ഉം നിലനിർത്തുക; target project-ന് പുറത്തുള്ള വിശ്വസനീയമായ ഡയറക്ടറിയിൽ നിന്ന് package നേടുക. ഇൻസ്റ്റലേഷൻ ഗൈഡ് കാണുക.
+
+പൂർണ്ണ output schema-കൾ സ്ഥിരസ്ഥിതിയായി പരസ്യപ്പെടുത്തുന്നു. Client `tools/list` പരിമിതപ്പെടുത്തുന്നുവെങ്കിൽ MCP registration-ൽ `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` അല്ലെങ്കിൽ `off` സജ്ജമാക്കുക. Server validation-ഉം structured result-കളും പൂർണ്ണമായി നിലനിൽക്കും. MCP കരാർ ഗൈഡിലെ «Output schemas» കാണുക.
 
 ### നിങ്ങളുടെ agent-നോട് ആവശ്യപ്പെടുക
 
@@ -111,7 +115,7 @@ npm install --global rea-agents
 rea --help
 ```
 
-Native analysis നടത്തുന്നതിന് മുമ്പ് ഒരു provider ക്രമീകരിക്കുക. Native commands, provider തിരഞ്ഞെടുക്കൽ, snapshots, scripting എന്നിവയ്ക്കായി [CLI and Evidence guide](../cli.md) കാണുക.
+Native analysis നടത്തുന്നതിന് മുമ്പ് ഒരു provider ക്രമീകരിക്കുക. Native commands, provider തിരഞ്ഞെടുക്കൽ, snapshots, scripting എന്നിവയ്ക്കായി [CLI and Evidence guide](../getting-started/cli.md) കാണുക.
 
 ### REA അപ്‌ഡേറ്റ് ചെയ്യുക
 
@@ -151,44 +155,47 @@ Target പരിശോധിക്കാനും പ്രസക്തമായ
 
 REA-യ്ക്ക് Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), അല്ലെങ്കിൽ 26+ (>=26.12.1) പതിപ്പും npm-ഉം ആവശ്യമാണ്. Target അനുസരിച്ച് അധിക tools-ഉം host support-ഉം വ്യത്യാസപ്പെടും:
 
-| Target                 | REA നൽകുന്ന ഫലങ്ങൾ                                                                             | ആവശ്യകതകളും ഗൈഡും                                                                                                                    |
-| ---------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Native binaries        | Pseudocode, assembly, strings, symbols, calls, references                                   | Hopper, Ghidra, IDA അല്ലെങ്കിൽ Kuna; [native analysis](../native-investigation.md)                                                  |
-| Offline ELF layout     | Sections, segments, യഥാർത്ഥ symbols/relocations, static mitigation candidates                 | Linux x64-ൽ caller നൽകുന്ന pwntools; [binary diagnostics](../binary-diagnostics.md)                                                 |
-| Go binaries            | ഉൾച്ചേർത്ത compiler version, modules, replacements, build settings                            | Built-in static ELF/PE/thin Mach-O പരിശോധന; Go installation ആവശ്യമില്ല                                                              |
-| Rust binaries          | ഉൾച്ചേർത്ത cargo-auditable crate പേരുകൾ, versions, sources, dependency edges                   | Built-in static ELF/PE/thin Mach-O പരിശോധന; [Rust binaries](../rust-binaries.md)                                                  |
-| PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                           |
-| PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                     |
-| ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                      |
-| Linux kernel modules   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                            |
-| Erlang BEAM            | IFF chunks, atoms, exports, and tables                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                 |
-| WASM artifact          | Validation, sections, കൃത്യമായ import/export WAT രൂപങ്ങൾ, decoded WAT                            | Caller നൽകുന്ന WABT 1.0.42; `inspect_wasm_artifact`                                                                                 |
-| EVM bytecode           | Dispatch selectors, byte offsets, അനുമാനിച്ച arguments, mutability                             | Linux x64-ൽ local raw/hex carrier; [offline EVM guide](../evm-bytecode.md)                                                        |
-| SQLite databases       | Tables, columns, indexes, views, triggers, തിരഞ്ഞെടുത്ത സാധാരണ table rows                        | Local database/WAL snapshot; native SQLite പരിമിതികളോടെ Node.js 24.x >=24.15 അല്ലെങ്കിൽ 26+                                         |
-| Apple IPS crashes      | .ips metadata, threads, images, registers and crash classes                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                     |
-| Recorded Linux crashes | Raw notes, രേഖപ്പെടുത്തിയ ഓരോ thread-ന്റെയും registers/signals, ഐച്ഛിക mapping candidates         | Linux x64-ൽ caller നൽകുന്ന pwntools; ഐച്ഛിക GDB/pwndbg; [recorded crashes](../recorded-crashes.md)                                   |
-| ഡെസ്ക്ടോപ്പ് ഇൻസ്റ്റലേഷനുകൾ   | റൺടൈം സാധ്യതകൾ, തെളിവ് ഫയലുകൾ, ഘടക സൂചനകൾ, തുടർ നടപടികൾ                                           | പരിധിയുള്ള ഡയറക്ടറി, ഹെഡർ പരിശോധന；[ഡെസ്ക്ടോപ്പ് ആപ്ലിക്കേഷനുകൾ](../desktop-applications.md)                                                |
-| JavaScript / Electron  | Modules, imports, source maps, routes, IPC, native add-on ബന്ധങ്ങൾ                            | Node.js, npm; Linux: procps-compatible `ps`; [application analysis](../javascript-application-workflows.md)                       |
-| Websites               | Page structure, scripts, network observations, ആവശ്യപ്പെട്ട screenshots                        | Chrome-family browser; [browser analysis](../browser-observation.md)                                                              |
-| Saved network captures | Requests, responses, പുറത്തുകാണുന്ന payload-ുകൾ, source locations                                  | HAR അല്ലെങ്കിൽ Fiddler Everywhere SAZ; native mitmproxy-നായി Linux-ൽ mitmdump; [capture guide](../web-network-captures.md)           |
-| .NET assemblies        | Metadata, CIL instructions, പ്രഖ്യാപിച്ച native dependencies, build comparisons                 | ഒന്നും ആവശ്യമില്ല (static മാത്രം); [managed-code guide](../managed-code-analysis.md)                                                    |
-| Python packaged apps   | CArchive/PYZ entries, Python version, bytecode, resources and runtime options               | Static PyInstaller parsing; [Python guide](../python-packaged-applications.md)                                                    |
-| Android APKs           | Manifest declarations, classes, decompiled methods, references                              | Linux/macOS/Windows x64-ൽ Headless JADX-ഉം full JDK-ഉം; [Android guide](../android-analysis.md)                                   |
-| Android devices        | Devices, packages, processes, logs, dumps, screen captures, APK/file transfers              | Caller നൽകുന്ന adb (emulator അല്ലെങ്കിൽ hardware); [ADB guide](../adb-device-analysis.md)                                             |
-| JEB projects           | Engine-backed project units, artifact digests, type/method pseudo-code                      | MCP സേവനം നൽകുന്ന caller ആരംഭിച്ച JEB client; REA_JEB_MCP_URL ഉപയോഗിച്ച് തിരഞ്ഞെടുക്കുക; [JEB guide](../jeb-analysis.md)                   |
-| Android resources      | Decoded manifest, string tables, locales, version വിവരങ്ങൾ                                   | Caller നൽകുന്ന Apktool launcher; [resource guide](../apktool-resource-analysis.md)                                                  |
-| Flutter apps           | Dart snapshot hash, ഓരോ ABI-യിലെയും library digests, engine build provenance                 | ഒന്നും ആവശ്യമില്ല (static APK parsing); [Flutter guide](../flutter-analysis.md)                                                       |
-| Firmware               | Regions, extraction results, native-analysis handoffs                                       | Linux-ൽ Binwalk / Unblob; [firmware guide](../firmware-analysis.md)                                                               |
-| Recorded packets       | തിരഞ്ഞെടുത്ത fields, ആവർത്തിക്കുന്ന values, filters, decode-as rules                               | Linux: TShark 4.x + prlimit; [capture guide](../packet-captures.md)                                                               |
-| Packet summaries       | Endpoints, DNS, TLS SNI, protocol distribution, HTTP requests                               | Caller നൽകുന്ന tshark, capinfos (Linux-ൽ പരിശോധിച്ചത്); [pcap guide](../pcap-analysis.md)                                             |
-| Recorded logic signals | Decoder annotations, sample ranges, diagnostics                                             | Linux: sigrok-cli 0.7.2 + prlimit; [signal recordings](../signal-recordings.md)                                                   |
-| Packages and resources | File inventories, digests, plists, Apple bundle ഘടന, extracted resources                    | [Artifact and JavaScript guide](../javascript-artifact-reconstruction.md), [Apple applications](../apple-application-analysis.md) |
-| Process behavior       | Terminal output, interactions, exit, filesystem observations, run comparisons               | Native PTY ഉള്ള Linux/macOS; [process capture](../process-capture.md)                                                              |
-| GPU code objects       | CUDA/HIP targets, തിരഞ്ഞെടുത്ത kernel parameters/resources, സൂക്ഷിച്ച PTX text                    | ഉൾനിർമിത static പരിശോധന ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                    |
-| Model files            | GGUF / safetensors metadata, tensor declarations, കണക്കാക്കിയ totals                           | Header പരിശോധന; full-file hash ഐച്ഛികം; [GGUF / safetensors](../model-artifacts.md)                                                |
-| IL2CPP metadata        | Unity global-metadata.dat assembly images, type/method names, index ranges                  | 24, 27, 29, 31, 39 versions-ന്റെ static decoding; Unity വേണ്ട                                                                       |
-| Godot PCK              | Archive inventory/extraction, original header/directory facts, തിരഞ്ഞെടുത്ത content identities | Static formats 2, 3, 4; Godot വേണ്ട                                                                                                |
-| APK signatures         | v1/v2/v3/v3.1 signers, certificate fingerprints, key rotation, digest self-consistency      | ഉൾനിർമിത static പരിശോധന; `inspect_apk_signature`                                                                                  |
+| Target                 | REA നൽകുന്ന ഫലങ്ങൾ                                                                             | ആവശ്യകതകളും ഗൈഡും                                                                                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native binaries        | Pseudocode, assembly, strings, symbols, calls, references                                   | Hopper, Ghidra, IDA അല്ലെങ്കിൽ Kuna; [native analysis](../guides/native/native-investigation.md)                                                                   |
+| Offline ELF layout     | Sections, segments, യഥാർത്ഥ symbols/relocations, static mitigation candidates                 | Linux x64-ൽ caller നൽകുന്ന pwntools; [binary diagnostics](../guides/native/binary-diagnostics.md)                                                                  |
+| Go binaries            | ഉൾച്ചേർത്ത compiler version, modules, replacements, build settings                            | Built-in static ELF/PE/thin Mach-O പരിശോധന; Go installation ആവശ്യമില്ല                                                                                             |
+| Rust binaries          | ഉൾച്ചേർത്ത cargo-auditable crate പേരുകൾ, versions, sources, dependency edges                   | Built-in static ELF/PE/thin Mach-O പരിശോധന; [Rust binaries](../rust-binaries.md)                                                                                 |
+| PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                          |
+| PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                    |
+| Windows shortcuts      | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                        |
+| ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                     |
+| Binary hardening       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                    |
+| Linux kernel modules   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                           |
+| Erlang BEAM            | IFF chunks, atoms, exports, and tables                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                |
+| WASM artifact          | Validation, sections, കൃത്യമായ import/export WAT രൂപങ്ങൾ, decoded WAT                            | Caller നൽകുന്ന WABT 1.0.42; `inspect_wasm_artifact`                                                                                                                |
+| EVM bytecode           | Dispatch selectors, byte offsets, അനുമാനിച്ച arguments, mutability                             | Linux x64-ൽ local raw/hex carrier; [offline EVM guide](../guides/evm/evm-bytecode.md)                                                                            |
+| SQLite databases       | Tables, columns, indexes, views, triggers, തിരഞ്ഞെടുത്ത സാധാരണ table rows                        | Local database/WAL snapshot; native SQLite പരിമിതികളോടെ Node.js 24.x >=24.15 അല്ലെങ്കിൽ 26+                                                                        |
+| Apple IPS crashes      | .ips metadata, threads, images, registers and crash classes                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                    |
+| Recorded Linux crashes | Raw notes, രേഖപ്പെടുത്തിയ ഓരോ thread-ന്റെയും registers/signals, ഐച്ഛിക mapping candidates         | Linux x64-ൽ caller നൽകുന്ന pwntools; ഐച്ഛിക GDB/pwndbg; [recorded crashes](../guides/native/recorded-crashes.md)                                                    |
+| ഡെസ്ക്ടോപ്പ് ഇൻസ്റ്റലേഷനുകൾ   | റൺടൈം സാധ്യതകൾ, തെളിവ് ഫയലുകൾ, ഘടക സൂചനകൾ, തുടർ നടപടികൾ                                           | പരിധിയുള്ള ഡയറക്ടറി, ഹെഡർ പരിശോധന；[ഡെസ്ക്ടോപ്പ് ആപ്ലിക്കേഷനുകൾ](../desktop-applications.md)                                                                               |
+| JavaScript / Electron  | Modules, imports, source maps, routes, IPC, native add-on ബന്ധങ്ങൾ                            | Node.js, npm; Linux: procps-compatible `ps`; [application analysis](../guides/javascript/javascript-application-workflows.md)                                    |
+| Websites               | Page structure, scripts, network observations, ആവശ്യപ്പെട്ട screenshots                        | Chrome-family browser; [browser analysis](../guides/web/browser-observation.md)                                                                                  |
+| Saved network captures | Requests, responses, പുറത്തുകാണുന്ന payload-ുകൾ, source locations                                  | HAR അല്ലെങ്കിൽ Fiddler Everywhere SAZ; native mitmproxy-നായി Linux-ൽ mitmdump; [capture guide](../guides/web/web-network-captures.md)                               |
+| .NET assemblies        | Metadata, CIL instructions, പ്രഖ്യാപിച്ച native dependencies, build comparisons                 | ഒന്നും ആവശ്യമില്ല (static മാത്രം); [managed-code guide](../guides/managed/managed-code-analysis.md)                                                                    |
+| Python packaged apps   | CArchive/PYZ entries, Python version, bytecode, resources and runtime options               | Static PyInstaller parsing; [Python guide](../python-packaged-applications.md)                                                                                   |
+| Deno compile binaries  | Virtual files, entry point, recorded options, npm snapshot length                           | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                             |
+| Android APKs           | Manifest declarations, classes, decompiled methods, references                              | Linux/macOS/Windows x64-ൽ Headless JADX-ഉം full JDK-ഉം; [Android guide](../guides/android/android-analysis.md)                                                   |
+| Android devices        | Devices, packages, processes, logs, dumps, screen captures, APK/file transfers              | Caller നൽകുന്ന adb (emulator അല്ലെങ്കിൽ hardware); [ADB guide](../guides/android/adb-device-analysis.md)                                                             |
+| JEB projects           | Engine-backed project units, artifact digests, type/method pseudo-code                      | MCP സേവനം നൽകുന്ന caller ആരംഭിച്ച JEB client; REA_JEB_MCP_URL ഉപയോഗിച്ച് തിരഞ്ഞെടുക്കുക; [JEB guide](../providers/jeb-analysis.md)                                        |
+| Android resources      | Decoded manifest, string tables, locales, version വിവരങ്ങൾ                                   | Caller നൽകുന്ന Apktool launcher; [resource guide](../guides/android/apktool-resource-analysis.md)                                                                  |
+| Flutter apps           | Dart snapshot hash, ഓരോ ABI-യിലെയും library digests, engine build provenance                 | ഒന്നും ആവശ്യമില്ല (static APK parsing); [Flutter guide](../guides/android/flutter-analysis.md)                                                                       |
+| Firmware               | Regions, extraction results, native-analysis handoffs                                       | Linux-ൽ Binwalk / Unblob; [firmware guide](../guides/firmware/firmware-analysis.md)                                                                              |
+| Recorded packets       | തിരഞ്ഞെടുത്ത fields, ആവർത്തിക്കുന്ന values, filters, decode-as rules                               | Linux: TShark 4.x + prlimit; [capture guide](../guides/data/packet-captures.md)                                                                                  |
+| Packet summaries       | Endpoints, DNS, TLS SNI, protocol distribution, HTTP requests                               | Caller നൽകുന്ന tshark, capinfos (Linux-ൽ പരിശോധിച്ചത്); [pcap guide](../guides/data/pcap-analysis.md)                                                                |
+| Recorded logic signals | Decoder annotations, sample ranges, diagnostics                                             | Linux: sigrok-cli 0.7.2 + prlimit; [signal recordings](../guides/signals/signal-recordings.md)                                                                   |
+| Packages and resources | File inventories, digests, plists, Apple bundle ഘടന, extracted resources                    | [Artifact and JavaScript guide](../guides/javascript/javascript-artifact-reconstruction.md), [Apple applications](../guides/apple/apple-application-analysis.md) |
+| Process behavior       | Terminal output, interactions, exit, filesystem observations, run comparisons               | Native PTY ഉള്ള Linux/macOS; [process capture](../guides/runtime/process-capture.md)                                                                              |
+| GPU code objects       | CUDA/HIP targets, തിരഞ്ഞെടുത്ത kernel parameters/resources, സൂക്ഷിച്ച PTX text                    | ഉൾനിർമിത static പരിശോധന ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                                   |
+| Model files            | GGUF / safetensors metadata, tensor declarations, കണക്കാക്കിയ totals                           | Header പരിശോധന; full-file hash ഐച്ഛികം; [GGUF / safetensors](../model-artifacts.md)                                                                               |
+| IL2CPP metadata        | Unity global-metadata.dat assembly images, type/method names, index ranges                  | 24, 27, 29, 31, 39 versions-ന്റെ static decoding; Unity വേണ്ട                                                                                                      |
+| Godot PCK              | Archive inventory/extraction, original header/directory facts, തിരഞ്ഞെടുത്ത content identities | Static formats 2, 3, 4; Godot വേണ്ട                                                                                                                               |
+| APK signatures         | v1/v2/v3/v3.1 signers, certificate fingerprints, key rotation, digest self-consistency      | ഉൾനിർമിത static പരിശോധന; `inspect_apk_signature`                                                                                                                 |
 
 Static JavaScript, .NET പരിശോധനകൾ application പ്രവർത്തിപ്പിക്കാതെ നൽകിയ files വായിച്ചാണ് നടത്തുന്നത്. Runtime capture, നിങ്ങളുടെ user permissions ഉപയോഗിച്ച് തിരഞ്ഞെടുത്ത target പ്രവർത്തിപ്പിക്കുകയോ അതുമായി ഇടപെടുകയോ ചെയ്യുന്നു; ഓരോ runtime guide-ലും അതിന്റെ പ്രത്യാഘാതങ്ങൾ വിശദീകരിച്ചിട്ടുണ്ട്.
 
@@ -196,11 +203,11 @@ Offline native-binary പരിശോധനയ്ക്കായി REA, caller 
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Native formats-ഉം host support-ഉം provider അനുസരിച്ച് വ്യത്യാസപ്പെടും. [Hopper and Ghidra setup](../installation.md#hopper), [IDA guide](../ida-provider.md) (ഐച്ഛിക native MCP bridge ഉൾപ്പെടെ), [Kuna decompiler guide](../kuna-provider.md), [പരീക്ഷണഘട്ടത്തിലുള്ള Windows Ghidra support](../windows-ghidra-p0.md) എന്നിവ കാണുക.
-Ghidra, [16-bit DOS analysis](../ghidra-dos.md)-ഉം പിന്തുണയ്ക്കുന്നു.
+Native formats-ഉം host support-ഉം provider അനുസരിച്ച് വ്യത്യാസപ്പെടും. [Hopper and Ghidra setup](../getting-started/installation.md#hopper), [IDA guide](../providers/ida-provider.md) (ഐച്ഛിക native MCP bridge ഉൾപ്പെടെ), [Kuna decompiler guide](../kuna-provider.md), [പരീക്ഷണഘട്ടത്തിലുള്ള Windows Ghidra support](../providers/windows-ghidra-p0.md) എന്നിവ കാണുക.
+Ghidra, [16-bit DOS analysis](../providers/ghidra-dos.md)-ഉം പിന്തുണയ്ക്കുന്നു.
 വലിയ binaries-നായി `REA_GHIDRA_STARTUP_TIMEOUT_MS` അല്ലെങ്കിൽ `REA_HOPPER_STARTUP_TIMEOUT_MS` ഉപയോഗിച്ച് provider-ന്റെ startup deadline വർധിപ്പിക്കുക.
-Provider തിരഞ്ഞെടുക്കാൻ [CLI guide](../cli.md#choose-a-provider) കാണുക.
-ഏറ്റവും പുതിയ npm release-നുശേഷം ചേർത്ത features അറിയാൻ [release availability](../installation.md#released-package-and-main) പരിശോധിക്കുക.
+Provider തിരഞ്ഞെടുക്കാൻ [CLI guide](../getting-started/cli.md#choose-a-provider) കാണുക.
+ഏറ്റവും പുതിയ npm release-നുശേഷം ചേർത്ത features അറിയാൻ [release availability](../getting-started/installation.md#released-package-and-main) പരിശോധിക്കുക.
 
 ## ഉദാഹരണങ്ങൾ
 
@@ -276,33 +283,39 @@ agent-env run ./my-env
 [പരിതസ്ഥിതി റഫറൻസ്](../agent-environments.md) ·
 [X-ൽ ഡെമോ കാണുക](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### ഡെസ്‌ക്‌ടോപ്പ് ആപ്പ് പരിതസ്ഥിതികൾ
+
+സ്ക്രീൻഷോട്ടുകൾ, മൗസ്, കീബോർഡ് എന്നിവ വഴി ഏജന്റ് ഉപയോഗിക്കുന്ന Linux ഡെസ്‌ക്‌ടോപ്പ് ആപ്പിന്റെ പരിതസ്ഥിതിയും REA-യ്ക്ക് നിർമ്മിക്കാം. "ഷോപ്പിംഗ് ലിസ്റ്റ് നോട്ടിൽ ഏജന്റ് ഒലിവ് ഓയിൽ ചേർക്കുന്ന ഒരു Gnote പരിതസ്ഥിതി നിർമ്മിക്കുക" പോലുള്ള ഒറ്റവരി അഭ്യർത്ഥനയിൽ നിന്ന്, നിങ്ങളുടെ ഏജന്റ് ഒരു പ്രാദേശിക ബിൽഡ് കമ്പ്യൂട്ടറിൽ ആപ്പ് ഇൻസ്റ്റാൾ ചെയ്യുന്നു, ടാസ്‌ക് എഴുതുന്നു, പരിതസ്ഥിതി എക്‌സ്‌പോർട്ട് ചെയ്യുന്നു, ഒരു പുതിയ കമ്പ്യൂട്ടറിൽ ടാസ്‌ക് പരിശോധിക്കുന്നു. ഇത് നിർമ്മിക്കുന്ന മെഷീന് amd64 അല്ലെങ്കിൽ arm64-ലെ Linux, Docker, ഗൈഡ് നിശ്ചയിക്കുന്ന agentenv ഫ്രെയിംവർക്ക് പതിപ്പ് എന്നിവ വേണം.
+
+[ഡെസ്‌ക്‌ടോപ്പ് ആപ്പ് പരിതസ്ഥിതികൾ സജ്ജീകരിക്കുക](../desktop-build-computer.md)
+
 ## പതിവുചോദ്യങ്ങൾ
 
 <details>
 <summary><strong>ഏതൊക്കെ agents-ന് REA ഉപയോഗിക്കാം?</strong></summary>
 
-Local MCP servers പിന്തുണയ്ക്കുന്ന ഏത് agent-നും REA ഉപയോഗിക്കാം. Setup, [പിന്തുണയ്ക്കുന്ന agents](../installation.md#supported-agents) ക്രമീകരിക്കുന്നു; മറ്റ് clients-ന് [manual MCP registration](../installation.md#mcp-registry) ഉപയോഗിക്കാം.
+Local MCP servers പിന്തുണയ്ക്കുന്ന ഏത് agent-നും REA ഉപയോഗിക്കാം. Setup, [പിന്തുണയ്ക്കുന്ന agents](../getting-started/installation.md#supported-agents) ക്രമീകരിക്കുന്നു; മറ്റ് clients-ന് [manual MCP registration](../getting-started/installation.md#mcp-registry) ഉപയോഗിക്കാം.
 
 </details>
 
 <details>
 <summary><strong>Hopper, Ghidra, IDA അല്ലെങ്കിൽ Kuna ആവശ്യമാണോ?</strong></summary>
 
-ആഴത്തിലുള്ള native analysis-ന് ഇവയിൽ ഒന്ന് ആവശ്യമാണ്. Static JavaScript, .NET പരിശോധനകൾ native analysis engine ഇല്ലാതെയും പ്രവർത്തിക്കും. അനുമതി ലഭിച്ചാൽ setup-ന് Hopper ഇൻസ്റ്റാൾ ചെയ്യാം; Ghidra, IDA, Kuna എന്നിവയ്ക്കായി നിങ്ങളുടെ നിലവിലുള്ള installations ഉപയോഗിക്കുന്നു. [Provider setup](../installation.md#hopper) കാണുക.
+ആഴത്തിലുള്ള native analysis-ന് ഇവയിൽ ഒന്ന് ആവശ്യമാണ്. Static JavaScript, .NET പരിശോധനകൾ native analysis engine ഇല്ലാതെയും പ്രവർത്തിക്കും. അനുമതി ലഭിച്ചാൽ setup-ന് Hopper ഇൻസ്റ്റാൾ ചെയ്യാം; Ghidra, IDA, Kuna എന്നിവയ്ക്കായി നിങ്ങളുടെ നിലവിലുള്ള installations ഉപയോഗിക്കുന്നു. [Provider setup](../getting-started/installation.md#hopper) കാണുക.
 
 </details>
 
 <details>
 <summary><strong>Hopper ആദ്യം ആരംഭിക്കേണ്ടതുണ്ടോ?</strong></summary>
 
-ഒരു operation-ന് ആവശ്യമാകുമ്പോൾ REA Hopper ആരംഭിക്കും. macOS-ൽ ആദ്യമായി പ്രവർത്തിപ്പിക്കുമ്പോൾ demo mode തിരഞ്ഞെടുക്കാനോ license activate ചെയ്യാനോ ആവശ്യപ്പെടുന്ന dialog പ്രത്യക്ഷപ്പെടാം. ആദ്യ CLI/MCP operation അല്ലെങ്കിൽ unattended job നടത്തുന്നതിന് മുമ്പ് അതേ user session-ൽ ആ prompt പൂർത്തിയാക്കുക. ആവശ്യമെങ്കിൽ Hopper സ്വമേധയാ തുറക്കുക. [Hopper startup and troubleshooting](../installation.md#launcher-paths-and-troubleshooting) കാണുക.
+ഒരു operation-ന് ആവശ്യമാകുമ്പോൾ REA Hopper ആരംഭിക്കും. macOS-ൽ ആദ്യമായി പ്രവർത്തിപ്പിക്കുമ്പോൾ demo mode തിരഞ്ഞെടുക്കാനോ license activate ചെയ്യാനോ ആവശ്യപ്പെടുന്ന dialog പ്രത്യക്ഷപ്പെടാം. ആദ്യ CLI/MCP operation അല്ലെങ്കിൽ unattended job നടത്തുന്നതിന് മുമ്പ് അതേ user session-ൽ ആ prompt പൂർത്തിയാക്കുക. ആവശ്യമെങ്കിൽ Hopper സ്വമേധയാ തുറക്കുക. [Hopper startup and troubleshooting](../getting-started/installation.md#launcher-paths-and-troubleshooting) കാണുക.
 
 </details>
 
 <details>
 <summary><strong>skills.sh-ൽ നിന്ന് skill ഇൻസ്റ്റാൾ ചെയ്യുന്നത് എന്താണ് ചെയ്യുന്നത്?</strong></summary>
 
-ഈ skill നിങ്ങളുടെ agent-ന് അന്വേഷണ നിർദ്ദേശങ്ങൾ നൽകുന്നു. REA-യുടെ MCP server രജിസ്റ്റർ ചെയ്യാനും അനുയോജ്യമായ നിർദ്ദേശങ്ങൾ ഇൻസ്റ്റാൾ ചെയ്യാനും `npx rea-agents setup` ഉപയോഗിക്കുക; തുടർന്ന് നിങ്ങളുടെ agent വീണ്ടും ആരംഭിക്കുക. [Skill-only installation](../installation.md#skill-only-installation) കാണുക.
+ഈ skill നിങ്ങളുടെ agent-ന് അന്വേഷണ നിർദ്ദേശങ്ങൾ നൽകുന്നു. REA-യുടെ MCP server രജിസ്റ്റർ ചെയ്യാനും അനുയോജ്യമായ നിർദ്ദേശങ്ങൾ ഇൻസ്റ്റാൾ ചെയ്യാനും `npx rea-agents setup` ഉപയോഗിക്കുക; തുടർന്ന് നിങ്ങളുടെ agent വീണ്ടും ആരംഭിക്കുക. [Skill-only installation](../getting-started/installation.md#skill-only-installation) കാണുക.
 
 </details>
 
@@ -346,12 +359,12 @@ npx rea-agents@latest setup
 വെബ്സൈറ്റിലെ [പ്രായോഗിക ഗൈഡുകൾ](https://rea.tools/guides/) ഉപയോഗിച്ച് തുടങ്ങുക.
 കൃത്യമായ options, prerequisites, result contracts എന്നിവയ്ക്കായി:
 
-- [Installation and setup](../installation.md): agent registration, provider configuration, updates, uninstall.
-- [Readiness and troubleshooting](../installation.md#check-readiness-for-your-task): ഒരു agent-ന്റെയോ analysis engine-ന്റെയോ പ്രശ്നങ്ങൾ കണ്ടെത്തുക.
-- [CLI and Evidence](../cli.md): commands, provider തിരഞ്ഞെടുക്കൽ, snapshots, import/export, exit statuses.
-- [MCP contracts](../mcp-contracts.md), [agent prompts](../mcp-prompts.md): tool results, sessions, guided investigations.
-- [Tool catalog](../mcp-contracts.md#generated-catalog): tools, providers, CLI commands എന്നിവയുടെ സ്വയമേവ സൃഷ്ടിച്ച പട്ടിക.
-- [Roadmap](../roadmap.md): ആസൂത്രണം ചെയ്ത പ്രവർത്തനങ്ങളും capability trackers-ഉം.
+- [Installation and setup](../getting-started/installation.md): agent registration, provider configuration, updates, uninstall.
+- [Readiness and troubleshooting](../getting-started/installation.md#check-readiness-for-your-task): ഒരു agent-ന്റെയോ analysis engine-ന്റെയോ പ്രശ്നങ്ങൾ കണ്ടെത്തുക.
+- [CLI and Evidence](../getting-started/cli.md): commands, provider തിരഞ്ഞെടുക്കൽ, snapshots, import/export, exit statuses.
+- [MCP contracts](../reference/mcp-contracts.md), [agent prompts](../getting-started/mcp-prompts.md): tool results, sessions, guided investigations.
+- [Tool catalog](../reference/mcp-contracts.md#generated-catalog): tools, providers, CLI commands എന്നിവയുടെ സ്വയമേവ സൃഷ്ടിച്ച പട്ടിക.
+- [Roadmap](../development/roadmap.md): ആസൂത്രണം ചെയ്ത പ്രവർത്തനങ്ങളും capability trackers-ഉം.
 
 സുരക്ഷാ ദുർബലതകൾ [SECURITY.md](../../SECURITY.md) വഴി റിപ്പോർട്ട് ചെയ്യുക.
 
@@ -381,7 +394,7 @@ REA ഉപയോഗിക്കുന്നവർക്കും, bugs റിപ
 
 REA-യ്ക്കായി നിങ്ങളുടെ സഹായം ഞങ്ങൾ സ്വാഗതം ചെയ്യുന്നു! bug റിപ്പോർട്ട് ചെയ്യാനോ feature നിർദ്ദേശിക്കാനോ [issue തുറക്കുക](https://github.com/morluto/rea/issues), code അല്ലെങ്കിൽ docs മെച്ചപ്പെടുത്താൻ [pull request അയയ്ക്കുക](https://github.com/morluto/rea/pulls).
 
-Development setup-നും checks-നും [CONTRIBUTING.md](../../CONTRIBUTING.md), verification lanes-നായി [testing](../testing.md), project ഘടനയ്ക്കായി [architecture map](../architecture.mermaid) എന്നിവ കാണുക.
+Development setup-നും checks-നും [CONTRIBUTING.md](../../CONTRIBUTING.md), verification lanes-നായി [testing](../development/testing.md), project ഘടനയ്ക്കായി [architecture map](../architecture/architecture.mermaid) എന്നിവ കാണുക.
 
 ## ലൈസൻസ്
 

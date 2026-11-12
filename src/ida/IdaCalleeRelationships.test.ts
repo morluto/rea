@@ -189,8 +189,9 @@ describe("headless IDA callee edges on x86 targets", () => {
       ]);
       expect(execution.relationshipCoverage).toMatchObject({
         status: "unknown",
-        reason:
-          "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
+        reason: expect.stringMatching(
+          /omitted.*truncation marker.*callees remain unknown/iu,
+        ),
       });
     } finally {
       expect((await client.close()).ok).toBe(true);

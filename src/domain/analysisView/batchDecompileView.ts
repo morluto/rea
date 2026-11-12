@@ -65,7 +65,7 @@ const itemsRequestSchema = z.strictObject({
           "Exact observed canonical entries. An item with unknown procedure identity never matches. Omitted selects all; [] selects none.",
         ),
       statuses: z
-        .array(z.enum(["ok", "error"]))
+        .array(z.enum(["ok", "unavailable", "error"]))
         .optional()
         .describe("Item outcomes. Omitted selects all; [] selects none."),
     })
@@ -114,6 +114,12 @@ const batchDecompileRowSchema = z.discriminatedUnion("status", [
     status: z.literal("ok"),
     pseudocode_code_units: z.int().positive(),
     pseudocode: z.string().min(1).exactOptional(),
+  }),
+  z.strictObject({
+    ...itemIdentity,
+    status: z.literal("unavailable"),
+    reason: z.literal("no_pseudocode"),
+    limitations: batchItemLimitationsSchema,
   }),
   z.strictObject({
     ...itemIdentity,
@@ -237,7 +243,9 @@ const summarizeBatch = (items: readonly BatchDecompileItem[]) => {
   };
 };
 
-const batchUnknowns = (items: readonly BatchDecompileItem[]): string[] => {
+export const batchUnknowns = (
+  items: readonly BatchDecompileItem[],
+): string[] => {
   const unknownIdentity = items.filter(
     ({ procedure }) => procedure.status === "unknown",
   ).length;
@@ -270,6 +278,15 @@ const itemRow = (
       status: "ok",
       pseudocode_code_units: item.pseudocode.length,
       ...(includePseudocode ? { pseudocode: item.pseudocode } : {}),
+    };
+  if (item.status === "unavailable")
+    return {
+      ...identity,
+      status: "unavailable",
+      reason: item.reason,
+      ...(item.limitations === undefined
+        ? {}
+        : { limitations: item.limitations }),
     };
   return {
     ...identity,
@@ -375,7 +392,7 @@ export const projectBatchDecompileView = (
     );
   if (item.status !== "ok")
     return pseudocodeRefusal(
-      `Item ${String(view.index)} has status error and no pseudocode; read its error and limitations through the items collection.`,
+      `Item ${String(view.index)} has status ${item.status} and no pseudocode; read its reason or error and limitations through the items collection.`,
     );
   const page = analysisTextPage(item.pseudocode, view.offset, view.limit);
   if (!page.ok) return page;

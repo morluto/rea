@@ -41,6 +41,10 @@ export const interfaceBuilderAnalysisSchema = bundleResourceBoundResultSchema(
   },
 );
 
+export type InterfaceBuilderAnalysis = z.output<
+  typeof interfaceBuilderAnalysisSchema
+>;
+
 export interface InterfaceBuilderDocumentInput {
   readonly relativePath: string;
   readonly archiveSha256: string;

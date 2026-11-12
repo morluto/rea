@@ -5,6 +5,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../../../src/contracts/analysisViewToolContracts.js";
+import { batchUnknowns } from "../../../src/domain/analysisView/batchDecompileView.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -195,6 +196,7 @@ const readBody = async (
 ) => {
   let text = "";
   let pages = 0;
+  const nextOffsets: (number | null)[] = [];
   let offset: number | null = 0;
   while (offset !== null) {
     const page = await view(harness, parentId, {
@@ -207,9 +209,10 @@ const readBody = async (
     offset = z
       .looseObject({ next_offset: z.number().nullable() })
       .parse(page.coverage).next_offset;
+    nextOffsets.push(offset);
     pages++;
   }
-  return { text, pages };
+  return { text, pages, nextOffsets };
 };
 
 /** A typed refusal whose issue names the rejected selection. */
@@ -264,10 +267,9 @@ it.each(["full", "compact"] as const)(
       },
     });
     expect(summary.unknowns).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("1 items have unknown procedure identity"),
-        expect.stringContaining("not attributed to one successful item"),
-      ]),
+      batchUnknowns(
+        batchDecompileResultSchema.parse(parent.normalized_result).items,
+      ),
     );
     const callsAfterBatch = harness.calls.count;
 
@@ -303,8 +305,8 @@ it.each(["full", "compact"] as const)(
       { index: 3, address: "emoji" },
       {
         index: 4,
-        status: "error",
-        error: { code: "capability_unavailable" },
+        status: "unavailable",
+        reason: "no_pseudocode",
         limitations: expect.arrayContaining([NO_BODY_REASON]),
       },
       { index: 5, procedure: { status: "unknown" } },
@@ -316,7 +318,8 @@ it.each(["full", "compact"] as const)(
       [{ procedure_addresses: ["0x401000"] }, [0, 1, 2]],
       // A selector never matches as an observed entry, including an unknown one.
       [{ procedure_addresses: ["missing"] }, []],
-      [{ statuses: ["error"] }, [4, 5]],
+      [{ statuses: ["unavailable"] }, [4, 5]],
+      [{ statuses: ["error"] }, []],
       [{ indices: [5, 3, 3] }, [3, 5]],
       [{ statuses: ["ok"], procedure_addresses: ["0x402000"] }, [3]],
       [{ indices: [] }, []],
@@ -355,7 +358,7 @@ it.each(["full", "compact"] as const)(
     });
     expect(selected.items).toMatchObject([
       { index: 3, pseudocode: EMOJI_BODY },
-      { index: 4, status: "error" },
+      { index: 4, status: "unavailable" },
     ]);
     expect(JSON.stringify(selected.items)).not.toContain('"pseudocode":null');
 
@@ -407,7 +410,8 @@ it("pages one body exactly without splitting a Unicode character", async () => {
   expect(JSON.stringify(evidence.normalized_result)).toContain("int main");
 
   // A limit ending inside a surrogate pair stops before it, so pages rebuild the text.
-  const { text, pages } = await readBody(harness, parent, 3, 30);
+  const { text, pages, nextOffsets } = await readBody(harness, parent, 3, 31);
+  expect(nextOffsets[0]).toBe(30);
   expect(text).toBe(EMOJI_BODY);
   expect(pages).toBeGreaterThan(1);
   expect(
@@ -435,7 +439,7 @@ it("pages one body exactly without splitting a Unicode character", async () => {
       }),
     ).error;
   expect(await refused({ index: 4 })).toMatchObject(
-    invalidIssue("Item 4 has status error"),
+    invalidIssue("Item 4 has status unavailable"),
   );
   expect(await refused({ index: 6 })).toMatchObject(
     invalidIssue("outside this batch of 6"),
@@ -484,6 +488,15 @@ it("recovers oversized batches and pages through smaller selections of the paren
   });
   const rows = await harness.call(first.name, first.arguments);
   expect(rowIndices(viewOf(rows.evidence))).toEqual([0, 1, 2]);
+  expect(viewOf(rows.evidence).items).toMatchObject([
+    { status: "ok" },
+    { status: "ok" },
+    {
+      status: "unavailable",
+      reason: "no_pseudocode",
+      limitations: expect.arrayContaining([NO_BODY_REASON]),
+    },
+  ]);
   expect(Buffer.byteLength(JSON.stringify(rows.result))).toBeLessThan(budget);
 
   // Several bodies that cannot fit continue with fewer rows from the same parent.
@@ -571,6 +584,56 @@ it("reads the same rows from a bundle and an Evidence file without a provider", 
     });
     expect(viewOf(parseEvidence(reply.structuredContent)).items).toEqual(items);
   }
+});
+
+it("reads historical batch Evidence with the prior null-pseudocode error", async () => {
+  const harness = await connect("full");
+  const savedItem = {
+    address: "bodyless",
+    procedure: { status: "resolved", address: "0x403000", name: "bodyless" },
+    status: "error",
+    error: {
+      code: "capability_unavailable",
+      category: "unsupported_provider",
+      message:
+        "The provider returned no pseudocode for this function; this item's limitations hold that observation's caveats, including any reason the provider reported.",
+      retryable: false,
+      remediation: {
+        action:
+          "Read this item's limitations for the provider's reason before retrying; another provider may decompile this entry.",
+      },
+      details: {
+        provider_id: "fixture",
+        operation: "procedure_pseudo_code",
+        reason: "provider returned null pseudocode",
+      },
+    },
+    limitations: [NO_BODY_REASON],
+  } as const;
+  const historical = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "batch_decompile",
+      parameters: { addresses: ["bodyless"] },
+      result: {
+        items: [savedItem],
+        total: 1,
+        succeeded: 0,
+        failed: 1,
+      },
+      confidence: "derived",
+    },
+  );
+  const result = await harness.call("inspect_analysis_view", {
+    source: { kind: "inline", evidence: historical },
+    view: {
+      kind: "batch-decompile",
+      collection: "items",
+      where: { statuses: ["error"] },
+    },
+  });
+  expect(viewOf(result.evidence).items).toEqual([{ index: 0, ...savedItem }]);
 });
 
 it("keeps the caller's own source when a page cannot fit, without retaining its parent", async () => {

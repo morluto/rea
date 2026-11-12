@@ -36,86 +36,16 @@ const fixture = vi.hoisted(() => ({
   >(),
   runId: "fixture-run-token",
   runIdFailure: undefined as string | undefined,
+  runIdCause: undefined as unknown,
   runIdAvailability: undefined as "absent" | "unavailable" | undefined,
   runIdReads: 0,
+  runIdReadResolve: undefined as (() => void) | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const filesystem = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...filesystem,
-    readFile: async (...args: Parameters<typeof filesystem.readFile>) => {
-      const [path, options] = args;
-      const filename = String(path);
-      if (!filename.startsWith("/proc/")) return filesystem.readFile(...args);
-      fixture.reads.push(filename);
-      const code = fixture.failures.get(filename);
-      if (code !== undefined) throw Object.assign(new Error(code), { code });
-      if (fixture.abortErrors.has(filename)) {
-        const error = new Error("unexpected abort-shaped filesystem error");
-        error.name = "AbortError";
-        throw error;
-      }
-      if (filename === fixture.holdPath) {
-        fixture.holdStarted = true;
-        fixture.holdStartedResolve?.();
-        const signal =
-          typeof options === "object" && options !== null && "signal" in options
-            ? options.signal
-            : undefined;
-        await new Promise<never>((_resolve, reject) => {
-          if (signal?.aborted) {
-            const error = Object.assign(new Error("sampling cancelled"), {
-              cause: signal.reason,
-            });
-            error.name = "AbortError";
-            reject(error);
-            return;
-          }
-          signal?.addEventListener(
-            "abort",
-            () => {
-              fixture.abortObserved = true;
-              fixture.abortObservedResolve?.();
-              const error = Object.assign(new Error("sampling cancelled"), {
-                cause: signal?.reason,
-              });
-              error.name = "AbortError";
-              reject(error);
-            },
-            { once: true },
-          );
-        });
-      }
-      const statMatch = /^\/proc\/(\d+)\/stat$/u.exec(filename);
-      let value: string | Buffer;
-      if (statMatch !== null) {
-        const pid = Number(statMatch[1]);
-        const reads = (fixture.statReads.get(pid) ?? 0) + 1;
-        fixture.statReads.set(pid, reads);
-        if (pid === fixture.statWaitPid && reads >= fixture.statWaitCount)
-          fixture.statWaitResolve?.();
-        value = statLine(pid, reads);
-      } else {
-        const childMatch = /^\/proc\/(\d+)\/task\/(\d+)\/children$/u.exec(
-          filename,
-        );
-        if (childMatch !== null)
-          value =
-            fixture.children.get(`${childMatch[1]}:${childMatch[2]}`) ?? "";
-        else if (/^\/proc\/\d+\/cmdline$/u.test(filename))
-          value = Buffer.from(`fixture-command-${filename.split("/")[2]}\0`);
-        else throw new Error(`Unexpected proc fixture read: ${filename}`);
-      }
-      if (
-        typeof options === "object" &&
-        options !== null &&
-        "encoding" in options &&
-        options.encoding === "utf8"
-      )
-        return typeof value === "string" ? value : value.toString("utf8");
-      return Buffer.isBuffer(value) ? value : Buffer.from(value);
-    },
     readdir: async (...args: Parameters<typeof filesystem.readdir>) => {
       const [path] = args;
       const filename = String(path);
@@ -145,9 +75,69 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-vi.mock("../ProcessOwnership.js", () => ({
+vi.mock("../ProcessInspectionFile.js", () => ({
+  readProcessInspectionFile: async (filename: string, signal?: AbortSignal) => {
+    if (!filename.startsWith("/proc/"))
+      throw new Error(`Unexpected inspection fixture path: ${filename}`);
+    fixture.reads.push(filename);
+    const code = fixture.failures.get(filename);
+    if (code !== undefined) throw Object.assign(new Error(code), { code });
+    if (fixture.abortErrors.has(filename)) {
+      const error = new Error("unexpected abort-shaped filesystem error");
+      error.name = "AbortError";
+      throw error;
+    }
+    if (filename === fixture.holdPath) {
+      fixture.holdStarted = true;
+      fixture.holdStartedResolve?.();
+      await new Promise<never>((_resolve, reject) => {
+        if (signal?.aborted) {
+          reject(new ProcessOwnershipInspectionCancelled(signal.reason));
+          return;
+        }
+        signal?.addEventListener(
+          "abort",
+          () => {
+            fixture.abortObserved = true;
+            fixture.abortObservedResolve?.();
+            reject(new ProcessOwnershipInspectionCancelled(signal?.reason));
+          },
+          { once: true },
+        );
+      });
+    }
+    const statMatch = /^\/proc\/(\d+)\/stat$/u.exec(filename);
+    let value: string | Buffer;
+    if (statMatch !== null) {
+      const pid = Number(statMatch[1]);
+      const reads = (fixture.statReads.get(pid) ?? 0) + 1;
+      fixture.statReads.set(pid, reads);
+      if (pid === fixture.statWaitPid && reads >= fixture.statWaitCount)
+        fixture.statWaitResolve?.();
+      value = statLine(pid, reads);
+    } else {
+      const childMatch = /^\/proc\/(\d+)\/task\/(\d+)\/children$/u.exec(
+        filename,
+      );
+      if (childMatch !== null)
+        value = fixture.children.get(`${childMatch[1]}:${childMatch[2]}`) ?? "";
+      else if (/^\/proc\/\d+\/cmdline$/u.test(filename))
+        value = Buffer.from(`fixture-command-${filename.split("/")[2]}\0`);
+      else throw new Error(`Unexpected proc fixture read: ${filename}`);
+    }
+    return value.toString();
+  },
+}));
+
+vi.mock("../ProcessOwnership.js", async (original) => ({
+  ...(await original<typeof import("../ProcessOwnership.js")>()),
+  cleanupOwnedProcessGroup: async () => {
+    throw new Error("Unexpected native process cleanup");
+  },
   readProcessRunId: async () => {
     fixture.runIdReads += 1;
+    fixture.runIdReadResolve?.();
+    if (fixture.runIdCause !== undefined) throw fixture.runIdCause;
     if (
       fixture.runIdFailure !== undefined &&
       fixture.runIdAvailability !== undefined
@@ -165,7 +155,8 @@ vi.mock("../ProcessOwnership.js", () => ({
   },
 }));
 
-vi.mock("../ExecFileOutput.js", () => ({
+vi.mock("../ExecFileOutput.js", async (original) => ({
+  ...(await original<typeof import("../ExecFileOutput.js")>()),
   execFileOutput: async () => {
     fixture.psReads += 1;
     if (fixture.psFailure !== undefined)
@@ -176,6 +167,10 @@ vi.mock("../ExecFileOutput.js", () => ({
   },
 }));
 
+import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
+import { ProcessCaptureInspectionFailure } from "./ProcessCaptureError.js";
+import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
+import { ProcessOwnershipInspectionCancelled } from "../ProcessInspectionCancellation.js";
 import { ProcessRunTokenReadError } from "../ProcessRunTokenObservations.js";
 import { startProcessSampler } from "./ProcessSampling.js";
 import { readLinuxProcessStat } from "./LinuxProcessSampling.js";
@@ -253,8 +248,10 @@ const setUpFixture = (): void => {
   fixture.statReads.clear();
   fixture.statMutations.clear();
   fixture.runIdFailure = undefined;
+  fixture.runIdCause = undefined;
   fixture.runIdAvailability = undefined;
   fixture.runIdReads = 0;
+  fixture.runIdReadResolve = undefined;
   for (const pid of [100, 200, 300, 400]) fixture.tasks.set(pid, [String(pid)]);
   fixture.children.set("100:100", "200 400");
   fixture.children.set("200:200", "300");
@@ -262,15 +259,18 @@ const setUpFixture = (): void => {
 
 const start = () => {
   const samples: ProcessSample[] = [];
+  const resourceScope = new ProcessCaptureResourceScope();
   const stop = startProcessSampler({
     rootPid: 100,
     runId: fixture.runId,
     started: 0,
     limit: 20,
     samples,
+    resourceScope,
   });
   onTestFinished(async () => {
     await stop();
+    await resourceScope.close();
   });
   return { samples, stop };
 };
@@ -676,3 +676,47 @@ it.each(["absent", "unavailable"] as const)(
     }
   },
 );
+
+it("adopts the failed run-token descriptor into the actual capture scope before stopping future samples", async () => {
+  setUpFixture();
+  const file = await failedInspectionDescriptor();
+  const resourceScope = new ProcessCaptureResourceScope();
+  fixture.runIdCause = file.failure;
+  vi.useFakeTimers();
+  const attempted = new Promise<void>((resolve) => {
+    fixture.runIdReadResolve = resolve;
+  });
+  const stop = startProcessSampler({
+    rootPid: 100,
+    runId: fixture.runId,
+    resourceScope,
+    started: 0,
+    limit: 20,
+    samples: [],
+  });
+  onTestFinished(async () => {
+    file.allow();
+    await resourceScope.close();
+    await stop().catch((cause: unknown) => {
+      if (!(cause instanceof ProcessCaptureInspectionFailure)) throw cause;
+    });
+    vi.useRealTimers();
+  });
+  await attempted;
+  await vi.advanceTimersByTimeAsync(200);
+  expect(fixture.runIdReads).toBe(1);
+  const failure: unknown = await stop().catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ProcessCaptureInspectionFailure);
+  if (!(failure instanceof ProcessCaptureInspectionFailure))
+    throw new Error("Expected exact retained inspection failure");
+  expect(failure.inspectionFailure).toBe(file.failure);
+  expect(failure.cleanupIncomplete).toBe(true);
+  await expect(resourceScope.retryCleanup()).rejects.toBeDefined();
+  expect(file.handle.fd).toBeGreaterThanOrEqual(0);
+  file.allow();
+  await resourceScope.retryCleanup();
+  expect(file.handle.fd).toBe(-1);
+  expect(failure.cleanupIncomplete).toBe(false);
+  await expect(stop()).rejects.toBe(failure);
+  expect(failure.inspectionFailure).toBe(file.failure);
+});

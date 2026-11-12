@@ -5,6 +5,9 @@ import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import { createBrowserScenarioEvidence } from "./BrowserScenarioEvidence.js";
 
+import { jsonValueSchema } from "../domain/jsonValue.js";
+
+const capture = scenarioCaptureFixture();
 const ORIGIN = "http://127.0.0.1:3101";
 
 const parameters = (actions: readonly unknown[]) =>
@@ -14,7 +17,7 @@ const parameters = (actions: readonly unknown[]) =>
       start_url: { url: `${ORIGIN}/` },
       actions,
     }),
-    scenarioCaptureFixture(),
+    { source: jsonValueSchema.parse(capture), facts: capture },
     { id: "fixture", name: "fixture", version: "1" },
   ).parameters;
 
@@ -36,10 +39,10 @@ const create = (fields: Record<string, unknown> = {}) => ({
 });
 
 describe("browser scenario evidence parameters", () => {
-  it("records a scenario that saves nothing as it was recorded before saved values existed", () => {
+  it("records the current parsed request action, including an empty saved-value list", () => {
     const recorded = parameters([open(), create()]);
     const actions = recorded["actions"] as Record<string, unknown>[];
-    expect(Object.keys(actions[1]!)).not.toContain("save");
+    expect(actions[1]).toHaveProperty("save", []);
     expect(parameters([open(), create({ save: [] })])).toEqual(recorded);
     const { scenario_sha256, ...scenario } = recorded;
     expect(scenario_sha256).toBe(

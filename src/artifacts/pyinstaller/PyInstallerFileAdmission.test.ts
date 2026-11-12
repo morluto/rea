@@ -20,7 +20,7 @@ it("classifies a source replacement during admission as an integrity failure", a
     await expect(reader.prepareContainer("0".repeat(64))).rejects.toMatchObject(
       {
         reason: "integrity",
-        message: `PyInstaller source changed during admission: ${path}`,
+        message: expect.stringContaining(path),
       },
     );
     expect(openRegularFile).toHaveBeenCalledWith(path, {

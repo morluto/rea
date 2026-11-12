@@ -76,6 +76,7 @@ const formatSchema = z.enum([
   "ines",
   "godot-pck",
   "unityfs",
+  "wxapkg",
   "dmg",
   "pkg",
   "intel-hex",
@@ -85,6 +86,7 @@ const formatSchema = z.enum([
   "dfuse",
   "esp-flash-image",
   "fit",
+  "ntfs-mft",
   "plist",
   "javascript",
   "source-map",
@@ -188,6 +190,27 @@ export type AnalysisSnapshotEntry = z.infer<typeof entrySchema>;
 export type AnalysisSnapshotWorkflowEntry = z.infer<typeof workflowEntrySchema>;
 export type AnalysisSnapshotTarget = z.infer<typeof targetSchema>;
 export type AnalysisSnapshotBinding = z.infer<typeof bindingSchema>;
+
+/** Recognize an already-parsed JSON file envelope; this does not validate or authenticate a snapshot. */
+export const resemblesAnalysisSnapshot = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const record = value as Record<string, unknown>;
+  const objectMember = (key: string) =>
+    Object.hasOwn(record, key) &&
+    typeof record[key] === "object" &&
+    record[key] !== null &&
+    !Array.isArray(record[key]);
+  return (
+    objectMember("target") &&
+    objectMember("binding") &&
+    objectMember("evidence_bundle") &&
+    Object.hasOwn(record, "entries") &&
+    Array.isArray(record.entries) &&
+    Object.hasOwn(record, "workflow_entries") &&
+    Array.isArray(record.workflow_entries)
+  );
+};
 
 // These handles only represent entries parsed in this realm. File readers can
 // release their payloads while retaining an authenticated comparison operand.
@@ -738,7 +761,7 @@ const restoreSnapshot = (
     scopedEvidence.unknowns.length !== bundle.unknowns.length
   )
     throw new TypeError(
-      "Analysis snapshot evidence contains records for another target",
+      "Analysis snapshot evidence contains records unrelated to the selected target and its linked sources",
     );
   if (!hasCanonicalQueryOrder(providerRows.map(({ entry }) => entry)))
     throw new TypeError("Analysis snapshot entries are not canonical");

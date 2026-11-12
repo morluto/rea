@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { lstat, open, type FileHandle } from "node:fs/promises";
-import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
+import {
+  resolvedRegularFile,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
@@ -38,11 +41,13 @@ export const completedStableArtifact = (
 export interface StableArtifactFileSystem {
   lstat(path: string): Promise<BigIntStats>;
   open(path: string, flags: number): Promise<FileHandle>;
+  realpath?(path: string): Promise<string>;
 }
 
 const FILE_SYSTEM: StableArtifactFileSystem = {
   lstat: (path) => lstat(path, { bigint: true }),
   open,
+  realpath,
 };
 
 const afterValidation = async <T>(
@@ -63,13 +68,18 @@ const afterValidation = async <T>(
   }
 };
 
-/** Read one bounded regular file and reject replacement or in-place changes. */
+/**
+ * Read one bounded regular file and reject replacement or in-place changes.
+ * The optional observer receives verified state before descriptor finalization;
+ * callers may reuse it only after this promise resolves successfully.
+ */
 export const readStableArtifact = async (
   path: string,
   maximumBytes: number,
   signal?: AbortSignal,
   fileSystem: StableArtifactFileSystem = FILE_SYSTEM,
   resourceScope?: ArtifactResourceScope,
+  onValidatedState?: (state: BigIntStats) => void,
 ): Promise<StableArtifactSnapshot> => {
   assertArtifactReadActive(signal);
   const before = await fileSystem.lstat(path);
@@ -77,6 +87,9 @@ export const readStableArtifact = async (
     throw new ArtifactReaderFailure(
       "path",
       `Expected a regular file without a symlink: ${path}`,
+      before.isSymbolicLink()
+        ? { resolvedPath: await resolvedRegularFile(path, fileSystem) }
+        : {},
     );
   const maximumSize = BigInt(maximumBytes);
   if (before.size > maximumSize)
@@ -161,10 +174,29 @@ export const readStableArtifact = async (
           `Artifact changed during read: ${path}`,
         );
       assertArtifactReadActive(signal);
+      onValidatedState?.(initial);
       return {
         bytes,
         sha256: hash.digest("hex"),
       };
     },
   );
+};
+
+/** Revalidate a completed snapshot's selected file state without reading its bytes again. */
+export const assertStableArtifactState = async (
+  path: string,
+  expected: BigIntStats,
+  signal?: AbortSignal,
+): Promise<void> => {
+  assertArtifactReadActive(signal);
+  const current = await afterValidation(path, "before cached inspection", () =>
+    lstat(path, { bigint: true }),
+  );
+  if (!sameRegularFileState(expected, current))
+    throw new ArtifactReaderFailure(
+      "integrity",
+      `Artifact changed since acquisition: ${path}`,
+    );
+  assertArtifactReadActive(signal);
 };
