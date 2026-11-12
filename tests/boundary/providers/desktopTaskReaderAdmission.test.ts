@@ -35,7 +35,7 @@ const expectUnread = async (source: string) => {
   expect(view).toMatchObject({
     format: null,
     view: null,
-    error: expect.stringContaining("could not inspect the reader's file"),
+    error: expect.stringContaining("cannot inspect the reader's source"),
   });
   if (view === undefined) throw new Error("inspection failure became absence");
   const [outcome] = evaluateTaskChecks(

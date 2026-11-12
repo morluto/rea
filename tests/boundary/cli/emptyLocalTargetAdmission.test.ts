@@ -131,3 +131,22 @@ it.each([
     });
   },
 );
+
+it("rejects an empty or NUL --snapshot option before analysis", async () => {
+  const { serve, runs } = registry();
+  expect(await serve(["inspect", ".", "--snapshot", ""])).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({ path: "snapshot", code: "too_small" }),
+    ],
+  });
+  expect(
+    await serve(["inspect", ".", "--snapshot", "snap\x00shot"]),
+  ).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({ path: "snapshot", code: "invalid_format" }),
+    ],
+  });
+  for (const run of runs) expect(run).not.toHaveBeenCalled();
+});

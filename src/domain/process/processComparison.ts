@@ -1,7 +1,6 @@
 import canonicalize from "canonicalize";
 import { z } from "zod";
 import { processSourceTruncated } from "./processCaptureCoverage.js";
-import { symlinkTargetIdentity } from "./symlinkTarget.js";
 import type {
   ProcessObservationLocation,
   ProcessObservationSource,
@@ -292,17 +291,8 @@ const hasKnownFilesystemDifference = (
           other.sha256 !== null &&
           file.sha256 !== other.sha256
         );
-      if (file.type === "symlink" && other.type === "symlink") {
-        const leftTarget = symlinkTargetIdentity(file);
-        const rightTarget = symlinkTargetIdentity(other);
-        if (leftTarget !== null && rightTarget !== null)
-          return leftTarget !== rightTarget;
-        return (
-          file.symlink_target !== null &&
-          other.symlink_target !== null &&
-          file.symlink_target !== other.symlink_target
-        );
-      }
+      if (file.type === "symlink" && other.type === "symlink")
+        return file.symlink_target_hex !== other.symlink_target_hex;
       return false;
     });
   }) ||

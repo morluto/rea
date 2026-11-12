@@ -7,6 +7,7 @@ import type {
   JavaScriptSemanticChildProcessSpawn,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
+import { rejectsSemanticEventListener } from "./javascriptSemanticAsyncEffects.js";
 import {
   createSemanticExpressionShapeResolver,
   optionsAfterOptionalArgv,
@@ -225,6 +226,11 @@ const childInteraction = (
   const method = semanticStaticPropertyName(member.property, member.computed);
   const classification = classifyInteraction(method, node.arguments[0]);
   if (classification === null) return null;
+  if (
+    classification.kind === "listener" &&
+    rejectsSemanticEventListener(node.arguments[1])
+  )
+    return null;
   const binding = objectBinding(member.object, state);
   const { candidates: linked, complete } = resolveChildCandidates(
     member.object,
