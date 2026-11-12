@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  entrypointSpellingVerdict,
   isNetworkSharePath,
   sameEntrypointSpelling,
   selectedFile,
@@ -68,16 +69,31 @@ describe("entrypoint spelling rules", () => {
     expect(read).toEqual(["/opt/rea/rea.mjs"]);
   });
 
-  it("keeps two different shares apart without reading them", () => {
+  it("refuses to answer for a share it never read", () => {
+    // A share is never dereferenced, so its lexical form is not evidence of identity: the same
+    // spelling can be remounted, and two different ones can name the same file after a retarget.
     const { read, resolveSpelling } = recordingResolver();
     expect(
-      sameEntrypointSpelling(
+      entrypointSpellingVerdict(
         "\\\\server\\share\\rea.mjs",
         "\\\\server\\share\\other.mjs",
         "node",
         resolveSpelling,
       ),
-    ).toBe(false);
+    ).toBe("unknown");
+    expect(read).toEqual([]);
+  });
+
+  it("refuses to answer for two equal shares too", () => {
+    const { read, resolveSpelling } = recordingResolver();
+    expect(
+      entrypointSpellingVerdict(
+        "\\\\server\\share\\rea.mjs",
+        "\\\\server\\share\\rea.mjs",
+        "node",
+        resolveSpelling,
+      ),
+    ).toBe("unknown");
     expect(read).toEqual([]);
   });
 

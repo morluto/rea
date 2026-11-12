@@ -194,7 +194,12 @@ describe("server and catalog identity", () => {
     expect(withoutExamples.prompts_sha256).toBe(original.prompts_sha256);
   });
 
-  it("reports unknown without a live comparison and distinguishes aligned from stale", () => {
+  it("reports unknown without a live comparison and distinguishes aligned from stale", async () => {
+    // `aligned` needs a file this process can actually read: two identical spellings of a path
+    // that cannot be selected prove nothing, so they report `unknown` as well.
+    const root = await createTestTempDirectory("server-identity-aligned-");
+    const entrypoint = join(root, "rea.mjs");
+    await writeFile(entrypoint, "");
     const unknown = createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
@@ -205,18 +210,18 @@ describe("server and catalog identity", () => {
     const aligned = createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
-      commandPath: "/packaged/rea.mjs",
+      commandPath: entrypoint,
       expected: {
         package_version: PRODUCT_IDENTITY.packageVersion,
         catalog_digest: DEFAULT_CATALOG_IDENTITY.digests.combined_sha256,
-        server_path: "/packaged/rea.mjs",
+        server_path: entrypoint,
       },
     });
     expect(aligned.alignment).toMatchObject({ state: "aligned", reasons: [] });
     const stale = createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
-      commandPath: "/packaged/rea.mjs",
+      commandPath: entrypoint,
       expected: {
         package_version: "1.2.0",
         catalog_digest: "0".repeat(64),
@@ -267,9 +272,10 @@ describe("server registration path identity", () => {
     expect(identity.alignment).toMatchObject({ state: "aligned", reasons: [] });
   });
 
-  it("compares a network share spelling without reading it", () => {
+  it("reports unknown for a network share it never reads", () => {
     // `absoluteLocalPathStringSchema` accepts a UNC spelling, and reading one starts SMB
-    // traffic. Two equal spellings still align because the comparison stays lexical for them.
+    // traffic. Since the share is never read, its lexical form proves nothing about identity —
+    // "aligned" would claim a comparison that never happened.
     const shared = "\\\\server\\share\\rea.mjs";
     const identity = createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
@@ -278,10 +284,11 @@ describe("server registration path identity", () => {
       expected: { server_path: shared },
     });
 
-    expect(identity.alignment).toMatchObject({ state: "aligned", reasons: [] });
+    expect(identity.alignment).toMatchObject({ state: "unknown", reasons: [] });
   });
 
-  it("keeps a different network share a mismatch", () => {
+  it("does not call two different shares a mismatch", () => {
+    // Without reading either share, "different" is as unsupported as "same".
     const identity = createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
@@ -289,7 +296,10 @@ describe("server registration path identity", () => {
       expected: { server_path: "\\\\server\\share\\other.mjs" },
     });
 
-    expect(identity.alignment.reasons).toEqual(["registration_path_mismatch"]);
+    expect(identity.alignment).toMatchObject({
+      state: "unknown",
+      reasons: [],
+    });
   });
 
   it("normalizes a parent segment that reaches the same entrypoint", async () => {

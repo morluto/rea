@@ -54,26 +54,38 @@ const nativeRealpath: RealpathResolver = (candidate) =>
   realpathSync.native(candidate);
 
 /**
- * The file a spelling selects, falling back to the lexical path when it cannot be read.
+ * The file a spelling selects, with the lexical form kept even when it was not read.
  *
- * A network share is compared lexically and never dereferenced. The lexical form uses Windows
- * semantics even off Windows, because `resolve` would otherwise prepend the working directory to
- * a `\\server\share` spelling on a POSIX host, where that spelling is not absolute.
+ * A network share is never dereferenced: reading one starts SMB traffic and can block on ambient
+ * Windows authentication. The lexical form uses Windows semantics even off Windows, because
+ * `resolve` would otherwise prepend the working directory to a `\\server\share` spelling on a
+ * POSIX host, where that spelling is not absolute.
  *
  * One residual stays open and is stated rather than hidden: on Windows a mapped drive letter
- * reaches a share too, and a letter cannot be classified without an I/O call of its own — the
- * same call this guard is avoiding. Since `expected_server_path` is caller input, a caller can
- * still name a mapped drive. Handling it needs a volume query with its own budget, not a wider
- * pattern here.
- *
- * `realpathSync.native` matches the launcher's own traversal, which is why
- * `entrypointIdentity` prefers it.
+ * reaches a share too, and a letter cannot be classified without an I/O call of its own — the same
+ * call this guard is avoiding. Since `expected_server_path` is caller input, a caller can still
+ * name a mapped drive. Handling it needs a volume query with its own budget, not a wider pattern
+ * here.
  */
-export const selectedFile = (
+export interface SelectedFile {
+  readonly path: string;
+  /**
+   * Whether the path was read from the filesystem.
+   *
+   * `false` means the spelling was deliberately left unread — a network share, or a path the
+   * resolver could not stat. The lexical form is still useful for display, but comparing two of
+   * them proves nothing about identity.
+   */
+  readonly selected: boolean;
+}
+
+/** Select the file a spelling names, reporting whether the filesystem was consulted. */
+export const selectEntrypoint = (
   candidate: string,
   readRealpath: RealpathResolver = nativeRealpath,
-): string => {
-  if (isNetworkSharePath(candidate)) return win32.resolve(candidate);
+): SelectedFile => {
+  if (isNetworkSharePath(candidate))
+    return { path: win32.resolve(candidate), selected: false };
   // A parent segment is normalized lexically *first*, then the result is resolved — that is the
   // composition the launcher performs. Measured on Node 24.22.1: with `a/link` pointing at
   // `b/deep` and both `a/s.mjs` and `b/s.mjs` present, `node a/link/../s.mjs` runs `a/s.mjs`
@@ -83,11 +95,22 @@ export const selectedFile = (
     ? resolve(candidate)
     : candidate;
   try {
-    return readRealpath(normalized);
+    return { path: readRealpath(normalized), selected: true };
   } catch {
-    return resolve(normalized);
+    return { path: resolve(normalized), selected: false };
   }
 };
+
+/**
+ * The file a spelling selects, falling back to the lexical path when it cannot be read.
+ *
+ * `realpathSync.native` matches the launcher's own traversal, which is why
+ * `entrypointIdentity` prefers it.
+ */
+export const selectedFile = (
+  candidate: string,
+  readRealpath: RealpathResolver = nativeRealpath,
+): string => selectEntrypoint(candidate, readRealpath).path;
 
 /**
  * Whether two entrypoint spellings select the same file.
@@ -116,9 +139,13 @@ export const entrypointSpellingVerdict = (
   // the process runs, so equality only holds if neither side selects something else.
   if (traversalSemanticsDiffer(left, runtime)) return "unknown";
   if (traversalSemanticsDiffer(right, runtime)) return "unknown";
-  return selectedFile(left, readRealpath) === selectedFile(right, readRealpath)
-    ? "same"
-    : "different";
+  const leftSelection = selectEntrypoint(left, readRealpath);
+  const rightSelection = selectEntrypoint(right, readRealpath);
+  // A lexical fallback is not evidence of identity: an unread share can be remounted, and an
+  // unreadable alias can be retargeted. Comparing those strings would turn "could not check"
+  // into "same" or "different".
+  if (!leftSelection.selected || !rightSelection.selected) return "unknown";
+  return leftSelection.path === rightSelection.path ? "same" : "different";
 };
 
 /** Whether two entrypoint spellings are not provably different. */
