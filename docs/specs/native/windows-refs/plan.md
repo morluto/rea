@@ -231,4 +231,4 @@ Ask the human owner to review the final diff and verification evidence, complete
 
 - [Windows ReFS specification](spec.md)
 - [REA #289: handle-based reparse-safe filesystem authority](https://github.com/morluto/rea/issues/289)
-- [Windows native build and verification guide](../../../native/windows/README.md)
+- [Windows native build and verification guide](https://github.com/morluto/rea/blob/main/native/windows/README.md)
