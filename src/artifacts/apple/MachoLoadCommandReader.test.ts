@@ -38,6 +38,25 @@ import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
 const read = (bytes: Uint8Array) =>
   readMachoImage(readerOf(bytes), bytes.length);
 
+it.each([
+  { count: 0, status: "malformed" },
+  { count: 1, status: "parsed" },
+  { count: 2, status: "malformed" },
+])(
+  "checks LC_BUILD_VERSION size with $count declared tools",
+  async ({ count, status }) => {
+    const command = Buffer.alloc(32);
+    command.set(buildVersionCommand(1));
+    command.writeUInt32LE(command.length, 4);
+    command.writeUInt32LE(count, 20);
+    command.writeUInt32LE(3, 24);
+    command.writeUInt32LE(0x00010000, 28);
+    expect(await read(machoImage({ commands: [command] }))).toMatchObject({
+      status,
+    });
+  },
+);
+
 it.skipIf(process.platform === "win32")(
   "keeps non-UTF-8 symlink targets distinct from a real replacement character",
   async () => {
