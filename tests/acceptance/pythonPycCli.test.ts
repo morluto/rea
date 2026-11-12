@@ -11,10 +11,37 @@ import {
 } from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { pythonPycEqualityGolden } from "../fixtures/python-pyc-equality/golden.js";
 
 const completePycEvidenceSchema = toolContract(
   "inspect_python_pyc",
 ).outputSchema.safeExtend({ normalized_result: pythonPycSchema });
+
+cliTest(
+  "preserves CPython code-member identity in public Evidence",
+  async ({ cli }) => {
+    const golden = pythonPycEqualityGolden;
+    const directory = await createTestTempDirectory("rea-pyc-code-equality-");
+    const path = join(directory, "equality.pyc");
+    await writeFile(path, Buffer.from(golden.pyc_base64, "base64"));
+    const result = await runFileCli(cli, {
+      arguments: ["inspect-python-pyc", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = completePycEvidenceSchema.parse(
+      result.json,
+    ).normalized_result;
+    expect(report.artifact).toMatchObject({ path, sha256: golden.sha256 });
+    expect(report.code_objects[0]?.consts).toEqual(
+      golden.cases.map((sample) => ({
+        kind: "frozenset",
+        length: sample.members,
+      })),
+    );
+    expect(report.code_objects).toHaveLength(golden.code_objects);
+    expect(report.coverage.status).toBe("complete");
+  },
+);
 
 const marshalUtf8 = (bytes: Buffer): Buffer => {
   const length = Buffer.alloc(4);
