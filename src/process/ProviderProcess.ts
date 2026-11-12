@@ -10,7 +10,10 @@ import { spawn, type ChildProcess } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
 
-import { WindowsOwnedProcess } from "../windows/WindowsOwnedProcess.js";
+import {
+  WindowsOwnedProcess,
+  isWindowsExecutableLaunchFailure,
+} from "../windows/WindowsOwnedProcess.js";
 
 import {
   ProcessOutputTokenScanner,
@@ -314,19 +317,26 @@ export const spawnOwnedProviderProcess = async (
     // A native constructor failure can occur after execution begins. Retain
     // the attempted state unless the native boundary supplies no-start proof.
     options.onLaunchState?.("attempting");
-    const child = new WindowsOwnedProcess(
-      options.command,
-      options.arguments,
-      options.cwd,
-      environment,
-      options.windowsVerbatimArguments ?? false,
-      {
-        protocolStdin: options.stdin === "pipe",
-        ...(options.memoryLimitBytes === undefined
-          ? {}
-          : { memoryLimitBytes: options.memoryLimitBytes }),
-      },
-    );
+    let child: WindowsOwnedProcess;
+    try {
+      child = new WindowsOwnedProcess(
+        options.command,
+        options.arguments,
+        options.cwd,
+        environment,
+        options.windowsVerbatimArguments ?? false,
+        {
+          protocolStdin: options.stdin === "pipe",
+          ...(options.memoryLimitBytes === undefined
+            ? {}
+            : { memoryLimitBytes: options.memoryLimitBytes }),
+        },
+      );
+    } catch (cause) {
+      if (isWindowsExecutableLaunchFailure(cause))
+        options.onLaunchState?.("not_started");
+      throw cause;
+    }
     return {
       process: child,
       ownership: {
