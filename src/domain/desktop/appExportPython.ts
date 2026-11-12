@@ -20,6 +20,7 @@ export const PYTHON_READY_CHECK = `
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
 from array import array
+from itertools import islice
 import binascii
 import contextlib
 import copy
@@ -319,10 +320,9 @@ def _sqlite(path: Path) -> dict:
 
 
 def _text(text: str) -> dict:
-    lines = LINE_BREAK.split(text)
-    if lines[-1] == "":
-        lines.pop()
-    view = {"lines": lines[:MAX_LINES], "line_count": len(lines), "truncated": len(lines) > MAX_LINES}
+    count = text.count("\n") + int(bool(text) and not text.endswith("\n"))
+    lines = list(islice(_each_line(text), min(MAX_LINES, count)))
+    view = {"lines": lines, "line_count": count, "truncated": count > MAX_LINES}
     return {"format": "text", "view": view, "truncated": view["truncated"]}
 
 

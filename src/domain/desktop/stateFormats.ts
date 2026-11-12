@@ -410,12 +410,23 @@ export const textView = (
   text: string,
   policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): JsonValue => {
-  const lines = text.split(/\r?\n/u);
-  if (lines.at(-1) === "") lines.pop();
+  const lines: string[] = [];
+  let lineCount = 0;
+  for (let start = 0; start < text.length;) {
+    const newline = text.indexOf("\n", start);
+    const end = newline < 0 ? text.length : newline;
+    if (lines.length < policy.text_lines) {
+      const hasCr = newline >= 0 && text.charCodeAt(newline - 1) === 13;
+      lines.push(text.slice(start, hasCr ? end - 1 : end));
+    }
+    lineCount += 1;
+    if (newline < 0) break;
+    start = newline + 1;
+  }
   return {
-    lines: lines.slice(0, policy.text_lines),
-    line_count: lines.length,
-    truncated: lines.length > policy.text_lines,
+    lines,
+    line_count: lineCount,
+    truncated: lineCount > policy.text_lines,
   };
 };
 

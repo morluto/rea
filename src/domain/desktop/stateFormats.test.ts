@@ -111,6 +111,28 @@ describe("jsonView", () => {
 });
 
 describe("views", () => {
+  it.each([
+    ["", []],
+    ["\n", [""]],
+    ["one\r\ntwo\n\n", ["one", "two", ""]],
+    ["one\rtwo\r", ["one\rtwo\r"]],
+    ["one\u2028two\u0085three", ["one\u2028two\u0085three"]],
+    ["one\r\r\ntwo", ["one\r", "two"]],
+  ] as const)(
+    "counts all lines and retains the requested prefix: %j",
+    (text, expected) => {
+      for (const limit of [1, 2, 5]) {
+        expect(
+          textView(text, desktopViewPolicy({ text_lines: limit })),
+        ).toEqual({
+          lines: expected.slice(0, limit),
+          line_count: expected.length,
+          truncated: expected.length > limit,
+        });
+      }
+    },
+  );
+
   it("splits text into lines without a trailing empty line", () => {
     expect(textView("a\nb\n")).toEqual({
       lines: ["a", "b"],
