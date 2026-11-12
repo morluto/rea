@@ -78,17 +78,32 @@ export const entropyFromCounts = (
  */
 export const wholeFileByteCounts = (): Float64Array => new Float64Array(256);
 
-export const computeBlockEntropy = (bytes: Uint8Array): number => {
-  // Indexed reads into a float counter. Iterating a typed array with `for...of` and
-  // re-reading `counts[byte] ?? 0` measured several times slower than this loop, and
-  // the gain comes from the indexed reads rather than from an integer bin.
-  const counts = new Float64Array(256);
+/**
+ * Add a run of bytes to a census.
+ *
+ * The counter is a `Float64Array` because one value can occur more than 2^32 times in a
+ * whole-file census, and an integer bin would wrap. Indexed reads into a float counter measure the
+ * same as into an integer one, so the exactness costs nothing; the gain over `for...of` comes from
+ * the indexed reads, not from the bin.
+ *
+ * Both the per-block entropy and the service's whole-file census call this, so the loop exists
+ * once and a caller cannot pick a narrower counter without the signature rejecting it.
+ */
+export const countByteValues = (
+  bytes: Uint8Array,
+  counts: Float64Array,
+): void => {
   const length = bytes.length;
   for (let index = 0; index < length; index += 1) {
     const key = bytes[index] as number;
     counts[key] = counts[key]! + 1;
   }
-  return entropyFromCounts(counts, length);
+};
+
+export const computeBlockEntropy = (bytes: Uint8Array): number => {
+  const counts = new Float64Array(256);
+  countByteValues(bytes, counts);
+  return entropyFromCounts(counts, bytes.length);
 };
 
 /** Merge only adjacent classified blocks, using the reported rounded entropy. */
