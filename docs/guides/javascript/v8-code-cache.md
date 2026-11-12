@@ -54,7 +54,8 @@ reader reports it under the name the measurement supports. Treat that name as an
 observation, not as a claim about what any other build stores there.
 `header.producer` names the producer family from the flag bits in that word. Bit 29
 marks `vm.compileFunction` (`compile_function`); bit 30 marks `vm.SourceTextModule`
-(`module`). When neither flag is present, the producer remains `unknown`:
+(`module`). V8 before 13.4, including Node 22, marks a module with bit 31 instead,
+which is also reported as `module`. When no flag is present, the producer remains `unknown`:
 `vm.Script`, bytenode output and older unflagged function caches cannot be
 separated by those bits alone. The source-length mask is `0x1fffffff`, so both
 flags sit outside the reported length. This describes the admitted header
