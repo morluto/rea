@@ -143,3 +143,27 @@ it("emits no request when the getter enumerates after the path", () => {
     ),
   ).toEqual([]);
 });
+
+it.each([
+  // An object-literal spread contributes its own data keys, so no getter runs and the invalid
+  // path is what Node copies. Measured on Node 24.22.1.
+  [`http.request({ ...{ host: "h" }, path: "/a b" })`],
+  [`http.request({ ...{ path: "/a b" }, host: "h" })`],
+  [`http.request({ ...{}, path: "/a b" })`],
+] as const)(
+  "emits no request through a statically inert spread: %s",
+  (call) => {
+    expect(requestsFor(call)).toEqual([]);
+  },
+);
+
+it.each([
+  // A getter inside the spread still runs during the copy.
+  [`http.request({ ...{ get x() {} }, path: "/a b" })`],
+  [`http.request({ get x() { this.path = "/ok"; }, path: "/a b" })`],
+] as const)(
+  "keeps the request when a getter may rewrite the path: %s",
+  (call) => {
+    expect(requestsFor(call)).toHaveLength(1);
+  },
+);

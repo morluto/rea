@@ -614,6 +614,10 @@ const UNESCAPED_PATH_CHARACTER = /[^\u0021-\u00ff]/u;
  * member therefore runs before the value is copied, so the syntactic value is not the runtime
  * one.
  */
+/** Whether an object-literal entry is a getter accessor. */
+const isGetterEntry = (entry: t.ObjectProperty | t.ObjectMethod): boolean =>
+  t.isObjectMethod(entry) && entry.kind === "get";
+
 const optionGetterPrecedesMember = (
   options: t.ObjectExpression,
   member: string,
@@ -625,11 +629,27 @@ const optionGetterPrecedesMember = (
   >();
   for (const [index, property] of options.properties.entries()) {
     if (t.isSpreadElement(property)) {
-      // A spread can supply any key at its own position; an empty literal supplies none.
+      // An object-literal spread contributes its own keys at this position, so it is walked
+      // rather than treated as opaque. Measured on Node 24.22.1,
+      // `http.request({...{host: "h"}, path: "/a b"})` throws `ERR_UNESCAPED_CHARACTERS`
+      // because the spread materializes `host` as a data property and leaves no getter.
       const spread = unwrapJavaScriptExpression(property.argument).node;
-      if (t.isObjectExpression(spread) && spread.properties.length === 0)
-        continue;
-      return true;
+      if (!t.isObjectExpression(spread)) return true;
+      // A getter anywhere inside the spread still runs during the copy.
+      if (
+        spread.properties.some(
+          (entry) => !t.isSpreadElement(entry) && isGetterEntry(entry),
+        )
+      )
+        return true;
+      for (const entry of spread.properties) {
+        if (t.isSpreadElement(entry)) return true;
+        const name = semanticStaticPropertyKey(entry.key, entry.computed);
+        if (name === null) return true;
+        if (!firstIndex.has(name)) firstIndex.set(name, index);
+        lastDescriptor.set(name, { node: entry });
+      }
+      continue;
     }
     const name = semanticStaticPropertyKey(property.key, property.computed);
     if (
