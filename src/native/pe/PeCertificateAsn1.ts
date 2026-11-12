@@ -426,6 +426,8 @@ const requireSubjectPublicKeyInfo = (node: Asn1BerNode): void => {
 // RFC 5280 4.1 and 4.2: an Extension is extnID, an optional critical BOOLEAN
 // and an extnValue OCTET STRING. A certificate MUST NOT repeat an extnID.
 const requireExtensions = (extensions: readonly Asn1BerNode[]): void => {
+  if (extensions.length === 0)
+    return fail("TBSCertificate Extensions sequence is empty.");
   const seen = new Set<string>();
   for (const extension of extensions) {
     const fields = sequence(extension, "TBSCertificate extension");

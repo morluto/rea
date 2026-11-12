@@ -78,6 +78,7 @@ eight header bytes, including zeros, is a truncated `WIN_CERTIFICATE` and
 fails the same way. SignedData must contain at least one `SignerInfo`, and
 each `SignerInfo` must carry a non-empty signature value. Each embedded X.509
 certificate must include `subjectPublicKeyInfo` and `signatureValue`.
+An explicit X.509 Extensions sequence must contain at least one extension.
 Certificate issuer/subject and signer issuer names require nonempty RDN sets
 and exactly two fields (type and value) in each attribute, as defined in
 [RFC 5280](https://www.rfc-editor.org/rfc/rfc5280.html#section-4.1.2.4).

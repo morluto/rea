@@ -894,7 +894,15 @@ it("accepts only RFC 5280 certificate versions and the fields each allows", () =
   const name = directoryName(der(0x0c, Buffer.from("Fixture")));
   const version = (value: number) => der(0xa0, derInt(value));
   const uniqueId = der(0x81, Buffer.from([0]));
-  const extensions = der(0xa3, derSeq());
+  const extensions = der(
+    0xa3,
+    derSeq(
+      derSeq(
+        der(0x06, Buffer.from([0x55, 0x1d, 0x0e])),
+        der(0x04, Buffer.from([0x04, 0x01, 0xaa])),
+      ),
+    ),
+  );
   const certificate = (head: Buffer[], tail: Buffer[]) =>
     readAsn1(
       derSeq(
@@ -1251,6 +1259,9 @@ it("rejects malformed and repeated certificate extensions", () => {
   const basicConstraints = der(0x06, Buffer.from([0x55, 0x1d, 0x13]));
   const basicConstraintsValue = der(0x04, Buffer.from([0x30, 0x00]));
   const critical = (...content: number[]) => der(0x01, Buffer.from(content));
+  expect(() => parseCertificate(certificate())).toThrow(
+    PeCertificateAsn1Failure,
+  );
   for (const extension of [
     derInt(1),
     derSeq(ski),
