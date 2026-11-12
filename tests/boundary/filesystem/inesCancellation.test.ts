@@ -839,3 +839,51 @@ it.each(["close", "cancel"] as const)(
     }
   },
 );
+
+it.each(["close", "cancel"] as const)(
+  "preserves region EIO when %s precedes stream error forwarding",
+  async (action) => {
+    const root = await createTestTempDirectory("rea-ines-rejection-forward-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const handle = await open(path, "r");
+    const reader = new InesArtifactReader(
+      path,
+      { handle, initial: await handle.stat() },
+      new OwnedFileHandle(handle),
+    );
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("region descriptor read failed"), {
+      code: "EIO",
+    });
+    let closing: Promise<void> | undefined;
+    let restore = () => {};
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const stream = await reader.open(entries[0]!, controller.signal);
+      const read = vi.spyOn(handle, "read").mockImplementationOnce(async () => {
+        queueMicrotask(() =>
+          queueMicrotask(() => {
+            if (action === "close") closing = reader.close();
+            else controller.abort(physical);
+          }),
+        );
+        throw physical;
+      });
+      restore = () => read.mockRestore();
+      const completed = finished(stream, { cleanup: true }).catch(
+        (cause: unknown) => cause,
+      );
+      stream.resume();
+      const outcome = await completed;
+      expect(outcome).toMatchObject({ reason: "io", cause: physical });
+      await reader.close();
+      expect(handle.fd).toBe(-1);
+    } finally {
+      restore();
+      await closing;
+      await reader.close();
+    }
+  },
+);
