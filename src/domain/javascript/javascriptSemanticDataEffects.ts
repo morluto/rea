@@ -627,6 +627,11 @@ const optionGetterPrecedesMember = (
     string,
     { readonly node: t.ObjectProperty | t.ObjectMethod }
   >();
+  // An object literal merges `get x` and `set x` into one accessor descriptor, so a later
+  // `set` entry does not remove the getter. Measured on Node 24.22.1,
+  // `{get agent() { this.path = "/ok"; }, path: "/a b", set agent(_) {}}` constructs a request
+  // because the getter still runs before `path` is copied.
+  const getterKeys = new Set<string>();
   // Each key takes its own position, including the keys a spread contributes: giving every
   // spread member the spread's outer index loses the order a later redefinition keeps.
   // Measured on Node 24.22.1,
@@ -654,6 +659,7 @@ const optionGetterPrecedesMember = (
         if (name === null) return true;
         if (!firstIndex.has(name)) firstIndex.set(name, position);
         lastDescriptor.set(name, { node: entry });
+        if (isGetterEntry(entry)) getterKeys.add(name);
         position += 1;
       }
       continue;
@@ -676,6 +682,7 @@ const optionGetterPrecedesMember = (
     if (name === null) continue;
     if (!firstIndex.has(name)) firstIndex.set(name, position);
     lastDescriptor.set(name, { node: property });
+    if (isGetterEntry(property)) getterKeys.add(name);
     position += 1;
   }
   const orderOf = (name: string): readonly [number, number] => {
@@ -695,11 +702,10 @@ const optionGetterPrecedesMember = (
     left[0] !== right[0] ? left[0] < right[0] : left[1] < right[1];
   let memberOrder: readonly [number, number] | undefined;
   let getterOrder: readonly [number, number] | undefined;
-  for (const [name, { node }] of lastDescriptor) {
+  for (const name of lastDescriptor.keys()) {
     const order = orderOf(name);
     if (
-      t.isObjectMethod(node) &&
-      node.kind === "get" &&
+      getterKeys.has(name) &&
       (getterOrder === undefined || before(order, getterOrder))
     )
       getterOrder = order;

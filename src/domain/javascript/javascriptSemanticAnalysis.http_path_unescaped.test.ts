@@ -177,3 +177,13 @@ it("keeps the position a spread gave a redefined key", () => {
     ),
   ).toHaveLength(1);
 });
+
+it("keeps the getter when a setter for the same key follows", () => {
+  // An object literal merges `get x` and `set x` into one accessor descriptor, so the later
+  // `set` does not remove the getter. Measured on Node 24.22.1.
+  expect(
+    requestsFor(
+      `http.request({ get agent() { this.path = "/ok"; }, path: "/a b", set agent(_) {} })`,
+    ),
+  ).toHaveLength(1);
+});
