@@ -4,6 +4,27 @@
 
 ---
 
+## เปิด Quick Tools บนเครื่องที่ติดตั้งแล้ว (Windows)
+
+ติดตั้ง REA แบบ global ด้วย `npm install -g rea-agents` แล้ว launcher จะอยู่ที่:
+
+```text
+%APPDATA%\npm\node_modules\rea-agents\tools\windows\REA-QuickTools.bat
+```
+
+เปิดใช้ได้ 3 วิธี:
+
+1. **ดับเบิลคลิก** ไฟล์ `REA-QuickTools.bat` ใน File Explorer (จะเปิดหน้าต่างเมนูของตัวเอง)
+2. **จาก cmd ที่เปิดอยู่** รัน:
+   ```bat
+   "%APPDATA%\npm\node_modules\rea-agents\tools\windows\REA-QuickTools.bat"
+   ```
+3. **สร้าง Shortcut** ไปวางบน Desktop: คลิกขวาที่ไฟล์ > Show more options > Send to > Desktop (create shortcut)
+
+ลากไฟล์ `.exe` / `.dll` ใส่หน้าต่าง launcher ก็วิเคราะห์ได้ทันที (drag-and-drop) หรือเลือกเมนู 3 เพื่อวาง path เอง
+
+---
+
 ## 1. การทำงานหลักของ REA
 
 - **Decompile โค้ด Native Binary (C/C++)**: แปลงฟังก์ชัน Machine Code กลับเป็น Pseudo-C ด้วย Ghidra 12.1.4

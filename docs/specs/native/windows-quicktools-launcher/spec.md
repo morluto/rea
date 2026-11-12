@@ -9,7 +9,7 @@ an installed REA can launch it.
 
 The launcher stays a thin menu over documented CLI commands: it owns no
 analysis logic, runs no target code itself, and every action maps to one
-public `rea` command documented in `docs\windows-quicktools.md`.
+public `rea` command documented in `docs\getting-started\windows-quicktools.md`.
 
 ## Launcher contract
 

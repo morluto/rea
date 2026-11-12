@@ -50,7 +50,7 @@
     "dist",
     "install.sh",
     "tools/windows/REA-QuickTools.bat",
-    "docs/windows-quicktools.md",
+    "docs/getting-started/windows-quicktools.md",
     "bridge/hopper_bridge.py",
     "bridge/cutter/rea_bridge.py",
     "bridge/native/NativeUIChildren.swift",

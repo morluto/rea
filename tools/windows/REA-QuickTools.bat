@@ -39,7 +39,12 @@ color 0A
 :: mask a caller-selected installation. REA discovery below always runs.
 if not defined GHIDRA_INSTALL_DIR (
     set "GHIDRA_ON_PATH="
-    for %%I in (ghidraRun.bat ghidra.bat analyzeHeadless.bat) do if exist "%%~$PATH:I" set "GHIDRA_ON_PATH=1"
+    :: Mirror the owning resolver exactly (GhidraInstallation.ts:1135):
+    :: ghidra.bat ghidraRun.bat ghidra.exe ghidraRun.exe -- it validates
+    :: application.properties + support/analyzeHeadless.bat at the root
+    :: itself. analyzeHeadless.bat is not in the owner's list and would
+    :: mismatch its decision, so it is not a candidate here either.
+    for %%I in (ghidra.bat ghidraRun.bat ghidra.exe ghidraRun.exe) do if exist "%%~$PATH:I" set "GHIDRA_ON_PATH=1"
     if not defined GHIDRA_ON_PATH if exist "C:\tools\ghidra_12.1.4_PUBLIC\support\analyzeHeadless.bat" set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
 )
 :: No JAVA_HOME guessing here: release identity and java.exe selection
@@ -212,10 +217,13 @@ if defined SCAN_HAS_QUOTE (
     echo [ERROR] ค่าที่มีอักขระ !BANG! รันผ่านเมนูนี้ไม่ได้ (batch กินเครื่องหมายนี้^) ใช้บรรทัดคำสั่งแทน:  rea decompile "!TARGET!" ...
 ) else if defined SCAN_HAS_WILD (
     echo [ERROR] ค่าที่มีอักขระ wildcard * หรือ ? รันผ่านเมนูนี้ไม่ได้ -- FOR จะเปลี่ยนเป็นชื่อไฟล์ในโฟลเดอร์ปัจจุบัน ใช้บรรทัดคำสั่งแทน:  rea decompile "!TARGET!" ...
+) else if defined SCAN_TRAIL_BS (
+    echo [ERROR] ค่าที่ลงท้ายด้วย \ รันผ่านเมนูนี้ไม่ได้ -- เครื่องหมายนี้ทำให้ flag หลังค่าถูกกลืน ใช้บรรทัดคำสั่งแทน:  rea decompile "!TARGET!" ...
 ) else if "!FUNC_NAME:~0,1!"=="-" (
-    for %%P in ("--procedure=!FUNC_NAME!") do call :RUN_ONE %%P decompile --provider ghidra
+    :: Percent pairs survive: no CALL re-parse on this line.
+    for %%P in ("--procedure=!FUNC_NAME!") do "%NODE_EXE%" "%REA_ENTRY%" decompile "!TARGET!" %%P --provider ghidra
 ) else (
-    for %%P in ("!FUNC_NAME!") do call :RUN_ONE %%P decompile --provider ghidra
+    for %%P in ("!FUNC_NAME!") do "%NODE_EXE%" "%REA_ENTRY%" decompile "!TARGET!" %%P --provider ghidra
 )
 pause
 goto FILE_DROPPED
@@ -246,10 +254,15 @@ if defined SCAN_HAS_QUOTE (
     echo [ERROR] ค่าที่มีอักขระ !BANG! รันผ่านเมนูนี้ไม่ได้ (batch กินเครื่องหมายนี้^) ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
 ) else if defined SCAN_HAS_WILD (
     echo [ERROR] ค่าที่มีอักขระ wildcard * หรือ ? รันผ่านเมนูนี้ไม่ได้ -- FOR จะเปลี่ยนเป็นชื่อไฟล์ในโฟลเดอร์ปัจจุบัน ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
+) else if defined SCAN_TRAIL_BS (
+    echo [ERROR] ค่าที่ลงท้ายด้วย \ รันผ่านเมนูนี้ไม่ได้ -- เครื่องหมายนี้ทำให้ flag หลังค่าถูกกลืน ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
 ) else if "!SEARCH_TERM:~0,1!"=="-" (
-    for %%P in ("--pattern=!SEARCH_TERM!") do call :RUN_ONE %%P search --kind strings --provider ghidra
+    :: Direct exec: a CALL re-parses the constructed line and expands
+    :: percent pairs inside the carried selector (verified: %USERNAME%
+    :: arrived as the ambient value). No CALL on this boundary.
+    for %%P in ("--pattern=!SEARCH_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind strings --provider ghidra
 ) else (
-    for %%P in ("!SEARCH_TERM!") do call :RUN_ONE %%P search --kind strings --provider ghidra
+    for %%P in ("!SEARCH_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind strings --provider ghidra
 )
 pause
 goto FILE_DROPPED
@@ -265,10 +278,13 @@ if defined SCAN_HAS_QUOTE (
     echo [ERROR] ค่าที่มีอักขระ !BANG! รันผ่านเมนูนี้ไม่ได้ (batch กินเครื่องหมายนี้^) ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
 ) else if defined SCAN_HAS_WILD (
     echo [ERROR] ค่าที่มีอักขระ wildcard * หรือ ? รันผ่านเมนูนี้ไม่ได้ -- FOR จะเปลี่ยนเป็นชื่อไฟล์ในโฟลเดอร์ปัจจุบัน ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
+) else if defined SCAN_TRAIL_BS (
+    echo [ERROR] ค่าที่ลงท้ายด้วย \ รันผ่านเมนูนี้ไม่ได้ -- เครื่องหมายนี้ทำให้ flag หลังค่าถูกกลืน ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
 ) else if "!PROC_TERM:~0,1!"=="-" (
-    for %%P in ("--pattern=!PROC_TERM!") do call :RUN_ONE %%P search --kind procedures --provider ghidra
+    :: Percent pairs survive: no CALL re-parse on this line.
+    for %%P in ("--pattern=!PROC_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind procedures --provider ghidra
 ) else (
-    for %%P in ("!PROC_TERM!") do call :RUN_ONE %%P search --kind procedures --provider ghidra
+    for %%P in ("!PROC_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind procedures --provider ghidra
 )
 pause
 goto FILE_DROPPED
@@ -284,11 +300,11 @@ goto FILE_DROPPED
 :GUIDE
 :: The installed skill ships the guide; the source checkout keeps it beside the skill.
 set "GUIDE_FILE="
-if exist "%APPDATA%\npm\node_modules\rea-agents\docs\windows-quicktools.md" set "GUIDE_FILE=%APPDATA%\npm\node_modules\rea-agents\docs\windows-quicktools.md"
-if not defined GUIDE_FILE if exist "%~dp0..\..\docs\windows-quicktools.md" set "GUIDE_FILE=%~dp0..\..\docs\windows-quicktools.md"
+if exist "%APPDATA%\npm\node_modules\rea-agents\docs\getting-started\windows-quicktools.md" set "GUIDE_FILE=%APPDATA%\npm\node_modules\rea-agents\docs\windows-quicktools.md"
+if not defined GUIDE_FILE if exist "%~dp0..\..\docs\getting-started\windows-quicktools.md" set "GUIDE_FILE=%~dp0..\..\docs\windows-quicktools.md"
 if defined GUIDE_FILE goto OPEN_GUIDE
 echo ไม่พบคู่มือภาษาไทยในเครื่องนี้
-echo ค้นหาได้ที่: docs\windows-quicktools.md ในโฟลเดอร์ติดตั้ง
+echo ค้นหาได้ที่: docs\getting-started\windows-quicktools.md ในโฟลเดอร์ติดตั้ง
 pause
 goto MENU
 
@@ -313,6 +329,7 @@ goto MENU
 set "SCAN_HAS_QUOTE="
 set "SCAN_HAS_BANG="
 set "SCAN_HAS_WILD="
+set "SCAN_TRAIL_BS="
 set "SCAN_REST=!%~1!"
 :: Caret-built constants: a comparison must never embed a literal quote or
 :: bang in the source line (both are parse-significant in batch).
@@ -327,23 +344,20 @@ if "!SCAN_CH!"=="!QUOTE!" set "SCAN_HAS_QUOTE=1"
 if "!SCAN_CH!"=="!BANG!" set "SCAN_HAS_BANG=1"
 if "!SCAN_CH!"=="*" set "SCAN_HAS_WILD=1"
 if "!SCAN_CH!"=="?" set "SCAN_HAS_WILD=1"
+:: Track the final character: a trailing backslash (odd run) turns
+:: the carrier's closing quote into a literal at the C argv boundary,
+:: so the flags after the selector would be absorbed into it.
+set "SCAN_PREV=!SCAN_CH!"
 set "SCAN_REST=!SCAN_REST:~1!"
 goto SCAN_LOOP
 
 :SCAN_DONE
+:: SCAN_PREV holds the final character (captured in the loop).
+if "!SCAN_PREV!"=="\" set "SCAN_TRAIL_BS=1"
 set "SCAN_REST="
+set "SCAN_PREV="
 set "SCAN_CH="
 goto :eof
-:: ---- one-shot carrier dispatch --------------------------------------------
-:: FOR wildcard elements (*, ?) enumerate the current directory, so a
-:: needle like *.dll would run once per matching file. The wildcard
-:: check at the action site refuses those needles first; this helper
-:: is the single exec point the carrier lands on (exactly one run).
-:RUN_ONE
-:: %1 = the carried selector, %2 = subcommand, %3+ = fixed flags.
-"%NODE_EXE%" "%REA_ENTRY%" %2 "!TARGET!" %1 %3 %4 %5
-goto :eof
-
 :: ---- run rea with the resolved launcher ------------------------------------
 :: REA_ARGS is built with delayed expansion at the action sites. Expanding it
 :: once here keeps operator and percent characters inside the value literal;

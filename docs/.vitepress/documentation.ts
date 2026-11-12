@@ -23,6 +23,11 @@ export const documentationSections = [
         source: "getting-started/mcp-prompts.md",
         route: "/mcp-prompts",
       },
+      {
+        text: "Windows quick tools launcher",
+        source: "getting-started/windows-quicktools.md",
+        route: "/windows-quicktools",
+      },
     ],
   },
   {
@@ -322,11 +327,6 @@ export const documentationSections = [
         text: "Windows Ghidra P0",
         source: "providers/windows-ghidra-p0.md",
         route: "/windows-ghidra-p0",
-      },
-      {
-        text: "Windows quick tools launcher",
-        source: "windows-quicktools.md",
-        route: "/windows-quicktools",
       },
       {
         text: "Headerless raw-binary analysis with Ghidra",
