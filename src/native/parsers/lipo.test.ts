@@ -238,6 +238,27 @@ architecture arm64e
     ]);
   });
 
+  it("normalizes the CPU names lipo prints for i386 slices", () => {
+    // cctools misc/lipo.c print_cputype() spells i386 with I386 names.
+    expect(
+      parseLipoOutput(`architecture i386
+    cputype CPU_TYPE_I386
+    cpusubtype CPU_SUBTYPE_I386_ALL
+    capabilities 0x0
+    offset 16384
+    size 28
+    align 2^14 (16384)
+`).architectures,
+    ).toMatchObject([
+      {
+        name: "i386",
+        cpu_type_code: 7,
+        cpu_subtype_code: 3,
+        cpu_subtype_base: 3,
+      },
+    ]);
+  });
+
   it("keeps unknown symbolic CPU values as source text without a code", () => {
     expect(
       parseLipoOutput(

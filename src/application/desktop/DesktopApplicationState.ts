@@ -70,6 +70,8 @@ const OPERATION = "inspect_desktop_application_state";
 /**
  * Readers for formats that need a tool or worker, supplied by composition. Each
  * database is staged with its retained log in a private directory the caller removes.
+ * Expected format/read failures return an error result. Cancellation throws a typed
+ * AnalysisCancelledError or ArtifactReaderFailure; cleanup failures retain their owner.
  */
 export interface DesktopStateReaders {
   readonly sqlite: (
@@ -399,7 +401,10 @@ const readVersion = async (
   path: string,
   context: ViewContext,
 ): Promise<void> => {
-  context.signal?.throwIfAborted();
+  if (context.signal?.aborted === true)
+    throw new AnalysisCancelledError(OPERATION, {
+      cause: context.signal.reason,
+    });
   if (!version.present) return;
   if (version.sha256 === null) {
     version.view_error = "content not retained";
@@ -550,7 +555,8 @@ const inspectState = async (
     paths,
     limitations,
   };
-  signal?.throwIfAborted();
+  if (signal?.aborted === true)
+    throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
   return createEvidence(undefined, DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-state",
     operation: OPERATION,

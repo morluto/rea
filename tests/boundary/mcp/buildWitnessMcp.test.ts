@@ -729,7 +729,7 @@ it("saves a witness record again after a failed save, without checking again", a
   ).toContain("ended");
 });
 
-it("returns the record a witness saved when the computer closes while the save commits", async () => {
+it("reports cancellation and the saved witness when the computer closes during commit", async () => {
   const witness = await witnessed();
   const { client, id, check, directory } = witness;
   await throughNearMiss(witness);
@@ -741,11 +741,17 @@ it("returns the record a witness saved when the computer closes while the save c
       arguments: { computer_id: id },
     });
   });
-  const saved = parsed(await check({ stage: "after_reset" }));
-  expect(saved.witness?.record).toMatchObject({
-    path: join(directory, "witness.json"),
-    verdict: "held",
+  const failure = parseMcpToolError(
+    await check({ stage: "after_reset" }),
+  ).error;
+  expect(failure).toMatchObject({
+    code: "cancelled",
+    details: { partial_observation: expect.any(Object) },
   });
+  const saved = JSON.parse(
+    await readFile(join(directory, "witness.json"), "utf8"),
+  );
+  expect(saved.normalized_result).toMatchObject({ verdict: "held" });
   await closed;
 });
 

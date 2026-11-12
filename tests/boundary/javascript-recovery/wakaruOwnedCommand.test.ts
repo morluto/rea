@@ -1,3 +1,4 @@
+import { createTestArtifactResourceScope } from "../../fixtures/artifactResourceScope.js";
 import { expect, it } from "vitest";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
@@ -28,6 +29,7 @@ it.skipIf(process.platform === "win32").each([
     let spawned: SpawnedOwnedProviderProcess | undefined;
     try {
       const result = await runWakaruCommand({
+        resources: createTestArtifactResourceScope(),
         command: "/unused/wakaru",
         limiter: "/unused/prlimit",
         arguments: [],

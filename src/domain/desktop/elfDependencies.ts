@@ -9,6 +9,7 @@ import {
   readElfHeaderFacts,
 } from "../elfFixedHeader.js";
 import {
+  admitElfLoadSegment,
   readElfProgramHeader,
   type ElfProgramHeader,
 } from "../elfProgramHeader.js";
@@ -17,6 +18,7 @@ import {
   observeElfStringTableEntry,
 } from "../elfStringTable.js";
 import { err, ok, type Result } from "../result.js";
+import { resolveMappedFileOffset } from "../virtualFileMapping.js";
 
 /** Read up to `length` bytes at `offset`; fewer at the end of the file. */
 export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
@@ -79,21 +81,6 @@ const readExactly = async (
   return bytes.byteLength === Number(length) ? Buffer.from(bytes) : undefined;
 };
 
-/** The file offset of a virtual address inside a file-backed PT_LOAD segment. */
-const fileOffset = (
-  loads: readonly ElfProgramHeader[],
-  address: bigint,
-): bigint | undefined => {
-  const load = loads.find(
-    (segment) =>
-      address >= segment.virtualAddress &&
-      address < segment.virtualAddress + segment.fileSize,
-  );
-  return load === undefined
-    ? undefined
-    : load.offset + address - load.virtualAddress;
-};
-
 const programHeaders = async (
   read: ReadAt,
   header: Buffer,
@@ -130,6 +117,15 @@ const programHeaders = async (
       little,
     );
     if (!parsed.ok) return err(parsed.error.message);
+    if (parsed.value.type === PT_LOAD) {
+      const admitted = admitElfLoadSegment(parsed.value, bits);
+      if (!admitted.ok) return err(admitted.error.message);
+      if (
+        parsed.value.fileSize > 0n &&
+        parsed.value.offset + parsed.value.fileSize > BigInt(size)
+      )
+        return err("ELF load segment is truncated");
+    }
     headers.push(parsed.value);
   }
   return ok(headers);
@@ -317,18 +313,36 @@ const readDependencyTables = async (
   const tags = dynamicTags(table, bits, little, policy);
   if (!tags.ok) return tags;
   const { strtab, strsz, needed, runpath, rpath } = tags.value;
-  const stringsAt =
-    strtab === undefined
-      ? undefined
-      : fileOffset(
-          headers.value.filter((program) => program.type === PT_LOAD),
-          strtab,
-        );
-  if (stringsAt === undefined || strsz === undefined)
-    return needed.size + runpath.size + rpath.size === 0
-      ? ok(none)
-      : err("ELF dynamic string table is not mapped from the file");
-  const strings = { size, at: stringsAt, bytes: strsz };
+  if (needed.size + runpath.size + rpath.size === 0) return ok(none);
+  if (strtab === undefined || strsz === undefined)
+    return err("ELF dynamic string table is not mapped from the file");
+  if (strsz > BigInt(size))
+    return err("ELF dynamic string table is not mapped from the file");
+  const loads = headers.value.filter((program) => program.type === PT_LOAD);
+  const stringsAt = resolveMappedFileOffset(
+    loads
+      .filter((segment) => segment.fileSize > 0n)
+      .map((segment) => ({
+        address: segment.virtualAddress,
+        offset: Number(segment.offset),
+        size: Number(segment.fileSize),
+      })),
+    strtab,
+    Number(strsz),
+    loads
+      .filter((segment) => segment.memorySize > segment.fileSize)
+      .map((segment) => ({
+        address: segment.virtualAddress + segment.fileSize,
+        size: segment.memorySize - segment.fileSize,
+      })),
+  );
+  if (!stringsAt.ok)
+    return err(
+      stringsAt.error.reason === "ambiguous"
+        ? "ELF dynamic string table has ambiguous file mappings"
+        : "ELF dynamic string table is not mapped from the file",
+    );
+  const strings = { size, at: BigInt(stringsAt.value), bytes: strsz };
   const names = await dynamicStrings(read, strings, needed, policy);
   if (!names.ok) return names;
   const search = await dynamicStrings(
