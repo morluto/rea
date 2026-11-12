@@ -23,11 +23,19 @@ public `rea` command documented in `docs\windows-quicktools.md`.
 - Install locations containing `!` are refused before delayed expansion
   starts; delayed expansion consumes `!` and would corrupt such paths.
 - Every analyst-provided value (menu input, pasted paths, function names,
-  search terms) is only ever referenced through delayed expansion and
-  dispatched as one `!REA_ARGS!` line. Values never travel through
+  search terms) is only ever referenced through delayed expansion. Fixed
+  actions (doctor, mcp doctor, PE resources) dispatch one `!REA_ARGS!` line;
+  the three selector actions (function decompile, strings search,
+  procedure search) dispatch through a quoted FOR-carrier into a
+  single-shot `:RUN_ONE` subroutine. Values never travel through
   parse-time `%*` or CALL re-expansion.
 - Leading-dash function symbols and search terms route through the
   documented `--procedure=` / `--pattern=` selectors instead of positionals.
+- Selector transport limits: a quoted FOR-carrier token cannot carry a
+  literal quote, ! is consumed by delayed expansion on any batch line,
+  and `*` / `?` make the FOR-set enumerate the current directory. The
+  launcher refuses all three with an explicit message instead of
+  running an altered selector; the command line carries them faithfully.
 - A closed stdin stops the launcher; menu variables are cleared before
   every read, so EOF cannot re-run the previous action.
 - `setlocal` wraps the whole script: no environment assignment leaks into

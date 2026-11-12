@@ -17,7 +17,7 @@ if /i "%~1"=="__REA_CHILD__" (
 :: Automation (and piped stdin) skips the console relaunch: REA_TEST_INLINE
 :: runs the menu in the calling console instead of a dedicated window.
 if defined REA_TEST_INLINE goto REA_CHILD
-start "REA Quick Tools" cmd /d /c ""%~f0" __REA_CHILD__ %1
+start "REA Quick Tools" cmd /d /c ""%~f0" __REA_CHILD__ %1"
 exit /b 0
 
 :REA_CHILD
@@ -137,7 +137,6 @@ cls
 echo [กำลังตรวจสอบ MCP Server...]
 set "REA_ARGS=mcp doctor"
 call :RUN_REA
-echo.
 pause
 goto MENU
 
@@ -211,10 +210,12 @@ if defined SCAN_HAS_QUOTE (
     echo [ERROR] ค่าที่มีอักขระ " รันผ่านเมนูนี้ไม่ได้ ใช้บรรทัดคำสั่งแทน:  rea decompile "!TARGET!" ...
 ) else if defined SCAN_HAS_BANG (
     echo [ERROR] ค่าที่มีอักขระ !BANG! รันผ่านเมนูนี้ไม่ได้ (batch กินเครื่องหมายนี้^) ใช้บรรทัดคำสั่งแทน:  rea decompile "!TARGET!" ...
+) else if defined SCAN_HAS_WILD (
+    echo [ERROR] ค่าที่มีอักขระ wildcard * หรือ ? รันผ่านเมนูนี้ไม่ได้ -- FOR จะเปลี่ยนเป็นชื่อไฟล์ในโฟลเดอร์ปัจจุบัน ใช้บรรทัดคำสั่งแทน:  rea decompile "!TARGET!" ...
 ) else if "!FUNC_NAME:~0,1!"=="-" (
-    for %%P in ("--procedure=!FUNC_NAME!") do "%NODE_EXE%" "%REA_ENTRY%" decompile "!TARGET!" %%P --provider ghidra
+    for %%P in ("--procedure=!FUNC_NAME!") do call :RUN_ONE %%P decompile --provider ghidra
 ) else (
-    for %%P in ("!FUNC_NAME!") do "%NODE_EXE%" "%REA_ENTRY%" decompile "!TARGET!" %%P --provider ghidra
+    for %%P in ("!FUNC_NAME!") do call :RUN_ONE %%P decompile --provider ghidra
 )
 pause
 goto FILE_DROPPED
@@ -243,10 +244,12 @@ if defined SCAN_HAS_QUOTE (
     echo [ERROR] ค่าที่มีอักขระ " รันผ่านเมนูนี้ไม่ได้ ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
 ) else if defined SCAN_HAS_BANG (
     echo [ERROR] ค่าที่มีอักขระ !BANG! รันผ่านเมนูนี้ไม่ได้ (batch กินเครื่องหมายนี้^) ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
+) else if defined SCAN_HAS_WILD (
+    echo [ERROR] ค่าที่มีอักขระ wildcard * หรือ ? รันผ่านเมนูนี้ไม่ได้ -- FOR จะเปลี่ยนเป็นชื่อไฟล์ในโฟลเดอร์ปัจจุบัน ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
 ) else if "!SEARCH_TERM:~0,1!"=="-" (
-    for %%P in ("--pattern=!SEARCH_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind strings --provider ghidra
+    for %%P in ("--pattern=!SEARCH_TERM!") do call :RUN_ONE %%P search --kind strings --provider ghidra
 ) else (
-    for %%P in ("!SEARCH_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind strings --provider ghidra
+    for %%P in ("!SEARCH_TERM!") do call :RUN_ONE %%P search --kind strings --provider ghidra
 )
 pause
 goto FILE_DROPPED
@@ -260,10 +263,12 @@ if defined SCAN_HAS_QUOTE (
     echo [ERROR] ค่าที่มีอักขระ " รันผ่านเมนูนี้ไม่ได้ ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
 ) else if defined SCAN_HAS_BANG (
     echo [ERROR] ค่าที่มีอักขระ !BANG! รันผ่านเมนูนี้ไม่ได้ (batch กินเครื่องหมายนี้^) ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
+) else if defined SCAN_HAS_WILD (
+    echo [ERROR] ค่าที่มีอักขระ wildcard * หรือ ? รันผ่านเมนูนี้ไม่ได้ -- FOR จะเปลี่ยนเป็นชื่อไฟล์ในโฟลเดอร์ปัจจุบัน ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
 ) else if "!PROC_TERM:~0,1!"=="-" (
-    for %%P in ("--pattern=!PROC_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind procedures --provider ghidra
+    for %%P in ("--pattern=!PROC_TERM!") do call :RUN_ONE %%P search --kind procedures --provider ghidra
 ) else (
-    for %%P in ("!PROC_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind procedures --provider ghidra
+    for %%P in ("!PROC_TERM!") do call :RUN_ONE %%P search --kind procedures --provider ghidra
 )
 pause
 goto FILE_DROPPED
@@ -307,6 +312,7 @@ goto MENU
 :SCAN_VALUE
 set "SCAN_HAS_QUOTE="
 set "SCAN_HAS_BANG="
+set "SCAN_HAS_WILD="
 set "SCAN_REST=!%~1!"
 :: Caret-built constants: a comparison must never embed a literal quote or
 :: bang in the source line (both are parse-significant in batch).
@@ -319,6 +325,8 @@ if not defined SCAN_REST goto SCAN_DONE
 set "SCAN_CH=!SCAN_REST:~0,1!"
 if "!SCAN_CH!"=="!QUOTE!" set "SCAN_HAS_QUOTE=1"
 if "!SCAN_CH!"=="!BANG!" set "SCAN_HAS_BANG=1"
+if "!SCAN_CH!"=="*" set "SCAN_HAS_WILD=1"
+if "!SCAN_CH!"=="?" set "SCAN_HAS_WILD=1"
 set "SCAN_REST=!SCAN_REST:~1!"
 goto SCAN_LOOP
 
@@ -326,6 +334,16 @@ goto SCAN_LOOP
 set "SCAN_REST="
 set "SCAN_CH="
 goto :eof
+:: ---- one-shot carrier dispatch --------------------------------------------
+:: FOR wildcard elements (*, ?) enumerate the current directory, so a
+:: needle like *.dll would run once per matching file. The wildcard
+:: check at the action site refuses those needles first; this helper
+:: is the single exec point the carrier lands on (exactly one run).
+:RUN_ONE
+:: %1 = the carried selector, %2 = subcommand, %3+ = fixed flags.
+"%NODE_EXE%" "%REA_ENTRY%" %2 "!TARGET!" %1 %3 %4 %5
+goto :eof
+
 :: ---- run rea with the resolved launcher ------------------------------------
 :: REA_ARGS is built with delayed expansion at the action sites. Expanding it
 :: once here keeps operator and percent characters inside the value literal;

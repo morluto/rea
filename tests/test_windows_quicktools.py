@@ -361,6 +361,34 @@ class LauncherBehaviorTests(unittest.TestCase):
         self.assertIn("ERROR", result[1])
 
     @windows_only
+    def test_wildcard_selector_is_refused_not_expanded(self):
+        # A quoted FOR-set element with * or ? is a FILENAME SET: cmd
+        # enumerates the current directory and runs DO once per match,
+        # sending filenames instead of the needle. Verified: '*.dll'
+        # beside the target produced TWO dispatches naming the files.
+        self.clear_log()
+        target = self.tmp / "sample.dll"
+        target.write_bytes(b"MZ")
+        (self.tmp / "evil-match.dll").write_bytes(b"MZ")
+        needle = "*.dll"
+        result = self.run_launcher(
+            [
+                "3\r\n",
+                f"{target}\r\n",
+                "4\r\n",
+                f"{needle}\r\n",
+                ".\r\n",
+                "7\r\n",
+                "5\r\n",
+            ]
+        )
+        self.assertSuccess(result)
+        # Nothing may run from a wildcard needle: the carrier would
+        # enumerate the filesystem, so the launcher refuses up front.
+        self.assertEqual(len(self.logged_dispatches()), 0)
+        self.assertIn("ERROR", result[1])
+
+    @windows_only
     def test_pasted_search_term_cannot_inject_commands(self):
         self.clear_log()
         target = self.tmp / "sample.dll"
