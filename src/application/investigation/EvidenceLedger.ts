@@ -122,6 +122,28 @@ export class EvidenceLedger {
     return ok("added");
   }
 
+  /**
+   * Adopt display metadata from a later recording of the same semantic ID.
+   * Only a value the ledger already holds under that ID can be replaced; the
+   * semantic identity and stored payload stay the same record.
+   */
+  replaceMetadata(
+    current: Evidence,
+    previous: Evidence,
+  ): Result<boolean, AnalysisError> {
+    if (current.evidence_id !== previous.evidence_id) return ok(false);
+    if (current.provider_selection === undefined) return ok(false);
+    if (this.#records.get(current.evidence_id) === undefined) return ok(false);
+    const admitted = this.#admitChanges(
+      "record_evidence",
+      new Map([[current.evidence_id, current]]),
+    );
+    if (!admitted.ok) return admitted;
+    this.#records.set(current.evidence_id, current);
+    this.#commitAccounting(admitted.value);
+    return ok(true);
+  }
+
   /** Validate an entire bundle before atomically merging its records. */
   import(input: unknown): ImportResult {
     if (!isImmutableEvidenceBundle(input)) {

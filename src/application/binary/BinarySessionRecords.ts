@@ -181,8 +181,20 @@ export abstract class BinarySessionRecords {
       this.activeAnalysisBinding()?.providerSelection,
     );
     const recorded = this.#records.recordEvidence(attributed);
-    if (recorded.ok && recorded.value === "added") this.#emitSnapshotChanged();
-    return recorded;
+    if (recorded.ok && recorded.value === "added") {
+      this.#emitSnapshotChanged();
+      return recorded;
+    }
+    if (!recorded.ok || attributed === authenticated) return recorded;
+    // The ledger already holds this semantic ID. Its stored display metadata
+    // came from whichever session recorded the observation first, possibly an
+    // imported bundle with no selection, so adopt this session's selection
+    // instead of dropping it with the discarded duplicate.
+    const replaced = this.#records.replaceEvidenceMetadata(
+      attributed,
+      authenticated,
+    );
+    return replaced.ok ? recorded : replaced;
   }
 
   admitRecoveryObservation(

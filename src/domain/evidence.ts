@@ -114,10 +114,22 @@ const providerSelectionProvenanceSchema = z
       // claims the selection. An imported bundle with zero or several would
       // re-export ambiguous provenance under a stable Evidence id.
       .refine(
-        (candidates) =>
-          candidates.filter(({ selected }) => selected).length === 1,
+        (candidates) => {
+          const selected = candidates.filter(({ selected }) => selected);
+          if (selected.length !== 1) return false;
+          // Every registry path binds a provider only after its availability
+          // and target support both succeeded, so a selected candidate that
+          // reports either as not-known never came from a recording session.
+          const [candidate] = selected;
+          return (
+            candidate !== undefined &&
+            candidate.availability === "available" &&
+            candidate.target_support === "supported"
+          );
+        },
         {
-          error: "provider selection must mark exactly one candidate selected",
+          error:
+            "provider selection must mark exactly one available, supported candidate selected",
         },
       ),
   })

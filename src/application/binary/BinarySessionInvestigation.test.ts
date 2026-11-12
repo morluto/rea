@@ -214,6 +214,34 @@ it("records the selected session's provider provenance with every admitted obser
   }
 });
 
+it("adopts the active session's selection when an imported record holds the semantic ID", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  try {
+    // Imported before a target is opened: no active binding stamps the bundle,
+    // so the retained record carries no provider selection.
+    const bundle = createEvidenceBundle([observation("duplicate")]);
+    expect(session.importEvidenceBundle(bundle).ok).toBe(true);
+    expect(
+      session.exportEvidenceBundle().records[0]?.provider_selection,
+    ).toBeUndefined();
+    expect((await session.open(target)).ok).toBe(true);
+    // The provider then produces the same deterministic observation. The ledger
+    // keeps one record, but its display provenance must name this session.
+    const recorded = session.recordEvidence(observation("duplicate"));
+    expect(recorded.ok && recorded.value).toBe("duplicate");
+    expect(
+      session.exportEvidenceBundle().records[0]?.provider_selection,
+    ).toMatchObject({
+      selection_source: expect.stringMatching(
+        /^(request|environment|auto-single-candidate)$/u,
+      ),
+    });
+  } finally {
+    await session.dispose();
+  }
+});
+
 it("attributes an imported bundle to the recording session's provider selection", async () => {
   const [target] = await createBinarySessionTargets();
   const session = createTestBinarySession(createCacheProvider([]));

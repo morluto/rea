@@ -96,6 +96,17 @@ export class InvestigationRecords
     return this.#evidence.record(evidence);
   }
 
+  /**
+   * Adopt a later recording session's display provenance for an Evidence value
+   * this ledger already holds under the same semantic ID, without adding a record.
+   */
+  replaceEvidenceMetadata(
+    current: Evidence,
+    previous: Evidence,
+  ): Result<boolean, AnalysisError> {
+    return this.#evidence.replaceMetadata(current, previous);
+  }
+
   /** Check one semantic Evidence ID without exposing stored values. */
   hasEvidence(evidenceId: string): boolean {
     return this.#evidence.has(evidenceId);

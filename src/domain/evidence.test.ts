@@ -399,6 +399,39 @@ it("refuses provider selection provenance that names no single provider", () => 
     ).toThrow();
 });
 
+it("refuses a selected provider the registry could never have bound", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: {},
+    rawResult: null,
+  });
+  const candidate = (status: {
+    readonly availability: "available" | "unavailable" | "unknown";
+    readonly target_support: "supported" | "unsupported" | "unknown";
+  }) => ({
+    provider: { id: "ghidra", name: "Ghidra", version: null },
+    selected: true,
+    ...status,
+    rejection_codes: [],
+  });
+  // Every registry path binds a provider only after both checks succeeded, so
+  // an imported bundle naming a selected unavailable or unsupported candidate
+  // would re-export a selection that never occurred.
+  for (const status of [
+    { availability: "unavailable", target_support: "supported" },
+    { availability: "unknown", target_support: "supported" },
+    { availability: "available", target_support: "unsupported" },
+    { availability: "available", target_support: "unknown" },
+  ] as const)
+    expect(() =>
+      withEvidenceProviderSelection(original, {
+        selection_source: "request",
+        candidates: [candidate(status)],
+      }),
+    ).toThrow();
+});
+
 it("retains named auxiliary path choices without changing identity, history or shared payloads", () => {
   const original = immutableEvidence(
     createEvidence(TARGET, PROVIDER, {
