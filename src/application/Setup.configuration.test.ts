@@ -880,8 +880,8 @@ it("discloses the selected catalog profile before applying it with the family sc
   host.clients = [
     {
       name: "cursor",
-      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: "/cursor.json",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
     },
   ];
   const selection = {
