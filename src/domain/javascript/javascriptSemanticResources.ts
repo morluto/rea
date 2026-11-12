@@ -20,7 +20,10 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
-import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import {
+  semanticBindingMayHaveOpaqueEffect,
+  semanticOpaqueBindingReadMayHaveChanged,
+} from "./javascriptSemanticOpaqueEffects.js";
 import {
   semanticBindingAtRead,
   semanticEffectTiming,
@@ -479,6 +482,8 @@ const releaseMethodMayHaveChanged = (
   const prototype = (key: JavaScriptSemanticPropertyPath[number]) =>
     semanticPropertyPathKeyMatches(key, "__proto__");
   return (
+    // A const binding still exposes mutable receiver properties to direct eval.
+    semanticBindingMayHaveOpaqueEffect(binding, state, read, "reference") ||
     binding.memberWrites.some(
       ({ path, node }) =>
         (path.length === 0 ||
