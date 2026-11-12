@@ -199,6 +199,28 @@ it("fails closed on a truncated header", () => {
   );
 });
 
+it("admits a 28-byte header written by a 32-bit V8 build", () => {
+  const payload = real.subarray(32);
+  const header28 = Buffer.alloc(28);
+  real.copy(header28, 0, 0, 28);
+  // Rewrite the payload-length word so it reaches the end of the 28-byte container.
+  header28.writeUInt32LE(payload.length, 20);
+  const combined = Buffer.concat([header28, payload]);
+  const report = parse(combined);
+  expect(report.header.header_bytes).toBe(28);
+  expect(report.header.fields).toHaveLength(7);
+  expect(report.header.fields.map((f) => f.offset)).toEqual([
+    0, 4, 8, 12, 16, 20, 24,
+  ]);
+  expect(report.payload.offset).toBe(28);
+  expect(report.payload.bytes).toBe(payload.length);
+  expect(report.payload.bytes).toBe(combined.readUInt32LE(20));
+  expect(report.payload.offset + report.payload.bytes).toBe(
+    report.artifact.bytes,
+  );
+  expect(report.coverage.status).toBe("complete");
+});
+
 it("fails closed when fewer payload bytes follow the header than it declares", () => {
   // Cut bytes off the end without rewriting the declared payload length.
   expect(() => parse(real.subarray(0, real.length - 16))).toThrow(

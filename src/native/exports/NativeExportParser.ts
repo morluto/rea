@@ -670,12 +670,15 @@ function* parseElfExports(
     width,
     "ELF dynamic symbols",
   );
-  // Entry zero is the reserved STN_UNDEF record. Skipping it is valid only
-  // after every field is observed as zero; neither ELF layout has padding.
-  if (bytes.subarray(table, table + width).some((byte) => byte !== 0))
+  // Entry zero is the reserved STN_UNDEF record. Its `st_name` (first u32) may
+  // legitimately be nonzero on real Android shared libraries; iteration starts
+  // at index 1 and never dereferences it. Reject only the fields that would
+  // describe an actual symbol: st_info, st_other, st_shndx, st_value, st_size.
+  const nullEntry = bytes.subarray(table, table + width);
+  if (nullEntry.subarray(4).some((byte) => byte !== 0))
     throw new BinaryFormatFailure(
       "malformed",
-      "ELF dynamic symbol table null entry has nonzero fields",
+      "ELF dynamic symbol table null entry has nonzero fields other than st_name",
     );
   const nameRange = reader.fileRange(
     strings.offset,
