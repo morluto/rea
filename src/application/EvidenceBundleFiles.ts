@@ -207,7 +207,7 @@ const validateBundlePayloads = (
       return err(
         new EvidenceIntegrityError("Evidence bundle validation failed", {
           cause: parsedCapture.error,
-          userMessage: `Process capture record ${record.evidence_id} has an invalid normalized_result (${describeValidationFailure(parsedCapture.error)}). Recreate or re-export the bundle, then try again.`,
+          userMessage: `Process capture record ${record.evidence_id} has an invalid normalized_result (${describeValidationFailure(parsedCapture.error)}). Rerun the capture that produced it; exporting the bundle again does not change a record's content.`,
         }),
       );
     }

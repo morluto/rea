@@ -268,6 +268,15 @@ export type EvidenceBundleFailure = {
   readonly cause: EvidenceBundleValidationFailure;
 };
 
+/**
+ * Recovery for a bundle whose records parse but whose assembly REA did not
+ * produce (manifests out of canonical order, duplicate records, or an invalid
+ * unknown graph). Reading the same file again, including through
+ * evidence-export, refuses it identically.
+ */
+const INTEGRITY_RECOVERY =
+  "REA accepts a bundle only in the form it wrote; records or manifests reordered, merged or edited by hand are refused, including by evidence-export. Use the unmodified file, export the records again from the MCP session that holds them (export_evidence_bundle), or rerun the analysis that produced them.";
+
 const describeEvidenceBundleFailure = (
   input: unknown,
   cause: EvidenceBundleValidationFailure,
@@ -287,7 +296,7 @@ const describeEvidenceBundleFailure = (
       message:
         cause instanceof z.ZodError
           ? `Evidence bundle does not match the bundle schema ${describeValidationFailure(cause)}. Supply an unmodified bundle produced by this REA identity format. Recreate observations from earlier formats; re-exporting an old bundle does not update its identities.`
-          : `Evidence bundle validation failed: ${describeValidationFailure(cause)}. Recreate or re-export the bundle, then try again.`,
+          : `Evidence bundle validation failed: ${describeValidationFailure(cause)}. ${INTEGRITY_RECOVERY}`,
     };
   }
 };
