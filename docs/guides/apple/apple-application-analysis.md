@@ -255,8 +255,12 @@ one of:
 
 A `conditional` image is still traced, because it is an in-root candidate
 that may load. Every edge below it has `loader_conditional: true`, and a
-request that reuses it by install name is `conditional` too. An in-root dylib
-with no platform load command remains unknown unless the root is an executable
+request that reuses it by install name is `conditional` too. A definitely loaded
+image can also first expand through a conditional chain: its dependency edges
+then have `loader_conditional: true`, while later reuse of the image retains its
+definite first-load result.
+
+An in-root dylib with no platform load command remains unknown unless the root is an executable
 with observed macOS platform and the candidate's CPU type is x86_64, i386, or arm64. In that macOS context,
 [Apple's dyld](https://github.com/apple-oss-distributions/dyld/blob/fd8d0c4d52320ebf64db34f3cb280310d905c5ae/mach_o/UnsafeHeader.cpp#L1137-L1145) supplies an implicit macOS platform to legacy dylibs on those CPU
 types. The candidate records `platform_basis: "macos-dyld-implicit"`; the

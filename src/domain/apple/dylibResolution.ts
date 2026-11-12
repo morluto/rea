@@ -188,8 +188,9 @@ const edgeSchema = z.strictObject({
   }),
   install_name_matches: z.boolean().nullable(),
   /**
-   * The loader was reached through a conditional edge, so it might not load;
-   * this edge describes what happens only if it does.
+   * The loader's dependency-expansion chain crosses a conditional edge.
+   * This edge applies only if that chain is used, even when another edge
+   * independently loads the same image.
    */
   loader_conditional: z.boolean(),
 });
@@ -651,10 +652,12 @@ const traceProcess = async (
       if (isLazyLoadCommand(dependency.command)) continue;
       const image = edge.resolution.image;
       if (image === null || expanded.has(image)) continue;
+      const conditional =
+        current.conditional || edge.resolution.status === "conditional";
       dependents.push({
         image,
         chain: [...next.chain, image],
-        conditional: current.conditional,
+        conditional,
       });
       if (context.loaded.has(image)) continue;
       const facts = context.images.get(image);
@@ -667,8 +670,7 @@ const traceProcess = async (
       context.loaded.set(image, {
         slice,
         // A modeled earlier search uncertainty can make this image conditional.
-        conditional:
-          current.conditional || edge.resolution.status === "conditional",
+        conditional,
       });
       if (
         slice.install_name !== null &&
