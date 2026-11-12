@@ -209,6 +209,55 @@ it("withholds the hash beyond pefile's section parser capacity", async () => {
   expect(report.imphash.reason).toMatch(/mapping|compatibility/u);
 });
 
+it("hashes a sub-page-aligned section pefile reads at its unrounded offset", async () => {
+  // SectionAlignment == FileAlignment == 0x80 with .idata at RVA 0x300 == file offset 0x300:
+  // pefile 2024.8.26 keeps PointerToRawData unrounded when it equals VirtualAddress
+  // (LdrpWx86FormatVirtualImage), so both readers see the same bytes and the hash is provable.
+  const report = await parse(
+    peImportImage({
+      bits: 64,
+      layout: {
+        sectionRva: 0x300,
+        sectionOffset: 0x300,
+        headerBytes: 0x200,
+        sectionAlignment: 0x80,
+        fileAlignment: 0x80,
+      },
+    }),
+  );
+  expect(report.imports[0]?.functions.map((row) => row.name)).toEqual([
+    "GetProcAddress",
+    "ExitProcess",
+  ]);
+  expect(report.coverage.status).toBe("complete");
+  expect(report.issues).toEqual([]);
+  expect(report.imphash.reason).toBeNull();
+  expect(report.imphash.md5).toBe(
+    createHash("md5")
+      .update("kernel32.getprocaddress,kernel32.exitprocess", "utf8")
+      .digest("hex"),
+  );
+});
+
+it("still withholds the hash when a sub-page section rounds to a different offset", async () => {
+  // Same sub-page alignment, but PointerToRawData 0x380 differs from VirtualAddress 0x400, so
+  // pefile does round it and the native mapping is not the one pefile reads.
+  const report = await parse(
+    peImportImage({
+      bits: 64,
+      layout: {
+        sectionRva: 0x400,
+        sectionOffset: 0x380,
+        headerBytes: 0x200,
+        sectionAlignment: 0x80,
+        fileAlignment: 0x80,
+      },
+    }),
+  );
+  expect(report.coverage.status).toBe("complete");
+  expect(report.imphash.md5).toBeNull();
+  expect(report.imphash.reason).toMatch(/mapping|compatibility/u);
+});
 it.each([false, true])(
   "withholds the hash when pefile stops at an earlier section (suspicious: %s)",
   async (suspicious) => {
