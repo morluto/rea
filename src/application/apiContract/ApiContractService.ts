@@ -11,6 +11,8 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   API_CONTRACT_OPERATION as operation,
   API_CONTRACT_PROVIDER,
+  apiContractSchema,
+  type ApiContract,
   type ApiContractArtifact,
 } from "../../domain/apiContract/apiContract.js";
 import {
@@ -70,8 +72,32 @@ function* documentSteps(document: unknown, artifact: ApiContractArtifact) {
   return yield* parseApiContractSteps(document, artifact);
 }
 
+type OpenApiInput = Extract<
+  InspectApiContractInput,
+  { format: "openapi-json" }
+>;
+
+const documentEvidence = (input: OpenApiInput, result: ApiContract): Evidence =>
+  createEvidence(
+    { path: input.path, format: "file", sha256: result.artifact.sha256 },
+    API_CONTRACT_PROVIDER,
+    {
+      operation,
+      predicateType: "rea.api-contract-inventory",
+      parameters: {
+        path: input.path,
+        format: input.format,
+        max_file_bytes: input.max_file_bytes,
+      },
+      result,
+      confidence: "observed",
+      limitations: result.limitations,
+      locations: [{ kind: "artifact-path", path: input.path }],
+    },
+  );
+
 const importDocument = async (
-  input: Extract<InspectApiContractInput, { format: "openapi-json" }>,
+  input: OpenApiInput,
   bytes: Buffer,
   sha256: string,
   signal?: AbortSignal,
@@ -86,26 +112,16 @@ const importDocument = async (
     }),
     signal,
   );
-  if (!parsed.ok) return parsed;
-  const result = parsed.value;
+  if (!parsed.ok) {
+    const partial = apiContractSchema.safeParse(
+      parsed.error.partialObservation,
+    );
+    if (partial.success)
+      parsed.error.partialObservation = documentEvidence(input, partial.data);
+    return parsed;
+  }
   return completeProviderEvidence(
-    createEvidence(
-      { path: input.path, format: "file", sha256 },
-      API_CONTRACT_PROVIDER,
-      {
-        operation,
-        predicateType: "rea.api-contract-inventory",
-        parameters: {
-          path: input.path,
-          format: input.format,
-          max_file_bytes: input.max_file_bytes,
-        },
-        result,
-        confidence: "observed",
-        limitations: result.limitations,
-        locations: [{ kind: "artifact-path", path: input.path }],
-      },
-    ),
+    documentEvidence(input, parsed.value),
     signal,
   );
 };

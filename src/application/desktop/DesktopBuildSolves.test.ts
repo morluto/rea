@@ -1,3 +1,7 @@
+import * as buildEnvironment from "../../desktop/BuildComputerEnvironment.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { renderSmokeTask } from "../../domain/desktop/appExport.js";
+import { MEASURE_BUILD_TASK_CONTRACT } from "../../contracts/desktopBuildMeasureContract.js";
 import {
   guestFileAnswerCeiling,
   guestFileAnswerWorkingBytes,
@@ -18,7 +22,11 @@ import {
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import type { SolveReport } from "../../desktop/AgentEnvSolveHelper.js";
-import { measureBuildTask, type Solver } from "./DesktopBuildSolves.js";
+import {
+  measureBuildTask,
+  measureInFreshComputers,
+  type Solver,
+} from "./DesktopBuildSolves.js";
 
 /** A bundle holding stand-in steps and verifiers for these tasks, and a README. */
 const bundleWith = async (...tasks: string[]) => {
@@ -291,7 +299,7 @@ it.each([
       .mockImplementation(async (path, ...rest) => {
         if (path.endsWith(suffix) && ++reads === occurrence) {
           if (cancel) controller.abort(reason);
-          throw hostFiles.hostCloseFailure(
+          throw hostFiles.hostReadFailure(
             new RegularFileCleanupFailure({
               path,
               owner: {
@@ -321,6 +329,7 @@ it.each([
       expect(result.error.cleanupResources).toContain(join(bundle, suffix));
       if (cancel) {
         expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(reason);
         expect(result.error.partialObservation).toMatchObject({
           kind: "partial-task-measurement",
           solves: [{}, {}, {}],
@@ -347,7 +356,7 @@ it("keeps an input read failure primary when cancellation also arrives during cl
     .mockImplementation(async (path, ...rest) => {
       if (!path.endsWith("tasks/add-eggs.json")) return original(path, ...rest);
       controller.abort(new Error("cancel"));
-      throw hostFiles.hostCloseFailure(
+      throw hostFiles.hostReadFailure(
         new RegularFileCleanupFailure({
           path,
           owner: { close: async () => {} } as never,
@@ -420,4 +429,125 @@ it("retains completed solves when the destination becomes unreadable before publ
   expect(await readFile(join(bundle, "difficulty.json"), "utf8")).toBe(
     "invalid",
   );
+});
+
+it.each(["../../outside", "nested/task", "nested\\task", ".", ".."])(
+  "refuses invalid selected task names before any file read or solve: %s",
+  async (task) => {
+    const read = vi
+      .spyOn(hostFiles, "readHostFile")
+      .mockRejectedValue(new Error("invalid task must not reach filesystem"));
+    const solve = vi.fn<Solver>();
+    try {
+      const result = await measureBuildTask(
+        request("/unused-bundle", task),
+        solve,
+        new AbortController().signal,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisInputError", issues: [{ path: ["task"] }] },
+      });
+      expect(read).not.toHaveBeenCalled();
+      expect(solve).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
+  },
+);
+
+it("keeps the portable smoke name selectable independently of authoring reservations", async () => {
+  const bundle = await bundleWith("smoke");
+  const { solver, calls } = counting();
+  const result = await measureBuildTask(
+    request(bundle, "smoke"),
+    solver,
+    new AbortController().signal,
+  );
+  expect(result.ok).toBe(true);
+  expect(calls).toEqual(["smoke", "smoke", "smoke"]);
+});
+
+it("refuses invalid measurement identity before resolving the fresh-computer environment", async () => {
+  const environment = vi
+    .spyOn(buildEnvironment, "resolveBuildComputerEnvironment")
+    .mockRejectedValue(
+      new Error("invalid task must not resolve an environment"),
+    );
+  const read = vi.spyOn(hostFiles, "readHostFile");
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await measureInFreshComputers(
+      request("/unused-bundle", "../../outside"),
+      {
+        environment: {},
+        defaults: {},
+        retainCleanup: () => undefined,
+        resources,
+      },
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError", issues: [{ path: ["task"] }] },
+    });
+    expect(environment).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  } finally {
+    environment.mockRestore();
+    read.mockRestore();
+    await resources.close();
+  }
+});
+
+it("advertises the same portable lookup names without changing their spelling", () => {
+  for (const task of ["add-eggs", "123-task", "a".repeat(63), "smoke"])
+    expect(
+      MEASURE_BUILD_TASK_CONTRACT.inputSchema.parse(
+        request("/unused-bundle", task),
+      ).task,
+    ).toBe(task);
+  for (const task of [
+    "../../outside",
+    "nested/task",
+    "nested\\task",
+    ".",
+    "..",
+    "con",
+    "123",
+    "a".repeat(64),
+  ])
+    expect(
+      MEASURE_BUILD_TASK_CONTRACT.inputSchema.safeParse(
+        request("/unused-bundle", task),
+      ).success,
+    ).toBe(false);
+});
+
+it("keeps a generated deploy-only smoke task inapplicable without its measurement verifier", async () => {
+  const bundle = await createTestTempDirectory("measured-smoke-");
+  await mkdir(join(bundle, "tasks"));
+  await mkdir(join(bundle, "artifacts", "check_app"), { recursive: true });
+  await writeFile(
+    join(bundle, "tasks", "smoke.json"),
+    renderSmokeTask({ name: "app" }),
+  );
+  await writeFile(
+    join(bundle, "artifacts", "check_app", "verify.py"),
+    "# generated deployment check\n",
+  );
+  const solve = vi.fn<Solver>();
+  const result = await measureBuildTask(
+    request(bundle, "smoke"),
+    solve,
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisInputError",
+      userMessage: expect.stringContaining("artifacts/smoke-check/verify.py"),
+    },
+  });
+  expect(solve).not.toHaveBeenCalled();
 });

@@ -215,8 +215,7 @@ export const registerBinaryDiagnosticsCommands = (
       maxIntegerTextBytes: cliDecimalField(
         inspectAppleIpsInputSchema.shape.max_integer_text_bytes,
       ),
-      joinPath: z
-        .string()
+      joinPath: localPathStringSchema
         .optional()
         .describe(
           "Optional local Mach-O executable or dSYM whose slice LC_UUID matches report images",

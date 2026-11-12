@@ -1,3 +1,4 @@
+import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { WindowsShortcutService } from "./WindowsShortcutService.js";
 import { WINDOWS_SHORTCUT_PROVIDER } from "../../domain/investigationProviders.js";
@@ -143,12 +144,13 @@ it("rejects complete coverage that still lists issues", async () => {
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
 
-it("discards an observation if the caller cancels while the provider completes", async () => {
+it("retains a completed observation when the caller cancels as the provider completes", async () => {
   const controller = new AbortController();
+  const reason = { request: "late WindowsShortcut cancellation" };
   const service = new WindowsShortcutService({
     identity,
     inspect: () => {
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(ok(report));
     },
   });
@@ -156,6 +158,11 @@ it("discards an observation if the caller cancels while the provider completes",
     { path: report.artifact.path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "inspect_windows_shortcut",
+    normalized_result: report,
+  });
 });

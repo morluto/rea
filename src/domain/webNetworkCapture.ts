@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { canonicalBase64Schema } from "./stringPatterns.js";
 import { z } from "zod";
 import {
   browserDeadlineIncrease,
@@ -79,7 +81,8 @@ export const webNetworkCaptureBudgetFacts = (
         ? MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH
         : Number.MAX_SAFE_INTEGER,
     applies_at: "next_operation",
-    rea_restart_required: false,
+    update_mode: "parameter" as const,
+    pending_restart: false as const,
   };
 };
 
@@ -215,7 +218,35 @@ export const webNetworkCaptureBinaryDescriptorSchema = z.discriminatedUnion(
   [retainedBinaryDescriptorSchema, redactedBinaryDescriptorSchema],
 );
 const binarySchema = z.discriminatedUnion("state", [
-  retainedBinaryDescriptorSchema.extend({ content_base64: z.string() }),
+  retainedBinaryDescriptorSchema
+    .extend({ content_base64: canonicalBase64Schema })
+    .superRefine((field, context) => {
+      const encoded = field.content_base64;
+      const decodedBytes = Buffer.byteLength(encoded, "base64");
+      if (field.bytes !== decodedBytes) {
+        context.addIssue({
+          code: "custom",
+          path: ["bytes"],
+          message:
+            "Retained binary byte count differs from its canonical content.",
+        });
+        return;
+      }
+      // Quartet-aligned windows authenticate every retained byte without
+      // allocating a second whole body while the capture remains live.
+      const hash = createHash("sha256");
+      for (let offset = 0; offset < encoded.length; offset += 65536)
+        hash.update(
+          Buffer.from(encoded.slice(offset, offset + 65536), "base64"),
+        );
+      if (hash.digest("hex") !== field.sha256)
+        context.addIssue({
+          code: "custom",
+          path: ["sha256"],
+          message:
+            "Retained binary SHA-256 differs from its canonical content.",
+        });
+    }),
   redactedBinaryDescriptorSchema.extend({ content_base64: z.null() }),
 ]);
 const numberSchema = z.strictObject({
@@ -244,7 +275,21 @@ export const webNetworkCaptureRecordSchema = z.strictObject({
     }),
   ]),
   reported: jsonValueSchema,
-  binary_fields: z.array(binarySchema),
+  binary_fields: z.array(binarySchema).superRefine((fields, context) => {
+    const pointers = new Set<string>();
+    for (const [index, field] of fields.entries()) {
+      if (pointers.has(field.pointer)) {
+        context.addIssue({
+          code: "custom",
+          path: [index, "pointer"],
+          message:
+            "Each retained source coordinate can declare binary facts only once.",
+        });
+        return;
+      }
+      pointers.add(field.pointer);
+    }
+  }),
   numeric_literals: z.array(numberSchema),
   redactions: z.array(redactionSchema),
   limitations: z.array(z.string()),

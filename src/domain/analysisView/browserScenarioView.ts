@@ -11,9 +11,11 @@ import { analysisViewInputError } from "./analysisViewErrors.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
   type AnalysisViewCoverage,
 } from "./analysisViewCoverage.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import { analysisTextPage } from "./analysisViewText.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -211,8 +213,17 @@ const textPage = (
 ) => {
   const artifact = capture.steps[view.step_index]!.artifacts[view.artifact];
   const value = artifact.state === "captured" ? artifact.value : null;
-  const text = value?.text.slice(view.offset, view.offset + view.limit) ?? null;
-  return {
+  const page =
+    value === null
+      ? ok({ item: { text: null }, coverage: unavailableViewCoverage() })
+      : analysisTextPage(
+          value.text,
+          view.offset,
+          view.limit,
+          "Scenario artifact text",
+        );
+  if (!page.ok) return page;
+  return ok({
     items: {
       collection: "text" as const,
       step_index: view.step_index,
@@ -223,25 +234,20 @@ const textPage = (
       bytes: value?.bytes ?? null,
       observed: artifact.state === "truncated" ? artifact.observed : null,
       retained: artifact.state === "truncated" ? artifact.retained : null,
-      text,
+      text: page.value.item.text,
     },
-    coverage: pageViewCoverage(
-      view.offset,
-      text?.length ?? 0,
-      value?.text.length ?? 0,
-    ),
-  };
+    coverage: page.value.coverage,
+  });
 };
 
 /** One stable page of exact recorded facts; no whole-result filtering arrays. */
 const pageRecords = (
   capture: BrowserScenarioCapture,
-  view: BrowserScenarioViewRequest,
+  view: Exclude<BrowserScenarioViewRequest, { collection: "text" }>,
 ): {
   readonly items: z.infer<typeof browserScenarioViewItemsSchema>;
   readonly coverage: AnalysisViewCoverage;
 } => {
-  if (view.collection === "text") return textPage(capture, view);
   const stepSelected = selected(view.step_indices);
   if (view.collection === "steps") {
     const artifacts = new Set(view.artifacts);
@@ -376,6 +382,11 @@ export const projectBrowserScenarioView = (
         },
       ]),
     );
+  const page =
+    view.collection === "text"
+      ? textPage(capture, view)
+      : ok(pageRecords(capture, view));
+  if (!page.ok) return page;
   return ok({
     kind: "browser-scenario" as const,
     view,
@@ -389,6 +400,6 @@ export const projectBrowserScenarioView = (
       transactions: capture.events.omissions.network_transactions.length,
       transaction_range: capture.events.omissions.network_transaction_range,
     },
-    ...pageRecords(capture, view),
+    ...page.value,
   });
 };

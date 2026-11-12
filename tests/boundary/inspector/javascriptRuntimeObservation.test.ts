@@ -1,3 +1,4 @@
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -84,7 +85,7 @@ test("reports browser origin scope mismatch at the caller parameter path", async
     const evidence = createBrowserEvidence(
       "inspect_web_page",
       input,
-      observed.value,
+      { source: jsonValueSchema.parse(observed.value), facts: observed.value },
       provider.identity(),
     );
     const invalidEvidence = createEvidence(undefined, evidence.provider, {
