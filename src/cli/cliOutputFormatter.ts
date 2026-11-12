@@ -25,6 +25,7 @@ import { Formatter } from "incur";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { escapeMarkdownTerminalControls } from "../domain/jsonSerialization.js";
 
 export interface CliDelimitedOutputOptions {
   readonly fields: readonly string[];
@@ -334,9 +335,15 @@ const escapeTableCell = (value: string): string =>
 const encodeMarkdownWhitespace = (whitespace: string): string =>
   whitespace.replace(/\s/g, (character) => `&#${character.charCodeAt(0)};`);
 
-/** Heading and paragraph facts are literal data, including block syntax. */
+/**
+ * Heading and paragraph facts are literal data, including block syntax.
+ *
+ * Markdown is a terminal format here, so it also escapes the C1 and bidi
+ * controls a terminal would act on: a failure detail echoing vendor-provided
+ * text must not erase or reorder the lines around it.
+ */
 const escapeMarkdownText = (value: string): string =>
-  escapeTableCell(value)
+  escapeTableCell(escapeMarkdownTerminalControls(value))
     .replace(/^(\s*)([-+=])/, "$1\\$2")
     .replace(/^(\s*\d{1,9})([.)])(?=\s|$)/, "$1\\$2")
     .replace(/^[ \t]+/, encodeMarkdownWhitespace)
@@ -349,7 +356,7 @@ const markdownEdgeWhitespace = /[\t \p{Z}\ufeff]/u;
 
 /** Encode edge spacing that Markdown can represent as character references. */
 export const encodeMarkdownTableCell = (value: string): string => {
-  const escaped = escapeTableCell(value);
+  const escaped = escapeTableCell(escapeMarkdownTerminalControls(value));
   let start = 0;
   let end = escaped.length;
   // Scan each edge once instead of retrying a trailing match at every suffix.

@@ -190,3 +190,16 @@ it("refuses unrepresentable delimited cells and column names before output", () 
     expect(result.ok).toBe(false);
   }
 });
+
+it("escapes C1 and bidi controls in Markdown for a terminal reader", () => {
+  const value = "release 1.2\u009b2K‮3";
+  for (const markdown of [
+    formatCliOutput({ remediation: value }, "md"),
+    formatCliOutput([{ remediation: value }], "md"),
+  ]) {
+    expect(markdown).toContain("\\u009b");
+    expect(markdown).toContain("\\u202e");
+    expect(markdown).not.toContain("\u009b");
+    expect(markdown).not.toContain("‮");
+  }
+});

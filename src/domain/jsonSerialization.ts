@@ -27,9 +27,22 @@ export const jsonStringCodeUnits = (value: string): number => {
  */
 const TERMINAL_UNSAFE =
   /[\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/gu;
-const escapeTerminalControls = (encoded: string): string =>
+/**
+ * The same set for Markdown, which already encodes U+FEFF as a numeric edge
+ * character reference so it stays visible; escaping it here would replace that
+ * representation instead.
+ */
+export const MARKDOWN_UNSAFE_TERMINAL_CONTROLS =
+  /[\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+export const escapeTerminalControls = (encoded: string): string =>
   encoded.replace(
     TERMINAL_UNSAFE,
+    (character) =>
+      `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+export const escapeMarkdownTerminalControls = (encoded: string): string =>
+  encoded.replace(
+    MARKDOWN_UNSAFE_TERMINAL_CONTROLS,
     (character) =>
       `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
