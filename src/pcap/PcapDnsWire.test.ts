@@ -91,6 +91,34 @@ const parse = (
 const pointer = Buffer.from([0xc0, 0x0c]);
 const address = Buffer.from([192, 0, 2, 9]);
 
+it.each([false, true])(
+  "retains observed records but marks TC responses incomplete (has answers: %s)",
+  (hasAnswers) => {
+    const bytes = packet(
+      label("61"),
+      hasAnswers ? [rr(pointer, 1, address)] : [],
+    );
+    bytes.writeUInt16BE(0x8380, 2);
+    const facts = parse(bytes, ["a"], hasAnswers ? ["192.0.2.9"] : []);
+    expect(facts.questions).toEqual([{ query: "a", labels_hex: ["61"] }]);
+    expect(facts.assigned).toEqual(hasAnswers ? [[0, "192.0.2.9"]] : []);
+    expect(facts.unattributed).toEqual([]);
+    expect(facts.incomplete).toBe(true);
+    expect(facts.incomplete_reasons).toContain(
+      "DNS message declares truncation (TC); captured records are incomplete",
+    );
+  },
+);
+
+it("preserves ownership limitations alongside declared DNS truncation", () => {
+  const bytes = packet(label("61"), [], [rr(pointer, 1, address)]);
+  bytes.writeUInt16BE(0x8380, 2);
+  const facts = parse(bytes);
+  expect(facts.assigned).toEqual([]);
+  expect(facts.unattributed).toEqual(["192.0.2.9"]);
+  expect(facts.incomplete_reasons).toHaveLength(2);
+});
+
 it("joins compressed CNAMEs using ASCII-folded bytes while retaining original labels", () => {
   const query = label("414243", "6578616d706c65");
   const alias = label("616263", "6578616d706c65");
