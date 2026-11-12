@@ -74,7 +74,7 @@ it("keeps the fetch candidate when the binding also holds another request", () =
     import http from "node:http";
     async function f(){
       let res = await fetch("https://api.test/x");
-      res = await http.get("https://api.test/y");
+      res = await http.get("http://api.test/y");
       return res.json();
     }
   `);
