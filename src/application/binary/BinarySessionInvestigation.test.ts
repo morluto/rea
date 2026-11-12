@@ -280,12 +280,14 @@ it("adopts a later recording's selection without erasing retained display metada
     // selected path; adopting the bundle's later selection must keep that path.
     const foreign = createEvidenceBundle([observation("provider_run")]);
     expect(session.importEvidenceBundle(foreign).ok).toBe(true);
-    expect(session.recordEvidence(
-      withEvidenceCallerInputPath(
-        observation("provider_run"),
-        "/selected/app.bin",
-      ),
-    ).ok).toBe(true);
+    expect(
+      session.recordEvidence(
+        withEvidenceCallerInputPath(
+          observation("provider_run"),
+          "/selected/app.bin",
+        ),
+      ).ok,
+    ).toBe(true);
     const [record] = session.exportEvidenceBundle().records;
     expect(record?.caller_input_path).toBe("/selected/app.bin");
     expect(record?.provider_selection).toMatchObject({
