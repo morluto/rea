@@ -1053,47 +1053,93 @@ const rejectsPortMember = (
 };
 
 /**
- * Whether a getter or a `__proto__` entry is copied before the last write of `member`.
+ * Whether a getter or a copied `__proto__` is read before the effective `port` write.
  *
- * `Object.assign` reads the source in property order. A getter writes the member when it runs,
- * and an own `__proto__` installs a prototype whose setters fire for the keys copied after it —
- * so either can rescue a value that the literal itself spells as invalid, but only when it comes
- * first.
+ * `Object.assign` walks the source by `OwnPropertyKeys`, not by source order: an array-index key
+ * comes first, ascending, and the string keys follow in insertion order. A getter only rescues the
+ * port when it runs before that write. Measured on Node 24.22.1:
+ *
+ *   {get side() { this.port = 80; }, port: -1}                       -> connects
+ *   {port: -1, get side() { this.port = 80; }}                       -> THREW
+ *   {port: -1, get 0() { this.port = 80; }}                          -> connects
+ *   {["__proto__"]: {set port(_) {...}}, port: -1}                    -> connects
+ *   {port: -1, ["__proto__"]: {set port(_) {...}}}                    -> THREW
+ *   {...{get side() { this.port = 80; }}, port: -1}                  -> THREW
+ *
+ * A spread is evaluated when the literal is built, so its getters have already run and left plain
+ * data properties — they are not writers here. A later data property replaces the descriptor, so a
+ * key written as data is no longer a getter.
  */
 const optionWriterPrecedesMember = (
   options: t.ObjectExpression,
   member: string,
 ): boolean => {
-  let writerOrder: number | undefined;
-  let memberOrder: number | undefined;
-  // A spread contributes its keys at its own position, so it is expanded in place.
-  const entries: readonly (t.ObjectProperty | t.ObjectMethod)[] =
-    options.properties.flatMap((property) => {
-      if (!t.isSpreadElement(property)) return [property];
-      const spread = unwrapJavaScriptExpression(property.argument).node;
-      return t.isObjectExpression(spread)
-        ? spread.properties.filter(
-            (entry): entry is t.ObjectProperty | t.ObjectMethod =>
-              !t.isSpreadElement(entry),
-          )
-        : [];
-    });
-  for (const [index, property] of entries.entries()) {
-    const name = semanticStaticPropertyKey(property.key, property.computed);
-    if (t.isObjectMethod(property) && property.kind === "get")
-      writerOrder ??= index;
-    // Only a computed or shorthand `__proto__` is a copied own key.
-    if (
+  const firstInsertion = new Map<string, number>();
+  const lastDescriptor = new Map<
+    string,
+    { readonly node: t.ObjectProperty | t.ObjectMethod }
+  >();
+  let position = 0;
+  for (const property of options.properties) {
+    // A spread contributes plain data properties: its own accessors already ran.
+    const entries: readonly (t.ObjectProperty | t.ObjectMethod)[] =
+      t.isSpreadElement(property) ? spreadDataEntries(property) : [property];
+    for (const entry of entries) {
+      const name = semanticStaticPropertyKey(entry.key, entry.computed);
+      if (name === null) continue;
+      if (!firstInsertion.has(name)) firstInsertion.set(name, position);
+      lastDescriptor.set(name, { node: entry });
+      position += 1;
+    }
+  }
+  const orderOf = (name: string): readonly [number, number] => {
+    const key = Number(name);
+    const isArrayIndex =
+      Number.isInteger(key) &&
+      String(key) === name &&
+      key >= 0 &&
+      key < 2 ** 32 - 1;
+    return isArrayIndex
+      ? [0, key]
+      : [1, firstInsertion.get(name) ?? Number.MAX_SAFE_INTEGER];
+  };
+  const before = (
+    left: readonly [number, number],
+    right: readonly [number, number],
+  ): boolean =>
+    left[0] !== right[0] ? left[0] < right[0] : left[1] < right[1];
+  let writerOrder: readonly [number, number] | undefined;
+  let memberOrder: readonly [number, number] | undefined;
+  for (const [name, { node }] of lastDescriptor) {
+    const order = orderOf(name);
+    const writesThroughPrototype =
       name === "__proto__" &&
-      (property.computed ||
-        (t.isObjectProperty(property) && property.shorthand))
-    )
-      writerOrder ??= index;
-    if (name === member) memberOrder = index;
+      ((t.isObjectProperty(node) && node.shorthand) || node.computed);
+    if (
+      (t.isObjectMethod(node) && node.kind === "get") ||
+      writesThroughPrototype
+    ) {
+      if (writerOrder === undefined || before(order, writerOrder))
+        writerOrder = order;
+    }
+    if (name === member) memberOrder = order;
   }
   return (
     writerOrder !== undefined &&
-    (memberOrder === undefined || writerOrder < memberOrder)
+    (memberOrder === undefined || before(writerOrder, memberOrder))
+  );
+};
+
+/** The plain data entries a spread contributes, its own accessors already evaluated. */
+const spreadDataEntries = (
+  property: t.SpreadElement,
+): readonly (t.ObjectProperty | t.ObjectMethod)[] => {
+  const spread = unwrapJavaScriptExpression(property.argument).node;
+  if (!t.isObjectExpression(spread)) return [];
+  return spread.properties.filter(
+    (entry): entry is t.ObjectProperty | t.ObjectMethod =>
+      !t.isSpreadElement(entry) &&
+      !(t.isObjectMethod(entry) && entry.kind !== "method"),
   );
 };
 
