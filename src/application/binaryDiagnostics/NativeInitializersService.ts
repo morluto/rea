@@ -13,9 +13,8 @@ import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import {
-  MACHO_CPU_TYPES,
+  machoSelectionAnswersArchitecture,
   machoSliceFamily,
-  machoSliceSubtypeSelector,
 } from "../../domain/apple/machoTargetSelection.js";
 
 const OPERATION = "inspect_native_initializers";
@@ -99,25 +98,16 @@ const validReport = (
 ): boolean => {
   const { coverage } = report;
   const slice = report.slice;
+  if (!machoSelectionAnswersArchitecture(slice, input.architecture))
+    return false;
   // Slice and report labels name the CPU family; arm64e selects an arm64 slice.
-  // A family name may read the family's only slice whatever its subtype, but
-  // arm64e reads only an arm64e slice.
-  const family =
-    input.architecture === undefined
-      ? undefined
-      : machoSliceFamily(input.architecture);
   if (
-    slice === null
-      ? input.architecture !== undefined
-      : report.format !== "mach-o" ||
-        family === undefined ||
-        slice.cpu_type !== MACHO_CPU_TYPES[family] ||
-        slice.architecture !== family ||
-        report.machine !== slice.cpu_type ||
-        report.architecture !== family ||
-        (input.architecture === "arm64e" &&
-          machoSliceSubtypeSelector(slice.cpu_type, slice.cpu_subtype) !==
-            "arm64e")
+    slice !== null &&
+    input.architecture !== undefined &&
+    (report.format !== "mach-o" ||
+      slice.architecture !== machoSliceFamily(input.architecture) ||
+      report.machine !== slice.cpu_type ||
+      report.architecture !== machoSliceFamily(input.architecture))
   )
     return false;
   const insideArtifact = (offset: number, bytes: number): boolean =>

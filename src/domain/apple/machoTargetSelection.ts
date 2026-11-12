@@ -95,6 +95,27 @@ export const machoSliceSubtypeSelector = (
   return undefined;
 };
 
+/**
+ * Whether a reported universal slice answers the caller's architecture value.
+ * Only a universal image has a selection, and only one needs a value. The
+ * slice must be of the value's CPU family; arm64e also requires its subtype,
+ * while a family name may read the family's only slice whatever its subtype.
+ */
+export const machoSelectionAnswersArchitecture = (
+  selection:
+    | { readonly cpu_type: number; readonly cpu_subtype: number }
+    | null
+    | undefined,
+  architecture: MachoSliceArchitecture | undefined,
+): boolean =>
+  selection === null || selection === undefined || architecture === undefined
+    ? (selection === null || selection === undefined) ===
+      (architecture === undefined)
+    : selection.cpu_type === MACHO_CPU_TYPES[machoSliceFamily(architecture)] &&
+      (architecture !== "arm64e" ||
+        machoSliceSubtypeSelector(selection.cpu_type, selection.cpu_subtype) ===
+          "arm64e");
+
 /** Confirm the selected header's CPU family agrees with the caller's request. */
 export const machoTargetSelectionMatchesArchitecture = (
   selection: MachoTargetSelection,
