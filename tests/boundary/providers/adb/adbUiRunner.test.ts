@@ -153,6 +153,7 @@ if (request.operation === 'ping') {
   fs.rmSync(path.join(root, 'active'), {force:true});
   const file=jobFile(request.cancel_request_id);
   let response=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null;
+  if(mode.settled_null) { reply({state:'settled',response:null}); process.exit(0); }
   if(response?.state==='running' || response?.state==='prepared') response=frame(request.cancel_request_id,null,{kind:'cancelled',reason:'UI request cancelled'});
   if(response!==null) fs.writeFileSync(file,JSON.stringify(response));
   reply({state:response===null?'missing':'settled',response});
@@ -174,6 +175,7 @@ if (request.operation === 'ping') {
   const file=jobFile(request.target_request_id);
   const response=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null;
   if(mode.status_capacity) console.log('Broadcast completed: result=1, data="REA_UI_V2:' + Buffer.from(JSON.stringify(frame(request.request_id,null,{kind:'capacity',reason:'Response exceeds the Binder transport budget'}))).toString('base64')+'"');
+  else if(mode.settled_null) reply({state:'settled',response:null});
   else if(response?.state==='running') setInterval(()=>{},1000);
   else reply({state:response===null?'missing':'settled',response});
 } else {
@@ -202,7 +204,8 @@ if (request.operation === 'ping') {
   else if(request.operation === 'perform_adb_ui_action') {
     node.password = Boolean(mode.password); node.text_redacted = node.password; if(node.password) node.text=null;
       result={runner,before:snapshot,selected_element:request.input.action.kind==='key_event'?null:node,dispatch_attempted:true,action_completed:true,action_error:null,text_verified:request.input.action.kind==='set_text'?true:null,can_scroll_more:null,after:mode.after_snapshot ? {...snapshot,nodes:[node],...mode.after_snapshot} : null,observation_failure:null};
-   } else if(request.operation !== 'wait_for_adb_ui' || mode.kind !== 'hang') throw new Error('unmodeled UI operation');
+   } else if(request.operation === 'wait_for_adb_ui') result={runner,snapshot,matches:[node],related_nodes:[],total_matches:1,offset:0,next_offset:null,coverage:'complete',freshness:'captured',satisfied:true,timed_out:false,cancelled:false};
+   else throw new Error('unmodeled UI operation');
     if(result && mode.runner_override) result.runner={...runner,...mode.runner_override};
     if(result && mode.observation_override) Object.assign(result,mode.observation_override);
    if(mode.completion_capacity) fs.writeFileSync(jobFile(request.request_id),JSON.stringify(frame(request.request_id,null,{kind:typeof mode.completion_capacity==='string'?mode.completion_capacity:'capacity',reason:mode.capacity_reason??'Response exceeds the Binder transport budget'})));
@@ -254,6 +257,108 @@ async function fixture(
       writeFile(config, JSON.stringify(next)),
   };
 }
+
+it.each([
+  {
+    name: "inspect package",
+    operation: "inspect_adb_ui",
+    observation_override: {
+      snapshot: {
+        ...header,
+        nodes: [{ ...node, package_name: "com.foreign.app" }],
+      },
+    },
+  },
+  {
+    name: "inspect unknown package",
+    operation: "inspect_adb_ui",
+    observation_override: {
+      snapshot: { ...header, nodes: [{ ...node, package_name: null }] },
+    },
+  },
+  {
+    name: "query window",
+    operation: "find_adb_ui_elements",
+    observation_override: { matches: [{ ...node, window_id: 9 }] },
+  },
+  {
+    name: "related package",
+    operation: "find_adb_ui_elements",
+    observation_override: {
+      related_nodes: [{ ...node, package_name: "com.foreign.app" }],
+    },
+  },
+  {
+    name: "wait window",
+    operation: "wait_for_adb_ui",
+    observation_override: { matches: [{ ...node, window_id: 9 }] },
+  },
+] as const)(
+  "rejects foreign nodes: $name",
+  async ({ operation, observation_override }) => {
+    const state = await fixture({ observation_override });
+    const result = await state.service.execute(
+      operation,
+      operation === "inspect_adb_ui" ? scope : { ...scope, selector: {} },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.partialObservation).toBeUndefined();
+      expect(result.error._tag).toBe("AnalysisProtocolError");
+      expect(result.error.message).toContain("snapshot scope");
+    }
+  },
+);
+
+it.each([
+  { name: "no terminal response", mode: { settled_null: true } },
+  {
+    name: "invalid report",
+    mode: { observation_override: { action_completed: "invalid" } },
+  },
+  {
+    name: "foreign selected node",
+    mode: {
+      observation_override: {
+        selected_element: { ...node, package_name: "com.foreign.app" },
+      },
+    },
+  },
+  {
+    name: "foreign after node",
+    mode: { after_snapshot: { nodes: [{ ...node, window_id: 9 }] } },
+  },
+])("retains unknown action and replay gate for $name", async ({ mode }) => {
+  const state = await fixture(mode);
+  const first = await state.service.execute(
+    "perform_adb_ui_action",
+    actionInput,
+  );
+  if (first.ok) throw new Error("Invalid completion accepted");
+  expect(projectAnalysisError(first.error)).toMatchObject({
+    details: { diagnostics: { action_outcome: "unknown", replay_safe: false } },
+  });
+  expect(first.error.partialObservation).toBeUndefined();
+  await state.setMode({});
+  const replay = await state.service.execute(
+    "perform_adb_ui_action",
+    actionInput,
+  );
+  if (replay.ok) throw new Error("Unknown action replayed");
+  expect(projectAnalysisError(replay.error)).toMatchObject({
+    details: {
+      diagnostics: {
+        prior_action_outcome: "unknown",
+        current_request_dispatched: false,
+      },
+    },
+  });
+  const inspected = await state.service.execute("inspect_adb_ui", scope);
+  expect(inspected.ok).toBe(true);
+  expect(
+    (await state.service.execute("perform_adb_ui_action", actionInput)).ok,
+  ).toBe(true);
+});
 
 it.each(
   ["busy", "capacity"].flatMap((kind) =>
@@ -1107,7 +1212,15 @@ it.each([
         },
       });
     } else {
-      expect(result.error._tag).toBe("AnalysisProtocolError");
+      expect(result.error._tag).toBe("AnalysisOutputError");
+      expect(result.error.cause).toMatchObject({
+        _tag: "AnalysisProtocolError",
+      });
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        details: {
+          diagnostics: { action_outcome: "unknown", replay_safe: false },
+        },
+      });
       expect(result.error.partialObservation).toBeUndefined();
     }
   },
@@ -1641,6 +1754,18 @@ it.each([
   },
   { name: "after-snapshot", mode: { after_snapshot: { window_id_filter: 7 } } },
   {
+    name: "after node",
+    mode: { after_snapshot: { nodes: [{ ...node, window_id: 9 }] } },
+  },
+  {
+    name: "selected node package",
+    mode: {
+      observation_override: {
+        selected_element: { ...node, package_name: "com.foreign.app" },
+      },
+    },
+  },
+  {
     name: "snapshot selection",
     mode: { snapshot_override: { id: otherSnapshotId } },
   },
@@ -1689,6 +1814,28 @@ it.each([
     ).toHaveLength(1);
   },
 );
+
+it("gates replay when late cleanup settles without a response", async () => {
+  const state = await fixture({ status_offline: true, cancel_offline: true });
+  const first = await runLostStatusAction(state);
+  expect(first.error.cleanupIncomplete).toBe(true);
+  await state.setMode({ settled_null: true });
+  const replay = await state.service.execute(
+    "perform_adb_ui_action",
+    actionInput,
+  );
+  if (replay.ok) throw new Error("Response-less action replayed");
+  expect(projectAnalysisError(replay.error)).toMatchObject({
+    details: {
+      diagnostics: {
+        prior_action_outcome: "unknown",
+        current_request_dispatched: false,
+      },
+    },
+  });
+  expect(first.error.partialObservation).toBeUndefined();
+  expect(first.error.cleanupIncomplete).toBe(false);
+});
 
 it("returns a recovered action before admitting a new UI action", async () => {
   const state = await fixture({ status_offline: true, cancel_offline: true });

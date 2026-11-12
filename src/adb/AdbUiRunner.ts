@@ -27,6 +27,8 @@ import {
 import {
   adbUiObservationSchemas,
   adbUiRunnerIdentitySchema,
+  type adbUiNodeSchema,
+  type adbUiSnapshotHeaderSchema,
   type AdbUiRequest,
 } from "../domain/adb/adbUiAnalysis.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
@@ -83,11 +85,20 @@ type ReplyFailure = {
   readonly reason: string;
 };
 /** A settled request can still lack a transportable result of its action. */
-interface RemoteCompletion {
-  readonly reply: Reply;
-  readonly kind: "report" | "refusal" | "unavailable";
-}
+type RemoteCompletion =
+  | {
+      readonly reply: Reply;
+      readonly kind: "report";
+      readonly observation: UiObservation;
+    }
+  | { readonly reply: Reply; readonly kind: "refusal" }
+  | {
+      readonly reply: Reply;
+      readonly kind: "unavailable";
+      readonly failure: AnalysisError;
+    };
 interface RemoteRequest {
+  readonly selection: AdbUiRequest;
   readonly binary: string;
   readonly serial: string;
   readonly targetPackage: string;
@@ -617,28 +628,29 @@ export class AdbUiRunner {
           if (result.state === "settled" || result.state === "missing") {
             request.settled = true;
             if (result.response !== null) {
-              const completion = this.#rememberCompletion(
-                request,
-                result.response,
-              );
-              // The originating outcome may already have been returned; it still
-              // owns this request's recovery until the request is forgotten.
-              const evidence = request.recover?.(completion);
-              if (
-                actionMayHaveDispatched(request) &&
-                completion.kind !== "refusal"
-              ) {
-                const outcome: RecoveredActionOutcome = {
-                  requestId: request.requestId,
-                  operation: request.operation,
-                  serial: request.serial,
-                  targetPackage: request.targetPackage,
-                  displayId: request.displayId,
-                  windowId: request.windowId,
-                  ...(evidence === undefined ? {} : { evidence }),
-                };
-                this.#rememberRecoveredAction(outcome);
-              }
+              this.#rememberCompletion(request, result.response);
+            }
+            const completion = request.completion;
+            // The originating outcome may already have been returned; it still
+            // owns this request's recovery until the request is forgotten.
+            const evidence =
+              completion === undefined
+                ? undefined
+                : request.recover?.(completion);
+            if (
+              actionMayHaveDispatched(request) &&
+              completion?.kind !== "refusal"
+            ) {
+              const outcome: RecoveredActionOutcome = {
+                requestId: request.requestId,
+                operation: request.operation,
+                serial: request.serial,
+                targetPackage: request.targetPackage,
+                displayId: request.displayId,
+                windowId: request.windowId,
+                ...(evidence === undefined ? {} : { evidence }),
+              };
+              this.#rememberRecoveredAction(outcome);
             }
             await this.#forget(request, signal);
             break;
@@ -681,14 +693,25 @@ export class AdbUiRunner {
     // Sensitive-store refusals use their own kind. Keep the existing capacity
     // tag for lost output so older hosts also retain replay guards; older
     // runners' ambiguous capacity replies cannot establish a refusal either.
-    const completion: RemoteCompletion = {
-      reply,
-      kind: reply.ok
-        ? "report"
-        : reply.error?.kind === "capacity"
-          ? "unavailable"
-          : "refusal",
-    };
+    let completion: RemoteCompletion;
+    if (!reply.ok && reply.error?.kind !== "capacity")
+      completion = { reply, kind: "refusal" };
+    else {
+      try {
+        completion = {
+          reply,
+          kind: "report",
+          observation: this.#validateObservation(
+            request.selection,
+            request,
+            reply,
+          ),
+        };
+      } catch (cause) {
+        if (!(cause instanceof AnalysisError)) throw cause;
+        completion = { reply, kind: "unavailable", failure: cause };
+      }
+    }
     request.completion = completion;
     request.settled = true;
     return completion;
@@ -795,6 +818,7 @@ export class AdbUiRunner {
           "UI runner identity does not match the selected endpoint",
         );
       owned = {
+        selection: request,
         binary: launch,
         serial,
         targetPackage: request.input.package,
@@ -953,16 +977,18 @@ export class AdbUiRunner {
                 throw new AnalysisProtocolError(
                   "Completed UI request has no result",
                 );
-              this.#rememberCompletion(owned, progress.response);
+              const completion = this.#rememberCompletion(
+                owned,
+                progress.response,
+              );
               reply = progress.response;
               // Validate the report before acknowledgement/finalization can be
               // interrupted, and retain the parsed facts through that phase.
-              observed = this.#validateObservation(
-                request,
-                owned,
-                reply,
-                signal,
-              );
+              if (completion.kind === "unavailable") throw completion.failure;
+              observed =
+                completion.kind === "report"
+                  ? completion.observation
+                  : this.#validateObservation(request, owned, reply, signal);
               await this.#forget(owned, pollSignal);
               break;
             }
@@ -1055,10 +1081,10 @@ export class AdbUiRunner {
     // A recovered refusal is the runner's definitive answer, so it replaces a
     // cancellation that is still undecided and otherwise stays visible as a
     // secondary failure instead of being dropped with the request.
-    const retainCompletion = ({
-      reply,
-      kind,
-    }: RemoteCompletion): Evidence | undefined => {
+    const retainCompletion = (
+      completion: RemoteCompletion,
+    ): Evidence | undefined => {
+      const { reply, kind } = completion;
       if (owned === undefined) return undefined;
       // Cancelling the prepared slot releases ownership; it cannot supersede
       // the authoritative body refusal or create an uncertain action outcome.
@@ -1074,9 +1100,14 @@ export class AdbUiRunner {
         return undefined;
       }
       try {
-        observed ??= this.#validateObservation(request, owned, reply, signal);
+        if (completion.kind === "unavailable") throw completion.failure;
+        observed ??=
+          completion.kind === "report"
+            ? completion.observation
+            : this.#validateObservation(request, owned, reply, signal);
       } catch (cause) {
         if (!(cause instanceof AnalysisError)) return;
+        if (cause === (returned ?? primary)) return undefined;
         if (kind === "unavailable")
           (returned ?? primary).retainSecondaryFailure(cause, {
             unavailable_completion: projectAnalysisError(cause),
@@ -1208,6 +1239,47 @@ export class AdbUiRunner {
       throw new AnalysisProtocolError(
         "UI observation does not match the requested scope",
       );
+    const validateNodes = (
+      snapshot: z.infer<typeof adbUiSnapshotHeaderSchema>,
+      nodes: readonly z.infer<typeof adbUiNodeSchema>[],
+    ): void => {
+      if (
+        snapshot.windows.some(
+          (window) =>
+            window.display_id !== snapshot.display_id ||
+            (snapshot.window_id_filter !== null &&
+              window.id !== snapshot.window_id_filter),
+        ) ||
+        nodes.some(
+          (node) =>
+            node.package_name !== snapshot.package_name ||
+            !snapshot.windows.some((window) => window.id === node.window_id),
+        )
+      )
+        throw new AnalysisProtocolError(
+          "UI nodes do not match their snapshot scope",
+        );
+    };
+    if ("before" in observation) {
+      validateNodes(
+        observation.before,
+        observation.selected_element === null
+          ? []
+          : [observation.selected_element],
+      );
+      if (observation.after !== null)
+        validateNodes(observation.after, observation.after.nodes);
+    } else {
+      validateNodes(
+        observation.snapshot,
+        "nodes" in observation.snapshot ? observation.snapshot.nodes : [],
+      );
+      if ("matches" in observation)
+        validateNodes(observation.snapshot, [
+          ...observation.matches,
+          ...observation.related_nodes,
+        ]);
+    }
     const selectedSnapshotId =
       "snapshot_id" in request.input ? request.input.snapshot_id : undefined;
     const selectedSnapshot =
