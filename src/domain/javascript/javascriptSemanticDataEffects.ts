@@ -250,7 +250,7 @@ const collectDefaults = (
  *
  * An empty string passes: Node accepts `method: ""` and falls back to a GET.
  */
-const HTTP_TOKEN = /^[!#$%&'*+\-.^`|~0-9A-Za-z]*$/u;
+const HTTP_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]*$/u;
 
 /**
  * Whether an options literal carries a `method` Node refuses at the call site.
