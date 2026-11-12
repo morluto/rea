@@ -3,6 +3,7 @@ import {
   open,
   readFile,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
