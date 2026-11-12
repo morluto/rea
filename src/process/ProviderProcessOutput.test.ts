@@ -121,7 +121,9 @@ it("retries process cleanup with capture attached until output closes", async ()
     },
   });
   await expect(owner.stop()).resolves.toMatchObject({ status: "incomplete" });
+  expect(owner.snapshot().stopRequested).toBe(true);
   producer.stderr.write("retained during retry");
+  producer.emit("exit", 0, null);
   fails = false;
   const retried = owner.stop();
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -129,6 +131,7 @@ it("retries process cleanup with capture attached until output closes", async ()
   producer.stdout.end();
   producer.emit("close", 0, null);
   await expect(retried).resolves.toEqual({ status: "verified-cleanup" });
+  expect(owner.snapshot().stopRequested).toBe(true);
   expect(owner.snapshot().stderr.text).toBe(
     "retained during retry and final tail",
   );
@@ -873,6 +876,38 @@ it("marks a stop the owner requested before any signal it sends", async () => {
   external.emit("exit", null, "SIGKILL");
   expect(unowned.snapshot()).toMatchObject({ signal: "SIGKILL" });
   expect(unowned.snapshot()).not.toHaveProperty("stopRequested");
+
+  for (const ownsProcessLifetime of [false, true] as const) {
+    const exited = producer();
+    const finalized = new ProviderProcessSupervisor(
+      ownsProcessLifetime
+        ? {
+            process: exited,
+            ownsProcessLifetime: true,
+            cleanup: async () => ({ cleaned: true, signaled: false }),
+          }
+        : { process: exited, ownsProcessLifetime: false },
+    );
+    exited.emit("exit", null, "SIGKILL");
+    exited.stdout.end();
+    exited.stderr.end();
+    exited.emit("close", null, "SIGKILL");
+    await expect(finalized.stop()).resolves.toEqual({
+      status: ownsProcessLifetime ? "verified-cleanup" : "not-owned",
+    });
+    expect(finalized.snapshot()).toMatchObject({ signal: "SIGKILL" });
+    expect(finalized.snapshot()).not.toHaveProperty("stopRequested");
+  }
+
+  const borrowed = producer();
+  const observer = new ProviderProcessSupervisor({
+    process: borrowed,
+    ownsProcessLifetime: false,
+  });
+  await expect(observer.stop()).resolves.toEqual({ status: "not-owned" });
+  expect(observer.snapshot()).not.toHaveProperty("stopRequested");
+  borrowed.stdout.destroy();
+  borrowed.stderr.destroy();
 
   const stopped = producer();
   const owner = new ProviderProcessSupervisor({

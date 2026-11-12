@@ -1,4 +1,9 @@
 import { expect, it } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { elf } from "../../domain/binaryTarget.fixture.js";
+import { createTestBinarySession } from "../../../tests/fixtures/binarySession.js";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -15,6 +20,84 @@ import {
   SessionProviderRouter,
   type SessionProviderRoute,
 } from "./SessionProviderRouter.js";
+
+it.each([false, true])(
+  "refreshes state published by close on alias switch (incoming fails: %s)",
+  async (failIncoming) => {
+    const directory = await createTestTempDirectory("rea-published-profile-");
+    const first = join(directory, "first.elf"),
+      alias = join(directory, "alias.elf");
+    await writeFile(first, elf(2, 1, 62));
+    await writeFile(alias, elf(2, 1, 62));
+    const identity = {
+      id: "fixture",
+      name: "Fixture analysis provider",
+      version: "1",
+    };
+    let generation = 0,
+      dirty = false;
+    const starts: number[] = [];
+    const failure = new AnalysisOutputError(
+      "health",
+      "Incoming target refused",
+    );
+    const session = createTestBinarySession(
+      (_target, profile) => ({
+        execute: async () => {
+          const selected = profile?.parameters.generation;
+          starts.push(Number(selected));
+          if (selected !== generation)
+            return err(
+              new AnalysisOutputError("health", "Stale published profile"),
+            );
+          return ok(createAnalysisExecution(null, identity));
+        },
+        close: async () => {
+          if (dirty) {
+            generation++;
+            dirty = false;
+          }
+          return ok(null);
+        },
+      }),
+      {
+        resolveAnalysisProfile: async (target) =>
+          failIncoming && generation > 0 && target.path === alias
+            ? err(failure)
+            : ok({
+                profile: createAnalysisProfile(identity, { generation }),
+                refreshAfterRetirement: true,
+              }),
+      },
+    );
+    try {
+      expect((await session.open(first)).ok).toBe(true);
+      expect((await session.execute("list_strings", {})).ok).toBe(true);
+      dirty = true;
+      const switched = await session.open(alias);
+      if (failIncoming) {
+        expect(switched.ok).toBe(false);
+        expect(session.activeTarget()?.path).toBe(first);
+      } else {
+        expect(switched.ok).toBe(true);
+        expect(session.activeTarget()?.path).toBe(alias);
+      }
+      expect(session.analysisProfile()?.parameters.generation).toBe(1);
+      expect(await session.status()).toMatchObject({
+        analysis_provider_binding: {
+          selection_source: "auto-single-candidate",
+        },
+        analysis_provider_candidates: [
+          { selected: true, selection_source: "auto-single-candidate" },
+        ],
+      });
+      expect((await session.execute("list_strings", {})).ok).toBe(true);
+      expect(starts).toEqual([0, 1]);
+    } finally {
+      expect((await session.close()).ok).toBe(true);
+    }
+  },
+);
 
 it("reports the previous selection after a failed switch restores its provider", async () => {
   const session = new BinarySession(

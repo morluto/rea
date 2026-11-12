@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import { bridgeResponseOversizeError } from "../config/bridgeMaxRequestBytes.js";
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 
@@ -75,6 +76,7 @@ export class CutterAuthenticatedResponseDecoder {
   /** Release the decode buffer and return the one response string. */
   finish(): DecodedCutterResponse {
     if (this.#stage !== "done") throw invalid();
+    if (!isUtf8(this.#out.subarray(0, this.#outLength))) throw invalid();
     const response = this.#out.toString("utf8", 0, this.#outLength);
     this.#out = Buffer.alloc(0);
     this.#outLength = 0;
@@ -310,6 +312,8 @@ export class CutterBridgeResponseFrames {
     if (delimiter < 0) return chunk.length;
     let value: unknown;
     try {
+      if (!isUtf8(this.#challenge.subarray(0, this.#challengeLength)))
+        throw new Error("invalid authentication challenge");
       value = JSON.parse(
         this.#challenge.toString("utf8", 0, this.#challengeLength),
       ) as unknown;

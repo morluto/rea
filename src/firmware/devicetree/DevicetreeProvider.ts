@@ -7,7 +7,10 @@ import {
   ArtifactReaderFailure,
   selectedPathRefusal,
 } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -54,9 +57,10 @@ export class DevicetreeProvider implements DevicetreePort {
   }
 
   async inspect(input: InspectDevicetreeInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -76,7 +80,7 @@ export class DevicetreeProvider implements DevicetreePort {
         );
       });
     } catch (cause) {
-      return err(devicetreeFailure(cause, input));
+      return err(devicetreeFailure(cause, input, snapshot));
     }
   }
 }
@@ -189,7 +193,11 @@ const devicetreeFailurePrimary = (
   );
 };
 
-const devicetreeFailure = (cause: unknown, input: InspectDevicetreeInput) => {
+const devicetreeFailure = (
+  cause: unknown,
+  input: InspectDevicetreeInput,
+  snapshot?: StableArtifactSnapshot,
+) => {
   const primary = devicetreeFailurePrimary(
     artifactFilePrimaryFacts(cause),
     input,
@@ -200,5 +208,6 @@ const devicetreeFailure = (cause: unknown, input: InspectDevicetreeInput) => {
     input.path,
     DEVICETREE_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };

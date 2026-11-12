@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
+import { z } from "zod";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -13,6 +14,182 @@ const routeViewFromEvidence = (evidence: unknown) =>
     parseEvidence(evidence).normalized_result,
   );
 
+// The owner tests cover the flag matrix. These public controls distinguish
+// unobserved script scope from observed package scope and preserve resolved
+// routes and explicit unknowns through CLI/MCP views.
+const indexRouteCases = [
+  ["literal", "", "true", "js", ["/"], "module", false],
+  [
+    "commonjs",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "js",
+    ["/"],
+    "commonjs",
+    false,
+  ],
+  [
+    "unspecified-package",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "js",
+    ["/"],
+    "unspecified",
+    false,
+  ],
+  [
+    "script-global-jsx",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "jsx",
+    [],
+    "unspecified",
+    true,
+  ],
+  [
+    "script-global",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "js",
+    [],
+    "script",
+    true,
+  ],
+] as const;
+
+cliTest.for(indexRouteCases)(
+  "retains resolved index routes and reports unresolved flags through the public CLI: %s",
+  async (
+    [name, prefix, flag, extension, paths, sourceType, partial],
+    { cli },
+  ) => {
+    const root = await createTestTempDirectory("rea-index-routes-");
+    const path = join(root, name);
+    await mkdir(path);
+    if (sourceType !== "script") {
+      await writeFile(
+        join(path, "package.json"),
+        JSON.stringify({
+          name: "index-fixture",
+          private: true,
+          type: sourceType === "unspecified" ? undefined : sourceType,
+        }),
+      );
+    }
+    const route = `createBrowserRouter([{index:${flag},Component:Home}])`;
+    await writeFile(
+      join(path, `routes.${extension}`),
+      sourceType === "module"
+        ? `import {createBrowserRouter} from 'react-router';${prefix}export const router=${route};function Home(){return null;}`
+        : `${prefix}${route};function Home(){return null;}`,
+    );
+    const response = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        path,
+        "--evidence_output",
+        join(root, `${name}-evidence.json`),
+        "--detail",
+        "summary",
+        "--view",
+        JSON.stringify({
+          kind: "javascript-routes",
+          collection: "routes",
+          fields: ["path"],
+        }),
+        "--json",
+      ],
+    });
+    expect(
+      response.exitCode,
+      `${name}: ${response.stdout}\n${response.stderr}`,
+    ).toBe(0);
+    const envelope = z.object({ summary: z.unknown() }).parse(response.json);
+    const view = routeViewFromEvidence(envelope.summary);
+    expect(view.items, name).toEqual(
+      paths.map((path) => expect.objectContaining({ path })),
+    );
+    expect(view.source_coverage, name).toMatchObject({
+      source_parsing: "complete",
+      candidate_enumeration: partial ? "partial" : "complete",
+      application_routes: "unknown",
+    });
+    if (partial) {
+      const unknowns = await cli.run({
+        arguments: [
+          "analyze-javascript-application",
+          path,
+          "--evidence_output",
+          join(root, `${name}-unknowns-evidence.json`),
+          "--detail",
+          "summary",
+          "--view",
+          JSON.stringify({
+            kind: "javascript-routes",
+            collection: "unknowns",
+          }),
+          "--json",
+        ],
+      });
+      expect(unknowns.exitCode, unknowns.stderr).toBe(0);
+      const unknownEnvelope = z
+        .object({ summary: z.unknown() })
+        .parse(unknowns.json);
+      expect(routeViewFromEvidence(unknownEnvelope.summary).items).toEqual([
+        expect.objectContaining({
+          kind: "interpretation",
+          reason: expect.stringContaining("index-route flag"),
+        }),
+      ]);
+    }
+  },
+);
+cliTest(
+  "keeps rejected program-var paths unknown through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-program-var-routes-");
+    const path = join(root, "application");
+    await mkdir(path);
+    await writeFile(
+      join(path, "routes.js"),
+      "var PATH='/reports/stale';globalThis.PATH='/other';createBrowserRouter([{path:PATH},{path:'/reports'}]);const independent='/reports/help';",
+    );
+    for (const collection of ["routes", "unknowns"] as const) {
+      const response = await cli.run({
+        arguments: [
+          "analyze-javascript-application",
+          path,
+          "--evidence_output",
+          join(root, collection + "-evidence.json"),
+          "--detail",
+          "summary",
+          "--view",
+          JSON.stringify({ kind: "javascript-routes", collection }),
+          "--json",
+        ],
+      });
+      expect(response.exitCode, response.stdout + response.stderr).toBe(0);
+      const envelope = z.object({ summary: z.unknown() }).parse(response.json);
+      const view = routeViewFromEvidence(envelope.summary);
+      expect(view.source_coverage).toMatchObject({
+        source_parsing: "complete",
+        candidate_enumeration: "partial",
+      });
+      if (collection === "routes")
+        expect(view.items).toEqual([
+          expect.objectContaining({ path: "/reports" }),
+          expect.objectContaining({ path: "/reports/help" }),
+        ]);
+      else
+        expect(view.items).toEqual([
+          expect.objectContaining({
+            kind: "interpretation",
+            reason: expect.stringContaining("parent segment is unknown"),
+          }),
+        ]);
+    }
+  },
+);
 const expectAccountRoutes = (items: unknown[]) => {
   expect(items).toHaveLength(2);
   expect(items).toEqual(
@@ -381,21 +558,25 @@ cliTest(
       expect(response.exitCode, response.stderr).toBe(0);
       const envelope = response.json as { summary: unknown };
       const selected = routeViewFromEvidence(envelope.summary);
-      expect(selected.items).toHaveLength(12);
-      expect(selected.items).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ path: "/reports/aliased-web" }),
-          expect.objectContaining({ path: "/checks/independent-web" }),
-          expect.objectContaining({ path: "/checks/projected-web" }),
-          expect.objectContaining({ path: "/checks/rest-web" }),
-          expect.objectContaining({ path: "/checks/inactive-default-web" }),
-          expect.objectContaining({ path: "/checks/inactive-branch-web" }),
-          expect.objectContaining({ path: "/checks/overwritten-web" }),
-          expect.objectContaining({ path: "/checks/member-web" }),
-          expect.objectContaining({ path: "/checks/config-sibling-web" }),
-          expect.objectContaining({ path: "/checks/optional-web/:id?" }),
-        ]),
-      );
+      const expectedPaths = [
+        "/reports/settings",
+        "/reports/panel",
+        "/reports/aliased-web",
+        "/checks/independent-web",
+        "/checks/projected-web",
+        "/checks/rest-web",
+        "/checks/inactive-default-web",
+        "/checks/inactive-branch-web",
+        "/checks/overwritten-web",
+        "/checks/member-web",
+        "/checks/config-sibling-web",
+        "/checks/optional-web/:id?",
+      ].sort();
+      expect(
+        selected.items
+          .map((item) => ("path" in item ? item.path : null))
+          .sort(),
+      ).toEqual(expectedPaths);
       expect(selected.artifact).toBeNull();
       const { call } = await connectLocalToolsMcp();
       const observed = await call("analyze_web_bundle", {
@@ -408,21 +589,9 @@ cliTest(
       });
       expect(observed.isError).not.toBe(true);
       const result = routeViewFromEvidence(observed.structuredContent);
-      expect(result.items).toHaveLength(12);
-      expect(result.items).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ path: "/reports/aliased-web" }),
-          expect.objectContaining({ path: "/checks/independent-web" }),
-          expect.objectContaining({ path: "/checks/projected-web" }),
-          expect.objectContaining({ path: "/checks/rest-web" }),
-          expect.objectContaining({ path: "/checks/inactive-default-web" }),
-          expect.objectContaining({ path: "/checks/inactive-branch-web" }),
-          expect.objectContaining({ path: "/checks/overwritten-web" }),
-          expect.objectContaining({ path: "/checks/member-web" }),
-          expect.objectContaining({ path: "/checks/config-sibling-web" }),
-          expect.objectContaining({ path: "/checks/optional-web/:id?" }),
-        ]),
-      );
+      expect(
+        result.items.map((item) => ("path" in item ? item.path : null)).sort(),
+      ).toEqual(expectedPaths);
       const retained = await call("inspect_analysis_view", {
         source: {
           kind: "retained-evidence",

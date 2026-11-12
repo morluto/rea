@@ -63,7 +63,6 @@ it("preserves completed prefix and suffix facts when one script times out", asyn
   expect(calls).toEqual(
     captured.scripts.items.map(({ script_key }) => script_key),
   );
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(
     result.value.observations.chunks.edges.map(({ specifier }) => specifier),
@@ -114,7 +113,6 @@ it("marks the unstarted suffix when the aggregate deadline expires", async () =>
   expect(calls).toEqual(
     captured.scripts.items.slice(0, 2).map(({ script_key }) => script_key),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected total deadline failure");
   expect(result.error._tag).toBe("AnalysisTimeoutError");
   expect(result.error.partialObservation).toMatchObject({
@@ -143,6 +141,7 @@ it("stops after a middle-script result-capacity failure and retains prefix facts
   ]);
   const calls: string[] = [];
   const caller = new AbortController();
+  const cancellation = new Error("later cancellation during final close");
   const primary = new AnalysisResourceConstraintError(
     "analyze_web_bundle",
     "memory",
@@ -160,7 +159,7 @@ it("stops after a middle-script result-capacity failure and retains prefix facts
       });
     },
     close: async () => {
-      caller.abort(new Error("later cancellation during final close"));
+      caller.abort(cancellation);
     },
   }));
   expect((await analyzer.reserve()).ok).toBe(true);
@@ -176,9 +175,14 @@ it("stops after a middle-script result-capacity failure and retains prefix facts
   expect(calls).toEqual(
     captured.scripts.items.slice(0, 2).map(({ script_key }) => script_key),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected result-capacity failure");
   expect(result.error).toBe(primary);
+  expect(result.error.secondaryFailures).toContainEqual(
+    expect.objectContaining({
+      _tag: "AnalysisCancelledError",
+      cause: cancellation,
+    }),
+  );
   expect(result.error.partialObservation).toMatchObject({
     completeness: { status: "partial", parsed_scripts: 1 },
     observations: {
@@ -234,7 +238,6 @@ it("carries the exact caller cancellation reason and completed prefix facts", as
   const result = await pending;
   analyzer.releaseReservation();
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(exactReason);
@@ -276,7 +279,6 @@ it("retains all completed facts when cancellation arrives during worker close", 
   const result = await pending;
   analyzer.releaseReservation();
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation during finalization");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.partialObservation).toMatchObject({
@@ -316,7 +318,6 @@ it("retains cleanup ownership after mixed worker/close failure and resolves it o
   expect((await analyzer.reserve()).ok).toBe(true);
 
   const result = await analyzer.analyze(captured, noSourceMaps, input);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected mixed failure");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.cleanupPrimary).toBe(primary);
@@ -347,7 +348,6 @@ it("shares one capture reservation when analyzers use one admission", async () =
   const second = new IsolatedWebBundleAnalyzer(() => inertWorker(), admission);
   expect((await first.reserve()).ok).toBe(true);
   const blocked = await second.reserve();
-  expect(blocked.ok).toBe(false);
   if (blocked.ok) throw new Error("Expected shared admission refusal");
   expect(projectAnalysisError(blocked.error)).toMatchObject({
     code: "resource_constraint",
@@ -361,7 +361,7 @@ it("shares one capture reservation when analyzers use one admission", async () =
   second.releaseReservation();
 });
 
-it("does not fail one admission when another host's worker runtime is retained", async () => {
+it("does not fail one admission's analysis when another host's worker runtime is retained", async () => {
   let fail = true;
   const stuck = new OwnedWorkerRuntime({
     rootPrefix: "rea-web-host-isolation-",
@@ -371,8 +371,25 @@ it("does not fail one admission when another host's worker runtime is retained",
   });
   stuck.retainForCleanup();
   try {
-    const analyzer = new IsolatedWebBundleAnalyzer(() => inertWorker());
+    const analyzed: string[] = [];
+    const analyzer = new IsolatedWebBundleAnalyzer(() => ({
+      analyze: async (script) => {
+        analyzed.push(script.script_key);
+        return ok(analyzeCapturedWebScript(script));
+      },
+      close: async () => {},
+    }));
     expect((await analyzer.reserve()).ok).toBe(true);
+    const captured = inspection(["fetch('/independent');"]);
+    const result = await analyzer.analyze(captured, noSourceMaps, input);
+    expect(result.ok).toBe(true);
+    expect(analyzed).toEqual(
+      captured.scripts.items.map(({ script_key }) => script_key),
+    );
+    if (result.ok)
+      expect(result.value.observations.endpoints).toMatchObject([
+        { value: "/independent" },
+      ]);
     analyzer.releaseReservation();
     await expect(OwnedWorkerRuntime.retryPending()).rejects.toThrow(
       "other host still owns its worker",

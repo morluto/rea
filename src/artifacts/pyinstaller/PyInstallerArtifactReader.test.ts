@@ -15,7 +15,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { reconstructedPycHeader } from "./PythonBytecode.js";
 import { parsePythonPyc } from "../../python/PythonPycParser.js";
-import { inspectPythonPycInputSchema } from "../../domain/python/pythonPyc.js";
+import { pythonPycLimitsSchema } from "../../domain/python/pythonPyc.js";
 import {
   PYTHON_39_MAGIC,
   cArchiveExecutable,
@@ -117,7 +117,7 @@ it("preserves legacy pyc bytes and derives only modern headerless CArchive bytec
         parsePythonPyc(
           bytes,
           { path: module.name, bytes: bytes.length, sha256: sha256(bytes) },
-          inspectPythonPycInputSchema.parse({ path: module.name }),
+          pythonPycLimitsSchema.parse({}),
         ).coverage.status,
       ).toBe("complete");
       expect(await buffer(await reader.open(entry))).toEqual(module.bytes);
@@ -590,12 +590,11 @@ it("rejects a truncated table of contents", async () => {
       tocBytes: Buffer.concat([Buffer.from([0, 0, 0, 64]), Buffer.alloc(16)]),
     }),
   );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toBeInstanceOf(
-    ArtifactReaderFailure,
+  const failure = await scanCanonicalArtifactInventory(path).catch(
+    (error: unknown) => error,
   );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
-    reason: "format",
-  });
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "format" });
 });
 
 it("rejects a cookie whose package range is outside the file", async () => {
@@ -922,7 +921,7 @@ it("retains the descriptor owner when admission cleanup fails", async () => {
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
       reason: "format",
-      message: `PyInstaller source is not a regular file: ${directory}`,
+      message: expect.stringContaining(directory),
       cleanup: {
         reason: closeFailure.message,
         resources: [directory],

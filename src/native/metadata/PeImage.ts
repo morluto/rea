@@ -1,3 +1,7 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import { readPeCoffHeader } from "../../domain/peCoffHeader.js";
 import { readPeOptionalHeader } from "../../domain/peMachine.js";
 import { readPeSectionHeader } from "../../domain/peSectionHeader.js";
@@ -10,9 +14,7 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   type BinaryContainer,
-  type FileMapping,
   type ImageSection,
-  type ZeroFillMapping,
 } from "./BinaryContainer.js";
 
 const peHeaderOffset = (reader: BinaryReader): number => {

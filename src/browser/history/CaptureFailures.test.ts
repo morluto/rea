@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
+  captureDecoderHeapContinuingRecovery,
   captureDecoderHeapRecovery,
   DEFAULT_CAPTURE_DECODER_HEAP,
 } from "../../config/captureDecoderHeap.js";
@@ -8,7 +9,7 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapture.js";
 import { historicalCaptureFailure } from "./CaptureFailures.js";
-import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "./CaptureRelease.js";
+import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../../tests/fixtures/captureDecoderLimits.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 
@@ -74,7 +75,7 @@ it.each([
       retryable: false,
       remediation: {
         action: expect.stringContaining(
-          captureDecoderHeapRecovery(DEFAULT_CAPTURE_DECODER_HEAP),
+          captureDecoderHeapContinuingRecovery(DEFAULT_CAPTURE_DECODER_HEAP),
         ),
       },
       details: {

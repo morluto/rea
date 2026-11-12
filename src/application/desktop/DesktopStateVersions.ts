@@ -79,6 +79,10 @@ export interface StateIndex {
   readonly changes: ChangeIndex;
   /** The retained digest of each path at the baseline. */
   readonly baseline: ReadonlyMap<string, string>;
+  readonly baselineNonFiles: ReadonlyMap<
+    string,
+    "directory" | "symlink" | "other"
+  >;
   /** Paths a walk saw as files whose bytes were not retained. */
   readonly omitted: ReadonlySet<string>;
   /**
@@ -89,6 +93,8 @@ export interface StateIndex {
   /** Paths every walk left out, so nothing records whether they existed. */
   readonly excluded: readonly string[];
   readonly checkpoints: number;
+  /** Walks whose path coverage cannot establish unchanged files. */
+  readonly incomplete: readonly boolean[];
 }
 
 export const indexState = (capture: DesktopApplicationCapture): StateIndex => {
@@ -115,10 +121,20 @@ export const indexState = (capture: DesktopApplicationCapture): StateIndex => {
     baseline: new Map(
       (first?.retained ?? []).map((file) => [file.path, file.sha256]),
     ),
+    baselineNonFiles: new Map(
+      capture.state.baseline_non_files.map(({ path, type }) => [path, type]),
+    ),
     omitted: new Set(capture.state.omitted_content.map((entry) => entry.path)),
     contentRoots: complete ? capture.state.content_roots : [],
     excluded: capture.state.excluded ?? [],
     checkpoints: capture.state.checkpoints.length,
+    incomplete: capture.state.checkpoints.map(
+      (checkpoint) =>
+        checkpoint.truncated ||
+        checkpoint.unreadable_directories > 0 ||
+        checkpoint.unchecked_paths !== 0 ||
+        checkpoint.unconfirmed_changes > 0,
+    ),
   };
 };
 
@@ -182,6 +198,60 @@ export const presenceAt = (
     );
   }
   return presence;
+};
+
+/**
+ * A file fact proven for one checkpoint, rather than the last recorded fact.
+ * An incomplete walk breaks continuity until a later change names the file.
+ */
+export const observedFileAt = (
+  path: string,
+  position: number,
+  index: StateIndex,
+): { readonly present: boolean | null; readonly sha256: string | null } => {
+  const changes = index.changes.get(path) ?? [];
+  const first = changes[0];
+  const baselineChange =
+    first !== undefined && !index.incomplete.slice(0, first.index).some(Boolean)
+      ? first.change
+      : undefined;
+  const hasNonFile = (candidate: string): boolean => {
+    let current = candidate;
+    while (true) {
+      const type = index.baselineNonFiles.get(current);
+      if (type !== undefined && (current === candidate || type !== "directory"))
+        return true;
+      const parent = current.slice(0, Math.max(1, current.lastIndexOf("/")));
+      if (parent === current) return false;
+      current = parent;
+    }
+  };
+  let present = hasNonFile(path)
+    ? null
+    : baselineChange?.before !== undefined &&
+        baselineChange.before !== null &&
+        baselineChange.before.type !== "file"
+      ? null
+      : baselinePresence(path, baselineChange, index);
+  let sha256 = index.baseline.get(path) ?? null;
+  const byIndex = new Map(changes.map((entry) => [entry.index, entry.change]));
+  for (let checkpoint = 1; checkpoint <= position; checkpoint += 1) {
+    if (index.incomplete[checkpoint]) {
+      present = null;
+      sha256 = null;
+    }
+    const change = byIndex.get(checkpoint);
+    if (change !== undefined) {
+      present =
+        change.after === null
+          ? false
+          : change.after.type === "file"
+            ? true
+            : null;
+      sha256 = present ? (change.after?.sha256 ?? null) : null;
+    }
+  }
+  return { present, sha256 };
 };
 
 /**

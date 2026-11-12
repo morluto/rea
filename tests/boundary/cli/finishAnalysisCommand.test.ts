@@ -56,29 +56,55 @@ it("returns completed partial Evidence when cancellation arrives during close", 
   });
 });
 
-it("preserves the primary operation error when cancellation arrives during close", async () => {
-  const controller = new AbortController();
-  const result = await finishAnalysisCommand(
-    async () =>
-      err(new AnalysisOutputError("inspect_web_page", "primary failure")),
-    {
-      close: async () => {
-        controller.abort();
+it.each([
+  ["final", false],
+  ["final", true],
+  ["initial", false],
+  ["initial", true],
+] as const)(
+  "preserves the primary failure and late cancellation with %s projection (close fails=%s)",
+  async (failureProjection, closeFails) => {
+    const controller = new AbortController();
+    const reason = { during: "final close" };
+    const failure = new AnalysisOutputError(
+      "inspect_web_page",
+      "primary failure",
+    );
+    const result = await finishAnalysisCommand(
+      async () => err(failure),
+      {
+        close: async () => {
+          controller.abort(reason);
+          if (closeFails)
+            throw new ProviderCleanupError(
+              "fixture-provider",
+              ["retained connection"],
+              { reason: "close failed" },
+            );
+        },
       },
-    },
-    "fixture-provider",
-    "inspect_web_page",
-    controller.signal,
-  ).then(projectCliAnalysisResult);
+      "fixture-provider",
+      "inspect_web_page",
+      controller.signal,
+      undefined,
+      { failureProjection },
+    );
 
-  expect(result).toMatchObject({
-    code: "unreadable_output",
-    details: {
-      reason: "primary failure",
-      operation: "inspect_web_page",
-    },
-  });
-});
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: closeFails ? "cleanup_incomplete" : "unreadable_output",
+        details: {
+          reason: "primary failure",
+          operation: "inspect_web_page",
+          secondary_failures: [{ code: "cancelled" }],
+        },
+      },
+    });
+    expect(failure.secondaryFailures).toHaveLength(1);
+    expect(failure.secondaryFailures[0]?.cause).toBe(reason);
+  },
+);
 
 it("retains late cancellation and completed Evidence when close also fails", async () => {
   const evidence = scriptCaptureEvidenceFixture();

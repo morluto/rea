@@ -7,7 +7,10 @@ import {
   ArtifactReaderFailure,
   selectedPathRefusal,
 } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -59,9 +62,10 @@ export class ElfNotesProvider implements ElfNotesPort {
   }
 
   async inspect(input: InspectElfNotesInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -81,7 +85,7 @@ export class ElfNotesProvider implements ElfNotesPort {
         );
       });
     } catch (cause) {
-      return err(elfNotesFailure(cause, input));
+      return err(elfNotesFailure(cause, input, snapshot));
     }
   }
 }
@@ -231,7 +235,11 @@ const elfNotesFailurePrimary = (
   );
 };
 
-const elfNotesFailure = (cause: unknown, input: InspectElfNotesInput) => {
+const elfNotesFailure = (
+  cause: unknown,
+  input: InspectElfNotesInput,
+  snapshot?: StableArtifactSnapshot,
+) => {
   const primary = elfNotesFailurePrimary(
     artifactFilePrimaryFacts(cause),
     input,
@@ -242,5 +250,6 @@ const elfNotesFailure = (cause: unknown, input: InspectElfNotesInput) => {
     input.path,
     ELF_NOTES_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };

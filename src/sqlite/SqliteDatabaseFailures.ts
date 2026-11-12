@@ -13,7 +13,6 @@ import {
 } from "../domain/analysisErrorProjection.js";
 import {
   AnalysisError,
-  primaryAnalysisError,
   type AnalysisCapturedOutput,
   type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
@@ -110,10 +109,7 @@ export const sqliteDatabaseFailure = (
         members: cause.completedMembers.map((member) => ({ ...member })),
       },
     };
-    failure.retainDiagnostics(diagnostics);
-    // Keep the facts on the semantic error after its cleanup envelope resolves.
-    const primary = primaryAnalysisError(failure);
-    if (primary !== failure) primary.retainDiagnostics(diagnostics);
+    failure.retainPrimaryDiagnostics(diagnostics);
     return failure;
   }
   if (cause instanceof AnalysisError) return cause;

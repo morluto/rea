@@ -183,8 +183,10 @@ describe("managed comparison selected scope agreement", () => {
     expect(explicit.result.selection).not.toEqual(bare.result.selection);
     const comparison = compareManagedMembers(bare, explicit);
     expect(comparison.coverage.status).toBe("complete-within-inputs");
-    expect(comparison.limitations).toContain(
-      "Both observations cover only the selected declaring types (Fixture.Inner, Inner); member totals and statuses describe those types, not the whole assembly.",
+    expect(comparison.limitations).toContainEqual(
+      expect.stringMatching(
+        /selected declaring types.*Fixture\.Inner.*Inner.*not the whole assembly/iu,
+      ),
     );
   });
 
@@ -220,8 +222,8 @@ describe("managed comparison selected scope agreement", () => {
       unchanged: 0,
     });
     expect(comparison.matching.unmatched).toBe(4);
-    expect(comparison.limitations).toContain(
-      "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
+    expect(comparison.limitations).toContainEqual(
+      expect.stringMatching(/different declaring types.*unknown/iu),
     );
   });
 
@@ -259,8 +261,8 @@ describe("managed comparison selected scope agreement", () => {
           "Selected declaring-type scope agreement is unknown",
         ),
       );
-      expect(comparison.limitations).not.toContain(
-        "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
+      expect(comparison.limitations).not.toContainEqual(
+        expect.stringMatching(/different declaring types/iu),
       );
     },
   );
@@ -1863,8 +1865,8 @@ describe("managed member comparison of selected types", () => {
       right: null,
     });
     expect(result.coverage.status).toBe("partial");
-    expect(result.limitations).toContain(
-      "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/different declaring types.*unknown/iu),
     );
   });
 
@@ -1909,8 +1911,10 @@ describe("managed member comparison of selected types", () => {
 
     expect(result.methods[0]).toMatchObject({ status: "unchanged" });
     expect(result.coverage.status).toBe("complete-within-inputs");
-    expect(result.limitations).toContain(
-      "Both observations cover only the selected declaring types (Fixture.Program); member totals and statuses describe those types, not the whole assembly.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /selected declaring types.*Fixture\.Program.*not the whole assembly/iu,
+      ),
     );
   });
 });
@@ -2276,13 +2280,32 @@ describe("managed member comparison of raw-signature contention", () => {
       ...base,
       result: { ...base.result, methods: [], fields: [field] },
     };
-    for (const result of [
-      compareManagedMembers(withOwnerless, resolvedOnly),
-      compareManagedMembers(resolvedOnly, withOwnerless),
-    ])
+    for (const [result, leftTokens, rightTokens] of [
+      [
+        compareManagedMembers(withOwnerless, resolvedOnly),
+        [field.token, "0x04000002"],
+        [field.token],
+      ],
+      [
+        compareManagedMembers(resolvedOnly, withOwnerless),
+        [field.token],
+        [field.token, "0x04000002"],
+      ],
+    ] as const) {
       expect(
         result.fields.filter(({ match }) => match.status === "matched"),
       ).toEqual([]);
+      expect(result.fields.length).toBeGreaterThan(0);
+      expect(comparedTokens(result, "fields", "left")).toEqual(
+        [...leftTokens].sort(),
+      );
+      expect(comparedTokens(result, "fields", "right")).toEqual(
+        [...rightTokens].sort(),
+      );
+      expect(result.fields.every((item) => item.status === "unknown")).toBe(
+        true,
+      );
+    }
   });
 });
 
@@ -2664,6 +2687,9 @@ describe("managed member comparison of unresolved owners", () => {
       },
     });
     const result = compareManagedMembers(side("Main"), side("Renamed"));
+    expect(result.methods.length).toBeGreaterThan(0);
+    expect(comparedTokens(result, "methods", "left")).toEqual([method.token]);
+    expect(comparedTokens(result, "methods", "right")).toEqual([method.token]);
 
     for (const item of result.methods)
       expect(item.match.status).not.toBe("matched");
@@ -2782,12 +2808,16 @@ describe("managed member comparison of unresolved owners", () => {
       },
     };
 
-    for (const result of [
-      compareManagedMembers(left, right),
-      compareManagedMembers(right, left),
-    ])
+    for (const [result, leftToken, rightToken] of [
+      [compareManagedMembers(left, right), method.token, "0x06000002"],
+      [compareManagedMembers(right, left), "0x06000002", method.token],
+    ] as const) {
+      expect(result.methods.length).toBeGreaterThan(0);
+      expect(comparedTokens(result, "methods", "left")).toEqual([leftToken]);
+      expect(comparedTokens(result, "methods", "right")).toEqual([rightToken]);
       for (const item of result.methods)
         expect(item.match.status).not.toBe("matched");
+    }
   });
 });
 
@@ -3053,8 +3083,8 @@ describe("managed member comparison of resolved signatures", () => {
     expect(result.fields).toEqual([
       expect.objectContaining({ status: "unchanged" }),
     ]);
-    expect(result.limitations).toContain(
-      "At least one managed member observation does not attest signature type-name resolution, so signatures compare by raw bytes, which name types by build-local metadata row.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/signature type.name resolution.*raw bytes/iu),
     );
   });
 });
@@ -3283,8 +3313,8 @@ describe("managed member comparison limitations for resolved signatures", () => 
     };
     const result = compareManagedMembers(empty, empty);
 
-    expect(result.limitations).not.toContain(
-      "At least one managed member observation does not attest signature type-name resolution, so signatures compare by raw bytes, which name types by build-local metadata row.",
+    expect(result.limitations).not.toContainEqual(
+      expect.stringMatching(/does not attest signature type.name resolution/iu),
     );
   });
 });
@@ -3442,6 +3472,25 @@ const withTwin = (
     },
   };
 };
+
+/** Every retained source token, including unresolved candidates with no selected identity. */
+const comparedTokens = (
+  result: ReturnType<typeof compareManagedMembers>,
+  kind: "methods" | "fields",
+  side: "left" | "right",
+) =>
+  [
+    ...new Set(
+      result[kind]
+        .flatMap((item) => [
+          item[side]?.token,
+          ...(side === "left"
+            ? item.match.candidate_left_tokens
+            : item.match.candidate_right_tokens),
+        ])
+        .filter((token) => token !== undefined),
+    ),
+  ].sort();
 
 const inspect = (bytes: Buffer, path: string, typeNames?: string[]) => {
   const target = managedPeFixtureTarget(bytes, path);

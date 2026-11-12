@@ -29,6 +29,7 @@ export type GhidraSessionFailureKind =
   | "start"
   | "process"
   | "protocol"
+  | "checkpoint"
   | "remote"
   | "analysis_timeout";
 

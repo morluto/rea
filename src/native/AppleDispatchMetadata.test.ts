@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { machoWithPropertyAttributes } from "../../tests/fixtures/objcPropertyMacho.js";
 import { objcRecordBudgetMacho } from "../../tests/fixtures/objcRecordBudgetMacho.js";
-import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
+import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
 
 const base = 0x100000000n;
 const fixture = (
@@ -307,6 +307,7 @@ const swiftExternalSwiftBindingImage = (
     ...Buffer.from(
       `${boundField === "protocol" ? "_$sSQMp" : boundField === "objc-class" ? "_OBJC_CLASS_$_NSObject" : "_$sSiMn"}\0`,
     ),
+    0x51, // SET_TYPE_IMM pointer
     0x70,
     0x80,
     0x16, // SET_SEGMENT_AND_OFFSET_ULEB segment 0 + offset 0xb00
@@ -373,6 +374,7 @@ const swiftBoundWitnessSlotImage = () => {
     0x11,
     0x40,
     ...Buffer.from("_externalWitnessImpl\0"),
+    0x51, // SET_TYPE_IMM pointer
     0x70,
     0x88,
     0x1c, // SET_SEGMENT_AND_OFFSET_ULEB segment 0 + witness slot 0xe08
@@ -766,8 +768,9 @@ describe("Swift conformance type-reference kinds", () => {
           witness_table: { address: null, file_offset: null },
           decode: {
             status: "partial",
-            reason:
-              "Indirect Objective-C class metadata requires runtime lookup",
+            reason: expect.stringMatching(
+              /indirect Objective-C class metadata.*runtime lookup/i,
+            ),
           },
         },
       ]);
@@ -1106,6 +1109,7 @@ describe("Apple dispatch pointer fixup metadata", () => {
       const bindings = Buffer.from([
         0x40,
         ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
+        0x51, // SET_TYPE_IMM pointer
         0x70,
         0x88,
         0x04,
@@ -1455,6 +1459,7 @@ describe("Objective-C category class references without a class name", () => {
     const bindings = Buffer.from([
       0x40,
       ...Buffer.from("_$s4Main3FooCN\0"),
+      0x51, // SET_TYPE_IMM pointer
       0x70,
       0xc8,
       0x16,
@@ -1466,8 +1471,9 @@ describe("Objective-C category class references without a class name", () => {
     bytes.writeUInt32LE(bindings.length, 284);
     expect(categoryCoverage(bytes)).toMatchObject({
       status: "partial",
-      reason:
-        "category_class_unresolved at 0x100000b48: Category FixtureCategory class reference is bound to _$s4Main3FooCN, which is not read as an Objective-C class name",
+      reason: expect.stringMatching(
+        /category_class_unresolved.*0x100000b48.*FixtureCategory.*_\$s4Main3FooCN.*not read as an Objective-C class name/iu,
+      ),
     });
   });
 
@@ -1476,8 +1482,9 @@ describe("Objective-C category class references without a class name", () => {
     bytes.writeBigUInt64LE(0n, 0xb48);
     expect(categoryCoverage(bytes)).toMatchObject({
       status: "partial",
-      reason:
-        "category_class_unresolved at 0x100000b48: Category FixtureCategory class reference is null",
+      reason: expect.stringMatching(
+        /category_class_unresolved.*0x100000b48.*FixtureCategory.*class reference is null/i,
+      ),
     });
   });
 });
@@ -1650,6 +1657,42 @@ describe("Objective-C category-local record-budget coverage", () => {
 });
 
 describe("malformed Objective-C property records", () => {
+  it.each(["class", "category"] as const)(
+    "retains the %s identity when its property-list pointer field is unmapped",
+    (owner) => {
+      const bytes = fixture(false, "partial-method");
+      if (owner === "class") {
+        bytes.writeBigUInt64LE(base + 0xfc0n, 0x220);
+        bytes.writeUInt32LE(2, 0xfc0);
+        bytes.writeUInt32LE(16, 0xfc8);
+        bytes.writeBigUInt64LE(base + 0x450n, 0xfd8);
+      } else {
+        bytes.writeBigUInt64LE(base + 0xfd8n, 0xb00);
+        bytes.writeBigUInt64LE(base + 0xbc0n, 0xfd8);
+        bytes.writeBigUInt64LE(base + 0x200n, 0xfe0);
+      }
+      const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+      if (owner === "class")
+        expect(result.objc_classes).toContainEqual(
+          expect.objectContaining({ name: "Fixture", is_meta_class: false }),
+        );
+      else
+        expect(result.objc_categories).toMatchObject([
+          { name: "FixtureCategory", class_name: "Fixture", properties: [] },
+        ]);
+      expect(
+        result.coverage.find(
+          ({ facet }) => facet === "objc_properties_categories",
+        ),
+      ).toMatchObject({
+        status: "partial",
+        reason: expect.stringContaining(
+          "property_decode_failed at 0x100001000",
+        ),
+      });
+    },
+  );
+
   it.each([
     ["an unmapped name", { secondNameOffset: 0x2000 }, "first", "0x100000518"],
     ["an empty name", { firstName: "" }, "second", "0x100000508"],
@@ -1993,6 +2036,58 @@ describe("FAT64 dispatch slice validation", () => {
     expect(() => decodeAppleDispatchMetadata(bytes, 100, provenance)).toThrow(
       "Ambiguous FAT architecture slice",
     );
+  });
+
+  it("decodes the admitted capability variant rather than re-selecting", () => {
+    const variant = (subtype: number) => {
+      const bytes = fixture();
+      bytes.writeUInt32LE(subtype, 8);
+      return bytes;
+    };
+    const first = variant(0x81000002);
+    const second = variant(0x80000002);
+    const offset = 4096;
+    const secondOffset = offset + Math.ceil(first.length / 4096) * 4096;
+    const bytes = Buffer.alloc(secondOffset + second.length);
+    bytes.writeUInt32BE(0xcafebabe, 0);
+    bytes.writeUInt32BE(2, 4);
+    const writeEntry = (
+      index: number,
+      subtype: number,
+      sliceOffset: number,
+      size: number,
+    ) => {
+      const base = 8 + index * 20;
+      bytes.writeUInt32BE(0x0100000c, base);
+      bytes.writeUInt32BE(subtype, base + 4);
+      bytes.writeUInt32BE(sliceOffset, base + 8);
+      bytes.writeUInt32BE(size, base + 12);
+      bytes.writeUInt32BE(12, base + 16);
+    };
+    writeEntry(0, 0x81000002, offset, first.length);
+    writeEntry(1, 0x80000002, secondOffset, second.length);
+    first.copy(bytes, offset);
+    second.copy(bytes, secondOffset);
+    expect(() => decodeAppleDispatchMetadata(bytes, 100, provenance)).toThrow(
+      "Ambiguous FAT architecture slice",
+    );
+    expect(
+      decodeAppleDispatchMetadata(
+        bytes,
+        100,
+        provenance,
+        "arm64",
+        undefined,
+        true,
+        {
+          offset: secondOffset,
+          size: second.length,
+        },
+      ).objc_classes[0],
+    ).toMatchObject({
+      name: "Fixture",
+      location: { file_offset: secondOffset + 512 },
+    });
   });
 
   it("rejects a missing selected architecture", () => {

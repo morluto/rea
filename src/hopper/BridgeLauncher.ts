@@ -671,7 +671,7 @@ export const bridgeBootstrapSource = (
 ): string => {
   const limit = options.bridgeMaxRequestBytes;
   const injectedLimit =
-    limit?.source === "setting" &&
+    (limit?.source === "setting" || limit?.source === "runtime") &&
     Number.isSafeInteger(limit.maximumBytes) &&
     limit.maximumBytes >= MINIMUM_BRIDGE_MAX_REQUEST_BYTES &&
     limit.maximumBytes <= MAXIMUM_BRIDGE_MAX_REQUEST_BYTES

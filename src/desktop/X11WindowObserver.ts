@@ -1,3 +1,4 @@
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   X11_WINDOW_PROPERTY_NAMES,
   parseX11ClientList,
@@ -7,6 +8,7 @@ import {
 import {
   execFileOutput,
   execFileOutputFailure,
+  ExecFileOutputCancelledError,
 } from "../process/ExecFileOutput.js";
 
 const XPROP_TIMEOUT_MS = 5_000;
@@ -66,7 +68,15 @@ export class X11WindowObserver {
       });
       return stdout;
     } catch (cause: unknown) {
-      signal?.throwIfAborted();
+      if (cause instanceof ExecFileOutputCancelledError)
+        throw new ArtifactReaderFailure(
+          "cancelled",
+          "X11 window query cancelled",
+          {
+            cause: cause.cause,
+            cancellation: { reason: cause.cause },
+          },
+        );
       if (execFileOutputFailure(cause)?.code === "ENOENT")
         throw new XpropUnavailableError(this.#command);
       // A window can close between listing and reading it.

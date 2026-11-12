@@ -158,7 +158,7 @@ it.skipIf(process.platform === "win32")(
       format: "har",
     });
     for (const error of [
-      evmInterfaceFailure(refusal, "artifact-read", selected),
+      evmInterfaceFailure(refusal, { phase: "artifact-read", path: selected }),
       wabtFailure(refusal, "artifact", selected),
       apkSignatureFailure(refusal, selected),
       historicalCaptureFailure(input, refusal, "capture-read"),
