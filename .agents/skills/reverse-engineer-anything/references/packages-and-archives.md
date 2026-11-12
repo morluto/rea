@@ -1,12 +1,19 @@
 # Packages and archives
 
-Read the section matching the supplied artifact; other sections are optional.
+Read only the sections needed for the selected task.
 
 - [Packages and extraction](#packages-and-extraction)
 - [Godot PCK](#godot-pck)
 - [Bun standalone executables](#bun-standalone-executables)
 
 ## Packages and extraction
+
+For PyInstaller executables, the CArchive is the application layer; the native
+bootloader is only its prefix. Prefer summary delivery for large inventories,
+then retained inventory views with selected member fields/pages. Runtime options
+are metadata, not files. Compact delivery still inventories and hashes members.
+A small complete inventory can cost less than extra calls and schemas. See the
+[Python packaged applications guide](https://github.com/morluto/rea/blob/main/docs/python-packaged-applications.md).
 
 Use `inspect_artifact` for application bundles, archives, ZIP/APK/IPA/MSIX/AppX,
 ASAR, or DMG inputs when the artifact graph and findings help answer the

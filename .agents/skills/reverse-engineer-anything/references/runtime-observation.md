@@ -1,5 +1,12 @@
 # Runtime observation
 
+Read only the sections needed for the selected task.
+
+- [Native runtime questions](#native-runtime-questions)
+- [Browser and Electron](#browser-and-electron)
+- [Who performs the action](#who-performs-the-action)
+- [Fiddler Everywhere traffic debugging](#fiddler-everywhere-traffic-debugging)
+
 ## Native runtime questions
 
 Start from the requested observation. State the selected target, input, expected
@@ -47,6 +54,18 @@ Detailed contracts and prerequisites: [Frida](https://github.com/morluto/rea/blo
 and [native calls/UI](https://github.com/morluto/rea/blob/main/docs/guides/native/native-investigation.md#native-desktop-observation).
 
 ## Browser and Electron
+
+Passive traffic capture of a SPA: the default scope is the page's own origin,
+and data APIs usually live on another origin. Discover API origins from
+absolute URLs in loaded bundles or script text via JavaScript analysis tools
+(another passive capture without those origins still scopes to the page
+origin, and `completeness.excluded` counts lack URLs). Pass both the page
+origin and those API origins in `allowed_origins` — the list replaces the
+default scope — and read `completeness.excluded` before reporting that an
+API is absent. For long captures with body shapes, use
+`export_evidence_bundle` instead of expecting an inline result.
+
+User-owned Electron runtime already open: `list_electron_targets`. Before an electron-main Inspector attempt, check packaged fuses with `inspect_electron_fuses`; disabled `EnableNodeCliInspectArguments` means the app ignores `--inspect`.
 
 Supply the existing browser or Electron instance's literal-port loopback CDP
 endpoint in the request. No separate permission configuration or per-call

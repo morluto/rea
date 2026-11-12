@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { PRODUCT_IDENTITY } from "../../src/identity.js";
 import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
 import {
   readGuidanceSection,
@@ -122,6 +123,21 @@ it.each([
     query: "PE import delay-load tables",
     guide: "references/format-inspectors.md",
     fact: "inspect_pe_imports",
+  },
+  {
+    query: "mitmproxy qlog",
+    guide: "references/recorded-captures.md",
+    fact: "without fetching recorded URLs",
+  },
+  {
+    query: "npx rea-agents",
+    guide: "references/connection-and-recovery.md",
+    fact: PRODUCT_IDENTITY.registrationPackageSpecifier,
+  },
+  {
+    query: "CLI summary receipt",
+    guide: "references/evidence-workflows.md",
+    fact: "summary.normalized_result.parent_evidence_id",
   },
 ])(
   "retrieves moved $query guidance from the installed bundle",

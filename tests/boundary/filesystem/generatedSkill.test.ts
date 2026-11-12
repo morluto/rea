@@ -130,7 +130,7 @@ it("rejects missing, stale, and extra packaged references and removes deleted so
   await f.generate("--check");
 });
 
-it("pins authored `@latest` commands to the packaged version", async () => {
+it("pins authored entrypoint and reference commands to the packaged version", async () => {
   const f = await fixture();
   await writeFile(
     join(f.sourceRoot, "SKILL.md"),
@@ -139,10 +139,19 @@ it("pins authored `@latest` commands to the packaged version", async () => {
       "Run `npx -y rea-agents@latest doctor --json` first.",
     ),
   );
+  const reference =
+    "# Recovery\nRun `npx -y rea-agents@latest doctor --json`.\n";
+  await writeFile(join(f.sourceRoot, "references/guide.md"), reference);
   await f.generate();
   const generated = await readFile(join(f.outputRoot, "SKILL.md"), "utf8");
   expect(generated).toContain("npx -y rea-agents@6.2.0 doctor --json");
   expect(generated).not.toContain("rea-agents@latest");
+  expect(
+    await readFile(join(f.outputRoot, "references/guide.md"), "utf8"),
+  ).toBe(reference.replaceAll("rea-agents@latest", "rea-agents@6.2.0"));
+  expect(
+    await readFile(join(f.sourceRoot, "references/guide.md"), "utf8"),
+  ).toBe(reference);
   await f.generate("--check");
 });
 
