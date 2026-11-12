@@ -18,7 +18,14 @@ export const isNetworkSharePath = (candidate: string): boolean =>
   // Windows only. On POSIX `//tmp/release/rea.mjs` is a local absolute path that the launcher
   // normalizes to `/tmp/release/rea.mjs`, so treating it as a share would report a mismatch for
   // the process's own launch spelling.
-  process.platform === "win32" && /^[\x5C\x2F]{2}[^\x5C\x2F]/u.test(candidate);
+  //
+  // The device spellings are not shares: `\\?\C:\release\rea.mjs` and `\\.\C:\release\rea.mjs`
+  // name a local volume and reading them touches no network. The only device form that does reach
+  // a share is `\\?\UNC\server\share`, which is matched explicitly.
+  process.platform === "win32" &&
+  /^(?:[\x5C\x2F]{2}(?!\?[\x5C\x2F]|\.[\x5C\x2F])[^\x5C\x2F]|[\x5C\x2F]{2}[?.][\x5C\x2F]UNC[\x5C\x2F])/iu.test(
+    candidate,
+  );
 
 /**
  * Whether a spelling carries a parent segment that Bun traverses differently.
@@ -79,10 +86,23 @@ export interface SelectedFile {
   readonly selected: boolean;
 }
 
+/**
+ * Whether the launcher normalizes a parent segment before it selects the script.
+ *
+ * Node does: `node a/link/../s.mjs` runs `a/s.mjs`. Bun follows the link first and reaches
+ * `b/s.mjs` instead, so a Bun launcher's spelled path is not lexically normalized and the
+ * snapshot has to keep the traversal Bun performed.
+ */
+const normalizesLexically = (
+  candidate: string,
+  runtime: JavaScriptRuntime["id"] = javaScriptRuntime(process.versions).id,
+): boolean => hasParentSegment(candidate) && runtime !== "bun";
+
 /** Select the file a spelling names, reporting whether the filesystem was consulted. */
 export const selectEntrypoint = (
   candidate: string,
   readRealpath: RealpathResolver = nativeRealpath,
+  runtime: JavaScriptRuntime["id"] = javaScriptRuntime(process.versions).id,
 ): SelectedFile => {
   if (isNetworkSharePath(candidate))
     return { path: win32.resolve(candidate), selected: false };
@@ -91,7 +111,7 @@ export const selectEntrypoint = (
   // `b/deep` and both `a/s.mjs` and `b/s.mjs` present, `node a/link/../s.mjs` runs `a/s.mjs`
   // (lexical, not `b/s.mjs`), and when `release` is itself a symlink the normalized path still
   // follows that link.
-  const normalized = hasParentSegment(candidate)
+  const normalized = normalizesLexically(candidate, runtime)
     ? resolve(candidate)
     : candidate;
   try {

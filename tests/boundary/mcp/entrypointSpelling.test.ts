@@ -6,6 +6,7 @@ import {
   entrypointSpellingVerdict,
   isNetworkSharePath,
   sameEntrypointSpelling,
+  selectEntrypoint,
   selectedFile,
   traversalSemanticsDiffer,
 } from "../../../src/process/EntrypointSpelling.js";
@@ -159,3 +160,34 @@ it("still decides two equal spellings by what they select", () => {
   ).toBe(true);
   expect(read).toEqual(["/root/rea.mjs", "/root/rea.mjs"]);
 });
+
+it.each([
+  // A Windows device spelling names a local volume, so it is not a share and reading it touches
+  // no network. Only the `UNC` device form reaches a share.
+  ["\\\\?\\C:\\release\\rea.mjs"],
+  ["\\\\.\\C:\\release\\rea.mjs"],
+  ["\\\\.\\pipe\\rea"],
+])(
+  "keeps a Windows device spelling out of the share guard: %s",
+  (candidate) => {
+    expect(isNetworkSharePath(candidate)).toBe(false);
+  },
+);
+
+it.each([
+  ["\\\\?\\UNC\\server\\share\\rea.mjs"],
+  ["\\\\.\\UNC\\server\\share\\rea.mjs"],
+])("still recognizes the UNC device form as a share: %s", (candidate) => {
+  expect(isNetworkSharePath(candidate)).toBe(process.platform === "win32");
+});
+
+it.skipIf(process.platform === "win32")(
+  "keeps the traversal Bun performed in the snapshot",
+  () => {
+    // Bun follows the link before `..` while Node normalizes lexically, so a Bun launcher is
+    // resolved without the lexical step.
+    const { read, resolveSpelling } = recordingResolver();
+    selectEntrypoint("/root/a/link/../s.mjs", resolveSpelling, "bun");
+    expect(read).toEqual(["/root/a/link/../s.mjs"]);
+  },
+);

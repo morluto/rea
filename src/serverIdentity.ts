@@ -6,7 +6,7 @@ import { PRODUCT_IDENTITY, SDK_IDENTITY } from "./identity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
 import {
   entrypointSpellingVerdict,
-  selectedFile,
+  selectEntrypoint,
   type EntrypointSpellingVerdict,
 } from "./process/EntrypointSpelling.js";
 
@@ -41,7 +41,9 @@ const packageRoot = (): string => {
 const LAUNCHED_FILE: string | undefined =
   CURRENT_ENTRYPOINT_PATH === undefined
     ? undefined
-    : selectedFile(CURRENT_ENTRYPOINT_PATH);
+    : // The snapshot follows the traversal the launcher performed: Bun reaches the link's target
+      // where Node reaches the lexical path.
+      selectEntrypoint(CURRENT_ENTRYPOINT_PATH).path;
 
 /**
  * Whether two entrypoint spellings select the same file.
