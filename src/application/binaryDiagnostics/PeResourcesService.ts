@@ -194,6 +194,16 @@ const validReport = (
       const within = ({ offset, bytes }: { offset: number; bytes: number }) =>
         offset >= payload.offset &&
         offset + bytes <= payload.offset + payload.bytes;
+      const signature = form.signature_location;
+      const signatureEnd = signature.offset + signature.bytes;
+      // A null prefix starts the payload; a present prefix covers every byte
+      // before the signature. Either way the root starts right after it.
+      const prefixMatches =
+        form.prefix === null
+          ? signature.offset === payload.offset
+          : form.prefix.location.offset === payload.offset &&
+            form.prefix.location.bytes === signature.offset - payload.offset &&
+            form.prefix.location.bytes > 0;
       return (
         // The declared page must be the resource's own declaration, and the
         // source classification must agree with it, so published Evidence
@@ -201,8 +211,10 @@ const validReport = (
         form.declared_code_page === resource.code_page &&
         signatureMatchesVersion(form) &&
         codePageSourceMatches(form) &&
-        within(form.signature_location) &&
-        (form.prefix === null || within(form.prefix.location)) &&
+        signature.bytes === 4 &&
+        within(signature) &&
+        prefixMatches &&
+        form.root.location.offset === signatureEnd &&
         within(form.root.location) &&
         insideLocations(form.root, within)
       );

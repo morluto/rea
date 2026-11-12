@@ -41,6 +41,16 @@ const validRoot = (location: { offset: number; bytes: number }) => ({
   unknown: null,
 });
 
+const signatureAt = (location: { offset: number; bytes: number }) => ({
+  offset: location.offset,
+  bytes: 4,
+});
+
+const rootAfterSignature = (location: { offset: number; bytes: number }) => ({
+  offset: location.offset + 4,
+  bytes: Math.max(0, location.bytes - 4),
+});
+
 const codePageFields = (declared: number) => {
   if (declared === 0)
     return {
@@ -76,10 +86,10 @@ const applySignatureVersionMismatch = (
       resource_index: index,
       signature: "TPF0",
       version: "boVersion1",
-      signature_location: resource.payload.location,
+      signature_location: signatureAt(resource.payload.location),
       prefix: null,
       ...codePageFields(resource.code_page),
-      root: validRoot(resource.payload.location),
+      root: validRoot(rootAfterSignature(resource.payload.location)),
     },
   ];
 };
@@ -99,12 +109,51 @@ const applyCodePageSourceMismatch = (
       resource_index: index,
       signature: "TPF0",
       version: "boVersion0",
-      signature_location: resource.payload.location,
+      signature_location: signatureAt(resource.payload.location),
       prefix: null,
       declared_code_page: 1252,
       code_page: "latin1",
       code_page_source: "unsupported",
-      root: validRoot(resource.payload.location),
+      root: validRoot(rootAfterSignature(resource.payload.location)),
+    },
+  ];
+};
+
+const applyFormGeometryCase = (
+  report: Awaited<ReturnType<typeof observedReport>>,
+  problem: string,
+): void => {
+  const resource = report.resources[2]!;
+  const payload = resource.payload.location;
+  const signature =
+    problem === "form-signature-not-four-bytes"
+      ? { offset: payload.offset, bytes: 0 }
+      : problem === "form-root-not-after-signature"
+        ? signatureAt(payload)
+        : { offset: payload.offset + 1, bytes: 4 };
+  const root =
+    problem === "form-root-not-after-signature"
+      ? validRoot(payload)
+      : problem === "form-signature-not-four-bytes"
+        ? validRoot(rootAfterSignature(payload))
+        : validRoot({ offset: payload.offset + 5, bytes: 0 });
+  const prefix =
+    problem === "form-prefix-empty-but-present"
+      ? {
+          location: { offset: payload.offset, bytes: 0 },
+          bytes_hex: "",
+          note: "test prefix",
+        }
+      : null;
+  report.delphi_forms = [
+    {
+      resource_index: 2,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signature,
+      prefix,
+      ...codePageFields(resource.code_page),
+      root,
     },
   ];
 };
@@ -120,6 +169,10 @@ it.each([
   "form-code-page-source-mismatch",
   "form-signature-version-mismatch",
   "form-value-outside-payload",
+  "form-signature-not-four-bytes",
+  "form-root-not-after-signature",
+  "form-prefix-missing-before-signature",
+  "form-prefix-empty-but-present",
   "mismatched-directory-path",
   "outside-directory-entry",
   "outside-directory-name",
@@ -141,13 +194,17 @@ it.each([
           resource_index: 2,
           signature: "TPF0",
           version: "boVersion0",
-          signature_location: report.resources[2]!.payload.location,
+          signature_location: signatureAt(
+            report.resources[2]!.payload.location,
+          ),
           prefix: null,
           declared_code_page: report.resources[2]!.code_page === 0 ? 1252 : 0,
           code_page: "windows-1252",
           code_page_source:
             report.resources[2]!.code_page === 0 ? "resource" : "default",
-          root: validRoot(report.resources[2]!.payload.location),
+          root: validRoot(
+            rootAfterSignature(report.resources[2]!.payload.location),
+          ),
         },
       ];
     if (problem === "form-points-at-icon-resource")
@@ -162,7 +219,7 @@ it.each([
           declared_code_page: 0,
           code_page: "windows-1252",
           code_page_source: "default",
-          root: validRoot({ offset: 0x400, bytes: 4 }),
+          root: validRoot(rootAfterSignature({ offset: 0x400, bytes: 4 })),
         },
       ];
     if (problem === "form-signature-outside-payload")
@@ -180,7 +237,9 @@ it.each([
           declared_code_page: 0,
           code_page: "windows-1252",
           code_page_source: "default",
-          root: validRoot(report.resources[2]!.payload.location),
+          root: validRoot(
+            rootAfterSignature(report.resources[2]!.payload.location),
+          ),
         },
       ];
     if (problem === "form-code-page-source-mismatch")
@@ -198,13 +257,13 @@ it.each([
           resource_index: index,
           signature: "TPF0",
           version: "boVersion0",
-          signature_location: payload,
+          signature_location: signatureAt(payload),
           prefix: null,
           declared_code_page: resource.code_page,
           code_page: "windows-1252",
           code_page_source: resource.code_page === 0 ? "default" : "resource",
           root: {
-            location: payload,
+            location: rootAfterSignature(payload),
             flags: [],
             child_position: null,
             class_name: null,
@@ -235,6 +294,13 @@ it.each([
         },
       ];
     }
+    if (
+      problem === "form-signature-not-four-bytes" ||
+      problem === "form-root-not-after-signature" ||
+      problem === "form-prefix-missing-before-signature" ||
+      problem === "form-prefix-empty-but-present"
+    )
+      applyFormGeometryCase(report, problem);
     if (problem === "mismatched-directory-path")
       report.directories[1]!.path = [];
     if (problem === "outside-directory-entry")
@@ -280,12 +346,12 @@ it("rejects a non-default label for a zero declared code page", async () => {
       resource_index: index,
       signature: "TPF0",
       version: "boVersion0",
-      signature_location: resource.payload.location,
+      signature_location: signatureAt(resource.payload.location),
       prefix: null,
       declared_code_page: 0,
       code_page: "utf-8",
       code_page_source: "default",
-      root: validRoot(resource.payload.location),
+      root: validRoot(rootAfterSignature(resource.payload.location)),
     },
   ];
   const service = new PeResourcesService({
@@ -308,7 +374,7 @@ it("rejects a signature-bearing form without a root", async () => {
       resource_index: index,
       signature: "TPF0",
       version: "boVersion0",
-      signature_location: resource.payload.location,
+      signature_location: signatureAt(resource.payload.location),
       prefix: null,
       ...codePageFields(resource.code_page),
       // A provider that reports a recognized signature without the explicit
