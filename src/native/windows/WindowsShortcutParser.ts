@@ -244,14 +244,15 @@ const driveType = (
   name: DRIVE_TYPES[raw] ?? null,
 });
 
-const extensionOf = (path: string | null | undefined): string | null => {
-  if (path === undefined || path === null || path.length === 0) return null;
+const extensionOf = (path: string, ansi: boolean): string | null => {
+  if (path.length === 0) return null;
   const normalized = path.replaceAll("/", "\\");
   const slash = normalized.lastIndexOf("\\");
   const name = slash === -1 ? normalized : normalized.slice(slash + 1);
   const dot = name.lastIndexOf(".");
   if (dot <= 0 || dot === name.length - 1) return null;
-  return name.slice(dot).toLowerCase();
+  const extension = name.slice(dot);
+  return ansi && !isAscii(extension) ? null : extension.toLowerCase();
 };
 
 const foldPath = (path: string): string =>
@@ -296,30 +297,66 @@ const hasUnexpandedVariable = (path: string): boolean =>
   /%[^%\\/]+%/u.test(path);
 
 /**
- * A recorded path and where its non-ASCII text came from. Every ANSI code page
- * agrees with ASCII, so only non-ASCII characters depend on the encoding. A
- * non-ASCII ANSI byte is a character from the unobserved system code page,
- * which its Latin1 projection does not name.
+ * A recorded path and where its text came from. All-ASCII strings agree across
+ * ANSI code pages, but an ASCII-valued trail byte in a multibyte string need not
+ * name an ASCII character. A Latin1 projection preserves bytes, not decoded
+ * character boundaries or case relationships.
  */
 type RecordedPath = {
-  readonly path: string;
+  /** Null when independently encoded parts cannot establish a joined path. */
+  readonly path: string | null;
   /** Holds non-ASCII text projected from ANSI bytes. */
   readonly ansi: boolean;
   /** Holds non-ASCII UTF-16 text. */
   readonly unicode: boolean;
+  /** A suffix may establish this even when its parent's identity is unknown. */
+  readonly extension: string | null;
 };
 
 const isAscii = (text: string): boolean =>
   [...text].every((char) => char <= "\u007f");
 
-const recorded = (path: string, ansi: boolean): RecordedPath => {
+const recorded = (path: string, ansi: boolean) => {
   const nonAscii = !isAscii(path);
-  return { path, ansi: ansi && nonAscii, unicode: !ansi && nonAscii };
+  return {
+    path,
+    ansi: ansi && nonAscii,
+    unicode: !ansi && nonAscii,
+    extension: extensionOf(path, ansi),
+  };
 };
 
 /** Two paths compare as text only when their non-ASCII parts share one encoding. */
 const comparableText = (left: RecordedPath, right: RecordedPath): boolean =>
   !((left.ansi || right.ansi) && (left.unicode || right.unicode));
+
+/** Opaque ANSI bytes are not Unicode characters or path separators. */
+const pathsDiffer = (
+  left: RecordedPath,
+  right: RecordedPath,
+): boolean | null => {
+  if (left.path === null || right.path === null || !comparableText(left, right))
+    return null;
+  if (!left.ansi && !right.ansi)
+    return normalizePath(left.path) !== normalizePath(right.path);
+  if (left.path === right.path) return false;
+  // The identical prefix can end in a separator or a DBCS trail byte: either
+  // way, only the following ASCII tails are compared. The prefix stays opaque.
+  const asciiTail = (path: string) => {
+    const at = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/")) + 1;
+    const name = path.slice(at);
+    return name !== "" && name !== "." && name !== ".." && isAscii(name)
+      ? { prefix: path.slice(0, at), name }
+      : null;
+  };
+  const leftFile = asciiTail(left.path);
+  const rightFile = asciiTail(right.path);
+  return leftFile !== null &&
+    rightFile !== null &&
+    leftFile.prefix === rightFile.prefix
+    ? leftFile.name.toLowerCase() !== rightFile.name.toLowerCase()
+    : null;
+};
 
 const iconDiffersFromTarget = (
   icon: WindowsShortcut["string_data"]["icon_location"],
@@ -329,18 +366,16 @@ const iconDiffersFromTarget = (
   const text = icon.value;
   if (!isFullPath(text) || hasUnexpandedVariable(text)) return null;
   const iconPath = recorded(text, icon.encoding === "ansi");
-  const location = normalizePath(text);
-  const fullTargets = targets.filter((target) => isFullPath(target.path));
-  const fixedTargets = fullTargets.filter(
-    (target) =>
-      !hasUnexpandedVariable(target.path) && comparableText(target, iconPath),
+  const fullTargets = targets.filter(
+    (target) => target.path === null || isFullPath(target.path),
   );
-  if (fixedTargets.some((target) => normalizePath(target.path) === location))
-    return false;
-  // A variable-bearing target, or one whose ANSI bytes the icon text cannot be
-  // compared with, could name the icon's file, so no difference is claimed.
-  if (fullTargets.length > fixedTargets.length) return null;
-  return fixedTargets.length === 0 ? null : true;
+  const differences = fullTargets.map((target) =>
+    target.path !== null && hasUnexpandedVariable(target.path)
+      ? null
+      : pathsDiffer(target, iconPath),
+  );
+  if (differences.includes(false)) return false;
+  return differences.length === 0 || differences.includes(null) ? null : true;
 };
 
 /** LinkInfo local and network base paths, each joined with CommonPathSuffix. */
@@ -354,14 +389,22 @@ const linkInfoTargets = (
       : recorded(suffixText, info.common_path_suffix_unicode === null);
   // Each part keeps its own encoding, so an ASCII ANSI part never hides a
   // comparable Unicode part.
-  const withSuffix = (base: RecordedPath): RecordedPath =>
-    suffix === null
-      ? base
-      : {
-          path: `${base.path.replace(/\\$/u, "")}\\${suffix.path.replace(/^\\/u, "")}`,
-          ansi: base.ansi || suffix.ansi,
-          unicode: base.unicode || suffix.unicode,
-        };
+  const withSuffix = (base: ReturnType<typeof recorded>): RecordedPath => {
+    if (suffix === null) return base;
+    if (base.ansi || suffix.ansi)
+      return {
+        path: null,
+        ansi: base.ansi || suffix.ansi,
+        unicode: base.unicode || suffix.unicode,
+        extension: suffix.extension,
+      };
+    return {
+      path: `${base.path.replace(/\\$/u, "")}\\${suffix.path.replace(/^\\/u, "")}`,
+      ansi: base.ansi || suffix.ansi,
+      unicode: base.unicode || suffix.unicode,
+      extension: suffix.extension,
+    };
+  };
   const values: RecordedPath[] = [];
   const local = info.local_base_path_unicode ?? info.local_base_path;
   if (local !== null && (suffix !== null || local.length > 0))
@@ -440,7 +483,7 @@ const observationsOf = (
     {
       kind: "target_extension",
       evidence_kind: "derived",
-      extension: extensionOf(targets[0]?.path ?? null),
+      extension: targets[0]?.extension ?? null,
     },
     {
       kind: "show_command_minimized",
