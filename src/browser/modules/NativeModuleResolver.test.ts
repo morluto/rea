@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
-import { NativeModuleResolver } from "./NativeModuleResolver.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  NativeModuleResolver,
+  type ModuleResolverLauncher,
+} from "./NativeModuleResolver.js";
 import { webModuleResolutionObservationSchema } from "../../domain/webModuleTrace.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 
@@ -102,6 +105,9 @@ describe("native module resolver cleanup ownership", () => {
     expect(result.error.cleanupResources).toEqual([]);
     if (!blocked.ok) expect(blocked.error.cleanupIncomplete).toBe(false);
   });
+});
+
+describe("native module resolver shutdown admission", () => {
   it("awaits acquisition and cleanup while refusing queued work during shutdown", async () => {
     let acquired: () => void = () => {
       throw new Error("acquisition gate missing");
@@ -147,10 +153,25 @@ describe("native module resolver cleanup ownership", () => {
     await first;
     const blocked = await queued;
     expect(blocked.ok).toBe(false);
+    if (!blocked.ok) {
+      expect(blocked.error.cleanupIncomplete).toBe(false);
+      expect(blocked.error.cleanupResources).toEqual([]);
+      expect(projectAnalysisError(blocked.error).code).toBe(
+        "capability_unavailable",
+      );
+    }
     await closing;
     expect(closed).toBe(true);
     expect([launches, closes]).toEqual([1, 1]);
-    expect((await provider.resolve(input)).ok).toBe(false);
+    const afterClose = await provider.resolve(input);
+    expect(afterClose.ok).toBe(false);
+    if (!afterClose.ok) {
+      expect(afterClose.error.cleanupIncomplete).toBe(false);
+      expect(afterClose.error.cleanupResources).toEqual([]);
+      expect(projectAnalysisError(afterClose.error).code).toBe(
+        "capability_unavailable",
+      );
+    }
   });
 });
 
@@ -167,6 +188,26 @@ describe("optional native resolution acquisition", () => {
         message: expect.stringContaining("REA_BROWSER_EXECUTABLE"),
       });
   });
+  it.each(["relative/chromium", ""])(
+    "retains an invalid selected browser path %j without launching",
+    async (executable) => {
+      const provider = new NativeModuleResolver(
+        { REA_BROWSER_EXECUTABLE: executable },
+        () => {
+          throw new Error("must not launch");
+        },
+      );
+      const result = await provider.resolve(input);
+      if (result.ok) throw new Error("expected configuration refusal");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "capability_unavailable",
+        details: {
+          reason: "invalid_browser_executable",
+          diagnostics: { executable },
+        },
+      });
+    },
+  );
   it("does not acquire a browser after caller cancellation", async () => {
     const controller = new AbortController();
     const reason = { request: "opaque admission cancellation" };
@@ -194,6 +235,61 @@ describe("optional native resolution acquisition", () => {
         executable: "/missing/browser",
         error_message: "spawn EACCES fixture",
       },
+    });
+  });
+});
+
+describe("native resolution Chromium sandbox", () => {
+  const hostPlatform = process.platform;
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: hostPlatform });
+  });
+
+  it.each([
+    { environment: {}, sandbox: true },
+    { environment: { REA_BROWSER_NO_SANDBOX: "false" }, sandbox: true },
+    { environment: { REA_BROWSER_NO_SANDBOX: "true" }, sandbox: false },
+  ])(
+    "launches Chromium with sandbox $sandbox for $environment",
+    async ({ environment, sandbox }) => {
+      Object.defineProperty(process, "platform", { value: "linux" });
+      let launchOptions: Parameters<ModuleResolverLauncher>[0] | undefined;
+      const provider = new NativeModuleResolver(
+        { REA_BROWSER_EXECUTABLE: "/browser", ...environment },
+        (options) => {
+          launchOptions = options;
+          return Promise.reject(new Error("launch boundary reached"));
+        },
+      );
+      const result = await provider.resolve(input);
+      if (result.ok) throw new Error("expected startup failure");
+      expect(launchOptions?.chromiumSandbox).toBe(sandbox);
+      expect(launchOptions?.args).not.toContain("--no-sandbox");
+      expect(result.error).toMatchObject({
+        remediationAction: sandbox
+          ? expect.stringContaining("REA_BROWSER_NO_SANDBOX=true")
+          : undefined,
+      });
+    },
+  );
+
+  it("keeps the default recovery for engine failures after a sandboxed launch", async () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    const provider = new NativeModuleResolver(
+      { REA_BROWSER_EXECUTABLE: "/browser" },
+      () =>
+        Promise.resolve({
+          version: () => "fixture",
+          newContext: () =>
+            Promise.reject(new Error("fixture context failure")),
+          close: () => Promise.resolve(),
+        }),
+    );
+    const result = await provider.resolve(input);
+    if (result.ok) throw new Error("expected engine failure");
+    expect(result.error).toMatchObject({
+      remediationAction: undefined,
+      diagnostics: { error_message: "fixture context failure" },
     });
   });
 });
@@ -297,6 +393,12 @@ it.each([
       cause: physicalFailure,
     });
     expect(projectAnalysisError(result.error).code).not.toBe("cancelled");
+    expect(result.error.secondaryFailures).toContainEqual(
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      }),
+    );
     await provider.close();
     expect(closes).toBe(stage === "launch" ? 0 : 1);
   },

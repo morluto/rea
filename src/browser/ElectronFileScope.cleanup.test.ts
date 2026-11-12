@@ -140,7 +140,6 @@ it("retains Inspector scripts and contexts when final ASAR authorization cannot 
   };
   try {
     const control = await observeJavaScriptRuntime(provider, input);
-    expect(control.ok).toBe(true);
     if (!control.ok) throw control.error;
     expect(control.value.normalized_result).toMatchObject({
       scripts: { observed_total: 1 },
@@ -149,7 +148,6 @@ it("retains Inspector scripts and contexts when final ASAR authorization cannot 
     await prependAsarJsonWhitespace(archive, " ");
     handleState.failCloseCount = 1;
     const result = await observeJavaScriptRuntime(provider, input);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected descriptor close failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.partialObservation).toMatchObject({
@@ -239,7 +237,7 @@ it("keeps cancellation primary when ASAR close fails, then retries the same hand
   expect(mapped?.cleanupPrimary?.cause).toBe(reason);
 
   await expect(authorizedElectronFile(location)).resolves.toBe(
-    `${handleState.archive}/index.html`,
+    fileURLToPath(location),
   );
   expect(handleState.events).toEqual([
     "open",
@@ -277,7 +275,7 @@ it("keeps an earlier read failure primary over a later abort and close failure",
   expect(mapped?.cleanupPrimary?.cause).toBe(readFailure);
 
   await expect(authorizedElectronFile(location)).resolves.toBe(
-    `${handleState.archive}/index.html`,
+    fileURLToPath(location),
   );
   expect(mapped?.cleanupIncomplete).toBe(false);
 });
@@ -306,7 +304,7 @@ it("preserves an arbitrary cancellation reason observed during ASAR read", async
   expect(mapped?.cleanupPrimary?.cause).toBe(reason);
 
   await expect(authorizedElectronFile(location)).resolves.toBe(
-    `${handleState.archive}/index.html`,
+    fileURLToPath(location),
   );
   expect(mapped?.cleanupIncomplete).toBe(false);
 });
@@ -335,7 +333,7 @@ it("preserves cancellation observed after ASAR stat when final close fails", asy
   expect(mapped?.cleanupPrimary?.cause).toBe(reason);
 
   await expect(authorizedElectronFile(location)).resolves.toBe(
-    `${handleState.archive}/index.html`,
+    fileURLToPath(location),
   );
   expect(mapped?.cleanupIncomplete).toBe(false);
 });

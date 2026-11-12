@@ -28,6 +28,11 @@ export type UpdateOutput = "human" | "structured";
 /** Why release lookup failed before a version could be compared. */
 export type ReleaseLookupFailure =
   | { readonly kind: "unavailable"; readonly detail: string }
+  | {
+      readonly kind: "package-manager-unavailable";
+      readonly manager: "npm" | "bun";
+      readonly detail: string;
+    }
   | { readonly kind: "unsupported-package-manager"; readonly detail: string }
   | { readonly kind: "invalid-metadata"; readonly detail: string };
 
@@ -121,13 +126,16 @@ const versionCheckRemediation = (
   }
   const failure = release.error;
   const kind = failure.kind;
+  const detail = `${failure.detail}${failure.detail.endsWith(".") ? "" : "."}`;
   switch (kind) {
     case "unsupported-package-manager":
       return failure.detail;
+    case "package-manager-unavailable":
+      return `REA's local ${failure.manager} command failed: ${detail} Make ${failure.manager} available on PATH or repair its launcher, then rerun rea update.`;
     case "unavailable":
-      return `REA could not resolve the latest release: ${failure.detail}. Retry rea update when registry access is available.`;
+      return `REA could not resolve the latest release: ${detail} Check the package-manager diagnostic and registry access, then rerun rea update.`;
     case "invalid-metadata":
-      return `REA could not resolve the latest release: ${failure.detail}. Check the npm release metadata, then rerun rea update.`;
+      return `REA could not resolve the latest release: ${detail} Check the npm release metadata, then rerun rea update.`;
     default: {
       const exhaustive: never = kind;
       throw new TypeError(

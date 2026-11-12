@@ -1,6 +1,7 @@
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { wasmInterfaceEntryRepresentationBytes } from "../domain/wasm/wasmInterface.js";
-import { WasmInterfaceBudget } from "./WasmInterfaceBudget.js";
+import { WasmInterfaceBudget } from "../domain/wasm/wasmInterfaceBudget.js";
 import type {
   WasmInterface,
   WasmInterfaceEntry,
@@ -11,8 +12,8 @@ import { watString, watStringEnd } from "./WabtString.js";
 import { watCommentEnd } from "./WabtComment.js";
 
 /** Split direct WAT children only; function instruction bodies are never materialized. */
-const parts = (form: string): string[] => {
-  const budget = new WasmInterfaceBudget();
+const splitParts = (form: string, maximumBytes?: number): string[] => {
+  const budget = new WasmInterfaceBudget(maximumBytes);
   const items: string[] = [];
   let i = 1;
   while (i < form.length - 1) {
@@ -47,13 +48,24 @@ const parts = (form: string): string[] => {
       if (items[0] === "func" && items.length > 1 && !atom.startsWith("$"))
         break;
     }
-    if (i <= start) throw new Error("Malformed WABT form");
+    if (i <= start) throw new WabtAdmissionError("malformed_form");
     budget.reserve(64 + (i - start) * 2);
     items.push(form.slice(start, i));
   }
   return items;
 };
-const head = (form: string): string | undefined => parts(form)[0];
+const name = (text: string | undefined): string => {
+  if (text?.startsWith('"') !== true)
+    throw new WabtAdmissionError("name_missing");
+  return new TextDecoder("utf8", { fatal: true, ignoreBOM: true }).decode(
+    watString(text, 1).bytes,
+  );
+};
+const integer = (text: string): string | null => {
+  if (!/^(?:\d+|0x[\da-f]+)$/iu.test(text)) return null;
+  return BigInt(text).toString();
+};
+
 const admittedValues = new Set([
   "i32",
   "i64",
@@ -65,48 +77,43 @@ const admittedValues = new Set([
 ]);
 const isValueType = (type: string): type is WasmInterfaceValueType =>
   admittedValues.has(type);
-const values = (
-  form: string,
-  category: string,
-): WasmInterfaceValueType[] | null => {
-  const result: WasmInterfaceValueType[] = [];
-  for (const item of parts(form)) {
-    if (!item.startsWith("(")) continue;
-    const group = parts(item);
-    if (group[0] !== category) continue;
-    for (const type of group.slice(1).filter((t) => !t.startsWith("$"))) {
-      if (!isValueType(type)) return null;
-      result.push(type);
-    }
-  }
-  return result;
-};
-const functionType = (
-  form: string,
-  kind: "func" | "tag",
-): WasmInterfaceSignature | null => {
-  const params = values(form, "param");
-  const results = values(form, "result");
-  return params === null || results === null ? null : { kind, params, results };
-};
-const name = (text: string | undefined): string => {
-  if (text?.startsWith('"') !== true)
-    throw new Error("WABT interface name is missing");
-  return new TextDecoder("utf8", { fatal: true, ignoreBOM: true }).decode(
-    watString(text, 1).bytes,
-  );
-};
-const integer = (text: string): string | null => {
-  if (!/^(?:\d+|0x[\da-f]+)$/iu.test(text)) return null;
-  return BigInt(text).toString();
-};
 
 /** Resolve index spaces at the producer, not from retained raw WAT in consumers. */
 const decodeWabtInterface = (
   forms: readonly string[],
   result: WasmInterface,
+  maximumBytes: number | undefined,
 ): WasmInterface => {
-  const budget = new WasmInterfaceBudget();
+  const budget = new WasmInterfaceBudget(maximumBytes);
+  const parts = (form: string) => splitParts(form, maximumBytes);
+  const head = (form: string): string | undefined => parts(form)[0];
+  const values = (
+    form: string,
+    category: string,
+  ): WasmInterfaceValueType[] | null => {
+    const result: WasmInterfaceValueType[] = [];
+    for (const item of parts(form)) {
+      if (!item.startsWith("(")) continue;
+      const group = parts(item);
+      if (group[0] !== category) continue;
+      for (const type of group.slice(1).filter((t) => !t.startsWith("$"))) {
+        if (!isValueType(type)) return null;
+        result.push(type);
+      }
+    }
+    return result;
+  };
+  const functionType = (
+    form: string,
+    kind: "func" | "tag",
+  ): WasmInterfaceSignature | null => {
+    const params = values(form, "param");
+    const results = values(form, "result");
+    return params === null || results === null
+      ? null
+      : { kind, params, results };
+  };
+
   const types: (WasmInterfaceSignature | null)[] = [];
   const typeNames = new Map<string, number | null>();
   const definitionNames = new Map<string, Map<string, number | null>>();
@@ -252,7 +259,7 @@ const decodeWabtInterface = (
     const p = parts(form);
     if (p[0] !== "import") continue;
     const body = p[3];
-    if (body === undefined) throw new Error("Incomplete WABT import");
+    if (body === undefined) throw new WabtAdmissionError("incomplete_import");
     const observed = addDefinition(body);
     const entry: WasmInterfaceEntry = {
       direction: "import",
@@ -280,7 +287,7 @@ const decodeWabtInterface = (
     const p = parts(form);
     if (p[0] !== "export") continue;
     const body = p[2];
-    if (body === undefined) throw new Error("Incomplete WABT export");
+    if (body === undefined) throw new WabtAdmissionError("incomplete_export");
     const descriptor = parts(body);
     const rawKind = descriptor[0] ?? "unknown";
     const kind = ["func", "table", "memory", "global", "tag"].includes(rawKind)
@@ -318,14 +325,19 @@ const decodeWabtInterface = (
 };
 
 /** New typed coverage may be incomplete without discarding existing decoded WAT Evidence. */
-export const parseWabtInterface = (forms: readonly string[]): WasmInterface => {
+export const parseWabtInterface = (
+  forms: readonly string[],
+  maximumBytes?: number,
+): WasmInterface => {
   const result: WasmInterface = { state: "complete", entries: [], issues: [] };
   try {
-    return decodeWabtInterface(forms, result);
+    return decodeWabtInterface(forms, result, maximumBytes);
   } catch (cause: unknown) {
     if (!(cause instanceof AnalysisResourceConstraintError)) throw cause;
     result.state = "partial";
     result.issues.push(cause.message);
+    if (cause.remediationAction !== undefined)
+      result.issues.push(cause.remediationAction);
     return result;
   }
 };

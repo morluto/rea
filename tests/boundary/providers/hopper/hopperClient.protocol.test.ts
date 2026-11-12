@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
-import { HOPPER_OPERATIONS } from "../../../../src/hopper/HopperProviderCapabilities.js";
+import { HOPPER_OPERATIONS } from "../../../../src/hopper/HopperProviderMetadata.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import type { HopperDiagnostic } from "../../../../src/hopper/HopperDiagnostics.js";
 import { providerCleanupFailure } from "../../../../src/hopper/HopperDiagnostics.js";
@@ -110,14 +110,31 @@ describe("HopperClient protocol", () => {
 });
 
 describe("HopperClient response lifecycle", () => {
+  it.each(["valid_then_invalid", "valid_then_invalid_split"])(
+    "retains a complete reply before later malformed bytes (%s)",
+    async (method) => {
+      const client = await startClient();
+      const completed = client.callTool(method);
+      const later = client.callTool("hang");
+      await expect(completed).resolves.toEqual({
+        ok: true,
+        value: "completed",
+      });
+      await expect(later).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "HopperProtocolError" },
+      });
+    },
+  );
+
   it("reassembles a fragmented Unicode reply from the owned socket", async () => {
     const client = await startClient();
 
     await expect(
-      client.callTool("echo", { label: "雪🦊", fragmented: true }),
+      client.callTool("echo", { label: "�雪🦊", fragmented: true }),
     ).resolves.toEqual({
       ok: true,
-      value: { label: "雪🦊", fragmented: true },
+      value: { label: "�雪🦊", fragmented: true },
     });
   });
 
@@ -165,6 +182,10 @@ describe("HopperClient response lifecycle", () => {
 
   it.each([
     ["malformed", "HopperProtocolError"],
+    ["invalid_utf8", "HopperProtocolError"],
+    ["invalid_utf8_split", "HopperProtocolError"],
+    ["invalid_utf8_end", "HopperProtocolError"],
+    ["valid_utf8_end", "HopperProcessError"],
     ["wrong_id", "HopperProtocolError"],
     ["wrong_event_id", "HopperProtocolError"],
     ["malformed_event", "HopperProtocolError"],
@@ -222,6 +243,33 @@ describe("HopperClient response lifecycle", () => {
       category: "bridge_exception",
       message: "safe fake failure",
     });
+  });
+});
+
+it("preserves caller cancellation while a late valid UTF-8 reply drains", async () => {
+  const launcher = new FixtureLauncher();
+  const client = await startClient(launcher);
+  const controller = new AbortController();
+  const reason = { phase: "UTF-8 reply pending" };
+  const pending = client.callTool(
+    "echo",
+    { label: "�雪🦊", fragmented: true, gate: "cancel-utf8" },
+    { signal: controller.signal },
+  );
+  const request = await launcher.waitForRequest("echo", "cancel-utf8");
+  controller.abort(reason);
+  const result = await pending;
+  if (result.ok) throw new Error("Expected caller cancellation");
+  expect(result.error).toMatchObject({ _tag: "HopperCancelledError" });
+  expect(result.error.cause).toBe(reason);
+  expect(client.requestActivity()).toMatchObject({ callerState: "cancelled" });
+  await launcher.release(request);
+  await vi.waitFor(() => expect(client.requestActivity()).toBeNull());
+  await expect(
+    client.callTool("echo", { label: "next �雪🦊" }),
+  ).resolves.toEqual({
+    ok: true,
+    value: { label: "next �雪🦊" },
   });
 });
 

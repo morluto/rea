@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -11,6 +10,7 @@ import {
   scenarioProfiles,
 } from "./browser-scenario-verifier.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { createBrowserFixtureHttpServer } from "./browser-fixture-http.mjs";
 
 const scenarioFor = (browser, origin) =>
   browserScenarioSchema.parse({
@@ -149,28 +149,29 @@ const storagePage = (kind, port) => {
   </script></body></html>`;
 };
 
-const startStorageSite = async () => {
+export const startStorageSite = async () => {
   let port = 0;
-  const server = createServer((request, response) => {
-    const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-    const kind =
-      path === "/storage-main"
-        ? "main"
-        : path === "/storage-frame"
-          ? "frame"
-          : path === "/storage-debugger"
-            ? "debugger"
-            : path === "/storage-top"
-              ? "top"
-              : undefined;
-    if (kind === undefined) {
-      response.writeHead(404).end();
-      return;
-    }
-    response.setHeader("content-type", "text/html; charset=utf-8");
-    response.end(storagePage(kind, port));
-  });
-  server.listen(0, "::");
+  const server = createBrowserFixtureHttpServer(
+    (_request, response, { pathname: path }) => {
+      const kind =
+        path === "/storage-main"
+          ? "main"
+          : path === "/storage-frame"
+            ? "frame"
+            : path === "/storage-debugger"
+              ? "debugger"
+              : path === "/storage-top"
+                ? "top"
+                : undefined;
+      if (kind === undefined) {
+        response.writeHead(404).end();
+        return;
+      }
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(storagePage(kind, port));
+    },
+  );
+  server.listen(0, "127.0.0.1");
   await once(server, "listening");
   port = server.address().port;
   return {

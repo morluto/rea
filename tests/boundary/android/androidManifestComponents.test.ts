@@ -227,6 +227,29 @@ const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
   </application>
 </manifest>`;
 
+it.each(['a:name=".First" b:name=".Last"', 'b:name=".Last" a:name=".First"'])(
+  "refuses duplicate Android attribute identities: %s",
+  (attributes) => {
+    const inventory = parseAndroidManifestComponents(
+      `<manifest package="com.example" xmlns:a="http://schemas.android.com/apk/res/android" xmlns:b="http://schemas.android.com/apk/res/android"><application><activity ${attributes}/></application></manifest>`,
+      "complete",
+      "33",
+    );
+    expect(inventory).toMatchObject({ status: "unavailable", items: [] });
+    expect(inventory.limitations.join(" ")).toContain("not well-formed XML");
+  },
+);
+
+it("does not infer the Android namespace from an undeclared prefix", () => {
+  expect(
+    parseAndroidManifestComponents(
+      '<manifest package="com.example"><application><activity android:name=".Guess"/></application></manifest>',
+      "complete",
+      "33",
+    ),
+  ).toMatchObject({ status: "unavailable", items: [] });
+});
+
 it.each([".9Activity", ".hyphen-name", ".😀Activity", ".nested.7"])(
   "resolves DEX component name %s and its alias reference",
   (name) => {
@@ -664,6 +687,60 @@ it("leaves target-31-or-later filtered components without an inferred export def
   expect(
     parseAndroidManifestComponents(manifest, "complete", "Preview").items[0],
   ).toMatchObject({ exported_default: null });
+});
+
+it("ignores action-less activity, alias and receiver filters for export defaults", () => {
+  // Android's package parser drops these filters; a service keeps them.
+  const manifest = [
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application>',
+    '<activity android:name=".Main"><intent-filter><category android:name="android.intent.category.DEFAULT"/></intent-filter></activity>',
+    '<activity-alias android:name=".Alias" android:targetActivity=".Main"><intent-filter><data android:scheme="https"/></intent-filter></activity-alias>',
+    '<receiver android:name=".Receiver"><intent-filter android:priority="1"/></receiver>',
+    '<service android:name=".Service"><intent-filter><category android:name="example.BIND"/></intent-filter></service>',
+    '<activity android:name=".Mixed"><intent-filter/><intent-filter><action android:name="example.OPEN"/></intent-filter></activity>',
+    "</application></manifest>",
+  ].join("");
+  const defaults = (sdk: string) =>
+    parseAndroidManifestComponents(manifest, "complete", sdk).items.map(
+      (item) => [item.intent_filter_count, item.exported_default],
+    );
+  expect(defaults("30")).toEqual([
+    [1, false],
+    [1, false],
+    [1, false],
+    [1, true],
+    [2, true],
+  ]);
+  const modern = parseAndroidManifestComponents(manifest, "complete", "31");
+  expect(modern.items.map((item) => item.exported_default)).toEqual([
+    false,
+    false,
+    false,
+    null,
+    null,
+  ]);
+  expect(modern.limitations.join(" ")).toContain(
+    "2 component(s) with intent filters target API 31",
+  );
+  expect(defaults("Preview").map(([, value]) => value)).toEqual([
+    false,
+    false,
+    false,
+    null,
+    null,
+  ]);
+  const filters = "<intent-filter/>".repeat(
+    ANDROID_MANIFEST_LIMITS.intentFilters,
+  );
+  const late = parseAndroidManifestComponents(
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Late">${filters}<intent-filter><action android:name="example.OPEN"/></intent-filter></activity></application></manifest>`,
+    "complete",
+    "30",
+  );
+  expect(late.items[0]).toMatchObject({
+    intent_filter_count: ANDROID_MANIFEST_LIMITS.intentFilters + 1,
+    exported_default: true,
+  });
 });
 
 it("ignores same-local-name attributes from other namespaces", () => {

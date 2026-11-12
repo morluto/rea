@@ -37,7 +37,11 @@ import type {
   ProviderProcessStopResult,
 } from "../process/ProviderProcess.js";
 import { capturedSqliteOutput } from "./SqliteDatabaseFailures.js";
-import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
+import {
+  SQLITE_DATABASE_LIMITS,
+  SQLITE_INSPECTION_REASONS,
+  SQLITE_STRUCTURED_INSPECTION_REASONS,
+} from "./SqliteDatabaseLimits.js";
 
 const operation = "inspect_sqlite_database";
 const {
@@ -51,16 +55,9 @@ const replySchema = z.union([
   z.strictObject({ ok: z.literal(true), inspection: inspectionSchema }),
   z.strictObject({
     ok: z.literal(false),
-    reason: z.enum([
-      "format",
-      "selection",
-      "column-selection",
-      "row-evaluation",
-      "unsupported",
-      "unavailable",
-      "output-limit",
-      "memory",
-    ]),
+    reason: z
+      .enum(SQLITE_INSPECTION_REASONS)
+      .exclude(SQLITE_STRUCTURED_INSPECTION_REASONS),
     message: z.string(),
   }),
   z.strictObject({
@@ -94,6 +91,7 @@ const rejectedArgument = {
   unsupported: "path",
   selection: "table",
   "column-selection": "columns",
+  "row-offset": "row_offset",
 } as const;
 
 const rejectedReply = (
@@ -155,6 +153,7 @@ const rejectedReply = (
       reply.message,
       {
         sqlite_value_or_record_bytes: SQLITE_DATABASE_LIMITS.outputBytes,
+        sqlite_sql_statement_bytes: SQLITE_DATABASE_LIMITS.outputBytes,
         worker_reply_bytes: SQLITE_DATABASE_LIMITS.outputBytes,
       },
       {
@@ -162,7 +161,7 @@ const rejectedReply = (
         diagnostics: { selected_path: selectedPath },
         retryable: false,
         remediationAction:
-          "The SQLite value/record and worker JSON reply allowances are fixed at 16 MiB; worker_timeout_ms and client deadlines do not raise them. If it preserves the requested facts, select exact columns, reduce row_limit, or use schema_scope: inventory instead of database. This worker refusal leaves no completed Evidence to retrieve. Do not repeat the unchanged request or truncate required database bytes.",
+          "The SQLite value/record, SQL statement and worker JSON reply allowances are each fixed at 16 MiB; this refusal does not identify which was exceeded. worker_timeout_ms and client deadlines do not raise them. If it preserves the requested facts, select exact columns, reduce row_limit, or use schema_scope: inventory instead of database. This worker refusal leaves no completed Evidence to retrieve. Do not repeat the unchanged request or truncate required database bytes.",
       },
     );
   if (reply.reason === "column-limit")

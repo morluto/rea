@@ -25,16 +25,10 @@ it("retains every owned label without inventing a missing cleanup capability", a
     "inspect_jadx_configuration",
   );
   expect(cleanup?.cleanupResources).toEqual(labels);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const error: unknown = await resources
-      .close()
-      .catch((failure: unknown) => failure);
-    expect(error).toBeInstanceOf(ArtifactResourceRetryFailure);
-    if (!(error instanceof ArtifactResourceRetryFailure))
-      throw new Error("Expected retained ownership");
-    expect(error.cleanup?.resources).toEqual(labels);
-    expect(cleanup?.cleanupIncomplete).toBe(true);
-  }
+  await expect(resources.close()).resolves.toBeUndefined();
+  expect(cleanup?.cleanupResources).toEqual(labels);
+  expect(cleanup?.cleanupIncomplete).toBe(true);
+  expect(cleanup?.cleanupRetry).toBeUndefined();
 });
 
 it("reports only live helper peers across partial cleanup and retry", async () => {

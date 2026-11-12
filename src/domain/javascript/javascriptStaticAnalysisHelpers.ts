@@ -17,7 +17,7 @@ import {
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
+import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -49,6 +49,7 @@ export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
     sender_validations: [],
     utility_processes: [],
     native_addon_bindings: [],
+    protocols: [],
   },
   limitations: [
     "JavaScript source could not be parsed; absence of findings is not evidence of absence.",
@@ -529,7 +530,7 @@ const WINDOW_OPEN_CALL =
   /(?:^|\.)(?:window|self|globalThis|top|parent|opener|frames|document)\.open$/u;
 
 /** Node `fs.open` flag strings, which are never request URLs. */
-const FS_OPEN_FLAGS = new Set([
+export const FS_OPEN_FLAGS: ReadonlySet<string> = new Set([
   "a",
   "a+",
   "as",
@@ -768,8 +769,11 @@ export const stringValue = (
 /** Return a string or numeric argument literal. */
 export const argumentValue = (
   node: t.Node | null | undefined,
-): string | undefined =>
-  t.isNumericLiteral(node) ? String(node.value) : stringValue(node);
+): string | undefined => {
+  if (node === null || node === undefined) return undefined;
+  const value = unwrapJavaScriptExpression(node).node;
+  return t.isNumericLiteral(value) ? String(value.value) : stringValue(value);
+};
 
 /** Prefix a static argument value when one is available. */
 export const prefixedArgument = (

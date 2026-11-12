@@ -62,12 +62,14 @@ it("classifies a selected name removed at final validation as a changed file and
     .spyOn(regularFile, "openRegularFile")
     .mockImplementationOnce(async (...args) => {
       descriptor = await nativeOpen(...args);
-      const nativeStat = descriptor.handle.stat.bind(descriptor.handle);
-      vi.spyOn(descriptor.handle, "stat").mockImplementationOnce(async () => {
-        const metadata = await nativeStat();
-        await unlink(path);
-        return metadata;
-      });
+      const nativeRead = descriptor.handle.read.bind(descriptor.handle);
+      vi.spyOn(descriptor.handle, "read").mockImplementation(
+        async (...args) => {
+          const result = await nativeRead(...args);
+          if (result.bytesRead === 0) await unlink(path);
+          return result;
+        },
+      );
       return descriptor;
     });
   try {
@@ -704,7 +706,6 @@ it.each(["physical", "completed"] as const)(
     );
     try {
       const result = await publisher.inspectLauncher(path, controller.signal);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Injected hash outcome passed");
       expect(result.error.reason).toBe(
         outcome === "physical" ? "verification_unavailable" : "cancelled",

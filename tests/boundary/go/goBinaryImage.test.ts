@@ -66,7 +66,9 @@ it("preserves exact Mach-O protection masks for Go fallback selection", () => {
 it("bounds cumulative header searches across overlapping ELF file spans", () => {
   const bytes = createGoOverlappingElfFixture();
   expect(() => readGoBinaryImage(bytes)).toThrow(BinaryResourceFailure);
-  expect(() => readGoBinaryImage(bytes)).toThrow(/256 MiB.*search/);
+  expect(() => readGoBinaryImage(bytes)).toThrow(
+    /max_header_search_bytes=268435456/,
+  );
 });
 
 it("does not charge duplicate ELF search spans repeatedly", () => {
@@ -119,6 +121,7 @@ it.each([
 it("continues past an empty file-backed ELF data load", () => {
   const fixture = createGoSplitElfFixture({ sectionless: true });
   const expected = readGoBinaryImage(fixture.bytes).build_info;
+  expect(expected).not.toBeNull();
   fixture.bytes.writeBigUInt64LE(0n, 128 + 32);
   expect(readGoBinaryImage(fixture.bytes).build_info).toEqual(expected);
 });
@@ -135,6 +138,7 @@ it.each([4, 5, 7])(
 it("prefers the named ELF section to an earlier writable-load marker", () => {
   const fixture = createGoSplitElfFixture();
   const expected = readGoBinaryImage(fixture.bytes).build_info;
+  expect(expected).not.toBeNull();
   fixture.bytes.copy(
     fixture.bytes,
     512,
@@ -154,7 +158,10 @@ it("does not skip malformed earlier metadata to report a later valid record", ()
   );
   fixture.bytes[512 + 15] = 0xff;
   expect(() => readGoBinaryImage(fixture.bytes)).toThrow(
-    /unsupported format bit/,
+    expect.objectContaining({
+      message: expect.stringMatching(/unsupported format bit/u),
+      undecodedContent: true,
+    }),
   );
 });
 

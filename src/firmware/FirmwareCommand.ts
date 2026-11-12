@@ -1,4 +1,9 @@
 import {
+  processInspectionCancellationError,
+  retainProcessInspectionCleanup,
+} from "../providers/OwnedCommandCleanup.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
   selectArtifactCommandPath,
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
@@ -24,7 +29,6 @@ import type {
 import { projectAnalysisErrorWithoutCapturedOutput } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import {
-  firmwareCancellation,
   firmwareFailure,
   firmwareLimitRecovery,
   firmwarePhaseInterruption,
@@ -153,6 +157,40 @@ export const resolveFirmwareCommand = async (
   };
 };
 
+/**
+ * The RLIMIT_FSIZE one producer run gets. It covers every producer file,
+ * including mandatory reports and logs; outputBudget inventory still governs
+ * aggregate payload. One byte above the largest budget makes a file the kernel
+ * stops at the limit exceed that budget instead of passing as complete. An
+ * inherited ceiling can remove that byte, so inventory also rejects files
+ * that reach the returned limit.
+ */
+export const firmwareFileSizeLimit = (
+  fileSizeCeiling: number,
+  stagingBytes?: number,
+): number =>
+  Math.min(
+    fileSizeCeiling,
+    Math.max(
+      stagingBytes ?? 0,
+      FIRMWARE_LIMITS.reportBytes,
+      FIRMWARE_LIMITS.diagnosticBytes,
+    ) + 1,
+  );
+
+/**
+ * Whether a larger max_output_bytes would raise the per-run file limit. It is
+ * false when the report and diagnostic allowances or the inherited ceiling,
+ * including its last byte of headroom, set that limit instead.
+ */
+const firmwareFileSizeAdjustable = (
+  fileSizeCeiling: number,
+  stagingBytes?: number,
+): boolean =>
+  stagingBytes !== undefined &&
+  firmwareFileSizeLimit(fileSizeCeiling, stagingBytes + 1) >
+    firmwareFileSizeLimit(fileSizeCeiling, stagingBytes);
+
 /** Execute one bounded provider command and verify its owned descendants have stopped. */
 export const runFirmwareCommand = async (context: {
   engine: string;
@@ -167,26 +205,20 @@ export const runFirmwareCommand = async (context: {
   signal: AbortSignal;
   deadline: FirmwareDeadline;
   launcher?: FirmwareLauncher;
+  resources: ArtifactResourceScope;
   outputBudget?: { root: string; bytes: number; entries: number };
   acceptReportedExtractionFailure?: boolean;
   retainCleanup(supervisor: ProviderProcessSupervisor): void;
 }) => {
   const { engine, operation, signal } = context;
-  // RLIMIT_FSIZE covers every producer file, including mandatory reports/logs.
-  // Aggregate extracted payload remains governed by outputBudget inventory.
-  const fileSizeBytes = Math.min(
+  const fileSizeBytes = firmwareFileSizeLimit(
     context.fileSizeCeiling,
-    Math.max(
-      context.outputBudget?.bytes ?? 0,
-      FIRMWARE_LIMITS.reportBytes,
-      FIRMWARE_LIMITS.diagnosticBytes,
-    ),
+    context.outputBudget?.bytes,
   );
-  const fileSizeAdjustable =
-    context.outputBudget !== undefined &&
-    context.fileSizeCeiling > context.outputBudget.bytes &&
-    context.outputBudget.bytes >=
-      Math.max(FIRMWARE_LIMITS.reportBytes, FIRMWARE_LIMITS.diagnosticBytes);
+  const fileSizeAdjustable = firmwareFileSizeAdjustable(
+    context.fileSizeCeiling,
+    context.outputBudget?.bytes,
+  );
   const checkInterruption = () => {
     const failure = firmwarePhaseInterruption(
       operation,
@@ -223,18 +255,17 @@ export const runFirmwareCommand = async (context: {
       NO_COLOR: "1",
     },
   }).catch((cause: unknown) => {
-    // Owned admission can reject before a supervisor/child exists. Attribute
-    // only this signal's raw reason or a linked Node AbortError, never an
-    // unrelated failure merely because a timer also fired.
-    if (
-      signal.aborted &&
-      (cause === signal.reason ||
-        (cause instanceof Error &&
-          cause.name === "AbortError" &&
-          cause.cause === signal.reason))
-    )
-      throw firmwareCancellation(operation, signal.reason, context.deadline);
-    throw cause;
+    const cancellation = processInspectionCancellationError(cause, operation);
+    const primary =
+      cancellation === undefined
+        ? firmwareFailure(cause, context)
+        : firmwareFailure(cancellation, context);
+    throw retainProcessInspectionCleanup(
+      cause,
+      primary,
+      context.resources,
+      operation,
+    );
   });
   let failure: AnalysisError | undefined;
   const isFailedExit = (code: number | null | undefined) =>
@@ -325,6 +356,7 @@ export const runFirmwareCommand = async (context: {
           context.outputBudget.root,
           context.outputBudget.bytes,
           context.outputBudget.entries,
+          fileSizeBytes,
           operation,
           signal,
         );
@@ -389,6 +421,7 @@ export const readFirmwareCommandReport = async (context: {
   execution: Awaited<ReturnType<typeof runFirmwareCommand>>;
   files: FirmwareFileAccess;
   signal?: AbortSignal;
+  deadline?: FirmwareDeadline;
 }): Promise<unknown> => {
   try {
     return await context.files.report(
@@ -397,7 +430,21 @@ export const readFirmwareCommandReport = async (context: {
       context.signal,
     );
   } catch (cause: unknown) {
-    if (cause instanceof ArtifactReaderFailure) throw cause;
+    if (cause instanceof ArtifactReaderFailure) {
+      const { engine, operation, execution, deadline } = context;
+      const failure = firmwareFailure(cause, { engine, operation, deadline });
+      if (cause.partialObservation !== undefined)
+        failure.retainPartialObservation(cause.partialObservation);
+      throw failure.retainCapturedOutput({
+        stdout: execution.stdout.text,
+        stderr: execution.stderr.text,
+        stdout_bytes: execution.stdout.bytes,
+        stderr_bytes: execution.stderr.bytes,
+        exit_code: execution.exit_code ?? null,
+        signal: execution.signal,
+        truncated: false,
+      });
+    }
     const { engine, operation, execution } = context;
     const reportFailure =
       cause instanceof AnalysisOutputError

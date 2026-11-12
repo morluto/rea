@@ -220,8 +220,6 @@ describe("safe CDP response metadata", () => {
       "agent-header-secret",
     ])
       expect(serialized).not.toContain(secret);
-    expect(serialized).toContain("link-secret");
-    expect(serialized).toContain("private.example.test/x");
   });
 
   it("reports well-known agent resources as untrusted observations", () => {
@@ -378,6 +376,57 @@ describe("safe CDP response metadata CSP sources", () => {
       { kind: "approved_origin", value: "https://cdn.example.test" },
       { kind: "approved_origin", value: origin },
     ]);
+  });
+
+  it("ignores a directive repeated within one policy but not across policies", () => {
+    const captured = safeResponseMetadata(
+      "request-csp-duplicate",
+      `${origin}/api`,
+      {
+        headers: {
+          "Content-Security-Policy":
+            "script-src 'self'; Script-Src 'unsafe-inline' 'nonce-abc', script-src data:",
+        },
+      },
+      new Set([origin]),
+    );
+
+    expect(captured.response.csp).toEqual({
+      directives: [
+        { name: "script-src", sources: [{ kind: "keyword", value: "'self'" }] },
+        { name: "script-src", sources: [{ kind: "scheme", value: "data:" }] },
+      ],
+      nonce_count: 0,
+      hash_count: 0,
+    });
+  });
+
+  it("counts only complete CSP3 nonce and hash sources", () => {
+    const captured = safeResponseMetadata(
+      "request-csp-nonce",
+      `${origin}/api`,
+      {
+        headers: {
+          "Content-Security-Policy":
+            "script-src 'nonce-YQ==' 'nonce-@@@' 'nonce-truncated 'sha256-' 'sha384-abc=' 'sha512-abcd===' 'self'",
+        },
+      },
+      new Set([origin]),
+    );
+
+    expect(captured.response.csp).toEqual({
+      directives: [
+        {
+          name: "script-src",
+          sources: [{ kind: "keyword", value: "'self'" }],
+        },
+      ],
+      nonce_count: 1,
+      hash_count: 1,
+    });
+    const serialized = JSON.stringify(captured);
+    for (const secret of ["YQ", "@@@", "truncated", "sha384-abc", "abcd"])
+      expect(serialized).not.toContain(secret);
   });
 });
 

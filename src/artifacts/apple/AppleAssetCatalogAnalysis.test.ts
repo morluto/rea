@@ -146,8 +146,10 @@ describe("Apple asset catalog application workflow", () => {
         next_offset: null,
         truncated: false,
       });
-      expect(result.limitations).toContain(
-        "No compiled Assets.car catalog was found among the app bundle's regular files (symlinks are not followed); any resource keys are reported as unmatched.",
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          /Assets\.car.*symlinks.*not followed.*unmatched/iu,
+        ),
       );
     },
   );
@@ -224,8 +226,10 @@ it.skipIf(process.platform === "win32")(
         throw new Error("No catalog is present");
       },
     });
-    expect(result.limitations).toContain(
-      "Interface Builder resource-key joins may be incomplete because the decoded object inventory is incomplete.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /resource-key joins.*incomplete.*object inventory.*incomplete/iu,
+      ),
     );
   },
 );
@@ -517,7 +521,7 @@ it.each([
   },
 );
 
-it.each(["reported carutil", "observed assetutil"])(
+it.each(["reported carutil", "tab-indented carutil", "observed assetutil"])(
   "attributes %s rejection of a readable nested catalog as invalid bytes",
   async (variant) => {
     const bundle = await createTestTempDirectory("rea-asset-rejected-");
@@ -535,9 +539,9 @@ it.each(["reported carutil", "observed assetutil"])(
     // catalog. This test injects those diagnoses, without running Apple tools.
     const stderr =
       "BOMStreamWithFileAndSys: read: Operation not permitted\n" +
-      (variant === "reported carutil"
+      (variant !== "observed assetutil"
         ? `assetutil Error: Unable to read file at '${path}'\n` +
-          `carutil: error:\n    ${path} is not a valid AssetCatalog\n`
+          `carutil: error:\n${variant === "tab-indented carutil" ? "\t" : "    "}${path} is not a valid AssetCatalog\n`
         : `assetutil: file error error exiting: 'can't read from: '${path}' Undefined error: 0' invalid file\n`);
     const cause = Object.assign(new Error("assetutil exited 1"), {
       code: 1,
@@ -558,8 +562,7 @@ it.each(["reported carutil", "observed assetutil"])(
     expect(error.cause).toBe(cause);
     expect(projectAnalysisError(error)).toMatchObject({
       code: "artifact_operation_failed",
-      message:
-        "Artifact is invalid or has changed. Get a fresh copy and try again.",
+      message: expect.stringMatching(/invalid.*changed.*fresh copy/iu),
       details: {
         operation: "inspect_asset_catalog",
         reason: "format",
@@ -580,6 +583,7 @@ it.each(["reported carutil", "observed assetutil"])(
 it.each([
   "unrecognized text",
   "another catalog",
+  "tab-indented another catalog",
   "signal",
   "truncated capture",
   "failed capture",
@@ -589,13 +593,15 @@ it.each([
   const bundle = await createTestTempDirectory("rea-asset-unknown-rejection-");
   const path = join(bundle, "Assets.car");
   await writeFile(path, "readable catalog");
-  const rejectedPath = scenario === "another catalog" ? `${path}.other` : path;
+  const rejectedPath = scenario.includes("another catalog")
+    ? `${path}.other`
+    : path;
   const stderr =
     scenario === "unrecognized text"
       ? "Operation not permitted; catalog may be invalid"
       : scenario.startsWith("different file-error")
         ? `assetutil: file error error exiting: 'can't read from: '${path}' Undefined error: ${scenario === "different file-error code" ? "13" : "0"}' ${scenario === "different file-error text" ? "access denied" : "invalid file"}\n`
-        : `carutil: error:\n    ${rejectedPath} is not a valid AssetCatalog\n`;
+        : `carutil: error:\n${scenario.startsWith("tab-indented") ? "\t" : "    "}${rejectedPath} is not a valid AssetCatalog\n`;
   const cause = Object.assign(new Error("assetutil failed"), {
     code: 1,
     stdout: "",

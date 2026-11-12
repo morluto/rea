@@ -1,13 +1,13 @@
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { z } from "zod";
 
-import type {
-  ArtifactInventoryResult,
-  ArtifactNode,
-  ArtifactOccurrence,
+import {
+  artifactOccurrenceRelationshipCoverage,
+  type ArtifactInventoryResult,
+  type ArtifactNode,
+  type ArtifactOccurrence,
 } from "./artifactGraph.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
-import { evidenceSchema } from "./evidence.js";
 import {
   ArtifactInventoryCarrierError,
   hasCompleteInventoryCoverage,
@@ -15,8 +15,8 @@ import {
   type InventorySet,
 } from "./artifactInventoryEvidence.js";
 import {
-  nodeSeaEntryDeclaration,
-  pyInstallerEntryDeclaration,
+  formatMetadataDeclaration,
+  type FormatMetadataDeclaration,
 } from "./artifactFormatMetadata.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJson } from "./comparisonSemantics.js";
@@ -49,12 +49,6 @@ const comparisonDimensionSchema = z.enum([
   "availability",
   "integrity",
 ]);
-/** Strict Evidence-backed input for deterministic artifact comparison. */
-export const artifactComparisonInputSchema = z.strictObject({
-  left: evidenceSchema,
-  right: evidenceSchema,
-});
-
 /** One path-classified artifact change with citations to both observations. */
 const artifactChangeSchema = z.object({
   classification: changeKindSchema,
@@ -102,6 +96,10 @@ export type ArtifactComparisonResult = z.infer<
   typeof artifactComparisonResultSchema
 >;
 type ArtifactChange = z.infer<typeof artifactChangeSchema>;
+
+/** Comparison limitation when a path's format declarations cannot be compared. */
+export const FORMAT_DECLARATION_UNKNOWN_LIMITATION =
+  "Format metadata declarations are missing on one side or differ in kind for matching paths; omitted metadata may be a legacy or non-container observation and leaves the complete declaration unavailable.";
 
 const comparisonInventory = (input: unknown, side: "left" | "right") => {
   try {
@@ -189,10 +187,8 @@ export const compareArtifacts = (
           "ASAR packing metadata is recorded on only one side for matching paths; omitted metadata may be a legacy observation and does not establish packed or unpacked storage.",
         ]
       : []),
-    ...(comparison.hasUnknownNodeSeaMetadata
-      ? [
-          "Node SEA member metadata is recorded on only one side for matching paths; omitted metadata may be a legacy observation and leaves the complete runtime member declaration unavailable.",
-        ]
+    ...(comparison.hasUnknownFormatDeclaration
+      ? [FORMAT_DECLARATION_UNKNOWN_LIMITATION]
       : []),
     ...(comparison.hasAmbiguousDuplicatePaths
       ? [
@@ -255,30 +251,35 @@ const compareOccurrences = (
   readonly changes: ArtifactChange[];
   readonly hasAmbiguousDuplicatePaths: boolean;
   readonly hasUnknownAsarPacking: boolean;
-  readonly hasUnknownNodeSeaMetadata: boolean;
+  readonly hasUnknownFormatDeclaration: boolean;
 } => {
   const leftNodes = new Map(left.nodes.map((item) => [item.artifact_id, item]));
   const rightNodes = new Map(
     right.nodes.map((item) => [item.artifact_id, item]),
   );
-  const leftRelations = relationsByPath(left);
-  const rightRelations = relationsByPath(right);
+  const leftRelationsFor = relationsForOccurrence(left);
+  const rightRelationsFor = relationsForOccurrence(right);
   const paths = [
     ...new Set([...leftByPath.keys(), ...rightByPath.keys()]),
   ].sort(compareUnicodeCodePoints);
   const output: ArtifactChange[] = [];
   let hasAmbiguousDuplicatePaths = false;
   let hasUnknownAsarPacking = false;
-  let hasUnknownNodeSeaMetadata = false;
+  let hasUnknownFormatDeclaration = false;
   for (const path of paths) {
     const leftMatches = leftByPath.get(path) ?? [];
     const rightMatches = rightByPath.get(path) ?? [];
     if (leftMatches.length > 1 || rightMatches.length > 1) {
       hasAmbiguousDuplicatePaths = true;
+      const integrityMismatch = [...leftMatches, ...rightMatches].some(
+        ({ hash_status: status }) => status === "mismatched",
+      );
       output.push({
         logical_path: path,
-        classification: "unknown",
-        dimensions: ["availability"],
+        classification: integrityMismatch ? "contradiction" : "unknown",
+        dimensions: integrityMismatch
+          ? ["availability", "integrity"]
+          : ["availability"],
         left_occurrence_id: null,
         right_occurrence_id: null,
         left_artifact_id: null,
@@ -292,7 +293,8 @@ const compareOccurrences = (
     const metadata = occurrenceMetadata({ leftOccurrence, rightOccurrence });
     if (leftOccurrence !== undefined && rightOccurrence !== undefined) {
       if (metadata.asarPacking === "unknown") hasUnknownAsarPacking = true;
-      if (metadata.nodeSea === "unknown") hasUnknownNodeSeaMetadata = true;
+      if (metadata.formatDeclaration === "unknown")
+        hasUnknownFormatDeclaration = true;
     }
     const change = classifyPath({
       metadata,
@@ -301,8 +303,10 @@ const compareOccurrences = (
       rightOccurrence,
       leftNode: nodeFor(leftOccurrence, leftNodes),
       rightNode: nodeFor(rightOccurrence, rightNodes),
-      leftRelations: leftRelations.get(path) ?? [],
-      rightRelations: rightRelations.get(path) ?? [],
+      relations: compareRelations(
+        leftRelationsFor(leftOccurrence),
+        rightRelationsFor(rightOccurrence),
+      ),
       rootCovered: coverage.root,
       entriesCovered: coverage.entries,
       evidenceLinks,
@@ -313,7 +317,7 @@ const compareOccurrences = (
     changes: output,
     hasAmbiguousDuplicatePaths,
     hasUnknownAsarPacking,
-    hasUnknownNodeSeaMetadata,
+    hasUnknownFormatDeclaration,
   };
 };
 
@@ -337,8 +341,7 @@ interface ClassifyPathInput {
   readonly rightOccurrence: ArtifactOccurrence | undefined;
   readonly leftNode: ArtifactNode | undefined;
   readonly rightNode: ArtifactNode | undefined;
-  readonly leftRelations: readonly RelationProjection[];
-  readonly rightRelations: readonly RelationProjection[];
+  readonly relations: FactComparison;
   readonly rootCovered: boolean;
   readonly entriesCovered: boolean;
   readonly evidenceLinks: readonly string[];
@@ -410,20 +413,44 @@ const classifyPath = (input: ClassifyPathInput): ArtifactChange | null => {
   if (integrity !== null) return integrity;
   const presence = classifyPresence(input, base);
   if (presence !== null) return presence;
-  const declaration = classifyPyInstallerDeclaration(input, base);
+  const declaration = classifyDeclarationRecord(input, base);
   if (declaration.handled) return declaration.change;
   const availability = classifyAvailability(input, base);
-  if (availability !== null)
-    return input.metadata.asarPacking === "changed" ||
-      input.metadata.nodeSea === "changed"
-      ? {
-          ...base,
-          classification: "changed",
-          dimensions: ["metadata", "availability"],
-        }
-      : availability;
+  if (availability !== null) {
+    const known = occurrenceDifferences(input);
+    const dimensions: ArtifactChange["dimensions"] = [];
+    if (known.kind) dimensions.push("kind");
+    if (known.format) dimensions.push("format");
+    if (known.executable) dimensions.push("executable");
+    if (input.relations === "changed") dimensions.push("relations");
+    if (known.metadata || declaredDigestsDiffer(input))
+      dimensions.push("metadata");
+    dimensions.push("availability");
+    return {
+      ...base,
+      classification: declarationChanged(input.metadata)
+        ? "changed"
+        : "unknown",
+      dimensions,
+    };
+  }
   const dimensions = changedDimensions(input);
-  if (Object.values(input.metadata).includes("unknown")) {
+  const occurrence = occurrenceDifferences(input);
+  if (
+    declarationUnknown(input.metadata) ||
+    occurrence.kindUnknown ||
+    occurrence.formatUnknown ||
+    input.relations === "unknown" ||
+    differsWithUnknown(input.leftNode?.format, input.rightNode?.format) ||
+    differsWithMissing(
+      input.leftNode?.media_type,
+      input.rightNode?.media_type,
+    ) ||
+    differsWithMissing(
+      input.leftNode?.architecture,
+      input.rightNode?.architecture,
+    )
+  ) {
     if (dimensions.length === 0)
       return {
         ...base,
@@ -442,98 +469,198 @@ type OccurrencePair = Pick<
   "leftOccurrence" | "rightOccurrence"
 >;
 
-type MetadataComparison = "unchanged" | "changed" | "unknown";
+type FactComparison = "unchanged" | "changed" | "unknown";
 
 interface OccurrenceMetadata {
-  readonly asarPacking: MetadataComparison;
-  readonly nodeSea: MetadataComparison;
-  readonly pyInstaller: MetadataComparison;
+  /** ASAR storage is an occurrence field, not format metadata. */
+  readonly asarPacking: FactComparison;
+  /** Every occurrence records `encrypted`, so a pair's comparison is known. */
+  readonly encryption: Exclude<FactComparison, "unknown">;
+  /** Absent when neither occurrence records a compared declaration. */
+  readonly formatDeclaration: FactComparison | "absent";
+  /** Unknown when either side could not read a compared field. */
+  readonly formatDeclarationAvailability: Exclude<FactComparison, "changed">;
 }
 
-const compareOptionalMetadata = <T>(
-  left: T | undefined,
-  right: T | undefined,
-  declaration: (value: T) => unknown,
-): MetadataComparison => {
-  if (left === undefined || right === undefined)
-    return left === right ? "unchanged" : "unknown";
-  return canonicalJson(declaration(left)) === canonicalJson(declaration(right))
+/** A declaration that differs even when content is unavailable. */
+const declarationChanged = (metadata: OccurrenceMetadata): boolean =>
+  metadata.asarPacking === "changed" ||
+  metadata.formatDeclaration === "changed";
+
+/** A declared fact that differs: a declaration or the encryption. */
+const declaredFactChanged = (metadata: OccurrenceMetadata): boolean =>
+  Object.values(metadata).includes("changed");
+
+/** A declared fact that one side omits, records as another kind or cannot read. */
+const declarationUnknown = (metadata: OccurrenceMetadata): boolean =>
+  Object.values(metadata).includes("unknown");
+
+/** Unknown classifications and absent node metadata cannot establish a difference. */
+const differsWithUnknown = (
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean =>
+  left !== right &&
+  (left == null || right == null || left === "unknown" || right === "unknown");
+
+const differsWithMissing = (
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean => left !== right && (left == null || right == null);
+
+/** Occurrence facts remain independently comparable when content is unavailable. */
+const occurrenceDifferences = (input: {
+  readonly metadata: OccurrenceMetadata;
+  readonly leftOccurrence: ArtifactOccurrence | undefined;
+  readonly rightOccurrence: ArtifactOccurrence | undefined;
+}) => ({
+  kind:
+    input.leftOccurrence?.artifact_kind !==
+      input.rightOccurrence?.artifact_kind &&
+    !differsWithUnknown(
+      input.leftOccurrence?.artifact_kind,
+      input.rightOccurrence?.artifact_kind,
+    ),
+  kindUnknown: differsWithUnknown(
+    input.leftOccurrence?.artifact_kind,
+    input.rightOccurrence?.artifact_kind,
+  ),
+  format:
+    input.leftOccurrence?.artifact_format !==
+      input.rightOccurrence?.artifact_format &&
+    !differsWithUnknown(
+      input.leftOccurrence?.artifact_format,
+      input.rightOccurrence?.artifact_format,
+    ),
+  formatUnknown: differsWithUnknown(
+    input.leftOccurrence?.artifact_format,
+    input.rightOccurrence?.artifact_format,
+  ),
+  executable:
+    input.leftOccurrence?.executable !== input.rightOccurrence?.executable,
+  metadata:
+    declaredFactChanged(input.metadata) ||
+    input.leftOccurrence?.entry_kind !== input.rightOccurrence?.entry_kind,
+});
+
+const compareAsarPacking = (
+  left: boolean | undefined,
+  right: boolean | undefined,
+): FactComparison =>
+  left === right
     ? "unchanged"
-    : "changed";
+    : left === undefined || right === undefined
+      ? "unknown"
+      : "changed";
+
+/**
+ * Declarations compare within one kind. A declaration that only one side
+ * records, including one whose other side records another kind, is unknown.
+ * A field that either side could not read is unknown, and the other fields
+ * still compare.
+ */
+const compareFormatDeclarations = (
+  left: FormatMetadataDeclaration | undefined,
+  right: FormatMetadataDeclaration | undefined,
+): Pick<
+  OccurrenceMetadata,
+  "formatDeclaration" | "formatDeclarationAvailability"
+> => {
+  if (left === undefined && right === undefined)
+    return {
+      formatDeclaration: "absent",
+      formatDeclarationAvailability: "unchanged",
+    };
+  if (left === undefined || right === undefined || left.kind !== right.kind)
+    return {
+      formatDeclaration: "unknown",
+      formatDeclarationAvailability: "unchanged",
+    };
+  const unreadable = new Set([...left.unreadable, ...right.unreadable]);
+  const readable = (facts: FormatMetadataDeclaration["facts"]) =>
+    Object.fromEntries(
+      Object.entries(facts).filter(([field]) => !unreadable.has(field)),
+    );
+  return {
+    formatDeclaration:
+      canonicalJson(readable(left.facts)) ===
+      canonicalJson(readable(right.facts))
+        ? "unchanged"
+        : "changed",
+    formatDeclarationAvailability: Object.keys(left.facts).some((field) =>
+      unreadable.has(field),
+    )
+      ? "unknown"
+      : "unchanged",
+  };
 };
 
-/** Interpret each pair's format declarations once, preserving historical omission. */
+/** Interpret each pair's declarations once, preserving historical omission. */
 const occurrenceMetadata = (input: OccurrencePair): OccurrenceMetadata => {
   const left = input.leftOccurrence;
   const right = input.rightOccurrence;
   return {
-    asarPacking: compareOptionalMetadata(
-      left?.unpacked,
-      right?.unpacked,
-      (value) => value,
-    ),
-    nodeSea: compareOptionalMetadata(
-      left?.format_metadata?.kind === "node-sea-entry"
-        ? left.format_metadata
-        : undefined,
-      right?.format_metadata?.kind === "node-sea-entry"
-        ? right.format_metadata
-        : undefined,
-      nodeSeaEntryDeclaration,
-    ),
-    pyInstaller: compareOptionalMetadata(
-      isPyInstallerEntry(left) ? left.format_metadata : undefined,
-      isPyInstallerEntry(right) ? right.format_metadata : undefined,
-      pyInstallerEntryDeclaration,
+    asarPacking: compareAsarPacking(left?.unpacked, right?.unpacked),
+    encryption: left?.encrypted === right?.encrypted ? "unchanged" : "changed",
+    ...compareFormatDeclarations(
+      formatMetadataDeclaration(left?.format_metadata),
+      formatMetadataDeclaration(right?.format_metadata),
     ),
   };
 };
 
-const isPyInstallerEntry = (
-  occurrence: ArtifactOccurrence | undefined,
-): occurrence is ArtifactOccurrence & {
-  readonly format_metadata: Extract<
-    NonNullable<ArtifactOccurrence["format_metadata"]>,
-    { readonly kind: "pyinstaller-entry" }
-  >;
-} => occurrence?.format_metadata?.kind === "pyinstaller-entry";
-
-const classifyPyInstallerDeclaration = (
+/**
+ * A node-less metadata record has no content node, so its declared facts are
+ * all that comparison checks; an unread payload is not compared. Neither are
+ * its limitations, which readers derive from those facts.
+ */
+const classifyDeclarationRecord = (
   input: ClassifyPathInput,
   base: ReturnType<typeof buildArtifactChangeBase>,
 ): { readonly handled: boolean; readonly change: ArtifactChange | null } => {
-  const leftIsDeclaration = input.leftOccurrence?.entry_kind === "metadata";
-  const rightIsDeclaration = input.rightOccurrence?.entry_kind === "metadata";
-  if (!leftIsDeclaration && !rightIsDeclaration)
-    return { handled: false, change: null };
-  // Metadata is not inherently a PyInstaller declaration. Only apply this
-  // format-specific comparison when a producer explicitly identified one.
+  // Metadata is not inherently a declaration. Only apply this comparison
+  // when a producer explicitly recorded a compared one. A record that names
+  // content keeps the content comparison.
   if (
-    !isPyInstallerEntry(input.leftOccurrence) &&
-    !isPyInstallerEntry(input.rightOccurrence)
+    input.leftOccurrence?.entry_kind !== "metadata" ||
+    input.rightOccurrence?.entry_kind !== "metadata" ||
+    input.leftOccurrence.artifact_id !== null ||
+    input.rightOccurrence.artifact_id !== null ||
+    input.metadata.formatDeclaration === "absent"
   )
     return { handled: false, change: null };
-  if (!leftIsDeclaration || !rightIsDeclaration)
-    return { handled: false, change: null };
-  if (
-    !isPyInstallerEntry(input.leftOccurrence) ||
-    !isPyInstallerEntry(input.rightOccurrence)
-  )
+  const dimensions: ArtifactChange["dimensions"] = [];
+  if (input.leftOccurrence.executable !== input.rightOccurrence.executable)
+    dimensions.push("executable");
+  if (declaredFactChanged(input.metadata)) dimensions.push("metadata");
+  const unknown = declarationUnknown(input.metadata);
+  if (dimensions.length === 0)
     return {
       handled: true,
-      change: {
-        ...base,
-        classification: "unknown",
-        dimensions: ["availability"],
-      },
+      change: unknown
+        ? { ...base, classification: "unknown", dimensions: ["availability"] }
+        : null,
     };
-  const changed = input.metadata.pyInstaller === "changed";
+  if (unknown) dimensions.push("availability");
   return {
     handled: true,
-    change: changed
-      ? { ...base, classification: "changed", dimensions: ["metadata"] }
-      : null,
+    change: { ...base, classification: "changed", dimensions },
   };
+};
+
+/**
+ * Without observed content on both sides, the containers' declared digests
+ * are the remaining content evidence. Claims of one algorithm that differ,
+ * and a claim present on only one side, are a metadata difference. They are
+ * unverified, so they do not make the path changed. Equal claims add nothing.
+ * The signal is the structured claim, not a reader limitation that restates it.
+ * Observed bytes replace both.
+ */
+const declaredDigestsDiffer = (input: OccurrencePair): boolean => {
+  const left = input.leftOccurrence?.declared_integrity;
+  const right = input.rightOccurrence?.declared_integrity;
+  if (left === undefined || right === undefined) return left !== right;
+  return left.algorithm === right.algorithm && left.digest !== right.digest;
 };
 
 const changedDimensions = (input: {
@@ -542,65 +669,40 @@ const changedDimensions = (input: {
   readonly rightNode: ArtifactNode | undefined;
   readonly leftOccurrence: ArtifactOccurrence | undefined;
   readonly rightOccurrence: ArtifactOccurrence | undefined;
-  readonly leftRelations: readonly RelationProjection[];
-  readonly rightRelations: readonly RelationProjection[];
+  readonly relations: FactComparison;
 }): z.infer<typeof comparisonDimensionSchema>[] => {
   const left = input.leftNode;
   const right = input.rightNode;
   if (left === undefined || right === undefined) return ["availability"];
+  const occurrence = occurrenceDifferences(input);
   const checks: readonly [
     z.infer<typeof comparisonDimensionSchema>,
     boolean,
   ][] = [
     ["content", left.sha256 !== right.sha256],
-    [
-      "kind",
-      input.leftOccurrence?.artifact_kind !==
-        input.rightOccurrence?.artifact_kind,
-    ],
+    ["kind", occurrence.kind],
     [
       "format",
-      left.format !== right.format ||
-        input.leftOccurrence?.artifact_format !==
-          input.rightOccurrence?.artifact_format,
+      (left.format !== right.format &&
+        !differsWithUnknown(left.format, right.format)) ||
+        occurrence.format,
     ],
     ["size", left.size !== right.size],
-    [
-      "executable",
-      input.leftOccurrence?.executable !== input.rightOccurrence?.executable,
-    ],
-    [
-      "relations",
-      JSON.stringify(input.leftRelations) !==
-        JSON.stringify(input.rightRelations),
-    ],
-    ["metadata", metadataChanged(input, left, right)],
+    ["executable", occurrence.executable],
+    ["relations", input.relations === "changed"],
+    ["metadata", occurrence.metadata || metadataChanged(left, right)],
   ];
   return checks
     .filter(([, changed]) => changed)
     .map(([dimension]) => dimension);
 };
 
-const metadataChanged = (
-  input: {
-    readonly metadata: OccurrenceMetadata;
-    readonly leftOccurrence: ArtifactOccurrence | undefined;
-    readonly rightOccurrence: ArtifactOccurrence | undefined;
-  },
-  left: ArtifactNode,
-  right: ArtifactNode,
-): boolean =>
-  input.metadata.asarPacking === "changed" ||
-  input.metadata.nodeSea === "changed" ||
-  left.media_type !== right.media_type ||
-  left.architecture !== right.architecture ||
-  left.content_state !== right.content_state ||
-  input.leftOccurrence?.entry_kind !== input.rightOccurrence?.entry_kind ||
-  input.leftOccurrence?.encrypted !== input.rightOccurrence?.encrypted ||
-  JSON.stringify(left.limitations) !== JSON.stringify(right.limitations) ||
-  JSON.stringify(input.leftOccurrence?.limitations) !==
-    JSON.stringify(input.rightOccurrence?.limitations) ||
-  input.metadata.pyInstaller === "changed";
+const metadataChanged = (left: ArtifactNode, right: ArtifactNode): boolean =>
+  (left.media_type !== right.media_type &&
+    !differsWithMissing(left.media_type, right.media_type)) ||
+  (left.architecture !== right.architecture &&
+    !differsWithMissing(left.architecture, right.architecture)) ||
+  left.content_state !== right.content_state;
 
 const nodeFor = (
   occurrence: ArtifactOccurrence | undefined,
@@ -610,10 +712,16 @@ const nodeFor = (
     ? undefined
     : nodes.get(occurrence.artifact_id);
 
-const relationsByPath = (
+/** An empty projection means observed absence. Missing edges or parent facts leave it unavailable. */
+const relationsForOccurrence = (
   inventory: InventorySet,
-): ReadonlyMap<string, readonly RelationProjection[]> => {
+): ((
+  occurrence: ArtifactOccurrence | undefined,
+) => readonly RelationProjection[] | undefined) => {
+  if (inventory.edges.length !== inventory.manifest.edge_count)
+    return () => undefined;
   const output = new Map<string, RelationProjection[]>();
+  const unresolvedPaths = new Set<string>();
   const occurrences = new Map(
     inventory.occurrences.map((item) => [item.occurrence_id, item]),
   );
@@ -622,13 +730,17 @@ const relationsByPath = (
     // An incomplete inventory can omit the occurrence that names the child.
     if (occurrence?.artifact_id === null || occurrence === undefined) continue;
     const path = occurrence.logical_path;
+    const parent =
+      occurrence.parent_occurrence_id === null
+        ? null
+        : occurrences.get(occurrence.parent_occurrence_id);
+    if (parent === undefined) {
+      unresolvedPaths.add(path);
+      continue;
+    }
     const values = output.get(path);
     const projection: RelationProjection = {
-      parent_logical_path:
-        occurrence.parent_occurrence_id === null
-          ? null
-          : (occurrences.get(occurrence.parent_occurrence_id)?.logical_path ??
-            null),
+      parent_logical_path: parent?.logical_path ?? null,
       // Containment roots are path-normalized to avoid graph-wide deltas, but
       // a source map's target is a semantic content identity, not its parent
       // directory. Preserve that identity in the relation comparison.
@@ -646,7 +758,23 @@ const relationsByPath = (
     values.sort((left, right) =>
       compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
     );
-  return output;
+  return (occurrence) => {
+    if (occurrence?.artifact_id == null) return undefined;
+    if (artifactOccurrenceRelationshipCoverage(occurrence) === "unknown")
+      return undefined;
+    const path = occurrence.logical_path;
+    return unresolvedPaths.has(path) ? undefined : (output.get(path) ?? []);
+  };
+};
+
+const compareRelations = (
+  left: readonly RelationProjection[] | undefined,
+  right: readonly RelationProjection[] | undefined,
+): FactComparison => {
+  if (left === undefined || right === undefined) return "unknown";
+  return JSON.stringify(left) === JSON.stringify(right)
+    ? "unchanged"
+    : "changed";
 };
 
 interface RelationProjection {
@@ -675,8 +803,8 @@ const summarize = (
     contradiction: 0,
   };
   for (const change of changes) counts[change.classification] += 1;
-  // Change rows are keyed by logical path, and one unknown row for a duplicate
-  // path stands for every left occurrence on it. Only occurrences on paths
+  // Change rows are keyed by logical path, and one row for a duplicate path
+  // stands for every left occurrence on it. Only occurrences on paths
   // without a left-side change are affirmatively unchanged.
   const changedPaths = new Set(
     changes

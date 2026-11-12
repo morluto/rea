@@ -6,6 +6,7 @@ import type {
   ApplicationEdge,
   ApplicationNode,
 } from "./javascriptApplicationGraphSchemas.js";
+import { IPC_COVERAGE_LIMITED_PAIRING_BASIS } from "./javascriptApplicationGraphSchemas.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
 import { javaScriptFileOccurrenceSchema } from "./javascriptArtifactFiles.js";
 import { applicationEndpointCorrespondence } from "./javascriptApplicationEndpointCorrespondence.js";
@@ -54,6 +55,7 @@ interface IndexedRelationship {
   readonly direction: "in" | "out";
   readonly relation: ApplicationEdge["relation"];
   readonly neighborId: string;
+  readonly coverageLimited: boolean;
 }
 
 interface RelationshipIndex {
@@ -151,7 +153,13 @@ const matchedItem = (
   context: ItemContext,
 ): ApplicationVersionComparisonItem => {
   const relationships = compareRelationships(pair, context);
-  const dimensions = changedDimensions(pair, relationships);
+  const sourceAnalysisUncertain =
+    hasUnexaminedSourceFile(pair.left) || hasUnexaminedSourceFile(pair.right);
+  const dimensions = changedDimensions(
+    pair,
+    relationships,
+    sourceAnalysisUncertain,
+  );
   const complete = graphsComplete(context);
   const ownEvidenceUncertain =
     ownPresenceUncertain(pair.left) || ownPresenceUncertain(pair.right);
@@ -164,6 +172,7 @@ const matchedItem = (
   // content, property, or relationship change.
   const completeChange =
     !ownEvidenceUncertain &&
+    !sourceAnalysisUncertain &&
     complete &&
     dimensions.some((dimension) => dimension !== "location");
   const status: ApplicationVersionComparisonItem["status"] =
@@ -171,12 +180,16 @@ const matchedItem = (
       ? "unknown"
       : observedChange || completeChange
         ? "changed"
-        : complete && !relationships.unresolved && !endpointTargetUncertain
+        : complete &&
+            !relationships.unresolved &&
+            !relationships.coverageLimited &&
+            !endpointTargetUncertain &&
+            !sourceAnalysisUncertain
           ? "unchanged"
           : "unknown";
   const finalDimensions = ownEvidenceUncertain
     ? []
-    : status === "unknown" && !complete
+    : status === "unknown" && (!complete || sourceAnalysisUncertain)
       ? [...dimensions, "coverage" as const]
       : dimensions;
   const semantic: ComparisonItemSemantic = {
@@ -193,6 +206,11 @@ const matchedItem = (
         ...ownComparisonLimitations(pair.right),
       ]),
       ...matchLimitations(pair),
+      ...(sourceAnalysisUncertain
+        ? [
+            "Source file analysis was not complete on both sides; retained file identity does not establish equality of unexamined facts.",
+          ]
+        : []),
       ...(status === "unknown" && !complete
         ? [
             "Incomplete graph coverage prevents a complete node-level conclusion.",
@@ -201,6 +219,11 @@ const matchedItem = (
       ...(relationships.unresolved
         ? [
             "Relationship target identity remains unresolved; equal node kinds do not establish cross-version alignment.",
+          ]
+        : []),
+      ...(relationships.coverageLimited
+        ? [
+            "Incomplete source coverage leaves some candidate relationships unconfirmed.",
           ]
         : []),
     ],
@@ -458,6 +481,7 @@ const ownComparisonLimitations = (node: ApplicationNode): string[] => {
 const changedDimensions = (
   pair: ApplicationVersionNodePair,
   relationships: RelationshipComparison,
+  sourceAnalysisUncertain: boolean,
 ): ApplicationVersionComparisonItem["dimensions"] => {
   const dimensions: ApplicationVersionComparisonItem["dimensions"] = [];
   const leftContent = contentIdentity(pair.left);
@@ -473,8 +497,8 @@ const changedDimensions = (
   )
     dimensions.push("location");
   if (
-    canonicalJson(properties(pair.left)) !==
-    canonicalJson(properties(pair.right))
+    canonicalJson(properties(pair.left, sourceAnalysisUncertain)) !==
+    canonicalJson(properties(pair.right, sourceAnalysisUncertain))
   )
     dimensions.push("properties");
   if (relationships.different) dimensions.push("relationships");
@@ -503,11 +527,38 @@ const locations = (node: ApplicationNode) =>
       compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
     );
 
-const properties = (node: ApplicationNode) =>
+const SOURCE_FILE_KINDS = new Set([
+  "javascript",
+  "html",
+  "json",
+  "package-json",
+  "source-map",
+]);
+
+const hasUnexaminedSourceFile = (node: ApplicationNode): boolean =>
+  node.observations.some(
+    ({ properties: values }) =>
+      typeof values.file_kind === "string" &&
+      SOURCE_FILE_KINDS.has(values.file_kind) &&
+      (values.text_status === "outside-analysis-scope" ||
+        values.text_status === "invalid-utf8" ||
+        (values.file_kind === "json" &&
+          "json_parse_status" in values &&
+          values.json_parse_status !== "included") ||
+        (values.file_kind === "package-json" &&
+          values.package_parse_status !== "included") ||
+        (values.file_kind === "javascript" &&
+          (("parse_status" in values && values.parse_status === null) ||
+            values.parse_status === "failed" ||
+            values.parse_status === "skipped" ||
+            values.parse_status === "partial"))),
+  );
+
+const properties = (node: ApplicationNode, sourceAnalysisUncertain: boolean) =>
   node.observations
     .map(({ label, properties: values, source_map_reference }) => ({
       label,
-      properties: comparisonPropertyValues(values),
+      properties: comparisonPropertyValues(values, sourceAnalysisUncertain),
       source_map_reference,
     }))
     .sort((left, right) =>
@@ -516,17 +567,38 @@ const properties = (node: ApplicationNode) =>
 
 const comparisonPropertyValues = (
   values: ApplicationNode["observations"][number]["properties"],
+  sourceAnalysisUncertain: boolean,
 ) => {
+  const comparable =
+    sourceAnalysisUncertain &&
+    typeof values.file_kind === "string" &&
+    SOURCE_FILE_KINDS.has(values.file_kind)
+      ? Object.fromEntries(
+          Object.entries(values).filter(
+            ([key]) =>
+              ![
+                "text_status",
+                "parse_status",
+                "analysis_coverage",
+                "vendor_markers",
+                "json_parse_status",
+                "package_parse_status",
+                "json_top_level_keys",
+                "omitted_json_top_level_keys",
+              ].includes(key),
+          ),
+        )
+      : values;
   const occurrence = javaScriptFileOccurrenceSchema.safeParse(
-    values.file_occurrence,
+    comparable.file_occurrence,
   );
-  if (!occurrence.success) return values;
+  if (!occurrence.success) return comparable;
   // A containing artifact's digest locates this occurrence in one version;
   // sibling changes do not establish a change to this file's own facts.
   // Keep the occurrence's path and content digest comparable, and retain the
   // complete provenance record on the original observation.
   return {
-    ...values,
+    ...comparable,
     file_occurrence: {
       path: occurrence.data.path,
       sha256: occurrence.data.sha256,
@@ -544,16 +616,20 @@ const indexRelationships = (
     else existing.push(relationship);
   };
   for (const edge of graph.edges) {
+    const coverageLimited =
+      edge.properties.pairing_basis === IPC_COVERAGE_LIMITED_PAIRING_BASIS;
     add(edge.source_node_id, {
       direction: "out",
       relation: edge.relation,
       neighborId: edge.target_node_id,
+      coverageLimited,
     });
     if (edge.target_node_id !== edge.source_node_id)
       add(edge.target_node_id, {
         direction: "in",
         relation: edge.relation,
         neighborId: edge.source_node_id,
+        coverageLimited,
       });
   }
   return {
@@ -566,6 +642,7 @@ const indexRelationships = (
 interface RelationshipComparison {
   readonly different: boolean;
   readonly unresolved: boolean;
+  readonly coverageLimited: boolean;
 }
 
 const compareRelationships = (
@@ -576,10 +653,48 @@ const compareRelationships = (
   const right = relationshipFacts(pair.right, "right", context);
   return {
     different:
-      left.paired !== right.paired ||
-      left.unpairedShape !== right.unpairedShape,
+      unexplainedRelationshipDifference(
+        left.paired,
+        right.paired,
+        left.possiblePaired,
+        right.possiblePaired,
+      ) ||
+      unexplainedRelationshipDifference(
+        left.unpairedShape,
+        right.unpairedShape,
+        left.possibleUnpairedShape,
+        right.possibleUnpairedShape,
+      ),
     unresolved: left.unresolved || right.unresolved,
+    coverageLimited: left.coverageLimited || right.coverageLimited,
   };
+};
+
+/** A candidate can explain a missing counterpart but cannot prove a change. */
+const unexplainedRelationshipDifference = (
+  left: readonly string[],
+  right: readonly string[],
+  leftPossible: readonly string[],
+  rightPossible: readonly string[],
+): boolean => {
+  const counts = (values: readonly string[]) => {
+    const result = new Map<string, number>();
+    for (const value of values) result.set(value, (result.get(value) ?? 0) + 1);
+    return result;
+  };
+  const leftCounts = counts(left);
+  const rightCounts = counts(right);
+  const leftCandidateCounts = counts(leftPossible);
+  const rightCandidateCounts = counts(rightPossible);
+  for (const key of new Set([...leftCounts.keys(), ...rightCounts.keys()])) {
+    const difference = (leftCounts.get(key) ?? 0) - (rightCounts.get(key) ?? 0);
+    if (
+      difference > (rightCandidateCounts.get(key) ?? 0) ||
+      -difference > (leftCandidateCounts.get(key) ?? 0)
+    )
+      return true;
+  }
+  return false;
 };
 
 const relationshipFacts = (
@@ -587,30 +702,46 @@ const relationshipFacts = (
   side: "left" | "right",
   context: ItemContext,
 ): {
-  readonly paired: string;
-  readonly unpairedShape: string;
+  readonly paired: readonly string[];
+  readonly unpairedShape: readonly string[];
+  readonly possiblePaired: readonly string[];
+  readonly possibleUnpairedShape: readonly string[];
   readonly unresolved: boolean;
+  readonly coverageLimited: boolean;
 } => {
   const { nodeById, adjacency } =
     side === "left" ? context.leftRelationships : context.rightRelationships;
   const paired = side === "left" ? context.pairByLeft : context.pairByRight;
   const matched: string[] = [];
   const unpaired: string[] = [];
-  for (const { direction, relation, neighborId } of adjacency.get(
-    node.node_id,
-  ) ?? []) {
+  const possibleMatched: string[] = [];
+  const possibleUnpaired: string[] = [];
+  let coverageLimited = false;
+  for (const {
+    direction,
+    relation,
+    neighborId,
+    coverageLimited: candidate,
+  } of adjacency.get(node.node_id) ?? []) {
     const mapped = paired.get(neighborId);
-    if (mapped !== undefined)
-      matched.push(`${direction}\0${relation}\0${mapped}`);
-    else
-      unpaired.push(
+    if (candidate) coverageLimited = true;
+    if (mapped !== undefined) {
+      (candidate ? possibleMatched : matched).push(
+        `${direction}\0${relation}\0${mapped}`,
+      );
+    } else {
+      (candidate ? possibleUnpaired : unpaired).push(
         `${direction}\0${relation}\0${nodeById.get(neighborId)?.kind ?? "unknown"}`,
       );
+    }
   }
   return {
-    paired: canonicalJson(matched.sort(compareUnicodeCodePoints)),
-    unpairedShape: canonicalJson(unpaired.sort(compareUnicodeCodePoints)),
-    unresolved: unpaired.length > 0,
+    paired: matched,
+    unpairedShape: unpaired,
+    possiblePaired: possibleMatched,
+    possibleUnpairedShape: possibleUnpaired,
+    unresolved: unpaired.length > 0 || possibleUnpaired.length > 0,
+    coverageLimited,
   };
 };
 

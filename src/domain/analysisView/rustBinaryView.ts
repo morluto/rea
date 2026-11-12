@@ -1,26 +1,30 @@
 import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
 import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import {
   rustBinarySchema,
   rustAuditableMetadataSchema,
   rustcCommitSchema,
   type RustBinary,
 } from "../rust/rustBinary.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import {
+  createAnalysisViewResultReader,
+  type AnalysisViewParent,
+} from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
+import { rustBinaryViewRequestSchema } from "../rust/rustBinaryQuery.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { selectViewRows } from "./selectViewRows.js";
 
 const count = z.number().int().nonnegative();
@@ -85,6 +89,13 @@ const summarize = (
             cyclic_packages: metadata.cyclic_dependency_indices.length,
           },
         };
+  let compilerSummary: z.output<
+    typeof rustBinarySummarySchema
+  >["rustc_commit"] = null;
+  if (compiler !== null) {
+    const { hashes, ...facts } = compiler;
+    compilerSummary = { ...facts, hashes_count: hashes.length };
+  }
   return {
     format: report.format,
     architecture: report.architecture,
@@ -95,21 +106,15 @@ const summarize = (
       : { selected_slice: report.selected_slice }),
     bytes: artifact.bytes,
     auditable_metadata: section,
-    rustc_commit:
-      compiler === null
-        ? null
-        : {
-            evidence_kind: compiler.evidence_kind,
-            hashes_count: compiler.hashes.length,
-          },
+    rustc_commit: compilerSummary,
   };
 };
 
 /** Query owner-normalized facts without reopening a source or walking dependency paths. */
 export const projectRustBinaryView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (view.kind !== "summary" && view.kind !== "rust")
     return err(
       analysisViewInputError([
@@ -120,6 +125,9 @@ export const projectRustBinaryView = (
         },
       ]),
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof rustBinaryViewRequestSchema>
+  >(view, "summary", "rust");
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
@@ -177,11 +185,20 @@ export const projectRustBinaryView = (
   const summary = summarize(report);
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary,
       coverage: completeWithinViewCoverage(1, 1),
+    });
+  if (metadata === null)
+    return ok({
+      kind: "rust" as const,
+      view,
+      ...shared,
+      rust: summary,
+      page: { collection: view.collection, rows: [] },
+      coverage: unavailableViewCoverage(),
     });
   const indices =
     view.indices === undefined ? undefined : new Set(view.indices);
@@ -192,7 +209,7 @@ export const projectRustBinaryView = (
     const versions =
       view.versions === undefined ? undefined : new Set(view.versions);
     const selected = selectViewRows(
-      metadata?.packages ?? [],
+      metadata.packages,
       view,
       (row, index) =>
         (indices?.has(index) ?? true) &&
@@ -214,11 +231,11 @@ export const projectRustBinaryView = (
       }),
     );
     return ok({
-      kind: "rust",
+      kind: "rust" as const,
       view,
       ...shared,
       rust: summary,
-      page: { collection: "packages", rows: selected.rows },
+      page: { collection: "packages" as const, rows: selected.rows },
       coverage: pageViewCoverage(
         view.offset,
         selected.rows.length,
@@ -231,7 +248,7 @@ export const projectRustBinaryView = (
   const to =
     view.to_indices === undefined ? undefined : new Set(view.to_indices);
   const selected = selectViewRows(
-    metadata?.dependency_edges ?? [],
+    metadata.dependency_edges,
     view,
     (row, index) =>
       (indices?.has(index) ?? true) &&
@@ -246,11 +263,11 @@ export const projectRustBinaryView = (
     }),
   );
   return ok({
-    kind: "rust",
+    kind: "rust" as const,
     view,
     ...shared,
     rust: summary,
-    page: { collection: "edges", rows: selected.rows },
+    page: { collection: "edges" as const, rows: selected.rows },
     coverage: pageViewCoverage(
       view.offset,
       selected.rows.length,

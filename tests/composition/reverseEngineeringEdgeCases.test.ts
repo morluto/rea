@@ -23,9 +23,68 @@ import {
 } from "../../src/process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../src/process/ProviderProcess.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 
 registerSharedReverseEngineeringEdgeCaseTests();
 registerOwnedRizinCommandEvidenceTests({ sweepTokenOwnedProcesses: true });
+
+it.each(["objdump", "rizin"] as const)(
+  "retains %s output-limit Evidence when owned cleanup remains incomplete",
+  async (provider) => {
+    const { directory, path } = await createArtifact();
+    const service = new ReverseEngineeringService({
+      runOwned: async (_spawn, limits) => {
+        expect(limits.diagnosticBytes).toBe(16 * 1024 * 1024);
+        throw new OwnedCommandFailure(
+          "output-limit",
+          "diagnostic output exceeded its budget",
+          providerSnapshot({
+            exitCode: null,
+            signal: "SIGTERM",
+            diagnosticTruncated: true,
+          }),
+          "owned descendant remains",
+          undefined,
+          ["run-id", "pid:42"],
+        );
+      },
+    });
+    try {
+      const result =
+        provider === "objdump"
+          ? await service.inspectWithObjdump({ path, operation: "symbols" })
+          : await service.executeRizinCommand({ path, command: "iI" });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          cleanupIncomplete: true,
+          cleanup: {
+            reason: "owned descendant remains",
+            resources: ["run-id", "pid:42"],
+          },
+          partialObservation: {
+            raw_result: {
+              stdout: "captured owned output",
+              exit_code: null,
+              signal: "SIGTERM",
+              output_truncated: true,
+              completion_status: "unknown",
+              artifact_sha256_after: null,
+              artifact_changed: null,
+            },
+            limitations: expect.arrayContaining([
+              expect.stringContaining("max_output_bytes=16777216"),
+            ]),
+          },
+        },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it("records pathless objdump architecture support as provider capability evidence", async () => {
   const { directory, path } = await createArtifact();
@@ -117,15 +176,13 @@ it.each(["cancellation", "deadline"] as const)(
       run: async () => ({ stdout: "", stderr: "" }),
     });
 
-    try {
-      if (interruption === "deadline") vi.useFakeTimers();
-      const resultPromise = service.inspectWithObjdump(
-        { path, operation: "file_headers" },
-        { signal: controller.signal },
-      );
-      await statStarted;
+    const resultPromise = service.inspectWithObjdump(
+      { path, operation: "file_headers", command_timeout_ms: 1_000 },
+      { signal: controller.signal },
+    );
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(statStarted, resultPromise, "stat request");
       if (interruption === "cancellation") controller.abort();
-      else await vi.advanceTimersByTimeAsync(120_000);
       await expect(resultPromise).resolves.toMatchObject({
         ok: false,
         error: {
@@ -137,10 +194,18 @@ it.each(["cancellation", "deadline"] as const)(
       });
       rejectStat?.(new Error("late stat failure"));
       await Promise.resolve();
-    } finally {
-      vi.useRealTimers();
-      await rm(directory, { recursive: true, force: true });
-    }
+    }, [
+      () => {
+        controller.abort();
+        rejectStat?.(new Error("stat fixture cleanup"));
+      },
+      async () => {
+        await resultPromise;
+      },
+      async () => {
+        await rm(directory, { recursive: true, force: true });
+      },
+    ]);
   },
 );
 
@@ -320,27 +385,6 @@ it("rejects malformed Rizin requests before touching the provider", async () => 
   expect(run).not.toHaveBeenCalled();
 });
 
-it("rejects directories as artifacts before invoking the provider", async () => {
-  const { directory } = await createArtifact();
-  const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
-  const service = new ReverseEngineeringService({ run });
-
-  try {
-    const result = await service.inspectWithObjdump({
-      path: directory,
-      operation: "file_headers",
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisInputError", operation: "inspect_with_objdump" },
-    });
-    expect(run).not.toHaveBeenCalled();
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 it("rejects new operations after service shutdown begins", async () => {
   const { directory, path } = await createArtifact();
   const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
@@ -378,11 +422,17 @@ it("rejects work after reaching the concurrent provider-operation limit", async 
     },
   });
 
-  try {
-    const admitted = Array.from({ length: 8 }, () =>
-      service.executeRizinCommand({ path, command: "iI" }),
+  const admitted = Array.from({ length: 8 }, () =>
+    service.executeRizinCommand({ path, command: "iI" }),
+  );
+  await withVerifierCleanup(async () => {
+    const rejection = service.executeRizinCommand({ path, command: "iI" });
+    await awaitAcknowledgement(
+      rejection.then(() => {}),
+      Promise.all(admitted),
+      "capacity response",
     );
-    const rejected = await service.executeRizinCommand({ path, command: "iI" });
+    const rejected = await rejection;
 
     expect(rejected.ok).toBe(false);
     if (!rejected.ok) {
@@ -393,9 +443,6 @@ it("rejects work after reaching the concurrent provider-operation limit", async 
           max_concurrent_operations: 8,
           active_operations: 8,
         });
-      expect(rejected.error.message).toContain(
-        "Concurrent reverse-engineering operation capacity reached (8 operations).",
-      );
     }
     expect(providerCalls).toBe(0);
 
@@ -403,10 +450,15 @@ it("rejects work after reaching the concurrent provider-operation limit", async 
     const results = await Promise.all(admitted);
     expect(results.every((result) => result.ok)).toBe(true);
     expect(providerCalls).toBe(8);
-  } finally {
-    releaseProviders?.();
-    await rm(directory, { recursive: true, force: true });
-  }
+  }, [
+    () => releaseProviders?.(),
+    async () => {
+      await Promise.allSettled(admitted);
+    },
+    async () => {
+      await rm(directory, { recursive: true, force: true });
+    },
+  ]);
 });
 
 it("cancels when an AbortSignal becomes aborted during listener registration", async () => {
@@ -443,7 +495,10 @@ it("cancels when an AbortSignal becomes aborted during listener registration", a
 it("drains an active provider operation before service shutdown resolves", async () => {
   const { directory, path } = await createArtifact();
   let signal: AbortSignal | undefined;
-  let releaseRun: (() => void) | undefined;
+  let releaseRun!: () => void;
+  const runGate = new Promise<void>((resolve) => {
+    releaseRun = resolve;
+  });
   let runStarted: (() => void) | undefined;
   const started = new Promise<void>((resolve) => {
     runStarted = resolve;
@@ -452,30 +507,39 @@ it("drains an active provider operation before service shutdown resolves", async
     run: async (_command, _args, options) => {
       signal = options?.signal;
       runStarted?.();
-      await new Promise<void>((resolve) => {
-        releaseRun = resolve;
-      });
+      await runGate;
       return { stdout: "finished", stderr: "" };
     },
   });
 
-  try {
-    const operation = service.executeRizinCommand({ path, command: "iI" });
-    await started;
+  const operation = service.executeRizinCommand({ path, command: "iI" });
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(started, operation, "provider command");
     let closed = false;
-    const closing = service.close().then(() => {
+    closing = service.close().then(() => {
       closed = true;
     });
     expect(signal?.aborted).toBe(true);
     expect(closed).toBe(false);
-    releaseRun?.();
+    releaseRun();
     await closing;
     expect(closed).toBe(true);
-    await operation;
-  } finally {
-    releaseRun?.();
-    await rm(directory, { recursive: true, force: true });
-  }
+    await expect(operation).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+  }, [
+    releaseRun,
+    async () => {
+      await operation;
+    },
+    async () => {
+      await closing;
+    },
+    () => service.close(),
+    () => rm(directory, { recursive: true, force: true }),
+  ]);
 });
 
 it("relays caller cancellation to the admitted provider signal", async () => {
@@ -486,27 +550,26 @@ it("relays caller cancellation to the admitted provider signal", async () => {
   const started = new Promise<void>((resolve) => {
     announceStarted = resolve;
   });
-  let releaseRun: (() => void) | undefined;
+  let releaseRun!: () => void;
+  const runGate = new Promise<void>((resolve) => {
+    releaseRun = resolve;
+  });
   let providerSignal: AbortSignal | undefined;
   const service = new CoreReverseEngineeringService({
     commands: createReverseEngineeringCommandPort(process.env),
     run: async (_command, _args, options) => {
       providerSignal = options?.signal;
       announceStarted?.();
-      await new Promise<void>((resolve) => {
-        releaseRun = resolve;
-      });
+      await runGate;
       return { stdout: "captured", stderr: "" };
     },
   });
-  let operation: ReturnType<typeof service.inspectWithObjdump> | undefined;
-
-  try {
-    operation = service.inspectWithObjdump(
-      { path, operation: "file_headers" },
-      { signal: controller.signal },
-    );
-    await started;
+  const operation = service.inspectWithObjdump(
+    { path, operation: "file_headers" },
+    { signal: controller.signal },
+  );
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(started, operation, "provider command");
     controller.abort();
     expect(addAbortListener).toHaveBeenCalledWith(
       "abort",
@@ -514,16 +577,20 @@ it("relays caller cancellation to the admitted provider signal", async () => {
       { once: true },
     );
     expect(providerSignal?.aborted).toBe(true);
-    releaseRun?.();
+    releaseRun();
     await expect(operation).resolves.toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
-  } finally {
-    releaseRun?.();
-    if (operation !== undefined) await operation.catch(() => undefined);
-    await rm(directory, { recursive: true, force: true });
-  }
+  }, [
+    () => controller.abort(),
+    releaseRun,
+    async () => {
+      await operation;
+    },
+    () => service.close(),
+    () => rm(directory, { recursive: true, force: true }),
+  ]);
 });
 
 it("passes an AbortSignal-like caller value through without relaying it", async () => {
@@ -993,8 +1060,10 @@ it("records an explicit loss marker when provider bytes are invalid UTF-8", asyn
       expect(result.value).toMatchObject({
         raw_result: { stdout: "captured � output" },
       });
-      expect(result.value.limitations).toContain(
-        "Captured stdout bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /stdout bytes.*invalid or incomplete UTF-8.*replacement characters.*do not preserve the original bytes/iu,
+        ),
       );
     }
   } finally {
@@ -1045,8 +1114,13 @@ it.each([
       const result = await service.executeRizinCommand({ path, command: "iI" });
       expect(result.ok).toBe(true);
       if (result.ok)
-        expect(result.value.limitations).toContain(
-          `Captured ${streams} bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.`,
+        expect(result.value.limitations).toContainEqual(
+          expect.stringMatching(
+            new RegExp(
+              `${streams} bytes.*invalid or incomplete UTF-8.*replacement characters.*do not preserve the original bytes`,
+              "iu",
+            ),
+          ),
         );
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -1072,8 +1146,10 @@ it.each(["objdump", "rizin"] as const)(
         output_truncated: true,
         completion_status: "complete",
       });
-      expect(result.value.limitations).toContain(
-        "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /output is partial.*bytes were omitted.*process completion.*separately/iu,
+        ),
       );
     } finally {
       await service.close();

@@ -39,6 +39,13 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 
 const CONTENT = "registered executable bytes";
 const runFile = promisify(execFile);
+// Respect the caller's selected developer tools without passing the ambient environment.
+const realXcrunRunner = () =>
+  new XcrunCommandRunner(
+    process.env.DEVELOPER_DIR === undefined
+      ? {}
+      : { DEVELOPER_DIR: process.env.DEVELOPER_DIR },
+  );
 const fixture = async () => {
   const directory = await createTestTempDirectory("rea-signature-binding-");
   const path = join(directory, "program");
@@ -78,12 +85,12 @@ const registerSignatureObservationCases = () => {
       .createClient(target)
       .execute("inspect_signature", {});
     if (!result.ok) throw result.error;
-    expect(captures.map((args) => args[args.indexOf("-a") + 1])).toEqual([
-      target.architecture,
-      target.architecture,
-      target.architecture,
-      ...target.availableArchitectures,
-    ]);
+    expect(captures.slice(0, 3).every((args) => !args.includes("-a"))).toBe(
+      true,
+    );
+    expect(
+      captures.slice(3).map((args) => args[args.indexOf("-a") + 1]),
+    ).toEqual(target.availableArchitectures);
     expect(result.value.result).toMatchObject({
       signed: true,
       identifier: "com.example.fixture",
@@ -372,10 +379,12 @@ it("returns typed cancellation at binding entry and final verification", async (
     ok: false,
     error: { _tag: "AnalysisCancelledError" },
   });
-  await withSignatureTarget(
+  let inspected = false;
+  const finalVerification = await withSignatureTarget(
     target,
     new ArtifactResourceScope(),
     async (binding) => {
+      inspected = true;
       const result = await verifySignatureTarget(target, binding, signal);
       expect(result).toMatchObject({
         ok: false,
@@ -384,6 +393,11 @@ it("returns typed cancellation at binding entry and final verification", async (
       return result.ok ? ok(signatureInspectionFixture()) : result;
     },
   );
+  expect(inspected).toBe(true);
+  expect(finalVerification).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
 });
 
 it("preserves cancellation after a capture instead of classifying it as invalid output", async () => {
@@ -453,7 +467,7 @@ it.skipIf(process.platform !== "darwin")(
     if (target.kind !== "executable")
       throw new Error("Expected the copied system executable");
     const originalBytes = await readFile(path);
-    const real = new XcrunCommandRunner({});
+    const real = realXcrunRunner();
     let snapshotPath: string | undefined;
     const runner: NativeCommandRunner = {
       async run(tool, args, options) {
@@ -502,7 +516,7 @@ it.skipIf(process.platform !== "darwin")(
       throw new Error("Expected the copied system executable");
     const result = await new NativeMacOSProvider(
       {},
-      new XcrunCommandRunner({}),
+      realXcrunRunner(),
       "darwin",
     )
       .createClient(target)
@@ -510,20 +524,43 @@ it.skipIf(process.platform !== "darwin")(
     if (!result.ok) throw result.error;
     const parsed = inspectSignatureSchema.parse(result.value.result);
     expect(parsed).toMatchObject({ signed: false });
-    const selectedArchitecture =
-      target.architecture === "x86" ? "i386" : target.architecture;
+    const { stdout: archOutput } = await runFile("/usr/bin/lipo", [
+      "-archs",
+      path,
+    ]);
+    const names = archOutput.trim().split(/\s+/u);
+    const toolName = (architecture: string) => {
+      const family = architecture === "x86" ? "i386" : architecture;
+      const name =
+        names.find((candidate) => candidate === family) ??
+        names.find((candidate) => candidate.startsWith(family));
+      if (name === undefined) throw new Error(`Missing ${family} slice`);
+      return name;
+    };
+    const selectedArchitecture = toolName(target.architecture);
+    const universal = target.format === "mach-o-universal";
+    if (!universal && target.format !== "mach-o")
+      throw new Error(`Unexpected Mach-O format ${target.format}`);
+    const selector = (command: readonly string[], required: boolean) => {
+      const index = command.indexOf("-a");
+      if (!required) {
+        expect(index).toBe(-1);
+        return null;
+      }
+      if (index < 0)
+        throw new Error("codesign omitted -a for a universal slice");
+      return command[index + 1];
+    };
     expect(
-      parsed.provenance.map(
-        ({ command }) => command[command.indexOf("-a") + 1],
+      parsed.provenance.map(({ command }, index) =>
+        selector(command, universal || index >= 3),
       ),
     ).toEqual([
-      selectedArchitecture,
-      selectedArchitecture,
-      selectedArchitecture,
-      ...(target.availableArchitectures.length > 1
-        ? target.availableArchitectures.map((architecture) =>
-            architecture === "x86" ? "i386" : architecture,
-          )
+      ...(universal
+        ? [selectedArchitecture, selectedArchitecture, selectedArchitecture]
+        : [null, null, null]),
+      ...(universal && target.availableArchitectures.length > 1
+        ? target.availableArchitectures.map(toolName)
         : []),
     ]);
     expect(parsed.provenance.every(({ exit }) => exit.code === 1)).toBe(true);
@@ -567,10 +604,12 @@ it("copies and hashes the same bytes across multiple snapshot chunks", async () 
   const bytes = Buffer.alloc(128 * 1024 + 13, 42);
   await writeFile(path, bytes);
   const target = await nativeMachoTargetForFile(path);
-  await withSignatureTarget(
+  let inspected = false;
+  const result = await withSignatureTarget(
     target,
     new ArtifactResourceScope(),
     async (binding) => {
+      inspected = true;
       expect(Buffer.compare(await readFile(binding.snapshotPath), bytes)).toBe(
         0,
       );
@@ -578,6 +617,9 @@ it("copies and hashes the same bytes across multiple snapshot chunks", async () 
       return verified.ok ? ok(signatureInspectionFixture()) : verified;
     },
   );
+  expect(inspected).toBe(true);
+  if (!result.ok) throw result.error;
+  expect(result.value).toEqual(signatureInspectionFixture());
 });
 
 it.skipIf(process.platform === "win32")(
@@ -654,7 +696,7 @@ it.skipIf(process.platform !== "darwin")(
     const target = admitted.value;
     if (target.kind !== "executable")
       throw new Error("Expected the copied system executable");
-    const real = new XcrunCommandRunner({});
+    const real = realXcrunRunner();
     let capturedPath: string | undefined;
     const runner: NativeCommandRunner = {
       async run(tool, args, options) {
@@ -687,7 +729,19 @@ it.skipIf(process.platform !== "darwin")(
       inspectSignatureSchema
         .parse(result.value.result)
         .provenance.map(({ command }) => command.at(-1)),
-    ).toEqual(["$ARTIFACT", "$ARTIFACT", "$ARTIFACT"]);
+    ).toEqual(
+      Array.from(
+        {
+          length:
+            3 +
+            (target.format === "mach-o-universal" &&
+            target.availableArchitectures.length > 1
+              ? target.availableArchitectures.length
+              : 0),
+        },
+        () => "$ARTIFACT",
+      ),
+    );
     if (capturedPath === undefined)
       throw new Error("Expected codesign invocation");
     await expect(lstat(dirname(capturedPath))).rejects.toMatchObject({
@@ -747,5 +801,6 @@ for (const cleanupFails of [false, true])
       _tag: "AnalysisCancelledError",
       cause: reason,
     });
+    expect(resolvedAnalysisError(result.error).cause).toBe(reason);
     await expect(lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
   });

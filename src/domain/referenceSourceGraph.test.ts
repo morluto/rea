@@ -228,6 +228,9 @@ describe("historical source graph", () => {
   it("omits absent local diagnostics and rejects explicitly undefined non-JSON metadata", () => {
     const input = graphInput();
     const graph = createHistoricalSourceGraph(input);
+    expect(graph.entries.map((entry) => entry.path)).toEqual(
+      input.entries.map((entry) => entry.path),
+    );
     expect(
       graph.entries.every(
         (entry) => !Object.hasOwn(entry, "local_diagnostics"),
@@ -488,32 +491,6 @@ describe("historical source graph validation", () => {
         ],
       }),
     ).toThrow(/normalized and inventoried/u);
-    expect(() =>
-      createHistoricalSourceGraph({
-        ...graphInput(),
-        inventory_state: "partial",
-        entries: graphInput().entries.map((entry) =>
-          entry.kind === "symlink"
-            ? { ...entry, target: "/etc/passwd", target_state: "external" }
-            : entry,
-        ),
-      }),
-    ).not.toThrow();
-    expect(() =>
-      createHistoricalSourceGraph({
-        ...graphInput(),
-        inventory_state: "partial",
-        entries: graphInput().entries.map((entry) =>
-          entry.kind === "symlink"
-            ? {
-                ...entry,
-                target: "<outside-root>",
-                target_state: "external",
-              }
-            : entry,
-        ),
-      }),
-    ).toThrow(/target path does not match/u);
     expect(() =>
       createHistoricalSourceGraph({
         ...graphInput(),

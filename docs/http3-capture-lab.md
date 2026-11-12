@@ -40,7 +40,12 @@ Record the image digest, REA source revision and these dependency versions:
 - OpenSSL and cURL advertising HTTP3 and HTTP2 in `curl --version`.
 
 The verified guest used Python 3.14.7, cURL 8.22.0, ngtcp2 1.25.0 and nghttp3
-1.18.0. Other dependency profiles need verification. Back up the guest's
+1.18.0. The current requirements update certifi from 2026.7.22 to 2026.10.19
+to remove the compromised emSign trust root described in
+[GHSA-6q48-6c7w-9gw2](https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2).
+The revised dependency graph has not been rerun in that sealed guest; the
+historical verification does not cover this update. Other dependency profiles
+need verification. Back up the guest's
 `/etc/hosts` before adding `127.0.0.1 lab.test`. Reserve guest TCP/UDP loopback
 ports 18443 and 19443. These changes belong only to the disposable guest.
 

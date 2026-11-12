@@ -3,6 +3,12 @@ import type { Logger } from "pino";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import {
+  OwnedDebuggerCleanupError,
+  retainedDebuggerDiagnostics,
+  retainedDebuggerProcessIds,
+  retainedDebuggerRemediation,
+} from "../process/ownedDebuggerCleanupError.js";
 import type { McpServerHandle, RuntimeDependencies } from "./types.js";
 import { MCP_SHUTDOWN_FAILED } from "./messages.js";
 
@@ -68,6 +74,10 @@ export const createShutdown = (input: {
           failures,
           "Multiple MCP cleanup operations failed",
         );
+      // Other runtime owners can fail after engine cleanup succeeds. Preserve
+      // investigation records until every owner has confirmed completion.
+      const disposed = await session.dispose({ retainProviderDocuments: true });
+      if (!disposed.ok) throw disposed.error;
       if (!shutdownUnregistered) {
         unregisterShutdown();
         shutdownUnregistered = true;
@@ -99,10 +109,14 @@ export const reportMcpShutdownFailure = (
     "MCP shutdown rejected",
   );
   dependencies.setExitCode(1);
-  serverLogger.error(MCP_SHUTDOWN_FAILED);
+  serverLogger.error(retainedDebuggerDiagnostics(cause), MCP_SHUTDOWN_FAILED);
   dependencies.writeStderr(`${MCP_SHUTDOWN_FAILED}\n`);
   if (cause instanceof AnalysisError)
     dependencies.writeStderr(`${projectAnalysisError(cause).message}\n`);
+  // This process is about to end, so it is the last chance to name them.
+  const retainedPids = retainedDebuggerProcessIds(cause);
+  if (retainedPids.length > 0)
+    dependencies.writeStderr(`${retainedDebuggerRemediation(retainedPids)}\n`);
 };
 
 const describeShutdownFailure = (
@@ -129,6 +143,9 @@ const describeShutdownFailureNode = (
         ...(typeof code === "string" ||
         (typeof code === "number" && Number.isFinite(code))
           ? { code }
+          : {}),
+        ...(cause instanceof OwnedDebuggerCleanupError
+          ? { retained_debugger_pids: [...cause.retainedProcessIds] }
           : {}),
         ...(cause instanceof AggregateError
           ? {

@@ -8,7 +8,12 @@ import {
 } from "./environmentStateRules.js";
 import { GENERATED } from "./environmentStateWriteGenerated.js";
 import type { FieldRule } from "./environmentStateWriteRules.js";
-import { delimitedOffsets, readClock } from "./environmentStateWriteValues.js";
+import {
+  delimitedOffsets,
+  joinsAfter,
+  joinsBefore,
+  readClock,
+} from "./environmentStateWriteValues.js";
 
 /** Shorter body strings are too common to show that a field copied one. */
 export const COPY_MIN_LENGTH = 8;
@@ -52,12 +57,6 @@ export const storedMembers = (
     }),
   );
 
-/** A letter or digit, which joins a token to the text around it. */
-const WORD = /[\p{L}\p{N}]/u;
-
-const joins = (character: string | undefined): boolean =>
-  character !== undefined && WORD.test(character);
-
 /**
  * The texts that hold each token delimited, read in one pass per text: from each start after a
  * delimiter, each length a token has that a delimiter ends, rather than a search per token and text.
@@ -72,10 +71,10 @@ const holdersOf = (
   const holders = new Map<string, Set<string>>();
   for (const [field, text] of texts)
     for (let at = 0; at < text.length; at += 1) {
-      if (joins(text[at - 1])) continue;
+      if (joinsBefore(text, at)) continue;
       for (const length of lengths) {
         if (at + length > text.length) break;
-        if (joins(text[at + length])) continue;
+        if (joinsAfter(text, at + length)) continue;
         const token = text.slice(at, at + length);
         if (tokens.has(token))
           holders.set(token, (holders.get(token) ?? new Set()).add(field));

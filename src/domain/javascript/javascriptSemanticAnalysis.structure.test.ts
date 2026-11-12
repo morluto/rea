@@ -210,6 +210,7 @@ describe("JavaScript semantic analysis: loop lexical names", () => {
       ({ name, role }) => name === "value" && role === "read",
     );
     expect(reads).toHaveLength(2);
+    expect(reads[0]?.bindingId).toEqual(expect.any(String));
     expect(reads[0]?.bindingId).not.toBe(reads[1]?.bindingId);
     expect(reads[1]?.bindingId).toBe(topLevelBinding(ir, "value").bindingId);
   });
@@ -224,6 +225,7 @@ describe("JavaScript semantic analysis: loop lexical names", () => {
       ({ name, role }) => name === "value" && role === "read",
     );
     expect(reads).toHaveLength(2);
+    expect(reads[0]?.bindingId).toEqual(expect.any(String));
     expect(reads[0]?.bindingId).not.toBe(
       topLevelBinding(ir, "value").bindingId,
     );
@@ -242,11 +244,14 @@ describe("JavaScript semantic analysis: loop lexical names", () => {
     const binding = onlyBinding(ir, "value");
     const callable = ir.callables.find(({ name }) => name === "run");
     expect(binding.scopeId).toBe(callable?.bodyScopeId);
-    expect(
-      ir.references
-        .filter(({ name, role }) => name === "value" && role === "read")
-        .every(({ bindingId }) => bindingId === binding.bindingId),
-    ).toBe(true);
+    const reads = ir.references.filter(
+      ({ name, role }) => name === "value" && role === "read",
+    );
+    expect(reads).toHaveLength(2);
+    expect(reads.map(({ bindingId }) => bindingId)).toEqual([
+      binding.bindingId,
+      binding.bindingId,
+    ]);
   });
 });
 
@@ -268,6 +273,9 @@ describe("JavaScript semantic analysis: class expression lexical names", () => {
       ({ name, role }) => name === "Service" && role === "read",
     );
     expect(references).toHaveLength(2);
+    expect(references[1]?.bindingId).toBe(
+      topLevelBinding(ir, "Service").bindingId,
+    );
     expect(references[0]?.bindingId).not.toBe(references[1]?.bindingId);
     expect(references[0]?.resolution).toBe("resolved");
     const classScope = ir.scopes.find(({ kind }) => kind === "class");

@@ -1,4 +1,10 @@
+import {
+  isProcessOwnershipInspectionCancellation,
+  rethrowProcessOwnershipInspectionFailure,
+} from "../../../src/process/ProcessInspectionCancellation.js";
+import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import {
   access,
   chmod,
@@ -17,6 +23,7 @@ import { promisify } from "node:util";
 import { _electron as electron } from "playwright-core";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
@@ -27,7 +34,6 @@ import {
   createDarwinProcessRunTokenReader,
   DarwinProcessOwnershipInspectionError,
   SWIFTC_INTERRUPT,
-  swiftcCompileTimeoutRecovery,
 } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import {
@@ -176,17 +182,9 @@ it("reports an actionable missing Swift compiler without installing it", async (
     },
   });
   try {
-    await expect(
-      reader.read([
-        {
-          pid: 1,
-          parentPid: 0,
-          processGroupId: 1,
-          state: "S",
-          command: "fixture",
-        },
-      ]),
-    ).rejects.toThrow(/requires the Apple Swift compiler via xcrun/u);
+    await expect(reader.read([{ pid: 1 }])).rejects.toThrow(
+      /requires the Apple Swift compiler via xcrun/u,
+    );
   } finally {
     await reader.close();
   }
@@ -228,13 +226,13 @@ it.skipIf(process.platform === "win32")(
         stderrTruncated: true,
         killed: false,
       });
-      expect(failure.message).toContain(
-        "(compiler result: exit code 1): module cache is not writable",
+      expect(failure.message).toMatch(
+        /exit code 1.*module cache is not writable/iu,
       );
-      expect(failure.message).toContain(
-        "[diagnostics truncated at 512 bytes; this release has no runtime override]",
+      expect(failure.message).toMatch(
+        /diagnostics truncated at 512 bytes.*no runtime override/iu,
       );
-      const normalized = normalizeCaptureFailure(failure, undefined);
+      const normalized = normalizeCaptureFailure(failure);
       if (!(normalized instanceof ProcessCaptureError))
         throw new Error("Expected a normalized process capture error");
       expect(projectAnalysisError(normalized)).toMatchObject({
@@ -275,10 +273,14 @@ it.skipIf(process.platform === "win32")(
     });
     try {
       const failure = await preparationFailure(reader);
-      expect(failure.message).toContain(
-        "macOS process ownership helper compilation failed via xcrun (compiler result: timed out after 3000 ms.",
+      expect(failure.message).toMatch(
+        /ownership helper.*xcrun.*timed out after 3000 ms/iu,
       );
-      expect(failure.message).toContain(swiftcCompileTimeoutRecovery(3_000));
+      expect(failure.message).toContain("REA_SWIFTC_COMPILE_TIMEOUT_MS");
+      expect(failure.message).toContain("1..2147483647");
+      expect(failure.message).toContain("120000 ms");
+      expect(failure.message).toMatch(/restart REA/i);
+      expect(failure.message).toMatch(/next ownership-helper compile/i);
       expect(failure.message).toContain(
         "error: PCH was compiled with module cache path that differs",
       );
@@ -310,8 +312,9 @@ it.skipIf(process.platform === "win32")(
     });
     try {
       await expect(preparationFailure(reader)).resolves.toMatchObject({
-        message:
-          "macOS process ownership helper compilation failed via xcrun (compiler result: stopped by signal SIGSEGV): fatal: segmentation fault during type checking",
+        message: expect.stringMatching(
+          /xcrun.*SIGSEGV.*fatal: segmentation fault during type checking/i,
+        ),
         compilerOutcome: {
           outcome: "signaled",
           code: null,
@@ -786,10 +789,16 @@ it.skipIf(process.platform === "win32")(
         throw new Error(
           "aborted native reader compilation unexpectedly succeeded",
         );
-      expect(outcome.cause).toMatchObject({ name: "AbortError" });
-      expect(
-        normalizeCaptureFailure(outcome.cause, controller.signal),
-      ).toMatchObject({ reason: "cancelled", userCategory: "cancelled" });
+      expect(isProcessOwnershipInspectionCancellation(outcome.cause)).toBe(
+        true,
+      );
+      if (!isProcessOwnershipInspectionCancellation(outcome.cause))
+        throw new Error("Expected producer-owned inspection cancellation");
+      expect(outcome.cause.reason).toBe(controller.signal.reason);
+      expect(normalizeCaptureFailure(outcome.cause)).toMatchObject({
+        reason: "cancelled",
+        userCategory: "cancelled",
+      });
       await expect(access(firstAttempt.root)).rejects.toThrow();
 
       await reader.prepare();
@@ -813,9 +822,8 @@ const temporaryStateSchema = z.object({
 });
 
 /**
- * A compiler that behaves like swift-driver: a job in its own process group
- * writes an object under TMPDIR, SIGINT stops the job and deletes the object,
- * and any other signal leaves the job writing after the driver exits.
+ * A compiler whose detached job closes standard streams but retains fd 3,
+ * writes an object after the SIGINT-stopped driver exits, then closes fd 3.
  */
 const writeTemporaryObjectCompiler = async (directory: string) => {
   const executable = join(directory, "fake-temporary-xcrun");
@@ -828,14 +836,14 @@ const path = process.getBuiltinModule("node:path");
 const { spawn } = process.getBuiltinModule("node:child_process");
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "TemporaryDirectory."));
 const object = path.join(temporary, "ProcessRunTokenReader-1.o");
+let lifetime = "ignore";
+try { if (fs.fstatSync(3).isSocket()) lifetime = 3; } catch {}
 const job = spawn(process.execPath, ["-e",
   "setTimeout(() => { const fs = process.getBuiltinModule('node:fs'); fs.mkdirSync(" + JSON.stringify(temporary) +
   ", { recursive: true }); fs.writeFileSync(" + JSON.stringify(object) + ", 'object'); }, 300)"],
-  { detached: true, stdio: "ignore" });
+  { detached: true, stdio: ["ignore", "ignore", "ignore", lifetime] });
 job.unref();
 process.on("SIGINT", () => {
-  job.kill("SIGKILL");
-  fs.rmSync(object, { force: true });
   process.exit(130);
 });
 const output = process.argv[process.argv.indexOf("-o") + 1];
@@ -881,7 +889,11 @@ it.skipIf(process.platform === "win32")(
       expect(state.temporary.startsWith(`${state.root}/`)).toBe(true);
 
       controller.abort();
-      expect(await preparation).toMatchObject({ name: "AbortError" });
+      const cancelled = await preparation;
+      expect(isProcessOwnershipInspectionCancellation(cancelled)).toBe(true);
+      if (!isProcessOwnershipInspectionCancellation(cancelled))
+        throw new Error("Expected producer-owned inspection cancellation");
+      expect(cancelled.reason).toBe(controller.signal.reason);
       await reader.close();
       // A job that outlived the compiler would recreate the root by now.
       await new Promise((resolve) => setTimeout(resolve, 600));
@@ -922,15 +934,19 @@ it.skipIf(process.platform === "win32").each(["first", "second"] as const)(
         cancelledWaiter === "first" ? firstWaiter : secondWaiter;
       const surviving =
         cancelledWaiter === "first" ? secondWaiter : firstWaiter;
-      (cancelledWaiter === "first"
-        ? firstController
-        : secondController
-      ).abort();
+      const cancelledController =
+        cancelledWaiter === "first" ? firstController : secondController;
+      cancelledController.abort();
       const firstOutcome = await cancelled;
       expect(firstOutcome.state).toBe("rejected");
       if (firstOutcome.state !== "rejected")
         throw new Error("cancelled compilation waiter unexpectedly succeeded");
-      expect(firstOutcome.cause).toMatchObject({ name: "AbortError" });
+      expect(isProcessOwnershipInspectionCancellation(firstOutcome.cause)).toBe(
+        true,
+      );
+      if (!isProcessOwnershipInspectionCancellation(firstOutcome.cause))
+        throw new Error("Expected producer-owned inspection cancellation");
+      expect(firstOutcome.cause.reason).toBe(cancelledController.signal.reason);
       await expect(access(state.root)).resolves.toBeUndefined();
       await writeFile(fakeCompiler.releasePath, "release");
       return { state, outcome: await surviving };
@@ -1004,7 +1020,13 @@ it
         const stopped = new AbortController();
         const reason = { request: "probe reader remains open" };
         stopped.abort(reason);
-        await expect(reader.prepare(stopped.signal)).rejects.toBe(reason);
+        const cancelled: unknown = await reader
+          .prepare(stopped.signal)
+          .catch((cause: unknown) => cause);
+        expect(isProcessOwnershipInspectionCancellation(cancelled)).toBe(true);
+        if (!isProcessOwnershipInspectionCancellation(cancelled))
+          throw new Error("Expected producer-owned inspection cancellation");
+        expect(cancelled.reason).toBe(reason);
       }
       await expect(access(state.root)).rejects.toThrow();
     } finally {
@@ -1039,9 +1061,20 @@ it.skipIf(process.platform === "win32")(
       expect(outcome.state).toBe("rejected");
       if (outcome.state !== "rejected")
         throw new Error("closed reader compilation unexpectedly succeeded");
-      expect(outcome.cause).toMatchObject({ name: "AbortError" });
+      expect(isProcessOwnershipInspectionCancellation(outcome.cause)).toBe(
+        true,
+      );
+      if (!isProcessOwnershipInspectionCancellation(outcome.cause))
+        throw new Error("Expected producer-owned inspection cancellation");
+      expect(outcome.cause.reason).toBeInstanceOf(DOMException);
+      if (!(outcome.cause.reason instanceof DOMException))
+        throw new Error("Expected the reader's default abort reason");
+      expect(outcome.cause.reason.name).toBe("AbortError");
       await expect(access(state.root)).rejects.toThrow();
-      await expect(reader.prepare()).rejects.toThrow(/reader is closed/u);
+      await expect(reader.prepare()).rejects.toMatchObject({
+        _tag: "ProcessAdmissionError",
+        code: "reader_closed",
+      });
       await expect(reader.close()).resolves.toBeUndefined();
     } finally {
       await Promise.allSettled([preparation]);
@@ -1091,7 +1124,7 @@ it.skipIf(process.platform === "win32")(
       if (outcome.state !== "result") throw outcome.cause;
       expect(outcome.value).toMatchObject({
         ok: false,
-        error: { reason: "cancelled", userCategory: "cancelled" },
+        error: { _tag: "AnalysisCancelledError" },
       });
       expect(launchSpy).not.toHaveBeenCalled();
       await expect(access(compileState.root)).rejects.toThrow();
@@ -1121,18 +1154,7 @@ it.skipIf(process.platform === "win32").each(["baseline", "tokens"] as const)(
     const inspection =
       kind === "baseline"
         ? host.captureBaseline?.(controller.signal)
-        : host.runTokens?.(
-            [
-              {
-                pid: process.pid,
-                parentPid: process.ppid,
-                processGroupId: process.pid,
-                state: "S",
-                command: process.execPath,
-              },
-            ],
-            controller.signal,
-          );
+        : host.runTokens?.([{ pid: process.pid }], controller.signal);
     const baseline =
       inspection?.then(
         () => ({ state: "fulfilled" as const }),
@@ -1149,10 +1171,16 @@ it.skipIf(process.platform === "win32").each(["baseline", "tokens"] as const)(
       expect(outcome.state).toBe("rejected");
       if (outcome.state !== "rejected")
         throw new Error("aborted identity inspection unexpectedly succeeded");
-      expect(outcome.cause).toMatchObject({ name: "AbortError" });
-      expect(
-        normalizeCaptureFailure(outcome.cause, controller.signal),
-      ).toMatchObject({ reason: "cancelled", userCategory: "cancelled" });
+      expect(isProcessOwnershipInspectionCancellation(outcome.cause)).toBe(
+        true,
+      );
+      if (!isProcessOwnershipInspectionCancellation(outcome.cause))
+        throw new Error("Expected producer-owned inspection cancellation");
+      expect(outcome.cause.reason).toBe(controller.signal.reason);
+      expect(normalizeCaptureFailure(outcome.cause)).toMatchObject({
+        reason: "cancelled",
+        userCategory: "cancelled",
+      });
       await expect(access(helper.root)).resolves.toBeUndefined();
     } finally {
       if (!controller.signal.aborted) controller.abort();
@@ -1181,18 +1209,19 @@ it.skipIf(process.platform === "win32")(
     const baselineSpy = vi
       .spyOn(systemProcessOwnershipHost, "captureBaseline")
       .mockImplementation(async (signal) => {
-        await reader.identities(
-          [
-            {
-              pid: process.pid,
-              parentPid: process.ppid,
-              processGroupId: process.pid,
-              state: "S",
-              command: process.execPath,
-            },
-          ],
-          signal,
-        );
+        const processes = [
+          {
+            pid: process.pid,
+            parentPid: process.ppid,
+            processGroupId: process.pid,
+            state: "S",
+            command: process.execPath,
+          },
+        ];
+        await reader.identities(processes, signal).catch((cause: unknown) => {
+          rethrowProcessOwnershipInspectionFailure(cause);
+          throw cause;
+        });
         return [];
       });
     const launchSpy = vi.spyOn(electron, "launch");
@@ -1219,10 +1248,11 @@ it.skipIf(process.platform === "win32")(
 
       expect(outcome.state).toBe("result");
       if (outcome.state !== "result") throw outcome.cause;
-      expect(outcome.value).toMatchObject({
-        ok: false,
-        error: { reason: "cancelled", userCategory: "cancelled" },
-      });
+      expect(outcome.value.ok).toBe(false);
+      if (outcome.value.ok) throw new Error("Expected baseline cancellation");
+      expect(primaryAnalysisError(outcome.value.error)._tag).toBe(
+        "AnalysisCancelledError",
+      );
       expect(launchSpy).not.toHaveBeenCalled();
       await expect(access(helper.root)).resolves.toBeUndefined();
     } finally {
@@ -1267,7 +1297,7 @@ it.skipIf(!onDarwin)(
         timeout: 10_000,
       });
       expect(JSON.parse(stdout)).toEqual({
-        argvDecoyIgnored: true,
+        argvDecoyFailsClosed: true,
         readableEnvironmentWithoutToken: {
           runId: null,
           environmentEntryCount: 1,
@@ -1308,11 +1338,58 @@ it.skipIf(!onDarwin)(
         emptyArgv0Read: true,
         emptyEnvironmentRecordsBeforeTokenFailClosed: true,
         duplicateTokenFailsClosed: true,
+        invalidTokenEncodingFailsClosed: true,
         finalAssignmentArgumentRead: true,
         missingAppleBoundaryFailsClosed: true,
+        malformedBuffersRejected: true,
+        invalidPointerSizeFailsClosed: true,
+        incompleteRestrictedArguments: [
+          "malformed_procargs_path_padding",
+          "malformed_procargs_arguments",
+          "apple_vector_unavailable",
+        ].map((reason) => [
+          {
+            state: "unavailable",
+            reason: "platform_binary_environment_withheld",
+          },
+          {
+            state: "unavailable",
+            reason: "restricted_process_environment_withheld",
+          },
+          { state: "unavailable", reason },
+        ]),
+        signedReadableTokens: [true, true],
+        signedInvalidTokens: [
+          "duplicate_run_token",
+          "invalid_run_token_encoding",
+        ].map((reason) => [
+          { state: "unavailable", reason },
+          { state: "unavailable", reason },
+        ]),
+        malformedStages: [
+          { state: "unavailable", reason: "malformed_procargs_header" },
+          { state: "unavailable", reason: "malformed_procargs_argument_count" },
+          {
+            state: "unavailable",
+            reason: "malformed_procargs_executable_path",
+          },
+          { state: "unavailable", reason: "malformed_procargs_pointer_size" },
+          { state: "unavailable", reason: "malformed_procargs_path_padding" },
+          { state: "unavailable", reason: "malformed_procargs_arguments" },
+          { state: "unavailable", reason: "malformed_procargs_terminator" },
+          {
+            state: "unavailable",
+            reason: "malformed_procargs_trailing_entries",
+          },
+        ],
+        malformedObservation: {
+          state: "unavailable",
+          reason: "malformed_procargs",
+        },
         nonAsciiPathRead: true,
         realTokenRead: true,
-        reservedArgumentIgnored: true,
+        reservedArgumentWithRealTokenFailsClosed: true,
+        titleOverwriteFailsClosed: true,
         truncatedArgvFailsClosed: true,
         zeroArgumentsRead: true,
       });
@@ -1361,6 +1438,7 @@ it.skipIf(!onDarwin)(
         zombieLifecycleIsSeparateFromIdentity: true,
         effectiveUidComesFromNativeIdentity: true,
         nativeRelationIsSeparateFromIdentity: true,
+        nativeNameIsSeparateFromIdentity: true,
       });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -1433,13 +1511,88 @@ it.skipIf(!onDarwin)(
 );
 
 it.skipIf(!onDarwin)(
+  "keeps a long title overwrite unknown when it hides the child's token",
+  async () => {
+    const host = createSystemProcessOwnershipHost("darwin");
+    const children: ChildProcess[] = [];
+    try {
+      for (const length of [256, 384, 512, 1024]) {
+        const child = spawn(
+          process.execPath,
+          [
+            "-e",
+            `if(process.env.PROBE_TITLE!=='-') process.title=process.env.PROBE_TITLE;process.send({ready:true,stillOwned:process.env.REA_PROCESS_RUN_ID==='probe-owned'});setInterval(()=>{},1000)`,
+            "arg1",
+            "arg2",
+            "arg3",
+          ],
+          {
+            env: {
+              REA_PROCESS_RUN_ID: "probe-owned",
+              PROBE_TITLE: "n".repeat(length),
+              PATH: process.env.PATH,
+            },
+            stdio: ["ignore", "ignore", "ignore", "ipc"],
+          },
+        );
+        children.push(child);
+        const message = await waitForChildReadiness(child);
+        expect(message).toEqual({ ready: true, stillOwned: true });
+        if (child.pid === undefined)
+          throw new Error("test child did not receive a PID");
+        const entry = (await host.listProcesses()).find(
+          ({ pid }) => pid === child.pid,
+        );
+        if (
+          entry === undefined ||
+          host.processIdentities === undefined ||
+          host.runTokens === undefined
+        )
+          throw new Error("native child inspection unavailable");
+        const before = (await host.processIdentities([entry])).get(child.pid);
+        const token = (await host.runTokens([entry])).get(child.pid);
+        const after = (await host.processIdentities([entry])).get(child.pid);
+        expect(before).toMatchObject({
+          state: "readable",
+          lifecycle: { state: "observed", lifecycle: "non-zombie" },
+        });
+        if (before?.state !== "readable")
+          throw new Error("child identity unavailable");
+        expect(after).toMatchObject({
+          state: "readable",
+          identity: before.identity,
+          lifecycle: { state: "observed", lifecycle: "non-zombie" },
+        });
+        if (token?.state === "readable") {
+          expect(token.runId).toBe("probe-owned");
+        } else {
+          expect(token).toEqual({
+            state: "unavailable",
+            reason: "ambiguous_environment_boundary",
+          });
+        }
+      }
+    } finally {
+      try {
+        await Promise.all(children.map(stopNodeChild));
+      } finally {
+        await host.close?.();
+      }
+    }
+  },
+  150_000,
+);
+
+it.skipIf(!onDarwin)(
   "reads owned tokens across executable padding and distinguishes a real empty environment",
   async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-process-token-padding-"));
     const host = createSystemProcessOwnershipHost("darwin");
     const children: Awaited<ReturnType<typeof startNodeChild>>[] = [];
     try {
-      const executables = [join(root, "n"), join(root, "node")];
+      const executables = Array.from({ length: 8 }, (_, index) =>
+        join(root, "n".repeat(index + 1)),
+      );
       for (const executable of executables)
         await symlink(process.execPath, executable);
       for (let index = 0; index < executables.length; index += 1) {
@@ -1465,8 +1618,10 @@ it.skipIf(!onDarwin)(
       });
       const observations = await host.runTokens?.(entries);
       expect(children.map(({ pid }) => observations?.get(pid))).toEqual([
-        { state: "readable", runId: "synthetic-padding-0" },
-        { state: "readable", runId: "synthetic-padding-1" },
+        ...executables.map((_, index) => ({
+          state: "readable",
+          runId: `synthetic-padding-${String(index)}`,
+        })),
         { state: "readable" },
       ]);
     } finally {
@@ -1505,6 +1660,36 @@ const stopNodeChild = async (child: ChildProcess) => {
   child.kill("SIGKILL");
   await exited;
 };
+
+const waitForChildReadiness = async (child: ChildProcess): Promise<unknown> => {
+  const listeners = new AbortController();
+  const message = once(child, "message", { signal: listeners.signal });
+  const exit = once(child, "exit", { signal: listeners.signal });
+  try {
+    await awaitAcknowledgement(
+      message.then(() => undefined),
+      exit,
+      "title-mutating child readiness",
+    );
+    return (await message)[0];
+  } finally {
+    listeners.abort();
+  }
+};
+
+it("stops a child that never acknowledges readiness", async () => {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  try {
+    await expect(waitForChildReadiness(child)).rejects.toThrow(
+      "title-mutating child readiness was not acknowledged before the gate deadline",
+    );
+  } finally {
+    await stopNodeChild(child);
+  }
+  expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+});
 
 it.skipIf(process.platform === "win32").each([
   {
@@ -1548,7 +1733,7 @@ it.skipIf(process.platform === "win32").each([
         exit_code: 7,
         signal: null,
       });
-      const normalized = normalizeCaptureFailure(failure, undefined);
+      const normalized = normalizeCaptureFailure(failure);
       if (!(normalized instanceof ProcessCaptureError))
         throw new Error("Expected capture failure");
       expect(normalized.capturedOutput).toEqual(failure.capturedOutput);

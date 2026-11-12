@@ -44,13 +44,18 @@ it.each(["late", "initial", "destroyed", "final-malformed", "out-of-scope"])(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: mainUrl },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: mainUrl,
+                },
                 childFrames:
                   reads > 1 || kind === "initial"
                     ? [
                         {
                           frame: {
                             id: "child",
+                            loaderId: "loader-child",
                             parentId: "frame-main",
                             url:
                               kind === "out-of-scope"
@@ -66,6 +71,7 @@ it.each(["late", "initial", "destroyed", "final-malformed", "out-of-scope"])(
                         {
                           frame: {
                             id: "child",
+                            loaderId: "loader-child",
                             parentId: "frame-main",
                             url: childUrl,
                           },
@@ -168,17 +174,27 @@ it.each(["reordered", "parent-changed", "path-changed"])(
         const first = {
           frame: {
             id: "first",
+            loaderId: "loader-first",
             parentId:
               reads > 2 && kind === "parent-changed" ? "second" : "frame-main",
             url: reads > 2 && kind === "path-changed" ? app : child,
           },
         };
         const second = {
-          frame: { id: "second", parentId: "frame-main", url: app },
+          frame: {
+            id: "second",
+            loaderId: "loader-second",
+            parentId: "frame-main",
+            url: app,
+          },
         };
         return {
           frameTree: {
-            frame: { id: "frame-main", url: main },
+            frame: {
+              id: "frame-main",
+              loaderId: "loader-frame-main",
+              url: main,
+            },
             childFrames: reads > 2 ? [second, first] : [first, second],
           },
         };
@@ -223,11 +239,16 @@ it.each([
       method === "Page.getFrameTree"
         ? {
             frameTree: {
-              frame: { id: "frame-main", url: main },
+              frame: { id: "frame-main", loaderId: "main", url: main },
               childFrames:
                 reads === 1 || kind === "same-document"
                   ? ["first", "second"].map((id) => ({
-                      frame: { id, parentId: "frame-main", url: child },
+                      frame: {
+                        id,
+                        loaderId: `loader-${id}`,
+                        parentId: "frame-main",
+                        url: child,
+                      },
                     }))
                   : [],
             },
@@ -292,6 +313,7 @@ it.each([
                   : {
                       frame: {
                         id: "first",
+                        loaderId: "loader-first",
                         parentId: "frame-main",
                         url: "https://foreign.test/",
                       },
@@ -365,11 +387,16 @@ it("excludes srcdoc scripts before source reads while retaining declared labels 
       method === "Page.getFrameTree"
         ? {
             frameTree: {
-              frame: { id: "frame-main", url: mainUrl },
+              frame: {
+                id: "frame-main",
+                loaderId: "loader-frame-main",
+                url: mainUrl,
+              },
               childFrames: [
                 {
                   frame: {
                     id: "srcdoc",
+                    loaderId: "loader-srcdoc",
                     parentId: "frame-main",
                     url: "about:srcdoc",
                   },
@@ -473,7 +500,6 @@ describe("CdpElectronProvider target access", () => {
       { signal: controller.signal },
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected late cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.partialObservation).toMatchObject({
@@ -731,7 +757,11 @@ describe("CdpElectronProvider frame capture", () => {
           command.method === "Page.getFrameTree"
             ? {
                 frameTree: {
-                  frame: { id: "frame-main", url: main },
+                  frame: {
+                    id: "frame-main",
+                    loaderId: "loader-frame-main",
+                    url: main,
+                  },
                   childFrames: [
                     {
                       frame: {
@@ -808,36 +838,43 @@ describe("CdpElectronProvider malformed source replies", () => {
   );
 });
 
+const inspectInventoryReply = async (
+  method: string,
+  reply: (fileUrl: string) => Readonly<Record<string, unknown>>,
+) => {
+  const root = await electronFixture();
+  const fileUrl = pathToFileURL(join(root, "index.html")).href;
+  const browser = await startFakeCdpBrowser({
+    electronFileUrl: fileUrl,
+    commandResult: (command) =>
+      command.method === method ? reply(fileUrl) : undefined,
+  });
+  browsers.push(browser);
+  const result = await new CdpElectronProvider().inspectPage(
+    inspectElectronPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      target_id: "electron-page",
+      observation_ms: 0,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+
 describe("CdpElectronProvider malformed inventory replies", () => {
-  const inspectWith = async (
-    method: string,
-    reply: (fileUrl: string) => Readonly<Record<string, unknown>>,
-  ) => {
-    const root = await electronFixture();
-    const fileUrl = pathToFileURL(join(root, "index.html")).href;
-    const browser = await startFakeCdpBrowser({
-      electronFileUrl: fileUrl,
-      commandResult: (command) =>
-        command.method === method ? reply(fileUrl) : undefined,
-    });
-    browsers.push(browser);
-    const result = await new CdpElectronProvider().inspectPage(
-      inspectElectronPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        target_id: "electron-page",
-        observation_ms: 0,
+  it("keeps documents unknown when the DOM string table is missing", async () => {
+    const inspected = await inspectInventoryReply(
+      "DOMSnapshot.captureSnapshot",
+      () => ({
+        documents: [{ documentURL: 0, nodes: { nodeType: [] } }],
       }),
     );
-    if (!result.ok) throw result.error;
-    return result.value;
-  };
 
-  it("keeps documents unknown when the DOM string table is missing", async () => {
-    const inspected = await inspectWith("DOMSnapshot.captureSnapshot", () => ({
-      documents: [{ documentURL: 0, nodes: { nodeType: [] } }],
-    }));
-
-    expect(inspected.dom).toEqual({ total_nodes: 0, nodes: [] });
+    expect(inspected.dom).toEqual({
+      total_nodes: 0,
+      node_value_length_unit: "utf8-bytes",
+      nodes: [],
+    });
     expect(inspected.completeness.unavailable_sections).toContain("dom");
     expect(inspected.completeness.excluded).toContainEqual({
       section: "dom",
@@ -867,40 +904,43 @@ describe("CdpElectronProvider malformed inventory replies", () => {
   ] as const)(
     "retains valid workers while reporting %s before target policy",
     async (_kind, malformed) => {
-      const inspected = await inspectWith("Target.getTargets", (fileUrl) => ({
-        targetInfos: [
-          {
-            targetId: "selected-worker",
-            type: "worker",
-            url: fileUrl,
-            attached: false,
-            openerId: "electron-page",
-          },
-          {
-            targetId: "malformed-worker",
-            type: "worker",
-            url: fileUrl,
-            attached: false,
-            openerId: "foreign-page",
-            ...malformed,
-          },
-          {
-            targetId: "foreign-worker",
-            type: "shared_worker",
-            url: fileUrl,
-            attached: true,
-            openerId: "foreign-page",
-          },
-          {
-            targetId: "unattributed-worker",
-            type: "service_worker",
-            url: fileUrl,
-            attached: false,
-          },
-          // Non-worker rows do not need worker identity or relationship fields.
-          { type: "page", targetId: 7, openerId: null },
-        ],
-      }));
+      const inspected = await inspectInventoryReply(
+        "Target.getTargets",
+        (fileUrl) => ({
+          targetInfos: [
+            {
+              targetId: "selected-worker",
+              type: "worker",
+              url: fileUrl,
+              attached: false,
+              openerId: "electron-page",
+            },
+            {
+              targetId: "malformed-worker",
+              type: "worker",
+              url: fileUrl,
+              attached: false,
+              openerId: "foreign-page",
+              ...malformed,
+            },
+            {
+              targetId: "foreign-worker",
+              type: "shared_worker",
+              url: fileUrl,
+              attached: true,
+              openerId: "foreign-page",
+            },
+            {
+              targetId: "unattributed-worker",
+              type: "service_worker",
+              url: fileUrl,
+              attached: false,
+            },
+            // Non-worker rows do not need worker identity or relationship fields.
+            { type: "page", targetId: 7, openerId: null },
+          ],
+        }),
+      );
       expect(inspected.workers).toEqual([
         expect.objectContaining({
           target_id: "selected-worker",
@@ -942,14 +982,17 @@ describe("CdpElectronProvider malformed inventory replies", () => {
       "resources",
       "Page.getResourceTree",
       (fileUrl: string) => ({
-        frameTree: { frame: { id: "main", url: fileUrl }, resources: null },
+        frameTree: {
+          frame: { id: "main", loaderId: "loader-main", url: fileUrl },
+          resources: null,
+        },
       }),
     ],
     ["workers", "Target.getTargets", () => ({ targetInfos: null })],
   ] as const)(
     "keeps a malformed %s inventory incomplete (%s)",
     async (section, method, reply) => {
-      const inspected = await inspectWith(method, reply);
+      const inspected = await inspectInventoryReply(method, reply);
       expect(inspected.completeness.status).not.toBe("complete_within_window");
       expect(inspected.completeness.excluded).toContainEqual(
         expect.objectContaining({
@@ -1110,7 +1153,11 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: main },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: main,
+                },
                 childFrames:
                   phase === "refreshed" && reads === 1
                     ? []
@@ -1118,6 +1165,7 @@ it.each(
                         {
                           frame: {
                             id: "child",
+                            loaderId: "loader-child",
                             url: child,
                             ...(parent === "missing"
                               ? {}
@@ -1127,6 +1175,7 @@ it.each(
                             {
                               frame: {
                                 id: "grandchild",
+                                loaderId: "loader-grandchild",
                                 parentId: "child",
                                 url: child,
                               },
@@ -1231,7 +1280,11 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: main },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: main,
+                },
                 childFrames:
                   phase === "refreshed" && reads === 1
                     ? []
@@ -1239,6 +1292,7 @@ it.each(
                         {
                           frame: {
                             id: "parent",
+                            loaderId: "loader-parent",
                             parentId: "frame-main",
                             url: parentUrl,
                           },
@@ -1246,6 +1300,7 @@ it.each(
                             {
                               frame: {
                                 id: "local",
+                                loaderId: "loader-local",
                                 parentId: "parent",
                                 url: child,
                               },
@@ -1347,10 +1402,19 @@ it.each(["about:blank", "https://foreign.invalid/root"])(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: rootUrl },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: rootUrl,
+                },
                 childFrames: [
                   {
-                    frame: { id: "local", parentId: "frame-main", url: local },
+                    frame: {
+                      id: "local",
+                      loaderId: "loader-local",
+                      parentId: "frame-main",
+                      url: local,
+                    },
                   },
                 ],
               },
@@ -1405,7 +1469,7 @@ const replayFrameTree = (
   reads: number,
 ) => ({
   frameTree: {
-    frame: { id: "frame-main", url: main },
+    frame: { id: "frame-main", loaderId: "loader-frame-main", url: main },
     childFrames:
       reads === 1 || (kind === "during-tree" && reads === 2)
         ? [

@@ -231,6 +231,15 @@ describe("DOM metadata document base URLs", () => {
 });
 
 describe("prefixed XHTML form destinations", () => {
+  it("resolves a prefixed base href against the document, not itself", () => {
+    const value = prefixedXhtmlSnapshot();
+    value.strings[1] = `${origin}/root/assets/`;
+    value.strings[13] = "assets/";
+    const step = captureDom(value, new Set([origin]), input).next();
+    if (!step.done) throw new Error("Unexpected SVG identity query");
+    expect(step.value.urls[0]?.url).toBe(`${origin}/root/assets/`);
+  });
+
   it("resolves empty actions to the document URL", () => {
     const result = captureDom(
       prefixedXhtmlSnapshot(),
@@ -318,7 +327,7 @@ describe("empty form destinations with a document base URL", () => {
     nodes.attributes[2] = [href, guide, href, value.strings.length - 1];
     const result = capture(value);
     expect(result.nodes[2]?.attribute_names).toEqual(["href"]);
-    expect(result.urls.map(({ url }) => url)).toContain(
+    expect(result.urls.find(({ node_index }) => node_index === 2)?.url).toBe(
       `${origin}/screens/guide`,
     );
     expect(result.urls.map(({ url }) => url)).not.toContain(later);
@@ -330,24 +339,6 @@ describe("empty form destinations with a document base URL", () => {
     value.strings[6] = "DIV";
     value.strings[15] = "";
     expect(capture(value).urls[3]?.url).toBe(baseUrl);
-  });
-});
-
-describe("repeated DOM attribute names", () => {
-  it("keeps the first declaration for attribute names and destination URLs", () => {
-    const value = snapshot(undefined, "assets/", documentUrl, "guide");
-    const hrefUpperIndex = value.strings.length;
-    const secondGuideIndex = hrefUpperIndex + 1;
-    value.strings.push("href", "second-guide");
-    const docNodes = value.documents[0]?.nodes;
-    if (docNodes !== undefined) {
-      docNodes.attributes[2] = [8, 10, hrefUpperIndex, secondGuideIndex];
-    }
-    const result = capture(value);
-    const linkNode = result.nodes[2];
-    expect(linkNode?.attribute_names).toEqual(["href"]);
-    const linkUrl = result.urls.find(({ node_index }) => node_index === 2);
-    expect(linkUrl?.url).toBe(`${origin}/screens/guide`);
   });
 });
 
@@ -938,6 +929,65 @@ const approvedHref = (
   attribute: "href",
   url,
   destination_scope: "approved",
+});
+
+describe("XHTML link agent hints", () => {
+  it.each([
+    ["html", "link", "xmlns"],
+    ["h:html", "h:link", "xmlns:h"],
+  ])("recognizes equivalent %s namespaces", (root, link, namespace) => {
+    const result = captureSvg(
+      svgDocument([
+        { name: root, parent: 0, attributes: [[namespace, XHTML_NAMESPACE]] },
+        {
+          name: link,
+          parent: 1,
+          attributes: [
+            ["href", "/agent"],
+            ["rel", "mcp model-context ai-plugin service-desc"],
+          ],
+        },
+      ]),
+    );
+    expect(result.agentHints).toEqual(
+      ["mcp", "model-context", "ai-plugin", "service-desc"].map(
+        (declaration) => ({
+          mechanism: "dom_link_rel",
+          declaration,
+          url: `${origin}/agent`,
+          trust: "page-declared-untrusted",
+        }),
+      ),
+    );
+  });
+
+  it("does not treat foreign or differently cased XML elements as XHTML links", () => {
+    const result = captureSvg(
+      svgDocument([
+        xhtmlRoot([
+          ["xmlns", XHTML_NAMESPACE],
+          ["xmlns:f", "urn:foreign"],
+        ]),
+        {
+          name: "f:link",
+          parent: 1,
+          attributes: [
+            ["rel", "mcp"],
+            ["href", "/agent"],
+          ],
+        },
+        {
+          name: "LINK",
+          parent: 1,
+          attributes: [
+            ["rel", "mcp"],
+            ["href", "/agent"],
+          ],
+        },
+      ]),
+    );
+    expect(result.agentHints).toEqual([]);
+  });
 });
 
 describe("XML SVG roots and namespace scope restoration", () => {

@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { prepareCliProcessEnvironment } from "./lib/cli-process-environment.mjs";
+import { unsupportedRuntimeMessage } from "./lib/runtime-admission.mjs";
 
 // Route production MCP before importing Incur. Incur owns registration helpers
 // such as `mcp add`, while the MCP runtime serves the tool catalog over stdio
@@ -13,6 +14,19 @@ const args = process.argv.slice(2);
 const { default: packageJson } = await import("../package.json", {
   with: { type: "json" },
 });
+// Admit the runtime before the first compiled import. Compiled modules import
+// Node APIs that absent releases only reject while linking, so an unsupported
+// release previously surfaced as a module error from every command, including
+// `--version` and `doctor`. `process.exit` is required here: setting exitCode
+// would still reach the imports below.
+const unsupportedRuntime = unsupportedRuntimeMessage(
+  packageJson.engines?.node,
+  process.versions.node,
+);
+if (unsupportedRuntime !== undefined) {
+  process.stderr.write(`${unsupportedRuntime}\n`);
+  process.exit(1);
+}
 prepareCliProcessEnvironment(
   process.env,
   process.platform,
@@ -68,15 +82,27 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   await runMcpHttpEntrypoint(args.slice(1));
 } else if (isMcpDoctorMode) {
   guardClosedStdout();
-  const { runProductionMcpDoctorCli } =
-    await import("../dist/cli-runtime/mcpDoctor.js");
-  const result = await runProductionMcpDoctorCli(doctorArguments, {
-    dispatcherPath: fileURLToPath(import.meta.url),
-    packageRoot,
-    stdoutIsTerminal: process.stdout.isTTY === true,
-  });
-  writeStdout(result.output);
-  process.exitCode = result.exitCode;
+  // Doctor runs outside Incur, so handle its global timing flag here. Keep a
+  // token consumed by --format as a value, even when it looks like a flag.
+  const { arguments: doctorCliArguments, enabled: timingRequested } =
+    builtinArguments.splitCliTimingArguments(doctorArguments);
+  const started = performance.now();
+  try {
+    const { runProductionMcpDoctorCli } =
+      await import("../dist/cli-runtime/mcpDoctor.js");
+    const result = await runProductionMcpDoctorCli(doctorCliArguments, {
+      dispatcherPath: fileURLToPath(import.meta.url),
+      packageRoot,
+      stdoutIsTerminal: process.stdout.isTTY === true,
+    });
+    writeStdout(result.output);
+    process.exitCode = result.exitCode;
+  } finally {
+    if (timingRequested)
+      process.stderr.write(
+        `${JSON.stringify({ rea_timings: { version: 1, command_ms: Math.round(performance.now() - started) } })}\n`,
+      );
+  }
 } else {
   const {
     cliConfigurationError,
@@ -109,7 +135,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   );
   const configurationError = cliConfigurationError(process.env);
   let dispatchFailure;
-  let closeCliJavaScriptResources;
+  let closeCliResources;
   // Incur can exit from the callback below before this function returns.
   // That callback owns the status, including a closed-pipe exit of 141.
   let exiting = false;
@@ -129,9 +155,39 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
       process.exitCode = 1;
     } else if (versionOutput !== undefined) {
       writeStdout(versionOutput);
+    } else if (
+      !isShellCompletion &&
+      builtinArguments.isProjectScopedAmpRegistration(cliArgs)
+    ) {
+      // Amp has global settings only. Share the parsed scope fact with the
+      // registration workflow and refuse before loading the command runtime.
+      //
+      // A caller that asked for a structured document gets the refusal in
+      // that document, through the same pre-execution error renderer the
+      // output-argument branch uses; anything else keeps the plain message.
+      const refusalMessage =
+        "Amp does not support project-scoped registration. Run without --no-global to register Amp globally, or select a client with project settings. No client settings were changed.";
+      const refusalFormat = outputOptions.format;
+      if (
+        refusalFormat === "json" ||
+        refusalFormat === "jsonl" ||
+        refusalFormat === "yaml"
+      ) {
+        writeStdout(
+          renderCliOutputArgumentError({
+            ok: false,
+            format: refusalFormat,
+            code: "AMP_PROJECT_SCOPE_UNSUPPORTED",
+            message: refusalMessage,
+          }),
+        );
+      } else {
+        process.stderr.write(`${refusalMessage}\n`);
+      }
+      process.exitCode = 1;
     } else {
       const cliRuntime = await import("../dist/cli-runtime/cli.js");
-      closeCliJavaScriptResources = cliRuntime.closeCliJavaScriptResources;
+      closeCliResources = cliRuntime.closeCliResources;
       const { createCli } = cliRuntime;
       const { createCliResultOutput } =
         await import("../dist/cli-runtime/cliResultOutput.js");
@@ -155,17 +211,17 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
           exit: (code) => {
             exiting = true;
             void (async () => {
-              let status = code;
+              let status = typeof code === "number" ? code : 0;
               try {
-                await closeCliJavaScriptResources();
+                await closeCliResources();
               } catch (cleanup) {
                 process.stderr.write(
-                  `Failed to close the JavaScript analysis worker: ${cleanupFailureText(cleanup)}\n`,
+                  `Failed to close CLI resources: ${cleanupFailureText(cleanup)}\n`,
                 );
                 if (status === 0) status = 1;
               }
               try {
-                await resultOutput?.finishSdkOutput(code);
+                await resultOutput?.finishSdkOutput(status);
               } catch (cause) {
                 if (!stdoutClosed)
                   process.stderr.write(`${cleanupFailureText(cause)}\n`);
@@ -206,7 +262,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     // Serve and output rendering can throw after a worker is parked. Stop it
     // on that path too, and keep the dispatch failure when both fail.
     try {
-      await closeCliJavaScriptResources?.();
+      await closeCliResources?.();
     } catch (cleanup) {
       // The exit callback reports this same shared failure and then exits.
       if (!exiting) {

@@ -432,11 +432,15 @@ it.each([
           expect(result.error).toMatchObject({ timeoutMs: 500 });
           // Each waiter keeps the producer's setting and recovery.
           expect(projectAnalysisError(result.error)).toMatchObject({
-            message:
-              "kuna strings did not finish within REA_KUNA_PROJECT_TIMEOUT_MS (500 ms).",
-            remediation: {
-              action:
-                "Raise REA_KUNA_PROJECT_TIMEOUT_MS in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.",
+            code: "provider_timeout",
+            details: {
+              timeout_ms: 500,
+              limit: {
+                setting: "kuna.project_timeout_ms",
+                effective_value: 500,
+                update_mode: "runtime",
+                pending_restart: false,
+              },
             },
           });
         }

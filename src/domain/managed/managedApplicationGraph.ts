@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import type { Evidence } from "../evidence.js";
+import { evidenceInputSchema } from "../evidenceReference.js";
+import { getEvidenceInputContract } from "../evidenceInputContract.js";
 import {
   createJavaScriptApplicationGraph,
   javascriptApplicationGraphSchema,
@@ -44,69 +46,113 @@ import { err, ok, type Result } from "../result.js";
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const textSchema = z.string().min(1);
 
-/** Authenticated managed Evidence records projected into the application graph. */
-const managedGraphRequestSchema = z
-  .strictObject({
-    managed_artifact: z.unknown().optional(),
-    managed_members: z.unknown().optional(),
-    managed_native_boundaries: z.unknown().optional(),
-  })
+const managedApplicationGraphReferenceShape = z.strictObject({
+  managed_artifact: evidenceInputSchema.optional(),
+  managed_members: evidenceInputSchema.optional(),
+  managed_native_boundaries: evidenceInputSchema.optional(),
+});
+
+/** Inline or exact retained Evidence sources for managed application graph projection. */
+export const managedApplicationGraphReferenceInputSchema = z
+  .union([
+    managedApplicationGraphReferenceShape.extend({
+      managed_artifact: evidenceInputSchema,
+    }),
+    managedApplicationGraphReferenceShape.extend({
+      managed_members: evidenceInputSchema,
+    }),
+    managedApplicationGraphReferenceShape.extend({
+      managed_native_boundaries: evidenceInputSchema,
+    }),
+  ])
   .superRefine((input, context) => {
-    if (
-      input.managed_artifact === undefined &&
-      input.managed_members === undefined &&
-      input.managed_native_boundaries === undefined
-    )
+    const sources = [
+      input.managed_artifact,
+      input.managed_members,
+      input.managed_native_boundaries,
+    ].filter((source) => source !== undefined);
+    if (sources.length === 0)
       context.addIssue({
         code: "custom",
-        message:
-          "At least one managed artifact, member, or native-boundary Evidence record is required",
+        message: "Provide at least one managed Evidence source",
+      });
+    // The derived frame borrows unadmitted payloads. Their owner reports a
+    // malformed carrier rather than mistaking its missing ID for duplication.
+    if (sources.some((source) => typeof source?.evidence_id !== "string"))
+      return;
+    const ids = sources.map((source) => source.evidence_id);
+    if (new Set(ids).size !== ids.length)
+      context.addIssue({
+        code: "custom",
+        message: "Managed application graph Evidence IDs must be unique",
       });
   });
 
+/** Borrow source payloads until the managed owner authenticates each role. */
+const managedGraphRequestSchema = getEvidenceInputContract(
+  managedApplicationGraphReferenceInputSchema,
+).frameSchema;
+
 /** Managed-code projection result containing a validated application graph. */
-export const managedApplicationGraphResultSchema = z.strictObject({
-  projection_id: prefixedDigestSchema("magp"),
-  root_artifact_sha256: digestSchema,
-  source_evidence: z.strictObject({
-    managed_artifact_evidence_id: evidenceIdSchema.nullable(),
-    managed_members_evidence_id: evidenceIdSchema.nullable(),
-    managed_native_boundaries_evidence_id: evidenceIdSchema.nullable(),
-  }),
-  summary: z.strictObject({
-    graph_nodes: z.int().min(0),
-    graph_edges: z.int().min(0),
-    assemblies: z.int().min(0),
-    modules: z.int().min(0),
-    types: z.int().min(0),
-    methods: z.int().min(0),
-    fields: z.int().min(0),
-    pinvoke_imports: z.int().min(0),
-    native_implementations: z.int().min(0),
-    // Graphs projected before call and field-access edges existed omit these
-    // counters; null means those relations were not projected, not zero.
-    calls: z
-      .int()
-      .min(0)
-      .nullable()
-      .default(null)
-      .describe("calls edges; null for graphs projected before calls edges"),
-    field_accesses: z
-      .int()
-      .min(0)
-      .nullable()
-      .default(null)
-      .describe(
-        "accesses edges; null for graphs projected before accesses edges",
-      ),
-  }),
-  graph: javascriptApplicationGraphSchema,
-  coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial"]),
-  }),
-  evidence_links: z.array(evidenceIdSchema).min(1).max(3),
-  limitations: z.array(textSchema),
-});
+export const managedApplicationGraphResultSchema = z
+  .strictObject({
+    projection_id: prefixedDigestSchema("magp"),
+    root_artifact_sha256: digestSchema,
+    source_evidence: z.strictObject({
+      managed_artifact_evidence_id: evidenceIdSchema.nullable(),
+      managed_members_evidence_id: evidenceIdSchema.nullable(),
+      managed_native_boundaries_evidence_id: evidenceIdSchema.nullable(),
+    }),
+    summary: z.strictObject({
+      graph_nodes: z.int().min(0),
+      graph_edges: z.int().min(0),
+      assemblies: z.int().min(0),
+      modules: z.int().min(0),
+      types: z.int().min(0),
+      methods: z.int().min(0),
+      fields: z.int().min(0),
+      pinvoke_imports: z.int().min(0),
+      native_implementations: z.int().min(0),
+      // Graphs projected before call and field-access edges existed omit these
+      // counters; null means those relations were not projected, not zero.
+      calls: z
+        .int()
+        .min(0)
+        .nullable()
+        .default(null)
+        .describe("calls edges; null for graphs projected before calls edges"),
+      field_accesses: z
+        .int()
+        .min(0)
+        .nullable()
+        .default(null)
+        .describe(
+          "accesses edges; null for graphs projected before accesses edges",
+        ),
+    }),
+    graph: javascriptApplicationGraphSchema,
+    coverage: z.strictObject({
+      status: z.enum(["complete-within-inputs", "partial"]),
+    }),
+    evidence_links: z.array(evidenceIdSchema).min(1).max(3),
+    limitations: z.array(textSchema),
+  })
+  .superRefine((result, context) => {
+    const [rootId] = result.graph.root_node_ids;
+    const root = result.graph.nodes.find(({ node_id }) => node_id === rootId);
+    if (
+      result.graph.root_node_ids.length !== 1 ||
+      root?.kind !== "artifact" ||
+      root.identity.strategy !== "content-digest" ||
+      root.identity.sha256 !== result.root_artifact_sha256
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["root_artifact_sha256"],
+        message:
+          "Managed graph root must identify the declared root artifact SHA-256.",
+      });
+  });
 
 export type ManagedApplicationGraphResult = z.infer<
   typeof managedApplicationGraphResultSchema
@@ -300,6 +346,17 @@ export const readManagedGraphProjection = (
 
 const OPERATION = "project_managed_application_graph";
 
+/** Validated graph input still had no artifact source. */
+class ManagedGraphSourceError extends Error {
+  readonly _tag = "ManagedGraphSourceError";
+  readonly code = "missing_source" as const;
+
+  constructor() {
+    super("missing_source");
+    this.name = "ManagedGraphSourceError";
+  }
+}
+
 const chooseArtifact = (
   parsed: ParsedManagedGraphInput,
 ): { readonly sha256: string; readonly path: string } => {
@@ -307,8 +364,7 @@ const chooseArtifact = (
     parsed.artifact?.result ??
     parsed.members?.result ??
     parsed.boundaries?.result;
-  if (result === undefined)
-    throw new Error("Validated managed graph projection has no source");
+  if (result === undefined) throw new ManagedGraphSourceError();
   return { sha256: result.artifact.sha256, path: result.artifact.path };
 };
 

@@ -1,4 +1,8 @@
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import {
+  chromiumLaunchRemediation,
+  chromiumSandboxEnabled,
+} from "./ChromiumSandbox.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
@@ -851,6 +855,7 @@ export const openPlaywrightScenarioBrowser = async (
     readonly retainCleanup?: (lease: AnalysisCleanupLease) => void;
   } = {},
 ): Promise<OpenedScenarioBrowser> => {
+  throwIfScenarioCancelled(options.signal);
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
     options.launcher ?? (await import("playwright-core")).chromium;
@@ -865,12 +870,17 @@ export const openPlaywrightScenarioBrowser = async (
       commandTimeoutMs,
     );
 
+  throwIfScenarioCancelled(options.signal);
   const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
   let context: BrowserContext;
   const executablePath = scenario.browser.executable_path;
   const headless = scenario.browser.headless;
+  const chromiumSandbox = chromiumSandboxEnabled(environment);
+  let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
+    throwIfScenarioCancelled(options.signal);
+    launchStarted = true;
     context = await withScenarioCommandDeadline(
       () =>
         launcher.launchPersistentContext(profilePath, {
@@ -892,26 +902,46 @@ export const openPlaywrightScenarioBrowser = async (
           handleSIGINT: false,
           handleSIGTERM: false,
           timeout: commandTimeoutMs,
+          chromiumSandbox,
           // Termux's Chromium cannot create its renderer process through Android's
           // executable boundary. Single-process mode keeps the browser and page in
           // the Termux-launched process so scenario navigation remains available.
-          args:
-            process.platform === "android"
-              ? ["--no-sandbox", "--single-process"]
-              : [],
+          args: process.platform === "android" ? ["--single-process"] : [],
         }),
       commandTimeoutMs,
       "launch",
+      undefined,
+      executablePath,
     );
   } catch (cause: unknown) {
     const cleanup = new AnalysisCleanupLease(async () => {
       await releaseLateScenarioCommand(cause);
       await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
     }, ["browser_profile"]);
+    // Preserve Playwright's launch diagnostics before the generic provider
+    // boundary discards an untyped error. Keep the original cause for late
+    // command cleanup and leave typed timeout/cancellation failures intact.
+    const primary =
+      launchStarted && !(cause instanceof AnalysisError)
+        ? new ProviderAdapterError(
+            PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
+            OPERATION,
+            {
+              cause,
+              userMessage: "The selected browser could not start.",
+              remediationAction: chromiumLaunchRemediation(chromiumSandbox),
+              diagnostics: {
+                executable_path: executablePath,
+                startup_error:
+                  cause instanceof Error ? cause.message : String(cause),
+              },
+            },
+          )
+        : cause;
     try {
-      return await failBrowserScenarioOperation(cleanup, cause);
+      return await failBrowserScenarioOperation(cleanup, primary);
     } catch (failure: unknown) {
-      if (failure !== cause) options.retainCleanup?.(cleanup);
+      if (failure !== primary) options.retainCleanup?.(cleanup);
       throw failure;
     }
   }
@@ -923,10 +953,12 @@ export const openPlaywrightScenarioBrowser = async (
       rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
   });
   try {
+    throwIfScenarioCancelled(options.signal);
     const browser = context.browser();
     if (browser === null)
       throw new BrowserObservationError(OPERATION, "protocol_error");
     const page = context.pages()[0] ?? (await context.newPage());
+    throwIfScenarioCancelled(options.signal);
     return {
       context,
       page,

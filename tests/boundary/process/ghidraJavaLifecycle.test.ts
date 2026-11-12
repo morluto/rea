@@ -176,6 +176,9 @@ posix.each([true, false])(
           code: "version_unresolved",
           cancellation: { reason },
         });
+        if (result.error._tag !== "GhidraJavaProbeFailure")
+          throw new Error("Expected the invalid Java report");
+        expect(result.error.cancellation?.reason).toBe(reason);
         expect(Object.keys(result.error)).not.toContain("cancellation");
         expect(() => JSON.stringify(result.error)).not.toThrow();
       }

@@ -132,7 +132,12 @@ export const machoImageSlices = (
 /** One observed path below the analyzed root. Symlink targets are not followed by the view. */
 export type DylibTreeEntry =
   | { readonly kind: "file" | "directory" }
-  | { readonly kind: "symlink"; readonly target: string };
+  | { readonly kind: "symlink"; readonly target: string }
+  | {
+      readonly kind: "symlink";
+      readonly target: null;
+      readonly targetHex: string;
+    };
 
 /** Read-only, lazily probed view of the analyzed root. Paths are root-relative. */
 export interface DylibTreeView {
@@ -263,7 +268,9 @@ interface ProcessContext {
   >;
   readonly searchOverrides: readonly DyldSearchOverride[];
   readonly environmentRoots: Set<string>;
+  readonly unknownArchitectureCandidates: Set<string>;
   readonly unknownPlatformCandidates: Set<string>;
+  readonly undecodableSymlinkTargets: Map<string, string>;
   readonly implicitMacOSPlatformCandidates: Set<string>;
   readonly platforms: readonly number[];
   readonly executable: string | null;
@@ -304,15 +311,11 @@ const candidateTemplates = (
 ): CandidateTemplate[] => {
   const name = dependency.install_name;
   if (!name.startsWith("@rpath/")) {
-    const source = name.startsWith("@executable_path")
-      ? "executable_path"
-      : name.startsWith("@loader_path")
-        ? "loader_path"
-        : "literal";
+    const expansion = expandCandidatePath(name, directoryOf(loader), context);
     return [
       {
-        expansion: expandCandidatePath(name, directoryOf(loader), context),
-        source,
+        expansion,
+        source: expansion.prefix ?? "literal",
         rpath: null,
         rpathOwner: null,
       },
@@ -359,6 +362,10 @@ const evaluateCandidate = async (
   );
   if (lookup.kind === "escapes")
     return { ...base, outcome: "escapes-target", resolved_path: null };
+  if (lookup.kind === "undetermined") {
+    context.undecodableSymlinkTargets.set(lookup.path, lookup.targetHex);
+    return { ...base, outcome: "undetermined", resolved_path: null };
+  }
   if (lookup.kind !== "file")
     return { ...base, outcome: "absent", resolved_path: null };
   const facts = await imageFacts(context, lookup.path);
@@ -369,8 +376,10 @@ const evaluateCandidate = async (
       machoImageSlices(facts),
       context.processIdentity,
     );
-    if (selection.kind === "unknown") outcome = "undetermined";
-    else if (selection.kind === "missing") outcome = "architecture-missing";
+    if (selection.kind === "unknown") {
+      outcome = "undetermined";
+      context.unknownArchitectureCandidates.add(lookup.path);
+    } else if (selection.kind === "missing") outcome = "architecture-missing";
     // Dependency commands require a dylib; generic dyld image loadability
     // also admits main executables and bundles for different operations.
     else if (selection.slice.file_type_code !== 6) outcome = "not-loadable";
@@ -662,7 +671,9 @@ const projectTraceResult = (input: {
   readonly edges: readonly Edge[];
   readonly withoutArchitecture: readonly string[];
   readonly environmentRoots: ReadonlySet<string>;
+  readonly unknownArchitectureCandidates: ReadonlySet<string>;
   readonly unknownPlatformCandidates: ReadonlySet<string>;
+  readonly undecodableSymlinkTargets: ReadonlyMap<string, string>;
   readonly implicitMacOSPlatformCandidates: ReadonlySet<string>;
   readonly rootEnumeration: DylibRootEnumeration | undefined;
 }): DylibTrace => {
@@ -694,7 +705,9 @@ const projectTraceResult = (input: {
         unparsed.length === 0 &&
         input.withoutArchitecture.length === 0 &&
         input.environmentRoots.size === 0 &&
+        input.unknownArchitectureCandidates.size === 0 &&
         input.unknownPlatformCandidates.size === 0 &&
+        input.undecodableSymlinkTargets.size === 0 &&
         input.rootEnumeration?.status !== "unknown"
           ? "complete"
           : "partial",
@@ -704,10 +717,20 @@ const projectTraceResult = (input: {
     limitations: [
       ...DYLIB_RESOLUTION_LIMITATIONS,
       ...(input.rootEnumeration?.limitations ?? []),
+      ...(input.undecodableSymlinkTargets.size === 0
+        ? []
+        : [
+            `Symlink targets cannot be represented as UTF-8; their paths and stored target bytes (hex) are ${JSON.stringify(Object.fromEntries(input.undecodableSymlinkTargets))}. Affected dependency resolution remains undetermined.`,
+          ]),
       ...(input.environmentRoots.size === 0
         ? []
         : [
             `Roots ${[...input.environmentRoots].join(", ")} request applicable image-selection inputs through LC_DYLD_ENVIRONMENT that are not modeled; affected dependencies or inserted images remain uncertain.`,
+          ]),
+      ...(input.unknownArchitectureCandidates.size === 0
+        ? []
+        : [
+            `In-root dylib candidates ${[...input.unknownArchitectureCandidates].sort(compare).join(", ")} have unknown architecture compatibility and are not treated as incompatible. Their dependent graphs may be incomplete.`,
           ]),
       ...(input.unknownPlatformCandidates.size === 0
         ? []
@@ -743,7 +766,9 @@ export const traceDylibLoading = async (
   const edges: Edge[] = [];
   const withoutArchitecture: string[] = [];
   const environmentRoots = new Set<string>();
+  const unknownArchitectureCandidates = new Set<string>();
   const unknownPlatformCandidates = new Set<string>();
+  const undecodableSymlinkTargets = new Map<string, string>();
   const implicitMacOSPlatformCandidates = new Set<string>();
   for (const root of request.roots) {
     const facts = await view.image(root);
@@ -784,7 +809,9 @@ export const traceDylibLoading = async (
             },
             searchOverrides,
             environmentRoots,
+            unknownArchitectureCandidates,
             unknownPlatformCandidates,
+            undecodableSymlinkTargets,
             implicitMacOSPlatformCandidates,
             platforms: slice.platforms,
             executable,
@@ -805,7 +832,9 @@ export const traceDylibLoading = async (
     edges,
     withoutArchitecture,
     environmentRoots,
+    unknownArchitectureCandidates,
     unknownPlatformCandidates,
+    undecodableSymlinkTargets,
     implicitMacOSPlatformCandidates,
     rootEnumeration: request.rootEnumeration,
   });

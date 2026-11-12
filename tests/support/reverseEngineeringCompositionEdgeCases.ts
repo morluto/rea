@@ -327,7 +327,7 @@ const registerSharedReverseEngineeringEdgeCasesPart3 = (): void => {
             ...(code === "ETIMEDOUT" ? { timeoutMs: 120_000 } : {}),
             ...(code === "EACCES" || code === "EPERM"
               ? {
-                  providerId: "objdump",
+                  providerId: "objdump.command",
                   diagnostics: {
                     boundary: "provider-launch",
                     command: "objdump",
@@ -337,7 +337,7 @@ const registerSharedReverseEngineeringEdgeCasesPart3 = (): void => {
               : {}),
             ...(code === "unknown"
               ? {
-                  providerId: "objdump",
+                  providerId: "objdump.command",
                   reason: "Unable to run configured command (unknown error)",
                 }
               : {}),
@@ -425,7 +425,7 @@ const registerSharedReverseEngineeringEdgeCasesPart4 = (): void => {
           ok: false,
           error: {
             _tag: "AnalysisCapabilityUnavailableError",
-            providerId: "objdump",
+            providerId: "objdump.command",
             diagnostics: {
               boundary: "provider-launch",
               command: "objdump",
@@ -535,7 +535,7 @@ const registerSharedReverseEngineeringEdgeCasesPart5 = (): void => {
         ok: false,
         error: {
           _tag: "AnalysisCapabilityUnavailableError",
-          providerId: "objdump",
+          providerId: "objdump.command",
           reason: "Unable to run configured command (ENOENT)",
           cause: { message: "launch failed" },
         },
@@ -647,21 +647,49 @@ const registerSharedReverseEngineeringEdgeCasesPart8 = (): void => {
   it("forwards a caller abort signal to the owned command supervisor", async () => {
     const { directory, path } = await createArtifact();
     const controller = new AbortController();
-    const runOwned = vi.fn<typeof runOwnedCommand>(async () =>
-      providerSnapshot(),
+    const reason = { request: "caller cancelled owned command" };
+    let observedSignal: AbortSignal | undefined;
+    let entered: (() => void) | undefined;
+    const admitted = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runOwned = vi.fn<typeof runOwnedCommand>(
+      async (_request, _limits, options) => {
+        observedSignal = options?.signal;
+        entered?.();
+        await gate;
+        throw new OwnedCommandFailure(
+          "cancelled",
+          "Caller interrupted the owned command",
+        );
+      },
     );
     const service = new ReverseEngineeringService({ runOwned });
 
+    let running: ReturnType<typeof service.executeRizinCommand> | undefined;
     try {
-      const result = await service.executeRizinCommand(
+      running = service.executeRizinCommand(
         { path, command: "iI" },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(true);
-      expect(runOwned.mock.calls[0]?.[2]).toMatchObject({
-        signal: expect.any(AbortSignal),
+      await admitted;
+      expect(observedSignal?.aborted).toBe(false);
+      controller.abort(reason);
+      expect(observedSignal?.aborted).toBe(true);
+      expect(observedSignal?.reason).toBe(reason);
+      release?.();
+      await expect(running).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisCancelledError" },
       });
     } finally {
+      release?.();
+      if (running !== undefined) await Promise.allSettled([running]);
+      await service.close();
       await rm(directory, { recursive: true, force: true });
     }
   });

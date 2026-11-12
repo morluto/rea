@@ -1,3 +1,5 @@
+import canonicalize from "canonicalize";
+
 import {
   digestProcessCommitment,
   processScenarioOutputBudgetProjectionSchema,
@@ -19,6 +21,11 @@ type RequireInvariant = (
   path: string,
   message: string,
 ) => void;
+
+const sameJsonValue = (left: unknown, right: unknown): boolean => {
+  const encoded = canonicalize(left);
+  return encoded !== undefined && encoded === canonicalize(right);
+};
 
 const orderedTimestamps = (values: readonly number[]): boolean =>
   values.every((value, index) => {
@@ -254,6 +261,15 @@ const validateLifecycle = (
   ), "filesystem_checkpoints", "filesystem snapshot times must be ordered");
   require(!capture.filesystem_checkpoints.some(({ truncated }) => truncated) ||
     capture.truncated, "truncated", "filesystem snapshot truncation must propagate to the capture");
+  // Comparison reads only the checkpoints, so the top-level copies must not disagree.
+  const [initial, final] = capture.filesystem_checkpoints;
+  require(sameJsonValue(initial?.files, capture.files_before) &&
+    initial?.effects.length === 0 &&
+    sameJsonValue(final?.files, capture.files_after) &&
+    sameJsonValue(
+      final?.effects,
+      capture.filesystem_effects,
+    ), "filesystem_checkpoints", "top-level filesystem snapshots and effects must match the initial and final checkpoints");
   require(capture.exit.reason === "exited" ||
     capture.exit.code ===
       null, "exit", "deadline termination cannot declare a normal exit code");
@@ -310,15 +326,20 @@ const validateCoverage = (
       ),
     ],
   ] as const) {
-    // Whole frames are retained or omitted, so retained bytes are exactly the
-    // retained frames' bytes, and nothing is unretained when no frame was omitted.
+    const accountedBytes =
+      retention.retained_bytes +
+      (name === "raw_terminal"
+        ? (details.raw_terminal.redacted_bytes ?? 0)
+        : 0);
+    // Retained bytes describe the safe frames exactly. Removed private bytes
+    // remain charged to admitted input even when no whole frame was omitted.
     require(retention.retained_frames === count &&
       retention.observed_frames >= count &&
       retention.retained_bytes === bytes &&
-      retention.observed_bytes >= retention.retained_bytes &&
+      retention.observed_bytes >= accountedBytes &&
       (retention.observed_frames > count ||
-        retention.observed_bytes === retention.retained_bytes) &&
-      retention.retained_bytes <= retention.budget_bytes &&
+        retention.observed_bytes === accountedBytes) &&
+      accountedBytes <= retention.budget_bytes &&
       (retention.unknown_size_frames ?? 0) <=
         retention.observed_frames -
           retention.retained_frames, `truncation_details.${name}`, "retained observations and budget accounting do not agree");

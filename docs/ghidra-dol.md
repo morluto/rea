@@ -1,7 +1,7 @@
 # GameCube DOL analysis through Ghidra
 
 This lane imports 32-bit big-endian PowerPC GameCube/Wii DOL images through
-Ghidra. It does not execute the image. DOL is a headerless format with no magic
+Ghidra. It does not execute the image. DOL has a section and entry-point header but no magic
 number, so REA never detects it: the caller must select it explicitly.
 
 Only the cached MEM1 window `0x80000000..0x81800000` is admitted. Wii MEM2
@@ -29,7 +29,7 @@ MCP, with the existing `open_binary` tool:
 }
 ```
 
-The architecture comes from the DOL header (`powerpc`). Do not pass
+Selecting the DOL format supplies the architecture (`powerpc`). Do not pass
 `architecture` with `gamecube-dol`; it is rejected. `entry_point` is optional,
 and if given it must equal the header entry.
 
@@ -119,7 +119,7 @@ installation's language catalog, the same catalog REA uses to admit
 and still succeeds on the stock checks.
 
 The ELF lane (`npm run verify:ghidra:ppc`) is separate. See
-[PowerPC ELF analysis through Ghidra](/ghidra-ppc).
+[PowerPC ELF analysis through Ghidra](ghidra-ppc.md).
 
 ## Not supported yet
 

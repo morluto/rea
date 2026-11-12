@@ -1,3 +1,11 @@
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionCancellationError,
+} from "../../providers/OwnedCommandCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
@@ -7,8 +15,9 @@ import type {
   JavaScriptSemanticFileProjection,
 } from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { writeJavaScriptAnalysisSourceTransfer } from "./JavaScriptAnalysisSourceTransfer.js";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { getHeapStatistics } from "node:v8";
@@ -21,7 +30,9 @@ import type {
   JavaScriptAnalyzedSource,
   JavaScriptSourceAnalysisFailure,
   JavaScriptSourceAnalysisLimits,
+  JavaScriptRevokedStaticProjection,
 } from "../../domain/javascript/javascriptSourceAnalysis.js";
+import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -46,6 +57,8 @@ import {
 import {
   OwnedWorkerRuntime,
   OwnedWorkerRuntimeCleanupError,
+  WorkerCleanupRegistry,
+  processWorkerCleanup,
 } from "../../process/OwnedWorkerRuntime.js";
 import { prepareProcessOwnershipInspection } from "../../process/ProcessOwnershipObservation.js";
 import {
@@ -80,6 +93,12 @@ const OPERATION = "analyze_javascript_application";
 const PROVIDER = "javascript-static-analysis";
 const MIB = 1024 * 1024;
 const STATIC_CHECKPOINT_RETENTION_EXPANSION = 6;
+/**
+ * Share of the parent's free heap that static checkpoints may fill once the
+ * result budget is used. Unlike the live heap, the charges also cover application
+ * relationships that are reserved but not yet materialized.
+ */
+const STATIC_CAPACITY_SHARE = 0.75;
 /** The worker runs on this executable; Bun accepts but ignores V8 heap flags. */
 const WORKER_HEAP_FLAGS_ENFORCED =
   javaScriptRuntime(process.versions).id === "node";
@@ -105,6 +124,7 @@ type WorkerPrimaryFailure =
 export class JavaScriptAnalysisWorker {
   readonly #runId = `rea-javascript-analysis-${randomUUID()}`;
   readonly #runtime: OwnedWorkerRuntime;
+  readonly #inspectionResources = new ArtifactResourceScope();
   #ready = false;
   #heapLimitBytes = 0;
   #frames: JavaScriptWorkerMessage[] = [];
@@ -119,11 +139,19 @@ export class JavaScriptAnalysisWorker {
   #phase = "startup";
   #lastFailure: AnalysisError | undefined;
   #estimatedRetainedBytes = 0;
+  #staticProjectionReservations: {
+    sourceIndex: number;
+    path: string;
+    bytes: number;
+  }[] = [];
+  #revokedStaticProjections: JavaScriptRevokedStaticProjection[] = [];
+  #nextSourceIndex = 0;
   #applicationProjectionFailure: AnalysisResourceConstraintError | undefined;
-  #parentCapacityExhausted = false;
+  #parentCapacityExhaustion: Readonly<Record<string, number>> | undefined;
   #sourcesRemaining: number | undefined;
   #deadline: ProviderStartupDeadline | undefined;
   #resultBudgetBytes = 0;
+  #staticCapacityBytes = 0;
   /** Null when the runtime enforces the V8 heap flags instead. */
   readonly #processMemoryLimitBytes: number | null;
   readonly #onStdout = (chunk: Buffer | string): void => {
@@ -160,14 +188,26 @@ export class JavaScriptAnalysisWorker {
     }
   };
 
+  readonly #workerCleanup: WorkerCleanupRegistry;
+
   constructor(
     readonly limits: JavaScriptSourceAnalysisLimits = DEFAULTS,
     readonly launcher: typeof spawnOwnedProviderProcess = spawnOwnedProviderProcess,
     sourceCount?: number,
+    workerCleanup: WorkerCleanupRegistry = processWorkerCleanup,
   ) {
+    this.#workerCleanup = workerCleanup;
     this.#runtime = new OwnedWorkerRuntime({
       rootPrefix: "rea-javascript-analysis-",
-      launcher,
+      launcher: (options) =>
+        this.#inspectionResources.run(async () => {
+          try {
+            return await launcher(options);
+          } catch (cause: unknown) {
+            throw this.#inspectionFailure(cause, this.#deadline);
+          }
+        }),
+      cleanupRegistry: workerCleanup,
       supervisorOptions: {
         captureStdout: false,
         maxDiagnosticBytes: 256 * 1024,
@@ -214,6 +254,7 @@ export class JavaScriptAnalysisWorker {
       this.#pending === "" &&
       this.#runtime.inputFailure === undefined &&
       !this.#runtime.hasPendingCleanup &&
+      !this.#inspectionResources.hasPending &&
       this.#runtime.supervisor !== undefined
     );
   }
@@ -230,7 +271,10 @@ export class JavaScriptAnalysisWorker {
       );
     this.#sourcesRemaining = sourceCount;
     this.#estimatedRetainedBytes = 0;
-    this.#parentCapacityExhausted = false;
+    this.#staticProjectionReservations = [];
+    this.#revokedStaticProjections = [];
+    this.#nextSourceIndex = 0;
+    this.#parentCapacityExhaustion = undefined;
     this.#applicationProjectionFailure = undefined;
     this.#refreshResultBudget();
     return true;
@@ -244,17 +288,20 @@ export class JavaScriptAnalysisWorker {
 
   /**
    * Reserve host-side control, schema/Evidence work, and a maximum record's
-   * transient copies. Admission also accounts for retained earlier files.
+   * transient copies. Everything retained is charged against what is left.
+   *
+   * Semantic and application results stop at half of it. Static checkpoints
+   * may go on to a larger share while the live heap has room for them, so a
+   * charge for earlier results cannot cost a later source its static facts.
    */
   #refreshResultBudget(): void {
-    this.#resultBudgetBytes = Math.max(
+    const capacity = Math.max(
       0,
-      Math.floor(
-        (this.#remainingParentHeapBytes() -
-          24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES) /
-          2,
-      ),
+      this.#remainingParentHeapBytes() -
+        24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
     );
+    this.#resultBudgetBytes = Math.floor(capacity / 2);
+    this.#staticCapacityBytes = Math.floor(capacity * STATIC_CAPACITY_SHARE);
   }
 
   /** Analyze inert source; hard worker failure does not terminate this process. */
@@ -263,6 +310,8 @@ export class JavaScriptAnalysisWorker {
     capacity: JavaScriptSemanticProjectionCapacity,
     signal?: AbortSignal,
     onPhase?: (phase: string) => Promise<void>,
+    packageType: JavaScriptPackageType = "unknown",
+    purpose: "analysis" | "preload-discovery" = "analysis",
   ): Promise<
     Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>
   > {
@@ -270,8 +319,10 @@ export class JavaScriptAnalysisWorker {
     let module: JavaScriptModuleSemanticIr | null = null;
     let projection: JavaScriptSemanticFileProjection | null = null;
     const id = randomUUID();
+    const sourceIndex = this.#nextSourceIndex++;
     this.#applicationProjectionFailure = undefined;
-    this.#parentCapacityExhausted = false;
+    this.#parentCapacityExhaustion = undefined;
+    this.#revokedStaticProjections = [];
     if (this.#sourcesRemaining !== undefined)
       this.#sourcesRemaining = Math.max(0, this.#sourcesRemaining - 1);
     let deadline: ProviderStartupDeadline | undefined;
@@ -287,8 +338,14 @@ export class JavaScriptAnalysisWorker {
           "JavaScript analysis worker requires included JavaScript text",
         );
       // Host ownership preparation is outside the parser execution deadline.
-      await prepareProcessOwnershipInspection(signal);
-      await OwnedWorkerRuntime.retryPending();
+      await this.#inspectionResources.run(async () => {
+        try {
+          await prepareProcessOwnershipInspection(signal);
+        } catch (cause: unknown) {
+          throw this.#inspectionFailure(cause);
+        }
+      });
+      await this.#workerCleanup.retry();
       deadline = new ProviderStartupDeadline(this.limits.timeoutMs, signal);
       this.#deadline = deadline;
       await this.#start(deadline);
@@ -303,19 +360,24 @@ export class JavaScriptAnalysisWorker {
         );
       supervisor.resetOutput();
       this.#phase = "source-transfer";
-      await writeFile(join(rootPath, `${id}.source`), file.text.value, {
-        flag: "wx",
-        mode: 0o600,
-        signal: deadline.signal,
-      });
+      await writeJavaScriptAnalysisSourceTransfer(
+        join(rootPath, `${id}.source`),
+        file.text.value,
+        { signal: deadline.signal },
+      );
       const { text: _text, ...metadata } = file;
       let offeredResultBudget = 0;
       const request = javaScriptWorkerRequestSchema.parse({
         id,
         node_budget: capacity.nodes,
         unknown_budget: capacity.unknowns,
+        ...(this.limits.semanticPrecision === undefined
+          ? {}
+          : { semantic_precision: this.limits.semanticPrecision }),
         text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
         file: metadata,
+        package_type: packageType,
+        purpose,
       });
       const frame = `${JSON.stringify(request)}\n`;
       if (Buffer.byteLength(frame) > DEFAULTS.protocolBytes)
@@ -342,11 +404,15 @@ export class JavaScriptAnalysisWorker {
       );
       for (;;) {
         const response = await this.#next(deadline, file.path);
-        if (response.kind === "ready" || response.id !== id)
+        // A ready frame is outside this job. A frame for another job is not
+        // this request's result; keep waiting so a later caller abort is
+        // still cancellation.
+        if (response.kind === "ready")
           throw new AnalysisOutputError(
             OPERATION,
             "JavaScript worker response names a different source job",
           );
+        if (response.id !== id) continue;
         if (response.kind === "phase") {
           this.#phase = response.phase;
           await onPhase?.(response.phase);
@@ -358,21 +424,17 @@ export class JavaScriptAnalysisWorker {
               OPERATION,
               "JavaScript worker emitted a duplicate static checkpoint",
             );
-          javascript = await this.#readCheckpoint(id, file.path, response);
-          if (this.#parentCapacityExhausted)
-            throw new AnalysisResourceConstraintError(
-              OPERATION,
-              "memory",
-              `The parent's result capacity was exhausted after retaining static facts for ${file.path}; remaining sources were not analyzed`,
-              {
-                ...this.#limits(),
-                parent_result_budget_bytes: this.#resultBudgetBytes,
-                parent_result_budget_exhausted: true,
-              },
-              {
-                remediationAction: JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION,
-              },
-            );
+          const previousPhase = this.#phase;
+          this.#phase = "checkpoint-read";
+          javascript = await this.#readCheckpoint(
+            id,
+            file.path,
+            sourceIndex,
+            response,
+          );
+          this.#phase = previousPhase;
+          const exhausted = this.#parentCapacityFailure(file.path);
+          if (exhausted !== undefined) throw exhausted;
           offeredResultBudget =
             this.#applicationProjectionFailure !== undefined &&
             this.#sourcesRemaining !== undefined &&
@@ -499,15 +561,22 @@ export class JavaScriptAnalysisWorker {
       if (this.#primaryFailure?.kind === "memory")
         throw this.#projectPrimaryFailure(file.path);
     } catch (cause: unknown) {
-      const error = this.#failure(cause, file.path, deadline, signal);
-      if (
-        this.#primaryFailure !== undefined &&
-        deadline?.interruption === "cancelled"
-      )
-        error.retainSecondaryFailure(
+      const error = this.#failure(cause, file.path, deadline);
+      if (deadline?.interruption === "cancelled")
+        analysisErrorWithCancellation(
+          error,
           new AnalysisCancelledError(OPERATION, {
             cause: deadline.signal.reason,
             capturedOutput: this.#captured(),
+          }),
+        );
+      else if (
+        deadline?.interruption === "timeout" &&
+        !(error instanceof AnalysisTimeoutError)
+      )
+        error.retainSecondaryFailure(
+          new AnalysisTimeoutError(OPERATION, deadline.timeoutMs, {
+            cause: deadline.signal.reason,
           }),
         );
       this.#lastFailure = error;
@@ -519,7 +588,7 @@ export class JavaScriptAnalysisWorker {
         this.#runtime.rootPath !== undefined
       ) {
         try {
-          javascript = await this.#readCheckpoint(id, file.path);
+          javascript = await this.#readCheckpoint(id, file.path, sourceIndex);
         } catch (checkpointCause: unknown) {
           void checkpointCause;
         }
@@ -573,21 +642,69 @@ export class JavaScriptAnalysisWorker {
       if (result.ok) this.#lastFailure = error;
       result = err({ error, javascript, module, projection });
     }
-    if (this.#applicationProjectionFailure !== undefined)
+    if (
+      this.#applicationProjectionFailure !== undefined ||
+      this.#revokedStaticProjections.length > 0
+    )
       return result.ok
         ? ok({
             ...result.value,
-            applicationProjectionFailure: this.#applicationProjectionFailure,
+            ...(this.#applicationProjectionFailure === undefined
+              ? {}
+              : {
+                  applicationProjectionFailure:
+                    this.#applicationProjectionFailure,
+                }),
+            ...(this.#revokedStaticProjections.length === 0
+              ? {}
+              : { revokedStaticProjections: this.#revokedStaticProjections }),
           })
         : err({
             ...result.error,
-            applicationProjectionFailure: this.#applicationProjectionFailure,
+            ...(this.#applicationProjectionFailure === undefined
+              ? {}
+              : {
+                  applicationProjectionFailure:
+                    this.#applicationProjectionFailure,
+                }),
+            ...(this.#revokedStaticProjections.length === 0
+              ? {}
+              : { revokedStaticProjections: this.#revokedStaticProjections }),
           });
     return result;
   }
 
   /** Verify process cleanup, then release the private runtime; failed close is retryable. */
   async close(): Promise<void> {
+    const [inspection, runtime] = await Promise.allSettled([
+      this.#inspectionResources.close(),
+      this.#closeRuntime(),
+    ]);
+    const inspectionError =
+      inspection.status === "rejected"
+        ? this.#failure(
+            inspection.reason,
+            "process ownership inspection",
+            undefined,
+          )
+        : undefined;
+    if (runtime.status === "rejected") {
+      const runtimeError =
+        runtime.reason instanceof AnalysisError
+          ? runtime.reason
+          : this.#failure(runtime.reason, "worker close", undefined);
+      if (inspectionError !== undefined)
+        throw analysisErrorWithCleanupFailure(
+          runtimeError,
+          inspectionError,
+          OPERATION,
+        ).bindCleanupDependencies([runtimeError, inspectionError]);
+      throw runtimeError;
+    }
+    if (inspectionError !== undefined) throw inspectionError;
+  }
+
+  async #closeRuntime(): Promise<void> {
     try {
       await this.#runtime.close();
       this.#ready = false;
@@ -709,6 +826,7 @@ export class JavaScriptAnalysisWorker {
   async #readCheckpoint(
     id: string,
     sourcePath: string,
+    sourceIndex: number,
     expected?: { readonly bytes: number; readonly sha256: string },
   ): Promise<JavaScriptStaticAnalysis> {
     const rootPath = this.#runtime.rootPath;
@@ -746,9 +864,68 @@ export class JavaScriptAnalysisWorker {
     const decoded = safeParseUtf8Json(checkpoint);
     if (!decoded.ok) throw decoded.cause;
     const facts = javaScriptWorkerStaticAnalysisSchema.parse(decoded.value);
-    const remaining = this.#remainingTotalResultBudget();
     const retainedBytes = bytes * STATIC_CHECKPOINT_RETENTION_EXPANSION;
-    this.#parentCapacityExhausted = retainedBytes > remaining;
+    // Application relationships are materialized only after all source files
+    // have been examined. Reclaim their pending reservations to keep room for
+    // later static observations, without relaxing the actual retained bound.
+    const { heap_size_limit, used_heap_size } = getHeapStatistics();
+    const liveAvailable =
+      heap_size_limit -
+      used_heap_size -
+      24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES;
+    // Past the result budget, the live heap must also keep room for another
+    // copy of what it holds, which final graph and Evidence work needs. The
+    // limit read here counts young-generation capacity that retained objects
+    // cannot use, so being merely below it does not protect the parent.
+    const staticCeiling =
+      retainedBytes + used_heap_size <= liveAvailable
+        ? this.#staticCapacityBytes
+        : this.#resultBudgetBytes;
+    const needed =
+      retainedBytes - (staticCeiling - this.#estimatedRetainedBytes);
+    if (needed > 0 && retainedBytes <= liveAvailable) {
+      // Plan all revocations first so an insufficient set leaves the earlier
+      // relationships intact rather than sacrificing them for a failed read.
+      let start = this.#staticProjectionReservations.length;
+      let reclaimable = 0;
+      while (start > 0 && reclaimable < needed) {
+        start--;
+        reclaimable += this.#staticProjectionReservations[start]!.bytes;
+      }
+      if (reclaimable >= needed) {
+        const revoked = this.#staticProjectionReservations.splice(start);
+        for (const reservation of revoked) {
+          this.#estimatedRetainedBytes -= reservation.bytes;
+          this.#revokedStaticProjections.push({
+            sourceIndex: reservation.sourceIndex,
+            error: new AnalysisResourceConstraintError(
+              OPERATION,
+              "memory",
+              `Expanded application relationships for ${reservation.path} were omitted to retain static facts for later sources`,
+              { parent_result_budget_bytes: this.#resultBudgetBytes },
+              {
+                remediationAction: `Read the retained static facts or analyze fewer source files. ${JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION}`,
+              },
+            ),
+          });
+        }
+      }
+    }
+    // Use the same live-heap observation for the reclamation decision and
+    // admission so a second read cannot reject after revocations commit.
+    const remaining = Math.max(
+      0,
+      Math.min(staticCeiling - this.#estimatedRetainedBytes, liveAvailable),
+    );
+    this.#parentCapacityExhaustion =
+      retainedBytes > remaining
+        ? {
+            parent_static_capacity_bytes: staticCeiling,
+            parent_available_static_capacity_bytes: remaining,
+            parent_used_heap_bytes: used_heap_size,
+            static_retention_estimate_bytes: retainedBytes,
+          }
+        : undefined;
     this.#estimatedRetainedBytes += retainedBytes;
     const expandedBytes = estimateJavaScriptStaticApplicationProjection(
       facts,
@@ -756,9 +933,14 @@ export class JavaScriptAnalysisWorker {
       sourcePath,
     );
     const availableResultBudget = this.#remainingResultBudget();
-    if (expandedBytes <= availableResultBudget)
+    if (expandedBytes <= availableResultBudget) {
       this.#estimatedRetainedBytes += expandedBytes;
-    else
+      this.#staticProjectionReservations.push({
+        sourceIndex,
+        path: sourcePath,
+        bytes: expandedBytes,
+      });
+    } else
       this.#applicationProjectionFailure = new AnalysisResourceConstraintError(
         OPERATION,
         "memory",
@@ -773,6 +955,26 @@ export class JavaScriptAnalysisWorker {
         },
       );
     return facts;
+  }
+
+  #parentCapacityFailure(
+    path: string,
+  ): AnalysisResourceConstraintError | undefined {
+    if (this.#parentCapacityExhaustion === undefined) return undefined;
+    return new AnalysisResourceConstraintError(
+      OPERATION,
+      "memory",
+      `The parent's result capacity was exhausted after retaining static facts for ${path}; remaining sources were not analyzed`,
+      {
+        ...this.#limits(),
+        parent_result_budget_bytes: this.#resultBudgetBytes,
+        ...this.#parentCapacityExhaustion,
+        parent_result_budget_exhausted: true,
+      },
+      {
+        remediationAction: JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION,
+      },
+    );
   }
 
   #limits() {
@@ -808,7 +1010,7 @@ export class JavaScriptAnalysisWorker {
         limit: analysisSettingLimit(
           "javascript.max_heap_mb",
           this.limits.heapMb,
-          undefined,
+          this.limits.heapSource,
         ),
         remediationAction: javaScriptWorkerHeapRemediation(this.limits.heapMb),
       },
@@ -999,15 +1201,19 @@ export class JavaScriptAnalysisWorker {
   #interruptionFailure(
     path: string,
     deadline: ProviderStartupDeadline,
+    inspectionFailure?: unknown,
   ): AnalysisError {
     if (this.#primaryFailure !== undefined)
       return this.#projectPrimaryFailure(path);
     return deadline.interruption === "timeout"
       ? new AnalysisTimeoutError(OPERATION, this.limits.timeoutMs, {
+          ...(inspectionFailure === undefined
+            ? {}
+            : { cause: inspectionFailure }),
           limit: analysisSettingLimit(
             "javascript.analysis_timeout_ms",
             this.limits.timeoutMs,
-            undefined,
+            this.limits.timeoutSource,
           ),
           capturedOutput: this.#captured(),
           userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
@@ -1042,7 +1248,7 @@ export class JavaScriptAnalysisWorker {
                 limit: analysisSettingLimit(
                   "javascript.max_heap_mb",
                   this.limits.heapMb,
-                  undefined,
+                  this.limits.heapSource,
                 ),
               }
             : {}),
@@ -1129,26 +1335,37 @@ export class JavaScriptAnalysisWorker {
       { capturedOutput: this.#captured() },
     );
   }
+  #inspectionFailure(
+    cause: unknown,
+    deadline?: ProviderStartupDeadline,
+  ): AnalysisError {
+    const failure = this.#failure(
+      cause,
+      "process ownership inspection",
+      undefined,
+    );
+    const primary =
+      failure instanceof AnalysisCancelledError &&
+      deadline?.interruption === "timeout"
+        ? this.#interruptionFailure(
+            "process ownership inspection",
+            deadline,
+            cause,
+          )
+        : failure;
+    return retainProcessInspectionCleanup(
+      cause,
+      primary,
+      this.#inspectionResources,
+      OPERATION,
+    );
+  }
+
   #failure(
     cause: unknown,
     path: string,
     deadline: ProviderStartupDeadline | undefined,
-    signal: AbortSignal | undefined,
   ): AnalysisError {
-    if (
-      deadline?.interruption === "cancelled" &&
-      cause === deadline.signal.reason
-    )
-      return this.#interruptionFailure(path, deadline);
-    if (
-      deadline === undefined &&
-      signal?.aborted === true &&
-      cause === signal.reason
-    )
-      return new AnalysisCancelledError(OPERATION, {
-        cause: signal.reason,
-        capturedOutput: this.#captured(),
-      });
     if (cause instanceof OwnedWorkerRuntimeCleanupError) {
       const error = this.#cleanupError(
         cause.message,
@@ -1159,18 +1376,38 @@ export class JavaScriptAnalysisWorker {
       cause.bindCleanupFailure(error);
       return error;
     }
-    // Ownership preparation is abortable before the worker deadline exists.
-    if (deadline?.interruption !== undefined)
-      return this.#interruptionFailure(path, deadline);
+    const cancellation = processInspectionCancellationError(cause, OPERATION);
+    if (cancellation !== undefined)
+      return deadline?.interruption === "timeout"
+        ? new AnalysisTimeoutError(OPERATION, deadline.timeoutMs, {
+            cause,
+            capturedOutput: this.#captured(),
+          })
+        : cancellation.capturedOutput === undefined
+          ? cancellation.retainCapturedOutput(this.#captured())
+          : cancellation;
+    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+      const error = new ProviderCleanupError(
+        PROVIDER,
+        cause.cleanup.resources,
+        { reason: cause.cleanup.reason },
+        { operation: OPERATION, cause },
+      );
+      bindArtifactFileCleanup(cause, error);
+      return error;
+    }
     if (
-      deadline === undefined &&
-      signal?.aborted === true &&
-      !(cause instanceof ProviderCleanupError)
+      cause instanceof AnalysisError &&
+      (deadline === undefined || this.#phase === "startup")
     )
-      return new AnalysisCancelledError(OPERATION, {
-        cause: signal.reason,
-        capturedOutput: this.#captured(),
-      });
+      return cause;
+    // Protocol waits retain the owned deadline; inspection/launch failures were
+    // already normalized at their producing boundary above.
+    if (
+      this.#phase !== "checkpoint-read" &&
+      deadline?.interruption !== undefined
+    )
+      return this.#interruptionFailure(path, deadline);
     const inputFailure = this.#runtime.inputFailure;
     if (inputFailure !== undefined)
       return new AnalysisOutputError(

@@ -9,18 +9,73 @@ import {
 } from "../../../tests/fixtures/analysisView.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import {
-  AnalysisCancelledError,
-  AnalysisResourceConstraintError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { JsonInputPhysicalReadFailure } from "../JsonInputFile.js";
 import { failFileReadAfterAbort } from "../../../tests/support/failFileReadAfterAbort.js";
 import { holdFirstFileRead } from "../../../tests/support/holdFirstFileRead.js";
 import { createEvidence } from "../../domain/evidence.js";
+import { readEvidence } from "../../domain/evidenceValidation.js";
+import { isImmutableJsonSnapshot } from "../../domain/immutableJson.js";
+import { ok } from "../../domain/result.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { readEvidenceFileSource } from "./evidenceFileSource.js";
+import type { Evidence } from "../../domain/evidence.js";
 
 describe("evidence-file source reads", () => {
+  it("owns immutable authentication proofs for selected records and related bundle parents", async () => {
+    const root = await createTestTempDirectory("rea-evidence-file-proof-");
+    const single = join(root, "single.json");
+    const source = analysisViewNativeEvidence();
+    const related = analysisViewCaptureEvidence();
+    await writeFile(single, JSON.stringify(source));
+    const selected = await readEvidenceFileSource(single);
+    if (!selected.ok) throw selected.error;
+    expect(isImmutableJsonSnapshot(selected.value)).toBe(true);
+    const checked = readEvidence(selected.value);
+    if (!checked.ok) throw checked.error;
+    expect(checked.value).toBe(selected.value);
+
+    const bundle = join(root, "bundle.json");
+    await writeFile(
+      bundle,
+      JSON.stringify(createEvidenceBundle([source, related])),
+    );
+    let parentChecked = false;
+    const fromBundle = await readEvidenceFileSource(
+      bundle,
+      {},
+      source.evidence_id,
+      {
+        operation: "compare_artifacts",
+        path: ["left"],
+        resolveSelected: (record, lookup) => {
+          const parent = lookup(related.evidence_id);
+          if (parent === undefined)
+            throw new Error("Missing admitted related record");
+          expect(isImmutableJsonSnapshot(record)).toBe(true);
+          expect(isImmutableJsonSnapshot(parent)).toBe(true);
+          const authenticated = readEvidence(parent);
+          if (!authenticated.ok) throw authenticated.error;
+          expect(authenticated.value).toBe(parent);
+          parentChecked = true;
+          return ok(record);
+        },
+      },
+    );
+    if (!fromBundle.ok) throw fromBundle.error;
+    expect(parentChecked).toBe(true);
+
+    // A later read must authenticate new bytes rather than reuse a path-based proof.
+    await writeFile(
+      single,
+      JSON.stringify({ ...source, normalized_result: { changed: true } }),
+    );
+    expect(await readEvidenceFileSource(single)).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceFileError", reason: "wrong-kind" },
+    });
+  });
+
   it("refuses a cancelled request before reading and reads within the caller's resource scope", async () => {
     const controller = new AbortController();
     const reason = new JsonInputPhysicalReadFailure(
@@ -272,7 +327,68 @@ it("keeps bundle-selection errors useful when operation labels exceed the reply 
   if (read.ok) throw new Error("Expected a record-selection error");
   const encoded = JSON.stringify(read);
   expect(Buffer.byteLength(encoded, "utf8")).toBeLessThan(8192);
-  for (const record of records) expect(encoded).toContain(record.evidence_id);
-  expect(encoded).toContain("operation omitted");
+  for (const record of records)
+    expect(read.error.userMessage).toContain(
+      `${record.evidence_id} (operation omitted)`,
+    );
   expect(encoded).not.toContain(operation);
+});
+
+describe("malformed Evidence file diagnostics (#8453)", () => {
+  /**
+   * A malformed file can carry tens of thousands of field issues. Projecting all
+   * of them expanded the error past the MCP response budget, which replaced the
+   * typed file error and its path with a transport `resource_constraint`. The
+   * reader now bounds the projected issues and says how many were omitted.
+   */
+  const manyIssues = (count: number): Evidence => {
+    const source = structuredClone(analysisViewCaptureEvidence());
+    return {
+      ...source,
+      limitations: Array.from({ length: count }, (_value, index) => index),
+    } as unknown as Evidence;
+  };
+
+  it("keeps the typed file error and path with bounded diagnostics", async () => {
+    const root = await createTestTempDirectory("rea-evidence-many-issues-");
+    const path = join(root, "many.json");
+    await writeFile(path, JSON.stringify(manyIssues(125_000)));
+    const result = await readEvidenceFileSource(path);
+    if (result.ok) throw new Error("expected a rejected file");
+    expect(result.error).toMatchObject({
+      _tag: "EvidenceFileError",
+      reason: "wrong-kind",
+      path,
+    });
+    const issues = (result.error as { contentIssues?: readonly unknown[] })
+      .contentIssues;
+    expect(issues).toBeDefined();
+    // Bounded: far below the 125,000 source issues, and small enough for the
+    // default MCP response budget.
+    expect(issues?.length ?? 0).toBeLessThan(1_000);
+    expect(Buffer.byteLength(JSON.stringify(issues), "utf8")).toBeLessThan(
+      1 << 20,
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        path: [],
+        message: expect.stringContaining("validator issues were omitted"),
+      }),
+    );
+  });
+
+  it("projects every issue when they fit the budget", async () => {
+    const root = await createTestTempDirectory("rea-evidence-few-issues-");
+    const path = join(root, "few.json");
+    await writeFile(path, JSON.stringify(manyIssues(3)));
+    const result = await readEvidenceFileSource(path);
+    if (result.ok) throw new Error("expected a rejected file");
+    const issues = (
+      result.error as { contentIssues?: readonly { message?: string }[] }
+    ).contentIssues;
+    expect(issues).toHaveLength(3);
+    expect(issues?.some(({ message }) => message?.includes("omitted"))).toBe(
+      false,
+    );
+  });
 });

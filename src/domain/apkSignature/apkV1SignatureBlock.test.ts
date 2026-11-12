@@ -202,8 +202,9 @@ describe("v1 signature block (PKCS#7 SignedData)", () => {
     let nested: Uint8Array = Uint8Array.from([0x05, 0x00]);
     for (let i = 0; i < 64; i += 1) nested = indefinite(0x30, nested);
     expect(errorOf(nested)).toEqual({
-      kind: "malformed-pkcs7",
-      detail: "ASN.1 nesting exceeds 32 levels.",
+      kind: "budget-exceeded",
+      resource: "asn1-depth",
+      limit: 32,
     });
   });
 });
@@ -379,4 +380,74 @@ it("keeps exact issuer identity when its comparison key cannot be interpreted", 
     }),
   );
   expect(block.signerInfos[0]?.certificateIndex).toBe(0);
+});
+
+it.each([0, 1])(
+  "refuses a non-minimal PKCS#7 content OID at subidentifier %i",
+  (at) => {
+    const block = signedDataBlock({
+      certificates: [LEAF_CERTIFICATE],
+      signerInfos: [signerInfo({ names: LEAF_CERTIFICATE })],
+    });
+    const contentAt = block[1]! > 0x80 ? 2 + (block[1]! & 0x7f) : 2;
+    const signedDataOid = oid("1.2.840.113549.1.7.2");
+    expect(block.subarray(contentAt, contentAt + signedDataOid.length)).toEqual(
+      signedDataOid,
+    );
+    const content = signedDataOid.subarray(2);
+    const paddedOid = tlv(
+      0x06,
+      content.subarray(0, at),
+      Uint8Array.of(0x80),
+      content.subarray(at),
+    );
+    const malformedBlock = indefinite(
+      0x30,
+      paddedOid,
+      block.subarray(contentAt + signedDataOid.length),
+    );
+    expect(decodeV1SignatureBlock(malformedBlock)).toMatchObject({
+      ok: false,
+      error: { kind: "malformed-pkcs7" },
+    });
+  },
+);
+
+it("keeps a valid constructed CMS content depth refusal distinct from malformed input", () => {
+  let content = tlv(0x04, Uint8Array.of(1));
+  const block = () =>
+    signedDataBlock({
+      certificates: [LEAF_CERTIFICATE],
+      signerInfos: [signerInfo({ names: LEAF_CERTIFICATE })],
+      encapsulatedContent: content,
+    });
+  expect(decodeV1SignatureBlock(block()).ok).toBe(true);
+  for (let depth = 0; depth < 40; depth += 1)
+    content = indefinite(0x24, content);
+  expect(errorOf(block())).toEqual({
+    kind: "budget-exceeded",
+    resource: "asn1-depth",
+    limit: 32,
+  });
+});
+
+it("preserves the canonical OID byte allowance for a valid unknown digest algorithm", () => {
+  const algorithm = tlv(
+    0x06,
+    Uint8Array.from([0x2a, ...Array<number>(64).fill(0)]),
+  );
+  expect(
+    errorOf(
+      signedDataBlock({
+        certificates: [LEAF_CERTIFICATE],
+        signerInfos: [
+          signerInfo({
+            names: LEAF_CERTIFICATE,
+            digestAlgorithmOid: algorithm,
+          }),
+        ],
+        digestAlgorithmOid: algorithm,
+      }),
+    ),
+  ).toEqual({ kind: "budget-exceeded", resource: "oid-bytes", limit: 64 });
 });
