@@ -726,8 +726,9 @@ channel still does not prove registration order, reachability, or runtime use.
 Native-addon call bindings consume the same loader identity and normalized
 arguments as dependency analysis, including optional calls. Local methods or
 parameters named `require` establish no native binding; `require.resolve` records
-lookup rather than a native namespace. CommonJS re-export bindings require a
-selected export value and an applicable shared export receiver. Arithmetic and
+lookup rather than a native namespace. When resolver options leave the search
+base unknown, the application graph retains the specifier and call location as
+an unresolved reference. CommonJS re-export bindings require a selected export value and an applicable shared export receiver. Arithmetic and
 logical compound stores keep their dependency observations without asserting that
 the addon is the selected exported value.
 

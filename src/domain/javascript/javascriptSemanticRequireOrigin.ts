@@ -724,6 +724,39 @@ export interface JavaScriptRequireCallFact {
   readonly sourceRelativePath?: string;
 }
 
+/** `require.resolve` options replace the default search paths unless exact current-directory paths are supplied. */
+export const requireResolveSearchBase = (
+  { operation, arguments: callArguments }: JavaScriptRequireCallFact,
+  bindings: JavaScriptSemanticAnalysisState,
+): "loader" | "source-file" | "unknown" => {
+  const arguments_ = callArguments ?? [];
+  if (operation !== "resolve" || arguments_.length < 2) return "loader";
+  if (arguments_.length !== 2) return "unknown";
+  const options = t.isExpression(arguments_[1]) ? arguments_[1] : undefined;
+  if (
+    t.isNullLiteral(options) ||
+    (options !== undefined &&
+      isUnmodifiedGlobalReference(options, bindings, "undefined"))
+  )
+    return "loader";
+  if (options === undefined || !t.isObjectExpression(options)) return "unknown";
+  if (options.properties.length === 0) return "loader";
+  if (options.properties.length !== 1) return "unknown";
+  const property = options.properties[0];
+  if (!t.isObjectProperty(property)) return "unknown";
+  if (semanticStaticPropertyKey(property.key, property.computed) !== "paths")
+    return "unknown";
+  const value = t.isExpression(property.value) ? property.value : undefined;
+  if (!t.isArrayExpression(value) || value.elements.length !== 1)
+    return "unknown";
+  const directory = value.elements[0];
+  return javaScriptRuntimeContext(bindings.program) === "commonjs" &&
+    t.isIdentifier(directory, { name: "__dirname" }) &&
+    isUnmodifiedGlobalReference(directory, bindings, "__dirname")
+    ? "source-file"
+    : "unknown";
+};
+
 /** A child-property write does not replace the selected callable itself. */
 export const semanticSelectedMemberMayHaveChanged = (
   index: JavaScriptBindingIndex,

@@ -42,8 +42,8 @@ interface JavaScriptStaticReferenceState {
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;
-  /** Source-relative filename selected by a proven createRequire factory. */
-  readonly resolution_base_path?: string;
+  /** A proven filename, or null for an unresolved explicit resolver search base. */
+  readonly resolution_base_path?: string | null;
   /**
    * Which loader produced this reference. A `factory-loader` specifier is a
    * recovered bundle module key, so it names a module inside the artifact even

@@ -276,6 +276,34 @@ it("keeps current-file and mixed createRequire bases distinct", () => {
   ).toEqual(["unknown"]);
 });
 
+it.each([
+  ["another directory", ', { paths: [__dirname + "/sub"] }'],
+  ["an empty path list", ", { paths: [] }"],
+])("retains an unresolved application lookup with %s", (_name, options) => {
+  const source = 'require.resolve("./dep.cjs"' + options + ");";
+  expect(analyzeCommonJsStaticFixture(source).references).toEqual([
+    expect.objectContaining({
+      kind: "require",
+      operation: "resolve",
+      specifier: "./dep.cjs",
+      resolution_base_path: null,
+    }),
+  ]);
+});
+
+it("preserves builtin lookups independently of search options", () => {
+  const source = 'require.resolve("node:path", { paths: [] });';
+  expect(
+    createRequire(import.meta.url).resolve("node:path", { paths: [] }),
+  ).toBe("node:path");
+  const [reference] = analyzeCommonJsStaticFixture(source).references;
+  expect(reference).toMatchObject({
+    operation: "resolve",
+    specifier: "node:path",
+  });
+  expect(reference).not.toHaveProperty("resolution_base_path");
+});
+
 it.each(["require.resolve", "require.resolve?.", "require?.resolve"])(
   "keeps search-path uncertainty for historical %s calls",
   (callee) => {

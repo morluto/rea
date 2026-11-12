@@ -348,7 +348,13 @@ const addReference = (
               "The module loader is unknown, so this dependency cannot be resolved against the source file.",
             ],
           }
-        : {}
+        : input.value.resolution_base_path === null
+          ? {
+              limitations: [
+                "The require.resolve search path is unknown for the supplied options.",
+              ],
+            }
+          : {}
       : { limitations: resolved.limitations }),
   });
 };
@@ -748,7 +754,8 @@ const resolveReference = (
   coverage: JavaScriptArtifactGraphCoverage,
 ): ResolvedReference | null => {
   const specifier = reference.specifier;
-  if (specifier === null) return null;
+  if (specifier === null || reference.resolution_base_path === null)
+    return null;
   const isWorker =
     reference.kind === "worker" || reference.kind === "service-worker";
   const resolutionSourcePath =

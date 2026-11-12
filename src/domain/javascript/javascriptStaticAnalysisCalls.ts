@@ -3,6 +3,7 @@ import {
   isFetchCall,
 } from "./javascriptNetworkRequests.js";
 import * as t from "@babel/types";
+import { isBuiltin } from "node:module";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
@@ -61,6 +62,7 @@ import {
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
+  requireResolveSearchBase,
   semanticFactoryLoaderMemberAt,
   semanticRequireCallAt,
   semanticRequireLoaderAt,
@@ -315,7 +317,7 @@ const requireCallSpecifier = (
 ): {
   readonly specifier: string | undefined;
   readonly operation: "load" | "resolve";
-  readonly resolutionBasePath?: string;
+  readonly resolutionBasePath?: string | null;
   readonly loader?: "commonjs-loader" | "factory-loader" | "create-require";
   readonly loaderAuthority?: "candidate";
 } | null => {
@@ -340,12 +342,22 @@ const requireCallSpecifier = (
         : { loaderAuthority: "candidate" as const }),
     };
   }
+  const specifier = argumentValue(call.arguments?.[0]);
+  // Node resolves known builtins before it reads any search options.
+  const searchBase =
+    specifier !== undefined && isBuiltin(specifier)
+      ? "loader"
+      : requireResolveSearchBase(call, bindings);
+  const resolutionBasePath =
+    searchBase === "loader"
+      ? call.sourceRelativePath
+      : searchBase === "unknown"
+        ? null
+        : undefined;
   return {
     operation: call.operation,
-    specifier: argumentValue(call.arguments?.[0]),
-    ...(call.sourceRelativePath === undefined
-      ? {}
-      : { resolutionBasePath: call.sourceRelativePath }),
+    specifier,
+    ...(resolutionBasePath === undefined ? {} : { resolutionBasePath }),
     // `factory-loader` names a bundle factory require, so its specifier is a
     // recovered module key rather than a package specifier.
     ...(call.loader === "commonjs-loader" ||
