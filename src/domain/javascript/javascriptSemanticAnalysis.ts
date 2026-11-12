@@ -1298,7 +1298,11 @@ function* collectDefinitionsSteps(
         // host: 1})\` connects over the inherited \`path\` while the same statements inside
         // a function do, so gating on \`Function\` alone made the answer depend on where
         // the write was written.
-        writesIntrinsicPrototype(node)
+        writesIntrinsicPrototype(node) ||
+        // An alias of an intrinsic prototype is only reachable through the call that produced
+        // it, so the call is what has to turn the facts on: the write `p.path = ...` below names
+        // `p`, not the owner.
+        readsIntrinsicPrototype(node)
       )
         needsPrototypeFacts = true;
       let parentScope = currentSemanticScope(stack);
@@ -1626,6 +1630,28 @@ const writesIntrinsicPrototype = (node: t.Node): boolean => {
   // Only a write can change a prototype, so this never runs for a read and never walks a
   // member chain that is not the target of one. Looking exactly two levels in rather than
   // walking to the root keeps it O(1) on the deep member chains a minified bundle produces.
+  //
+  // A mutator call counts as a write: measured on Node 24.22.1,
+  // `Object.defineProperty(Object.prototype, "path", {value: "/tmp/a.sock"});
+  // net.connect({port: 0, host: 1})` connects over the inherited path with no assignment in
+  // the source at all.
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+    const callee = unwrapJavaScriptExpression(node.callee).node;
+    if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
+      return false;
+    const method = semanticStaticPropertyKey(callee.property, callee.computed);
+    if (
+      method !== "defineProperty" &&
+      method !== "defineProperties" &&
+      method !== "setPrototypeOf"
+    )
+      return false;
+    const receiver = unwrapJavaScriptExpression(callee.object).node;
+    if (!t.isIdentifier(receiver) || receiver.name !== "Object") return false;
+    const subject = node.arguments[0];
+    if (subject === undefined || t.isSpreadElement(subject)) return false;
+    return prototypeOwnerSpelling(subject);
+  }
   const target = t.isAssignmentExpression(node)
     ? node.left
     : t.isUpdateExpression(node)
@@ -1637,17 +1663,57 @@ const writesIntrinsicPrototype = (node: t.Node): boolean => {
   const value = unwrapJavaScriptExpression(target).node;
   if (!t.isMemberExpression(value) && !t.isOptionalMemberExpression(value))
     return false;
-  const owner = unwrapJavaScriptExpression(value.object).node;
-  if (!t.isMemberExpression(owner) && !t.isOptionalMemberExpression(owner))
+  return prototypeOwnerSpelling(value.object);
+};
+/**
+ * Whether a node is an `Object.getPrototypeOf(<literal>)` call whose result is an intrinsic
+ * prototype.
+ *
+ * A write through the result names the alias, not the owner, so the write itself cannot be
+ * recognised as touching a prototype. Measured on Node 24.22.1,
+ * `const p = Object.getPrototypeOf({}); p.path = "/tmp/a.sock"; net.connect({port: 0, host: 1})`
+ * connects over the inherited path.
+ */
+const readsIntrinsicPrototype = (node: t.Node): boolean => {
+  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
-  if (semanticStaticPropertyKey(owner.property, owner.computed) !== "prototype")
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
     return false;
-  const root = unwrapJavaScriptExpression(owner.object).node;
+  if (
+    semanticStaticPropertyKey(callee.property, callee.computed) !==
+    "getPrototypeOf"
+  )
+    return false;
+  const receiver = unwrapJavaScriptExpression(callee.object).node;
+  if (!t.isIdentifier(receiver) || receiver.name !== "Object") return false;
+  const argument = node.arguments[0];
+  if (argument === undefined || t.isSpreadElement(argument)) return false;
+  const value = unwrapJavaScriptExpression(argument).node;
+  // A literal names its own prototype; a `<intrinsic>.prototype` spelling names that owner.
+  if (prototypeOwnerSpelling(value)) return true;
+  return (
+    (t.isObjectExpression(value) && value.properties.length === 0) ||
+    (t.isArrayExpression(value) && value.elements.length === 0) ||
+    t.isFunctionExpression(value) ||
+    t.isArrowFunctionExpression(value)
+  );
+};
+
+/** Whether a spelling is `<intrinsic>.prototype`. */
+const prototypeOwnerSpelling = (node: t.Node): boolean => {
+  const value = unwrapJavaScriptExpression(node).node;
+  if (!t.isMemberExpression(value) && !t.isOptionalMemberExpression(value))
+    return false;
+  if (semanticStaticPropertyKey(value.property, value.computed) !== "prototype")
+    return false;
+  const root = unwrapJavaScriptExpression(value.object).node;
   return (
     t.isIdentifier(root) &&
     semanticPrototypeOwners.some((candidate) => candidate === root.name)
   );
 };
+
 /** Preserve uncertainty when source can change or expose a built-in prototype. */
 function* indexPrototypeUncertaintySteps(
   program: t.Program,
@@ -1703,6 +1769,69 @@ function* indexPrototypeUncertaintySteps(
       ? globalOwner(value.object)
       : undefined;
   };
+  /**
+   * The intrinsic whose prototype an alias names, when the alias is a known prototype source.
+   *
+   * `Object.getPrototypeOf({})` returns `Object.prototype`, and writing through the result
+   * changes the same object a direct `Object.prototype.x = ...` would. Measured on Node 24.22.1,
+   * `const p = Object.getPrototypeOf({}); p.path = "/tmp/a.sock"; net.connect({port: 0, host: 1})`
+   * connects over the inherited path. The mapping is the literal's own prototype, which is one of
+   * the intrinsics this file already tracks.
+   */
+  /** The intrinsic whose prototype a literal inherits, for the shapes that are certain. */
+  function literalPrototypeOwner(
+    node: t.Node,
+  ): SemanticPrototypeOwner | undefined {
+    const value = unwrapJavaScriptExpression(node).node;
+    if (t.isObjectExpression(value) && value.properties.length === 0)
+      return "Object";
+    if (t.isArrayExpression(value) && value.elements.length === 0)
+      return "Array";
+    if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
+      return "Function";
+    if (prototypeOwnerSpelling(value)) return globalOwner(value);
+    return undefined;
+  }
+  // The alias table is syntactic: bindings are not resolved yet at this point, and
+  // \`const p = Object.getPrototypeOf({})\` is recognisable without them.
+  const aliasOwners = new Map<string, SemanticPrototypeOwner>();
+  yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
+    enter: (node) => {
+      if (!t.isVariableDeclarator(node) || !t.isIdentifier(node.id)) return;
+      const init = node.init;
+      if (init === null || init === undefined) return;
+      const owner = prototypeSourceOwner(unwrapJavaScriptExpression(init).node);
+      if (owner !== undefined && !aliasOwners.has(node.id.name))
+        aliasOwners.set(node.id.name, owner);
+    },
+  });
+  const aliasOwner = (node: t.Node): SemanticPrototypeOwner | undefined => {
+    const value = unwrapJavaScriptExpression(node).node;
+    if (!t.isIdentifier(value)) return undefined;
+    return aliasOwners.get(value.name);
+  };
+  function prototypeSourceOwner(
+    call: t.Node,
+  ): SemanticPrototypeOwner | undefined {
+    if (!t.isCallExpression(call) && !t.isOptionalCallExpression(call))
+      return undefined;
+    if (!t.isCallExpression(call) && !t.isOptionalCallExpression(call))
+      return undefined;
+    const callee = unwrapJavaScriptExpression(call.callee).node;
+    if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
+      return undefined;
+    if (
+      semanticStaticPropertyKey(callee.property, callee.computed) !==
+      "getPrototypeOf"
+    )
+      return undefined;
+    if (!isUnmodifiedGlobalReference(callee.object, state, "Object"))
+      return undefined;
+    const argument = call.arguments[0];
+    if (argument === undefined || t.isSpreadElement(argument)) return undefined;
+    return literalPrototypeOwner(argument);
+  }
+
   const objectMethod = (node: t.Node): string | undefined => {
     const callee = unwrapJavaScriptExpression(node).node;
     return (t.isMemberExpression(callee) ||
@@ -1729,16 +1858,23 @@ function* indexPrototypeUncertaintySteps(
             t.isOptionalMemberExpression(value)
           ) {
             const prototype = prototypeOwner(value.object);
-            const owner = prototype ?? globalOwner(value.object);
+            const alias =
+              prototype === undefined ? aliasOwner(value.object) : undefined;
+            const owner = prototype ?? globalOwner(value.object) ?? alias;
             if (owner !== undefined)
               taint(
                 owner,
-                prototype !== undefined ||
+                // An alias names the prototype object itself, so every member write through it
+                // lands on the owner. Measured on Node 24.22.1: with
+                // `const p = Object.getPrototypeOf({}); p.path = "/tmp/a.sock"` a later
+                // `net.connect({port: 0, host: 1})` connects over the inherited path.
+                alias !== undefined ||
+                  prototype !== undefined ||
                   semanticStaticPropertyKey(value.property, value.computed) ===
                     "prototype",
               );
           } else {
-            const owner = globalOwner(value);
+            const owner = globalOwner(value) ?? aliasOwner(value);
             if (owner !== undefined) taint(owner);
           }
         }
