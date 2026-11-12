@@ -14,6 +14,72 @@ import {
   type CatalogIdentity,
 } from "../catalogDiscovery.js";
 
+const DISCOVERY_PREVIEW_CHARS = 240;
+
+/** Short text the model reads. A late match stays visible inside the cap. */
+export const discoveryPreview = (
+  description: string,
+  words: readonly string[],
+): string => {
+  if (description.length <= DISCOVERY_PREVIEW_CHARS) return description;
+  const lower = description.toLowerCase();
+  const late = words
+    .map((word) => lower.indexOf(word))
+    .filter((index) => index >= DISCOVERY_PREVIEW_CHARS);
+  if (late.length === 0) return description.slice(0, DISCOVERY_PREVIEW_CHARS);
+  const candidates = late.map((index) => Math.max(0, index - 48));
+  let start = candidates[0] ?? 0;
+  let covered = -1;
+  for (const candidate of candidates) {
+    const end = candidate + DISCOVERY_PREVIEW_CHARS - 1;
+    const count = late.filter(
+      (index) => index >= candidate && index < end,
+    ).length;
+    if (count > covered || (count === covered && candidate < start)) {
+      covered = count;
+      start = candidate;
+    }
+  }
+  return `…${description.slice(start, start + DISCOVERY_PREVIEW_CHARS - 1)}`;
+};
+
+const nameHits = (name: string, words: readonly string[]): number => {
+  const lowered = name.toLowerCase();
+  const spaced = lowered.replaceAll("_", " ");
+  return words.filter((word) => lowered.includes(word) || spaced.includes(word))
+    .length;
+};
+
+const earliestDescriptionHit = (
+  description: string,
+  words: readonly string[],
+): number => {
+  const lower = description.toLowerCase();
+  return words.reduce((earliest, word) => {
+    const index = lower.indexOf(word);
+    if (index < 0) return earliest;
+    return earliest < 0 || index < earliest ? index : earliest;
+  }, Number.MAX_SAFE_INTEGER);
+};
+
+const compareDiscoveryNames = (
+  left: string,
+  right: string,
+  words: readonly string[],
+  descriptions: ReadonlyMap<string, { description: string }>,
+): number => {
+  const leftHits = nameHits(left, words);
+  const rightHits = nameHits(right, words);
+  if (leftHits !== rightHits) return rightHits - leftHits;
+  if (leftHits === 0) {
+    const position =
+      earliestDescriptionHit(descriptions.get(left)?.description ?? "", words) -
+      earliestDescriptionHit(descriptions.get(right)?.description ?? "", words);
+    if (position !== 0) return position;
+  }
+  return left < right ? -1 : left > right ? 1 : 0;
+};
+
 /** Per-connection visibility; canonical SDK handles retain validation and authority. */
 export class ProgressiveToolCatalog {
   readonly identity: CatalogIdentity;
@@ -38,7 +104,7 @@ export class ProgressiveToolCatalog {
           name,
           {
             registered,
-            description: (registered.description ?? "").slice(0, 240),
+            description: registered.description ?? "",
             search:
               `${name} ${name.replaceAll("_", " ")} ${registered.description ?? ""}`.toLowerCase(),
           },
@@ -89,14 +155,9 @@ export class ProgressiveToolCatalog {
       [...this.tools]
         .filter(([, tool]) => words.every((word) => tool.search.includes(word)))
         .map(([name]) => name)
-        .sort((left, right) => {
-          const score = (name: string) =>
-            words.filter((word) => name.includes(word)).length;
-          return (
-            score(right) - score(left) ||
-            (left < right ? -1 : left > right ? 1 : 0)
-          );
-        });
+        .sort((left, right) =>
+          compareDiscoveryNames(left, right, words, this.tools),
+        );
     const page =
       names ?? matches.slice(input.offset, input.offset + input.limit);
     const selected = page.map((name) => ({ name, ...this.tools.get(name)! }));
@@ -115,7 +176,7 @@ export class ProgressiveToolCatalog {
           : null,
       tools: selected.map(({ name, description, registered }) => ({
         name,
-        description,
+        description: discoveryPreview(description, words),
         input_schema: registered.inputSchema?.["~standard"].jsonSchema.input({
           target: "draft-2020-12",
         }) ?? { type: "object" },

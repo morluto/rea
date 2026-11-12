@@ -10,7 +10,11 @@ afterEach(async () => {
 });
 
 const connect = async (
-  options: { replyBytes?: number; bulk?: boolean } = {},
+  options: {
+    replyBytes?: number;
+    bulk?: boolean;
+    extra?: ReadonlyArray<{ name: string; description: string }>;
+  } = {},
 ) => {
   const bulkNames = options.bulk
     ? Array.from(
@@ -18,6 +22,7 @@ const connect = async (
         (_, index) => `bulk_${String(index).padStart(2, "0")}`,
       )
     : [];
+  const extra = options.extra ?? [];
   const server = new EvidenceMcpServerCore(
     { name: "catalog-test", version: "1" },
     { capabilities: {} },
@@ -28,7 +33,7 @@ const connect = async (
     {
       counts: {
         cli_commands: 0,
-        mcp_tools: 3 + bulkNames.length,
+        mcp_tools: 3 + bulkNames.length + extra.length,
         mcp_prompts: 0,
       },
       digests: {
@@ -45,11 +50,14 @@ const connect = async (
     "beta_sqlite",
     "excluded_sqlite",
     ...bulkNames,
+    ...extra.map((tool) => tool.name),
   ]) {
+    const described = extra.find((tool) => tool.name === name);
     const registration = server.registerTool(
       name,
       {
-        description: `${name} SQLite database inspection`,
+        description:
+          described?.description ?? `${name} SQLite database inspection`,
         inputSchema: name.startsWith("bulk_")
           ? z.strictObject({
               payload: z.string().describe("schema guidance ".repeat(64)),
@@ -242,4 +250,79 @@ it("distinguishes exhausted pages from unmatched queries without loading tools",
     next_offset: null,
     next_step: expect.stringContaining("Call the returned tool"),
   });
+});
+
+it("ranks a leading task word ahead of an alphabetical later mention", async () => {
+  const buried = `${"padding ".repeat(40)}javascript module graph`;
+  const commonThenLate = `${"notes ".repeat(50)}javascript module graph`;
+  const f = await connect({
+    extra: [
+      { name: "alpha_calendar", description: "calendar export" },
+      { name: "alpha_misc", description: buried },
+      { name: "notes_misc", description: commonThenLate },
+      {
+        name: "zebra_misc",
+        description: "javascript module graph for bundles",
+      },
+    ],
+  });
+  const first = await f.discover({ query: "javascript", limit: 1 });
+  expect(first.structuredContent).toMatchObject({
+    total_matches: 3,
+    tools: [{ name: "zebra_misc" }],
+  });
+  const page = await f.discover({ query: "javascript", limit: 3 });
+  const tools = z
+    .object({
+      tools: z.array(z.object({ name: z.string(), description: z.string() })),
+    })
+    .parse(page.structuredContent).tools;
+  expect(tools.map((tool) => tool.name)).toEqual([
+    "zebra_misc",
+    "notes_misc",
+    "alpha_misc",
+  ]);
+  const latePreview = tools[1]?.description ?? "";
+  expect(latePreview.length).toBeLessThanOrEqual(240);
+  expect(latePreview).toContain("javascript");
+  const buriedPreview = tools[2]?.description ?? "";
+  expect(buriedPreview.length).toBeLessThanOrEqual(240);
+  expect(buriedPreview).toContain("javascript");
+  const notesPage = await f.discover({ query: "notes javascript", limit: 1 });
+  const notesTool = z
+    .object({
+      tools: z.array(z.object({ name: z.string(), description: z.string() })),
+    })
+    .parse(notesPage.structuredContent).tools[0];
+  expect(notesTool?.name).toBe("notes_misc");
+  expect(notesTool?.description.length ?? 0).toBeLessThanOrEqual(240);
+  expect(notesTool?.description).toContain("javascript");
+});
+
+it("drops tools loaded by the previous connection on the same server", async () => {
+  const f = await connect();
+  await f.discover({ names: ["alpha_sqlite"] });
+  await f.client.close();
+  const client = new Client({ name: "catalog-next-connection", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  cleanup.push(() => client.close());
+  await f.server.connect(serverTransport);
+  await client.connect(clientTransport);
+  expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
+    "binary_session",
+    "discover_tools",
+  ]);
+});
+
+it("keeps tools loaded in one catalog invisible to another", async () => {
+  const first = await connect();
+  const second = await connect();
+  await first.discover({ names: ["alpha_sqlite"] });
+  expect(
+    (await first.client.listTools()).tools.map(({ name }) => name),
+  ).toContain("alpha_sqlite");
+  expect(
+    (await second.client.listTools()).tools.map(({ name }) => name),
+  ).toEqual(["binary_session", "discover_tools"]);
 });

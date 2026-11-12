@@ -97,8 +97,10 @@ before proposing another issue, and avoid treating lack of API parity as a bug.
 
 Start with the analyst task, selected source and useful result. Put material
 effects and the deciding boundary between neighboring tools early. Progressive
-discovery previews the first 240 characters, so those characters should identify
-the operation without requiring the rest of its reference documentation.
+discovery shows at most 240 characters. A query match past that prefix is
+windowed into the same cap; a names lookup still shows the start. Those opening
+characters should identify the operation without requiring the rest of its
+reference documentation.
 
 Keep exact call syntax where the advertised schema cannot convey it. The compact
 input profile strips most annotation prose and can reduce nested controls to
