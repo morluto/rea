@@ -203,6 +203,93 @@ describe("parseAptPolicyPackageSources", () => {
   });
 });
 
+describe("apt-cache policy priority widths", () => {
+  // apt prints package files with `"%4i %s"` and a version's files with
+  // `"       %4i %s"` (apt-private/private-show.cc), and appends
+  // ` (phased N%)` to a version line while the version is phased.
+  const mozilla =
+    "https://packages.mozilla.org/apt mozilla/main amd64 Packages";
+  const experimental =
+    "http://deb.debian.org/debian experimental/main amd64 Packages";
+  const updates =
+    "http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages";
+
+  it("reads a package file pinned to 1000 or with a priority below 100", () => {
+    const versions = [
+      "firefox:",
+      "  Installed: 133.0.3~build1",
+      "  Candidate: 133.0.3~build1",
+      "  Version table:",
+      " *** 133.0.3~build1 1000",
+      `       1000 ${mozilla}`,
+      "        100 /var/lib/dpkg/status",
+      "     1:1snap1-0ubuntu5 500",
+      "        500 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages",
+      "mousepad:",
+      "  Installed: 0.6.3-1",
+      "  Candidate: 0.6.3-1",
+      "  Version table:",
+      " *** 0.6.3-1 100",
+      `          1 ${experimental}`,
+      "        100 /var/lib/dpkg/status",
+    ].join("\n");
+
+    expect(parseAptPolicySources(versions.split("mousepad:")[0] ?? "")).toEqual(
+      [mozilla],
+    );
+    expect(
+      parseAptPolicySources(`mousepad:${versions.split("mousepad:")[1]}`),
+    ).toEqual([experimental]);
+    expect(parseAptPolicyPackageSources(versions).get("firefox")).toEqual([
+      mozilla,
+      "http://archive.ubuntu.com/ubuntu noble/main amd64 Packages",
+    ]);
+    expect(parseAptPolicyPackageSources(versions).get("mousepad")).toEqual([
+      experimental,
+    ]);
+    expect(
+      Object.fromEntries(
+        parseAptPolicyOrigins(
+          [
+            "Package files:",
+            " 100 /var/lib/dpkg/status",
+            "     release a=now",
+            `1000 ${mozilla}`,
+            "     release o=mozilla,a=mozilla,n=mozilla,l=mozilla,c=main,b=amd64",
+            "     origin packages.mozilla.org",
+            `   1 ${experimental}`,
+            "     release o=Debian,a=experimental,n=rc-buggy,l=Debian,c=main,b=amd64",
+            "     origin deb.debian.org",
+            "Pinned packages:",
+          ].join("\n"),
+        ),
+      ),
+    ).toEqual({
+      "/var/lib/dpkg/status": null,
+      [mozilla]: "mozilla",
+      [experimental]: "Debian",
+    });
+  });
+
+  it("reads the installed version while it is phased", () => {
+    expect(
+      parseAptPolicySources(
+        [
+          "gnome-text-editor:",
+          "  Installed: 46.3-0ubuntu2",
+          "  Candidate: 46.3-0ubuntu2",
+          "  Version table:",
+          " *** 46.3-0ubuntu2 500 (phased 40%)",
+          `        500 ${updates}`,
+          "        100 /var/lib/dpkg/status",
+          "     46.1-0ubuntu1 500",
+          "        500 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages",
+        ].join("\n"),
+      ),
+    ).toEqual([updates]);
+  });
+});
+
 describe("packageFromPath", () => {
   it("recognises snaps, flatpaks and AppImages by location", () => {
     expect(

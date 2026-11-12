@@ -59,8 +59,12 @@ export const parseDpkgStatus = (
   return { name, version, architecture, status };
 };
 
-const POLICY_VERSION = /^ (?:\*\*\*| {3}) (?<version>\S+) -?\d+$/u;
-const POLICY_SOURCE = /^ {8}-?\d+ (?<source>.+)$/u;
+// apt prints a version line as `" *** "` or 5 spaces, the version and its
+// priority, then a translated `(phased N%)` while it is phased.
+const POLICY_VERSION = /^ (?:\*\*\*| {3}) (?<version>\S+) -?\d+(?: \(.*\))?$/u;
+// apt prints each package file of a version with `"       %4i %s"`, so a
+// priority below 100 is padded with more spaces and 1000 or more has fewer.
+const POLICY_SOURCE = /^ {7,10}-?\d+ (?<source>.+)$/u;
 const DPKG_STATUS_SOURCE = "/var/lib/dpkg/status";
 
 /** The source a policy line names, without any user name or password in its URI. */
@@ -120,7 +124,8 @@ export const parseAptPolicyPackageSources = (
   return packages;
 };
 
-const GLOBAL_POLICY_SOURCE = /^ -?\d+ (?<source>.+)$/u;
+// The package files list prints each file with `"%4i %s"`.
+const GLOBAL_POLICY_SOURCE = /^ {0,3}-?\d+ (?<source>.+)$/u;
 const GLOBAL_POLICY_RELEASE = /^ +release (?<fields>.*)$/u;
 
 /**
