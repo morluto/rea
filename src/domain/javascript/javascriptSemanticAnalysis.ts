@@ -1646,8 +1646,22 @@ const writesIntrinsicPrototype = (node: t.Node): boolean => {
       method !== "setPrototypeOf"
     )
       return false;
+    // `Reflect.defineProperty` has the same effect as the `Object` form. Measured on Node
+    // 24.22.1, `Reflect.defineProperty(Object.prototype, "path", {value: "/tmp/a.sock"})` then
+    // `net.connect({port: 0, host: 1})` connects over the inherited path.
     const receiver = unwrapJavaScriptExpression(callee.object).node;
-    if (!t.isIdentifier(receiver) || receiver.name !== "Object") return false;
+    const intrinsic =
+      t.isIdentifier(receiver) &&
+      (receiver.name === "Object" || receiver.name === "Reflect")
+        ? receiver.name
+        : undefined;
+    if (intrinsic === undefined) return false;
+    if (
+      intrinsic === "Reflect" &&
+      method !== "defineProperty" &&
+      method !== "setPrototypeOf"
+    )
+      return false;
     const subject = node.arguments[0];
     if (subject === undefined || t.isSpreadElement(subject)) return false;
     return prototypeOwnerSpelling(subject);
@@ -1795,14 +1809,38 @@ function* indexPrototypeUncertaintySteps(
   // The alias table is syntactic: bindings are not resolved yet at this point, and
   // \`const p = Object.getPrototypeOf({})\` is recognisable without them.
   const aliasOwners = new Map<string, SemanticPrototypeOwner>();
+  /**
+   * Names bound in more than one place, whose owner therefore cannot be settled.
+   *
+   * A name can be rebound to a different owner in an inner scope, and this table is built from
+   * the whole program rather than from the binding at the write, so a second declarator with a
+   * different owner makes the name unusable. Measured on Node 24.22.1, an inner
+   * `const p = Object.getPrototypeOf({})` shadows an outer `p = Object.getPrototypeOf([])`, and
+   * the inner `p.path = ...` reaches `Object`. Reporting nothing is the honest answer here: the
+   * table cannot see which declarator is in scope at the write, and guessing one attribute a
+   * prototype mutation to the wrong owner.
+   */
+  const ambiguousAliases = new Set<string>();
+  const recordAlias = (name: string, owner: SemanticPrototypeOwner): void => {
+    if (ambiguousAliases.has(name)) return;
+    const previous = aliasOwners.get(name);
+    if (previous === undefined) {
+      aliasOwners.set(name, owner);
+      return;
+    }
+    // A second declarator for the same name may shadow the first, so neither is trusted.
+    if (previous !== owner) {
+      aliasOwners.delete(name);
+      ambiguousAliases.add(name);
+    }
+  };
   yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node) => {
       if (!t.isVariableDeclarator(node) || !t.isIdentifier(node.id)) return;
       const init = node.init;
       if (init === null || init === undefined) return;
       const owner = prototypeSourceOwner(unwrapJavaScriptExpression(init).node);
-      if (owner !== undefined && !aliasOwners.has(node.id.name))
-        aliasOwners.set(node.id.name, owner);
+      if (owner !== undefined) recordAlias(node.id.name, owner);
     },
   });
   const aliasOwner = (node: t.Node): SemanticPrototypeOwner | undefined => {
