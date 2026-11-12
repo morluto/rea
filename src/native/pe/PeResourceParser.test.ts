@@ -298,14 +298,23 @@ describe("Delphi forms inside PE resources", () => {
     ).toBe(true);
   });
 
-  it("reports a declared code page this host cannot label as unsupported", async () => {
-    // 866 is a declared page, not an absent one, so it must not be decoded as
-    // the Delphi 7 default without saying so.
+  it("decodes a declared OEM code page the host can label", async () => {
     const result = peResourcesSchema.parse(await parse(formFixture(866).bytes));
+    expect(result.delphi_forms[0]).toMatchObject({
+      code_page: "ibm866",
+      code_page_source: "resource",
+      declared_code_page: 866,
+    });
+  });
+
+  it("reports a declared code page this host cannot label as unsupported", async () => {
+    // 437 is a declared page outside the host's decoder table, so it must not
+    // be decoded as the Delphi 7 default without saying so.
+    const result = peResourcesSchema.parse(await parse(formFixture(437).bytes));
     expect(result.delphi_forms[0]).toMatchObject({
       code_page: "latin1",
       code_page_source: "unsupported",
-      declared_code_page: 866,
+      declared_code_page: 437,
     });
   });
 

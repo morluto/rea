@@ -326,6 +326,25 @@ describe("Delphi value ordinal table", () => {
   });
 });
 
+describe("Delphi form declared code pages", () => {
+  it("decodes a supported declared OEM code page", () => {
+    // WHATWG labels ibm866, and byte 0x80 is U+0410 there; decoding it as
+    // latin1 would turn a Cyrillic caption into a control character.
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [property_("Caption", bytes(6, 1, 0x80))]),
+      ),
+      "ibm866",
+    );
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      text: "\u0410",
+      bytes_hex: "80",
+      code_page: "ibm866",
+    });
+  });
+});
+
 describe("Delphi form string and structural values", () => {
   it("decodes strings with the recorded code page and retains their bytes", () => {
     const root = rootOf(
@@ -717,6 +736,20 @@ describe("Delphi form unread object suffix", () => {
     expect(root.class_name?.text).toBe("TForm1");
     expect(root.unknown?.bytes_hex).toBe(unread.toString("hex"));
     expect(root.unknown?.bytes_hex).not.toContain("54466f726d31");
+    expect(root.unknown?.truncated).toBe(false);
+    expect(root.unknown?.location).toMatchObject({ bytes: unread.length });
+  });
+
+  it("reports a capped unread suffix as truncated", () => {
+    const declared = 255;
+    const unread = Buffer.alloc(200, 0x41);
+    const root = rootOf(
+      form(Buffer.concat([shortString("TForm1"), bytes(declared), unread])),
+    );
+    expect(root.class_name?.text).toBe("TForm1");
+    expect(root.unknown?.truncated).toBe(true);
+    expect(root.unknown?.bytes_hex).toHaveLength(128 * 2);
+    expect(root.unknown?.location).toMatchObject({ bytes: unread.length });
   });
 });
 

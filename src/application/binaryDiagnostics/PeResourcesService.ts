@@ -215,6 +215,7 @@ const insideLocations = (
   within: (range: { offset: number; bytes: number }) => boolean,
 ): boolean => {
   if (!within(object.location)) return false;
+  if (object.unknown !== null && !within(object.unknown.location)) return false;
   const text = (item: DelphiFormText | null): boolean =>
     item === null || within(item.location);
   if (!text(object.class_name) || !text(object.component_name)) return false;

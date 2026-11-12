@@ -116,6 +116,8 @@ export type DelphiFormObject = {
   readonly unknown: {
     readonly reason: string;
     readonly bytes_hex: string;
+    readonly truncated: boolean;
+    readonly location: DelphiFormRange;
   } | null;
 };
 
@@ -131,6 +133,7 @@ export const DEFAULT_CODE_PAGE = "windows-1252";
  * declarations are supported.
  */
 export const RESOURCE_CODE_PAGES: Readonly<Record<number, string>> = {
+  866: "ibm866",
   874: "windows-874",
   932: "shift_jis",
   936: "gbk",
@@ -298,7 +301,12 @@ const objectSchemaOf = <P extends z.ZodType, O extends z.ZodType>(
     properties: z.array(property),
     children: z.array(object),
     unknown: z
-      .strictObject({ reason: z.string(), bytes_hex: z.string() })
+      .strictObject({
+        reason: z.string(),
+        bytes_hex: z.string(),
+        truncated: z.boolean(),
+        location: rangeSchema,
+      })
       .nullable(),
   });
 

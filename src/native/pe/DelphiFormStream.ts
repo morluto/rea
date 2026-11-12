@@ -190,6 +190,17 @@ const hexOf = (
   };
 };
 
+/** Object unknowns keep the same capped bytes, range and cap flag as values. */
+const formUnknown = (
+  reason: string,
+  bytes: Buffer,
+  location: DelphiFormRange,
+): NonNullable<DelphiFormObject["unknown"]> => ({
+  reason,
+  ...hexOf(bytes),
+  location,
+});
+
 /**
  * Decode short Pascal strings with the declared code page. `latin1` is only a
  * last resort for labels that cannot be decoded; it never replaces a declared
@@ -741,13 +752,13 @@ function readObject(
     component_name: componentName,
     properties,
     children,
-    unknown: {
+    unknown: formUnknown(
       reason,
       // Keep the bytes that could not be decoded, not the header bytes the
       // object fields and their locations already describe.
-      bytes_hex: hexOf(stream.bytes.subarray(stream.position, stream.end))
-        .bytes_hex,
-    },
+      stream.bytes.subarray(stream.position, stream.end),
+      range(stream.position, stream.end),
+    ),
   });
   try {
     const prefix = stream.peek();
@@ -843,11 +854,11 @@ function readObject(
           component_name: null,
           properties: [],
           children: [],
-          unknown: {
-            reason: error.message,
-            bytes_hex: hexOf(stream.bytes.subarray(childAt, stream.position))
-              .bytes_hex,
-          },
+          unknown: formUnknown(
+            error.message,
+            stream.bytes.subarray(childAt, stream.position),
+            range(childAt, stream.position),
+          ),
         });
         throw new StoppedForm(partial(error.message));
       }
@@ -912,22 +923,22 @@ export const decodeDelphiFormStream = (
         component_name: null,
         properties: [],
         children: [],
-        unknown: {
-          reason:
-            "Payload ends after the filer signature without a root component.",
-          bytes_hex: "",
-        },
+        unknown: formUnknown(
+          "Payload ends after the filer signature without a root component.",
+          stream.bytes.subarray(stream.position, end),
+          range(stream.position, end),
+        ),
       };
     // A suffix after the root terminator is part of the payload but nothing
     // decoded claims it; report it instead of presenting a complete decode.
     if (root !== null && root.unknown === null && stream.remaining > 0)
       root = {
         ...root,
-        unknown: {
-          reason: `${String(stream.remaining)} bytes follow the root component terminator.`,
-          bytes_hex: hexOf(stream.bytes.subarray(stream.position, end))
-            .bytes_hex,
-        },
+        unknown: formUnknown(
+          `${String(stream.remaining)} bytes follow the root component terminator.`,
+          stream.bytes.subarray(stream.position, end),
+          range(stream.position, end),
+        ),
       };
   } catch (error) {
     // A stopped form still carries everything decoded before the stop.
@@ -941,7 +952,11 @@ export const decodeDelphiFormStream = (
         component_name: null,
         properties: [],
         children: [],
-        unknown: { reason: error.message, bytes_hex: "" },
+        unknown: formUnknown(
+          error.message,
+          stream.bytes.subarray(stream.position, end),
+          range(stream.position, end),
+        ),
       };
     else throw error;
   }
