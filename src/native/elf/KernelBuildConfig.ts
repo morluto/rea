@@ -530,8 +530,8 @@ const parseBannerText = (
   let compiler: string | null = null;
   if (rest.startsWith(" (")) {
     const close = rest.indexOf(")");
-    if (close > 2) {
-      builder = rest.slice(2, close);
+    if (close >= 2) {
+      builder = rest.slice(2, close) || null;
       rest = rest.slice(close + 1);
     }
   }
