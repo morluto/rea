@@ -532,8 +532,10 @@ const parseBannerText = (
     const close = rest.indexOf(")");
     if (close > 2) {
       builder = rest.slice(2, close);
-      rest = rest.slice(close + 1);
     }
+    // Consume an empty first group too (e.g. "Linux version 6.1.0 () (gcc 12.2.0)"),
+    // so the following compiler group boundary is read from the right position.
+    if (close > 0) rest = rest.slice(close + 1);
   }
   if (rest.startsWith(" (")) {
     const marked = rest.lastIndexOf(") #");

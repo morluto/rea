@@ -64,6 +64,14 @@ export const plainIkcfgStringFixture = (): Buffer =>
     Buffer.from("ordinary IKCFG_ST string without gzip\0", "latin1"),
   );
 
+/** ELF whose banner has an empty first parenthesized group before the compiler. */
+export const emptyBuilderKernelConfigFixture = (): Buffer =>
+  concat(
+    elfPrefix(),
+    Buffer.from("Linux version 6.1.0 () (gcc 12.2.0) #1 SMP\0", "latin1"),
+    Buffer.from("ordinary IKCFG_ST string without gzip\0", "latin1"),
+  );
+
 /** ELF whose `IKCFG_ST` is followed by a gzip header that ends early. */
 export const truncatedKernelConfigFixture = (): Buffer => {
   const member = gzipSync(Buffer.from(SAMPLE_KERNEL_CONFIG, "latin1"));

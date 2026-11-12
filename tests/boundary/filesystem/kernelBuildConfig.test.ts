@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createKernelBuildConfigService } from "../../../src/composition/binaryDiagnostics.js";
 import {
+  emptyBuilderKernelConfigFixture,
   kernelBuildConfigFixture,
   plainIkcfgStringFixture,
 } from "../../../src/native/elf/KernelBuildConfig.fixture.js";
@@ -81,6 +82,31 @@ describe("kernel build config stable filesystem boundary", () => {
       expect(result.value.subject?.format).toBe("elf");
       expect(result.value.normalized_result).toMatchObject({
         banner: { status: "present", version: "6.6.0" },
+        config: { status: "absent", entries: [] },
+        coverage: { status: "complete" },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("reports the second parenthesized group as compiler when the builder group is empty", async () => {
+    const root = await createTestTempDirectory("rea-kernel-config-empty-builder-");
+    const path = join(root, "vmlinux");
+    await writeFile(path, emptyBuilderKernelConfigFixture());
+    const service = createKernelBuildConfigService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      expect(result.value.subject?.format).toBe("elf");
+      expect(result.value.normalized_result).toMatchObject({
+        banner: {
+          status: "present",
+          version: "6.1.0",
+          builder: null,
+          compiler: "gcc 12.2.0",
+          text: "Linux version 6.1.0 () (gcc 12.2.0) #1 SMP",
+        },
         config: { status: "absent", entries: [] },
         coverage: { status: "complete" },
       });
