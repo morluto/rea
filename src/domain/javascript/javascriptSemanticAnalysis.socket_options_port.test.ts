@@ -216,3 +216,35 @@ it("emits no acquisition for a colon-form prototype key copied by a spread", () 
     ),
   ).toEqual([]);
 });
+
+it.each([
+  // A getter or an own `__proto__` only rescues the port when it is copied first. Measured on
+  // Node 24.22.1.
+  [`tls.connect({}, { port: -1, get side() { this.port = 80; } })`],
+  [
+    `tls.connect({}, { port: -1, ["__proto__"]: { set port(_) { this.path = "/tmp/x"; } } })`,
+  ],
+  [
+    `tls.connect({}, { port: -1, ...{ ["__proto__"]: { set port(_) { this.path = "/tmp/x"; } } } })`,
+  ],
+] as const)(
+  "emits no acquisition when the bad port is copied first: %s",
+  (call) => {
+    expect(acquisitionsFor(call)).toEqual([]);
+  },
+);
+
+it.each([
+  [`tls.connect({}, { get side() { this.port = 80; }, port: -1 })`],
+  [
+    `tls.connect({}, { ["__proto__"]: { set port(_) { this.path = "/tmp/x"; } }, port: -1 })`,
+  ],
+  [
+    `tls.connect({}, { ...{ ["__proto__"]: { set port(_) { this.path = "/tmp/x"; } } }, port: -1 })`,
+  ],
+] as const)(
+  "keeps the acquisition when a writer precedes the port: %s",
+  (call) => {
+    expect(acquisitionsFor(call)).toHaveLength(1);
+  },
+);
