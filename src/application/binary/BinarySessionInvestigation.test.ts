@@ -2,7 +2,10 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import { createEvidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  withEvidenceCallerInputPath,
+} from "../../domain/evidence.js";
 import {
   createEvidenceBundle,
   parseEvidenceBundle,
@@ -262,6 +265,53 @@ it("attributes an imported bundle to the recording session's provider selection"
         /^(request|environment|auto-single-candidate)$/u,
       ),
     });
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("adopts a later recording's selection without erasing retained display metadata", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    // A bundle recorded before the target opened carries no attribution. The
+    // session then records the same semantic observation under a caller-
+    // selected path; adopting the bundle's later selection must keep that path.
+    const foreign = createEvidenceBundle([observation("provider_run")]);
+    expect(session.importEvidenceBundle(foreign).ok).toBe(true);
+    expect(session.recordEvidence(
+      withEvidenceCallerInputPath(
+        observation("provider_run"),
+        "/selected/app.bin",
+      ),
+    ).ok).toBe(true);
+    const [record] = session.exportEvidenceBundle().records;
+    expect(record?.caller_input_path).toBe("/selected/app.bin");
+    expect(record?.provider_selection).toMatchObject({
+      selection_source: expect.stringMatching(
+        /^(request|environment|auto-single-candidate)$/u,
+      ),
+    });
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("emits a snapshot change when a duplicate adopts the recording selection", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    // Imported before the target opened, so it carries no selection.
+    const foreign = createEvidenceBundle([observation("provider_run")]);
+    expect(session.importEvidenceBundle(foreign).ok).toBe(true);
+    const listener = vi.fn();
+    session.onAnalysisSnapshotChanged(listener);
+    expect(session.recordEvidence(observation("provider_run")).ok).toBe(true);
+    const [record] = session.exportEvidenceBundle().records;
+    expect(record?.provider_selection).toBeDefined();
+    expect(listener).toHaveBeenCalled();
   } finally {
     await session.dispose();
   }

@@ -17,6 +17,7 @@ import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import {
   isImmutableEvidence,
+  adoptEvidenceDisplayMetadata,
   evidenceDisplayMetadataAgree,
   type Evidence,
 } from "../../domain/evidence.js";
@@ -124,24 +125,29 @@ export class EvidenceLedger {
 
   /**
    * Adopt display metadata from a later recording of the same semantic ID.
-   * Only a value the ledger already holds under that ID can be replaced; the
-   * semantic identity and stored payload stay the same record.
+   * Only a value the ledger already holds under that ID can be replaced: the
+   * retained value's caller-selected paths, aliases and subject display come
+   * from the session that recorded the observation, so an incoming copy without
+   * them must not erase them merely to add attribution.
    */
   replaceMetadata(
     current: Evidence,
     previous: Evidence,
-  ): Result<boolean, AnalysisError> {
-    if (current.evidence_id !== previous.evidence_id) return ok(false);
-    if (current.provider_selection === undefined) return ok(false);
-    if (this.#records.get(current.evidence_id) === undefined) return ok(false);
+  ): Result<Evidence | null, AnalysisError> {
+    if (current.evidence_id !== previous.evidence_id) return ok(null);
+    if (current.provider_selection === undefined) return ok(null);
+    const retained = this.#records.get(current.evidence_id);
+    if (retained === undefined) return ok(null);
+    const replacement = adoptEvidenceDisplayMetadata(retained, current);
+    if (replacement === retained) return ok(null);
     const admitted = this.#admitChanges(
       "record_evidence",
-      new Map([[current.evidence_id, current]]),
+      new Map([[current.evidence_id, replacement]]),
     );
     if (!admitted.ok) return admitted;
-    this.#records.set(current.evidence_id, current);
+    this.#records.set(current.evidence_id, replacement);
     this.#commitAccounting(admitted.value);
-    return ok(true);
+    return ok(replacement);
   }
 
   /** Validate an entire bundle before atomically merging its records. */

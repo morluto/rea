@@ -98,12 +98,13 @@ export class InvestigationRecords
 
   /**
    * Adopt a later recording session's display provenance for an Evidence value
-   * this ledger already holds under the same semantic ID, without adding a record.
+   * this ledger already holds under the same semantic ID, without adding a
+   * record. Returns the stored replacement, or null when nothing changed.
    */
   replaceEvidenceMetadata(
     current: Evidence,
     previous: Evidence,
-  ): Result<boolean, AnalysisError> {
+  ): Result<Evidence | null, AnalysisError> {
     return this.#evidence.replaceMetadata(current, previous);
   }
 

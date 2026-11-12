@@ -194,7 +194,16 @@ export abstract class BinarySessionRecords {
       attributed,
       authenticated,
     );
-    return replaced.ok ? recorded : replaced;
+    if (!replaced.ok) return replaced;
+    // The retained record's display metadata changed, so replay caches and
+    // snapshot subscribers must observe it exactly as on the import path.
+    if (replaced.value !== null) {
+      this.#snapshot.refreshEvidenceMetadata([
+        { kind: "metadata", previous: authenticated, current: replaced.value },
+      ]);
+      this.#emitSnapshotChanged();
+    }
+    return recorded;
   }
 
   admitRecoveryObservation(
