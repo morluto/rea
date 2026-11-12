@@ -8,6 +8,7 @@ export const PREFETCH_VERSIONS = ["17", "23", "26"] as const;
 
 const SIGNATURE = Buffer.from("SCCA", "ascii");
 const MAM = Buffer.from("MAM", "ascii");
+const MAM_VERSION = 4;
 const NAME_BYTES = 60;
 const RUN_COUNT_OFFSET = 0x98;
 
@@ -36,6 +37,9 @@ export const prefetchFixture = ({
   const bytes = Buffer.alloc(512);
   if (compressed) {
     MAM.copy(bytes, 0);
+    // The wrapper's own version byte; the reader uses it to tell a MAM
+    // container from a file that merely starts with these three letters.
+    bytes[MAM.length] = MAM_VERSION;
     return bytes;
   }
   bytes.writeUInt32LE(Number(version), 0);

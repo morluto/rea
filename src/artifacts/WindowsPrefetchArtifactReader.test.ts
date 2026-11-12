@@ -141,6 +141,17 @@ it("calls a file that ends inside the MAM header malformed, not unsupported", as
   }
 });
 
+it("does not read a MAM prefix without the container version byte as Prefetch", async () => {
+  // A file whose first three bytes spell "MAM" carries no container header, so
+  // the three letters alone must not give it Prefetch provenance.
+  const bytes = prefetchFixture({ version: "23", compressed: true });
+  bytes[3] = 0;
+  const snapshot = await scanCanonicalArtifactInventory(
+    await writePrefetch("MAM-prefixed.bin", bytes),
+  );
+  expect(snapshot.manifest.root_format).not.toBe("windows-prefetch");
+});
+
 it.each([
   ["17", 0x78],
   ["23", 0x80],

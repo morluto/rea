@@ -91,12 +91,20 @@ export const hasPrefetchSignature = (prefix: Uint8Array): boolean =>
   ).equals(SIGNATURE);
 
 /**
- * A MAM container starts at offset 0 with "MAM", an uncompressed Prefetch file
- * with its generation DWORD, so the two cannot be confused.
+ * A MAM container starts at offset 0 with "MAM" and the container version byte
+ * the wrapper writes, an uncompressed Prefetch file with its version DWORD, so
+ * the two cannot be confused. The three ASCII bytes alone are not enough: any
+ * file whose first bytes spell "MAM" would otherwise acquire Prefetch
+ * provenance from a header it does not carry.
  */
+const MAM_VERSION_OFFSET = MAM_MAGIC.length;
+const MAM_VERSION = 4;
+const hasMamMagic = (bytes: Uint8Array): boolean =>
+  bytes.length > MAM_MAGIC.length &&
+  Buffer.from(bytes.subarray(0, MAM_MAGIC.length)).equals(MAM_MAGIC) &&
+  bytes[MAM_VERSION_OFFSET] === MAM_VERSION;
 export const isMamContainer = (bytes: Uint8Array): boolean =>
-  bytes.length >= MAM_MAGIC.length &&
-  Buffer.from(bytes.subarray(0, MAM_MAGIC.length)).equals(MAM_MAGIC);
+  bytes.length >= MAM_HEADER_BYTES && hasMamMagic(bytes);
 
 /** Prefetch header fields are little-endian. */
 const u32 = (view: DataView, offset: number, end: number): number | null =>
@@ -128,7 +136,7 @@ export const parsePrefetchFile = (
   // A MAM container replaces the header entirely, so it has no generation. The
   // signature alone does not make a container: a file that ends inside the
   // fixed MAM header is truncated, not an intact unimplemented format.
-  if (isMamContainer(bytes)) {
+  if (hasMamMagic(bytes)) {
     if (bytes.length < MAM_HEADER_BYTES)
       return err({
         kind: "format",
