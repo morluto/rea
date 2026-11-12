@@ -248,3 +248,19 @@ it.each([
     expect(acquisitionsFor(call)).toHaveLength(1);
   },
 );
+
+it.each([
+  // An array-index key enumerates before the string keys, so `get 0` runs before `port` and
+  // rewrites it. Measured on Node 24.22.1.
+  [`tls.connect({}, { port: -1, get 0() { this.port = 80; } })`],
+] as const)("keeps the acquisition when the writer runs first: %s", (call) => {
+  expect(acquisitionsFor(call)).toHaveLength(1);
+});
+
+it("emits no acquisition when a spread getter cannot rescue the port", () => {
+  expect(
+    acquisitionsFor(
+      `tls.connect({}, { ...{ get side() { this.port = 80; } }, port: -1 })`,
+    ),
+  ).toEqual([]);
+});
