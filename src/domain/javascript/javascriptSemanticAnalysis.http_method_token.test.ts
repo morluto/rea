@@ -1,4 +1,4 @@
-﻿import { expect, it } from "vitest";
+import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 /**
@@ -40,6 +40,10 @@ it.each([
   [`http.request({ method: "POST" })`],
   // An empty string is a valid token and Node falls back to a GET.
   [`http.request({ method: "" })`],
+  // `_` and `-` are RFC 9110 `tchar`s; a hand-written class is most likely to drop these.
+  [`http.request({ method: "M_SEARCH" })`],
+  [`http.request({ method: "_" })`],
+  [`http.request({ method: "M-SEARCH" })`],
   [`http.request("http://h/", { method: "GET" })`],
   // A replaced `URL` does not prove the `(url, options)` overload.
   [`const URL = Function; http.request(new URL(), { method: "BAD METHOD" })`],
