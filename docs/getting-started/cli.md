@@ -638,9 +638,11 @@ entries record a refused kind, format, architecture, or role. An availability-on
 message describes the recorded rejections without claiming that every provider
 is unconfigured or that target support is known.
 For Hopper, Ghidra, IDA, JADX, and Kuna, run
-`rea doctor --provider ID --json` to diagnose the selected engine. Other adapters,
-such as `pwntools-elf`, report their configuration requirements directly and are
-not accepted by `doctor --provider`. See
+`rea doctor --provider ID --json` to diagnose the selected engine. The
+`desktop_build` scope is accepted as well: it checks the desktop application
+build host rather than an analysis engine. Other adapters, such as `pwntools-elf`,
+report their configuration requirements directly and are not accepted by
+`doctor --provider`. See
 [task readiness](installation.md#check-readiness-for-your-task) and
 [provider selection](../reference/mcp-contracts.md#identity-and-discovery).
 
