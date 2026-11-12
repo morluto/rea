@@ -118,13 +118,15 @@ describe("entrypoint spelling rules", () => {
   });
 });
 
-it("normalizes a parent segment lexically, as the launcher did", () => {
-  // A `..` spelling is resolved lexically rather than dereferenced. Measured on Node 24.22.1:
-  // with `a/link` pointing at `b/deep` and both `a/s.mjs` and `b/s.mjs` present,
-  // `node a/link/../s.mjs` runs `a/s.mjs`, while `realpath` would reach `b/s.mjs`.
+it("normalizes a parent segment before resolving it", () => {
+  // The launcher normalizes lexically *first*, then follows whatever the normalized path
+  // selects. Measured on Node 24.22.1: with `a/link` pointing at `b/deep` and both `a/s.mjs`
+  // and `b/s.mjs` present, `node a/link/../s.mjs` runs `a/s.mjs`, not `b/s.mjs`.
   const { read, resolveSpelling } = recordingResolver();
   selectedFile("/root/a/link/../s.mjs", resolveSpelling);
-  expect(read).toEqual([]);
+  // The resolver sees the normalized spelling, never the raw one.
+  expect(read).toEqual([resolve("/root/a/link/../s.mjs")]);
+  expect(read[0]).not.toContain("link");
 });
 
 it("still decides two equal spellings by what they select", () => {

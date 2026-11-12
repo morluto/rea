@@ -15,7 +15,10 @@ import {
  * this module therefore skips the filesystem for a share and stays lexical.
  */
 export const isNetworkSharePath = (candidate: string): boolean =>
-  /^[\x5C\x2F]{2}[^\x5C\x2F]/u.test(candidate);
+  // Windows only. On POSIX `//tmp/release/rea.mjs` is a local absolute path that the launcher
+  // normalizes to `/tmp/release/rea.mjs`, so treating it as a share would report a mismatch for
+  // the process's own launch spelling.
+  process.platform === "win32" && /^[\x5C\x2F]{2}[^\x5C\x2F]/u.test(candidate);
 
 /**
  * Whether a spelling carries a parent segment that Bun traverses differently.
@@ -30,11 +33,19 @@ export const traversalSemanticsDiffer = (
 ): boolean =>
   process.platform !== "win32" &&
   runtime === "bun" &&
-  candidate.split(/[\\/]/u).includes("..");
+  candidate.split(hostSeparator).includes("..");
+
+/**
+ * The separator this host uses.
+ *
+ * Backslash is a legal filename character on POSIX, so splitting on it invents components that
+ * do not exist: `/tmp/release\../foreign.mjs` has no parent segment there.
+ */
+const hostSeparator = process.platform === "win32" ? /[\\/]/u : /\//u;
 
 /** Whether a spelling carries a parent segment. */
 const hasParentSegment = (candidate: string): boolean =>
-  candidate.split(/[\\/]/u).includes("..");
+  candidate.split(hostSeparator).includes("..");
 
 /** Resolving a spelling to the file it selects; injectable so a test can observe the call. */
 export type RealpathResolver = (candidate: string) => string;
@@ -63,15 +74,18 @@ export const selectedFile = (
   readRealpath: RealpathResolver = nativeRealpath,
 ): string => {
   if (isNetworkSharePath(candidate)) return win32.resolve(candidate);
-  // A parent segment is normalized lexically, which is what the launcher did when it selected
-  // the script. Measured on Node 24.22.1: with `a/link` pointing at `b/deep` and both `a/s.mjs`
-  // and `b/s.mjs` present, `node a/link/../s.mjs` runs `a/s.mjs`, while `realpath` resolves the
-  // link first and reaches `b/s.mjs`.
-  if (hasParentSegment(candidate)) return resolve(candidate);
+  // A parent segment is normalized lexically *first*, then the result is resolved — that is the
+  // composition the launcher performs. Measured on Node 24.22.1: with `a/link` pointing at
+  // `b/deep` and both `a/s.mjs` and `b/s.mjs` present, `node a/link/../s.mjs` runs `a/s.mjs`
+  // (lexical, not `b/s.mjs`), and when `release` is itself a symlink the normalized path still
+  // follows that link.
+  const normalized = hasParentSegment(candidate)
+    ? resolve(candidate)
+    : candidate;
   try {
-    return readRealpath(candidate);
+    return readRealpath(normalized);
   } catch {
-    return resolve(candidate);
+    return resolve(normalized);
   }
 };
 
