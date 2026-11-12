@@ -419,13 +419,21 @@ export interface CorePrpsinfoOptions {
   readonly sid?: number;
   readonly fname?: string;
   readonly psargs?: string;
+  /**
+   * Width of `__kernel_uid_t` for a 32-bit image: 2 on i386, ARM, m68k and sparc32, and 4 on
+   * every ABI that takes `asm-generic/posix_types.h` (MIPS o32, PowerPC-32, s390) or
+   * `compat_elf_prpsinfo`. Selects the 124- or 128-byte descriptor the kernel writes. Ignored for
+   * a 64-bit image, whose layout is fixed.
+   */
+  readonly idWidth?: 2 | 4;
 }
 
 /** Linux CORE NT_PRPSINFO note (type 3). */
 export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer => {
   const bits = options.bits ?? 64;
   const little = options.little ?? true;
-  const desc = Buffer.alloc(bits === 64 ? 136 : 124);
+  const idWidth = bits === 64 ? 4 : (options.idWidth ?? 2);
+  const desc = Buffer.alloc(bits === 64 ? 136 : idWidth === 4 ? 128 : 124);
   desc[0] = options.state ?? 0;
   desc[1] = (options.sname ?? "R").charCodeAt(0);
   desc[2] = options.zomb ?? 0;
@@ -455,26 +463,32 @@ export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer => {
     psargs.copy(desc, 56, 0, Math.min(psargs.length, 80));
   } else {
     write32(desc, 4, options.flag ?? 0, little);
-    write16(desc, 8, options.uid ?? 1000, little);
-    write16(desc, 10, options.gid ?? 1000, little);
-    if (little) {
-      desc.writeInt32LE(options.pid ?? 1234, 12);
-      desc.writeInt32LE(options.ppid ?? 1, 16);
-      desc.writeInt32LE(options.pgrp ?? 1234, 20);
-      desc.writeInt32LE(options.sid ?? 1234, 24);
+    if (idWidth === 4) {
+      write32(desc, 8, options.uid ?? 1000, little);
+      write32(desc, 12, options.gid ?? 1000, little);
     } else {
-      desc.writeInt32BE(options.pid ?? 1234, 12);
-      desc.writeInt32BE(options.ppid ?? 1, 16);
-      desc.writeInt32BE(options.pgrp ?? 1234, 20);
-      desc.writeInt32BE(options.sid ?? 1234, 24);
+      write16(desc, 8, options.uid ?? 1000, little);
+      write16(desc, 10, options.gid ?? 1000, little);
+    }
+    const pidAt = 8 + idWidth * 2;
+    if (little) {
+      desc.writeInt32LE(options.pid ?? 1234, pidAt);
+      desc.writeInt32LE(options.ppid ?? 1, pidAt + 4);
+      desc.writeInt32LE(options.pgrp ?? 1234, pidAt + 8);
+      desc.writeInt32LE(options.sid ?? 1234, pidAt + 12);
+    } else {
+      desc.writeInt32BE(options.pid ?? 1234, pidAt);
+      desc.writeInt32BE(options.ppid ?? 1, pidAt + 4);
+      desc.writeInt32BE(options.pgrp ?? 1234, pidAt + 8);
+      desc.writeInt32BE(options.sid ?? 1234, pidAt + 12);
     }
     const fname = Buffer.from(`${options.fname ?? "app"}\0`, "latin1");
-    fname.copy(desc, 28, 0, Math.min(fname.length, 16));
+    fname.copy(desc, pidAt + 16, 0, Math.min(fname.length, 16));
     const psargs = Buffer.from(
       `${options.psargs ?? "./app --flag"}\0`,
       "latin1",
     );
-    psargs.copy(desc, 44, 0, Math.min(psargs.length, 80));
+    psargs.copy(desc, pidAt + 32, 0, Math.min(psargs.length, 80));
   }
   return elfNote("CORE", 3, desc, little);
 };

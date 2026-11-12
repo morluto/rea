@@ -945,26 +945,25 @@ it("decodes a 32-bit prpsinfo whose ABI gives pr_uid 32 bits", () => {
   // `pr_uid`/`pr_gid` are `__kernel_uid_t`, which is 16-bit only on i386, ARM, m68k and sparc32.
   // MIPS o32, PowerPC-32 and s390 take the asm-generic `unsigned int`, so the kernel writes
   // `sizeof(struct elf_prpsinfo)` == 128 and every member after `pr_flag` sits four bytes later.
-  const descriptor = Buffer.alloc(128);
-  descriptor[0] = 1;
-  descriptor[1] = "R".charCodeAt(0);
-  descriptor.writeUInt32LE(0x40_0000, 4);
-  descriptor.writeUInt32LE(70_000, 8);
-  descriptor.writeUInt32LE(80_000, 12);
-  descriptor.writeInt32LE(4242, 16);
-  descriptor.writeInt32LE(1, 20);
-  descriptor.writeInt32LE(4242, 24);
-  descriptor.writeInt32LE(4242, 28);
-  Buffer.from("mips-proc\0").copy(descriptor, 32);
-  Buffer.from("./mips-proc --serve\0").copy(descriptor, 48);
-
   const report = parse(
     elfNoteFixture({
       bits: 32,
       machine: 8,
       type: 4,
       ownership: "program",
-      notes: elfNote("CORE", 3, descriptor),
+      notes: corePrpsinfoNote({
+        bits: 32,
+        idWidth: 4,
+        state: 1,
+        uid: 70_000,
+        gid: 80_000,
+        pid: 4242,
+        ppid: 1,
+        pgrp: 4242,
+        sid: 4242,
+        fname: "mips-proc",
+        psargs: "./mips-proc --serve",
+      }),
     }),
   );
   expect(report.entries[0]?.core?.prpsinfo).toEqual({
@@ -980,6 +979,40 @@ it("decodes a 32-bit prpsinfo whose ABI gives pr_uid 32 bits", () => {
   });
 });
 
+it("still decodes the 124-byte 32-bit prpsinfo with 16-bit ids", () => {
+  // The i386/ARM form must not shift: its descriptor is four bytes shorter.
+  const report = parse(
+    elfNoteFixture({
+      bits: 32,
+      machine: 3,
+      type: 4,
+      ownership: "program",
+      notes: corePrpsinfoNote({
+        bits: 32,
+        state: 1,
+        uid: 500,
+        gid: 600,
+        pid: 4242,
+        ppid: 1,
+        pgrp: 4242,
+        sid: 4242,
+        fname: "i386-proc",
+        psargs: "./i386-proc --serve",
+      }),
+    }),
+  );
+  expect(report.entries[0]?.core?.prpsinfo).toEqual({
+    state: 1,
+    pid: 4242,
+    ppid: 1,
+    pgrp: 4242,
+    sid: 4242,
+    uid: 500,
+    gid: 600,
+    filename: "i386-proc",
+    psargs: "./i386-proc --serve",
+  });
+});
 it("still decodes the 124-byte 32-bit prpsinfo with 16-bit ids", () => {
   // The i386/ARM form must not shift: its descriptor is four bytes shorter.
   const descriptor = Buffer.alloc(124);
