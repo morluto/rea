@@ -926,10 +926,18 @@ const rejectsSocketOptionsPort = (
       !isKnownNonObject(secondValue, context)
     ) {
       // The later object replaces a member it writes, so its own `port` is the effective
-      // one. `Object.assign` reads that object, so only its getters run, and an own
-      // `__proto__` installs a prototype on the target whose setters then fire.
-      if (accessorDecides(secondValue) || installsPrototype(secondValue))
-        return false;
+      // one. `Object.assign` reads that object in order, so a getter or an own `__proto__`
+      // only rescues the port when it is copied first. Measured on Node 24.22.1:
+      //
+      //   tls.connect({}, {get side() { this.port = 80; }, port: -1})                 -> connects
+      //   tls.connect({}, {port: -1, get side() { this.port = 80; }})                 -> THREW
+      //   tls.connect({}, {["__proto__"]: {set port(_) { this.path = "/tmp/x"; }}, port: -1}) -> connects
+      //   tls.connect({}, {port: -1, ["__proto__"]: {set port(_) { this.path = "/tmp/x"; }}}) -> THREW
+      const writerPrecedesPort = optionWriterPrecedesMember(
+        secondValue,
+        "port",
+      );
+      if (writerPrecedesPort) return false;
       const sourcePort = staticObjectProperty(
         secondValue,
         "port",
@@ -1042,6 +1050,51 @@ const rejectsPortMember = (
   )
     return true;
   return rejectsPortValueNode(written, specifier, context);
+};
+
+/**
+ * Whether a getter or a `__proto__` entry is copied before the last write of `member`.
+ *
+ * `Object.assign` reads the source in property order. A getter writes the member when it runs,
+ * and an own `__proto__` installs a prototype whose setters fire for the keys copied after it —
+ * so either can rescue a value that the literal itself spells as invalid, but only when it comes
+ * first.
+ */
+const optionWriterPrecedesMember = (
+  options: t.ObjectExpression,
+  member: string,
+): boolean => {
+  let writerOrder: number | undefined;
+  let memberOrder: number | undefined;
+  // A spread contributes its keys at its own position, so it is expanded in place.
+  const entries: readonly (t.ObjectProperty | t.ObjectMethod)[] =
+    options.properties.flatMap((property) => {
+      if (!t.isSpreadElement(property)) return [property];
+      const spread = unwrapJavaScriptExpression(property.argument).node;
+      return t.isObjectExpression(spread)
+        ? spread.properties.filter(
+            (entry): entry is t.ObjectProperty | t.ObjectMethod =>
+              !t.isSpreadElement(entry),
+          )
+        : [];
+    });
+  for (const [index, property] of entries.entries()) {
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (t.isObjectMethod(property) && property.kind === "get")
+      writerOrder ??= index;
+    // Only a computed or shorthand `__proto__` is a copied own key.
+    if (
+      name === "__proto__" &&
+      (property.computed ||
+        (t.isObjectProperty(property) && property.shorthand))
+    )
+      writerOrder ??= index;
+    if (name === member) memberOrder = index;
+  }
+  return (
+    writerOrder !== undefined &&
+    (memberOrder === undefined || writerOrder < memberOrder)
+  );
 };
 
 /** Whether an object literal copies an own `__proto__` key rather than setting its own prototype. */
