@@ -67,7 +67,7 @@ export const projectGhidraDoctorInspection = (
               code: !readiness.available ? readiness.code : null,
               detail: !readiness.available
                 ? readiness.reason
-                : "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS only.",
+                : "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS/ReFS only.",
               remediation: !readiness.available ? readiness.remediation : null,
               classification:
                 !readiness.available && readiness.code === "runtime_unavailable"
