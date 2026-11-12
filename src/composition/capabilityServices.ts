@@ -34,6 +34,7 @@ import { createV8CodeCacheService } from "./v8CodeCache.js";
 import { createModelArtifactService } from "./model.js";
 import { createIl2cppMetadataService } from "./il2cpp.js";
 import { createElectronFuseService } from "./electronFuses.js";
+import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
@@ -123,6 +124,7 @@ import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBui
 import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import type { BuildSettle } from "../application/desktop/DesktopBuildSettle.js";
+import type { BuildComputerDefaults } from "../desktop/BuildComputerEnvironment.js";
 
 /** Typed injection inputs shared by a capability host, independent of transport. */
 export interface CapabilityServiceOptions {
@@ -163,6 +165,8 @@ export interface CapabilityServiceOptions {
   readonly fridaInstrumentation?: FridaInstrumentationPort;
   /** How build computers read an app until its files settle; the shipped timing on real time unless a test shortens or clocks it. */
   readonly desktopBuildSettle?: BuildSettle;
+  /** Where build computers look for unset settings; the host's PATH and REA cache unless a test isolates them. */
+  readonly desktopBuildDefaults?: BuildComputerDefaults;
   readonly reverseEngineering?: ReverseEngineeringService;
 }
 
@@ -340,6 +344,7 @@ const modules = {
       new DesktopBuildComputers(
         providerEnvironment,
         options.desktopBuildSettle,
+        options.desktopBuildDefaults,
       ),
     (value) => value.closeAll(),
   ),
@@ -377,6 +382,9 @@ const modules = {
   windowsShortcut: service(() => createWindowsShortcutService()),
   electronFuses: service(
     ({ options }) => options.electronFuses ?? createElectronFuseService(),
+  ),
+  releaseExposure: service(({ environment, settings }) =>
+    createReleaseExposureService(environment, settings),
   ),
   pythonPyc: service(
     ({ options }) => options.pythonPyc ?? createPythonPycService(),
@@ -567,8 +575,8 @@ const modules = {
       },
     }),
   ),
-  cutter: service(({ providerEnvironment }) =>
-    createCutterBridgeService(providerEnvironment),
+  cutter: service(({ providerEnvironment, settings }) =>
+    createCutterBridgeService(providerEnvironment, { read: settings }),
   ),
   browserObservation: capability(
     ({ options }) => options.browserObservation,

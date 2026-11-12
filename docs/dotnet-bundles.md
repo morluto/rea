@@ -50,7 +50,8 @@ explicitly with the managed tools to establish PE/CLI facts.
 
 ## Admission and containment
 
-Metadata is range-read with a 64 KiB cache. Policy budgets are 16 MiB of
+Metadata is range-read with a cache of at most 64 KiB, bounded by the remaining
+selected metadata allowance. Default policy budgets are 16 MiB of
 manifest metadata, 100,000 files, 64 KiB per UTF-8 string, 512 MiB of stored or
 expanded bytes per file, 256 path parts per member, 250,000 distinct in-memory
 path-tree nodes, and 2 GiB of aggregate expanded bytes. The node budget counts
@@ -59,6 +60,18 @@ resource policies, not limits imposed by Microsoft's format. Marker scanning
 streams 64 KiB chunks and reuses completed probe facts during extraction;
 ordinary native files without a marker incur one extra
 read pass before host hashing.
+
+Both artifact tools accept `artifact_limits.dotnet_bundle` to select
+`metadata_bytes`, `entry_count`, `string_bytes`, `member_bytes`,
+`expanded_bytes`, `path_parts`, and `path_nodes` for the next operation. The
+string allowance applies to every manifest string, including the bundle ID.
+For example, retry a complete bundle whose manifest exceeds the default with
+`{"artifact_limits":{"dotnet_bundle":{"metadata_bytes":33554432}}}`.
+The CLI accepts the same selection through `--artifact-limits` JSON. Omitted
+fields preserve defaults; errors name the exact selected control, effective
+value and required minimum when known. No REA restart is needed. Summary
+delivery and paging do not change producer admission, and larger reader
+budgets do not raise MCP response or Node representation limits.
 
 Extraction hashes the whole host again through the same descriptor used to read
 members and compares it with the inventory's root digest before creating an

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { rustProducerLimitsField } from "./rustResourceLimits.js";
 import { digestSchema } from "../digests.js";
 import {
   absoluteLocalPathStringSchema,
@@ -14,6 +15,8 @@ import {
 
 /** Known revisions used to interpret compatible cargo-auditable documents. */
 export const RUST_AUDITABLE_FORMAT_VERSIONS = [0, 1, 8] as const;
+/** Default compiler-path retention; callers can select a larger bounded prefix. */
+export const DEFAULT_RUSTC_HASH_LIMIT = 64;
 
 const index = z.int().nonnegative();
 const rustcHash = z.string().regex(/^[0-9a-f]{40}$/u);
@@ -55,6 +58,13 @@ export const rustAuditableMetadataSchema = z.strictObject({
 /** Inferred compiler id from read-only `/rustc/<40-hex>/` paths. */
 export const rustcCommitSchema = z.strictObject({
   evidence_kind: z.literal("inferred"),
+  coverage: z
+    .strictObject({
+      status: z.literal("partial"),
+      reason: z.enum(["max_rustc_hashes", "report_bytes"]),
+      effective_limit: z.int().positive(),
+    })
+    .exactOptional(),
   hashes: z
     .array(
       z.strictObject({
@@ -71,6 +81,14 @@ export const inspectRustBinaryInputSchema = z.strictObject({
     "Absolute filesystem path to the selected executable or library",
   ),
   architecture: machoSliceArchitectureSchema.exactOptional(),
+  producer_limits: rustProducerLimitsField,
+  max_rustc_hashes: z
+    .int()
+    .positive()
+    .exactOptional()
+    .describe(
+      `Maximum distinct inferred compiler paths to retain (default ${String(DEFAULT_RUSTC_HASH_LIMIT)}). Omitted paths leave compiler coverage partial without discarding dependency facts. Raise this value on the next call to recover a larger prefix; complete-report byte admission still applies.`,
+    ),
 });
 
 /** Bounded cargo-auditable observation. A missing section is null, not an empty dependency list. */

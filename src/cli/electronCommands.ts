@@ -1,9 +1,14 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { parseCliAnalysisEvidenceDelivery } from "./analysisEvidenceDelivery.js";
 import { javaScriptRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
+
 import { isAbsolute, resolve, sep } from "node:path";
 
 import { Cli, z } from "incur";
+import {
+  localPathStringSchema,
+  nulFreeStringSchema,
+} from "../domain/localPath.js";
 
 import { logCliCommand } from "../cliLogging.js";
 import {
@@ -64,11 +69,9 @@ const registerElectronFuseCommand = (
     description:
       "Inspect packaged Electron fuse bytes without launching the application",
     args: z.object({
-      path: z
-        .string()
-        .describe(
-          "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
-        ),
+      path: nulFreeStringSchema.describe(
+        "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -344,7 +347,9 @@ const registerJavaScriptApplicationCommand = (
     description:
       "Statically reconstruct a local JavaScript/Electron application",
     args: z.object({
-      path: z.string().describe("ASAR or extracted application path"),
+      path: localPathStringSchema.describe(
+        "ASAR or extracted application path",
+      ),
     }),
     options: javascriptApplicationOptions,
     run: ({ args, options }) =>
@@ -365,11 +370,22 @@ const registerJavaScriptApplicationCommand = (
               signal,
             );
             if (!sourcePaths.ok) return sourcePaths.error;
+            const precision =
+              options.semanticPrecision === undefined
+                ? undefined
+                : await parseCliJsonInput(
+                    options.semanticPrecision,
+                    "analyze_javascript_application",
+                    signal,
+                  );
+            if (precision !== undefined && !precision.ok)
+              return precision.error;
             return runCliJavaScriptApplicationAnalysis(
               {
-                // An empty path names no file; leave it for input validation.
-                input_path:
-                  args.path === "" ? args.path : absoluteCallerPath(args.path),
+                input_path: absoluteCallerPath(args.path),
+                ...(precision === undefined
+                  ? {}
+                  : { semantic_precision: precision.value }),
                 format: options.artifactFormat,
                 integrity_policy: options.integrityPolicy,
                 ...(options.maxSemanticNodes === undefined

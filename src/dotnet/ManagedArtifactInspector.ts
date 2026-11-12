@@ -371,6 +371,7 @@ const partialMetadataResult = ({
 export const inspectManagedArtifactBytes = (
   bytes: Buffer,
   target: BinaryTarget,
+  maxRepresentationBytes?: number,
 ): ManagedArtifactInspection => {
   const layout = readManagedPeLayout(bytes);
   if (layout.cli === null) return unavailableResult(target, bytes, layout);
@@ -386,6 +387,7 @@ export const inspectManagedArtifactBytes = (
       bytes,
       metadataOffset,
       cli.metadata.size,
+      maxRepresentationBytes,
     );
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;

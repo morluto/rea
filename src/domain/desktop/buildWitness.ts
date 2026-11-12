@@ -60,7 +60,14 @@ const EXPECTATIONS: Readonly<Record<WitnessStage, WitnessExpectation>> = {
 };
 
 /** Actions that change the app through its own interface; a reset restores the seed instead. */
-const INPUT = ["click", "drag", "scroll", "type", "key"] as const;
+const INPUT = [
+  "click",
+  "drag",
+  "scroll",
+  "type",
+  "type_secret",
+  "key",
+] as const;
 
 export const stageExpectation = (stage: WitnessStage): WitnessExpectation =>
   EXPECTATIONS[stage];
@@ -153,7 +160,7 @@ const notAnEdit = (
   },
 ): string | undefined => {
   if (latest.input < latest.from)
-    return `Before checking ${stage}, act on the app with act_on_build_computer: no click, drag, scroll, type or key was applied since ${since}, and a reset does not count.`;
+    return `Before checking ${stage}, act on the app with act_on_build_computer: no click, drag, scroll, type, type_secret or key was applied since ${since}, and a reset does not count.`;
   if (
     latest.unsettledReset > latest.reset &&
     latest.unsettledReset > latest.input
@@ -167,9 +174,9 @@ const notAnEdit = (
 /**
  * Whether `stage` may be checked now, given the stages already checked and
  * the action log; its value is where this stage's actions end. The edit and
- * the near miss each need an applied click, drag, scroll, type or key since
- * the stage before, with no reset after the last of them; the check after
- * reset needs a reset since the stage before as the last change.
+ * the near miss each need an applied click, drag, scroll, type, typed secret
+ * or key since the stage before, with no reset after the last of them; the
+ * check after reset needs a reset since the stage before as the last change.
  */
 export const admitWitnessStage = (
   stages: readonly WitnessStageRecord[],

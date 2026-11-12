@@ -20,6 +20,9 @@ import {
 import { isLockFile } from "../../domain/desktop/appExportUnowned.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 
 const START = "start_build_computer";
 const MAX_KEY_BYTES = 1024 * 1024;
@@ -30,7 +33,7 @@ const reaPayload = async (
 ): Promise<ReaPayload> => {
   const path = environment.REA_BUILD_COMPUTER_REA_ARCHIVE;
   const reason =
-    "A build computer from a request needs REA_BUILD_COMPUTER_REA_ARCHIVE, the absolute path of a tar archive of a runnable REA whose one top folder holds scripts/rea.mjs.";
+    "A build computer from a request needs REA_BUILD_COMPUTER_REA_ARCHIVE, the absolute path of a tar archive of a runnable REA whose one top folder holds scripts/rea.mjs, or the archive rea setup --desktop-build packs for this REA version.";
   if (
     path === undefined ||
     !isAbsolute(path) ||
@@ -46,7 +49,7 @@ const reaPayload = async (
       {
         userMessage: reason,
         remediationAction:
-          "Pack a built REA with its production dependencies, set REA_BUILD_COMPUTER_REA_ARCHIVE to the archive and restart REA, or start from an exported bundle folder.",
+          "Run rea setup --client <client> --desktop-build, or pack a built REA with its production dependencies, set REA_BUILD_COMPUTER_REA_ARCHIVE to the archive and restart REA, or start from an exported bundle folder.",
       },
     );
   return { kind: "file", path };
@@ -76,6 +79,7 @@ const readAptKey = async (path: string): Promise<Buffer> => {
 const writeBuildBundle = async (
   request: BuildRequest,
   payload: ReaPayload,
+  resources: ArtifactResourceScope,
 ): Promise<{
   readonly workspace: PrivateRuntimeRoot;
   readonly bundle: string;
@@ -103,7 +107,23 @@ const writeBuildBundle = async (
     }
     return { workspace, bundle, name };
   } catch (cause: unknown) {
-    await workspace.close();
+    const released = await resources.release({
+      kind: "private-runtime-root",
+      resource: workspace.path,
+      root: workspace,
+    });
+    if (released.kind === "failed") {
+      const cleanup = resources.cleanupFailure({ kind: "failed", cause }, [
+        released,
+      ]);
+      const error = new ProviderAdapterError(AGENTENV_PROVIDER, START, {
+        cause,
+        userMessage: cause instanceof Error ? cause.message : String(cause),
+        cleanup: cleanup.cleanup,
+      });
+      bindArtifactFileCleanup(cleanup, error);
+      throw error;
+    }
     throw cause;
   }
 };
@@ -115,32 +135,55 @@ const writeBuildBundle = async (
 export const writeRequestBundle = async (
   request: BuildRequest,
   environment: Readonly<NodeJS.ProcessEnv>,
-) => writeBuildBundle(request, await reaPayload(environment));
+  resources: ArtifactResourceScope,
+) => writeBuildBundle(request, await reaPayload(environment), resources);
 
 /**
  * The lock files in a bundle folder's seeds, as `envs/<name>/seed/<home
  * path>`; none when it has no seed. A bundle records no state directories, so
- * only a profile lock's name or LibreOffice's document lock counts here.
+ * only a profile lock's name, LibreOffice's document lock or a `<file>.lck`
+ * beside a seeded file counts here.
  */
 export const seededLockFiles = async (
   bundle: string,
-): Promise<readonly string[]> => {
+): Promise<{
+  readonly locks: readonly string[];
+  readonly unreadable: readonly {
+    readonly path: string;
+    readonly reason: string;
+  }[];
+}> => {
   const environments = join(bundle, "envs");
-  const names = await readdir(environments).catch(() => []);
+  const unreadable: { path: string; reason: string }[] = [];
+  const unavailable = (path: string, cause: unknown) => {
+    if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
+      unreadable.push({
+        path,
+        reason: cause instanceof Error ? cause.message : String(cause),
+      });
+    return [];
+  };
+  const names = await readdir(environments).catch((cause: unknown) =>
+    unavailable(environments, cause),
+  );
   const locks: string[] = [];
   for (const name of names) {
     const seed = join(environments, name, "seed");
     const entries = await readdir(seed, {
       recursive: true,
       withFileTypes: true,
-    }).catch(() => []);
-    for (const entry of entries) {
-      const home = relative(seed, join(entry.parentPath, entry.name))
-        .split(sep)
-        .join("/");
-      if (entry.isFile() && isLockFile(home, []))
-        locks.push(`envs/${name}/seed/${home}`);
-    }
+    }).catch((cause: unknown) => unavailable(seed, cause));
+    const homes = new Set(
+      entries
+        .filter((entry) => entry.isFile())
+        .map((entry) =>
+          relative(seed, join(entry.parentPath, entry.name))
+            .split(sep)
+            .join("/"),
+        ),
+    );
+    for (const home of homes)
+      if (isLockFile(home, [], homes)) locks.push(`envs/${name}/seed/${home}`);
   }
-  return locks.sort();
+  return { locks: locks.sort(), unreadable };
 };

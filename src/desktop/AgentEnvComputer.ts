@@ -13,6 +13,12 @@ import type {
   ComputerHelper,
   ComputerRelease,
 } from "./AgentEnvComputerHelper.js";
+import {
+  DATA_OBJECTS,
+  dataGetSchema,
+  readHomeFiles,
+  writeHomeFiles,
+} from "./ComputerHomeFiles.js";
 import { drawnScreenshot } from "./DrawnScreenshot.js";
 import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
 
@@ -158,21 +164,6 @@ const recordingManifestSchema = z.looseObject({
 });
 /** An ended recording's manifest, as `computer-recording/v1` returns it. */
 export type RecordingManifest = z.infer<typeof recordingManifestSchema>;
-const dataGetSchema = z.union([
-  z.object({
-    result: z.object({
-      parts: z.array(
-        z.looseObject({
-          file: z.looseObject({ bytes: z.string().optional() }).optional(),
-          metadata: z
-            .record(z.string(), z.looseObject({ path: z.string().optional() }))
-            .optional(),
-        }),
-      ),
-    }),
-  }),
-  z.object({ error: z.looseObject({ message: z.string() }) }),
-]);
 const rpcSchema = z.union([
   z.object({ result: z.looseObject({}) }),
   z.object({ error: z.looseObject({ message: z.string() }) }),
@@ -508,10 +499,10 @@ export class AgentEnvComputer {
     );
     if ("error" in answer)
       throw new Error(
-        `data/get of recording segment ${segment.path} failed: ${answer.error.message}`,
+        `data/get of recording segment ${segment.path} failed: ${this.redacted(answer.error.message)}`,
       );
     const encoded = answer.result.parts.find(
-      (part) => Object.values(part.metadata ?? {})[0]?.path === path,
+      (part) => part.metadata?.[DATA_OBJECTS]?.path === path,
     )?.file?.bytes;
     const bytes =
       encoded === undefined ? undefined : Buffer.from(encoded, "base64");
@@ -523,6 +514,18 @@ export class AgentEnvComputer {
         `Recording segment ${segment.path} is missing or differs from its manifest.`,
       );
     return bytes;
+  }
+
+  /** Write files under the computer user's home, by home path, through the driver's `data/add`. */
+  async addHomeFiles(
+    files: ReadonlyMap<string, Buffer>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await writeHomeFiles(
+      (body) => this.#request("/agentenv", body, signal),
+      (text) => this.redacted(text),
+      files,
+    );
   }
 
   /**
@@ -537,38 +540,19 @@ export class AgentEnvComputer {
     const ceiling = guestFileAnswerCeiling();
     const refusal = guestFileAnswerRefusal(bytes, paths.length, ceiling);
     if (refusal !== undefined) throw refusal;
-    const answer = dataGetSchema.parse(
-      await this.#request(
-        "/agentenv",
-        { jsonrpc: "2.0", id: 1, method: "data/get", params: { paths } },
-        signal,
-        {
-          limit: {
-            bytes: Math.min(
-              guestFileAnswerBytes(bytes, paths.length),
-              guestFileAnswerWorkingBytes(ceiling),
-            ),
-            what: `The computer's answer for ${paths.join(", ")}`,
-          },
-        },
+    const limit = {
+      bytes: Math.min(
+        guestFileAnswerBytes(bytes, paths.length),
+        guestFileAnswerWorkingBytes(ceiling),
       ),
-    );
-    if ("error" in answer)
-      throw new Error(
-        `data/get failed: ${this.redacted(answer.error.message)}`,
-      );
+      what: `The computer's answer for ${paths.join(", ")}`,
+    };
     const retained = retainGuestFiles(
-      answer.result.parts.flatMap((part) => {
-        const encoded = part.file?.bytes;
-        return encoded === undefined
-          ? []
-          : [
-              {
-                path: Object.values(part.metadata ?? {})[0]?.path,
-                bytes: Buffer.from(encoded, "base64"),
-              },
-            ];
-      }),
+      await readHomeFiles(
+        (body) => this.#request("/agentenv", body, signal, { limit }),
+        (text) => this.redacted(text),
+        paths,
+      ),
       bytes,
       paths.length,
       ceiling,
@@ -582,11 +566,12 @@ export class AgentEnvComputer {
     argv: readonly string[],
     timeoutS: number,
     signal?: AbortSignal,
+    requestId: string = randomUUID(),
   ): Promise<ComputerCommandResult> {
     const result = execSchema.parse(
       await this.#request(
         "/agentenv/ext/computer-exec/run",
-        { argv, request_id: randomUUID(), timeout_s: timeoutS },
+        { argv, request_id: requestId, timeout_s: timeoutS },
         signal,
         {
           limit: {
@@ -669,9 +654,11 @@ export class AgentEnvComputer {
       const failed = waiting.find((check) => check.final === true);
       if (failed !== undefined || Date.now() > deadline)
         throw new ComputerStartFailure(
-          failed === undefined
-            ? `The computer was not ready within ${String(READY_TIMEOUT_MS / 1000)} s; waiting on ${waiting.map((check) => check.name).join(", ")}.`
-            : `The computer's ${failed.name} check failed: ${failed.detail ?? "no detail"}.`,
+          this.redacted(
+            failed === undefined
+              ? `The computer was not ready within ${String(READY_TIMEOUT_MS / 1000)} s; waiting on ${waiting.map((check) => check.name).join(", ")}.`
+              : `The computer's ${failed.name} check failed: ${failed.detail ?? "no detail"}.`,
+          ),
           "Read the helper's output; `agent-env run <bundle> --task smoke --no-emulate` reproduces the deploy.",
           { reason: "not_ready" },
         );
@@ -718,8 +705,15 @@ export class AgentEnvComputer {
     const text = await readBounded(response, limit.bytes, limit.what);
     if (response.status < 200 || response.status > 299)
       throw new Error(
-        `The computer answered ${path} with HTTP ${String(response.status)}: ${this.redacted(text.slice(0, 512))}`,
+        `The computer answered ${path} with HTTP ${String(response.status)}: ${this.redacted(text).slice(0, 512)}`,
       );
-    return JSON.parse(text) as unknown;
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      // Parser diagnostics can quote a token fragment that exact redaction cannot match.
+      throw new Error(
+        `The computer answered ${path} with invalid JSON: ${this.redacted(text).slice(0, 512)}`,
+      );
+    }
   }
 }

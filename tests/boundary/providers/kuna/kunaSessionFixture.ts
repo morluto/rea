@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 import { onTestFinished } from "vitest";
 
@@ -124,4 +126,33 @@ export const unprovenCleanupLauncher = (subcommand: string) => {
     };
   };
   return { launcher, release: () => (proven = true) };
+};
+
+/** Wait for a real child invocation, while preserving an early operation failure. */
+export const awaitKunaCommand = async (
+  kuna: string,
+  command: string,
+  operation: Promise<unknown>,
+): Promise<void> => {
+  let waiting = true;
+  const acknowledged = (async () => {
+    while (waiting) {
+      if ((await fakeKunaCalls(kuna)).some(({ argv }) => argv[0] === command))
+        return;
+      await delay(10);
+    }
+  })();
+  try {
+    // Cold installation, workspace and inventory preparation precede decompile.
+    // The phase probe took over two seconds with the two-core resource bound.
+    await awaitAcknowledgement(
+      acknowledged,
+      operation,
+      `Kuna ${command} child`,
+      5_000,
+    );
+  } finally {
+    waiting = false;
+    await Promise.allSettled([acknowledged]);
+  }
 };

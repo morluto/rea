@@ -137,7 +137,9 @@ const graphCoverageFacts = (
     inspection.completeness.conditions.includes("truncated"),
   );
   const captureHasUnknownOmissions = input.captures.some(
-    ({ inspection }) => inspection.completeness.unavailable_sections.length > 0,
+    ({ inspection }) =>
+      inspection.completeness.attach_limited_sections.length > 0 ||
+      inspection.completeness.unavailable_sections.length > 0,
   );
   const inputTruncated =
     input.layers.some(({ graph }) => graph.coverage.truncated) ||

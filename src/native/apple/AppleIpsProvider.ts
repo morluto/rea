@@ -1,6 +1,17 @@
 import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
-import type { AppleIps } from "../../domain/native/appleIps.js";
+import {
+  type AppleIps,
+  MAX_INSPECT_APPLE_IPS_FILE_BYTES,
+  MAX_INSPECT_APPLE_IPS_JOIN_BYTES,
+  MAX_INSPECT_APPLE_IPS_FRAMES,
+  MAX_INSPECT_APPLE_IPS_IMAGES,
+  MAX_INSPECT_APPLE_IPS_REGISTERS,
+  MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
+  DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
+  MAX_INSPECT_APPLE_IPS_THREADS,
+  type InspectAppleIpsInput,
+} from "../../domain/native/appleIps.js";
 import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
 import {
   projectStableArtifactFailure,
@@ -28,17 +39,6 @@ import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
-import {
-  MAX_INSPECT_APPLE_IPS_FILE_BYTES,
-  MAX_INSPECT_APPLE_IPS_JOIN_BYTES,
-  MAX_INSPECT_APPLE_IPS_FRAMES,
-  MAX_INSPECT_APPLE_IPS_IMAGES,
-  MAX_INSPECT_APPLE_IPS_REGISTERS,
-  MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
-  DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
-  MAX_INSPECT_APPLE_IPS_THREADS,
-  type InspectAppleIpsInput,
-} from "../../domain/native/appleIps.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
@@ -112,7 +112,7 @@ export class AppleIpsProvider implements AppleIpsPort {
         );
         completedSnapshot = joinArtifact;
         assertArtifactReadActive(options?.signal);
-        return ok({
+        completedReport = {
           ...report,
           join: await resolveAppleIpsJoin(
             report,
@@ -123,7 +123,9 @@ export class AppleIpsProvider implements AppleIpsPort {
             },
             read,
           ),
-        });
+        };
+        assertArtifactReadActive(options?.signal);
+        return ok(completedReport);
       });
     } catch (cause) {
       const primary = appleIpsFailurePrimary(

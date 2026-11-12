@@ -219,6 +219,13 @@ export const PE_RICH_HEADER_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for the read-only release exposure audit. */
+export const RELEASE_EXPOSURE_PROVIDER = Object.freeze({
+  id: "rea-release-exposure",
+  name: "REA release exposure audit",
+  version: "1",
+} as const);
+
 /** Provider identity for portable ELF, PE, and Mach-O hardening inspection. */
 export const BINARY_HARDENING_PROVIDER = Object.freeze({
   id: "rea-binary-hardening",

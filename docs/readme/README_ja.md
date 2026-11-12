@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · **日本語** · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA：あらゆるものをリバースエンジニアリング
 
@@ -280,6 +280,12 @@ REA は実行可能な環境と、起動して応答することを確認する�
 [環境構築ガイド](https://rea.tools/guides/rl-environments/) ·
 [環境リファレンス](../agent-environments.md) ·
 [X でデモを見る](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### デスクトップアプリの環境
+
+REA は、エージェントがスクリーンショット、マウス、キーボードで操作する Linux デスクトップアプリの環境も構築できます。「エージェントが買い物リストのメモにオリーブオイルを追加する Gnote 環境を作って」のような 1 行の依頼から、エージェントがローカルのビルド用コンピューターにアプリをインストールし、タスクを書き、環境をエクスポートし、新しいコンピューターでタスクを確認します。構築するマシンには、amd64 または arm64 の Linux、Docker、ガイドが指定するバージョンの agentenv フレームワークが必要です。
+
+[デスクトップアプリ環境を設定する](../desktop-build-computer.md)
 
 ## よくある質問
 

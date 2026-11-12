@@ -75,6 +75,12 @@ describe("tool families", () => {
   it("resolves each advertised tool to its owning family", () => {
     for (const { name } of TOOL_CONTRACTS)
       expect(TOOL_FAMILY_IDS).toContain(toolFamilyId(name));
+    for (const name of [
+      "export_web_scripts",
+      "trace_web_module_imports",
+      "trace_web_source_location",
+    ] as const)
+      expect(toolFamilyId(name)).toBe("application");
     expect(toolFamilyId("not_a_tool")).toBeUndefined();
   });
 

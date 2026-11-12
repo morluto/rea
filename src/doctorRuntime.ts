@@ -5,6 +5,7 @@ import {
   type DoctorProviderInspection,
 } from "./application/Doctor.js";
 import { fileURLToPath } from "node:url";
+import { readDesktopBuildFacts } from "./desktop/DesktopBuildDoctorFacts.js";
 import {
   JADX_DOCTOR_SETTINGS,
   inspectJadxProvider,
@@ -163,7 +164,7 @@ const readSelectedRegistration = async (
   if (configuration.value.document === undefined) return undefined;
   const details = clientRegistrationEnvironmentDetails(
     configuration.value.document,
-    client.name,
+    client,
     {},
     "effective",
     platform,
@@ -413,6 +414,7 @@ export const createSystemDoctorHost = (
           })),
       ] satisfies readonly DoctorProviderInspection[];
     },
+    desktopBuildFacts: readDesktopBuildFacts,
     linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
       inspectLinuxHopperDemoRuntime(
         environment,

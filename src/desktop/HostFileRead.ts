@@ -1,9 +1,15 @@
 import { stat } from "node:fs/promises";
 
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactFileCancelled,
+  ArtifactFileCleanupFailure,
+  artifactOperationCause,
+} from "../artifacts/ArtifactFileOperation.js";
 import {
   RegularFileCleanupFailure,
+  RegularFileCancelled,
+  regularFileCancellation,
   withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
 import {
@@ -26,24 +32,31 @@ export const isRefusedRead = (cause: unknown): boolean =>
   isSelectedRegularFileError(cause) ||
   DENIED_CODES.has((cause as NodeJS.ErrnoException).code ?? "");
 
-/**
- * A host read whose close failed, as a cleanup failure with a lease on the
- * exact handle: the capture reports the file and keeps its owner, even when
- * cancelled or beside another failure.
- */
-export const hostCloseFailure = (
-  cause: RegularFileCleanupFailure,
-): ArtifactFileCleanupFailure =>
-  new ArtifactFileCleanupFailure(
-    cause,
-    new AnalysisCleanupLease(() => cause.owner.close(), [cause.path]),
-  );
+/** Preserve physical failures and normalize only cancellation recorded by the file owner. */
+export const hostReadFailure = (
+  cause: unknown,
+  cancellationFailure?: (reason: unknown) => Error,
+): unknown => {
+  if (cause instanceof RegularFileCleanupFailure)
+    return new ArtifactFileCleanupFailure(
+      cause,
+      new AnalysisCleanupLease(() => cause.owner.close(), [cause.path]),
+    );
+  const cancellation = regularFileCancellation(cause);
+  if (cancellation !== undefined && cancellationFailure !== undefined)
+    return cancellationFailure(cancellation.reason);
+  if (cause instanceof RegularFileCancelled)
+    return new ArtifactFileCancelled(cause);
+  return artifactOperationCause(cause);
+};
 
 /** A small host file's bytes, following links; `missing` when the path names nothing. */
 export const readHostFile = async (
   path: string,
   maximumBytes: number,
   signal: AbortSignal | undefined,
+  preserveCapacity = false,
+  cancellationFailure?: (reason: unknown) => Error,
 ): Promise<Buffer | "missing" | "unreadable"> => {
   const options = {
     symlinks: "follow" as const,
@@ -54,9 +67,13 @@ export const readHostFile = async (
       readStableFileBytes(handle, path, maximumBytes, options),
     );
   } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure)
-      throw hostCloseFailure(cause);
-    signal?.throwIfAborted();
+    const failure = hostReadFailure(cause, cancellationFailure);
+    if (failure !== cause) throw failure;
+    if (preserveCapacity && cause instanceof RegularFileCapacityError)
+      throw cause;
+    // This caller requires the physical failure rather than an optional omission after abort.
+    if (cancellationFailure !== undefined && signal?.aborted === true)
+      throw cause;
     if (!isRefusedRead(cause)) throw cause;
     return (cause as NodeJS.ErrnoException).code === "ENOENT"
       ? "missing"

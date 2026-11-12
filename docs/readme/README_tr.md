@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · **Türkçe** · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Her şeyi tersine mühendislikle inceleyin
 
@@ -272,6 +272,12 @@ REA, çalıştırılabilir bir ortamı ve başlayıp yanıt verdiğini kontrol e
 [Ortam oluşturma rehberi](https://rea.tools/guides/rl-environments/) ·
 [Ortam referansı](../agent-environments.md) ·
 [Demoyu X’te izleyin](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Masaüstü uygulama ortamları
+
+REA, bir ajanın ekran görüntüleri, fare ve klavye ile kullandığı bir Linux masaüstü uygulamasının ortamını da oluşturabilir. “Ajanın alışveriş listesi notuna zeytinyağı eklediği bir Gnote ortamı oluştur” gibi tek satırlık bir istekten ajanınız uygulamayı yerel bir derleme bilgisayarına kurar, görevi yazar, ortamı dışa aktarır ve görevi yeni bir bilgisayarda kontrol eder. Ortamı oluşturan makinede amd64 veya arm64 üzerinde Linux, Docker ve kılavuzun sabitlediği agentenv framework sürümü gerekir.
+
+[Masaüstü uygulama ortamlarını kurun](../desktop-build-computer.md)
 
 ## Sık sorulan sorular
 

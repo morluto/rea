@@ -343,7 +343,10 @@ const readCommandFacts = (
  * wrong width, is structural and fails the slice before any row exists.
  */
 const admitEncryption = (encrypted: MachoSliceEncryption): void => {
-  if (encrypted.status === "malformed" && encrypted.commands.length < 2)
+  if (
+    encrypted.status === "malformed" &&
+    encrypted.malformed_kind !== "duplicate-commands"
+  )
     malformed(
       encrypted.reason ?? "Mach-O encryption load command is malformed",
     );
@@ -595,10 +598,11 @@ const stackRow = (
     const entry = symbolAt + index * width;
     const nameOffset = bytes.readUInt32LE(entry);
     if (nameOffset === 0) continue;
-    // N_EXT with N_TYPE clear is an undefined external. A defined export of
-    // the same name, including libc itself, is not an import into this image.
+    // N_STAB records use a different type namespace. Only an ordinary N_EXT
+    // with N_TYPE clear is an undefined external; defined exports are not imports.
     const nType = bytes.readUInt8(entry + 4);
-    if ((nType & 0x0e) !== 0 || (nType & 0x01) === 0) continue;
+    if ((nType & 0xe0) !== 0 || (nType & 0x0e) !== 0 || (nType & 0x01) === 0)
+      continue;
     // A common definition shares those type bits but carries its size in
     // n_value, so only a zero n_value names an import.
     if (

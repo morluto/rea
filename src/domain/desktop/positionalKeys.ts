@@ -122,9 +122,62 @@ export const positionalKeys = (
   return keys;
 };
 
+/**
+ * Identifiers numbering a list's members of a tag 0..N-1 in document order at
+ * both ends, where members came or went, as Parley numbers its entries by
+ * where they are saved: a place among the members as much as a name, which a
+ * member with a child's text to name it by ranks after that text.
+ */
+export const savePositionKeys = (
+  newer: readonly JsonValue[],
+  older: readonly JsonValue[],
+): ReadonlySet<string> => {
+  const before = attributesByTag(older);
+  const fromZero = (members: readonly Record<string, string>[]) =>
+    Object.keys(members[0] ?? {}).filter(
+      (key) =>
+        isIdentifyingAttribute(key) &&
+        members.every((member, index) => member[key] === String(index)),
+    );
+  const keys = new Set<string>();
+  for (const [tag, members] of attributesByTag(newer)) {
+    const old = before.get(tag) ?? [];
+    if (old.length === members.length) continue;
+    const numbered = new Set(fromZero(old));
+    for (const key of fromZero(members))
+      if (numbered.has(key)) keys.add(tagKey(tag, key));
+  }
+  return keys;
+};
+
 /** Whether `positionalKeys` holds an identifier of members with a tag. */
 export const isPositionalKey = (
   keys: ReadonlySet<string>,
   tag: string,
   key: string,
 ) => keys.has(tagKey(tag, key));
+
+/**
+ * Whether an attribute's values on the members with a tag end in numbers that
+ * count up or down by one in document order, as MyPaint names each layer's
+ * `src` `data/layer-00.png`, `data/layer-01.png` and on along the stack on
+ * every save: they say where a member sits, not which it is.
+ */
+export const numberedInOrder = (
+  members: readonly JsonValue[],
+  tag: string,
+  key: string,
+): boolean => {
+  const numbers = (attributesByTag(members).get(tag) ?? []).map((attributes) =>
+    Number(
+      /(?<n>\d+)\D*$/u.exec(attributes[key] ?? "")?.groups?.n ?? Number.NaN,
+    ),
+  );
+  const [first, second] = numbers;
+  if (first === undefined || second === undefined) return false;
+  const step = second - first;
+  return (
+    Math.abs(step) === 1 &&
+    numbers.every((number, index) => number === first + step * index)
+  );
+};

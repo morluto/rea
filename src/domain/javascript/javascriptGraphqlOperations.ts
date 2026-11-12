@@ -110,6 +110,30 @@ const graphqlNameAt = (
     : { value: name, end: index + name.length };
 };
 
+/** GraphQL selections may start with a field, named spread, or inline fragment. */
+const graphqlSelectionAt = (text: string, start: number): boolean => {
+  let index = skipGraphqlIgnored(text, start);
+  for (;;) {
+    if (graphqlNameAt(text, index) !== undefined) return true;
+    if (!text.startsWith("...", index)) return false;
+    index = skipGraphqlIgnored(text, index + 3);
+    const fragment = graphqlNameAt(text, index);
+    if (fragment !== undefined)
+      return (
+        fragment.value !== "on" ||
+        graphqlNameAt(text, skipGraphqlIgnored(text, fragment.end)) !==
+          undefined
+      );
+    if (text.charAt(index) === "@")
+      return (
+        graphqlNameAt(text, skipGraphqlIgnored(text, index + 1)) !== undefined
+      );
+    if (text.charAt(index) !== "{") return false;
+    // Untyped inline fragments can nest; scan their prefix without recursion.
+    index = skipGraphqlIgnored(text, index + 1);
+  }
+};
+
 /** Recover a named operation from GraphQL document text. */
 const graphqlOperationFromText = (
   text: string,
@@ -122,12 +146,13 @@ const graphqlOperationFromText = (
   const index = skipGraphqlIgnored(text, name.end);
   const next = text.charAt(index);
   // Keep the existing bounded recognition scope: a named operation followed
-  // by variable definitions, a directive, or a selection set with a field.
+  // by variable definitions, a directive, or a recognized selection prefix.
   const hasHeader =
     next === "("
       ? text.charAt(skipGraphqlIgnored(text, index + 1)) === "$"
-      : (next === "@" || next === "{") &&
-        graphqlNameAt(text, skipGraphqlIgnored(text, index + 1)) !== undefined;
+      : next === "@"
+        ? graphqlNameAt(text, skipGraphqlIgnored(text, index + 1)) !== undefined
+        : next === "{" && graphqlSelectionAt(text, index + 1);
   return hasHeader
     ? { value: name.value, mechanism: `graphql:${type.value}` }
     : undefined;
@@ -149,9 +174,10 @@ const graphqlOperationFromDocumentNode = (
   )
     return undefined;
   const value = semanticFinalObjectStringProperty(name, "value");
-  return value === undefined
-    ? undefined
-    : { value, mechanism: `graphql:${type}` };
+  if (value === undefined) return undefined;
+  return graphqlNameAt(value, 0)?.end === value.length
+    ? { value, mechanism: `graphql:${type}` }
+    : undefined;
 };
 
 interface GraphqlSourceDependency {

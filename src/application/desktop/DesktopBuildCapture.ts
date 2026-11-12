@@ -1,9 +1,20 @@
+import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { BuildRequest } from "../../domain/desktop/appBuild.js";
-import { BUILD_PACKAGE_FILE } from "../../domain/desktop/appBuild.js";
+import {
+  SIGN_IN_END,
+  SIGN_IN_START,
+  type BuildConsent,
+} from "../../domain/desktop/appWithheld.js";
+import type { KnownSecret } from "../../domain/desktop/buildSecrets.js";
+import {
+  BUILD_PACKAGE_FILE,
+  downloadInstallOf,
+  extraPackagesOf,
+} from "../../domain/desktop/appBuild.js";
 import {
   END_CHECKPOINT,
   SEED_CHECKPOINT,
@@ -12,10 +23,13 @@ import {
   captureProgressEvent,
   type DesktopCaptureEvent,
 } from "../../domain/desktop/desktopCapture.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
 import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import {
   endedCapture,
   notAnswered,
@@ -37,11 +51,49 @@ import {
 } from "./DesktopBuildExport.js";
 import {
   summarizeCapture,
+  secretDraftRefusal,
   type StoppedCapture,
 } from "./DesktopBuildSummary.js";
 
 const START = "start_build_capture";
 const MARK = "mark_build_checkpoint";
+
+/** The computer routes a capture uses: REA's controller, and the screenshot it keeps of each checkpoint. */
+type CaptureComputer = ControlledComputer &
+  Pick<AgentEnvComputer, "callTool" | "addHomeFiles">;
+
+/** A checkpoint's screenshot as the export takes a screen judge's examples: JPEG, small enough for a judge's prompt. */
+const CHECKPOINT_SHOT = { format: "jpeg", quality: 70 } as const;
+
+/**
+ * Keep a screenshot of the checkpoint just taken in the capture's screens
+ * folder, where the export finds a screen judge's examples. A screenshot
+ * that fails leaves the checkpoint as it is; only cancellation propagates.
+ */
+const keepScreenshot = async (
+  computer: CaptureComputer,
+  folder: string,
+  name: string,
+  signal: AbortSignal,
+): Promise<void> => {
+  try {
+    const shot = await computer.callTool(
+      "computer_screenshot",
+      CHECKPOINT_SHOT,
+      signal,
+    );
+    const image = shot.content.find((block) => block.type === "image")?.data;
+    if (shot.isError || typeof image !== "string") return;
+    await computer.addHomeFiles(
+      new Map([
+        [`${folder}/screens/${name}.jpg`, Buffer.from(image, "base64")],
+      ]),
+      signal,
+    );
+  } catch (cause: unknown) {
+    if (signal.aborted) throw cause;
+  }
+};
 const STOP = "stop_build_capture";
 const EXPORT = "export_build_environment";
 /** The start's step, for a capture that ended before the app's window opened. */
@@ -49,7 +101,7 @@ const STARTING: CaptureStep = {
   operation: START,
   when: "before the app's window opened",
   afterAppExit:
-    "The app does not run as installed: check what it needs, such as a runtime its stderr names, or install it from another source on a new build computer, and close this one.",
+    "The app does not run as installed: check what it needs, such as a runtime its stderr names, and name that package in an archive install's extra_packages, or install the app from another source, on a new build computer; close this one.",
 };
 /** A checkpoint's step, for a capture that ended before acknowledging it. */
 const marking = (name: string): CaptureStep => ({
@@ -79,6 +131,12 @@ const schemaCommandError = (exitCode: number | null, detail: string) =>
     userMessage: `The build computer's REA export schema command ${exitCode === null ? "ended without an exit status" : `exited ${String(exitCode)}`}: ${detail}`,
     remediationAction: `Inspect the command error. If the runtime is outdated, ${repackRuntime}`,
   });
+
+/** Export options a build passes, as the runtime's schema names them, with what each supports. */
+const BUILD_EXPORT_OPTIONS = {
+  syntheticSeed: "synthetic seeds",
+  taskEnd: "task ends",
+} as const;
 
 /** Check the installed runtime's advertised export contract before capturing the user's work. */
 const checkExportRuntime = async (
@@ -141,11 +199,14 @@ const checkExportRuntime = async (
           "The build computer's REA returned an invalid export schema.",
         ),
       );
-    if (!("syntheticSeed" in schema.data.options.properties))
+    const unsupported = Object.entries(BUILD_EXPORT_OPTIONS)
+      .filter(([name]) => !(name in schema.data.options.properties))
+      .map(([, what]) => what);
+    if (unsupported.length > 0)
       return err(
         refused(
           START,
-          "The REA runtime in this build computer does not support synthetic seeds required by build export.",
+          `The REA runtime in this build computer does not support ${unsupported.join(" or ")} required by build export.`,
           repackRuntime,
         ),
       );
@@ -221,20 +282,44 @@ const unreleasedError = (
  * can be asked again after a lost answer.
  */
 export class DesktopBuildCapture {
+  readonly longRuns: BuildComputerLongRuns;
   #count = 0;
   #run: CaptureRun | undefined;
   readonly #entry: string | undefined;
   readonly #packageFile: { readonly url: string } | undefined;
+  /** The AppImage or tarball the request unpacked the app from, which the export downloads too. */
+  readonly #download: DownloadInstall | undefined;
+  /** What the request named beside the app, which the export installs too, so a package file's dependencies outlive an install by name. */
+  readonly #extraPackages: readonly string[];
 
+  /** The person's consents, in their words, which the export writes into consent.json. */
+  readonly #consents: BuildConsent[] = [];
+
+  /** `secrets` lists the secrets no exported bundle may hold, keeps the withheld files' bytes as secrets, and redacts a quote of the app's output before it is cut. */
   constructor(
-    private readonly computer: ControlledComputer,
+    private readonly computer: CaptureComputer,
     request: BuildRequest | undefined,
+    private readonly secrets: {
+      readonly all: (signal?: AbortSignal) => Promise<readonly KnownSecret[]>;
+      readonly keep: (handle: string, bytes: Buffer) => Promise<string>;
+      readonly redact: (text: string) => string;
+      readonly hasDeclaredSecret: boolean;
+    } = {
+      all: () => Promise.resolve([]),
+      keep: (handle) => Promise.resolve(handle),
+      redact: (text) => text,
+      hasDeclaredSecret: false,
+    },
   ) {
+    this.longRuns = new BuildComputerLongRuns(computer);
     this.#entry = request?.desktop_entry;
     this.#packageFile =
       request?.install.kind === "package_file"
         ? { url: request.install.url }
         : undefined;
+    this.#extraPackages = request === undefined ? [] : extraPackagesOf(request);
+    this.#download =
+      request === undefined ? undefined : downloadInstallOf(request);
   }
 
   async start(
@@ -361,7 +446,7 @@ export class DesktopBuildCapture {
       return err({
         failure: await endedCapture(
           this.computer,
-          { ...STARTING, folder: run.folder },
+          { ...STARTING, folder: run.folder, redact: this.secrets.redact },
           answer,
           signal,
         ),
@@ -423,12 +508,17 @@ export class DesktopBuildCapture {
         return err(
           await endedCapture(
             this.computer,
-            { ...marking(name), folder: run.folder },
+            {
+              ...marking(name),
+              folder: run.folder,
+              redact: this.secrets.redact,
+            },
             answer,
             signal,
           ),
         );
       run.checkpoints.add(name);
+      await keepScreenshot(this.computer, run.folder, name, signal);
       const {
         kind: _kind,
         changed_files: changed,
@@ -466,7 +556,11 @@ export class DesktopBuildCapture {
         : err(unreleasedError(STOP, run, undefined));
     if (run === undefined || run.status === "released")
       return err(refused(STOP, ...NOT_RUNNING));
-    if (run.stopped !== undefined) return ok(run.stopped);
+    if (run.stopped !== undefined) {
+      if (this.secrets.hasDeclaredSecret)
+        run.stopped = { ...run.stopped, ...secretDraftRefusal };
+      return ok(run.stopped);
+    }
     try {
       if (run.outputBytes === undefined) {
         const answer = await controller(
@@ -476,13 +570,14 @@ export class DesktopBuildCapture {
           { timeoutS: 600, signal },
         );
         if (answer.exit_code === undefined || answer.output_bytes === undefined)
-          return err(notAnswered(STOP, answer));
+          return err(notAnswered(STOP, answer, this.secrets.redact));
         run.status = "stopped";
         run.outputBytes = answer.output_bytes;
       }
       const summary = await summarizeCapture(
         this.computer,
         { folder: run.folder, outputBytes: run.outputBytes },
+        () => this.secrets.hasDeclaredSecret,
         signal,
       );
       if (!summary.ok) {
@@ -491,8 +586,10 @@ export class DesktopBuildCapture {
       }
       run.checkpoints = summary.value.checkpoints;
       run.packageFile = summary.value.packageFile;
-      run.stopped = summary.value.stopped;
-      return ok(summary.value.stopped);
+      run.stopped = this.secrets.hasDeclaredSecret
+        ? { ...summary.value.stopped, ...secretDraftRefusal }
+        : summary.value.stopped;
+      return ok(run.stopped);
     } catch (cause: unknown) {
       return err(
         cause instanceof AnalysisError
@@ -502,12 +599,33 @@ export class DesktopBuildCapture {
     }
   }
 
+  /** Record a consent the person gave, in their own words, relayed by the agent; the export ships every one. */
+  recordConsent({
+    url,
+    ...consent
+  }: Omit<BuildConsent, "recorded_at" | "source">): {
+    readonly consent: Readonly<Record<string, JsonValue>>;
+    readonly consents: number;
+  } {
+    const recorded = {
+      ...consent,
+      ...(url === undefined ? {} : { url }),
+      recorded_at: new Date().toISOString(),
+      source: "relayed" as const,
+    };
+    this.#consents.push(recorded);
+    return { consent: recorded, consents: this.#consents.length };
+  }
+
   /** Export the bundle with the agent's task inside the computer and write it to a folder on this host. */
   async export(
     input: BuildExportRequest,
     signal: AbortSignal,
   ): Promise<Result<ExportedBuild, AnalysisError>> {
     const run = this.#run;
+    const ends = input.tasks.map(
+      ({ end_checkpoint: end }) => end ?? END_CHECKPOINT,
+    );
     if (
       run?.stopped === undefined ||
       !run.checkpoints.has(SEED_CHECKPOINT) ||
@@ -520,7 +638,50 @@ export class DesktopBuildCapture {
           "Capture with start_build_capture, mark seed and end, then call stop_build_capture.",
         ),
       );
+    const untaken = ends.filter((end) => !run.checkpoints.has(end));
+    if (untaken.length > 0)
+      return err(
+        refused(
+          EXPORT,
+          `The capture took no checkpoint named ${untaken.join(" or ")}; its checkpoints are ${[...run.checkpoints].join(", ")}.`,
+          "Give each task the end checkpoint marked once its change was saved.",
+        ),
+      );
+    const signIn = [SIGN_IN_START, SIGN_IN_END].filter((name) =>
+      run.checkpoints.has(name),
+    );
+    if (signIn.length === 1)
+      return err(
+        refused(
+          EXPORT,
+          `The capture has ${signIn.join("")} but not ${signIn[0] === SIGN_IN_START ? SIGN_IN_END : SIGN_IN_START}, so REA cannot tell which files the sign-in wrote.`,
+          `Capture again on a new build computer, marking ${SIGN_IN_START} before the sign-in and ${SIGN_IN_END} after it.`,
+        ),
+      );
+    if (
+      input.seed_sign_in === true &&
+      !this.#consents.some(({ kind }) => kind === "seed_sign_in")
+    )
+      return err(
+        refused(
+          EXPORT,
+          "Seeding the withheld sign-in state needs the person's consent, and record_build_consent recorded none on this computer.",
+          "Ask the person whether the bundle may hold their signed-in state; if they say yes, record their words with record_build_consent, kind seed_sign_in, then export again. Otherwise export without seed_sign_in.",
+        ),
+      );
     run.exports += 1;
+    let secrets: readonly KnownSecret[];
+    try {
+      secrets = await this.secrets.all(signal);
+    } catch (cause: unknown) {
+      return err(
+        cause instanceof AnalysisError
+          ? cause
+          : signal.aborted
+            ? new AnalysisCancelledError(EXPORT, { cause: signal.reason })
+            : adapterError(EXPORT, errorText(cause), cause),
+      );
+    }
     return exportBuild(
       this.computer,
       {
@@ -529,9 +690,19 @@ export class DesktopBuildCapture {
         ...(this.#packageFile === undefined || run.packageFile !== true
           ? {}
           : { packageUrl: this.#packageFile.url }),
+        extraPackages: this.#extraPackages,
+        ...(this.#download === undefined
+          ? {}
+          : { downloadInstall: this.#download }),
+        secrets,
+        keep: this.secrets.keep,
+        signIn: signIn.length === 2,
+        consents: [...this.#consents],
+        checkpoints: run.checkpoints,
       },
       input,
       signal,
+      this.longRuns,
     );
   }
 }

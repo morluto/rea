@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · **Roman Urdu** · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · **Roman Urdu** · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -337,6 +337,12 @@ REA chalne ke liye tayyar environment aur aik bunyadi test export karta hai jo u
 [Environment banane ki rehnumai](https://rea.tools/guides/rl-environments/) ·
 [Environment reference](../agent-environments.md) ·
 [X par demo dekhein](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Desktop app environments
+
+REA Linux desktop app ka environment bhi bana sakta hai, jise agent screenshots, mouse aur keyboard se istemal karta hai. Aik line ki request se, jaise "Mere liye Gnote environment banao jis mein agent shopping list note mein olive oil shamil kare", aap ka agent app ko local build computer par install karta hai, task likhta hai, environment export karta hai aur naye computer par task check karta hai. Ise banane wali machine ko amd64 ya arm64 par Linux, Docker aur guide mein muqarrar agentenv framework version chahiye.
+
+[Desktop app environments setup karein](../desktop-build-computer.md)
 
 ## FAQ
 
