@@ -14,6 +14,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const FIXTURE_UUID = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA";
 const OTHER_UUID = "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC";
 const ARM64 = { type: 0x0100000c, subtype: 0 } as const;
+const ARM64_V8 = { type: 0x0100000c, subtype: 1 } as const;
+const ARM64E_X1 = { type: 0x0100000c, subtype: 12 } as const;
 const X86_64 = { type: 0x01000007, subtype: 3 } as const;
 
 interface SliceSpec {
@@ -225,6 +227,65 @@ describe("Apple IPS Mach-O and dSYM join", () => {
     );
     expect(report.join.image_matches).toHaveLength(1);
     expect(report.join.frames[0]).toMatchObject({ status: "joined" });
+  });
+
+  it("joins a recorded arm64 report to an arm64v8 slice through the family match", async () => {
+    const root = await createTestTempDirectory("rea-apple-ips-join-arm64v8-");
+    const report = await inspectWithJoin(
+      root,
+      fatImage([
+        { cpu: ARM64_V8, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n },
+      ]),
+    );
+    expect(report.join.status).toBe("selected");
+    expect(report.join.image_matches).toHaveLength(1);
+    expect(report.join.image_matches[0]).toMatchObject({
+      recorded_arch: "arm64",
+      slice_index: 0,
+      slice_arch: "arm64v8",
+      text_vmaddr: { decimal: "4294967296", hex: "0x100000000" },
+    });
+    expect(report.join.frames[0]).toMatchObject({
+      status: "joined",
+      static_address: { decimal: "4294968120", hex: "0x100000338" },
+    });
+  });
+
+  it("joins a recorded arm64e report to an arm64e.x1 slice through the family match", async () => {
+    const root = await createTestTempDirectory("rea-apple-ips-join-arm64ex1-");
+    const report = await inspectWithJoin(
+      root,
+      fatImage([
+        { cpu: ARM64E_X1, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n },
+      ]),
+      { arch: "arm64e" },
+    );
+    expect(report.join.status).toBe("selected");
+    expect(report.join.image_matches).toHaveLength(1);
+    expect(report.join.image_matches[0]).toMatchObject({
+      recorded_arch: "arm64e",
+      slice_index: 0,
+      slice_arch: "arm64e.x1",
+      text_vmaddr: { decimal: "4294967296", hex: "0x100000000" },
+    });
+    expect(report.join.frames[0]).toMatchObject({
+      status: "joined",
+      static_address: { decimal: "4294968120", hex: "0x100000338" },
+    });
+  });
+
+  it("still refuses a recorded arm64 report against an arm64e.x1 slice", async () => {
+    const root = await createTestTempDirectory("rea-apple-ips-join-arm-cross-");
+    const report = await inspectWithJoin(
+      root,
+      fatImage([
+        { cpu: ARM64E_X1, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n },
+      ]),
+    );
+    expect(report.join.image_matches).toEqual([]);
+    expect(report.join.limitations.join(" ")).toContain(
+      "does not match",
+    );
   });
 });
 
