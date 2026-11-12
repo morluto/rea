@@ -367,6 +367,19 @@ const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({
   ...projectAnalysisError(error),
 });
 
+/** Project retained input cleanup only when the CLI delivers the error. */
+export const projectProcessCliInputCleanupError = (
+  cause: unknown,
+): ProcessCliErrorOutput => {
+  if (
+    !(cause instanceof ProviderAdapterError) ||
+    !(cause.cause instanceof ArtifactReaderFailure) ||
+    cause.cause.cleanup === undefined
+  )
+    throw cause;
+  return cliAnalysisError(cause);
+};
+
 /**
  * This catch includes target execution, and the projection stays non-retryable.
  * Tell the user what happened; do not ask them to run the command again.
@@ -483,12 +496,27 @@ const withProcessInputResources = async (
       inherited === undefined || local === undefined
         ? undefined
         : [...new Set([...inherited, ...local])];
-    const failure = ArtifactReaderFailure.withCleanup(
+    let failure = ArtifactReaderFailure.withCleanup(
       primary,
       cleanup,
       outcome.ok ? outcome.value : undefined,
       leases,
     );
+    if (leases === undefined && cause instanceof ArtifactReaderFailure) {
+      // Keep local retry authority reachable when coverage of the primary is unknown.
+      failure = new ArtifactReaderFailure(
+        failure.reason,
+        failure.message,
+        {
+          cause: new AggregateError(
+            [failure, cause],
+            "Process and input cleanup remain incomplete",
+          ),
+          ...artifactFailureFacts(failure),
+        },
+        failure.details,
+      );
+    }
     const typedPrimary =
       primary instanceof AnalysisError
         ? primary
@@ -503,7 +531,7 @@ const withProcessInputResources = async (
       userMessage: failure.userMessage ?? failure.message,
     });
     bindArtifactFileCleanup(failure, error);
-    return cliAnalysisError(error);
+    throw error;
   }
   if (
     !outcome.ok &&

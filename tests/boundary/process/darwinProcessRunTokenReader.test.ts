@@ -1,4 +1,8 @@
-import { isProcessOwnershipInspectionCancellation } from "../../../src/process/ProcessInspectionCancellation.js";
+import {
+  isProcessOwnershipInspectionCancellation,
+  rethrowProcessOwnershipInspectionFailure,
+} from "../../../src/process/ProcessInspectionCancellation.js";
+import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import {
@@ -1120,7 +1124,7 @@ it.skipIf(process.platform === "win32")(
       if (outcome.state !== "result") throw outcome.cause;
       expect(outcome.value).toMatchObject({
         ok: false,
-        error: { reason: "cancelled", userCategory: "cancelled" },
+        error: { _tag: "AnalysisCancelledError" },
       });
       expect(launchSpy).not.toHaveBeenCalled();
       await expect(access(compileState.root)).rejects.toThrow();
@@ -1214,7 +1218,10 @@ it.skipIf(process.platform === "win32")(
             command: process.execPath,
           },
         ];
-        await reader.identities(processes, signal);
+        await reader.identities(processes, signal).catch((cause: unknown) => {
+          rethrowProcessOwnershipInspectionFailure(cause);
+          throw cause;
+        });
         return [];
       });
     const launchSpy = vi.spyOn(electron, "launch");
@@ -1241,10 +1248,11 @@ it.skipIf(process.platform === "win32")(
 
       expect(outcome.state).toBe("result");
       if (outcome.state !== "result") throw outcome.cause;
-      expect(outcome.value).toMatchObject({
-        ok: false,
-        error: { reason: "cancelled", userCategory: "cancelled" },
-      });
+      expect(outcome.value.ok).toBe(false);
+      if (outcome.value.ok) throw new Error("Expected baseline cancellation");
+      expect(primaryAnalysisError(outcome.value.error)._tag).toBe(
+        "AnalysisCancelledError",
+      );
       expect(launchSpy).not.toHaveBeenCalled();
       await expect(access(helper.root)).resolves.toBeUndefined();
     } finally {
