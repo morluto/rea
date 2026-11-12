@@ -7,6 +7,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { JebOperation } from "../domain/jeb/jebAnalysis.js";
 import type { Logger } from "pino";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -63,8 +64,8 @@ export const registerJebCommands = (
     options: z.object({
       filter: jebInputSchemas.list_jeb_units.shape.filter,
       "parent-unit-path": jebInputSchemas.list_jeb_units.shape.parent_unit_path,
-      index: jebInputSchemas.list_jeb_units.shape.index,
-      count: jebInputSchemas.list_jeb_units.shape.count,
+      index: cliDecimalField(jebInputSchemas.list_jeb_units.shape.index),
+      count: cliDecimalField(jebInputSchemas.list_jeb_units.shape.count),
     }),
     run: ({ options }) =>
       execute(CLI_COMMANDS.listJebUnits, "list_jeb_units", {

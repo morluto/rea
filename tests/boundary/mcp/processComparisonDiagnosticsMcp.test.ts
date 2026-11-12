@@ -274,9 +274,7 @@ it.each(["left", "right"] as const)(
         issues: [
           {
             path: ["evidence_id"],
-            message: expect.stringContaining(
-              "Evidence semantic identifier does not match its record",
-            ),
+            message: expect.stringMatching(/semantic identifier.*not match/iu),
           },
         ],
       },

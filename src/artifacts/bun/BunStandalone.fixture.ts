@@ -1,11 +1,25 @@
+import type { FileHandle } from "node:fs/promises";
 import {
   BUN_OFFSETS_BYTES,
   BUN_RECORD_BYTES_1_3_3,
   BUN_RECORD_BYTES_1_3_9,
   BUN_TRAILER,
+  loadBunStandaloneGraph,
+  probeBunStandaloneGraph,
   type BunLayoutRevision,
+  type BunStandaloneRecognition,
   type BunStringPointer,
 } from "./BunModuleGraphLayout.js";
+
+/** Exercise the same two-stage probe and payload read as the artifact reader. */
+export const locateBunGraphFixture = async (
+  handle: FileHandle,
+  fileSize: number,
+): Promise<BunStandaloneRecognition> => {
+  const probed = await probeBunStandaloneGraph(handle, fileSize);
+  if (probed.status !== "present" || probed.claim === undefined) return probed;
+  return loadBunStandaloneGraph(handle, probed.claim);
+};
 
 export interface BunFixtureModule {
   readonly name?: string | Buffer;
@@ -202,8 +216,10 @@ export const elfAppendedBunPayload = (payload: Buffer): Buffer =>
   Buffer.concat([elfPrefix(), payload]);
 
 /** ELF64 whose `.bun` section holds the length-prefixed graph. */
-export const elfBunSection = (section: Buffer): Buffer => {
-  const shstr = Buffer.from("\0.shstrtab\0.bun\0");
+export const elfBunSection = (section: Buffer, nameOffset = 11): Buffer => {
+  const shstr = Buffer.alloc(nameOffset + 5);
+  shstr.write("\0.shstrtab\0");
+  shstr.write(".bun\0", nameOffset);
   const shstrOffset = 64;
   const sectionOffset = shstrOffset + shstr.length;
   const tableOffset = sectionOffset + section.length;
@@ -217,7 +233,13 @@ export const elfBunSection = (section: Buffer): Buffer => {
   shstr.copy(bytes, shstrOffset);
   section.copy(bytes, sectionOffset);
   writeElfSection(bytes, tableOffset + 64, 1, shstrOffset, shstr.length);
-  writeElfSection(bytes, tableOffset + 128, 11, sectionOffset, section.length);
+  writeElfSection(
+    bytes,
+    tableOffset + 128,
+    nameOffset,
+    sectionOffset,
+    section.length,
+  );
   return bytes;
 };
 

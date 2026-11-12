@@ -14,13 +14,12 @@ import {
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
-import {
-  astObservationEvidence,
-  staticInferenceEvidence,
-} from "./JavaScriptArtifactGraphEvidence.js";
+import { staticInferenceEvidence } from "./JavaScriptArtifactGraphEvidence.js";
 import {
   addElectronAstEdge,
   addElectronInferenceEdge,
+  ELECTRON_CANDIDATE_LIMITATION,
+  electronFindingEvidence,
   electronFindingSourceNode,
 } from "./ElectronBoundaryGraphContext.js";
 import {
@@ -90,14 +89,20 @@ const addBrowserWindow = (
     ),
     observations: [
       {
-        label: `BrowserWindow@${javascriptSourceRangeKey(value.location)}`,
+        label: `${value.window_constructor ?? "BrowserWindow"}@${javascriptSourceRangeKey(value.location)}`,
         properties: {
+          ...(value.window_constructor === undefined
+            ? {}
+            : { window_constructor: value.window_constructor }),
           source_path: file.path,
           options_status: value.options_status,
           web_preferences_status: value.web_preferences_status,
           web_preferences: value.web_preferences,
           preload_path: value.preload_path,
           preload_resolution_context: value.preload_resolution_context,
+          ...(value.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
           ...(value.resolution_sources === undefined
             ? {}
             : {
@@ -110,21 +115,40 @@ const addBrowserWindow = (
               }),
           absence_means_default: false,
         },
-        evidence: (value.resolution_sources === undefined
-          ? astObservationEvidence
-          : staticInferenceEvidence)({
-          sha256: file.sha256,
-          path: file.path,
-          range: value.location,
-          operation:
-            value.resolution_sources === undefined
-              ? "observe-browser-window-construction"
-              : "resolve-browser-window-constant-options",
-          coverage,
-          limitations: [
-            "Only explicitly present webPreferences are reported; omitted properties are not interpreted as Electron defaults.",
-          ],
-        }),
+        evidence:
+          value.resolution_sources === undefined
+            ? electronFindingEvidence(
+                {
+                  sha256: file.sha256,
+                  path: file.path,
+                  range: value.location,
+                  operation: "observe-browser-window-construction",
+                  coverage,
+                  limitations: [
+                    "Only explicitly present webPreferences are reported; omitted properties are not interpreted as Electron defaults.",
+                  ],
+                },
+                value.loader_authority,
+              )
+            : staticInferenceEvidence({
+                sha256: file.sha256,
+                path: file.path,
+                range: value.location,
+                operation:
+                  value.resolution_sources === undefined
+                    ? "observe-browser-window-construction"
+                    : "resolve-browser-window-constant-options",
+                coverage,
+                limitations: [
+                  "Only explicitly present webPreferences are reported; omitted properties are not interpreted as Electron defaults.",
+                  ...(value.loader_authority === "candidate"
+                    ? [ELECTRON_CANDIDATE_LIMITATION]
+                    : []),
+                ],
+                ...(value.loader_authority === "candidate"
+                  ? { confidence: "low" as const }
+                  : {}),
+              }),
       },
     ],
   });
@@ -137,6 +161,7 @@ const addBrowserWindow = (
     relation: "contains",
     operation: "locate-browser-window-construction",
     properties: { source_path: file.path },
+    loaderAuthority: value.loader_authority,
   });
   addWindowPreload(input, window);
 };
@@ -145,7 +170,11 @@ const addWindowPreload = (
   input: FindingInput<ElectronBrowserWindowFinding>,
   window: ApplicationNode,
 ): void => {
-  if (input.value.preload_path === null) return;
+  if (
+    input.value.preload_path === null ||
+    input.value.loader_authority === "candidate"
+  )
+    return;
   const {
     preload_path: declared,
     preload_resolution_context: resolutionContext,
@@ -164,7 +193,7 @@ const addWindowPreload = (
     kind: "electron-preload",
     anchor: input.file,
     resolution,
-    mechanism: "BrowserWindow:webPreferences.preload",
+    mechanism: `${input.value.window_constructor ?? "BrowserWindow"}:webPreferences.preload`,
     range: input.value.location,
     coverage: input.coverage,
   });
@@ -217,16 +246,35 @@ const addContextBridge = (
           members: value.members,
           unknown_members: value.unknown_members,
           resolution_basis: value.resolution_basis ?? "direct-syntax",
+          ...(value.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
         },
-        evidence: (value.resolution_basis === "wrapper-substitution"
-          ? staticInferenceEvidence
-          : astObservationEvidence)({
-          sha256: file.sha256,
-          path: file.path,
-          range: value.location,
-          operation: "observe-context-bridge-api",
-          coverage,
-        }),
+        evidence:
+          value.resolution_basis !== "wrapper-substitution"
+            ? electronFindingEvidence(
+                {
+                  sha256: file.sha256,
+                  path: file.path,
+                  range: value.location,
+                  operation: "observe-context-bridge-api",
+                  coverage,
+                },
+                value.loader_authority,
+              )
+            : staticInferenceEvidence({
+                sha256: file.sha256,
+                path: file.path,
+                range: value.location,
+                operation: "observe-context-bridge-api",
+                coverage,
+                ...(value.loader_authority === "candidate"
+                  ? {
+                      confidence: "low" as const,
+                      limitations: [ELECTRON_CANDIDATE_LIMITATION],
+                    }
+                  : {}),
+              }),
       },
     ],
   });
@@ -238,6 +286,7 @@ const addContextBridge = (
     coverage,
     relation: "exposes",
     operation: "map-context-bridge-exposure",
+    loaderAuthority: value.loader_authority,
     properties: {
       world: value.world,
       api_key: value.api_key,
@@ -251,7 +300,7 @@ const addUtilityProcess = (
 ): void => {
   const { context, file, value, coverage } = input;
   const resolution =
-    value.module_path === null
+    value.module_path === null || value.loader_authority === "candidate"
       ? undefined
       : resolveArtifactPathByContext({
           declaredPath: value.module_path,
@@ -283,14 +332,20 @@ const addUtilityProcess = (
           module_resolution_context: value.module_resolution_context,
           module_expression: value.module_expression,
           service_name: value.service_name,
+          ...(value.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
         },
-        evidence: astObservationEvidence({
-          sha256: file.sha256,
-          path: file.path,
-          range: value.location,
-          operation: "observe-utility-process-fork",
-          coverage,
-        }),
+        evidence: electronFindingEvidence(
+          {
+            sha256: file.sha256,
+            path: file.path,
+            range: value.location,
+            operation: "observe-utility-process-fork",
+            coverage,
+          },
+          value.loader_authority,
+        ),
       },
       ...(resolution === undefined
         ? []
@@ -318,6 +373,7 @@ const addUtilityProcess = (
     coverage,
     relation: "loads",
     operation: "map-utility-process-launch",
+    loaderAuthority: value.loader_authority,
     limitations: resolution?.limitations ?? [],
     properties: {
       declared_path: value.module_path,

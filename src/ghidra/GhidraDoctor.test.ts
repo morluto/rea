@@ -14,7 +14,10 @@ import {
   type GhidraInstallationHost,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
-import { projectGhidraDoctorInspection } from "./GhidraDoctor.js";
+import {
+  inspectSystemGhidraProvider,
+  projectGhidraDoctorInspection,
+} from "./GhidraDoctor.js";
 
 let inspectionResources = createInspectionResources();
 afterEach(async () => {
@@ -395,4 +398,112 @@ describe("Windows native doctor failure diagnostics", () => {
       }),
     );
   });
+});
+
+describe("Windows Ghidra temporary directory check", () => {
+  const WINDOWS_INSTALL = "C:\\tools\\ghidra_12.1.4_PUBLIC";
+
+  it("fails the provider closed and keeps restricted-host remediation when the probe fails", async () => {
+    const projected = projectGhidraDoctorInspection(
+      await inspection({ installDir: WINDOWS_INSTALL, platform: "win32" }),
+      {
+        ok: false,
+        directory: "C:\\sandbox\\tmp",
+        stage: "write",
+        code: "EPERM",
+        message: "EPERM: operation not permitted",
+      },
+    );
+    expect(projected.available).toBe(false);
+    const check = projected.checks.find(
+      ({ name }) => name === "temp_directory",
+    );
+    expect(check).toMatchObject({
+      ok: false,
+      code: "temp_directory_unwritable",
+      classification: "runtime_failure",
+      remediation: expect.stringMatching(
+        /TMP and TEMP.*allowed tree.*no dot-prefixed element.*restart REA/iu,
+      ),
+      details: { directory: "C:\\sandbox\\tmp", system_code: "EPERM" },
+    });
+    expect(check?.detail).toContain("C:\\sandbox\\tmp");
+    expect(check?.detail).not.toMatch(/antivirus|DACL/iu);
+    expect(check?.remediation).toMatch(
+      /java_home\.save.*creating that file in advance does not help/iu,
+    );
+  });
+
+  it("reports a retained probe file whose cleanup doctor retries", async () => {
+    const projected = projectGhidraDoctorInspection(
+      await inspection({ installDir: WINDOWS_INSTALL, platform: "win32" }),
+      {
+        ok: false,
+        directory: "C:\\work",
+        stage: "cleanup",
+        code: "EPERM",
+        message: "EPERM: operation not permitted",
+        retainedPath: "C:\\work\\rea-doctor-probe-1",
+      },
+    );
+    const check = projected.checks.find(
+      ({ name }) => name === "temp_directory",
+    );
+    expect(check).toMatchObject({
+      details: {
+        directory: "C:\\work",
+        stage: "cleanup",
+        retained_path: "C:\\work\\rea-doctor-probe-1",
+      },
+    });
+    expect(check?.detail).toContain("retries removal when doctor finishes");
+  });
+
+  it("reports a passing probe without claiming child-process access", async () => {
+    const projected = projectGhidraDoctorInspection(
+      await inspection({ installDir: WINDOWS_INSTALL, platform: "win32" }),
+      { ok: true, directory: "C:\\Temp" },
+    );
+    expect(projected.checks).toContainEqual(
+      expect.objectContaining({
+        name: "temp_directory",
+        ok: true,
+        detail: expect.stringContaining(
+          "does not test writes by Ghidra's child JVM",
+        ),
+      }),
+    );
+  });
+
+  it("does not probe when no Windows installation was selected", async () => {
+    const probe = vi.fn(() => Promise.reject(new Error("unexpected probe")));
+    const projected = await inspectSystemGhidraProvider(
+      {},
+      inspectionResources.owner,
+      undefined,
+      probe,
+    );
+    expect(probe).not.toHaveBeenCalled();
+    expect(projected.checks.map(({ name }) => name)).not.toContain(
+      "temp_directory",
+    );
+  });
+});
+
+it("does not claim probe deletion failed when only descriptor cleanup remains", async () => {
+  const projected = projectGhidraDoctorInspection(
+    await inspection({ installDir: "C:\\tools\\ghidra", platform: "win32" }),
+    {
+      ok: false,
+      directory: "C:\\work",
+      stage: "cleanup",
+      code: "EIO",
+      message: "descriptor close not confirmed",
+    },
+  );
+  const check = projected.checks.find(({ name }) => name === "temp_directory");
+  expect(check).toMatchObject({ ok: false, details: { stage: "cleanup" } });
+  expect(check?.detail).toContain("could not clean up a probe file");
+  expect(check?.detail).not.toContain("could not delete");
+  expect(check?.detail).not.toContain("remains");
 });

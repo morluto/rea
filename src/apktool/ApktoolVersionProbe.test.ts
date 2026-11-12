@@ -17,6 +17,7 @@ import { ApktoolProvider } from "./ApktoolProvider.js";
 vi.mock("../process/OwnedCommand.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../process/OwnedCommand.js")>()),
   runOwnedCommand: vi.fn(),
+  prepareOwnedCommand: vi.fn(async () => {}),
 }));
 let commands = new ApktoolCommandCleanup();
 afterEach(async () => {
@@ -36,9 +37,11 @@ const owner = {
 it("runs the version probe as an owned interpreter-script process group", async () => {
   vi.mocked(runOwnedCommand).mockImplementationOnce(async (_spawn, limits) => {
     const output = {
-      stdout: { text: "2.9.3\n" },
-      stderr: { text: "" },
-    } as Awaited<ReturnType<typeof runOwnedCommand>>;
+      stdout: { text: "2.9.3\n", bytes: 6, observedBytes: 6 },
+      stderr: { text: "", bytes: 0, observedBytes: 0 },
+      exitCode: 0,
+      signal: null,
+    };
     limits.observeCompleted?.(output);
     return output;
   });
@@ -108,16 +111,21 @@ it("retains an unresolved probe cleanup owner and reports the cleanup", async ()
   expect((failure as AnalysisTimeoutError).cleanupIncomplete).toBe(false);
 });
 
-it("reports a cancelled version probe as cancelled", async () => {
+it("reports a cancelled version probe with the exact recorded caller reason", async () => {
+  const reason = { caller: "cancel selected version probe" };
   vi.mocked(runOwnedCommand).mockRejectedValueOnce(
-    new OwnedCommandFailure("cancelled", "Command cancelled."),
-  );
-  await expect(
-    inspectApktoolClient(selection, commands, {
-      environment: {},
-      platform: "linux",
+    new OwnedCommandFailure("cancelled", "Command cancelled.", null, null, {
+      cancellation: { reason },
     }),
-  ).rejects.toBeInstanceOf(AnalysisCancelledError);
+  );
+  const failure: unknown = await inspectApktoolClient(selection, commands, {
+    environment: {},
+    platform: "linux",
+  }).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AnalysisCancelledError);
+  if (!(failure instanceof AnalysisCancelledError)) throw failure;
+  expect(failure.cause).toBe(reason);
+  expect(failure.cleanupResources).toEqual([]);
 });
 
 it("keeps unresolved probe cleanup typed when the launcher overflows its output", async () => {
@@ -152,8 +160,8 @@ it("keeps unresolved probe cleanup typed when the launcher overflows its output"
   vi.mocked(runOwnedCommand).mockRejectedValueOnce(overflow());
   const result = await provider.execute({
     operation: "decode_android_resources",
-    input: {},
-  } as never);
+    input: { path: "/fixture/input.apk", include_strings: false },
+  });
   expect(result.ok ? null : result.error.cleanupIncomplete).toBe(true);
   expect(result.ok ? null : projectAnalysisError(result.error)).toMatchObject({
     code: "cleanup_incomplete",
@@ -169,9 +177,11 @@ it.each(["linux", "win32"] as const)(
     vi.mocked(runOwnedCommand).mockImplementationOnce(
       async (_spawn, limits) => {
         const output = {
-          stdout: { text: "2.9.2\n" },
-          stderr: { text: "" },
-        } as Awaited<ReturnType<typeof runOwnedCommand>>;
+          stdout: { text: "2.9.2\n", bytes: 6, observedBytes: 6 },
+          stderr: { text: "", bytes: 0, observedBytes: 0 },
+          exitCode: 0,
+          signal: null,
+        };
         limits.observeCompleted?.(output);
         return output;
       },

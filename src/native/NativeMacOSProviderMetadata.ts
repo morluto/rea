@@ -9,12 +9,12 @@ export const APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE = createAnalysisProfile(
   {
     id: NATIVE_MACOS_PROVIDER_IDENTITY.id,
     name: NATIVE_MACOS_PROVIDER_IDENTITY.name,
-    version: "apple-metadata-reader-2",
+    version: "apple-metadata-reader-4",
   },
   {
     operation: "inspect_native_dispatch_metadata",
     reader: "apple-dispatch-metadata",
-    revision: 2,
+    revision: 4,
   },
 );
 /** Operations whose target process can show UI, use the network and write files. */
@@ -58,7 +58,8 @@ export const nativeMacOSCapabilities = (
           mayWriteFilesystem:
             OWNED_PROCESS_OPERATIONS.has(contract.name) ||
             contract.name === "observe_native_ui" ||
-            contract.name === "inspect_signature",
+            contract.name === "inspect_signature" ||
+            contract.name === "inspect_macho",
           changesPermissions: false,
           requiresRoot: false,
         }),

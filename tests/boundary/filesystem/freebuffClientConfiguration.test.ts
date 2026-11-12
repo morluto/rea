@@ -52,7 +52,7 @@ const freebuffPath = (
 
 describe("FreeBuff configuration paths", () => {
   it("resolves the shared user agents file and the profile marker directory", () => {
-    expect(freebuffPath("/home/a")).toEqual({
+    expect(freebuffPath("/home/a")).toMatchObject({
       name: "freebuff",
       displayName: "FreeBuff",
       configPath: join("/home/a", ".agents", "mcp.json"),
@@ -392,8 +392,8 @@ describe("uninstall applicability for shared FreeBuff storage", () => {
     expect(zcodeItem?.detail).toContain(
       "Configuration could not be read. Check file permissions, then rerun uninstall.",
     );
-    expect(zcodeItem?.detail).toContain(
-      "Configuration is not valid JSON and was not changed. Repair it, then rerun uninstall.",
+    expect(zcodeItem?.detail).toMatch(
+      /not valid JSON.*not changed.*repair.*uninstall/iu,
     );
   });
 

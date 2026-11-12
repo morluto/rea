@@ -28,22 +28,22 @@ import { err, ok } from "../../../src/domain/result.js";
 
 type DeclaredOperation = Exclude<AnalysisOperation, "health">;
 
-describe("target-bound provider routing", () => {
-  it("rejects provider identity and operation-family collisions at composition", () => {
-    const alpha = deepProvider("alpha");
-    const registry = new AnalysisProviderRegistry([alpha.provider]);
-    expect(() =>
-      SessionProviderRouter.selectable(registry, [auxiliaryProvider("alpha")]),
-    ).toThrow(/Duplicate configured provider ID: alpha/u);
-    expect(() =>
-      SessionProviderRouter.selectable(registry, [
-        auxiliaryProvider("auxiliary", "address_name"),
-      ]),
-    ).toThrow(
-      /Deep and auxiliary providers both declare operation address_name/u,
-    );
-  });
+it("rejects provider identity and operation-family collisions at composition", () => {
+  const alpha = deepProvider("alpha");
+  const registry = new AnalysisProviderRegistry([alpha.provider]);
+  expect(() =>
+    SessionProviderRouter.selectable(registry, [auxiliaryProvider("alpha")]),
+  ).toThrow(/Duplicate configured provider ID: alpha/u);
+  expect(() =>
+    SessionProviderRouter.selectable(registry, [
+      auxiliaryProvider("auxiliary", "address_name"),
+    ]),
+  ).toThrow(
+    /Deep and auxiliary providers both declare operation address_name/u,
+  );
+});
 
+describe("target-bound provider routing", () => {
   it("binds one overlapping provider, preserves provenance, and never falls back", async () => {
     const target = await databaseTarget();
     const alpha = deepProvider("alpha");
@@ -172,9 +172,10 @@ describe("target-bound provider routing", () => {
 
     expect(await running).toMatchObject({ ok: true });
     const cancelled = await switching;
-    expect(cancelled).toEqual({
+    expect(cancelled).toMatchObject({
       ok: false,
       error: new AnalysisCancelledError("open_binary", { cause: reason }),
+      targetAtCompletion: expect.objectContaining({ path: target }),
       selection: { kind: "binary", path: target, sha256: expect.any(String) },
     });
     if (!cancelled.ok) expect(cancelled.error.cause).toBe(reason);

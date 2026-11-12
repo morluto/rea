@@ -4,7 +4,7 @@ import { Cli, z } from "incur";
 import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
-import { rejectSurplusCliArguments } from "../../../src/cli/strictPositionals.js";
+import { validateCliArguments } from "../../../src/cli/strictPositionals.js";
 import {
   excludeDeclaredSensitiveArguments,
   explicitSensitiveValueOptions,
@@ -27,7 +27,7 @@ const serve = async (cli: CliInstance, argv: string[]) => {
   return { stdout, exitCode };
 };
 const installAdmission = (cli: CliInstance) => {
-  const strict = rejectSurplusCliArguments(cli);
+  const strict = validateCliArguments(cli);
   const declared = excludeDeclaredSensitiveArguments(cli);
   const original = cli.serve.bind(cli);
   cli.serve = (argv = [], options = {}) =>
@@ -207,5 +207,102 @@ it("preserves counted aliases and negated booleans while checking the positional
   ]);
   expect(surplus.exitCode).toBe(1);
   expect(surplus.stdout).toContain("Unexpected positional arguments");
+  expect(runs).toBe(1);
+});
+
+it("validates every dry-run literal before lossy coercion while retaining bare and negated controls", async () => {
+  let runs = 0;
+  let defaults = 0;
+  const cli = Cli.create("dry-run-fixture", { sync: false });
+  cli.command("setup", {
+    aliases: ["plan"],
+    options: z.object({
+      dryRun: z.boolean().default(false),
+      selected: z.string().default(() => {
+        defaults++;
+        return "default";
+      }),
+    }),
+    run: ({ options }) => {
+      runs++;
+      return options;
+    },
+  });
+  installAdmission(cli);
+  for (const literal of ["", "abc", "1", "True", "ab\ncd"]) {
+    const result = await serve(cli, [
+      "plan",
+      `--dry-run=${literal}`,
+      "--dryRun=false",
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({ code: "PARSE_ERROR" });
+  }
+  expect({ runs, defaults }).toEqual({ runs: 0, defaults: 0 });
+  for (const [tokens, expected] of [
+    [["--dry-run"], true],
+    [["--dryRun=true"], true],
+    [["--dry-run=false"], false],
+    [["--no-dry-run"], false],
+    [["--no-dryRun", "--dry-run"], true],
+  ] as const) {
+    const result = await serve(cli, ["setup", ...tokens]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ dryRun: expected });
+  }
+  expect({ runs, defaults }).toEqual({ runs: 5, defaults: 5 });
+});
+
+it("keeps flag-shaped option data untouched while validating only bound dry-run values", async () => {
+  const cli = Cli.create("dry-run-data", { sync: false });
+  cli.command("setup", {
+    options: z.object({
+      dryRun: z.boolean().default(false),
+      selected: z.string(),
+    }),
+    alias: { selected: "s" },
+    run: ({ options }) => options,
+  });
+  cli.command("text", {
+    options: z.object({ dryRun: z.string() }),
+    run: ({ options }) => options,
+  });
+  installAdmission(cli);
+  for (const value of ["--dry-run=abc", "--dry-run", "--no-dryRun"]) {
+    const result = await serve(cli, ["setup", "-s", value, "--dry-run=true"]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      dryRun: true,
+      selected: value,
+    });
+  }
+  const text = await serve(cli, ["text", "--dry-run=abc"]);
+  expect(text.exitCode).toBe(0);
+  expect(JSON.parse(text.stdout)).toEqual({ dryRun: "abc" });
+});
+
+it("validates dry-run on variadic commands without losing their declared tail", async () => {
+  let runs = 0;
+  const cli = Cli.create("dry-run-tail", { sync: false });
+  cli.command("many", {
+    args: z.object({
+      values: z.array(z.string()),
+    }),
+    options: z.object({ dryRun: z.boolean().default(false) }),
+    run: ({ args, options }) => {
+      runs++;
+      return { args, options };
+    },
+  });
+  installAdmission(cli);
+  const rejected = await serve(cli, ["many", "one", "two", "--dry-run=abc"]);
+  expect(rejected.exitCode).toBe(1);
+  expect(runs).toBe(0);
+  const accepted = await serve(cli, ["many", "one", "two", "--no-dry-run"]);
+  expect(accepted.exitCode, accepted.stdout).toBe(0);
+  expect(JSON.parse(accepted.stdout)).toMatchObject({
+    args: { values: ["one", "two"] },
+    options: { dryRun: false },
+  });
   expect(runs).toBe(1);
 });

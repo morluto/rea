@@ -1,3 +1,4 @@
+import { artifactOperationCause } from "./ArtifactFileOperation.js";
 import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
 import { Readable } from "node:stream";
 import {
@@ -11,7 +12,7 @@ import {
   assertStableRegularFileIdentity,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   ArtifactReaderFailure,
@@ -88,7 +89,7 @@ export class InesArtifactReader implements ArtifactReader {
     const size = produced.declaredSize;
     if (offset === null || size === null || size <= 0)
       throw new ArtifactReaderFailure("integrity", "Invalid iNES region range");
-    const stream = readFileHandleChunks(this.source.handle, {
+    const stream = readArtifactFileChunks(this.source.handle, {
       start: offset,
       end: offset + size - 1,
       signal,
@@ -111,7 +112,6 @@ export class InesArtifactReader implements ArtifactReader {
             );
           await verify();
         } catch (cause: unknown) {
-          abortIfNeeded(signal);
           if (cause instanceof ArtifactReaderFailure) throw cause;
           throw new ArtifactReaderFailure("io", "Could not read iNES region", {
             cause,
@@ -177,14 +177,13 @@ export class InesArtifactReader implements ArtifactReader {
         { symlinks: "reject", ...(signal === undefined ? {} : { signal }) },
       );
     } catch (cause: unknown) {
-      abortIfNeeded(signal);
       if (cause instanceof RegularFileChangedError)
         throw new ArtifactReaderFailure(
           "integrity",
           "iNES source changed during reading",
           { cause: cause.cause ?? cause },
         );
-      throw cause;
+      throw artifactOperationCause(cause);
     }
     // State validation is asynchronous even after the final byte was consumed.
     abortIfNeeded(signal);

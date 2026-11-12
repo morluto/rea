@@ -78,9 +78,10 @@ export const requestBody = (
     return undefined;
   const { mimeType, text } = facts.postData;
   if (mimeType === undefined || text === undefined) return undefined;
-  return isJsonLike(mediaTypeEssence(mimeType))
-    ? (parseExactJson(text) ?? text)
-    : text;
+  const value = isJsonLike(mediaTypeEssence(mimeType))
+    ? parseExactJson(text)
+    : undefined;
+  return value === undefined ? text : value;
 };
 
 /** The application's answer as an environment answer carries it: JSON, text, or null when it is empty; a body the probe did not record is marked. */

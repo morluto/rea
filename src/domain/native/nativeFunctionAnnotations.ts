@@ -4,7 +4,12 @@ import { functionDossierSchema } from "../native/functionDossier.js";
 /** One explicit function's analyst-authored metadata changes. */
 export const nativeFunctionAnnotationsInputSchema = z
   .strictObject({
-    procedure: z.string().min(1),
+    procedure: z
+      .string()
+      .min(1)
+      .describe(
+        "Function name or address selecting a function; edits apply at its entry.",
+      ),
     name: z.string().min(1).optional(),
     comment: z
       .string()

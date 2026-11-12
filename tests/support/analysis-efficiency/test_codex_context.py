@@ -673,8 +673,71 @@ class ContextCaptureTests(unittest.TestCase):
                 with self.assertRaisesRegex(OSError, 'fixture capture failure'):
                     agent.main()
             self.assertFalse(list(output.glob('profile-*')))
+            self.assertFalse(list((root / '.cache/rea-agent-trials').glob('profile-*')))
             self.assertTrue(json.loads((output / 'cleanup.json').read_text())['profile_removed'])
             self.assertEqual((auth_home / 'auth.json').read_text(), 'synthetic-credential')
+
+    def test_artifact_directory_does_not_choose_the_codex_workspace_or_enable_mcp_control(self):
+        spec = importlib.util.spec_from_file_location('agent_trial', Path(__file__).with_name('agent-trial.py'))
+        agent = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(agent)
+        for control, drift, mode, account_tools in [
+            (False, False, 'direct', False), (True, False, 'direct', False),
+            (False, True, 'direct', False), (False, False, 'client-code', False),
+            (False, False, 'client-code', True), (True, False, 'client-code', True),
+        ]:
+            with self.subTest(control=control, drift=drift, mode=mode, account_tools=account_tools), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                runtime = root / 'runtime'
+                (runtime / 'scripts').mkdir(parents=True)
+                (runtime / 'scripts/rea.mjs').write_text('')
+                (runtime / 'package-lock.json').write_text('{}')
+                (runtime / '.nvmrc').write_text('24.22.1\n')
+                (runtime / 'AGENTS.md').write_text('Foreign project instructions must not reach the trial')
+                question = root / 'question'
+                question.write_text('Reply with exactly CATALOG_OK.')
+                output = runtime / '.cache/trial'
+                arguments = ['agent-trial.py', '--runtime-root', str(runtime), '--revision', 'fixture',
+                             '--prompt', str(question), '--output', str(output), '--catalog-load', '--mode', mode,
+                             *(['--no-mcp'] if control else []),
+                             *(['--include-account-tools'] if account_tools else [])]
+                observed = {}
+
+                def launch(_invocation, **options):
+                    workspace = options['cwd']
+                    self.assertFalse(workspace.is_relative_to(runtime))
+                    config = Path(options['env']['CODEX_HOME']) / 'config.toml'
+                    observed['config'] = config.read_text()
+                    if drift:
+                        (runtime / 'dist').mkdir()
+                        (runtime / 'dist/changed.js').write_text('Runtime changed during the trial')
+                    child = Mock(stdin=io.StringIO())
+                    child.wait.return_value = 0
+                    return child
+
+                with patch.dict(os.environ, {'CODEX_HOME': str(root / 'source-auth')}, clear=True), \
+                        patch.object(sys, 'argv', arguments), \
+                        patch.object(agent.shutil, 'which', return_value='/fixture/node'), \
+                        patch.object(agent.subprocess, 'check_output', return_value='v24.22.1\n'), \
+                        patch.object(agent.subprocess, 'Popen', side_effect=launch), patch('builtins.print'):
+                    with self.assertRaises(SystemExit) as completed:
+                        agent.main()
+                self.assertEqual(completed.exception.code, 125 if drift else 0)
+                self.assertEqual('[mcp_servers.rea]' in observed['config'], not control)
+                self.assertEqual('required = true' in observed['config'], not control)
+                self.assertNotIn('Use the registered REA MCP server', observed['config'])
+                self.assertIn('code_mode_host = ' + ('true' if mode == 'client-code' else 'false'), observed['config'])
+                settings = json.loads((output / 'trial-settings.json').read_text())
+                for feature in ['apps', 'plugins']:
+                    self.assertIn(feature + ' = ' + str(account_tools).lower(), observed['config'])
+                    self.assertIs(settings['features'][feature], account_tools)
+                for feature, enabled in settings['features'].items():
+                    self.assertIn(feature + ' = ' + str(enabled).lower(), observed['config'])
+                self.assertNotIn('code_mode =', observed['config'])
+                self.assertNotIn('code_mode_only =', observed['config'])
+                self.assertTrue(json.loads((output / 'trial-settings.json').read_text())['workspace_isolated_from_runtime'])
+                self.assertEqual(json.loads((output / 'summary.json').read_text())['runtime_bytes_unchanged'], not drift)
+                self.assertFalse(list((root / '.cache/rea-agent-trials').glob('profile-*')))
 
     def test_refuses_foreign_session_directory_and_symlink_records(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -29,6 +29,7 @@ const recordingHost = (overrides: Partial<DoctorHost>) => {
           {
             client: "cursor",
             config_path: "/home/user/.cursor/mcp.json",
+            command_identity: "owned",
             command: ["/current/rea", "mcp"],
             state: "aligned",
             remediation: null,
@@ -164,6 +165,7 @@ it("states each comparison result without a claim it did not establish", async (
           {
             client: "cursor",
             config_path: "/cursor.json",
+            command_identity: "owned",
             command: ["/current/rea", "mcp"],
             state: "aligned",
             remediation: null,
@@ -176,9 +178,17 @@ it("states each comparison result without a claim it did not establish", async (
         ]),
     }),
   );
-  const detail = report.checks.find(({ name }) => name === CHECK)?.detail;
-  expect(detail).toContain("what the server cursor starts receives is unknown");
-  expect(detail).toContain("records other values for JAVA_HOME");
-  expect(detail).toContain("could not resolve its GHIDRA_INSTALL_DIR");
-  expect(detail).not.toContain("does not record");
+  const check = report.checks.find(({ name }) => name === CHECK);
+  expect(check).toMatchObject({
+    classification: "unknown",
+    details: { effective_environment: "unknown" },
+  });
+  expect(check?.detail).toContain(
+    "what the server cursor starts receives is unknown",
+  );
+  expect(check?.detail).toContain("It records other values for JAVA_HOME.");
+  expect(check?.detail).toContain(
+    "REA could not resolve its GHIDRA_INSTALL_DIR.",
+  );
+  expect(check?.detail).not.toContain("does not record");
 });

@@ -1,3 +1,16 @@
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  DarwinProcessOwnershipInspectionError,
+  swiftcCompileTimeoutRecovery,
+} from "../process/DarwinProcessRunTokenReader.js";
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "../process/ProcessInspectionCancellation.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionCancellationError,
+} from "../providers/OwnedCommandCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -6,7 +19,6 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { swiftcCompileTimeoutRecovery } from "../process/DarwinProcessRunTokenReader.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {
   DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
@@ -32,6 +44,7 @@ export interface NativeCommandFailurePresentation {
 export const translateNativeCommandFailure = (
   operation: string,
   failure: NativeCommandFailure,
+  resources: ArtifactResourceScope,
   timeoutMs = DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
   presentation: NativeCommandFailurePresentation = {},
 ): AnalysisError => {
@@ -60,21 +73,16 @@ export const translateNativeCommandFailure = (
       : error.bindCleanupDependencies([...new Set(markers)]);
   const preparation = failure.preparationFailure;
   if (preparation !== undefined) {
-    const marker = preparation.cleanupFailure;
-    const compiler = preparation.compilerOutcome;
+    const darwin =
+      preparation instanceof DarwinProcessOwnershipInspectionError
+        ? preparation
+        : undefined;
+    const compiler = darwin?.compilerOutcome;
     const options = {
       cause: failure,
-      ...(preparation.capturedOutput === undefined
+      ...(darwin?.capturedOutput === undefined
         ? {}
-        : { capturedOutput: preparation.capturedOutput }),
-      ...(marker === undefined
-        ? {}
-        : {
-            cleanup: {
-              reason: marker.message,
-              resources: marker.cleanupResources,
-            },
-          }),
+        : { capturedOutput: darwin?.capturedOutput }),
       diagnostics: {
         phase: "process-preparation",
         tool: failure.tool,
@@ -96,36 +104,44 @@ export const translateNativeCommandFailure = (
     };
     const compilerTimeoutMs =
       compiler?.outcome === "timed_out" ? compiler.timeoutMs : undefined;
+    const cancelled = processInspectionCancellationError(
+      preparation,
+      operation,
+    );
+    const cancellationPrimary =
+      preparation instanceof ProcessOwnershipInspectionCancelled ||
+      (preparation instanceof ProcessOwnershipIdentityBatchFailure &&
+        preparation.origin === "cancelled") ||
+      (darwin !== undefined && failure.reason === "cancelled");
     const error =
-      preparation.cancellation === undefined
-        ? compilerTimeoutMs === undefined
-          ? new ProviderAdapterError(IDENTITY.id, operation, options)
-          : new AnalysisTimeoutError(operation, compilerTimeoutMs, {
-              ...options,
-              userMessage: `The macOS process ownership helper compiler reached its REA_SWIFTC_COMPILE_TIMEOUT_MS deadline of ${String(compilerTimeoutMs)} ms.`,
-              remediationAction:
-                swiftcCompileTimeoutRecovery(compilerTimeoutMs),
-            })
-        : failure.reason === "timeout"
-          ? new AnalysisTimeoutError(operation, timeoutMs, {
-              ...options,
-              cause: preparation.cancellation.reason,
-              ...(presentation.timeoutRecovery ??
-                nativeDeadlineRecovery({
-                  timeoutMs,
-                  setting: "native_command_timeout_ms",
-                  cliFlag: "--native-command-timeout-ms",
-                  defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
-                  phase: "macOS native command deadline",
-                  unchanged: `The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance and the ${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES)}-byte failure-diagnostic excerpt have no runtime override.`,
-                })),
-            })
-          : new AnalysisCancelledError(operation, {
-              ...options,
-              cause: preparation.cancellation.reason,
-            });
-    return bindCleanup(
-      marker === undefined ? error : error.bindCleanupDependencies([marker]),
+      failure.reason === "timeout"
+        ? new AnalysisTimeoutError(operation, timeoutMs, {
+            ...options,
+            ...(presentation.timeoutRecovery ??
+              nativeDeadlineRecovery({
+                timeoutMs,
+                setting: "native_command_timeout_ms",
+                cliFlag: "--native-command-timeout-ms",
+                defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
+                phase: "macOS native command deadline",
+                unchanged: `The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance and the ${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES)}-byte failure-diagnostic excerpt have no runtime override.`,
+              })),
+          })
+        : cancellationPrimary && cancelled !== undefined
+          ? cancelled
+          : compilerTimeoutMs === undefined
+            ? new ProviderAdapterError(IDENTITY.id, operation, options)
+            : new AnalysisTimeoutError(operation, compilerTimeoutMs, {
+                ...options,
+                userMessage: `The macOS process ownership helper compiler reached its REA_SWIFTC_COMPILE_TIMEOUT_MS deadline of ${String(compilerTimeoutMs)} ms.`,
+                remediationAction:
+                  swiftcCompileTimeoutRecovery(compilerTimeoutMs),
+              });
+    return retainProcessInspectionCleanup(
+      preparation,
+      bindCleanup(error),
+      resources,
+      operation,
     );
   }
   const capturedOutput =

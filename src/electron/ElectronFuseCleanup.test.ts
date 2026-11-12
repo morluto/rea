@@ -49,7 +49,6 @@ it("retains the exact rejected fuse descriptor until its owner can close it", as
   const provider = new ElectronFuseProvider();
   try {
     const result = await provider.inspect({ path });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected incomplete descriptor cleanup");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupResources).toEqual([path]);

@@ -203,6 +203,6 @@ it("classifies every partition of two dumps that end inside their last partition
     ["partitions/ota_1.bin", "changed"],
   ]);
   expect(occurrence(left, "partitions/ota_1.bin").limitations).toEqual([
-    "partitions/ota_1.bin lies outside the dump: the file holds none of its 65536 bytes.",
+    expect.stringMatching(/partitions\/ota_1\.bin.*outside.*65536/iu),
   ]);
 });

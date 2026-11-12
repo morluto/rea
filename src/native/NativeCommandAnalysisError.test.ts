@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -14,15 +15,20 @@ const preparationFailure = (
   compilerOutcome: DarwinCompilerOutcome,
   cancellation?: { readonly reason: unknown },
 ) =>
-  new NativeCommandFailure("lipo", "io", null, {
-    cause: new DarwinProcessOwnershipInspectionError(
-      "ownership-helper compilation failed",
-      {
-        compilerOutcome,
-        ...(cancellation === undefined ? {} : { cancellation }),
-      },
-    ),
-  });
+  new NativeCommandFailure(
+    "lipo",
+    cancellation === undefined ? "io" : "cancelled",
+    null,
+    {
+      cause: new DarwinProcessOwnershipInspectionError(
+        "ownership-helper compilation failed",
+        {
+          compilerOutcome,
+          ...(cancellation === undefined ? {} : { cancellation }),
+        },
+      ),
+    },
+  );
 
 describe("translateNativeCommandFailure", () => {
   it("projects an ownership-helper compiler deadline as a retryable provider timeout", () => {
@@ -38,6 +44,7 @@ describe("translateNativeCommandFailure", () => {
         killed: true,
         timeoutMs: 1,
       }),
+      new ArtifactResourceScope(),
       60_000,
       {
         timeoutRecovery: {
@@ -79,6 +86,7 @@ describe("translateNativeCommandFailure", () => {
         outputTruncated: false,
         killed: false,
       }),
+      new ArtifactResourceScope(),
     );
 
     expect(error).toBeInstanceOf(ProviderAdapterError);
@@ -106,6 +114,7 @@ describe("translateNativeCommandFailure", () => {
         },
         { reason: cancellation },
       ),
+      new ArtifactResourceScope(),
     );
 
     expect(error).not.toBeInstanceOf(AnalysisTimeoutError);
