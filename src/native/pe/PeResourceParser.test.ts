@@ -248,15 +248,15 @@ describe("portable PE resource parsing", () => {
   });
 });
 
-describe("Delphi forms inside PE resources", () => {
-  const formFixture = (codePage: number, payload = delphiFormFixture()) => {
-    const fixture = peResourceFixture(false, [
-      { type: 10, name: 7, language: 1033, payload },
-    ]);
-    fixture.bytes.writeUInt32LE(codePage, (fixture.dataOffsets[0] ?? 0) + 8);
-    return fixture;
-  };
+const formFixture = (codePage: number, payload = delphiFormFixture()) => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: 7, language: 1033, payload },
+  ]);
+  fixture.bytes.writeUInt32LE(codePage, (fixture.dataOffsets[0] ?? 0) + 8);
+  return fixture;
+};
 
+describe("Delphi forms inside PE resources", () => {
   it("decodes a TPF0 RT_RCDATA payload against the resource it came from", async () => {
     const { bytes } = formFixture(1252);
     const result = peResourcesSchema.parse(await parse(bytes));
@@ -395,6 +395,36 @@ describe("Delphi forms inside PE resources", () => {
       inventory.limitations.some((line) => line.includes("Inventory-only")),
     ).toBe(true);
   });
+});
+
+describe("Delphi form resource code pages", () => {
+  it.each([
+    [28600, "iso-8859-10", "\u012a"],
+    [28604, "iso-8859-14", "\u010a"],
+    [28606, "iso-8859-16", "\u20ac"],
+  ] as const)(
+    "decodes declared page %i with its exact host label",
+    async (declared, label, character) => {
+      // Byte 0xA4 distinguishes these ISO pages from latin1 and each other.
+      const payload = delphiForm(
+        delphiComponent("TForm1", "Form1", [
+          delphiProperty("Caption", Buffer.concat([delphiBytes(6, 1, 0xa4)])),
+        ]),
+      );
+      const result = peResourcesSchema.parse(
+        await parse(formFixture(declared, payload).bytes),
+      );
+      expect(result.delphi_forms[0]).toMatchObject({
+        code_page: label,
+        code_page_source: "resource",
+        declared_code_page: declared,
+      });
+      expect(result.delphi_forms[0]?.root.properties[0]?.value).toMatchObject({
+        kind: "string",
+        text: character,
+      });
+    },
+  );
 });
 
 describe("inventory-only PE resource projections", () => {

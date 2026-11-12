@@ -155,6 +155,10 @@ export const RESOURCE_CODE_PAGES: Readonly<Record<number, string>> = {
   20866: "koi8-r",
   20932: "euc-jp",
   21866: "koi8-u",
+  // 28591 (ISO-8859-1) and 28601 (ISO-8859-11) are intentionally absent:
+  // the host aliases those labels to windows-1252 and windows-874, which
+  // changes bytes outside the declared repertoire. They keep the
+  // byte-preserving unsupported path instead.
   28592: "iso-8859-2",
   28593: "iso-8859-3",
   28594: "iso-8859-4",
@@ -163,8 +167,11 @@ export const RESOURCE_CODE_PAGES: Readonly<Record<number, string>> = {
   28597: "iso-8859-7",
   28598: "iso-8859-8",
   28599: "iso-8859-9",
+  28600: "iso-8859-10",
   28603: "iso-8859-13",
+  28604: "iso-8859-14",
   28605: "iso-8859-15",
+  28606: "iso-8859-16",
   38598: "iso-8859-8-i",
   50220: "iso-2022-jp",
   51932: "euc-jp",
