@@ -19,6 +19,22 @@ export interface ZipMember {
 
 const UTF8_NAME = 0x800;
 
+/** A version-1 Info-ZIP Unicode Path extra field claiming `path` for the stored `name`; `crc` lets a test frame one whose CRC does not match. */
+export const unicodePathExtra = (
+  name: string,
+  path: string,
+  crc: number = crc32(Buffer.from(name)),
+): Buffer => {
+  const text = Buffer.from(path);
+  const field = Buffer.alloc(9 + text.length);
+  field.writeUInt16LE(0x7075);
+  field.writeUInt16LE(field.length - 4, 2);
+  field[4] = 1;
+  field.writeUInt32LE(crc, 5);
+  text.copy(field, 9);
+  return field;
+};
+
 /** A zip archive of the members in order, framed from the PKWARE APPNOTE records. */
 export const zipArchive = (members: readonly ZipMember[]): Buffer => {
   const locals: Buffer[] = [];

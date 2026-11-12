@@ -11,6 +11,7 @@ import { detectStateFormat } from "../../../src/domain/desktop/stateFormats.js";
 import {
   emptyEntriesArchive,
   odtArchive,
+  unicodePathExtra,
   withZip64End,
   zipArchive,
   type ZipMember,
@@ -83,6 +84,64 @@ it("gives the UTF-8 flag precedence over a Unicode Path for names and formats", 
       { name: storedName, format: "text" },
       { name: "other.txt", format: "text" },
     ],
+  });
+});
+
+it("uses the last Unicode Path field when several claim one member, in both readers", async () => {
+  // Two version-1, CRC-matching fields: the first claims a directory, the
+  // second the file the complete decoder reads. zip.js indexes extra fields
+  // by id, so the last claim wins; the bounded scan must agree with it.
+  const storedName = "settings.json";
+  const extra = Buffer.concat([
+    unicodePathExtra(storedName, "hidden/"),
+    unicodePathExtra(storedName, storedName),
+  ]);
+  const archive = zipArchive([
+    { name: storedName, data: '{"zoom": 1.5}', centralExtra: extra },
+  ]);
+
+  expect(await sameView(archive)).toMatchObject({
+    entries: [{ name: "settings.json", format: "json", view: { zoom: 1.5 } }],
+    entry_count: 1,
+    truncated: false,
+  });
+});
+
+it("uses the last Unicode Path field when it claims a directory, in both readers", async () => {
+  // The reverse shape: the first field claims the file, the last a directory,
+  // so the member is a directory the view omits rather than a listed file.
+  const storedName = "settings.json";
+  const extra = Buffer.concat([
+    unicodePathExtra(storedName, storedName),
+    unicodePathExtra(storedName, "hidden/"),
+  ]);
+  const archive = zipArchive([
+    { name: storedName, data: '{"zoom": 1.5}', centralExtra: extra },
+  ]);
+
+  expect(await sameView(archive)).toMatchObject({
+    entries: [],
+    entry_count: 0,
+    truncated: false,
+  });
+});
+
+it("falls back to the stored name when the last Unicode Path field is unusable, not an earlier claim", async () => {
+  // The last field's CRC does not match the stored name, so it is unusable;
+  // the earlier valid claim of a directory must not be resurrected.
+  const storedName = "settings.json";
+  const extra = Buffer.concat([
+    unicodePathExtra(storedName, "hidden/"),
+    unicodePathExtra(storedName, "hidden/", 1),
+  ]);
+  const archive = zipArchive([
+    { name: storedName, data: '{"zoom": 1.5}', centralExtra: extra },
+  ]);
+
+  expect(await sameView(archive)).toMatchObject({
+    entries: [{ name: "settings.json", format: "json", view: { zoom: 1.5 } }],
+    entry_count: 1,
+    truncated: false,
   });
 });
 

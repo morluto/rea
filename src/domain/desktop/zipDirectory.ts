@@ -84,19 +84,25 @@ const unicodePath = (
   view: DataView,
   { name, extra, comment, flags }: RecordName,
 ): Uint8Array | undefined => {
+  // zip.js indexes extra fields by id with Map.set: the last occurrence
+  // replaces earlier ones, and only that selected claim is validated, so an
+  // unusable last field falls back to the stored name rather than resurrecting
+  // an earlier claim.
+  let selected: { at: number; length: number } | undefined;
   for (let at = extra; at + 4 <= comment;) {
     const length = view.getUint16(at + 2, true);
-    if (view.getUint16(at, true) === UNICODE_PATH)
-      return length >= 5 &&
-        at + 4 + length <= comment &&
-        bytes[at + 4] === 1 &&
-        (flags & UTF8_NAME) === 0 &&
-        view.getUint32(at + 5, true) === crc32(bytes.subarray(name, extra))
-        ? bytes.subarray(at + 9, at + 4 + length)
-        : undefined;
+    if (view.getUint16(at, true) === UNICODE_PATH) selected = { at, length };
     at += 4 + length;
   }
-  return undefined;
+  if (selected === undefined) return undefined;
+  const { at, length } = selected;
+  return length >= 5 &&
+    at + 4 + length <= comment &&
+    bytes[at + 4] === 1 &&
+    (flags & UTF8_NAME) === 0 &&
+    view.getUint32(at + 5, true) === crc32(bytes.subarray(name, extra))
+    ? bytes.subarray(at + 9, at + 4 + length)
+    : undefined;
 };
 
 /**
