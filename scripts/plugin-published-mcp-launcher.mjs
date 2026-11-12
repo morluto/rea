@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import { accessSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 // Marketplace and Codex checkouts keep source package.json at the plugin root.
-// npx would prefer that unbuilt package over the published artifact, so this
-// launcher always resolves rea-agents@VERSION from the OS temporary directory.
+// Install the published artifact under os.tmpdir() and run it in-process so the
+// plugin client owns the same process that registered shutdown handlers. An
+// npx/npm script-shell child can exit without delivering signals or awaiting
+// rea, orphaning session/provider resources.
+const PACKAGE = "rea-agents";
 const [version, ...extra] = process.argv.slice(2);
 try {
   if (
@@ -19,30 +25,60 @@ try {
 }
 
 if (process.exitCode !== 1) {
-  const child = spawn("npx", ["-y", `rea-agents@${version}`, "mcp"], {
-    cwd: tmpdir(),
-    env: process.env,
-    stdio: "inherit",
-    // Windows resolves the npx.cmd shim only through a shell.
-    shell: process.platform === "win32",
-    windowsHide: true,
-  });
-  const forwardSignal = (signal) => {
-    if (!child.killed) child.kill(signal);
-  };
-  process.once("SIGINT", forwardSignal);
-  process.once("SIGTERM", forwardSignal);
-  child.on("error", (error) => {
-    process.stderr.write(
-      `REA plugin failed to launch npx: ${error.message}.\n`,
+  const prefix = join(tmpdir(), "rea-plugin-mcp", version);
+  const entry = join(prefix, "node_modules", PACKAGE, "scripts", "rea.mjs");
+  try {
+    accessSync(entry);
+  } catch {
+    mkdirSync(prefix, { recursive: true });
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    const install = spawnSync(
+      npm,
+      [
+        "install",
+        "--omit=dev",
+        "--no-fund",
+        "--no-audit",
+        "--no-update-notifier",
+        "--prefix",
+        prefix,
+        `${PACKAGE}@${version}`,
+      ],
+      {
+        // Keep install away from the plugin checkout package.json.
+        cwd: tmpdir(),
+        env: process.env,
+        stdio: ["ignore", "inherit", "inherit"],
+        shell: process.platform === "win32",
+        windowsHide: true,
+      },
     );
-    process.exitCode = 1;
-  });
-  child.on("exit", (code, signal) => {
-    if (signal) {
-      process.kill(process.pid, signal);
-      return;
+    if (install.error) {
+      process.stderr.write(
+        `REA plugin failed to install ${PACKAGE}@${version}: ${install.error.message}.\n`,
+      );
+      process.exitCode = 1;
+    } else if (install.status !== 0) {
+      process.stderr.write(
+        `REA plugin failed to install ${PACKAGE}@${version}.\n`,
+      );
+      process.exitCode = 1;
     }
-    process.exitCode = code ?? 1;
-  });
+  }
+
+  if (process.exitCode !== 1) {
+    try {
+      accessSync(entry);
+    } catch {
+      process.stderr.write(
+        `REA plugin installed ${PACKAGE}@${version} without scripts/rea.mjs.\n`,
+      );
+      process.exitCode = 1;
+    }
+  }
+
+  if (process.exitCode !== 1) {
+    process.argv = [process.execPath, entry, "mcp"];
+    await import(pathToFileURL(entry).href);
+  }
 }
