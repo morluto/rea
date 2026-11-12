@@ -631,6 +631,17 @@ const optionGetterPrecedesMember = (
   // `set` entry does not remove the getter. Measured on Node 24.22.1,
   // `{get agent() { this.path = "/ok"; }, path: "/a b", set agent(_) {}}` constructs a request
   // because the getter still runs before `path` is copied.
+  // A data entry replaces the descriptor, so the key is no longer a getter. A setter merges
+  // with an existing getter instead of replacing it. Measured on Node 24.22.1,
+  // `{get agent() {...}, path: "/a b", agent: null}` throws while the same literal with
+  // `set agent(_) {}` in place of `agent: null` constructs a request.
+  const recordAccessor = (
+    entry: t.ObjectProperty | t.ObjectMethod,
+    name: string,
+  ): void => {
+    if (isGetterEntry(entry)) getterKeys.add(name);
+    else if (t.isObjectProperty(entry)) getterKeys.delete(name);
+  };
   const getterKeys = new Set<string>();
   // Each key takes its own position, including the keys a spread contributes: giving every
   // spread member the spread's outer index loses the order a later redefinition keeps.
@@ -659,7 +670,7 @@ const optionGetterPrecedesMember = (
         if (name === null) return true;
         if (!firstIndex.has(name)) firstIndex.set(name, position);
         lastDescriptor.set(name, { node: entry });
-        if (isGetterEntry(entry)) getterKeys.add(name);
+        recordAccessor(entry, name);
         position += 1;
       }
       continue;
@@ -682,7 +693,7 @@ const optionGetterPrecedesMember = (
     if (name === null) continue;
     if (!firstIndex.has(name)) firstIndex.set(name, position);
     lastDescriptor.set(name, { node: property });
-    if (isGetterEntry(property)) getterKeys.add(name);
+    recordAccessor(property, name);
     position += 1;
   }
   const orderOf = (name: string): readonly [number, number] => {

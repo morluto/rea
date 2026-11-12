@@ -187,3 +187,28 @@ it("keeps the getter when a setter for the same key follows", () => {
     ),
   ).toHaveLength(1);
 });
+
+it.each([
+  // A data entry replaces the descriptor, so the key is no longer a getter. Measured on Node
+  // 24.22.1.
+  [
+    `http.request({ get agent() { this.path = "/ok"; }, path: "/a b", agent: null })`,
+  ],
+] as const)(
+  "emits no request when a data property clears the getter: %s",
+  (call) => {
+    expect(requestsFor(call)).toEqual([]);
+  },
+);
+
+it.each([
+  // A setter merges with the getter instead of replacing it.
+  [
+    `http.request({ get agent() { this.path = "/ok"; }, path: "/a b", set agent(_) {} })`,
+  ],
+  [
+    `http.request({ set agent(_) {}, get agent() { this.path = "/ok"; }, path: "/a b" })`,
+  ],
+] as const)("keeps the request when a setter joins the getter: %s", (call) => {
+  expect(requestsFor(call)).toHaveLength(1);
+});
