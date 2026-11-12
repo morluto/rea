@@ -229,6 +229,8 @@ validation boundaries, and built-in resource acquisition/release.
 For `fs/promises.open`, a binding receiving the Promise is distinct from one
 receiving the awaited FileHandle. Awaiting the Promise later does not replace
 the original binding, but `h = await h` can replace it with the FileHandle.
+After a definite reassignment, release links use the receiver at the call.
+A replacement from a second `open` can link to that FileHandle once awaited.
 Receiver writes can therefore retain a candidate release and its ownership
 ambiguity; a still-known Promise has no direct FileHandle release. Acquisitions
 remain retained, and unknown loader authority keeps its existing candidate tag.
