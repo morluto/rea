@@ -77,6 +77,7 @@ export const registerWebNetworkCaptureCommands = (
           async () => {
             const service = createWebNetworkCaptureService(environment);
             return deliverCliAnalysisEvidence({
+              callerInputPath: args.capturePath,
               run: () =>
                 service.inspect(
                   {

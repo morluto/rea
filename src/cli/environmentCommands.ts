@@ -375,7 +375,7 @@ const inspectBuildHar = async (
   // writes the same caller_input_path as the three-step CLI path (#9681).
   const evidence = withEvidenceCallerInputPath(
     inspected.value,
-    capturePath,
+    callerInputPath,
   );
   const file = await environmentExportEvidenceFile(
     "evidence",
