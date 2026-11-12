@@ -148,3 +148,50 @@ it("retains shared module escapes after collecting resource receiver paths", () 
     result.resourceOperations.filter(({ kind }) => kind === "release"),
   ).toMatchObject([{ resolution: "complete" }]);
 });
+
+it.each([
+  "stream.close = () => {};",
+  "decorate(stream);",
+  'eval("stream.close = () => {}");',
+])("keeps a fresh local release before %s complete", (effect) => {
+  expect(
+    releases(`
+    import { createReadStream } from "node:fs";
+    function run() {
+      const stream = createReadStream("fixture.txt");
+      stream.close();
+      ${effect}
+    }
+  `),
+  ).toMatchObject([{ resolution: "complete" }]);
+});
+
+it("keeps a fresh local method captured before argument evaluation complete", () => {
+  expect(
+    releases(`
+    import { createReadStream } from "node:fs";
+    function run() {
+      const stream = createReadStream("fixture.txt");
+      stream.close(stream.close = () => {});
+    }
+  `),
+  ).toMatchObject([{ resolution: "complete" }]);
+});
+
+it("retains prior mutations and persistent receiver effects", () => {
+  expect(
+    releases(`
+    import { createReadStream } from "node:fs";
+    const shared = createReadStream("fixture.txt");
+    function prior() {
+      const stream = createReadStream("fixture.txt");
+      stream.close = () => {};
+      stream.close();
+    }
+    function persistent() {
+      shared.close();
+      shared.close = () => {};
+    }
+  `).map(({ resolution }) => resolution),
+  ).toEqual(["partial", "partial"]);
+});

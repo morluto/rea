@@ -25,11 +25,12 @@ import {
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import {
-  semanticBindingMayHaveOpaqueEffect,
+  semanticOpaqueBindingEffects,
   semanticOpaqueBindingReadMayHaveChanged,
 } from "./javascriptSemanticOpaqueEffects.js";
 import {
   semanticBindingAtRead,
+  semanticBindingEffectFollowsRead,
   semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -460,7 +461,13 @@ const collectReleases = (
         : {}),
       resolution:
         !opaqueReceiver &&
-        !releaseMethodMayHaveChanged(binding, method, member, context.state) &&
+        !releaseMethodMayHaveChanged(
+          binding,
+          method,
+          member,
+          context.state,
+          knownAcquisitions,
+        ) &&
         linked.length === 1 &&
         (binding.kind !== "parameter" ||
           semanticBindingAtRead(binding, member.object, context.state)
@@ -479,19 +486,39 @@ const releaseMethodMayHaveChanged = (
   method: string,
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  acquisitions: ReadonlySet<t.Node>,
 ): boolean => {
   const prototype = (key: JavaScriptSemanticPropertyPath[number]) =>
     semanticPropertyPathKeyMatches(key, "__proto__");
+  const initializer = binding.initializers[0];
+  const fresh =
+    binding.initializers.length === 1 &&
+    initializer !== undefined &&
+    acquisitions.has(resourceInitializer(initializer.node).value);
+  const mayPrecede = (effect: t.Node | undefined): boolean =>
+    semanticEffectTiming(read, effect, state) !== "after" &&
+    !(
+      fresh &&
+      effect !== undefined &&
+      semanticBindingEffectFollowsRead(
+        binding,
+        read,
+        effect,
+        state.parentsByNode,
+      )
+    );
   return (
     // A const binding still exposes mutable receiver properties to direct eval.
-    semanticBindingMayHaveOpaqueEffect(binding, state, read, "reference") ||
+    [...semanticOpaqueBindingEffects(binding, state, "reference")].some(
+      mayPrecede,
+    ) ||
     binding.memberWrites.some(
       ({ path, node }) =>
         (path.length === 0 ||
           (path.length === 1 &&
             semanticPropertyPathKeyMatches(path[0]!, method)) ||
           prototype(path[0]!)) &&
-        semanticEffectTiming(read, node, state) !== "after",
+        mayPrecede(node),
     ) ||
     binding.escapedPaths.some(
       ({ path, node }) =>
@@ -499,7 +526,7 @@ const releaseMethodMayHaveChanged = (
         (path.length === 0 || prototype(path[0]!)) &&
         // This invocation receives the receiver after selecting its method.
         node !== state.parentsByNode.get(read) &&
-        semanticEffectTiming(read, node, state) !== "after",
+        mayPrecede(node),
     )
   );
 };
