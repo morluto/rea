@@ -1,8 +1,9 @@
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
 import { expect, it, vi } from "vitest";
+import { z } from "incur";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
 import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
