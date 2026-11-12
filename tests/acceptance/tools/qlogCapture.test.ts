@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { writeFile, truncate, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { writeFile, truncate, rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -22,6 +23,74 @@ const hasMemoryBound =
   NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES !== null;
 const it = runtimeTest.skipIf(!hasMemoryBound);
 const cli = fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url));
+
+it("preserves aioquic recovery packet-number spaces and their source records", async () => {
+  const source = await readFile(
+    new URL("../../fixtures/qlog-packet-spaces/recovery.qlog", import.meta.url),
+  );
+  const root = await createTestTempDirectory("rea-qlog-number-spaces-");
+  const path = join(root, "recovery.qlog");
+  await writeFile(path, source);
+  const ordinals = [1, 5, 9, 13, 17, 21, 25];
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("inspect_web_network_capture", {
+    capture_path: path,
+    format: "qlog",
+    record_ordinals: ordinals,
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  const capture = webNetworkCaptureSchema.parse(
+    parseEvidence(response.structuredContent).normalized_result,
+  );
+  if (capture.format !== "qlog") throw new Error("qlog format required");
+  expect(capture.artifact.sha256).toBe(
+    createHash("sha256").update(source).digest("hex"),
+  );
+  expect(capture.records.map((record) => record.ordinal)).toEqual(ordinals);
+  expect(capture.records.map((record) => record.location)).toEqual(
+    [
+      "/traces/0/events/1",
+      "/traces/0/events/5",
+      "/traces/0/events/9",
+      "/traces/0/events/13",
+      "/traces/1/events/1",
+      "/traces/1/events/5",
+      "/traces/1/events/9",
+    ].map((pointer) => ({ kind: "json-pointer", pointer })),
+  );
+  expect(
+    capture.qlog.traces.map((trace) => ({
+      vantage: trace.vantage_point,
+      odcid: trace.odcid,
+      losses: trace.loss_declarations.map((loss) => [
+        loss.record_ordinal,
+        loss.packet_number,
+        loss.packet_type,
+        loss.packet_number_space,
+      ]),
+    })),
+  ).toEqual([
+    {
+      vantage: "client",
+      odcid: "01020304",
+      losses: [
+        [1, { state: "reported", value: "7" }, "initial", "initial"],
+        [5, { state: "reported", value: "7" }, "handshake", "handshake"],
+        [9, { state: "reported", value: "7" }, "0RTT", "application"],
+        [13, { state: "reported", value: "8" }, "1RTT", "application"],
+      ],
+    },
+    {
+      vantage: "server",
+      odcid: "01020304",
+      losses: [
+        [17, { state: "reported", value: "7" }, "initial", "initial"],
+        [21, { state: "reported", value: "7" }, "handshake", "handshake"],
+        [25, { state: "reported", value: "7" }, "1RTT", "application"],
+      ],
+    },
+  ]);
+});
 const event = {
   name: "transport:packet_sent",
   time: 1791819895000.25,
