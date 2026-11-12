@@ -1,4 +1,7 @@
-import { artifactReaderLifecycleCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
+import {
+  artifactPreparationRecoveryCases,
+  artifactReaderLifecycleCases,
+} from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
@@ -10,6 +13,8 @@ import { buildUImage, buildMultiPayload } from "../../tests/fixtures/uimage.js";
 import {
   parseUImageHeaderFields,
   parseMultiImageTable,
+  UIMAGE_HEADER_SIZE,
+  UIMAGE_MULTI_TABLE_WINDOW,
 } from "../domain/uimageFormat.js";
 
 const fixture = async (bytes: Buffer): Promise<string> => {
@@ -89,6 +94,14 @@ it("preserves cancellation during payload CRC admission", async () => {
         }
       })(),
     ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    reads.mockRestore();
+    const recovered = await entries(reader);
+    expect(recovered).toHaveLength(1);
+    expect(
+      (await buffer(await reader.open(recovered[0]!))).equals(
+        Buffer.alloc(128 * 1024, 0x61),
+      ),
+    ).toBe(true);
   } finally {
     await reader.close();
     reads.mockRestore();
@@ -110,7 +123,31 @@ it("admits a multi-image count before scanning the remaining payload", async () 
       reason: "limit",
       boundary: "capacity",
     });
-    expect(reads).toHaveBeenCalledTimes(2); // header and bounded table, no payload scan
+    expect(reads.mock.calls.length).toBeGreaterThan(0);
+    for (const call of reads.mock.calls) {
+      const [, , length, position] = call as unknown as [
+        Buffer,
+        number,
+        number,
+        number,
+      ];
+      expect(Number.isSafeInteger(position)).toBe(true);
+      expect(Number.isSafeInteger(length)).toBe(true);
+      expect(position).toBeGreaterThanOrEqual(0);
+      expect(length).toBeGreaterThanOrEqual(0);
+      if (length > 0)
+        expect(position + length).toBeLessThanOrEqual(
+          UIMAGE_HEADER_SIZE + UIMAGE_MULTI_TABLE_WINDOW,
+        );
+    }
+    const results = await Promise.all(
+      reads.mock.results.map(
+        ({ value }) => value as Promise<{ bytesRead: number }>,
+      ),
+    );
+    expect(
+      results.reduce((sum, result) => sum + result.bytesRead, 0),
+    ).toBeLessThanOrEqual(UIMAGE_HEADER_SIZE + UIMAGE_MULTI_TABLE_WINDOW);
   } finally {
     await reader.close();
     reads.mockRestore();
@@ -163,5 +200,24 @@ artifactReaderLifecycleCases({
       type: 4,
       payload: buildMultiPayload([Buffer.from("a"), Buffer.from("b")]),
     }),
+  createReader: (path, admitted) => new UImageArtifactReader(path, admitted),
+});
+
+it("reports impossible over-cap component extents as malformed", async () => {
+  const payload = Buffer.alloc(UIMAGE_MULTI_TABLE_WINDOW);
+  for (let offset = 0; offset < payload.length; offset += 4)
+    payload.writeUInt32BE(1, offset);
+  const reader = new UImageArtifactReader(
+    await fixture(buildUImage({ type: 4, payload })),
+  );
+  try {
+    await expect(entries(reader)).rejects.toMatchObject({ reason: "format" });
+  } finally {
+    await reader.close();
+  }
+});
+
+artifactPreparationRecoveryCases({
+  image: () => buildUImage({ payload: Buffer.from("payload") }),
   createReader: (path, admitted) => new UImageArtifactReader(path, admitted),
 });

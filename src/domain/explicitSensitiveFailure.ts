@@ -48,13 +48,6 @@ const excludeSnapshotIdentity = (
   return { ...snapshot, path, admitted_sha256 };
 };
 
-/** Keep a real JSON-pointer ancestor when a property identity is explicitly excluded. */
-export const redactExplicitPointer = (
-  pointer: string,
-  values: readonly string[],
-): string =>
-  redactSensitivePointer(pointer, (value) => redactExplicitText(value, values));
-
 const redactSensitivePointer = (
   pointer: string,
   text: (value: string) => string,
@@ -91,6 +84,9 @@ export const redactSensitiveFailure = (
   // Other observation owners already apply their format-aware exclusions.
   if (redacted !== error && error.partialObservation !== undefined)
     redacted.retainPartialObservation(error.partialObservation);
+  if (redacted !== error)
+    for (const secondary of error.secondaryFailures)
+      redacted.retainSecondaryFailure(redactSensitiveFailure(secondary, text));
   return redacted === error ? error : mirrorCleanup(error, redacted, text);
 };
 
@@ -145,9 +141,22 @@ const redactFailure = (
       ? {}
       : { observed: visit(issue.observed) }),
   });
+  const guidance = error.continuingCallerGuidance;
   const context = {
     cause: error,
     ...(error.limit === undefined ? {} : { limit: error.limit }),
+    ...(guidance === undefined
+      ? {}
+      : {
+          continuingCallerGuidance: {
+            ...(guidance.userMessage === undefined
+              ? {}
+              : { userMessage: text(guidance.userMessage) }),
+            ...(guidance.remediationAction === undefined
+              ? {}
+              : { remediationAction: text(guidance.remediationAction) }),
+          },
+        }),
     ...(error.cleanupPrimary === undefined
       ? {}
       : {
@@ -156,6 +165,9 @@ const redactFailure = (
     ...(error.diagnostics === undefined
       ? {}
       : { diagnostics: diagnostics(error.diagnostics) }),
+    ...(error.invocationDiagnostics === undefined
+      ? {}
+      : { invocationDiagnostics: diagnostics(error.invocationDiagnostics) }),
     ...(error.capturedOutput === undefined
       ? {}
       : {
@@ -214,6 +226,9 @@ const redactFailure = (
     return new AnalysisCancelledError(error.operation, {
       ...context,
       cause: error.cause,
+      ...(error.userMessage === undefined
+        ? {}
+        : { userMessage: text(error.userMessage) }),
     });
   if (error instanceof AnalysisTimeoutError)
     return new AnalysisTimeoutError(error.operation, error.timeoutMs, {
@@ -224,6 +239,7 @@ const redactFailure = (
       ...(error.remediationAction === undefined
         ? {}
         : { remediationAction: text(error.remediationAction) }),
+      ...(error.limit === undefined ? {} : { limit: error.limit }),
     });
   if (error instanceof AnalysisAccessDeniedError)
     return new AnalysisAccessDeniedError(
@@ -242,15 +258,29 @@ const redactFailure = (
   if (error instanceof AnalysisInputError)
     return new AnalysisInputError(
       error.operation,
-      context,
+      {
+        ...context,
+        ...(error.userMessage === undefined
+          ? {}
+          : { userMessage: text(error.userMessage) }),
+        ...(error.remediationAction === undefined
+          ? {}
+          : { remediationAction: text(error.remediationAction) }),
+        conformsToInputContract: error.conformsToInputContract,
+      },
       error.issues.map(issueProjection),
     );
   if (error instanceof AnalysisOutputError)
-    return new AnalysisOutputError(
-      error.operation,
-      text(error.reason),
-      context,
-    );
+    return new AnalysisOutputError(error.operation, text(error.reason), {
+      ...context,
+      ...(error.userMessage === undefined
+        ? {}
+        : { userMessage: text(error.userMessage) }),
+      ...(error.remediationAction === undefined
+        ? {}
+        : { remediationAction: text(error.remediationAction) }),
+      cleanupOnly: error.cleanupOnly,
+    });
   if (error instanceof AnalysisCapabilityUnavailableError)
     return new AnalysisCapabilityUnavailableError(
       error.providerId,
@@ -261,6 +291,27 @@ const redactFailure = (
         ...(error.userMessage === undefined
           ? {}
           : { userMessage: text(error.userMessage) }),
+        ...(error.remediationAction === undefined
+          ? {}
+          : { remediationAction: text(error.remediationAction) }),
+        ...(error.fallbackRemediationAction === undefined
+          ? {}
+          : {
+              fallbackRemediationAction: text(error.fallbackRemediationAction),
+            }),
+        ...(error.siblingOperations === undefined
+          ? {}
+          : { siblingOperations: error.siblingOperations }),
+        ...(error.siblingReasons === undefined
+          ? {}
+          : {
+              siblingReasons: Object.fromEntries(
+                Object.entries(error.siblingReasons).map(([op, msg]) => [
+                  op,
+                  text(msg),
+                ]),
+              ),
+            }),
         ...(error.retryable ? { retryable: true } : {}),
       },
     );
@@ -270,7 +321,11 @@ const redactFailure = (
       error.resource,
       text(error.reason),
       error.reportedLimits === null ? null : diagnostics(error.reportedLimits),
-      { ...context, ...resourceConstraintRecovery(error, text) },
+      {
+        ...context,
+        ...resourceConstraintRecovery(error, text),
+        ...(error.limit === undefined ? {} : { limit: error.limit }),
+      },
     );
   if (error instanceof ProviderCleanupError)
     return new ProviderCleanupError(

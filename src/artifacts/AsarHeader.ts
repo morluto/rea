@@ -15,6 +15,7 @@ import {
   DEFAULT_ASAR_MAX_HEADER_BYTES,
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
 } from "../domain/analysisResourceLimits.js";
+import { parseAsarListingAdmission } from "../config/asarListingAdmission.js";
 
 /**
  * Resolve the admission from a composition root's selected environment; an
@@ -28,7 +29,11 @@ export const resolveAsarHeaderAdmission = (
     environment[ASAR_HEADER_ADMISSION_SETTING],
   );
   if (!parsed.ok) throw parsed.error;
-  return parsed.value;
+  const listing = parseAsarListingAdmission(
+    environment.REA_ASAR_MAX_LISTING_BYTES,
+  );
+  if (!listing.ok) throw listing.error;
+  return { ...parsed.value, listing: listing.value };
 };
 
 const MEBIBYTE = 1024 * 1024;

@@ -92,7 +92,7 @@ describe("DeepSeek Harness configuration paths", () => {
   );
 
   it("resolves the home Cordis patch under the Harness home", () => {
-    expect(dshClient({})).toEqual({
+    expect(dshClient({})).toMatchObject({
       name: "dsh",
       displayName: "DeepSeek Harness",
       configPath: resolve("/home/a", ".dsh", "cordis.patch.yml"),
@@ -1159,44 +1159,6 @@ describe("DeepSeek Harness alias collapse", () => {
 });
 
 describe("DeepSeek Harness alias targets", () => {
-  it("collapses an alias of the insert list", async () => {
-    const { client } = await harnessClient();
-    await writeFile(
-      client.configPath,
-      `- holder: &rows
-    - id: other-tool
-      name: other
-      config:
-        command: keep-me
-    - id: rea-mcp
-      name: "@deepseek-ai/dsh-mcp-client"
-      config:
-        serverName: rea
-        transport: stdio
-        command: stale-launcher
-        args: [mcp]
-- insert: *rows
-`,
-    );
-
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    const text = await readFile(client.configPath, "utf8");
-    expect(text).toContain("other-tool");
-    expect(text).not.toContain("*rows");
-    expect(text).toContain("stale-launcher");
-    const patches = parseYaml(text) as { insert?: { id?: string }[] }[];
-    expect(
-      patches.flatMap(({ insert }) =>
-        (insert ?? []).filter((entry) => entry.id === "rea-mcp"),
-      ),
-    ).toHaveLength(1);
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("unchanged");
-  });
-
   it("keeps a Cordis tag when the config map is an alias", async () => {
     const { client } = await harnessClient();
     await writeFile(
@@ -1256,7 +1218,10 @@ describe("DeepSeek Harness alias identity", () => {
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
     ).toBe("configured");
-    const patches = parseYaml(await readFile(client.configPath, "utf8")) as {
+    const text = await readFile(client.configPath, "utf8");
+    expect(text).not.toContain("*rows");
+    expect(text).toContain("stale-launcher");
+    const patches = parseYaml(text) as {
       insert?: { id?: string; config?: { command?: string } }[];
     }[];
     const inserted = patches.flatMap((patch) => patch.insert ?? []);

@@ -6,7 +6,7 @@ import { packetFieldsSchema } from "../domain/captures/packetCapture.js";
 const producerSchema = z.array(
   z.object({ _source: z.object({ layers: packetFieldsSchema }) }),
 );
-export const parsePacketOutput = (text: string) => {
+export const parsePacketOutput = (text: string, packetLimit: number | null) => {
   const decoded: unknown = JSON.parse(text);
   const packets = producerSchema
     .parse(decoded)
@@ -18,6 +18,11 @@ export const parsePacketOutput = (text: string) => {
       throw new AnalysisOutputError(
         "inspect_packet_capture",
         "TShark returned unordered frames.",
+      );
+    if (packetLimit !== null && frame > BigInt(packetLimit))
+      throw new AnalysisOutputError(
+        "inspect_packet_capture",
+        "TShark returned a frame beyond the selected input packet limit.",
       );
     previous = frame;
   }

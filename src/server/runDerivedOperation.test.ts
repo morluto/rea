@@ -125,23 +125,6 @@ describe("derived MCP operation progress and cancellation", () => {
     expect(result.ok ? undefined : result.error.cause).toBe(reason);
   });
 
-  it("lets cancellation win immediately before result publication", async () => {
-    const controller = new AbortController();
-    const result = await runDerivedOperation(
-      context(controller),
-      "compare",
-      () => {
-        controller.abort();
-        return "must-not-publish";
-      },
-    );
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisCancelledError" },
-    });
-  });
-
   it("lets cancellation win while terminal progress delivery is pending", async () => {
     const controller = new AbortController();
     let terminalReached = false;

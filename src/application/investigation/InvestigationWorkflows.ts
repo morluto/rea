@@ -9,6 +9,7 @@ import {
 import { buildCallPath } from "../../domain/callPath.js";
 import { correlateStaticAndRuntime } from "../../domain/staticRuntimeCorrelation.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { readImmutableEvidence } from "../../domain/evidenceValidation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -92,6 +93,9 @@ export const buildCallPathEvidence = (
     const evidence = createEvidence(undefined, CALL_PATH_PROVIDER, {
       predicateType: "rea.call-path",
       operation: "build_call_path",
+      analysisProfile: createAnalysisProfile(CALL_PATH_PROVIDER, {
+        workflow_revision: 2,
+      }),
       parameters: {
         start: selected.value.input.start.address,
         goal: selected.value.input.goal.address,
@@ -112,7 +116,7 @@ export const buildCallPathEvidence = (
         {
           operation: "analyze_function",
           rationale:
-            "Collect complete callee dossiers for the reported frontier addresses.",
+            "Inspect reachable code and compare independent provider observations where call discovery is uncertain.",
         },
       ],
     });

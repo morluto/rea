@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { fat } from "../domain/binaryTarget.fixture.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   NativeFixtureRunner,
-  nativeMachoTarget,
+  nativeMachoTargetForFile,
 } from "../../tests/fixtures/nativeCommands.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -45,8 +49,11 @@ const execute = async (
   runner: NativeCommandRunner,
   parameters: Readonly<Record<string, JsonValue>>,
 ) => {
+  const root = await createTestTempDirectory("rea-native-deadline-");
+  const path = join(root, "app");
+  await writeFile(path, fat([0x01000007, 0x0100000c]));
   const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-    nativeMachoTarget("/fixture/app"),
+    await nativeMachoTargetForFile(path),
   );
   try {
     return await client.execute("list_architectures", parameters);
@@ -91,7 +98,6 @@ describe("native_command_timeout_ms", () => {
     const result = await runner.run("lipo", ["-info", "/fixture/app"], {
       timeoutMs: 120_000,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected resolution timeout");
     expect(result.error.reason).toBe("timeout");
     expect(calls).toEqual([

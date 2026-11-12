@@ -127,13 +127,13 @@ its declaration, so the same bytes moved to another device memory are
 
 Root `format_metadata` (`dfuse`) records:
 
-| Field                                                | Meaning                                                                         |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `image_size`, `target_count`                         | `DFUImageSize` and `bTargets` from the prefix                                   |
-| `element_count`, `empty_element_count`, `data_bytes` | All elements, elements of 0 bytes (which have no entry), and element data bytes |
-| `overlapping_element_count`                          | Elements that overlap an earlier element of the same alternate setting          |
-| `device_version`, `product_id`, `vendor_id`          | `bcdDevice`, `idProduct` and `idVendor` from the suffix                         |
-| `suffix_crc`, `computed_crc`                         | The stored `dwCRC`, and the same CRC computed over every byte before it         |
+| Field                                                | Meaning                                                                                     |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `image_size`, `target_count`                         | `DFUImageSize` and `bTargets` from the prefix                                               |
+| `element_count`, `empty_element_count`, `data_bytes` | All elements, elements of 0 bytes (which have no entry), and element data bytes             |
+| `overlapping_element_count`                          | Elements that overlap an earlier element in address order within the same alternate setting |
+| `device_version`, `product_id`, `vendor_id`          | `bcdDevice`, `idProduct` and `idVendor` from the suffix                                     |
+| `suffix_crc`, `computed_crc`                         | The stored `dwCRC`, and the same CRC computed over every byte before it                     |
 
 Recognition already requires `bVersion` 1 and `bcdDFU` `0x011A`, so they are
 not repeated. The DFU suffix CRC is CRC-32 without the final inversion, as

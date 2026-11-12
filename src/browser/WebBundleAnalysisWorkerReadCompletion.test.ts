@@ -4,6 +4,9 @@ import { expect, it, vi } from "vitest";
 
 const closeFailure = vi.hoisted(() => ({
   enabled: false,
+  readFailure: undefined as Error | undefined,
+  onReadFailure: undefined as (() => void) | undefined,
+  onResultClose: undefined as (() => void) | undefined,
   resultCloseAttempts: 0,
   root: undefined as string | undefined,
   rootRemovedBeforeResultClose: false,
@@ -25,6 +28,20 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
       const path = args[0];
+      if (
+        closeFailure.readFailure !== undefined &&
+        String(path).endsWith(".result")
+      ) {
+        const failure = closeFailure.readFailure;
+        closeFailure.readFailure = undefined;
+        Object.defineProperty(handle, "read", {
+          configurable: true,
+          value: async () => {
+            closeFailure.onReadFailure?.();
+            throw failure;
+          },
+        });
+      }
       if (closeFailure.enabled && String(path).endsWith(".result")) {
         closeFailure.enabled = false;
         const close = handle.close.bind(handle);
@@ -41,6 +58,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           },
         });
       }
+      if (
+        closeFailure.onResultClose !== undefined &&
+        String(path).endsWith(".result")
+      ) {
+        const close = handle.close.bind(handle);
+        Object.defineProperty(handle, "close", {
+          configurable: true,
+          value: async () => {
+            await close();
+            closeFailure.onResultClose?.();
+          },
+        });
+      }
       return handle;
     },
   };
@@ -48,6 +78,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
+import {
+  AnalysisOutputError,
+  AnalysisCancelledError,
+} from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
@@ -144,7 +178,6 @@ it("retains completed facts and resolves a result-file lease through another cle
       makeScript("fetch('/retained');"),
       10_000,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained result cleanup failure");
     expect(result.error.completed).toMatchObject({
       status: "analyzed",
@@ -170,5 +203,78 @@ it("retains completed facts and resolves a result-file lease through another cle
   } finally {
     await worker.close().catch(() => undefined);
     await OwnedWorkerRuntime.retryPending().catch(() => undefined);
+  }
+});
+
+it.each([false, true])(
+  "keeps a physical result read failure primary before late cancellation and close failure: %s",
+  async (failClose) => {
+    const worker = new WebBundleAnalysisWorker(
+      WEB_BUNDLE_WORKER_LIMITS.heapMb,
+      ownedSourceLauncher(),
+    );
+    const physical = new Error("controlled physical result read failed");
+    const controller = new AbortController();
+    const reason = { source: "after physical read began" };
+    closeFailure.enabled = failClose;
+    closeFailure.readFailure = physical;
+    closeFailure.onReadFailure = () => controller.abort(reason);
+    try {
+      const result = await worker.analyze(
+        makeScript("fetch('/physical-failure');"),
+        10_000,
+        controller.signal,
+      );
+      if (result.ok) throw new Error("Expected physical read failure");
+      expect(result.error.completed).toBeNull();
+      const primary = result.error.error.cleanupPrimary ?? result.error.error;
+      expect(primary).toBeInstanceOf(AnalysisOutputError);
+      expect(primary.cause).toBe(physical);
+      expect(primary.secondaryFailures).toHaveLength(1);
+      expect(primary.secondaryFailures[0]).toBeInstanceOf(
+        AnalysisCancelledError,
+      );
+      expect(primary.secondaryFailures[0]?.cause).toBe(reason);
+      expect(result.error.error.cleanupIncomplete).toBe(failClose);
+      await worker.close();
+      expect(result.error.error.cleanupIncomplete).toBe(false);
+    } finally {
+      closeFailure.enabled = false;
+      closeFailure.readFailure = undefined;
+      closeFailure.onReadFailure = undefined;
+      await worker.close();
+    }
+  },
+);
+
+it("retains validated completed facts when cancellation arrives at result descriptor close", async () => {
+  const worker = new WebBundleAnalysisWorker(
+    WEB_BUNDLE_WORKER_LIMITS.heapMb,
+    ownedSourceLauncher(),
+  );
+  const controller = new AbortController();
+  const reason = { source: "completed result descriptor closed" };
+  closeFailure.onResultClose = () => controller.abort(reason);
+  try {
+    const result = await worker.analyze(
+      makeScript("fetch('/completed-before-abort');"),
+      10_000,
+      controller.signal,
+    );
+    if (result.ok) throw new Error("Expected finalization cancellation");
+    expect(result.error.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.error.cause).toBe(reason);
+    expect(result.error.completed).toMatchObject({
+      status: "analyzed",
+      observations: {
+        endpoints: [
+          expect.objectContaining({ value: "/completed-before-abort" }),
+        ],
+      },
+    });
+    expect(result.error.error.cleanupIncomplete).toBe(false);
+  } finally {
+    closeFailure.onResultClose = undefined;
+    await worker.close();
   }
 });

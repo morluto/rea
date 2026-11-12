@@ -1,4 +1,7 @@
 import { expect, it } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { buildCapabilityInventory } from "../../../src/application/CapabilityInventory.js";
@@ -41,33 +44,43 @@ it("probes the default limiter with executable and regular-file checks", async (
   ]);
 });
 
-it("uses the exact absolute override and reports a failed executable check", async () => {
-  const limiter = "/fixture/util-linux/prlimit";
-  const availability = await evmLimiterAvailability(
-    { REA_EVM_PRLIMIT_COMMAND: limiter },
-    {
-      ...linux,
-      fs: {
-        access: async (path) => {
-          expect(path).toBe(limiter);
-          throw Object.assign(new Error("permission denied"), {
-            code: "EACCES",
-          });
-        },
-        stat: async () => {
-          throw new Error("stat must not run after access failure");
+it.each(["EACCES", "EPERM"])(
+  "uses the exact absolute override and reports denied access: %s",
+  async (code) => {
+    const limiter = "/fixture/util-linux/prlimit";
+    const availability = await evmLimiterAvailability(
+      { REA_EVM_PRLIMIT_COMMAND: limiter },
+      {
+        ...linux,
+        fs: {
+          access: async (path) => {
+            expect(path).toBe(limiter);
+            throw Object.assign(new Error("permission denied"), {
+              code,
+            });
+          },
+          stat: async () => {
+            throw new Error("stat must not run after access failure");
+          },
         },
       },
-    },
-  );
+    );
 
-  expect(availability).toMatchObject({
-    status: "unavailable",
-    code: "executable_missing",
-    reason: expect.stringContaining(limiter),
-    diagnostics: { limiter_path: limiter },
-  });
-});
+    expect(availability).toMatchObject({
+      status: "unavailable",
+      code: "runtime_unavailable",
+      reason: expect.stringContaining(limiter),
+      diagnostics: { limiter_path: limiter, system_code: code },
+    });
+    if (availability === undefined) throw new Error("Expected limiter probe");
+    const entry = buildCapabilityInventory(status, {
+      ...basePolicy,
+      evmLimiterAvailability: availability,
+    }).find(({ name }) => name === "inspect_evm_interface");
+    expect(entry?.remediation).toContain("REA_EVM_PRLIMIT_COMMAND");
+    expect(entry?.remediation).toContain("execute permission");
+  },
+);
 
 it("rejects a relative override and non-file without probing an alternate command", async () => {
   const relative = await evmLimiterAvailability(
@@ -84,7 +97,8 @@ it("rejects a relative override and non-file without probing an alternate comman
   );
   expect(relative).toMatchObject({
     status: "unavailable",
-    reason: "prlimit_not_absolute",
+    code: "not_configured",
+    reason: expect.stringContaining("absolute executable regular file"),
     diagnostics: {
       limiter_path: "prlimit",
       code: "prlimit_not_absolute",
@@ -104,9 +118,51 @@ it("rejects a relative override and non-file without probing an alternate comman
   );
   expect(directory).toMatchObject({
     status: "unavailable",
-    reason: "prlimit_not_file",
+    code: "not_configured",
+    reason: expect.stringContaining("absolute executable regular file"),
     diagnostics: expect.objectContaining({ code: "prlimit_not_file" }),
   });
+});
+
+it("delivers selected-path recovery from real filesystem probes to capability output", async () => {
+  const root = await createTestTempDirectory("rea-evm-limiter-recovery-");
+  const executable = join(root, "caller-selected-limiter");
+  await writeFile(executable, "not executed by the readiness probe", {
+    mode: 0o700,
+  });
+  for (const [path, expectedCode, expectedReason] of [
+    ["prlimit", "not_configured", "absolute executable regular file"],
+    [root, "not_configured", "absolute executable regular file"],
+    [
+      join(root, "missing-limiter"),
+      "executable_missing",
+      "REA_EVM_PRLIMIT_COMMAND",
+    ],
+    [executable, null, null],
+  ] as const) {
+    const availability = await evmLimiterAvailability(
+      { REA_EVM_PRLIMIT_COMMAND: path },
+      linux,
+    );
+    expect(availability?.code).toBe(expectedCode);
+    expect(availability?.diagnostics.limiter_path).toBe(path);
+    if (availability === undefined) throw new Error("Expected limiter probe");
+    const entry = buildCapabilityInventory(status, {
+      ...basePolicy,
+      evmLimiterAvailability: availability,
+    }).find(({ name }) => name === "inspect_evm_interface");
+    if (expectedReason === null) {
+      expect(entry).toMatchObject({ available: true, remediation: null });
+    } else {
+      expect(entry).toMatchObject({
+        available: false,
+        reason: "provider_missing",
+      });
+      expect(entry?.remediation).toContain(expectedReason);
+      expect(entry?.remediation).toContain(path);
+      expect(entry?.remediation).toContain("util-linux prlimit");
+    }
+  }
 });
 
 it("rechecks on each observation so inventory follows the selected executable's current state", async () => {

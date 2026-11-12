@@ -6,7 +6,7 @@ For captured or bundled JavaScript that needs readable source recovery, use
 `additional_paths` when advertised, then analyze the returned `analysis_input`
 directory together. Each input retains its own snapshot, digest and byte-range
 provenance; inputs and recovered code are never executed. Recovery requires a
-caller-supplied Wakaru on Linux x64; see [the recovery guide](https://github.com/morluto/rea/blob/main/docs/javascript-recovery.md).
+caller-supplied Wakaru on Linux x64; see [the recovery guide](https://github.com/morluto/rea/blob/main/docs/guides/javascript/javascript-recovery.md).
 
 Use `analyze_javascript_application` directly on the operator-supplied ASAR or
 extracted tree. When the question concerns known source paths and the connected
@@ -169,7 +169,10 @@ leaving it, and `both` when the question needs both. Trace traversal includes
 containment relationships, so even a narrow seed can expand many nodes; a
 bidirectional trace can reach unrelated sibling modules. A module item or page
 is preferable when its observations already answer the question. Do not treat
-all reached nodes as participants in the feature.
+all reached nodes as participants in the feature. For a broad trace, pass
+`view: {"kind": "feature-trace", "collection": "paths"}` (or `summary`) to
+retain the complete trace and read terminal paths first; page `nodes` or `edges`
+with exact `where.node_ids` through `inspect_analysis_view` as needed.
 
 Reuse retained parent Evidence when the server advertises it, or supply complete
 Evidence inline. Include Hopper or Ghidra Evidence only when its artifact digest

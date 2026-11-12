@@ -9,9 +9,10 @@ import {
   symlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
@@ -58,9 +59,10 @@ let clientVersion = null;
 let fixture;
 let passed = false;
 let evidenceSeen = false;
-let skillSeen = false;
 let finalSeen = false;
 let skillRequested = false;
+let skillCallId;
+let expectedSkillBody;
 let searchCallId;
 let analysisCallId;
 let artifactReadByAgent = false;
@@ -133,8 +135,11 @@ await withVerifierCleanup(async () => {
         assert(
           result.plannedActions.every(
             (a) =>
-              a.target.startsWith(profile + sep) ||
-              a.target.startsWith(sharedSkills + sep),
+              isAbsolute(a.target) &&
+              ((relative(profile, a.target) !== "" &&
+                isPathWithinRoot(profile, a.target)) ||
+                (relative(sharedSkills, a.target) !== "" &&
+                  isPathWithinRoot(sharedSkills, a.target))),
           ),
         );
       await writeFile(
@@ -162,6 +167,20 @@ await withVerifierCleanup(async () => {
       command: "unrelated-server",
       disabled: true,
     });
+    const skillFile = join(
+      sharedSkills,
+      "reverse-engineer-anything",
+      "SKILL.md",
+    );
+    const normalizedSkill = (await readFile(skillFile, "utf8"))
+      .replace(/^\uFEFF/u, "")
+      .replace(/\r\n|\r/gu, "\n");
+    const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)([\s\S]*)$/u.exec(
+      normalizedSkill,
+    );
+    assert(frontmatter, "Installed skill must have authored frontmatter");
+    expectedSkillBody = frontmatter[2].trim();
+    assert(expectedSkillBody.length > 0);
     clientPath = baseEnvironment.PATH;
     if (reducedPath) {
       assert.equal(
@@ -200,9 +219,6 @@ await withVerifierCleanup(async () => {
       directory: lab,
       prefix: `${client}-${mode}`,
       onRequest: async ({ body, tools, requestIndex }) => {
-        skillSeen ||= JSON.stringify(body.messages ?? []).includes(
-          "reverse-engineer-anything",
-        );
         const messages = (body.messages ?? []).map((message) => ({
           role: message.role,
           callId: message.tool_call_id,
@@ -213,14 +229,14 @@ await withVerifierCleanup(async () => {
                   .map((part) => part.text ?? "")
                   .join("\n"),
         }));
-        const messageText = messages.map((message) => message.text).join("\n");
         const toolResponseText = (callId) =>
           messages.find(
             (message) => message.role === "tool" && message.callId === callId,
           )?.text ?? "";
-        selectedSkillLoaded ||= messageText.includes(
-          join(sharedSkills, "reverse-engineer-anything"),
-        );
+        const expectedSkill = `Base directory for this skill: ${join(sharedSkills, "reverse-engineer-anything")}\nImportant: ALWAYS resolve absolute paths from this base directory when working with skills.\n\n${expectedSkillBody}\n`;
+        selectedSkillLoaded ||=
+          skillCallId !== undefined &&
+          toolResponseText(skillCallId).includes(expectedSkill);
         const toolText = JSON.stringify(
           (body.messages ?? []).filter((m) => m.role === "tool"),
         );
@@ -294,10 +310,10 @@ await withVerifierCleanup(async () => {
             role: "assistant",
             content: "REA_CLIENT_COMPATIBILITY_OK",
           };
-          finalSeen = true;
         } else if (skill && !skillRequested) {
           skillRequested = true;
           message = call(skill.name, { skill: "reverse-engineer-anything" });
+          skillCallId = message.tool_calls[0].id;
         } else if (persisted && shell) {
           artifactPath = persisted[1];
           assert(
@@ -384,11 +400,13 @@ await withVerifierCleanup(async () => {
         stderr: join(lab, `${mode}.stderr`),
       },
     );
-    const initialized = response.stdout
+    const events = response.stdout
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line))
-      .find((v) => v.type === "system" && v.subtype === "init");
+      .map((line) => JSON.parse(line));
+    const initialized = events.find(
+      (v) => v.type === "system" && v.subtype === "init",
+    );
     assert(initialized);
     const observed = initialized.tools
       .filter((n) => n.startsWith("mcp__rea__"))
@@ -400,7 +418,15 @@ await withVerifierCleanup(async () => {
       "Qwen must discover the complete REA catalog",
     );
     assert.equal(fixture.failure, undefined);
-    assert(finalSeen);
+    const result = events.findLast((event) => event.type === "result");
+    assert.equal(
+      result?.subtype,
+      "success",
+      "Qwen must emit a successful terminal result",
+    );
+    assert.equal(result.is_error, false);
+    assert.equal(result.result, "REA_CLIENT_COMPATIBILITY_OK");
+    finalSeen = true;
     if (mode === "call") {
       assert(evidenceSeen);
       assert(selectedSkillLoaded);

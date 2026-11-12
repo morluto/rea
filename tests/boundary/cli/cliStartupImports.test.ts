@@ -1,15 +1,14 @@
+import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const execute = promisify(execFile);
 const MARKER = "REA_TEST_RESOLVED ";
 // Dependencies and composition modules used by one command family; startup
 // must not resolve them just to register the complete command catalog.
@@ -161,10 +160,16 @@ const resolvedMarkers = (stderr: string): ReadonlySet<string> =>
 const resolvedPackages = async (
   arguments_: readonly string[],
 ): Promise<ReadonlySet<string>> => {
-  const { stderr } = await execute(
-    process.execPath,
-    [`--import=${RESOLUTION_HOOK}`, ...arguments_],
-    { cwd: process.cwd(), maxBuffer: 16 * 1_024 * 1_024 },
+  const commands = await createVerifierCommands();
+  onTestFinished(() => commands.close());
+  const { stderr } = await withVerifierCleanup(
+    () =>
+      commands.exec(
+        process.execPath,
+        [`--import=${RESOLUTION_HOOK}`, ...arguments_],
+        { cwd: process.cwd(), maxBuffer: 16 * 1_024 * 1_024, timeout: 15_000 },
+      ),
+    [() => commands.close()],
   );
   return resolvedMarkers(stderr);
 };

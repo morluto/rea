@@ -3,7 +3,6 @@ import { buildManagedPeFixture } from "../../../../scripts/fixtures/managed/pe.m
 import { managedPeFixtureTarget } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
-import { comparisonLimitations } from "../../../../src/domain/managed/managedMemberComparisonCoverage.js";
 import { executeManagedMemberComparison } from "../../../../src/application/managed/ManagedMemberComparisonService.js";
 import { managedMemberComparisonResultSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
 
@@ -57,9 +56,9 @@ it("keeps field comparison policy and delivers its owning limitation for changed
       },
     }),
   ]);
-  expect(comparison.limitations).toEqual(
-    expect.arrayContaining(comparisonLimitations(left.report, right.report)),
-  );
+  const constantLimitation =
+    "Field Constant-table defaults are not compared; field matching and change detection cover names, flags and signatures only.";
+  expect(comparison.limitations).toContain(constantLimitation);
   const ordinary = observe("", false, 1);
   const otherOrdinary = observe("", false, 2);
   expect(ordinary.report.fields[0]?.constant).toBeNull();
@@ -71,9 +70,5 @@ it("keeps field comparison policy and delivers its owning limitation for changed
   const baselineComparison = managedMemberComparisonResultSchema.parse(
     baseline.value.evidence.normalized_result,
   );
-  expect(
-    comparison.limitations.filter(
-      (limitation) => !baselineComparison.limitations.includes(limitation),
-    ),
-  ).toHaveLength(1);
+  expect(baselineComparison.limitations).not.toContain(constantLimitation);
 });

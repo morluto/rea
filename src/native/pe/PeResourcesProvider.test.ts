@@ -36,47 +36,16 @@ const inspect = async (
 };
 
 describe("PE resource provider budget reporting", () => {
-  it("reports an input byte budget as a file-size bound", async () => {
-    const root = await createTestTempDirectory("rea-pe-input-budget-");
-    const path = join(root, "resource.exe");
-    await writeFile(path, peResourceFixture().bytes);
-    const result = await inspect(path, { max_file_bytes: 64 });
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Expected a refusal");
-    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "file-size",
-    });
-    expect(result.error.message).toContain(
-      "Selected artifact exceeds 64 bytes",
-    );
-    expect(
-      (result.error as AnalysisResourceConstraintError).reportedLimits,
-    ).toMatchObject({ max_file_bytes: 64 });
-  });
-
-  it("reports an entry budget as a capacity bound", async () => {
-    const root = await createTestTempDirectory("rea-pe-entry-budget-");
-    const path = join(root, "resource.exe");
-    await writeFile(path, peResourceFixture().bytes);
-    const result = await inspect(path, { max_entries: 1 });
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Expected a refusal");
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "capacity",
-    });
-    expect(result.error.message).toContain("entry budget exceeded");
-  });
-
   it("reports a file-size budget without memory remediation advice", async () => {
     const root = await createTestTempDirectory("rea-pe-budget-advice-");
     const path = join(root, "resource.exe");
     await writeFile(path, peResourceFixture().bytes);
     const result = await inspect(path, { max_file_bytes: 64 });
     if (result.ok) throw new Error("Expected a refusal");
+    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
     const error = result.error as AnalysisResourceConstraintError;
+    expect(error.message).toContain("Selected artifact exceeds 64 bytes");
+    expect(error.reportedLimits).toMatchObject({ max_file_bytes: 64 });
     expect(error.resource).toBe("file-size");
     expect(error.remediationAction).toContain("max_file_bytes");
     expect(error.retryable).toBe(false);
@@ -95,6 +64,7 @@ describe("PE resource provider budget reporting", () => {
     if (result.ok) throw new Error("Expected a refusal");
     const error = result.error as AnalysisResourceConstraintError;
     expect(error.resource).toBe("capacity");
+    expect(error.message).toContain("entry budget exceeded");
     expect(error.remediationAction).toContain("max_entries");
     expect(projectAnalysisError(error)).toMatchObject({
       retryable: false,

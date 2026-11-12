@@ -23,7 +23,7 @@ import {
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
 import { constants, type Stats } from "node:fs";
 import { createHash } from "node:crypto";
 import { access, realpath, stat, type FileHandle } from "node:fs/promises";
@@ -85,6 +85,10 @@ import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
 import { hasGodotPckHeader } from "../domain/godotPckFormat.js";
 import { hasUImageMagic } from "../domain/uimageFormat.js";
 import { hasUnityFsHeader } from "../domain/unityfsFormat.js";
+import {
+  hasWxapkgEncryptedMagic,
+  hasWxapkgHeader,
+} from "../domain/wxapkgFormat.js";
 import { detectHexRecordEncoding } from "../domain/firmware/hexRecords.js";
 import { hasUf2Block } from "../domain/firmware/uf2.js";
 import {
@@ -93,6 +97,7 @@ import {
   isDfuSeFile,
 } from "../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
+import { hasMftFileRecordHeader } from "../domain/windows/ntfsMft.js";
 import {
   locateEspFlashLayout,
   type EspFlashSelection,
@@ -138,6 +143,7 @@ import {
   type MachoLoadCommandTableHeader,
 } from "../domain/apple/machoLoadCommands.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
 const XML_PLIST_PROBE_CHUNK_BYTES = 64 * 1024;
@@ -158,8 +164,9 @@ export interface BinaryTargetResolverOptions {
 
 /**
  * Resolve and classify a readable local target before a provider is selected.
- * FAT Mach-O inputs select the host-compatible architecture, otherwise their
- * first declared supported slice, so setup remains non-interactive; unsupported
+ * FAT Mach-O inputs select the host-compatible slice. Several subtypes of that
+ * family use subtype preference, then the earliest capability variant.
+ * Otherwise the first foreign family declared once is selected. Unsupported
  * or ambiguous inputs are returned as typed errors.
  */
 export const parseBinaryTarget = async (
@@ -168,9 +175,25 @@ export const parseBinaryTarget = async (
 ): Promise<
   Result<BinaryTarget, BinaryTargetError | AnalysisCancelledError>
 > => {
-  const cwd = options.cwd ?? process.cwd();
   const { signal } = options;
-  const candidate = absoluteCallerPath(input, { cwd });
+  const admitted = localPathStringSchema.safeParse(input);
+  if (!admitted.success) {
+    if (signal?.aborted === true)
+      return err(
+        new AnalysisCancelledError("resolve_binary_target", {
+          cause: signal.reason,
+        }),
+      );
+    return err(
+      new BinaryTargetError(
+        input,
+        admitted.error.issues[0]?.message ?? "Invalid local path",
+        { cause: admitted.error },
+      ),
+    );
+  }
+  const cwd = options.cwd ?? process.cwd();
+  const candidate = absoluteCallerPath(admitted.data, { cwd });
   // Failures before canonicalization concern the selected path itself; later
   // failures concern the canonical path opened with symbolic links rejected.
   let stage: TargetFilesystemStage = "resolve";
@@ -189,6 +212,9 @@ export const parseBinaryTarget = async (
     const { executable: path, infoPlist } = resolved.value;
     const bundle =
       infoPlist === undefined ? {} : { bundleInfoPlist: infoPlist };
+    // A bundle directory is selected for its executable, so the executable's
+    // own name classifies it; a selected file keeps the caller's spelling.
+    const classifiedAs = infoPlist === undefined ? candidate : path;
     return withOwnedRegularFile<TargetResolution>(
       path,
       {
@@ -199,7 +225,13 @@ export const parseBinaryTarget = async (
         try {
           return await readOpenedBinaryTarget(
             source,
-            { path, sourcePath, selectedPath: candidate, ...bundle },
+            {
+              path,
+              sourcePath,
+              selectedPath: candidate,
+              classifiedAs,
+              ...bundle,
+            },
             options,
           );
         } catch (cause: unknown) {
@@ -279,13 +311,23 @@ const readOpenedBinaryTarget = async (
     readonly path: string;
     readonly sourcePath: string;
     readonly selectedPath: string;
+    /** Spelling whose name supplies format hints: the selected file, or a bundle's executable. */
+    readonly classifiedAs: string;
     readonly bundleInfoPlist?: string;
   },
   options: BinaryTargetResolverOptions,
 ): Promise<TargetResolution> => {
   const { handle, initial: metadata } = source;
-  const { path, sourcePath, selectedPath, bundleInfoPlist } = selected;
+  const { path, sourcePath, selectedPath, classifiedAs, bundleInfoPlist } =
+    selected;
   const bundle = bundleInfoPlist === undefined ? {} : { bundleInfoPlist };
+  // Every admitted target shares one identity; routes add their own facts.
+  const identity = async () => ({
+    path,
+    sourcePath,
+    ...bundle,
+    sha256: await sha256Handle(handle, path, metadata, signal),
+  });
   const hostArchitecture = options.hostArchitecture ?? process.arch;
   const { targetKind, formatHint, signal, architecture, entryPoint } = options;
   throwIfTargetResolutionCancelled(signal);
@@ -322,10 +364,7 @@ const readOpenedBinaryTarget = async (
         }),
       );
     return ok({
-      path,
-      sourcePath,
-      ...bundle,
-      sha256: await sha256Handle(handle, path, metadata, signal),
+      ...(await identity()),
       kind: "executable",
       format: "raw-binary",
       architecture: admitted.value.architecture,
@@ -373,10 +412,7 @@ const readOpenedBinaryTarget = async (
         }),
       );
     return ok({
-      path,
-      sourcePath,
-      ...bundle,
-      sha256: await sha256Handle(handle, path, metadata, signal),
+      ...(await identity()),
       kind: "executable",
       format: "gamecube-dol",
       architecture: admitted.value.architecture,
@@ -414,10 +450,8 @@ const readOpenedBinaryTarget = async (
         ),
       );
     return ok({
-      path,
-      sourcePath,
+      ...(await identity()),
       artifactSelectedPath: selectedPath,
-      sha256: await sha256Handle(handle, path, metadata, signal),
       kind: "archive",
       format: "esp-flash-image",
       espFlash: {
@@ -444,10 +478,7 @@ const readOpenedBinaryTarget = async (
         }),
       );
     return ok({
-      path,
-      sourcePath,
-      ...bundle,
-      sha256: await sha256Handle(handle, path, metadata, signal),
+      ...(await identity()),
       kind: "executable",
       format: "dos-com",
       architecture: "x86",
@@ -456,11 +487,15 @@ const readOpenedBinaryTarget = async (
   }
   // Probe WASM content before suffix-only database routing; an explicit
   // database selection keeps the caller's chosen interpretation.
-  const classificationPath = artifactNameForClassification(selectedPath, path);
+  const classificationPath = artifactNameForClassification(classifiedAs, path);
   const artifactFormat =
     targetKind === "database"
       ? undefined
       : await detectArtifactFormat(classificationPath, source, signal, path);
+  const artifactIdentity = async () => ({
+    ...(await identity()),
+    artifactSelectedPath: selectedPath,
+  });
   if (
     targetKind === "database" ||
     (targetKind === undefined &&
@@ -469,19 +504,12 @@ const readOpenedBinaryTarget = async (
       path.toLowerCase().endsWith(".hop"))
   )
     return ok({
-      path,
-      sourcePath,
-      sha256: await sha256Handle(handle, path, metadata, signal),
+      ...(await identity()),
       kind: "database",
       format: "analysis-database",
     });
   if (artifactFormat !== undefined) {
-    const identity = {
-      path,
-      sourcePath,
-      artifactSelectedPath: selectedPath,
-      sha256: await sha256Handle(handle, path, metadata, signal),
-    };
+    const identity = await artifactIdentity();
     if (artifactFormat === "esp-flash-image")
       return ok({
         ...identity,
@@ -512,12 +540,9 @@ const readOpenedBinaryTarget = async (
       )) !== undefined
     )
       return ok({
-        path,
-        sourcePath,
-        sha256: await sha256Handle(handle, path, metadata, signal),
+        ...(await artifactIdentity()),
         kind: "archive",
         format: zipRootPackageFormat(classificationPath),
-        artifactSelectedPath: selectedPath,
       });
     const reason =
       typeof detected.error === "string"
@@ -535,10 +560,7 @@ const readOpenedBinaryTarget = async (
     );
   }
   return ok({
-    path,
-    sourcePath,
-    ...bundle,
-    sha256: await sha256Handle(handle, path, metadata, signal),
+    ...(await identity()),
     kind: "executable",
     ...detected.value,
   });
@@ -607,14 +629,12 @@ const targetFileCleanupError = (
             : String(failure.cleanupCause),
         resources: [failure.path],
       },
-      diagnostics: {
-        ...(primary === undefined
+      ...childFailureDiagnostics(
+        primary === undefined ? {} : { primary_error: { error: primary } },
+        completedTarget === undefined
           ? {}
-          : { primary_error: projectAnalysisError(primary) }),
-        ...(completedTarget === undefined
-          ? {}
-          : { completed_target: completedTarget }),
-      },
+          : { completed_target: completedTarget },
+      ),
     },
   );
   bindRegularFileCleanup(failure, error);
@@ -787,6 +807,7 @@ const detectArtifactFormat = async (
   if (hasZipSignature(magic)) return zipRootPackageFormat(lower);
   if (hasGodotPckHeader(magic)) return "godot-pck";
   if (hasUnityFsHeader(magic)) return "unityfs";
+  if (hasWxapkgEncryptedMagic(magic) || hasWxapkgHeader(magic)) return "wxapkg";
   if (hasUImageMagic(magic)) return "uimage";
   const hexRecords = detectHexRecordEncoding(magic);
   if (hexRecords !== undefined) return hexRecords;
@@ -821,6 +842,7 @@ const detectArtifactFormat = async (
     });
   if (esp === "esp-image") return "esp-image";
   if (hasFitImagesNode(magic)) return "fit";
+  if (hasMftFileRecordHeader(magic)) return "ntfs-mft";
   // Binary plists, including keyed archives, often use other extensions.
   if (hasBinaryPlistSignature(magic)) return "plist";
   const named = namedArtifactFormat(lower);
@@ -893,6 +915,7 @@ const isArchiveFormat = (
     "ines",
     "godot-pck",
     "unityfs",
+    "wxapkg",
     "uimage",
     "dmg",
     "pkg",
@@ -903,6 +926,7 @@ const isArchiveFormat = (
     "dfuse",
     "esp-flash-image",
     "fit",
+    "ntfs-mft",
   ].includes(format);
 
 /** Whether the leading bytes begin any executable header family, valid or not. */

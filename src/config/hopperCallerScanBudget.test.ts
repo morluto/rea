@@ -11,8 +11,12 @@ import {
   type HopperCallerScanFacts,
 } from "../domain/native/hopperCallerReconciliation.js";
 import { parseConfig } from "./parseConfig.js";
+import { runtimeAnalysisConfig } from "./runtimeAnalysisSettings.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   HOPPER_CALLER_SCAN_BUDGET_SETTING,
+  hopperCallerScanLimit,
   hopperCallerScanRecovery,
 } from "./hopperCallerScanBudget.js";
 
@@ -53,25 +57,38 @@ it("records the default caller-scan budget and forwards an explicit setting", ()
   ).toEqual({ [HOPPER_CALLER_SCAN_BUDGET_SETTING]: "250" });
 });
 
+it("rejects a malformed caller-scan seed unless an override is active", () => {
+  const parsed = parseConfig({ [HOPPER_CALLER_SCAN_BUDGET_SETTING]: "0" });
+  if (!parsed.ok) throw new Error("runtime seed rejected startup");
+  const live = runtimeAnalysisConfig(parsed.value);
+  expect(() => live.hopperCallerScanBudget.milliseconds).toThrow(
+    ConfigurationError,
+  );
+  expect(
+    runWithAnalysisOperationSnapshot(
+      {
+        revision: 1,
+        overrides: { "hopper.caller_scan_budget_ms": 250 },
+      },
+      () => live.hopperCallerScanBudget.milliseconds,
+    ),
+  ).toBe(250);
+});
+
 it("explains the time budget and that fixed byte allowances have no override", () => {
   const parsed = parseConfig({ [HOPPER_CALLER_SCAN_BUDGET_SETTING]: "250" });
   if (!parsed.ok) throw parsed.error;
   const budget = parsed.value.hopperCallerScanBudget;
-  const time = hopperCallerScanRecovery(
-    facts({ stop: { code: "work_budget", budget_ms: 250 } }),
-    budget,
-  );
-  expect(time).toContain(`${HOPPER_CALLER_SCAN_BUDGET_SETTING} is 250 ms`);
-  expect(time).toContain(
-    `The default is ${String(DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS)} ms`,
-  );
-  expect(time).toContain(
-    `from ${String(MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS)} to ${String(MAX_NODE_TIMER_DELAY_MS)} ms`,
-  );
-  expect(time).toContain("no runtime override");
-  expect(time).toContain(
-    `${HOPPER_CALLER_SCAN_BUDGET_SETTING} does not raise them`,
-  );
+  expect(hopperCallerScanLimit(budget)).toMatchObject({
+    setting: "hopper.caller_scan_budget_ms",
+    effective_value: 250,
+    source: "setting",
+    minimum: MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS,
+    maximum: MAX_NODE_TIMER_DELAY_MS,
+    update_mode: "runtime",
+    pending_restart: false,
+  });
+  expect(DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS).toBe(2000);
   const page = hopperCallerScanRecovery(
     facts({
       stop: {
@@ -82,9 +99,7 @@ it("explains the time budget and that fixed byte allowances have no override", (
     budget,
   );
   expect(page).toContain("no runtime override");
-  expect(page).toContain(
-    `${HOPPER_CALLER_SCAN_BUDGET_SETTING} does not raise them`,
-  );
+  expect(page).toContain("hopper.caller_scan_budget_ms does not raise them");
   expect(page).not.toContain("is 250 ms");
   expect(
     hopperCallerScanRecovery(facts({ stop: { code: "complete" } }), budget),

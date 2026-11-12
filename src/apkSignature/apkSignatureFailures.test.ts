@@ -56,9 +56,7 @@ it.each([
     });
     expect(projected.remediation.action).toContain(String(limit));
     expect(projected.remediation.action).toContain("no runtime override");
-    expect(projected.remediation.action).toContain(
-      "Repeating the unchanged request fails the same way",
-    );
+    expect(projected.remediation.action).toMatch(/unchanged request.*fails/iu);
     expect(projected.remediation.action).not.toContain(
       "Wait for an active analysis to complete",
     );

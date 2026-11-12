@@ -10,8 +10,14 @@ import { join } from "node:path";
 
 import { expect, it as test } from "vitest";
 
+import { runWithAnalysisOperationSnapshot } from "../../../../src/domain/analysisOperationSnapshot.js";
+
 import { kunaInstallationCancellation } from "../../../../src/kuna/KunaInstallation.js";
-import { readKunaConfiguration } from "../../../../src/kuna/KunaConfiguration.js";
+import {
+  readKunaConfiguration,
+  kunaFunctionDeadline,
+  kunaProjectDeadline,
+} from "../../../../src/kuna/KunaConfiguration.js";
 import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaResourceScope.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
@@ -22,7 +28,7 @@ const it = test.skipIf(process.platform === "win32");
 it("identifies a caller-selected kuna by version and digest", async () => {
   const root = await createTestTempDirectory("rea-kuna-install-");
   const kuna = await writeFakeKuna(root, {
-    version: { stdout: "kuna 1.986\n" },
+    version: { stdout: "kuna 1.990\n" },
   });
   const link = join(root, "current-kuna");
   await symlink(kuna, link);
@@ -37,7 +43,7 @@ it("identifies a caller-selected kuna by version and digest", async () => {
     value: {
       configuration: { command: link, cacheRoot: join(root, "cache") },
       executable: await realpath(kuna),
-      version: "1.986",
+      version: "1.990",
       verified: true,
       // A `#!` launcher reports its interpreter; ownership checks must not expect the path.
       script: true,
@@ -104,14 +110,14 @@ fs.renameSync(process.argv[1] + ".new", process.argv[1]);
 it("accepts another release but reports it as unverified", async () => {
   const root = await createTestTempDirectory("rea-kuna-unverified-");
   const kuna = await writeFakeKuna(root, {
-    version: { stdout: "kuna 1.833\n" },
+    version: { stdout: "kuna 1.989\n" },
   });
 
   const result = await inspectKunaInstallation({ REA_KUNA_COMMAND: kuna });
 
   expect(result).toMatchObject({
     ok: true,
-    value: { version: "1.833", verified: false },
+    value: { version: "1.989", verified: false },
   });
 });
 
@@ -246,6 +252,44 @@ it("parses cache, timeout and job settings at the configuration boundary", () =>
       ok: false,
       error: { code: "open_options_invalid", setting },
     });
+  const overridden = runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: {
+        "kuna.project_timeout_ms": 4000,
+        "kuna.function_timeout_ms": 250,
+      },
+    },
+    () => {
+      const parsed = readKunaConfiguration(
+        {
+          ...environment,
+          REA_KUNA_PROJECT_TIMEOUT_MS: "0",
+          REA_KUNA_TIMEOUT_MS: "-1",
+        },
+        "linux",
+      );
+      if (!parsed.ok) throw new Error(parsed.error.reason);
+      return {
+        project: kunaProjectDeadline(parsed.value),
+        function: kunaFunctionDeadline(parsed.value),
+      };
+    },
+  );
+  expect(overridden).toMatchObject({
+    project: { ms: 4000, source: "runtime" },
+    function: { ms: 250, source: "runtime" },
+  });
+  expect(
+    runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "kuna.function_timeout_ms": 250 } },
+      () =>
+        readKunaConfiguration({ ...environment, REA_KUNA_JOBS: "33" }, "linux"),
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: { setting: "REA_KUNA_JOBS" },
+  });
 });
 
 it("stops a version probe that ignores SIGTERM instead of waiting on it", async () => {

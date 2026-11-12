@@ -530,7 +530,7 @@ const WINDOW_OPEN_CALL =
   /(?:^|\.)(?:window|self|globalThis|top|parent|opener|frames|document)\.open$/u;
 
 /** Node `fs.open` flag strings, which are never request URLs. */
-const FS_OPEN_FLAGS = new Set([
+export const FS_OPEN_FLAGS: ReadonlySet<string> = new Set([
   "a",
   "a+",
   "as",
@@ -769,8 +769,11 @@ export const stringValue = (
 /** Return a string or numeric argument literal. */
 export const argumentValue = (
   node: t.Node | null | undefined,
-): string | undefined =>
-  t.isNumericLiteral(node) ? String(node.value) : stringValue(node);
+): string | undefined => {
+  if (node === null || node === undefined) return undefined;
+  const value = unwrapJavaScriptExpression(node).node;
+  return t.isNumericLiteral(value) ? String(value.value) : stringValue(value);
+};
 
 /** Prefix a static argument value when one is available. */
 export const prefixedArgument = (

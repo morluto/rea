@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
 
 import { nativeMacOSCapabilities } from "./NativeMacOSProviderMetadata.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
@@ -101,21 +102,58 @@ it.each(["inspect_macho", "list_architectures"] as const)(
     const root = await createTestTempDirectory("rea-macho-lipo-output-");
     const path = join(root, "fixture.macho");
     await writeFile(path, inspectionImage());
-    const client = new NativeMacOSProvider(
-      {},
-      new NativeFixtureRunner({ lipo: "unrecognized slice record\n" }),
-      "darwin",
-    ).createClient(await nativeMachoTargetForFile(path));
-    const result = await client.execute(operation, {});
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisOutputError",
-        capturedOutput: { stdout: "unrecognized slice record\n", exit_code: 0 },
-      },
+    const runner = new NativeFixtureRunner({
+      lipo: "unrecognized slice record\n",
     });
+    const run = vi.spyOn(runner, "run");
+    const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+      await nativeMachoTargetForFile(path),
+    );
+    try {
+      const result = await client.execute(operation, {});
+      expect(run).toHaveBeenCalledWith(
+        "lipo",
+        ["-detailed_info", path],
+        expect.any(Object),
+      );
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          operation,
+          capturedOutput: {
+            stdout: "unrecognized slice record\n",
+            exit_code: 0,
+          },
+        },
+      });
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
   },
 );
+
+it("refuses a missing Mach-O source before running lipo", async () => {
+  const root = await createTestTempDirectory("rea-native-lipo-missing-");
+  const runner = new NativeFixtureRunner({
+    lipo: "unrecognized slice record\n",
+  });
+  const run = vi.spyOn(runner, "run");
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+    nativeMachoTarget(join(root, "missing")),
+  );
+  try {
+    const result = await client.execute("inspect_macho", {});
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "ProviderAdapterError" },
+    });
+    expect(run).not.toHaveBeenCalled();
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
+});
 
 it("declares the signature snapshot write in provider capabilities", () => {
   expect(
@@ -124,3 +162,55 @@ it("declares the signature snapshot write in provider capabilities", () => {
     )?.effects,
   ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
 });
+
+it("declares the temporary private operand write in inspect_macho provider capabilities", () => {
+  expect(
+    nativeMacOSCapabilities("darwin").find(
+      ({ operation }) => operation === "inspect_macho",
+    )?.effects,
+  ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
+});
+
+it.each(["before command", "during command"] as const)(
+  "rejects architecture facts when the admitted target changes %s",
+  async (phase) => {
+    const root = await createTestTempDirectory("rea-lipo-target-identity-");
+    const path = join(root, "fixture.macho");
+    const original = inspectionImage();
+    await writeFile(path, original);
+    const target = await nativeMachoTargetForFile(path);
+    const runner = new NativeFixtureRunner({
+      lipo: `Non-fat file: ${path} is architecture: arm64\n`,
+    });
+    const run = runner.run.bind(runner);
+    const capture = vi
+      .spyOn(runner, "run")
+      .mockImplementation(async (...args) => {
+        if (phase === "during command")
+          await writeFile(
+            path,
+            Buffer.concat([original, Buffer.from("changed")]),
+          );
+        return run(...args);
+      });
+    const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+      target,
+    );
+    try {
+      if (phase === "before command")
+        await writeFile(
+          path,
+          Buffer.concat([original, Buffer.from("changed")]),
+        );
+      const result = await client.execute("list_architectures", {});
+      if (result.ok) throw new Error("Expected target identity refusal");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisArtifactChangedError",
+        operation: "list_architectures",
+      });
+      expect(capture).toHaveBeenCalledTimes(phase === "before command" ? 0 : 1);
+    } finally {
+      await client.close();
+    }
+  },
+);

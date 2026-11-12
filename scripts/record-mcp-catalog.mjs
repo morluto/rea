@@ -15,12 +15,18 @@ const [
   { parseConfig },
   { silentLogger },
   { PROMPT_CONTRACTS },
+  { TOOL_CONTRACTS },
+  { getEvidenceInputContract },
+  { toolOutputSchemaWithMetadata },
 ] = await Promise.all([
   read("server/createServer.js"),
   read("composition/binary.js"),
   read("config/parseConfig.js"),
   read("logger.js"),
   read("contracts/promptContracts.js"),
+  read("contracts/toolContracts.js"),
+  read("domain/evidenceInputContract.js"),
+  read("contracts/toolSchemaMetadata.js"),
 ]);
 const recordCatalog = async (profile) => {
   // Catalog generation is independent of the host account and user configuration.
@@ -55,7 +61,18 @@ const recordCatalog = async (profile) => {
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     await client.connect(clientTransport);
-    const tools = (await client.listTools()).tools;
+    const tools = (await client.listTools()).tools.map((tool) => {
+      const contract = TOOL_CONTRACTS.find(({ name }) => name === tool.name);
+      if (contract === undefined) throw new Error(`Missing tool ${tool.name}`);
+      return {
+        ...tool,
+        // Record the pre-codec schema. The SDK owns protocol-specific root
+        // wrapping for both tools/list and tools/call on the deferred server.
+        outputSchema: toolOutputSchemaWithMetadata(contract)[
+          "~standard"
+        ].jsonSchema.output({ target: "draft-2020-12" }),
+      };
+    });
     const prompts = (await client.listPrompts()).prompts.map((prompt) => {
       const contract = PROMPT_CONTRACTS.find(
         (candidate) => candidate.name === prompt.name,
@@ -71,6 +88,11 @@ const recordCatalog = async (profile) => {
       instructions: client.getInstructions(),
       identity: server.catalogIdentity,
       tools,
+      evidenceReferenceAlternatives: TOOL_CONTRACTS.filter(
+        (contract) =>
+          getEvidenceInputContract(contract.inputSchema)
+            .hasEvidenceReferenceAlternative,
+      ).map((contract) => contract.name),
       prompts,
     };
     const encoded = JSON.stringify(catalog);

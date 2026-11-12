@@ -97,12 +97,18 @@ interface ManagedMemberComparisonPathDependencies {
   readonly readSnapshot: typeof readManagedSnapshot;
 }
 
+interface ManagedMemberComparisonPathInput {
+  readonly leftPath: string;
+  readonly rightPath: string;
+  /** Applied to both sides with inspect_managed_members selection semantics. */
+  readonly typeNames?: readonly string[];
+  readonly maxSnapshotBytes?: number;
+  readonly maxRepresentationBytes?: number;
+}
+
 /** Inspect two local PE artifacts and return one derived comparison Evidence. */
 export const compareManagedMemberPaths = async (
-  input: {
-    readonly leftPath: string;
-    readonly rightPath: string;
-  },
+  input: ManagedMemberComparisonPathInput,
   dependencies: Partial<ManagedMemberComparisonPathDependencies> = {},
   resources?: ArtifactResourceScope,
 ): Promise<Result<Evidence, AnalysisError>> => {
@@ -144,6 +150,9 @@ export const compareManagedMemberPaths = async (
       let snapshot: Awaited<ReturnType<typeof readManagedSnapshot>>;
       try {
         snapshot = await readSnapshot(path, operation, {
+          ...(input.maxSnapshotBytes === undefined
+            ? {}
+            : { maxBytes: input.maxSnapshotBytes }),
           expectedSha256: target.sha256,
           ...(resources === undefined ? {} : { resources }),
         });
@@ -159,6 +168,12 @@ export const compareManagedMemberPaths = async (
       try {
         inspection = inspectManagedMembersBytes(snapshot.bytes, target, {
           userStrings: false,
+          ...(input.maxRepresentationBytes === undefined
+            ? {}
+            : { maxRepresentationBytes: input.maxRepresentationBytes }),
+          ...(input.typeNames === undefined
+            ? {}
+            : { typeNames: input.typeNames }),
         });
       } catch (cause: unknown) {
         throw (
@@ -172,7 +187,19 @@ export const compareManagedMemberPaths = async (
       }
       const evidence = createEvidence(target, MANAGED_STATIC_PROVIDER, {
         operation: "inspect_managed_members",
-        parameters: {},
+        parameters: {
+          ...(input.typeNames === undefined
+            ? {}
+            : { type_names: [...input.typeNames] }),
+          ...(input.maxSnapshotBytes === undefined
+            ? {}
+            : { max_snapshot_bytes: input.maxSnapshotBytes }),
+          ...(input.maxRepresentationBytes === undefined
+            ? {}
+            : {
+                max_metadata_representation_bytes: input.maxRepresentationBytes,
+              }),
+        },
         result: inspection,
         rawResult: null,
         limitations: inspection.limitations,
@@ -198,7 +225,7 @@ export const compareManagedMemberPaths = async (
         left.evidence,
         right.evidence,
         result,
-        { leftPath: input.leftPath, rightPath: input.rightPath },
+        input,
       ),
     );
   } catch (cause: unknown) {
@@ -215,7 +242,7 @@ const createManagedMemberComparisonEvidence = (
   left: Evidence,
   right: Evidence,
   result: ManagedMemberComparisonResult,
-  sourcePaths?: { readonly leftPath: string; readonly rightPath: string },
+  pathRequest?: ManagedMemberComparisonPathInput,
 ): Evidence =>
   createEvidence(undefined, MANAGED_WORKFLOW_PROVIDER, {
     predicateType: "rea.managed-member-comparison",
@@ -223,11 +250,23 @@ const createManagedMemberComparisonEvidence = (
     parameters: {
       left_evidence_id: left.evidence_id,
       right_evidence_id: right.evidence_id,
-      ...(sourcePaths === undefined
+      ...(pathRequest === undefined
         ? {}
         : {
-            left_path: sourcePaths.leftPath,
-            right_path: sourcePaths.rightPath,
+            left_path: pathRequest.leftPath,
+            right_path: pathRequest.rightPath,
+          }),
+      ...(pathRequest?.typeNames === undefined
+        ? {}
+        : { type_names: [...pathRequest.typeNames] }),
+      ...(pathRequest?.maxSnapshotBytes === undefined
+        ? {}
+        : { max_snapshot_bytes: pathRequest.maxSnapshotBytes }),
+      ...(pathRequest?.maxRepresentationBytes === undefined
+        ? {}
+        : {
+            max_metadata_representation_bytes:
+              pathRequest.maxRepresentationBytes,
           }),
     },
     result,
@@ -237,11 +276,11 @@ const createManagedMemberComparisonEvidence = (
     environment: null,
     limitations: result.limitations,
     locations:
-      sourcePaths === undefined
+      pathRequest === undefined
         ? []
         : [
-            { kind: "artifact-path", path: sourcePaths.leftPath },
-            { kind: "artifact-path", path: sourcePaths.rightPath },
+            { kind: "artifact-path", path: pathRequest.leftPath },
+            { kind: "artifact-path", path: pathRequest.rightPath },
           ],
     evidenceLinks: result.evidence_links,
   });
