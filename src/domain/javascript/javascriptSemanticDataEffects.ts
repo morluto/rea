@@ -627,7 +627,13 @@ const optionGetterPrecedesMember = (
     string,
     { readonly node: t.ObjectProperty | t.ObjectMethod }
   >();
-  for (const [index, property] of options.properties.entries()) {
+  // Each key takes its own position, including the keys a spread contributes: giving every
+  // spread member the spread's outer index loses the order a later redefinition keeps.
+  // Measured on Node 24.22.1,
+  // `http.request({...{agent: null, path: "/a b"}, get agent() { this.path = "/ok"; return false; }})`
+  // constructs a request, because `agent` keeps the position the spread gave it.
+  let position = 0;
+  for (const property of options.properties) {
     if (t.isSpreadElement(property)) {
       // An object-literal spread contributes its own keys at this position, so it is walked
       // rather than treated as opaque. Measured on Node 24.22.1,
@@ -646,8 +652,9 @@ const optionGetterPrecedesMember = (
         if (t.isSpreadElement(entry)) return true;
         const name = semanticStaticPropertyKey(entry.key, entry.computed);
         if (name === null) return true;
-        if (!firstIndex.has(name)) firstIndex.set(name, index);
+        if (!firstIndex.has(name)) firstIndex.set(name, position);
         lastDescriptor.set(name, { node: entry });
+        position += 1;
       }
       continue;
     }
@@ -667,8 +674,9 @@ const optionGetterPrecedesMember = (
     )
       continue;
     if (name === null) continue;
-    if (!firstIndex.has(name)) firstIndex.set(name, index);
+    if (!firstIndex.has(name)) firstIndex.set(name, position);
     lastDescriptor.set(name, { node: property });
+    position += 1;
   }
   const orderOf = (name: string): readonly [number, number] => {
     const position = firstIndex.get(name) ?? Number.MAX_SAFE_INTEGER;

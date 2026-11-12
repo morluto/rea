@@ -167,3 +167,13 @@ it.each([
     expect(requestsFor(call)).toHaveLength(1);
   },
 );
+
+it("keeps the position a spread gave a redefined key", () => {
+  // `agent` keeps the position the spread gave it, so the getter that redefines it still runs
+  // before `path` is copied and rewrites the value. Measured on Node 24.22.1.
+  expect(
+    requestsFor(
+      `http.request({ ...{ agent: null, path: "/a b" }, get agent() { this.path = "/ok"; return false; } })`,
+    ),
+  ).toHaveLength(1);
+});
