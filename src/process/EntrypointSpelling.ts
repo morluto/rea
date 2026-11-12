@@ -32,6 +32,10 @@ export const traversalSemanticsDiffer = (
   runtime === "bun" &&
   candidate.split(/[\\/]/u).includes("..");
 
+/** Whether a spelling carries a parent segment. */
+const hasParentSegment = (candidate: string): boolean =>
+  candidate.split(/[\\/]/u).includes("..");
+
 /** Resolving a spelling to the file it selects; injectable so a test can observe the call. */
 export type RealpathResolver = (candidate: string) => string;
 
@@ -59,6 +63,11 @@ export const selectedFile = (
   readRealpath: RealpathResolver = nativeRealpath,
 ): string => {
   if (isNetworkSharePath(candidate)) return win32.resolve(candidate);
+  // A parent segment is normalized lexically, which is what the launcher did when it selected
+  // the script. Measured on Node 24.22.1: with `a/link` pointing at `b/deep` and both `a/s.mjs`
+  // and `b/s.mjs` present, `node a/link/../s.mjs` runs `a/s.mjs`, while `realpath` resolves the
+  // link first and reaches `b/s.mjs`.
+  if (hasParentSegment(candidate)) return resolve(candidate);
   try {
     return readRealpath(candidate);
   } catch {
@@ -80,7 +89,9 @@ export const sameEntrypointSpelling = (
   runtime: JavaScriptRuntime["id"] = javaScriptRuntime(process.versions).id,
   readRealpath: RealpathResolver = nativeRealpath,
 ): boolean => {
-  if (left === right) return true;
+  // `left` and `right` being equal does not settle it: a manager alias can be retargeted while
+  // the process runs, so equality only holds if neither side selects something else. Both are
+  // resolved below, which is the same cost as the unequal case.
   if (traversalSemanticsDiffer(left, runtime)) return true;
   if (traversalSemanticsDiffer(right, runtime)) return true;
   return selectedFile(left, readRealpath) === selectedFile(right, readRealpath);

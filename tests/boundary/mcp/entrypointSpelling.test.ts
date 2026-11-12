@@ -117,3 +117,26 @@ describe("entrypoint spelling rules", () => {
     );
   });
 });
+
+it("normalizes a parent segment lexically, as the launcher did", () => {
+  // A `..` spelling is resolved lexically rather than dereferenced. Measured on Node 24.22.1:
+  // with `a/link` pointing at `b/deep` and both `a/s.mjs` and `b/s.mjs` present,
+  // `node a/link/../s.mjs` runs `a/s.mjs`, while `realpath` would reach `b/s.mjs`.
+  const { read, resolveSpelling } = recordingResolver();
+  selectedFile("/root/a/link/../s.mjs", resolveSpelling);
+  expect(read).toEqual([]);
+});
+
+it("still decides two equal spellings by what they select", () => {
+  // Equality alone is not alignment: a manager alias can be retargeted while the process runs.
+  const { read, resolveSpelling } = recordingResolver();
+  expect(
+    sameEntrypointSpelling(
+      "/root/rea.mjs",
+      "/root/rea.mjs",
+      process.platform === "win32" ? "node" : "node",
+      resolveSpelling,
+    ),
+  ).toBe(true);
+  expect(read).toEqual(["/root/rea.mjs", "/root/rea.mjs"]);
+});

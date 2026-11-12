@@ -49,10 +49,12 @@ const LAUNCHED_FILE: string | undefined =
  * retargeted manager alias cannot move the live side after the process started.
  */
 const sameEntrypoint = (left: string, right: string): boolean => {
-  if (right === CURRENT_ENTRYPOINT_PATH && LAUNCHED_FILE !== undefined)
-    return left === CURRENT_ENTRYPOINT_PATH || left === LAUNCHED_FILE
-      ? true
-      : sameEntrypointSpelling(left, LAUNCHED_FILE);
+  if (right === CURRENT_ENTRYPOINT_PATH && LAUNCHED_FILE !== undefined) {
+    // An unchanged registered alias is not alignment by itself: the alias may have been
+    // retargeted while this process runs the release it started from. Both sides are resolved
+    // against the snapshot, so equality is still decided by what each spelling selects now.
+    return sameEntrypointSpelling(left, LAUNCHED_FILE);
+  }
   return sameEntrypointSpelling(left, right);
 };
 
