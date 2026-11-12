@@ -963,24 +963,15 @@ const createGlobalPathRead = (
       };
       byNamespace.set(namespace, effects);
     }
-    // The call that escapes a receiver contains the callee being identified.
-    // That escape cannot have replaced the callee before the call selects it.
-    const escapePrecedesRead = effects.escapes.some((effect) => {
-      const escape = effect.node;
-      // Containment alone does not order deferred callback/class bodies.
-      // Only a read reached without crossing such a boundary precedes escape.
-      if (escape !== undefined && escape !== site) {
-        let parent = state.parentsByNode.get(site);
-        while (
-          parent !== undefined &&
-          !t.isFunction(parent) &&
-          !t.isClass(parent)
-        ) {
-          if (parent === escape) return false;
-          parent = state.parentsByNode.get(parent);
-        }
-      }
-      return semanticEffectTiming(site, escape, state) !== "after";
+    const escapePrecedesRead = effects.escapes.some(({ node }) => {
+      // Selecting this callee precedes exposing its own receiver. Other reads,
+      // including arguments, need activation-aware ordering across repetitions.
+      if (
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        node.callee === site
+      )
+        return false;
+      return semanticEffectTiming(site, node, state) !== "after";
     });
     if (
       (escapesCovered && effects.escapes.length === 0) ||

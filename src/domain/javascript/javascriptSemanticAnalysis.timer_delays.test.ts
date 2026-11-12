@@ -175,3 +175,15 @@ it.each(["Symbol", "BigInt"])(
     expect(result[1]?.linkedTimerId).toBe(result[0]?.timerId);
   },
 );
+
+it.each([
+  'for (let i=0;i<2;i++) configure(globalThis, i ? setTimeout(()=>{}, Symbol("1")) : null);',
+  'function run(first) { configure(globalThis, first ? null : setTimeout(()=>{}, BigInt("1"))); } run(true); run(false);',
+  'let first=true; while (next()) { configure(globalThis, first ? null : setTimeout(()=>{}, Symbol("1"))); first=false; }',
+])("retains constructor uncertainty across repeated escapes: %s", (source) => {
+  expect(
+    operations(
+      `import configure from "./configure.js"; import {setTimeout} from "node:timers"; ${source}`,
+    ),
+  ).toMatchObject([{ kind: "schedule" }]);
+});
