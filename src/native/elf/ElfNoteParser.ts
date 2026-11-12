@@ -1072,6 +1072,7 @@ export const readGnuPropertyWords = (
     if (note.owner !== "GNU" || note.type !== NT_GNU_PROPERTY_TYPE_0) continue;
     const descriptor = note.descriptor;
     let cursor = 0;
+    let previousType: number | undefined;
     while (cursor < descriptor.length) {
       if (descriptor.length - cursor < 8)
         fail("ELF GNU property record is truncated.");
@@ -1086,6 +1087,11 @@ export const readGnuPropertyWords = (
       const step = Math.ceil((8 + dataSize) / propertyAlign) * propertyAlign;
       if (!Number.isSafeInteger(step) || cursor + step > descriptor.length)
         fail("ELF GNU property record is truncated.");
+      if (previousType !== undefined && type <= previousType)
+        fail(
+          "ELF GNU property types must be strictly increasing within a note.",
+        );
+      previousType = type;
       if (
         type === GNU_PROPERTY_X86_FEATURE_1_AND ||
         type === GNU_PROPERTY_AARCH64_FEATURE_1_AND
