@@ -5,11 +5,11 @@ import { z } from "zod";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
+import { PARENT_HEAP_NODE_OPTIONS } from "../../domain/processHeapControl.js";
 
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
 import {
-  JAVASCRIPT_PARENT_HEAP_NODE_OPTIONS,
   JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
   JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
 } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
@@ -81,7 +81,7 @@ export const javaScriptTransferCeilingRemediation = (
   const recordBytes = String(JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES);
   const maximumBytes = String(MAX_TRANSFER_BYTES);
   const fixed = `The ${recordBytes}-byte transfer record ceiling and the ${maximumBytes}-byte transfer file maximum have no runtime override. Raising max_heap_mb does not raise either fixed ceiling. A request that exceeds the record ceiling or that maximum fails the same way when repeated unchanged.`;
-  const adjustable = `${JAVASCRIPT_PARENT_HEAP_NODE_OPTIONS} to raise the effective file ceiling up to ${maximumBytes} bytes. Selecting fewer source_paths can also raise this effective file allowance, because earlier retained results and the reserve for remaining sources reduce the offered budget. Neither change raises the record ceiling or the maximum.`;
+  const adjustable = `${PARENT_HEAP_NODE_OPTIONS} to raise the effective file ceiling up to ${maximumBytes} bytes. Selecting fewer source_paths can also raise this effective file allowance, because earlier retained results and the reserve for remaining sources reduce the offered budget. Neither change raises the record ceiling or the maximum.`;
   if (
     transferFileBytes !== undefined &&
     transferFileBytes >= MAX_TRANSFER_BYTES

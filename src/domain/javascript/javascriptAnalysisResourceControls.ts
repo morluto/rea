@@ -3,6 +3,7 @@ import {
   javaScriptSemanticPrecisionSchema,
 } from "./javascriptSemanticPrecision.js";
 import { z } from "zod";
+import { PARENT_HEAP_NODE_OPTIONS } from "../processHeapControl.js";
 
 /** Complete static checkpoint / per-script result transport ceiling. */
 export const JAVASCRIPT_STATIC_FACT_BYTES = 8 * 1024 * 1024;
@@ -45,19 +46,11 @@ export const javaScriptWorkerHeapRemediation = (heapMb: number): string => {
   return `${adjustment} The effective worker heap for this analysis is ${String(heapMb)} MiB. A changed max_heap_mb applies on the next analysis, which starts a new worker. It does not change a worker that is already running, and it does not require restarting the REA server. ${HEAP_DOES_NOT_RAISE} On Bun, V8 heap flags are ignored: Windows limits the analyzer's committed memory to max_heap_mb plus a 512 MiB reserve, and other Bun hosts enforce no analyzer heap limit.`;
 };
 
-/**
- * Node control for the CLI/MCP process heap. The old-space flag requires a
- * mebibyte value; a bare name is an illegal V8 option and prevents Node from
- * starting.
- */
-export const JAVASCRIPT_PARENT_HEAP_NODE_OPTIONS =
-  "On Node, set NODE_OPTIONS (for example --max-old-space-size=<MiB>) in the environment that starts the CLI or MCP server, then restart that process,";
-
 /** Parent admission follows the CLI/MCP heap, not the isolated worker heap argument. */
-export const JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION = `This limit belongs to the parent result budget. That budget follows the parent V8 heap limit. Increasing max_heap_mb does not raise it. ${JAVASCRIPT_PARENT_HEAP_NODE_OPTIONS} to raise the parent heap and this budget. Use the retained static facts or analyze fewer source files.`;
+export const JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION = `This limit belongs to the parent result budget. That budget follows the parent V8 heap limit. Increasing max_heap_mb does not raise it. ${PARENT_HEAP_NODE_OPTIONS} to raise the parent heap and this budget. Use the retained static facts or analyze fewer source files.`;
 
 /** Checkpoint decode uses the parent heap, not the isolated worker heap argument. */
-export const JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION = `This limit belongs to the parent process heap. Increasing max_heap_mb does not raise it. max_heap_mb changes only the isolated analyzer, on the next analysis, by starting a new worker. ${JAVASCRIPT_PARENT_HEAP_NODE_OPTIONS} to raise the parent heap and admit this checkpoint.`;
+export const JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION = `This limit belongs to the parent process heap. Increasing max_heap_mb does not raise it. max_heap_mb changes only the isolated analyzer, on the next analysis, by starting a new worker. ${PARENT_HEAP_NODE_OPTIONS} to raise the parent heap and admit this checkpoint.`;
 
 /**
  * Heap-exhaustion exit text. Node exhausted the configured V8 old-space.
