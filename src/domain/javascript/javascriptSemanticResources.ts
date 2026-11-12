@@ -11,8 +11,10 @@ import type {
 } from "./javascriptSemanticIr.js";
 import {
   readExactJavaScriptLiteral,
+  isNullishJavaScriptSyntax,
   isObjectPrototypeSetter,
   primitiveOwnKeys,
+  semanticStaticPropertyKey,
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
   staticObjectPropertyReader,
@@ -20,7 +22,10 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
-import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import {
+  semanticOpaqueBindingReadMayHaveChanged,
+  semanticOpaqueGlobalMayHaveChanged,
+} from "./javascriptSemanticOpaqueEffects.js";
 import {
   semanticBindingAtRead,
   semanticEffectTiming,
@@ -1052,6 +1057,31 @@ const socketSelectsUnixOverload = (
  * The positional second argument is a different slot Node does not validate —
  * `net.connect(0, 5)` connects — so only the member is decided.
  */
+/**
+ * The options literal `tls.connect` actually reads, when a later object may override it.
+ *
+ * `{}` writes nothing, so the first object still decides: measured on Node 24.22.1,
+ * `tls.connect({port: 0, host: 1}, {})` throws. A listener is not merged either. A literal that
+ * writes `host` is the one Node uses, and any other object leaves the answer open.
+ */
+const mergedOptionsLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): t.ObjectExpression | "unknown" | undefined => {
+  const second = node.arguments[1];
+  if (second === undefined || t.isSpreadElement(second)) return undefined;
+  const value = unwrapJavaScriptExpression(second).node;
+  if (t.isArrowFunctionExpression(value) || t.isFunctionExpression(value))
+    return undefined;
+  if (isNullishJavaScriptSyntax(value)) return undefined;
+  if (!t.isObjectExpression(value)) return "unknown";
+  const writesHost = value.properties.some(
+    (property) =>
+      !t.isSpreadElement(property) &&
+      semanticStaticPropertyKey(property.key, property.computed) === "host",
+  );
+  return writesHost ? value : undefined;
+};
+
 const rejectsSocketHostMember = (
   node: t.CallExpression | t.OptionalCallExpression,
   specifier: string,
@@ -1064,11 +1094,30 @@ const rejectsSocketHostMember = (
   // `{path}` selects a Unix socket, and `tls`'s `{socket}` wraps an existing one. In
   // both cases Node never reaches the host check; while the overload is unreadable the
   // host is not decided either.
-  const overload = socketSelectsUnixOverload(options, node, specifier, context);
+  // `tls` merges a later non-null object over this one, and that object can write `host`.
+  // Measured on Node 24.22.1, `tls.connect({port: 0, host: 1}, {host: "localhost"})` returns a
+  // TLSSocket while `tls.connect({port: 0, host: "localhost"}, {host: 1})` throws. Reading only
+  // slot 0 decides from a value the merge may have replaced, so an override that writes `host`
+  // is read instead.
+  const merged = specifier === "tls" ? mergedOptionsLiteral(node) : undefined;
+  if (merged === "unknown") return false;
+  const effective = merged ?? options;
+  const overload = socketSelectsUnixOverload(
+    effective,
+    node,
+    specifier,
+    context,
+  );
   if (overload !== false) return false;
-  const host = finalMemberNode(options, "host", context.state, node);
+  const host = finalMemberNode(effective, "host", context.state, node);
   if (host.status !== "explicit") return false;
   const value = unwrapJavaScriptExpression(host.node).node;
+  // Global code this analysis cannot see may have patched the intrinsic the value folds
+  // through. Measured on Node 24.22.1,
+  // `globalThis.eval("Number = String"); net.connect({port: 0, host: Number(1)})` connects,
+  // because `Number(1)` is then the string `"1"`. `isUnmodifiedGlobalReference` covers the
+  // writes the source shows; this covers the ones it does not.
+  if (semanticOpaqueGlobalMayHaveChanged(node, context.state)) return false;
   const constant = staticConstantValue(value, context.state);
   if (constant.found) {
     // Falsy falls through to the default; a string is the ordinary case; anything

@@ -161,3 +161,23 @@ it.each([
     { kind: "acquire", method: "connect" },
   ]);
 });
+
+it.each([
+  // `tls` merges a later non-null object over this one, and that object can write `host`.
+  // Measured on Node 24.22.1.
+  [`tls.connect({ port: 0, host: 1 }, { host: "localhost" })`],
+  // Global code the analysis cannot see may have patched the intrinsic the value folds through.
+  [
+    `globalThis.eval("Number = String"); net.connect({ port: 0, host: Number(1) })`,
+  ],
+] as const)("keeps the acquisition for a merged or opaque host: %s", (call) => {
+  expect(acquisitionsFor(call)).toHaveLength(1);
+});
+
+it.each([
+  [`tls.connect({ port: 0, host: "localhost" }, { host: 1 })`],
+  [`tls.connect({ port: 0, host: 1 }, {})`],
+  [`net.connect({ port: 0, host: Number(1) })`],
+] as const)("emits no acquisition for a decided numeric host: %s", (call) => {
+  expect(acquisitionsFor(call)).toEqual([]);
+});
