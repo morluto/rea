@@ -1009,7 +1009,19 @@ The written entry is:
         transport: stdio
         command: /absolute/path/to/node
         args: ["/absolute/path/to/rea/scripts/rea.mjs", mcp]
+        toolCallTimeoutMs: 450000
 ```
+
+The `toolCallTimeoutMs` field is derived from REA's known provider allowance
+plus 120 seconds of operation headroom, with the same derivation as the Kimi
+Code tool timeout above. The default is 450000 ms, covering the default
+330-second Ghidra startup; without the field, DeepSeek Harness applies its own
+60000 ms tool-call default, which a native provider startup alone can exceed.
+Setup preserves a positive caller-selected `toolCallTimeoutMs` and replaces any
+other value, including an unevaluated Cordis expression, with the recommended
+literal. Doctor reports a registration without a usable `toolCallTimeoutMs` as
+stale, and adds a non-blocking advisory when a positive configured value is
+shorter than the known provider allowance.
 
 Setup preserves caller-owned Cordis expressions and replaces launcher fields
 with literal values that doctor can verify. It refuses to edit an expression

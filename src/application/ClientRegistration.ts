@@ -194,6 +194,12 @@ export const parseClientRegistrationPolicy = (
   if (client.format === "dsh") {
     const parsed = registrationSchema
       .pick({ command: true, args: true, serverName: true, transport: true })
+      .extend({
+        // An unevaluated Cordis expression or malformed literal is not a
+        // usable deadline; alignment reports the registration stale so setup
+        // repairs it with the recommended literal.
+        toolCallTimeoutMs: z.number().positive().optional().catch(undefined),
+      })
       .strip()
       .safeParse(value);
     return parsed.success
