@@ -180,7 +180,7 @@ it("bounds output schema advertisements and keeps canonical MCP output validatio
   }
 });
 
-it("keeps the default compact-input catalog below a measured one-megabyte frame", async () => {
+it("bounds compact-input catalogs and preserves explicitly full inputs", async () => {
   const compactInput: CompactInputSchemaPresentation = {
     budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
   };

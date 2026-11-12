@@ -33,12 +33,18 @@ it("cancels a pending regular-file JSON read through the owning reader", async (
 it.each([
   { label: "undefined", physical: undefined },
   { label: "null", physical: null },
+  {
+    label: "streamed undefined",
+    physical: undefined,
+    padding: 9 * 1024 * 1024,
+  },
+  { label: "streamed null", physical: null, padding: 9 * 1024 * 1024 },
 ])(
   "classifies a physical $label read rejection before late cancellation",
-  async ({ physical }) => {
+  async ({ physical, padding }) => {
     const root = await createTestTempDirectory("rea-json-input-late-io-");
     const path = join(root, "input.json");
-    await writeFile(path, '{"value":1}');
+    await writeFile(path, `${" ".repeat(padding ?? 0)}{"value":1}`);
     const controller = new AbortController();
     await failFileReadAfterAbort(
       path,

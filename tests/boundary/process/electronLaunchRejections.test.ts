@@ -329,8 +329,10 @@ processTest(
     expect(observed.after).toBe(observed.before);
     expect(observed.observedRejections).toBe(3);
     expect(observed.ok).toEqual([false, false, false, false, false]);
+    expect(observed.errors[0]?.details).not.toHaveProperty("cleanup");
     expect(observed.errors).toMatchObject([
       {
+        code: "execution_failure",
         details: {
           diagnostics: {
             message: expect.stringContaining("electron.launch: alpha failed"),

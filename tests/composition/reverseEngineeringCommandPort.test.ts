@@ -7,9 +7,38 @@ import { expect, it, vi } from "vitest";
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
+import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { execFileOutput } from "../../src/process/ExecFileOutput.js";
 
 type ExecFileOutputOptions = NonNullable<Parameters<typeof execFileOutput>[2]>;
+
+it("documents caller-selected combined capture budgets for both command tools", () => {
+  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS) {
+    expect(contract.description).toMatch(/max_output_bytes.*combined output/u);
+    expect(contract.description).toContain("16 MiB default");
+    expect(contract.description).toContain("next call without restart");
+    expect(contract.description).toContain("client receive limits");
+    for (const example of contract.examples)
+      expect(
+        contract.inputSchema.safeParse({
+          ...example.input,
+          max_output_bytes: 32 * 1024 * 1024,
+        }).success,
+      ).toBe(true);
+  }
+});
+
+it("passes a caller-selected Windows executable through provider composition", () => {
+  const commands = createReverseEngineeringCommandPort(
+    { REA_OBJDUMP_COMMAND: "C:\\tools\\objdump.exe" },
+    "win32",
+  );
+  expect(
+    commands.objdump({ path: "artifact", operation: "file_headers" })
+      .executable,
+  ).toBe("C:\\tools\\objdump.exe");
+});
 
 it("uses provider profiles supplied through the application port", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rea-reverse-port-"));

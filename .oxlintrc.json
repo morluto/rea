@@ -152,7 +152,11 @@
     {
       "files": [
         "scripts/lib/http3-capture-assertions.test.mjs",
-        "scripts/lib/http3-verifier-lifecycle.test.mjs"
+        "scripts/lib/http3-verifier-lifecycle.test.mjs",
+        "experiments/command-scope.test.mjs",
+        "experiments/adb-ui/fixture.test.mjs",
+        "experiments/adb-ui/lease.test.mjs",
+        "experiments/adb-ui/mcp.test.mjs"
       ],
       "rules": {
         "typescript/no-floating-promises": [

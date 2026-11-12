@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import Ajv2020 from "ajv/dist/2020.js";
+import { GrokCatalogDiscovery } from "./verify/clients/grok-catalog.mjs";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
@@ -51,6 +51,8 @@ let diagnosticsRequested = false;
 let diagnosticsVerified = false;
 let lastTool;
 let catalogChecked = false;
+const catalog = new GrokCatalogDiscovery(expectedNames);
+let catalogQuery;
 let catalogSize = null;
 let schemasChecked = 0;
 let analysisRequested = false;
@@ -104,14 +106,6 @@ await withVerifierCleanup(async () => {
             `export function extra${index}() { return { index: ${index}, tag: "GROK_LARGE_FIXTURE" }; }`,
         ).join("\n"),
     );
-    assert(
-      expectedNames.length <= 255,
-      "Native search_tool limit is uint8; this full-catalog query cannot cover more than 255 tools",
-    );
-    const schemaValidator = new Ajv2020({
-      strict: false,
-      validateFormats: false,
-    });
     const shellQuote = (value) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
     const containsText = (value, text) => {
       if (typeof value === "string") return value.includes(text);
@@ -249,29 +243,23 @@ await withVerifierCleanup(async () => {
             );
             diagnosticsVerified = true;
           }
-          if (discovery?.status !== "ready")
-            return call("search_tool", { query: "rea", limit: 255 });
-          const inventory = discovery.results
-            .filter((result) => result.server === "rea")
-            .flatMap((result) => result.tools);
-          catalogSize = inventory.length;
-          assert.deepEqual(
-            inventory.map((tool) => tool.tool_name).sort(),
-            expectedNames,
-            "Native search_tool must discover the complete REA catalog",
-          );
-          for (const tool of inventory) {
-            assert(
-              tool.input_schema,
-              `${tool.tool_name}: missing input schema`,
-            );
-            assert(
-              schemaValidator.validateSchema(tool.input_schema),
-              `${tool.tool_name}: invalid advertised schema: ${JSON.stringify(schemaValidator.errors)}`,
-            );
-            schemasChecked++;
+          if (discovery?.status !== "ready") {
+            catalogQuery = "rea";
+            return call("search_tool", { query: catalogQuery, limit: 255 });
           }
-          await writeFile(join(lab, "native-discovery.json"), last);
+          const missing = catalog.accept(discovery, catalogQuery);
+          catalogSize = catalog.size;
+          schemasChecked = catalog.size;
+          if (missing !== undefined) {
+            // Native search_tool's uint8 limit caps one query, not the catalog.
+            // Query only uncovered names; never infer completeness from a page.
+            catalogQuery = missing;
+            return call("search_tool", { query: catalogQuery, limit: 255 });
+          }
+          await writeFile(
+            join(lab, "native-discovery.json"),
+            JSON.stringify(catalog.pages),
+          );
           catalogChecked = true;
           analysisRequested = true;
           return call("use_tool", {
@@ -521,7 +509,7 @@ enabled = false
       discovery:
         "native GROK_HOME, isolated additional skill directory, disabled foreign compatibility sources; default OS-home skill discovery and Windows unverified",
       interface:
-        "default native search_tool/use_tool with a complete explicit inventory query; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
+        "default native search_tool/use_tool with accumulated explicit inventory queries and missing-name follow-ups; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
       catalogChecked,
       catalogSize,
       schemasChecked,
