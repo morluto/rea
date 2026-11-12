@@ -2,6 +2,7 @@ import { expect, it as test, vi } from "vitest";
 
 import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { ProcessOwnershipInspectionCancelled } from "../../../../src/process/ProcessInspectionCancellation.js";
 import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaResourceScope.js";
 import { KunaTargetCommands } from "../../../../src/kuna/KunaTargetCommands.js";
 import { fakeKunaCalls } from "./fakeKuna.js";
@@ -267,9 +268,11 @@ it.each(["before-launch", "after-launch"] as const)(
         const signal = options.signal;
         if (signal === undefined)
           throw new Error("Missing command deadline signal");
-        if (signal.aborted) reject(signal.reason);
+        const cancelled = () =>
+          reject(new ProcessOwnershipInspectionCancelled(signal.reason));
+        if (signal.aborted) cancelled();
         else
-          signal.addEventListener("abort", () => reject(signal.reason), {
+          signal.addEventListener("abort", cancelled, {
             once: true,
           });
       });

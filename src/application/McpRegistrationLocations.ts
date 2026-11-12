@@ -1,6 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { dirname, join, posix, win32 } from "node:path";
 
+import { resolveClineCliSettingsPath } from "./ClineCliLocation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { SetupClient, SupportedClientName } from "./SupportedClients.js";
@@ -122,52 +123,10 @@ export const clineLocation = async (
 export const clineCliLocation = async (
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationGlobalLocation> => {
-  const { environment, home } = context;
-  const explicitPath = environment.CLINE_MCP_SETTINGS_PATH?.trim();
-  if (explicitPath) return location(explicitPath);
-  const explicitData = environment.CLINE_DATA_DIR?.trim();
-  if (explicitData)
-    return location(join(explicitData, "settings", "cline_mcp_settings.json"));
-  const explicitDirectory = environment.CLINE_DIR?.trim();
-  if (explicitDirectory)
-    return location(
-      join(explicitDirectory, "data", "settings", "cline_mcp_settings.json"),
-    );
-  const envHome = environment.HOME?.trim();
-  const profile = environment.USERPROFILE?.trim();
-  const drive = environment.HOMEDRIVE?.trim();
-  const path = environment.HOMEPATH?.trim();
-  // Cline falls back to os.homedir(), then to the literal "~". On POSIX,
-  // a present HOME is returned by os.homedir() even if empty or "~".
-  // Otherwise use the supplied account home only when it was not selected
-  // from a rejected environment value; that value cannot prove the OS home.
-  const rejectedHome =
-    context.platform !== "win32" && environment.HOME !== undefined;
-  const fallbackUncertain =
-    (context.platform === "win32" &&
-      (environment.USERPROFILE !== undefined ||
-        Boolean(environment.HOMEDRIVE && environment.HOMEPATH) ||
-        Boolean(environment.HOME))) ||
-    (context.platform !== "win32" &&
-      environment.HOME === undefined &&
-      environment.USERPROFILE !== undefined);
-  const nativeHome = rejectedHome
-    ? "~"
-    : fallbackUncertain
-      ? undefined
-      : home.trim() || "~";
-  const clineHome =
-    (envHome && envHome !== "~" ? envHome : undefined) ||
-    profile ||
-    (drive && path ? `${drive}${path}` : undefined) ||
-    nativeHome;
-  if (!clineHome)
-    throw new ConfigurationError(
-      "Cannot determine Cline CLI's system home from the selected environment. Set CLINE_MCP_SETTINGS_PATH, CLINE_DATA_DIR, or CLINE_DIR to select its configuration location.",
-    );
-  return location(
-    join(clineHome, ".cline", "data", "settings", "cline_mcp_settings.json"),
-  );
+  const selected = resolveClineCliSettingsPath(context);
+  if (!selected.ok) throw selected.error;
+  const pathApi = context.platform === "win32" ? win32 : posix;
+  return location(selected.value, pathApi.dirname(selected.value));
 };
 export const gooseLocation = async (
   context: McpRegistrationLocationContext,

@@ -1,3 +1,6 @@
+import { clientRegistrationSource } from "./ClientRegistrationSource.js";
+import type { SetupClient } from "./SupportedClients.js";
+
 import {
   inspectAnalysisSettingSeeds,
   launchAnalysisSetting,
@@ -98,14 +101,14 @@ const expressionSettings = (
 /** Read explicit REA overrides without dropping peers when one value is invalid. */
 export const clientRegistrationEnvironment = (
   parsed: ClientConfigurationDocument | undefined,
-  clientName: string | undefined,
+  client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
   platform: NodeJS.Platform = process.platform,
 ): Result<Readonly<Record<string, string>>, ConfigurationError> => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
-    clientName,
+    client,
     overrides,
     validation,
     platform,
@@ -116,7 +119,7 @@ export const clientRegistrationEnvironment = (
 /** Retain original strings and the parser-owned timeout facts. */
 export const clientRegistrationEnvironmentDetails = (
   parsed: ClientConfigurationDocument | undefined,
-  clientName: string | undefined,
+  client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
   platform: NodeJS.Platform = process.platform,
@@ -141,16 +144,21 @@ export const clientRegistrationEnvironmentDetails = (
     parsed === undefined
       ? undefined
       : effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey);
-  const raw =
-    typeof registration === "object" && registration !== null
-      ? Reflect.get(registration, key)
-      : undefined;
+  const source = clientRegistrationSource(
+    registration,
+    client?.registrationProfile,
+  );
+  const raw = source.connection?.[key];
   const existing = environmentSchema.safeParse(raw === undefined ? {} : raw);
   if (!existing.success)
     return err(
       new ConfigurationError("Invalid REA server environment", {
         settings: existing.error.issues.map((issue) => ({
-          setting: [key, ...issue.path].join("."),
+          setting: [
+            ...(source.nested ? ["transport"] : []),
+            key,
+            ...issue.path,
+          ].join("."),
           constraint:
             "Server environment must be an object containing only string values",
         })),
@@ -167,7 +175,7 @@ export const clientRegistrationEnvironmentDetails = (
     environment,
     validation,
     platform,
-    expressionSettings(clientName, environment),
+    expressionSettings(client?.name, environment),
   );
 };
 
@@ -197,7 +205,7 @@ export type ProviderSettingObserver = (name: string, value: string) => void;
  */
 export const recordedProviderSettings = (
   parsed: ClientConfigurationDocument,
-  clientName: string | undefined,
+  client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   selected: Readonly<Record<string, string>>,
   platform: NodeJS.Platform = process.platform,
   owns?: OwnedProviderSetting,
@@ -210,7 +218,7 @@ export const recordedProviderSettings = (
   if (names.length === 0) return undefined;
   const details = clientRegistrationEnvironmentDetails(
     parsed,
-    clientName,
+    client,
     {},
     "fragment",
     platform,
@@ -261,7 +269,7 @@ export const recordedProviderSettings = (
 /** Resolve the async provider-specific budget through its retained reader owner. */
 export const clientRegistrationEnvironmentDetailsWithBudget = async (
   parsed: ClientConfigurationDocument | undefined,
-  clientName: string | undefined,
+  client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   overrides: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
   resolveProviderRequestBudget: ProviderRequestBudgetResolver | undefined,
@@ -271,7 +279,7 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
 > => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
-    clientName,
+    client,
     overrides,
     validation,
     platform,
