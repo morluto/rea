@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { finished } from "node:stream/promises";
 import type {
   OwnedProviderProcessSpawnOptions,
+  ProcessDiagnosticBudget,
   SpawnedOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
@@ -62,7 +63,9 @@ export class OwnedMcpStdioTransport implements Transport {
       readonly maxFrameBytes: number;
       readonly maxOperationBytes: number;
       readonly gracefulInputCloseMs?: number;
-      readonly maxDiagnosticBytes?: number;
+      readonly maxDiagnosticBytes?: ProcessDiagnosticBudget;
+      /** Observe the owned child's stderr from acquisition onward, including when it closes early. */
+      readonly onStderr?: (chunk: unknown) => void;
       readonly notifyOnExit?: boolean;
     },
     readonly launcher: OwnedMcpLauncher = spawnOwnedProviderProcess,
@@ -113,6 +116,8 @@ export class OwnedMcpStdioTransport implements Transport {
     spawned.process.stdout.on("data", this.#read);
     spawned.process.stdout.on("error", this.#error);
     spawned.process.stderr?.on("data", this.#countStderr);
+    if (this.settings.onStderr !== undefined)
+      spawned.process.stderr?.on("data", this.settings.onStderr);
     spawned.process.on("error", this.#error);
     spawned.process.once("exit", this.#exit);
     spawned.process.once("close", this.#outputClosed);
@@ -194,6 +199,8 @@ export class OwnedMcpStdioTransport implements Transport {
     process?.stdout?.off("data", this.#read);
     process?.stdout?.off("error", this.#error);
     process?.stderr?.off("data", this.#countStderr);
+    if (this.settings.onStderr !== undefined)
+      process?.stderr?.off("data", this.settings.onStderr);
     process?.off("error", this.#error);
     process?.off("exit", this.#exit);
     process?.off("close", this.#outputClosed);
