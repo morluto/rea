@@ -61,9 +61,11 @@ export const safeResponseMetadata = (
       policies: {
         coop: structuredFieldToken(field("cross-origin-opener-policy")),
         coep: structuredFieldToken(field("cross-origin-embedder-policy")),
-        corp: policyToken(field("cross-origin-resource-policy")),
+        corp: crossOriginResourcePolicy(field("cross-origin-resource-policy")),
         referrer_policy: referrerPolicy(field("referrer-policy")),
-        x_content_type_options: policyToken(field("x-content-type-options")),
+        x_content_type_options: xContentTypeOptions(
+          field("x-content-type-options"),
+        ),
         permissions_policy_features: permissionFeatures(
           field("permissions-policy"),
         ),
@@ -427,9 +429,30 @@ const referrerPolicy = (value: string | undefined): string | null => {
   return policy;
 };
 
-const policyToken = (value: string | undefined): string | null => {
-  const token = trimHttpWhitespace(value ?? "").toLowerCase();
-  return /^[a-z][a-z0-9_.\x2d]*$/u.test(token) ? token : null;
+// Fetch 3.7: `Cross-Origin-Resource-Policy = %s"same-origin" / %s"same-site" /
+// %s"cross-origin"`. The `%s` productions make the value case-sensitive, so `SAME-ORIGIN`
+// declares no policy rather than being folded into the enforced spelling.
+const crossOriginResourcePolicies: ReadonlySet<string> = new Set([
+  "same-origin",
+  "same-site",
+  "cross-origin",
+]);
+
+const crossOriginResourcePolicy = (
+  value: string | undefined,
+): string | null => {
+  const token = trimHttpWhitespace(value ?? "");
+  return crossOriginResourcePolicies.has(token) ? token : null;
+};
+
+// Fetch 3.6: `X-Content-Type-Options = "nosniff"` is case-insensitive, and "determine nosniff"
+// tests `values[0]` of the combined header. A response whose middleware and application each
+// send `nosniff` still declares it, and `nosniff, sniff` still takes the first member.
+const xContentTypeOptions = (value: string | undefined): string | null => {
+  const [first = ""] = (value ?? "").split(",");
+  return trimHttpWhitespace(first).toLowerCase() === "nosniff"
+    ? "nosniff"
+    : null;
 };
 
 // RFC 9110 section 8.6: Content-Length = 1*DIGIT. Other spellings declare no length.
