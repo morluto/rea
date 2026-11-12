@@ -12,7 +12,7 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 const queriesSchema = z.object({ queries: z.array(z.string()) });
-/** An uncapped page is fully delivered; discovery still cannot classify every call site. */
+/** An uncapped inventory still cannot establish every possible callee. */
 const uncappedCalleeCoverage = {
   status: "complete",
   discovery: {

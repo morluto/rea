@@ -5,9 +5,24 @@ import {
   checkpointTaken,
   desktopApplicationInventorySchema,
   desktopCaptureEventSchema,
+  desktopFileFactsSchema,
   type DesktopCheckpoint,
   type DesktopStateChange,
 } from "./desktopCapture.js";
+
+it.each(["-315619200000000000", "0", "1"])(
+  "retains filesystem modification timestamp %s without changing its spelling",
+  (mtime_ns) => {
+    const value = {
+      type: "file",
+      size: 3,
+      mode: 0o644,
+      mtime_ns,
+      sha256: null,
+    };
+    expect(desktopFileFactsSchema.parse(value)).toEqual(value);
+  },
+);
 
 describe("checkpointNameRefusal", () => {
   it("accepts an omitted name and a new one", () => {

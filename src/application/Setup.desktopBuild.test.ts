@@ -8,6 +8,7 @@ import type {
   DesktopBuildSetupHost,
 } from "./SetupDesktopBuild.js";
 import type { SetupOptions, SetupProviderEnvironment } from "./SetupTypes.js";
+import { supportedClientRegistrationProfile } from "./SupportedClients.js";
 
 const ARCHIVE = "/home/ada/.cache/rea/build-computer/rea-6.8.0.tar.xz";
 const SETTINGS = {
@@ -25,7 +26,7 @@ const desktopHost = (facts: Partial<DesktopBuildSetupFacts> = {}) => {
         selected: [],
         archive: ARCHIVE,
         archivePacked: false,
-        agentEnvVersion: "0.9.1464",
+        agentEnvVersion: "0.9.1485",
         recorded: {},
         ...facts,
       }),
@@ -39,7 +40,13 @@ const desktopHost = (facts: Partial<DesktopBuildSetupFacts> = {}) => {
     },
   };
   const host = Object.assign(new FakeSetupHost("linux"), { desktopBuild });
-  host.clients = [{ name: "claude_code", configPath: "/claude.json" }];
+  host.clients = [
+    {
+      name: "claude_code",
+      registrationProfile: supportedClientRegistrationProfile("claude_code"),
+      configPath: "/claude.json",
+    },
+  ];
   host.hopper = "/opt/hopper/bin/Hopper";
   host.skill = "unchanged";
   return { host, calls };
@@ -244,7 +251,7 @@ describe("rea setup --desktop-build", () => {
 
     expect(result.plannedActions[0]).toMatchObject({
       id: "install_agentenv",
-      commands: ["uv tool install agentenv-framework==0.9.1464"],
+      commands: ["uv tool install agentenv-framework==0.9.1485"],
     });
     expect(calls).toEqual(["install /usr/local/bin/uv", `pack ${ARCHIVE}`]);
     expect(host.configuredProviderEnvironments[0]).toMatchObject({
@@ -266,7 +273,7 @@ describe("rea setup --desktop-build", () => {
     expect(calls).toEqual([`pack ${ARCHIVE}`]);
     expect(result.status).toBe("needs_human");
     expect(result.remediation).toContain(
-      "uv tool install agentenv-framework==0.9.1464",
+      "uv tool install agentenv-framework==0.9.1485",
     );
   });
 

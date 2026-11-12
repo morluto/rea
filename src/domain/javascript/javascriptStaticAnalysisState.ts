@@ -59,7 +59,7 @@ export interface JavaScriptAnalysisAccumulator {
   )[];
   readonly appPathChanges: LocatedJavaScriptFinding<ElectronAppPathChangeFinding>[];
   electronCallPaths?: readonly ElectronCallPath[];
-  electronCallPathLimitReached?: boolean;
+  electronCallPathLimits?: Set<"wrapper_visits" | "wrapper_depth">;
   readonly references: LocatedJavaScriptFinding<JavaScriptStaticReference>[];
   readonly endpoints: LocatedJavaScriptFinding<JavaScriptStaticEndpoint>[];
   /** Target and receiver identities awaiting the shared mutation index. */
@@ -133,7 +133,10 @@ export interface JavaScriptFindingContext {
   readonly expressionShapes: JavaScriptExpressionShapeResolver;
   readonly source: string;
   readonly accumulator: JavaScriptAnalysisAccumulator;
-  readonly vitePreloadDependencyTable: readonly (string | undefined)[] | null;
+  readonly vitePreloadDependencyTable: {
+    readonly helper: t.Node;
+    readonly dependencies: readonly (string | undefined)[];
+  } | null;
   readonly openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>;
   /** Proven Electron export path segments by root offset. */
   readonly electronBindings?: ReadonlyMap<number, readonly string[]>;

@@ -34,9 +34,8 @@ def note_header(content, note, **changes):
 
 # Authored metadata carriers exercise actual parser projection through public
 # inspection, independently of the host that produced the captured amd64 core.
+# The named ARCHEXT/UNWIND carriers are written once below using numeric type IDs.
 for name, machine, kind in [
-    ("aarch64-archext", "EM_AARCH64", "PT_AARCH64_ARCHEXT"),
-    ("aarch64-unwind", "EM_AARCH64", "PT_AARCH64_UNWIND"),
     ("aarch64-mte-opaque", "EM_AARCH64", 0x70000002),
     ("amd64-processor-opaque", "EM_X86_64", 0x70000001),
 ]:

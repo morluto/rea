@@ -18,7 +18,10 @@ import {
   FINALIZED_PROCESS_CAPTURE_EXAMPLE,
 } from "../domain/process/processCapture.fixture.js";
 import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
-import { parseProcessCapture } from "../domain/process/processCaptureParsing.js";
+import {
+  parseProcessCapture,
+  safeParseProcessCapture,
+} from "../domain/process/processCaptureParsing.js";
 import {
   digestProcessCommitment,
   processScenarioSchema,
@@ -252,6 +255,10 @@ describe("reconstruction obligation candidates", () => {
         },
       },
     });
+    const invalid = safeParseProcessCapture(evidence.normalized_result);
+    expect(invalid.success).toBe(false);
+    if (invalid.success) throw new Error("Expected invalid capture fixture");
+    expect(invalid.error.issues).toHaveLength(2);
     const generated = deriveCandidates(createEvidenceBundle([evidence]), []);
 
     expect(generated.limitations).toHaveLength(1);
@@ -259,6 +266,7 @@ describe("reconstruction obligation candidates", () => {
     expect(generated.limitations[0]).toMatch(
       /Process Evidence.*could not generate candidates.*manifest\.completed_at/iu,
     );
+    expect(generated.limitations[0]).toContain("(1 more issues)");
   });
 });
 

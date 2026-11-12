@@ -63,20 +63,21 @@ export const classifySwiftSymbol = (
         category = null;
       break;
     }
-    const kind = mangling.charAt(end);
+    const kindOffset = filePrivateDiscriminatorEnd(mangling, end) ?? end;
+    const kind = mangling.charAt(kindOffset);
     const nominal = NOMINAL_CATEGORIES.get(kind);
     if (nominal === undefined) {
       // Current swiftc emits protocol descriptors as `…<Nominal>Mp` without
       // the nominal `P` marker (e.g. `_$s4main7ScoringMp`). Decode that exact
       // suffix; unknown substitution encodings stay unclassified, never guessed.
-      if (mangling.slice(end) === "Mp") {
+      if (mangling.slice(kindOffset) === "Mp") {
         category = "protocols";
         protocolIdentity = true;
       } else if (kind === "E" && category !== null) category = "extensions";
       break;
     }
     category = nominal;
-    offset = end + 1;
+    offset = kindOffset + 1;
   }
   return { category, protocolIdentity };
 };
@@ -127,4 +128,24 @@ const identifierEnd = (
   )
     return undefined;
   return end;
+};
+
+/**
+ * swiftc inserts `<length>_<hex>LL` between a private declaration's name and
+ * its nominal kind. The length-prefixed discriminator is itself an identifier,
+ * so reading the digit as the kind keeps the enclosing type's category.
+ */
+const filePrivateDiscriminatorEnd = (
+  mangling: string,
+  offset: number,
+): number | undefined => {
+  const lengthToken = /^[1-9][0-9]*/u.exec(mangling.slice(offset))?.[0];
+  if (
+    lengthToken === undefined ||
+    mangling.charAt(offset + lengthToken.length) !== "_"
+  )
+    return undefined;
+  const end = identifierEnd(mangling, offset);
+  if (end === undefined || !mangling.startsWith("LL", end)) return undefined;
+  return end + 2;
 };

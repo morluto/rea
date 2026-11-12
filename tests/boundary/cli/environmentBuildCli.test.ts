@@ -49,7 +49,7 @@ cliTest.for(["absolute", "relative"] as const)(
   async (pathKind, { cli }) => {
     const root = await createTestTempDirectory("rea-environment-build-cli-");
     const har = join(root, "grafana.har");
-    const callerPath = pathKind === "relative" ? "grafana.har" : har;
+    const callerPath = pathKind === "relative" ? "./grafana.har" : har;
     await writeFile(har, JSON.stringify(environmentManifestHar()));
     const built = await cli.run({
       arguments: [
@@ -82,6 +82,10 @@ cliTest.for(["absolute", "relative"] as const)(
       cwd: root,
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
+    expect(inspected.json).toMatchObject({
+      caller_input_path: callerPath,
+      parameters: { capture_path: har },
+    });
     const capture = join(root, "capture.json");
     await writeFile(capture, inspected.stdout);
     const request = join(root, "view.json");
@@ -122,6 +126,13 @@ cliTest.for(["absolute", "relative"] as const)(
         ),
         file,
       ).toBe(0);
+    const published = JSON.parse(
+      await readFile(
+        join(root, "built", "envs", "grafana-example", "evidence.json"),
+        "utf8",
+      ),
+    ) as { caller_input_path?: string };
+    expect(published.caller_input_path).toBe(callerPath);
     expect(built.json).toMatchObject({
       tool_count: (exported.json as { tool_count: number }).tool_count,
       files: (exported.json as { files: unknown[] }).files,

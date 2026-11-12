@@ -1,6 +1,10 @@
 import { Readable } from "node:stream";
 import { finished, pipeline } from "node:stream/promises";
 import { createInflateRaw } from "node:zlib";
+import {
+  DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+  type DotnetBundleReaderLimits,
+} from "../domain/artifactReaderLimits.js";
 
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
@@ -39,6 +43,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
   constructor(
     path: string,
     admitted?: StableRegularFileDescriptor | DotnetBundleAdmission,
+    private readonly limits: DotnetBundleReaderLimits = DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
   ) {
     if (admitted !== undefined && "kind" in admitted) {
       this.#admission = admitted;
@@ -83,6 +88,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
           source.initial.size,
           header,
           signal,
+          this.limits,
         );
         this.#admission = undefined;
       }

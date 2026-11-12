@@ -11,6 +11,7 @@ import {
   MAX_ADB_ACTIVITY_EXTRAS,
   type AdbOperation,
 } from "../domain/adb/adbDeviceAnalysis.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
@@ -138,12 +139,9 @@ export const registerAdbCommands = (
       package: packageName.describe("Installed package name"),
     }),
     options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .describe(
-          "Local directory for the pulled APK set; a package-named subdirectory is created inside",
-        ),
+      "output-directory": localPathStringSchema.describe(
+        "Local directory for the pulled APK set; a package-named subdirectory is created inside",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.pullAdbPackage, "pull_adb_package", {
@@ -192,10 +190,9 @@ export const registerAdbCommands = (
       "device-path": adbInputSchemas.pull_adb_file.shape.device_path,
     }),
     options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .describe("Local directory for the pulled file"),
+      "output-directory": localPathStringSchema.describe(
+        "Local directory for the pulled file",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.pullAdbFile, "pull_adb_file", {
@@ -209,7 +206,7 @@ export const registerAdbCommands = (
       "Push one local file to the device; refuses existing targets without --overwrite",
     args: z.object({
       serial,
-      "local-path": z.string().min(1).describe("Existing local file"),
+      "local-path": localPathStringSchema.describe("Existing local file"),
       "device-path": adbInputSchemas.push_adb_file.shape.device_path,
     }),
     options: z.object({
@@ -230,10 +227,9 @@ export const registerAdbCommands = (
     description: "Capture one screen frame as a digested PNG",
     args: z.object({ serial }),
     options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .describe("Local directory for screen.png"),
+      "output-directory": localPathStringSchema.describe(
+        "Local directory for screen.png",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.captureAdbScreen, "capture_adb_screen", {
@@ -301,10 +297,9 @@ export const registerAdbCommands = (
     description: "Collect and digest one device-generated bugreport archive",
     args: z.object({ serial }),
     options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .describe("Local directory for the bugreport zip"),
+      "output-directory": localPathStringSchema.describe(
+        "Local directory for the bugreport zip",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.collectAdbBugreport, "collect_adb_bugreport", {
@@ -323,7 +318,7 @@ export const registerAdbCommands = (
       "Install one local APK; --replace requests reinstall mode to keep existing app data",
     args: z.object({
       serial,
-      "apk-path": z.string().min(1).describe("Local APK file to install"),
+      "apk-path": localPathStringSchema.describe("Local APK file to install"),
     }),
     options: z.object({
       replace: z

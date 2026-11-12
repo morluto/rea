@@ -114,53 +114,61 @@ const withJsonInputPipeline = async <Value>(
   try {
     return await run(controller.signal);
   } catch (cause: unknown) {
-    // Node can combine the source's checkpoint cancellation with the abort it
-    // delivers to the parser. Normalize only that pipeline-owned combination,
-    // before the descriptor owner records its outcome and closes the file.
-    if (isJsonPipelineCancellation(cause, signal, controller.signal))
-      throw new RegularFileOperationCancelled(signal.reason);
+    if (
+      controller.signal.aborted &&
+      controller.signal.reason instanceof JsonInputCancellationFailure &&
+      isOwnedJsonPipelineCancellation(cause, controller.signal.reason)
+    )
+      throw controller.signal.reason;
     throw cause;
   } finally {
     signal.removeEventListener("abort", cancel);
   }
 };
 
-const isJsonPipelineCancellation = (
+/** Node may combine its owned abort with a cooperative read cancellation. */
+const isOwnedJsonPipelineCancellation = (
   cause: unknown,
-  caller: AbortSignal,
-  pipeline: AbortSignal,
+  cancellation: JsonInputCancellationFailure,
 ): boolean => {
-  if (!caller.aborted || !pipeline.aborted) return false;
   const pending = [cause];
-  const seen = new Set<unknown>();
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (current === pipeline.reason) continue;
-    // The caller's value is opaque, even if it resembles a cancellation or
-    // contains an aggregate. It is never a pipeline-produced error envelope.
-    if (current === caller.reason) return false;
-    if (
-      current instanceof RegularFileOperationCancelled &&
-      current.reason === caller.reason
-    )
-      continue;
-    if (
-      current instanceof Error &&
-      current.name === "AbortError" &&
-      "code" in current &&
-      current.code === "ABORT_ERR" &&
-      current.cause === pipeline.reason
-    )
-      continue;
-    if (seen.has(current)) return false;
-    seen.add(current);
-    if (current instanceof AggregateError && current.errors.length > 0) {
-      pending.push(...current.errors);
-      continue;
+  const seen = new Set<AggregateError>();
+  let owned = false;
+  try {
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (
+        current === cancellation ||
+        (current instanceof Error &&
+          current.name === "AbortError" &&
+          "code" in current &&
+          current.code === "ABORT_ERR" &&
+          current.cause === cancellation)
+      ) {
+        owned = true;
+        continue;
+      }
+      if (
+        current instanceof RegularFileOperationCancelled &&
+        current.reason === cancellation.reason
+      )
+        continue;
+      if (!(current instanceof AggregateError) || seen.has(current))
+        return false;
+      const failures: unknown = current.errors;
+      if (!Array.isArray(failures)) return false;
+      const count = failures.length;
+      if (!Number.isSafeInteger(count) || count <= 0) return false;
+      // Cyclic or repeatedly shared aggregate graphs leave ownership unproven.
+      seen.add(current);
+      for (let index = 0; index < count; index += 1)
+        pending.push(failures[index]);
     }
+    return owned;
+  } catch {
+    // Unreadable aggregate contents do not authorize replacing the failure.
     return false;
   }
-  return true;
 };
 
 /** Heap a whole-file native JSON.parse may need: the assembler's 64x container expansion plus byte and text copies. */

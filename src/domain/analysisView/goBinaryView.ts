@@ -4,10 +4,10 @@ import { z } from "zod";
 import {
   goBinarySchema,
   goBuildInfoSchema,
-  goMaxStringLiteralsSchema,
   goModuleMetadataSchema,
   goModuleSchema,
   goStringLiteralSchema,
+  goStringLiteralsSchema,
 } from "../go/goBinary.js";
 import { err, ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
@@ -20,6 +20,7 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
@@ -116,15 +117,9 @@ export const goBinarySummarySchema = z.strictObject({
         }),
     })
     .nullable(),
-  string_literals: z
-    .strictObject({
-      evidence_kind: z.literal("inferred"),
-      available_count: count,
-      discovered_count: count,
-      aggregate_bytes: count,
-      max_items: goMaxStringLiteralsSchema,
-      truncated: z.boolean(),
-    })
+  string_literals: goStringLiteralsSchema
+    .omit({ items: true })
+    .extend({ available_count: count })
     .exactOptional(),
 });
 
@@ -227,7 +222,14 @@ export const projectGoBinaryView = (
       runtimeUnknown,
     ]),
   };
-  if (view.kind === "summary")
+  if (view.kind === "summary") {
+    let stringSummary: z.output<
+      typeof goBinarySummarySchema
+    >["string_literals"];
+    if (stringLiterals !== undefined) {
+      const { items, ...facts } = stringLiterals;
+      stringSummary = { ...facts, available_count: items.length };
+    }
     return ok({
       kind: "summary" as const,
       view,
@@ -263,21 +265,15 @@ export const projectGoBinaryView = (
                   },
                 },
               },
-        ...(stringLiterals === undefined
+        ...(stringSummary === undefined
           ? {}
           : {
-              string_literals: {
-                evidence_kind: stringLiterals.evidence_kind,
-                available_count: stringLiterals.items.length,
-                discovered_count: stringLiterals.discovered_count,
-                aggregate_bytes: stringLiterals.aggregate_bytes,
-                max_items: stringLiterals.max_items,
-                truncated: stringLiterals.truncated,
-              },
+              string_literals: stringSummary,
             }),
       },
       coverage: completeWithinViewCoverage(1, 1),
     });
+  }
   const indices =
     view.indices === undefined ? undefined : new Set(view.indices);
   const fields =
@@ -327,10 +323,18 @@ export const projectGoBinaryView = (
       ),
     });
   }
+  if (info === null)
+    return ok({
+      kind: "go" as const,
+      view,
+      ...shared,
+      page: { collection: view.collection, rows: [] },
+      coverage: unavailableViewCoverage(),
+    });
   if (view.collection === "dependencies") {
     const paths = view.paths === undefined ? undefined : new Set(view.paths);
     const selected = selectViewRows(
-      info?.module.dependencies ?? [],
+      info.module.dependencies,
       view,
       (row, index) =>
         (indices?.has(index) ?? true) && (paths?.has(row.path) ?? true),
@@ -358,7 +362,7 @@ export const projectGoBinaryView = (
   }
   const keys = view.keys === undefined ? undefined : new Set(view.keys);
   const selected = selectViewRows(
-    info?.module.settings ?? [],
+    info.module.settings,
     view,
     (row, index) =>
       (indices?.has(index) ?? true) && (keys?.has(row.key) ?? true),

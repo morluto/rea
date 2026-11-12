@@ -511,6 +511,31 @@ it("finds a banner after overlapping unterminated repeats in one linear scan", a
   });
 });
 
+it("reports the link-time banner after the kbuild placeholder banner", async () => {
+  // Linux 6.1+ keeps init/version.o's weak banner, built before the build
+  // number and timestamp exist, ahead of the banner the kernel prints.
+  const head = "Linux version 6.18.0 (u@h) (gcc 13.2.0) #";
+  const other = "Linux version 1.0.0 (x@y) (cc) #2";
+  const linked = `${head}1 SMP PREEMPT Tue Oct  6 19:13:07 UTC 2026`;
+  // No build number, then a set KBUILD_BUILD_VERSION with no timestamp.
+  for (const placeholder of [`${head} SMP PREEMPT `, `${head}1 SMP PREEMPT `]) {
+    const bytes = Buffer.from(
+      `${placeholder}\n\0${other}\n\0${placeholder}\n\0${linked}\n`,
+    );
+    expect((await parse(bytes)).banner).toMatchObject({
+      text: linked,
+      version: "6.18.0",
+      builder: "u@h",
+      compiler: "gcc 13.2.0",
+      location: { offset: bytes.length - linked.length - 1 },
+    });
+    // Without a matching link-time banner the placeholder is still reported.
+    expect(
+      (await parse(Buffer.from(`${placeholder}\n\0${other}\n`))).banner,
+    ).toMatchObject({ text: placeholder, location: { offset: 0 } });
+  }
+});
+
 it("honors cancellation during the marker, inflate, and banner scans", async () => {
   const input = inspectKernelBuildConfigInputSchema.parse({
     path: artifactPath,
@@ -707,7 +732,12 @@ it("retains incomplete coverage for a partial config end marker", async () => {
     bytes.indexOf(Buffer.from("IKCFG_ST")) + 20,
   );
   const report = await parse(bytes.subarray(0, end + 7));
-  expect(report.config.status).not.toBe("absent");
+  expect(report.config).toMatchObject({
+    status: "incomplete",
+    reason: "config_gzip_truncated",
+    entries: [],
+  });
+  expect(report.coverage.status).toBe("incomplete");
 });
 
 it("ignores marker bytes inside a gzip member", async () => {

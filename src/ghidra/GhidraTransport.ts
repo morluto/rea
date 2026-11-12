@@ -176,31 +176,29 @@ const observationFailure = (
   cause: unknown,
 ): GhidraSessionError => {
   const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
-  let failure: GhidraSessionError;
-  if (origin === "owned-or-classified" && primary instanceof GhidraSessionError)
-    failure = primary;
-  else if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-    failure = endpointFailure(
-      endpoint,
-      "Ghidra TCP endpoint is invalid",
-      cause,
-    );
-  else if (
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    failure = bindGhidraSessionFailure(() => ({
-      transport: endpoint.transport,
-      endpoint_path: endpoint.path,
-    }))("cancelled", "Ghidra endpoint observation was cancelled", cause, {
-      cancellation: { reason: artifactFileCancellationCause(cause) },
-    });
-  else
-    failure = endpointFailure(
-      endpoint,
-      "Ghidra endpoint observation failed",
-      cause,
-    );
+  // Classify a bounded endpoint record without discarding its owned cleanup.
+  const invalidRecord =
+    endpoint.transport === "authenticated-loopback-tcp" &&
+    origin === "owned-or-classified" &&
+    primary instanceof ArtifactReaderFailure &&
+    primary.reason === "limit";
+  let failure =
+    origin === "owned-or-classified" && primary instanceof GhidraSessionError
+      ? primary
+      : cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
+        ? bindGhidraSessionFailure(() => ({
+            transport: endpoint.transport,
+            endpoint_path: endpoint.path,
+          }))("cancelled", "Ghidra endpoint observation was cancelled", cause, {
+            cancellation: { reason: artifactFileCancellationCause(cause) },
+          })
+        : endpointFailure(
+            endpoint,
+            invalidRecord
+              ? "Ghidra TCP endpoint is invalid"
+              : "Ghidra endpoint observation failed",
+            cause,
+          );
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
     const cleanup = new ProviderCleanupError(
       "ghidra",

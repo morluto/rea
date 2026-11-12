@@ -16,16 +16,6 @@ const rows = {
   cpu_seconds: "Max cpu time",
 } as const;
 
-/** Bound the resident input copy and retained text before allocation/collection. */
-export const BOUNDED_PRODUCER_LIMITS = {
-  input_bytes: 32 * 1024 * 1024,
-  output_bytes: 4 * 1024 * 1024,
-  command_timeout_ms: 30_000,
-  address_space_bytes: 1024 * 1024 * 1024,
-  file_bytes: 64 * 1024 * 1024,
-  cpu_seconds: 30,
-} as const;
-
 /**
  * Pin soft and hard ceilings together, ending at the prlimit option terminator.
  * Callers that append the producer command themselves use this prefix.

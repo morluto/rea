@@ -444,7 +444,7 @@ cliTest(
 );
 
 cliTest(
-  "preserves exact large safetensors dimensions while bounding actual offsets",
+  "preserves exact large safetensors dimensions while rejecting impossible file offsets",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-shape-precision-");
     const path = join(root, "empty.safetensors");
@@ -524,6 +524,7 @@ cliTest(
     // established before asking whether a valid offset fits host precision.
     const invalidExtent = {
       code: "target_unavailable",
+      category: "unsupported_target",
       details: {
         path,
         constraint: "file_format_rejected",

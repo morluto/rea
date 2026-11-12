@@ -501,6 +501,7 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
 }) => {
   skip(process.platform === "win32", "the fake gh is a POSIX shell script");
   const { directory, base } = await fixture();
+  const foreignBase = await change(directory, ["README.md"]);
   const head = await change(directory, ["src/evm/client.ts"]);
   const bin = join(directory, "fake-bin");
   await mkdir(bin);
@@ -517,7 +518,7 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
           conclusion: "success",
           head_branch: "main",
           head_repository: { full_name: "untrusted/fork" },
-          head_sha: base,
+          head_sha: foreignBase,
         },
         {
           event: "push",
@@ -692,6 +693,8 @@ it.each([
     { code: true, runtime: false, browser: false, package: false },
   ],
   ["scripts/lib/release-proposal.mjs", { code: true, package: true }],
+  ["scripts/lib/release-proposal.d.mts", { code: true, package: true }],
+  ["scripts/lib/release-pull-request.mjs", { code: true, package: true }],
   ["patches/release-please+17.3.0.patch", { code: true, package: true }],
   [
     "tests/boundary/filesystem/releaseProposal.test.ts",
@@ -782,7 +785,7 @@ it.each([
     { code: false, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
-    "tests/conformance/ghidra/ReaArmContextProbe.java",
+    "tests/conformance/ghidra/ReaInstructionContextProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
@@ -1484,6 +1487,26 @@ it.each([
   ],
   [
     "scripts/lib/cli-process-environment.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      javascript_recovery: true,
+      readiness: false,
+    },
+  ],
+  [
+    "scripts/lib/runtime-admission.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      javascript_recovery: true,
+      readiness: false,
+    },
+  ],
+  [
+    "scripts/lib/runtime-admission.d.mts",
     {
       code: true,
       package: true,
