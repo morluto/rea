@@ -21,7 +21,16 @@ import {
 
 import { parseAdbTransportIdentity } from "../domain/adb/adbTransportIdentity.js";
 
-const DEVICE_LINE = /^(\S+)\s+(.*)$/u;
+/**
+ * The serial column of a `devices` line, which is not always a single token.
+ *
+ * AOSP `transport.cpp append_transport()` substitutes the literal `(no serial number)` when the
+ * transport has none to report — `client/usb_linux.cpp` keeps an empty serial for a device that
+ * cannot report one during early bringup (http://b/20883914) and still registers the transport.
+ * The long listing pads that column with `%-22s`, the short one separates it with a tab, and in
+ * both forms the placeholder carries spaces, so `\S+` alone never matched it.
+ */
+const DEVICE_LINE = /^(\(no serial number\)|\S+)\s+(.*)$/u;
 
 /**
  * adb prints a wireless-debugging transport's serial as the mDNS instance
