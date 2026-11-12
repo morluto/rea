@@ -1139,9 +1139,10 @@ it.each(["valid replacement", "malformed blob"] as const)(
         const before = statSync(args[0]);
         writeFileSync(args[0], replacement);
         // The replacement keeps the carrier size, and filesystems with coarse
-        // timestamps can leave mtime unchanged within one tick. Move mtime so
-        // the mutation is observable independently of timestamp granularity.
-        utimesSync(args[0], before.atime, new Date(before.mtimeMs + 1000));
+        // timestamps can leave mtime unchanged within one tick. Move mtime 10 s
+        // forward (more than a 2 s FAT tick) so the mutation is observable
+        // independently of timestamp granularity.
+        utimesSync(args[0], before.atime, new Date(before.mtimeMs + 10_000));
         const reader = createReader(...args);
         if (reader instanceof NodeSeaArtifactReader) created = reader;
         return reader;

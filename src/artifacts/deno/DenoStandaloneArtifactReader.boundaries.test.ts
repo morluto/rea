@@ -50,10 +50,11 @@ it("rejects carrier mutation between physical member reads", async () => {
             65536,
             start + 65536,
           );
-          // The in-place write keeps the carrier size, and filesystems with
-          // coarse timestamps can leave mtime unchanged within one tick. Move
-          // mtime so the mutation is observable independently of granularity.
-          await writer.utimes(before.atime, new Date(before.mtimeMs + 1000));
+          // The in-place write keeps the carrier size, and filesystems with coarse
+          // timestamps can leave mtime unchanged within one tick. Move mtime 10 s
+          // forward (more than a 2 s FAT tick) so the mutation is observable
+          // independently of timestamp granularity.
+          await writer.utimes(before.atime, new Date(before.mtimeMs + 10_000));
         } finally {
           await writer.close();
         }
