@@ -102,7 +102,8 @@ export const readerViewsOfBytes = async (
       views.set(reader.id, { format: null, view: null, error: file.error });
       continue;
     }
-    const folder = await mkdtemp(join(tmpdir(), "rea-reader-bytes-")).catch(
+    // The runner nests below this owner; leave room for temporary Unix sockets.
+    const folder = await mkdtemp(join(tmpdir(), "rea-")).catch(
       (cause: unknown) => {
         throw readerFailure(cause, { views, absent });
       },

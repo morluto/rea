@@ -27,7 +27,11 @@ grades them in the solving agent's computer, all through one runner.
   It answers with one JSON line: `{"view"}`, `{"absent": true}` when the file
   is not there, or `{"error"}`. It copies the file into a new temporary folder,
   runs the command there with `{file}` replaced by the copy's path in argv and
-  stdin, `HOME` and the four `XDG_` folders in that folder, without
+  stdin, `HOME` and the four `XDG_` folders in that folder. `TMPDIR`, `TMP`
+  and `TEMP` point to its private temporary subfolder, so ordinary command
+  scratch files share the copy's cleanup owner. The local export and runner use
+  short private directory names to leave space for temporary Unix sockets in
+  nested reader workflows. It runs without
   `DISPLAY`, `WAYLAND_DISPLAY` or `XAUTHORITY` unless `display` is true, and
   never with `DBUS_SESSION_BUS_ADDRESS`, `SESSION_MANAGER`,
   `XDG_RUNTIME_DIR` or any `AGENTENV_` variable. Past `timeout_s` it kills
