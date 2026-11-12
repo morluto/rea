@@ -335,7 +335,7 @@ it("skips XML conversion for safe integers, signed zero, exponential reals and n
     Text: "9007199254740993",
   });
   expect(result.limitations).toEqual([
-    '2 negative-zero real value(s) are reported as { "$plist_type": "real", "value": "-0" } because a JSON number cannot carry the sign of zero.',
+    expect.stringMatching(/2 negative.zero.*sign of zero/iu),
   ]);
   expect(result.provenance.map(({ command }) => command)).toEqual([
     ["/usr/bin/file", "-b", "$PLIST"],

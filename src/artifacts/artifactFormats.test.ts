@@ -25,11 +25,13 @@ type FormatsWithReaders =
   | ZipPackageFormat
   | "dotnet-bundle"
   | "bun-standalone"
+  | "deno-standalone"
   | "dmg"
   | "asar"
   | "ines"
   | "godot-pck"
   | "unityfs"
+  | "wxapkg"
   | "uimage"
   | "mach-o-universal"
   | "directory"
@@ -41,7 +43,8 @@ type FormatsWithReaders =
   | "uf2"
   | "dfuse"
   | "esp-flash-image"
-  | "fit";
+  | "fit"
+  | "ntfs-mft";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =
   true;

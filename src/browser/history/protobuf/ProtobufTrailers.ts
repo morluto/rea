@@ -7,7 +7,11 @@ interface TrailerFacts {
 }
 
 type TrailerFailure = TrailerFacts & {
-  readonly kind: "invalid-utf8-value" | "invalid-name" | "invalid-value";
+  readonly kind:
+    | "invalid-utf8-value"
+    | "invalid-name"
+    | "invalid-value"
+    | "invalid-boundary";
   readonly reason: string;
 };
 
@@ -36,9 +40,15 @@ export const parseGrpcWebTrailers = (
     const lineExaminedBytes = hasSeparator ? end + 2 : lineEnd;
     if (lineEnd === start) {
       if (!hasSeparator) break;
+      if (lineExaminedBytes < bytes.length)
+        return err({
+          ...facts(),
+          examined_bytes: lineExaminedBytes,
+          kind: "invalid-boundary",
+          reason: "gRPC-web trailer block has bytes after a blank line",
+        });
       examinedBytes = lineExaminedBytes;
-      start = end + 2;
-      continue;
+      break;
     }
     let colon = start;
     while (colon < lineEnd && bytes[colon] !== 58) colon += 1;

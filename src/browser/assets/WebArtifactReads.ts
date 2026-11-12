@@ -1,6 +1,7 @@
 import type { WebArtifactAcquisition as Acquisition } from "../../domain/webArtifactAcquisition.js";
 import { z } from "zod";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
@@ -34,6 +35,8 @@ export interface WebArtifactReadContext {
   readonly targetPath: string;
   /** Whether the caller named this file, rather than a manifest deriving it. */
   readonly callerSelected: boolean;
+  /** Exact resource recovery supplied by the selected artifact owner. */
+  readonly limitRecovery?: string;
 }
 
 /** A malformed producer document, distinct from host I/O failures. */
@@ -198,8 +201,15 @@ const webArtifactPrimaryError = (
       context.operation,
       cause.reason,
       cause.details,
-      cause.message,
-      { cause },
+      cause.reason === "limit" && context.limitRecovery !== undefined
+        ? `${cause.message} ${context.limitRecovery}`
+        : cause.message,
+      {
+        cause,
+        ...(cause.reason === "limit" && context.limitRecovery !== undefined
+          ? { remediationAction: context.limitRecovery }
+          : {}),
+      },
     );
   if (
     cause instanceof Error &&
@@ -250,9 +260,16 @@ const selectedFileError = (
   context: WebArtifactReadContext,
 ): AnalysisError | undefined => {
   const selected = (message: string) =>
-    new AnalysisInputError(context.operation, { cause }, [
-      { path: context.field, reason: "invalid_value", message },
-    ]);
+    new AnalysisInputError(
+      context.operation,
+      {
+        cause,
+        ...(cause instanceof ArtifactReaderFailure
+          ? stableArtifactInputRecovery(cause)
+          : {}),
+      },
+      [{ path: context.field, reason: "invalid_value", message }],
+    );
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure

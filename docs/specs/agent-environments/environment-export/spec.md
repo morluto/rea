@@ -69,7 +69,7 @@ previous increment.
 - Add the `agentenv` CI scope, the reusable `real-agentenv.yml` workflow
   (`workflow_dispatch` and `workflow_call` with `build_cache_artifact`,
   `ubuntu-24.04`, SHA-pinned actions, `setup-python` 3.12, a virtual
-  environment with `agentenv-framework==0.9.1334`, the runner's Docker, 30
+  environment with `agentenv-framework==0.9.1431`, the runner's Docker, 30
   minutes), the `verify:agentenv:environment` script and
   `scripts/verify-agentenv-environment.mjs`, which requires absolute
   `REA_AGENT_ENV_COMMAND` and `REA_DOCKER_COMMAND` like every other lane
@@ -94,7 +94,7 @@ recorded in `verification.md` is the proof that one exported bundle runs under
 
 The export copies bytes and never inspects the tarball; it does not build or
 run the image itself. Its writes are not transactional: a host failure after
-the first file leaves the partial folder for inspection, as `docs/cli.md`
+the first file leaves the partial folder for inspection, as `docs/getting-started/cli.md`
 states. The verifier checks one replayed status and the tool count, not every
 tool. The lane passes `--sandbox local` as designed although
 `tasks/smoke.json` already pins `sandbox_type: local` on its deploy step, so

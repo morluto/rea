@@ -242,7 +242,11 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
           new ProviderCleanupError(
             SQLITE_PROVIDER_IDENTITY.id,
             failures.flatMap((failure) => failure.cleanupResources),
-            { failures: failures.map(projectAnalysisError) },
+            {
+              failures: failures.map((failure) =>
+                projectAnalysisError(failure),
+              ),
+            },
             { operation },
           ).bindCleanupDependencies(failures),
         );

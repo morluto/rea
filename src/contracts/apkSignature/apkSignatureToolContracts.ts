@@ -16,7 +16,7 @@ export const INSPECT_APK_SIGNATURE_CONTRACT = {
   kind: "artifact-provider",
   requiresActiveTarget: true,
   description:
-    "Inspect declared v1/v2/v3/v3.1 APK signers, certificate fingerprints, algorithm IDs, content digests, SDK ranges, rotation lineage and source stamp without executing Android code. SHA-256 identifies the exact local file. Summary retains complete Evidence; an optional view selects signers/digests/lineage using stable IDs, scheme or signer-ID batches, fields and paging. Read retained pages with inspect_analysis_view kind apk-signature after the source is removed. IDs include artifact digest, scheme and source ordinal; certificates retain raw-DER SHA-256. Content-digest equality is not cryptographic signature verification: modified declarations can match modified bytes. Authenticity, signatures, lineage trust and v1 entry coverage remain unverified. Malformed structures and resource refusals are explicit; no device, network or SDK is used by REA.",
+    "Inspect declared APK v1/v2/v3/v3.1 signers, certificate fingerprints, digests, SDK ranges, rotation lineage and source stamp without executing Android code. Returns exact file SHA-256; identities include scheme/source ordinal and certificates retain DER digests. Default summary retains complete Evidence; optional view selects signers/digests/lineage by IDs/schemes/fields and pages. Reuse inspect_analysis_view kind apk-signature after removing the source. Matching content digests do not verify signatures or authenticity; lineage trust and v1 entry coverage remain unverified. No device, network or SDK; malformed structures and resource refusals are explicit.",
   inputSchema: inspectApkSignatureInputSchema,
   outputSchema: evidenceResultOf(
     z.union([

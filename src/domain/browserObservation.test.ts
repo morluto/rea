@@ -142,6 +142,54 @@ describe("browser observation contracts", () => {
   });
 });
 
+it("normalizes equivalent loopback browser-socket spellings while keeping IPv4, IPv6, and socket IDs distinct", () => {
+  expect(
+    browserObservationEndpointSchema.parse(
+      "WS://[0:0:0:0:0:0:0:1]:09222/devtools/browser/0b1c-socket-id",
+    ),
+  ).toEqual({
+    transport: "browser_websocket",
+    url: "ws://[::1]:9222/devtools/browser/0b1c-socket-id",
+    recorded: "ws://[::1]:9222/devtools/browser/[REDACTED]",
+  });
+  expect(
+    browserObservationEndpointSchema.parse(
+      "WS://127.0.0.1:0080/devtools/browser/0b1c-socket-id",
+    ),
+  ).toEqual({
+    transport: "browser_websocket",
+    url: "ws://127.0.0.1:80/devtools/browser/0b1c-socket-id",
+    recorded: "ws://127.0.0.1:80/devtools/browser/[REDACTED]",
+  });
+  expect(
+    browserObservationEndpointSchema.parse(
+      "WS://[0000:0000:0000:0000:0000:0000:0000:0001]:09222/devtools/browser/0b1c-socket-id",
+    ).url,
+  ).toBe(
+    browserObservationEndpointSchema.parse(
+      "ws://[::1]:9222/devtools/browser/0b1c-socket-id",
+    ).url,
+  );
+  expect(
+    browserObservationEndpointSchema.parse(
+      "ws://127.0.0.1:9222/devtools/browser/0b1c-socket-id",
+    ).url,
+  ).not.toBe(
+    browserObservationEndpointSchema.parse(
+      "ws://[::1]:9222/devtools/browser/0b1c-socket-id",
+    ).url,
+  );
+  expect(
+    browserObservationEndpointSchema.parse(
+      "ws://127.0.0.1:9222/devtools/browser/Socket-Id",
+    ).url,
+  ).not.toBe(
+    browserObservationEndpointSchema.parse(
+      "ws://127.0.0.1:9222/devtools/browser/socket-id",
+    ).url,
+  );
+});
+
 describe("browser observation sensitive surfaces and retention", () => {
   it("removes only URL userinfo and preserves the original query and fragment", () => {
     expect(

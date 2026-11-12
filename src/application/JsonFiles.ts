@@ -20,7 +20,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   JsonInputPhysicalReadFailure,
@@ -34,7 +34,10 @@ import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
-import { bindRegularFileCleanup } from "./RegularFileRead.js";
+import {
+  bindRegularFileCleanup,
+  regularFileCleanupLeases,
+} from "./RegularFileRead.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
@@ -55,6 +58,23 @@ export interface TextWriteCancellation {
 
 type TextWriteResult<Failure = EvidenceFileError | AnalysisCancelledError> =
   Result<{ readonly path: string; readonly bytes: number }, Failure>;
+
+// The JSON read owner records the exact leases it binds; consumers never
+// infer cleanup ownership from matching resource labels.
+const jsonReadLeases = new WeakMap<
+  EvidenceFileError,
+  readonly AnalysisCleanupLease[]
+>();
+export const jsonFileReadCleanupLeases = (
+  error: EvidenceFileError,
+): readonly AnalysisCleanupLease[] | undefined => jsonReadLeases.get(error);
+const rememberJsonReadCleanup = (
+  error: EvidenceFileError,
+  cause: unknown,
+): void => {
+  const leases = regularFileCleanupLeases(cause);
+  if (leases !== undefined) jsonReadLeases.set(error, leases);
+};
 
 /** Read JSON data without changing the caller's existing data-only contract. */
 export const readJsonFile = async (
@@ -170,9 +190,10 @@ const readJsonFileInput = async <Value>(
         cleanupPrimary: primary,
         ...(primary === undefined
           ? {}
-          : { diagnostics: { primary_error: projectAnalysisError(primary) } }),
+          : childFailureDiagnostics({ primary_error: { error: primary } })),
       });
       bindRegularFileCleanup(cause, error);
+      rememberJsonReadCleanup(error, cause);
       return err(error);
     }
     return err(jsonFileReadFailure(cause, requestedPath, operation, signal));
@@ -247,6 +268,7 @@ const jsonFileCleanupError = <Value>(
     },
   });
   bindRegularFileCleanup(failure, cleanup);
+  rememberJsonReadCleanup(cleanup, failure);
   const cancellation = regularFileCancellation(failure);
   let primary: AnalysisError | undefined;
   if (failure.outcome.kind === "failed") {
@@ -263,7 +285,7 @@ const jsonFileCleanupError = <Value>(
       });
   }
   if (primary === undefined) return cleanup;
-  return new EvidenceFileError("read", "io", {
+  const combined = new EvidenceFileError("read", "io", {
     path,
     cause: new AggregateError(
       [primary, cleanup],
@@ -272,8 +294,10 @@ const jsonFileCleanupError = <Value>(
     ),
     cleanupPrimary: primary,
     cleanup: cleanup.cleanup,
-    diagnostics: { primary_error: projectAnalysisError(primary) },
+    ...childFailureDiagnostics({ primary_error: { error: primary } }),
   }).bindCleanupDependencies([primary, cleanup]);
+  if (!primary.cleanupIncomplete) rememberJsonReadCleanup(combined, failure);
+  return combined;
 };
 
 const isJsonReadCancellation = (

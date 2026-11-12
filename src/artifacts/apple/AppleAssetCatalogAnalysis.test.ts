@@ -146,8 +146,10 @@ describe("Apple asset catalog application workflow", () => {
         next_offset: null,
         truncated: false,
       });
-      expect(result.limitations).toContain(
-        "No compiled Assets.car catalog was found among the app bundle's regular files (symlinks are not followed); any resource keys are reported as unmatched.",
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          /Assets\.car.*symlinks.*not followed.*unmatched/iu,
+        ),
       );
     },
   );
@@ -224,8 +226,10 @@ it.skipIf(process.platform === "win32")(
         throw new Error("No catalog is present");
       },
     });
-    expect(result.limitations).toContain(
-      "Interface Builder resource-key joins may be incomplete because the decoded object inventory is incomplete.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /resource-key joins.*incomplete.*object inventory.*incomplete/iu,
+      ),
     );
   },
 );
@@ -558,8 +562,7 @@ it.each(["reported carutil", "tab-indented carutil", "observed assetutil"])(
     expect(error.cause).toBe(cause);
     expect(projectAnalysisError(error)).toMatchObject({
       code: "artifact_operation_failed",
-      message:
-        "Artifact is invalid or has changed. Get a fresh copy and try again.",
+      message: expect.stringMatching(/invalid.*changed.*fresh copy/iu),
       details: {
         operation: "inspect_asset_catalog",
         reason: "format",

@@ -1,3 +1,4 @@
+import { isJavaScriptModuleUnit } from "./javascriptModuleUnits.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
@@ -57,7 +58,10 @@ const classifyLayer = (
   const direct = new Map<string, string[]>();
   const ambiguous = new Set<string>();
   const incomplete = new Set<string>();
-  for (const match of matches)
+  // A target's entry location establishes correspondence, not script presence.
+  for (const match of matches.filter(
+    ({ entity_kind }) => entity_kind === "script",
+  ))
     if (
       match.status === "matched" &&
       match.static_layer_id === layer.layerId &&
@@ -168,9 +172,8 @@ const isLoadStateNode = (
 ): node is ApplicationNode & {
   readonly kind: "javascript-asset" | "javascript-chunk" | "javascript-module";
 } =>
-  node.kind === "javascript-asset" ||
   node.kind === "javascript-chunk" ||
-  node.kind === "javascript-module";
+  (isJavaScriptModuleUnit(node) && node.kind !== "source-module");
 
 const state = (
   layer: ParsedStaticLayer,

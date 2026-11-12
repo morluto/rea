@@ -57,7 +57,7 @@ describe("unobserved internal symlink reconciliation", () => {
     ]);
   });
 
-  it("retains unreadable targets below the nearest failed directory", () => {
+  it("retains unreadable targets below a failed directory", () => {
     const entries: ReferenceSourceEntry[] = [
       internalLink("alias.txt", "hidden/target.txt"),
       failedDirectory("hidden", "io"),

@@ -105,6 +105,7 @@ const readBoundaryInventory = (
   pe: ManagedPeLayout,
   cli: NonNullable<ManagedPeLayout["cli"]>,
   issues: ManagedParseIssue[],
+  maxRepresentationBytes?: number,
 ): {
   readonly layout: ManagedMetadataLayout;
   readonly inventory: Inventory;
@@ -118,6 +119,7 @@ const readBoundaryInventory = (
     bytes,
     metadataOffset,
     cli.metadata.size,
+    maxRepresentationBytes,
   );
   const memberLists = readTypeMemberListFacts(bytes, layout);
   const inventory = readManagedMetadataInventory(
@@ -133,6 +135,7 @@ const readBoundaryInventory = (
 export const inspectManagedNativeBoundariesBytes = (
   bytes: Buffer,
   target: BinaryTarget,
+  maxRepresentationBytes?: number,
 ): ManagedNativeBoundaryInspection => {
   // An unmappable PE layout is invalid input for every managed operation.
   const pe = readManagedPeLayout(bytes);
@@ -147,7 +150,13 @@ export const inspectManagedNativeBoundariesBytes = (
   let layout: ManagedMetadataLayout;
   let inventory: Inventory;
   try {
-    ({ layout, inventory } = readBoundaryInventory(bytes, pe, pe.cli, issues));
+    ({ layout, inventory } = readBoundaryInventory(
+      bytes,
+      pe,
+      pe.cli,
+      issues,
+      maxRepresentationBytes,
+    ));
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
     return emptyInspection(target, bytes, "malformed", {

@@ -98,8 +98,8 @@ export type FileState = FileStateIdentity &
         readonly type: "symlink";
         readonly sha256: null;
         readonly symlink_target: string | null;
-        /** Exact stored target bytes; omitted by legacy captures. */
-        readonly symlink_target_hex?: string | undefined;
+        /** Exact stored target bytes; decoded text is only a display projection. */
+        readonly symlink_target_hex: string;
       }
     | {
         readonly type: "directory" | "other";
@@ -371,20 +371,9 @@ const fileStateSchema = z.discriminatedUnion("type", [
       type: z.literal("symlink"),
       sha256: z.null(),
       symlink_target: z.string().nullable(),
-      symlink_target_hex: z
-        .string()
-        .regex(/^(?:[a-f0-9]{2})+$/u)
-        .optional(),
+      symlink_target_hex: z.string().regex(/^(?:[a-f0-9]{2})+$/u),
     })
     .superRefine((file, context) => {
-      if (file.symlink_target_hex === undefined) {
-        if (file.symlink_target === null)
-          context.addIssue({
-            code: "custom",
-            message: "An unknown symlink target requires its exact bytes",
-          });
-        return;
-      }
       const { text } = observedSymlinkTarget(
         Buffer.from(file.symlink_target_hex, "hex"),
       );

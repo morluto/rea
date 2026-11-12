@@ -7,7 +7,13 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 it("keeps declaration discovery and client creation lazy and independently owned", async () => {
   const target = await parseBinaryTarget(process.execPath);
   if (!target.ok) throw target.error;
-  for (const declaration of auxiliaryAnalysisProviderDeclarations({})) {
+  const declarations = auxiliaryAnalysisProviderDeclarations({});
+  expect(declarations.map(({ identity }) => identity.id).sort()).toEqual([
+    "native-macos",
+    "rea-artifact-graph",
+    "rea-dotnet-static",
+  ]);
+  for (const declaration of declarations) {
     let loads = 0;
     const provider = new LazyAnalysisProvider({
       ...declaration,

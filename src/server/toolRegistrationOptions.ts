@@ -13,6 +13,10 @@ import {
   toolInputSchemaWithMetadata,
   toolOutputSchemaWithMetadata,
 } from "../contracts/toolSchemaMetadata.js";
+import {
+  canReferenceInlineEvidence,
+  markEvidenceInput,
+} from "./evidenceInputRegistration.js";
 
 /** One registration's SDK argument-element allowance. */
 export interface StructuredArgumentCapacity {
@@ -222,7 +226,9 @@ export const toolRegistrationOptions = <Contract extends ToolContract>(
   return {
     title: contract.title,
     description: contract.description,
-    inputSchema,
+    inputSchema: evidenceInputs.hasEvidenceReferenceAlternative
+      ? markEvidenceInput(inputSchema)
+      : inputSchema,
     outputSchema: toolOutputSchemaWithMetadata(contract),
     annotations: contract.annotations,
   };
@@ -252,5 +258,10 @@ export const applicationToolRegistrationOptions = <
       },
     },
   };
-  return { ...registration, inputSchema };
+  return {
+    ...registration,
+    inputSchema: canReferenceInlineEvidence(registration.inputSchema)
+      ? markEvidenceInput(inputSchema)
+      : inputSchema,
+  };
 };

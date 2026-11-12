@@ -40,7 +40,6 @@ it("retains empty literal evidence across the application boundary surfaces", as
     "new WebSocket('');",
     "navigator.serviceWorker.register('');",
     "new Worker('');",
-    "const x = require('');",
     "import y from ''; y();",
     "import('');",
     "localStorage.getItem('');",
@@ -50,13 +49,18 @@ it("retains empty literal evidence across the application boundary surfaces", as
     "win.loadURL('');",
     "app.get('', handler);",
     "process.on('', () => 1);",
+  ];
+  const commonJsSources = [
+    "const x = require('');",
     "const { EventEmitter } = require('events'); new EventEmitter().on('', () => 1);",
     "const { spawn } = require('child_process'); spawn('/bin/x').on('', () => 1);",
     "const { ipcMain } = require('electron'); ipcMain.handle('', () => 1);",
     "const { ipcRenderer } = require('electron'); ipcRenderer.invoke('');",
     "const { contextBridge } = require('electron'); contextBridge.exposeInMainWorld('', {});",
   ];
-  const output = await analyzeSource(sources.join("\n"));
+  const output = await analyzeSource(sources.join("\n"), {
+    "commonjs.cjs": commonJsSources.join("\n"),
+  });
   expect(output.graph.nodes).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ kind: "endpoint" }),
@@ -115,11 +119,13 @@ it("keeps bridge entry paths stable through worker validation and API seed match
   const expectedPaths = [
     expect.objectContaining({
       path_id: expect.any(String),
+      loader_authority: "candidate",
       entry_path: ["desktop", "nested.write"],
       channel: "literal",
     }),
     expect.objectContaining({
       path_id: expect.any(String),
+      loader_authority: "candidate",
       entry_path: ["desktop", "nested", "write"],
       channel: "nested",
     }),

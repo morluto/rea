@@ -3,6 +3,7 @@ import {
   artifactInventoryCoverageSchema,
   artifactNodeSchema,
   artifactOccurrenceSchema,
+  artifactOccurrenceRelationshipCoverage,
   artifactEdgeSchema,
   integrityContradictionSchema,
 } from "../artifactGraph.js";
@@ -15,6 +16,7 @@ import { prefixedDigestSchema } from "../digests.js";
 import type { ArtifactOccurrence } from "../artifactGraph.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { z } from "zod";
+import { artifactReaderLimitsSchema } from "../artifactReaderLimits.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
@@ -93,6 +95,7 @@ export const artifactInventoryItemsSchema = z.array(
 );
 
 export const artifactInventorySummarySchema = z.strictObject({
+  effective_limits: artifactReaderLimitsSchema.exactOptional(),
   source_coverage: artifactInventoryCoverageSchema.exactOptional(),
   available_hash_status_counts: z
     .strictObject({
@@ -277,6 +280,7 @@ export const projectArtifactInventoryView = (
     view.kind === "inventory" ||
     inventory.manifest.root_format === "godot-pck" ||
     inventory.manifest.root_format === "unityfs" ||
+    inventory.manifest.root_format === "wxapkg" ||
     inventory.manifest.root_format === "pyinstaller" ||
     inventory.manifest.root_format === "node-sea" ||
     inventory.manifest.root_format === "intel-hex" ||
@@ -332,6 +336,9 @@ export const projectArtifactInventoryView = (
       kind: "summary" as const,
       view,
       summary: {
+        ...(inventory.effectiveLimits === undefined
+          ? {}
+          : { effective_limits: inventory.effectiveLimits }),
         manifest: inventory.manifest,
         available_counts: {
           nodes: inventory.nodes.length,
@@ -568,6 +575,12 @@ const selectOccurrenceFields = (
     ? row
     : {
         ...selectFields(row, fields),
+        ...(fields.includes("relationship_coverage")
+          ? {
+              relationship_coverage:
+                artifactOccurrenceRelationshipCoverage(row),
+            }
+          : {}),
         occurrence_id: row.occurrence_id,
         artifact_id: row.artifact_id,
         parent_occurrence_id: row.parent_occurrence_id,

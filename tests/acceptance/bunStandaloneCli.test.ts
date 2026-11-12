@@ -16,7 +16,7 @@ import {
 } from "../../src/domain/artifactGraph.js";
 
 cliTest(
-  "inventories and extracts Bun source without executing its carrier",
+  "inventories and extracts Bun source from its carrier",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-bun-cli-");
     const source = join(root, "app");

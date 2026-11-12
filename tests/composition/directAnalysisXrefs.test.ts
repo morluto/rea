@@ -101,12 +101,32 @@ const fixture = (
 };
 
 describe("direct CLI cross-reference selectors", () => {
-  it("retains validation issues unrelated to symbol resolution", async () => {
+  it("rejects unknown arguments before opening a session", async () => {
     const [path] = await createBinarySessionTargets();
-    const issues = [
-      { path: ["address"], reason: "invalid_format" },
-      { path: ["extra"], reason: "unknown_argument" },
-    ] as const;
+    const provider = fixture({
+      xrefsError: new AnalysisInputError("xrefs", undefined, [
+        { path: ["address"], reason: "invalid_format" },
+      ]),
+    });
+    const result = await runDirectAnalysis(
+      provider.dependencies,
+      path,
+      "xrefs",
+      { address: "table_only", extra: true },
+    ).then(projectCliAnalysisResult);
+    expect(result).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "xrefs",
+        issues: [{ path: ["extra"], reason: "unknown_argument" }],
+      },
+    });
+    expect(provider.closed()).toBe(0);
+  });
+
+  it("retains provider validation issues unrelated to symbol resolution", async () => {
+    const [path] = await createBinarySessionTargets();
+    const issues = [{ path: ["address"], reason: "invalid_format" }] as const;
     const provider = fixture({
       xrefsError: new AnalysisInputError("xrefs", undefined, issues),
     });
@@ -114,7 +134,7 @@ describe("direct CLI cross-reference selectors", () => {
       provider.dependencies,
       path,
       "xrefs",
-      { address: "table_only", extra: true },
+      { address: "table_only" },
     ).then(projectCliAnalysisResult);
     expect(result).toMatchObject({
       code: "invalid_request",
@@ -211,8 +231,12 @@ describe("direct CLI cross-reference name resolution", () => {
     ).then(projectCliAnalysisResult);
     expect(missing).toMatchObject({
       code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("use different address coordinates"),
+      },
       details: { operation: "xrefs", issues: [{ path: ["address"] }] },
     });
+    expect(missing).not.toHaveProperty("recovery");
     expect(JSON.stringify(missing)).toContain("missing_symbol");
     expect(provider.closed()).toBe(2);
   });
@@ -228,7 +252,13 @@ describe("direct CLI cross-reference name resolution", () => {
         address: "ambiguous",
       },
     ).then(projectCliAnalysisResult);
-    expect(result).toMatchObject({ code: "invalid_request" });
+    expect(result).toMatchObject({
+      code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("Select an exact address"),
+      },
+    });
+    expect(result).not.toHaveProperty("recovery");
     expect(JSON.stringify(result)).toContain("0x1000");
     expect(JSON.stringify(result)).toContain("0x2000");
     expect(provider.closed()).toBe(1);

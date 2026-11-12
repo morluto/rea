@@ -165,7 +165,9 @@ try {
       scenario.value.steps.some((step) => step.outcome !== "completed") ||
       !scenario.value.steps
         .at(-1)
-        ?.after?.nodes.some((node) => node.title === "REA fixture incremented")
+        ?.after?.nodes.some(
+          (node) => node.title === "REA fixture incremented 1",
+        )
     )
       throw new Error(
         `Source-owned AX scenario failed: ${JSON.stringify(scenario.value.steps.map(({ outcome, reason }) => ({ outcome, reason })))}`,
@@ -195,7 +197,12 @@ try {
       evidence.normalized_result?.steps?.some(
         (step) => step.outcome !== "completed",
       ) ||
-      evidence.normalized_result?.steps?.length !== 2
+      evidence.normalized_result?.steps?.length !== 2 ||
+      !evidence.normalized_result?.steps
+        ?.at(-1)
+        ?.after?.nodes.some(
+          (node) => node.title === "REA fixture incremented 2",
+        )
     )
       throw new Error(
         `Native UI CLI did not preserve the selected scenario: ${JSON.stringify(evidence.error ?? evidence.normalized_result?.steps?.map(({ outcome, reason }) => ({ outcome, reason })))}`,
@@ -232,7 +239,7 @@ try {
         !captured.steps
           .at(-1)
           ?.after?.nodes.some(
-            (node) => node.title === "REA fixture incremented",
+            (node) => node.title === "REA fixture incremented 3",
           )
       )
         throw new Error("MCP did not observe the selected fixture's AX action");
@@ -245,7 +252,13 @@ try {
     scope,
     { environment: process.env },
   );
-  if (mismatch.ok || !mismatch.error.message.includes("target-mismatch"))
+  // A selection failure carries its helper code in the issue, not in its message.
+  if (
+    mismatch.ok ||
+    !mismatch.error.issues?.some(({ message }) =>
+      message.startsWith("target-mismatch:"),
+    )
+  )
     throw new Error("Real helper did not reject changed target bytes");
   report = {
     ok: true,
