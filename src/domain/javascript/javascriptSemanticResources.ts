@@ -1013,6 +1013,19 @@ const rejectsPortMember = (
       ? false
       : !usablePortText(cooked);
   }
+  // A unary operator over a BigInt or over `undefined` is still not a port. Measured on Node
+  // 24.22.1, `net.connect({port: -1n})` and `net.connect({port: ~1n})` throw
+  // ERR_INVALID_ARG_TYPE, and `net.connect({port: +undefined})` throws ERR_SOCKET_BAD_PORT.
+  if (
+    t.isUnaryExpression(written) &&
+    (t.isBigIntLiteral(unwrapJavaScriptExpression(written.argument).node) ||
+      isUnmodifiedGlobalReference(
+        unwrapJavaScriptExpression(written.argument).node,
+        context.state,
+        "undefined",
+      ))
+  )
+    return true;
   if (rejectsNonScalarPort(written)) return true;
   // A nullish member leaves Node without a port, which it reports rather than ignoring.
   // Measured on Node 24.22.1, `tls.connect({port: undefined})` and `net.connect({port: null})`
