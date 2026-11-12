@@ -37,7 +37,11 @@ it.skipIf(process.platform === "win32")(
           partialPath: partial,
           workspace,
         }),
-      ).rejects.toMatchObject({ reason: "timeout" });
+      ).rejects.toMatchObject({
+        _tag: "AnalysisOutputError",
+        operation: "setup",
+        diagnostics: { command_failure: "timeout" },
+      });
       const pid = Number(await readFile(pidFile, "utf8"));
       expect(Number.isInteger(pid)).toBe(true);
       expect(() => process.kill(pid, 0)).toThrow();

@@ -241,8 +241,7 @@ if (tier === "reused") {
         selected.website ||= matchesAny(file, CI_LANES.website.paths);
         // Authored docs copied into a shipped artifact also own package checks.
         const packaged =
-          file.startsWith("docs/") &&
-          matchesAny(file, CI_LANES.package.paths);
+          file.startsWith("docs/") && matchesAny(file, CI_LANES.package.paths);
         selected.package ||= packaged;
         selected.code ||= packaged;
         continue;

@@ -129,7 +129,7 @@ export const readClientConfigurationFiles = async (
     if (document.value !== undefined) {
       const environment = clientRegistrationEnvironment(
         document.value,
-        client.name,
+        client,
         path === client.configPath ? writeOverrides : undefined,
         "fragment",
         platform,
@@ -148,7 +148,7 @@ export const readClientConfigurationFiles = async (
   }
   const environment = clientRegistrationEnvironment(
     effectiveClientConfiguration(documents, undefined, platform),
-    client.name,
+    client,
     writeOverrides,
     "effective",
     platform,

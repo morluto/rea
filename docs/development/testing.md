@@ -407,6 +407,10 @@ relying on the new scope. While the variable is unset, the existing default
 setup continues scanning. Adding the configuration file alone does not change
 default setup in this user-owned repository.
 
+Pull-request scans are cancelled when superseded. Active scans on `main` finish
+so frequent pushes cannot prevent a complete baseline from being uploaded.
+Cancelled runs skip the SARIF artifact upload when no report was produced.
+
 Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
 jobs run one at a time. Complete SARIF reports are retained for seven days.
 For a scope comparison, use the same source SHA, CodeQL bundle, default query
@@ -738,6 +742,16 @@ materialized source. Exercise descriptor close failure and retry before output
 publication.
 Use explicit abort reasons and assert their identity at admission and after
 provider completion, alongside retained observations and cleanup state.
+Include a physical I/O failure reused as the abort reason and genuine
+cancellation whose reason is already a typed error; neither error names nor
+value equality establishes origin. Assert that cleanup capabilities carried by
+that opaque reason are neither adopted nor released. Verify an owning command's timeout or
+refusal policy when preparation records cancellation but its caller is still
+active. Parallel inspection failures must retain completed observations and
+mixed physical/cancelled request facts after all peers settle, including
+multiple failed closes and partial cleanup retry. For input copying, hold an
+admitted read or write in flight before cancelling; descriptor close and
+workspace retirement must await its settlement.
 
 Electron fuse regressions cover actual descriptor close denial and retry through
 the built CLI, same-connection MCP recovery, mixed descriptor outcomes, and

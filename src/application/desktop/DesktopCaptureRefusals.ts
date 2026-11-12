@@ -24,6 +24,7 @@ import type { LinuxApplicationRefusal } from "../../desktop/LinuxApplicationInve
 import { resolveProgram } from "../../desktop/ProgramLookup.js";
 import type { ObservedWindow } from "../../desktop/X11WindowObserver.js";
 import type { OutputRefusal } from "./DesktopCaptureOutput.js";
+import { processInspectionCancellationError } from "../../providers/OwnedCommandCleanup.js";
 
 export const DESKTOP_OPERATION = "capture_desktop_application";
 
@@ -213,7 +214,13 @@ export const desktopOperationFailure = (
   label: string,
 ): AnalysisError => {
   let failure: AnalysisError;
+  const inspectionCancellation = processInspectionCancellationError(
+    cause,
+    operation,
+  );
   if (cause instanceof AnalysisError) failure = cause;
+  else if (inspectionCancellation !== undefined)
+    failure = inspectionCancellation;
   else if (cause instanceof RetainedRegularFileCleanupFailure) {
     const cancellation = regularFileCancellation(cause);
     const primary =
