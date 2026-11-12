@@ -391,6 +391,86 @@ const SHA256_ALG = derSeq(
 const contentInfo = (signedData: Buffer) =>
   derSeq(SIGNED_DATA_OID, der(0xa0, signedData));
 
+it.each([
+  "certificateSignature",
+  "subjectPublicKey",
+  "digest",
+  "signerDigest",
+  "signerSignature",
+] as const)("rejects extra AlgorithmIdentifier fields in %s", (target) => {
+  const malformed = derSeq(
+    Buffer.from([0x06, 2, 0x2a, 3]),
+    der(0x05, Buffer.alloc(0)),
+    der(0x05, Buffer.alloc(0)),
+  );
+  const payload = pkcs7SignedDataFixture(
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    {},
+    { [target]: malformed },
+  );
+  let failure: unknown;
+  try {
+    parse(peCertificateFixture(false, payload));
+  } catch (cause: unknown) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "format" });
+});
+
+it("preserves digest identifiers with absent parameters", () => {
+  const payload = pkcs7SignedDataFixture(
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    {},
+    { digest: SHA256_ALG, signerDigest: SHA256_ALG },
+  );
+  const report = parse(peCertificateFixture(true, payload));
+  expect(report.entries[0]?.pkcs7?.digest_algorithm_oids).toEqual([
+    "2.16.840.1.101.3.4.2.1",
+  ]);
+  expect(report.coverage.status).toBe("complete");
+});
+
+it.each(["null", "constructed"] as const)(
+  "preserves one opaque %s parameter in generic algorithm identifiers",
+  (kind) => {
+    const parameter =
+      kind === "null"
+        ? der(0x05, Buffer.alloc(0))
+        : derSeq(derInt(1), derInt(2));
+    const identifier = derSeq(Buffer.from([0x06, 2, 0x2a, 3]), parameter);
+    const payload = pkcs7SignedDataFixture(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {},
+      {
+        certificateSignature: identifier,
+        subjectPublicKey: identifier,
+        digest: identifier,
+        signerDigest: identifier,
+        signerSignature: identifier,
+      },
+    );
+    const report = parse(peCertificateFixture(false, payload));
+    expect(report.coverage.status).toBe("complete");
+    expect(report.entries[0]?.pkcs7).toMatchObject({
+      digest_algorithm_oids: ["1.2.3"],
+      certificates: [{ signature_algorithm_oid: "1.2.3" }],
+      signers: [
+        { digest_algorithm_oid: "1.2.3", signature_algorithm_oid: "1.2.3" },
+      ],
+    });
+  },
+);
+
 it("rejects extra ContentInfo and signedData wrapper values", () => {
   const valid = pkcs7SignedDataFixture();
   const root = readAsn1(valid);

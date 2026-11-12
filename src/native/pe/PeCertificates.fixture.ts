@@ -69,17 +69,30 @@ export const pkcs7SignedDataFixture = (
   signature = octet(Buffer.from("sig")),
   unsignedAttributes?: readonly (readonly number[])[],
   names: Partial<Record<"issuer" | "subject" | "signerIssuer", Buffer>> = {},
+  algorithms: Partial<
+    Record<
+      | "certificateSignature"
+      | "subjectPublicKey"
+      | "digest"
+      | "signerDigest"
+      | "signerSignature",
+      Buffer
+    >
+  > = {},
 ): Buffer => {
   const serial = Buffer.from([0x11, 0x22, 0x33, 0x44]);
   const subject = name(commonName, organization);
   const tbs = seq(
     context(0, integer(2)),
     integer(serial),
-    algorithm(SHA256_RSA),
+    algorithms.certificateSignature ?? algorithm(SHA256_RSA),
     names.issuer ?? subject,
     seq(utc("250101000000Z"), utc("260101000000Z")),
     names.subject ?? subject,
-    seq(algorithm(RSA), bitString(Buffer.from("pubkey"))),
+    seq(
+      algorithms.subjectPublicKey ?? algorithm(RSA),
+      bitString(Buffer.from("pubkey")),
+    ),
     context(
       3,
       seq(seq(oid([2, 5, 29, 14]), octet(Buffer.from([0x04, 0x01, 0xaa])))),
@@ -87,14 +100,14 @@ export const pkcs7SignedDataFixture = (
   );
   const certificate = seq(
     tbs,
-    algorithm(SHA256_RSA),
+    algorithms.certificateSignature ?? algorithm(SHA256_RSA),
     bitString(Buffer.from("signature")),
   );
   const signer = seq(
     integer(1),
     seq(names.signerIssuer ?? subject, integer(serial)),
-    algorithm(SHA256),
-    algorithm(SHA256_RSA),
+    algorithms.signerDigest ?? algorithm(SHA256),
+    algorithms.signerSignature ?? algorithm(SHA256_RSA),
     signature,
     ...(unsignedAttributes === undefined
       ? []
@@ -111,7 +124,7 @@ export const pkcs7SignedDataFixture = (
   );
   const signedData = seq(
     integer(1),
-    set(algorithm(SHA256)),
+    set(algorithms.digest ?? algorithm(SHA256)),
     seq(DATA),
     context(0, certificate),
     set(signer),
