@@ -215,7 +215,10 @@ Resolution follows dyld:
   image that loaded it, up to the process root.
 - Dependencies load dependents-first in load-command order, and each image
   loads once per process. A later @rpath request whose install name matches an
-  already loaded image reuses it.
+  already loaded image reuses it. Loading an image and expanding its dependencies
+  are separate: an already loaded sibling can first be expanded through another
+  dependency, inheriting that traversal's rpath stack. Cycles do not expand an
+  image twice, and lazy edges do not establish a launch-time traversal chain.
 - Symlinks such as `Versions/Current` are followed inside the analyzed root.
   An escape through `..` or an absolute link is `escapes-target`.
 - Dyld path components are POSIX names. On Windows hosts, link text uses `\`

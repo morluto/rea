@@ -271,6 +271,104 @@ cliTest(
   },
 );
 
+for (const dependency of ["eager", "lazy", "none"]) {
+  cliTest(
+    `uses the first expansion chain for a loaded sibling (${dependency} nested dependency)`,
+    async ({ cli }) => {
+      const nested = dependency === "eager";
+      const app = await createTestTempDirectory("rea-dyld-sibling-chain-");
+      const root = "App";
+      await writeFiles(app, {
+        [root]: machoImage({
+          commands: [
+            buildVersionCommand(1),
+            rpathCommand("@executable_path/fallback"),
+            dylibCommand(LC.LOAD_DYLIB, "@loader_path/A.dylib"),
+            dylibCommand(LC.LOAD_DYLIB, "@loader_path/B.dylib"),
+          ],
+        }),
+        "A.dylib": machoImage({
+          fileType: FILE_TYPE.dylib,
+          commands: [
+            buildVersionCommand(1),
+            rpathCommand("@loader_path/private"),
+            ...(dependency === "none"
+              ? []
+              : [
+                  dylibCommand(
+                    nested ? LC.LOAD_DYLIB : LC.LAZY_LOAD_DYLIB,
+                    "@loader_path/B.dylib",
+                  ),
+                ]),
+            dylibCommand(LC.LOAD_DYLIB, "@loader_path/C.dylib"),
+          ],
+        }),
+        "B.dylib": machoImage({
+          fileType: FILE_TYPE.dylib,
+          commands: [
+            buildVersionCommand(1),
+            dylibCommand(LC.LOAD_DYLIB, "@rpath/leaf.dylib"),
+            // The cycle must not expand B's dependencies a second time.
+            dylibCommand(LC.LOAD_DYLIB, "@loader_path/A.dylib"),
+          ],
+        }),
+        "private/leaf.dylib": machoImage({
+          fileType: FILE_TYPE.dylib,
+          commands: [buildVersionCommand(1)],
+        }),
+        "fallback/leaf.dylib": machoImage({
+          fileType: FILE_TYPE.dylib,
+          commands: [buildVersionCommand(1)],
+        }),
+        "C.dylib": machoImage({
+          fileType: FILE_TYPE.dylib,
+          commands: [
+            buildVersionCommand(1),
+            dylibCommand(LC.LOAD_DYLIB, "@loader_path/fallback/other.dylib"),
+          ],
+        }),
+        "fallback/other.dylib": machoImage({
+          fileType: FILE_TYPE.dylib,
+          commands: [buildVersionCommand(1)],
+        }),
+      });
+      const output = await runFileCli(cli, {
+        arguments: ["trace-dylib-resolution", join(app, root), "--json"],
+        environment: ENVIRONMENT,
+      });
+      expect(output.exitCode, JSON.stringify(output.json)).toBe(0);
+      const trace = dylibResolutionResultSchema.parse(
+        parseEvidence(output.json).normalized_result,
+      );
+      expect(trace.edges.map(({ loader }) => loader)).toEqual([
+        root,
+        root,
+        ...(dependency === "none" ? [] : ["A.dylib"]),
+        "A.dylib",
+        ...(nested
+          ? ["B.dylib", "B.dylib", "C.dylib"]
+          : ["C.dylib", "B.dylib", "B.dylib"]),
+      ]);
+      const leaf = trace.edges.find(
+        (edge) => edge.install_name === "@rpath/leaf.dylib",
+      );
+      expect(leaf).toMatchObject({
+        loader: "B.dylib",
+        via: nested ? [root, "A.dylib", "B.dylib"] : [root, "B.dylib"],
+        resolution: {
+          status: "resolved",
+          image: nested ? "private/leaf.dylib" : "fallback/leaf.dylib",
+        },
+        candidates: [
+          expect.objectContaining({
+            rpath_owner: nested ? "A.dylib" : root,
+          }),
+        ],
+      });
+    },
+  );
+}
+
 describe("trace-dylib-resolution CLI", () => {
   cliTest("traces every executable root of an app bundle", async ({ cli }) => {
     const app = await fixtureApp();
