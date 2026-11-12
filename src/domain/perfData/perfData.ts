@@ -98,7 +98,8 @@ export const perfDataSchema = z.strictObject({
    * caller happened to expect.
    */
   file_header: z.strictObject({
-    magic: z.literal("PERFILE2"),
+    /** The layout signature the file states; null when the file is not a perf recording. */
+    magic: z.literal("PERFILE2").nullable(),
     byte_order: z.enum(["little-endian", "big-endian"]).nullable(),
     /** Header extent the file states in its own `size` field. */
     header_bytes: z.int().nonnegative().nullable(),

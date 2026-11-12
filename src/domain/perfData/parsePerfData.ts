@@ -367,7 +367,9 @@ const noHeaderRecording = (
   format: "perf-data",
   artifact,
   file_header: {
-    magic: "PERFILE2",
+    // A file that failed the magic check stated no layout, so reporting the
+    // expected magic here would pair a rejection with a value never observed.
+    magic: null,
     byte_order: null,
     header_bytes: null,
     attribute_bytes: null,

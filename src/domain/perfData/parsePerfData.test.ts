@@ -126,7 +126,7 @@ describe("parsePerfData rejection diagnostics", () => {
     // The spec requires a null header for a non-perf file: nothing about the
     // byte order, extents or feature bitmap was observed, so none is published.
     expect(archive.file_header).toEqual({
-      magic: "PERFILE2",
+      magic: null,
       byte_order: null,
       header_bytes: null,
       attribute_bytes: null,
