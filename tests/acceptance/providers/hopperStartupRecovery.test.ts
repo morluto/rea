@@ -1,3 +1,7 @@
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../../scripts/lib/verifier-cleanup.mjs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { access, copyFile, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -37,7 +41,7 @@ const closeWithLateBridge = async (
     { onprogress: () => closeStarted() },
   );
   let closeAcknowledged = false;
-  try {
+  return withVerifierCleanup(async () => {
     await awaitAcknowledgement(started, closing, "late bridge close progress");
     closeAcknowledged = true;
     // A verified close may remove the socket before the fixture can poll it.
@@ -45,10 +49,14 @@ const closeWithLateBridge = async (
     const owned = startBridge();
     expect((await closing).isError).not.toBe(true);
     return owned;
-  } finally {
-    if (!closeAcknowledged) await mcp.close();
-    await Promise.allSettled([closing]);
-  }
+  }, [
+    async () => {
+      if (!closeAcknowledged) await mcp.close();
+    },
+    async () => {
+      await Promise.allSettled([closing]);
+    },
+  ]);
 };
 
 test.for(["target", "loader"] as const)(
@@ -86,8 +94,10 @@ test.for(["target", "loader"] as const)(
     });
     const mcp = new Client({ name: "hopper-literal-boundary", version: "1" });
     onTestFinished(async () => {
-      await mcp.close();
-      await transport.close();
+      await closeVerifierResources([
+        () => mcp.close(),
+        () => transport.close(),
+      ]);
     });
     await mcp.connect(transport);
     const call = (name: string, arguments_: Record<string, string> = {}) =>
@@ -180,8 +190,7 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
     stderr += chunk.toString();
   });
   onTestFinished(async () => {
-    await mcp.close();
-    await transport.close();
+    await closeVerifierResources([() => mcp.close(), () => transport.close()]);
   });
   await mcp.connect(transport);
   const call = (name: string, arguments_: Record<string, string> = {}) =>
@@ -266,9 +275,12 @@ test.for(["handoff", "not-found"] as const)(
     const children: ChildProcess[] = [];
     let runtime: string | undefined;
     onTestFinished(async () => {
-      await Promise.all(children.map(stopChild));
-      await mcp.close();
-      await transport.close();
+      await closeVerifierResources([
+        ...children.map((child) => () => stopChild(child)),
+        () => mcp.close(),
+        () => transport.close(),
+      ]);
+      // The parent remains owned until every child and transport closed.
       if (runtime !== undefined)
         await rm(runtime, { recursive: true, force: true });
     });

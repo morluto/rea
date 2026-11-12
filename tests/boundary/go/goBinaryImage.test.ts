@@ -66,7 +66,9 @@ it("preserves exact Mach-O protection masks for Go fallback selection", () => {
 it("bounds cumulative header searches across overlapping ELF file spans", () => {
   const bytes = createGoOverlappingElfFixture();
   expect(() => readGoBinaryImage(bytes)).toThrow(BinaryResourceFailure);
-  expect(() => readGoBinaryImage(bytes)).toThrow(/256 MiB.*search/);
+  expect(() => readGoBinaryImage(bytes)).toThrow(
+    /max_header_search_bytes=268435456/,
+  );
 });
 
 it("does not charge duplicate ELF search spans repeatedly", () => {
@@ -156,7 +158,10 @@ it("does not skip malformed earlier metadata to report a later valid record", ()
   );
   fixture.bytes[512 + 15] = 0xff;
   expect(() => readGoBinaryImage(fixture.bytes)).toThrow(
-    /unsupported format bit/,
+    expect.objectContaining({
+      message: expect.stringMatching(/unsupported format bit/u),
+      undecodedContent: true,
+    }),
   );
 });
 

@@ -20,8 +20,12 @@ import { functionInstructionInputSchema } from "./functionInstructionContract.js
 import { HOPPER_MEMORY_TOOL_DEFINITIONS } from "./hopperMemoryContracts.js";
 import { nativeSearchInput } from "../domain/native/nativeSearch.js";
 
-const hopperRegexDeadline =
-  "Regex dialect depends on the provider: Ghidra uses Java Pattern; Kuna, IDA and Hopper use ECMAScript Unicode. See binary_session for selected-provider limits. Hopper regex mode uses a cancellable worker. The matching deadline is REA_REGEX_MATCHING_DEADLINE_MS (a positive decimal integer of milliseconds from 1 to 2147483647, default 5000). Unset keeps the default. A deadline failure names the effective milliseconds, source (default or setting), the default, and the maximum, and leaves the API usable. The worker old-generation request is REA_REGEX_WORKER_HEAP_REQUEST_MIB (a decimal integer of mebibytes from 7 to 16384, default 128). Unset keeps the default. A positive Node --max-old-space-size, including NODE_OPTIONS, overrides that request and is not limited by the setting's floor or maximum. A heap failure names the effective request, its source (default or setting), the default, the floor, and the maximum.";
+export const decompileAnalysisSelection = z
+  .enum(["independent_fresh"])
+  .optional()
+  .describe(
+    "Request a new independent decompile, bypassing project and snapshot results. Use only when the routed provider's procedure_pseudo_code capability declares independent_decompile; otherwise the request is refused. This may use different analysis context.",
+  );
 
 const official = <
   Name extends keyof typeof officialOutputSchemas,
@@ -50,12 +54,12 @@ const official = <
 export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "annotate_native_function",
-    "Atomically update one function name and/or entry comments, read them back, and return a refreshed complete function dossier. Ghidra changes its ephemeral session analysis database only; original executable bytes remain unchanged. Empty comment text clears that comment. Edits remain available to subsequent MCP calls until close; CLI returns the updated dossier before discarding its session. Invalid edits roll back the entire operation. Windows P0 and providers without this capability are unsupported.",
+    "Atomically rename one function and/or change entry comments, verify readback, and return its refreshed complete dossier. Ghidra resolves interior addresses to function entries; use procedure_address to select the entry explicitly. Edits change analysis metadata, never executable bytes; empty comment text clears it. Invalid edits roll back together. Ghidra checkpoint mode saves on normal close; ephemeral mode discards edits, including in CLI cleanup. Check binary_session for the mode. Windows P0 and providers without this capability are unsupported.",
     nativeFunctionAnnotationsInputSchema,
   ),
   official(
     "inspect_native_load_image",
-    "Inspect the provider's measured source digests, memory mappings, relocations, entry points and entry register context. Ghidra relocation symbols are provider observations, not runtime binding proof; older Evidence may not record them. Independent snapshot verification supports DOS MZ, explicitly selected COM, raw binaries and GameCube DOL; other formats retain their observations with unsupported verification. Overlay and uninitialized coverage remain explicit. Select detail summary for verification state and counts, retaining complete Evidence for inspect_analysis_view kind native-load-image: collection source_files, mappings, relocations, entry_points, entry_context, checks or sections, with indices, fields and offset/limit paging. Relocation bytes and check expected/observed payloads require explicit fields; defaults keep metadata. Null collections are unrecorded or inapplicable. Does not execute or modify the target.",
+    "Inspect provider source digests, loaded mappings, relocations, entries and register context without executing or changing the target. Independent snapshot checks support DOS MZ, selected COM, raw binaries and GameCube DOL; other formats retain observations with unsupported verification. Relocation symbols do not prove runtime binding. detail summary retains complete Evidence for inspect_analysis_view kind native-load-image, collection source_files/mappings/relocations/entry_points/entry_context/checks/sections. Null collections are unrecorded/inapplicable; payload bytes require explicit fields. Overlay and uninitialized coverage remain explicit.",
     z.strictObject({ detail: analysisDetailSchema }),
     { evidenceParameters: "omit-detail" },
   ),
@@ -66,7 +70,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "inspect_native_instruction",
-    "Inspect one exact code or data address: decoded bytes, mnemonic, ordered operand tokens, flow, outgoing instruction references and typed incoming references where available. Incoming references preserve source, access kind, operand index and analysis provenance even at data addresses; they do not prove runtime access. Page retained references with inspect_analysis_view kind native-instruction-references; null coverage means the selected collection was unavailable or not recorded. Memory addressing decomposition is unavailable when the provider supplies only tokens. Ghidra reports in-memory addresses without a listed instruction or defined data as not-in-listing, without attempting a decode.",
+    "Inspect bytes, mnemonic, operand tokens, flow and typed incoming/outgoing references at one code/data address. Ghidra preserves the query and separately reports a containing listed instruction/data object; unlisted memory is not decoded. References do not establish runtime access, and token-only operands do not establish memory decomposition. Use inspect_native_data_type at a data object's start for layout, without inferring a selected field. Retained references use inspect_analysis_view kind native-instruction-references; null coverage is unavailable or unrecorded.",
     nativeInstructionInputSchema,
   ),
   official(
@@ -81,7 +85,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "comment",
-    "Read the regular analysis comment at an address, defaulting to the current cursor. This is read-only and returns null when no comment exists; use set_comment to persist a finding.",
+    "Read the regular analysis comment at an explicit address, or the current cursor where supported. Returns null when absent; use set_comment to write one.",
     z.object({ document, address: optionalAddress }),
   ),
   official(
@@ -106,7 +110,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "inline_comment",
-    "Read the inline instruction comment at an address, defaulting to the current cursor. Returns null when absent; use set_inline_comment to write one.",
+    "Read the inline instruction comment at an explicit address, or the current cursor where supported. Returns null when absent; use set_inline_comment to write one.",
     z.object({ document, address: optionalAddress }),
   ),
   official(
@@ -198,17 +202,24 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "procedure_references",
-    "Return every raw incoming or outgoing reference edge for one procedure. Endpoint procedures are resolved only from provider containment. Ghidra preserves detailed reference flags. Hopper preserves native CallReference classifications and exact endpoints while leaving unavailable detailed flags explicit.",
+    "Return incoming or outgoing reference edges for one procedure. Ghidra preserves detailed reference flags; Hopper preserves native CallReference classifications and exact endpoints. Select detail summary to retain complete Evidence and page references or unresolved calls using inspect_analysis_view kind native-procedure-references. Page coverage describes retained observations, not complete discovery or proof the target ran.",
     z.object({
       procedure,
       direction: z.enum(["incoming", "outgoing"]).default("outgoing"),
       document,
+      detail: analysisDetailSchema,
     }),
+    { evidenceParameters: "omit-detail" },
   ),
   official(
     "procedure_pseudo_code",
-    "Decompile one analyzed procedure by symbol name or provider-normalized address. Ghidra also accepts file-offset:0x... selectors and falls back to a unique source-file mapping when a 0x-prefixed number resolves to no procedure; existing analysis addresses take precedence and ambiguous mappings fail explicitly. Returns provider-specific pseudocode, never original source or cross-provider text equivalence, and may return null; request procedure_assembly when instruction precision matters. Ghidra no-return assumptions may cut the analyzed body; Evidence limitations report observed terminal calls and available callee identities. Select detail summary to retain complete Evidence and receive text availability and counts; inspect_analysis_view summary or native/pseudocode pages read the original observation without decompiling again. Complete remains the default.",
-    z.object({ procedure, document, detail: analysisDetailSchema }),
+    "Decompile one analyzed procedure by symbol or provider-normalized address. Returns provider-specific pseudocode or null, never original source; raw_result.pseudocode_absence distinguishes reported provider-failure from not-in-export, otherwise the cause is unknown. Use procedure_assembly for instruction precision. detail summary retains text for inspect_analysis_view native/pseudocode pages without another decompile; complete is default. analysis: independent_fresh requests a separate attempt only when binary_session advertises independent_decompile; it may use different analysis context. Ghidra accepts file-offset:0x... or unique file offsets when a 0x selector resolves to no procedure; existing analysis addresses take precedence, and space-qualified addresses avoid that fallback. Its terminal-call assumptions may truncate the analyzed body, as limitations report.",
+    z.object({
+      procedure,
+      document,
+      analysis: decompileAnalysisSelection,
+      detail: analysisDetailSchema,
+    }),
     { evidenceParameters: "omit-detail" },
   ),
   official(
@@ -219,13 +230,13 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "search_procedures",
-    `Search every analyzed procedure name, including secondary names exact lookup accepts, using literal matching by default or regex when requested. Each procedure appears once under its primary name; matched_aliases lists matching secondary names. Results are deterministic and complete. ${hopperRegexDeadline} Select detail summary for counts and retained native-inventory pages; complete remains the default.`,
+    "Find analyzed procedures by literal name (default) or regex, including accepted secondary names. Returns deterministic provider-inventory matches under primary names with matched_aliases and available thunk/external metadata. For Ghidra case-insensitive literal searches, raw_result retains unfiltered candidates; normalized_result holds matches. detail summary retains native-inventory pages. Regex uses Java Pattern in Ghidra and ECMAScript Unicode in Kuna, IDA and Hopper; binary_session and errors report effective limits and recovery.",
     z.object({ ...nativeSearchInput, detail: analysisDetailSchema }),
     { evidenceParameters: "omit-detail" },
   ),
   official(
     "search_strings",
-    `Search every provider-reported string object or candidate using literal matching by default or regex when requested. Results are deterministic and complete over that provider inventory, not every text sequence in artifact bytes. Kuna scans mapped sequences of at least five characters, including unterminated fragments, without computing references. Ghidra may omit packed or undefined literals, including Rust strings; an empty result does not prove text is absent. For known encoded bytes, Ghidra search_bytes can find byte matches; a hit does not establish a string or use. If an address is known, xrefs can look for references; read_bytes can inspect bytes where supported (not available with Kuna). Hopper retains typed byte decoding, native display, and explicit decoding unknowns. Adjacent long-literal fragments match independently. ${hopperRegexDeadline} Select detail summary for counts and retained native-inventory pages; complete remains the default.`,
+    "Find provider-reported strings by literal text (default) or regex. Complete results cover that inventory, not all artifact text; packed/undefined strings or independently matched fragments may be missing. Ghidra search_bytes finds known encoded bytes without establishing string identity/use; xrefs inspects references at a known address. Kuna scans mapped sequences of at least five characters without references or read_bytes. Hopper preserves decoded typed objects, display text and decoding unknowns. For Ghidra case-insensitive literal searches, raw_result holds candidates; normalized_result holds matches. detail summary retains native-inventory pages. Regex uses Java Pattern in Ghidra and ECMAScript Unicode elsewhere; binary_session/errors report limits.",
     z.object({ ...nativeSearchInput, detail: analysisDetailSchema }),
     { evidenceParameters: "omit-detail" },
   ),
@@ -261,7 +272,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "xrefs",
-    "Return analyzed references to a code or data address. Hopper may default to its current cursor; headless providers such as Ghidra require an explicit address. Use to connect strings, globals, selectors, and functions; bare addresses are untyped and indirect references may be incomplete. Page a retained result with inspect_analysis_view and native-observation; use native-context for source caveats. Use inspect_native_instruction at the target address for typed incoming references where supported.",
+    "Return analyzed references to a code or data address. Hopper may default to its current cursor; headless providers such as Ghidra require an explicit address. Kuna also accepts names in its own inventory, including data names; an unlisted name may still exist in the target. Use to connect strings, globals, selectors, and functions; bare addresses are untyped and indirect references may be incomplete. Page a retained result with inspect_analysis_view and native-observation; use native-context for source caveats. Use inspect_native_instruction at the target address for typed incoming references where supported.",
     z.object({ document, address: optionalAddress }),
   ),
 ] as const satisfies readonly ToolContract[];

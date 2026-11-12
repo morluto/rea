@@ -138,6 +138,12 @@
     "dir": "ltr"
   },
   {
+    "code": "bg",
+    "name": "Български",
+    "readme": "docs/readme/README_bg.md",
+    "dir": "ltr"
+  },
+  {
     "code": "bn",
     "name": "বাংলা",
     "readme": "docs/readme/README_bn.md",

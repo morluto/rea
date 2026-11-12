@@ -6,9 +6,12 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import {
+  cliDecimalField,
   directAnalysisOptionsFromCli,
   nativeOpenOptionFields,
+  snapshotSelectionOption,
 } from "./options.js";
+import { decompileDirectoryInputSchema } from "../contracts/decompileDirectory.js";
 import type { CliInstance } from "./types.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -24,7 +27,7 @@ export const registerDecompileDirectoryCommand = (
     description:
       "Write every function's pseudocode into a directory and return a manifest",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: localPathStringSchema.describe("App or program path"),
     }),
     options: z.object({
       output: localPathStringSchema.describe(
@@ -42,6 +45,7 @@ export const registerDecompileDirectoryCommand = (
         .describe(
           "Continue a matching export. Never overwrites a function file.",
         ),
+      retryFailed: decompileDirectoryInputSchema.shape.retry_failed,
       name: z
         .string()
         .min(1)
@@ -64,21 +68,14 @@ export const registerDecompileDirectoryCommand = (
         .min(1)
         .optional()
         .describe("Inclusive upper bound, 0xoffset or space:0xoffset"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe(
-          "Maximum functions to attempt after skipping verified files and recorded external functions",
-        ),
-      snapshot: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "Load a local analysis snapshot. decompile-all does not update it.",
-        ),
+      limit: cliDecimalField(
+        decompileDirectoryInputSchema.shape.limit,
+      ).describe(
+        "Maximum functions to attempt after skipping verified files and recorded external functions",
+      ),
+      snapshot: snapshotSelectionOption.describe(
+        "Load a local analysis snapshot. decompile-all does not update it.",
+      ),
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
@@ -97,6 +94,7 @@ const decompileAllArguments = (options: {
   readonly output: string;
   readonly layout: "address" | "dwarf";
   readonly resume: boolean;
+  readonly retryFailed?: "independent_fresh" | undefined;
   readonly name?: string | undefined;
   readonly namespace?: string | undefined;
   readonly addressStart?: string | undefined;
@@ -106,6 +104,9 @@ const decompileAllArguments = (options: {
   output_directory: absoluteCallerPath(options.output),
   layout: options.layout,
   resume: options.resume,
+  ...(options.retryFailed === undefined
+    ? {}
+    : { retry_failed: options.retryFailed }),
   ...(options.name === undefined ? {} : { name: options.name }),
   ...(options.namespace === undefined ? {} : { namespace: options.namespace }),
   ...(options.addressStart === undefined

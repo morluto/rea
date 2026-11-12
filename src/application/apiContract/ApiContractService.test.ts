@@ -3,8 +3,13 @@ import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { apiContractSchema } from "../../domain/apiContract/apiContract.js";
+import {
+  API_CONTRACT_FACT_BYTES,
+  apiContractSchema,
+} from "../../domain/apiContract/apiContract.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { parseEvidence } from "../../domain/evidence.js";
+import { projectAnalysisView } from "../../domain/analysisView/analysisView.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { inspectApiContractEvidence } from "./ApiContractService.js";
 import * as readOwner from "./ApiContractRead.js";
@@ -211,7 +216,6 @@ it("keeps native JSON source excerpts internal while preserving the failure caus
   const resources = new ArtifactResourceScope();
   try {
     const result = await inspectApiContractEvidence({ path }, resources);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a syntax refusal");
     expect(result.error.cause).toBeInstanceOf(SyntaxError);
     expect(JSON.stringify(result.error)).not.toContain("u:p@h");
@@ -257,7 +261,6 @@ it.each([
       });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(controller.signal.aborted).toBe(true);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected the parser failure");
       expect(result.error._tag).toBe(tag);
       expect(result.error.partialObservation).toEqual({
@@ -319,3 +322,159 @@ it("cancels a cooperative document traversal after the actual verified file read
     await resources.close();
   }
 });
+
+it.each(["between-paths", "after-projection"] as const)(
+  "preserves authenticated OpenAPI facts on cancellation %s",
+  async (stage) => {
+    const bytes = JSON.stringify({
+      openapi: "3.1.2",
+      info: { title: "Cancellation", version: "1" },
+      paths: { "/first": { get: {} }, "/second": { post: {} } },
+    });
+    const { path } = await inputFile(bytes);
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const realParse = parser.parseApiContractSteps;
+    try {
+      const baseline = await inspectApiContractEvidence({ path }, resources);
+      if (!baseline.ok) throw baseline.error;
+      const complete = apiContractSchema.parse(
+        baseline.value.normalized_result,
+      );
+      const scheduled = vi
+        .spyOn(parser, "parseApiContractSteps")
+        .mockImplementationOnce(function* (...args) {
+          const steps = realParse(...args);
+          if (stage === "between-paths") {
+            expect(steps.next().done).toBe(false);
+            expect(steps.next().done).toBe(false);
+            setImmediate(() => controller.abort(stage));
+            return yield* steps;
+          }
+          const result = yield* steps;
+          setImmediate(() => controller.abort(stage));
+          return result;
+        });
+      try {
+        const result = await inspectApiContractEvidence({ path }, resources, {
+          signal: controller.signal,
+        });
+        if (result.ok) throw new Error("Expected cancellation");
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(stage);
+        const evidence = parseEvidence(result.error.partialObservation);
+        const retained = apiContractSchema.parse(evidence.normalized_result);
+        expect(evidence.subject).toEqual(baseline.value.subject);
+        expect(evidence.parameters).toEqual(baseline.value.parameters);
+        expect(retained.artifact).toEqual(complete.artifact);
+        expect(retained.contract_id).toBe(complete.contract_id);
+        if (stage === "between-paths") {
+          expect(retained.operations).toEqual(complete.operations.slice(0, 1));
+          expect(retained.source_coverage.status).toBe("partial");
+          expect(evidence.evidence_id).not.toBe(baseline.value.evidence_id);
+          const page = projectAnalysisView(
+            {
+              evidenceId: evidence.evidence_id,
+              operation: evidence.operation,
+              predicateType: evidence.predicate_type,
+              normalizedResult: evidence.normalized_result,
+              limitations: evidence.limitations,
+            },
+            {
+              kind: "api-contract",
+              collection: "operations",
+              offset: 0,
+              limit: 1,
+            },
+          );
+          expect(page).toMatchObject({
+            ok: true,
+            value: {
+              parent_evidence_id: evidence.evidence_id,
+              items: [{ path: "/first", state: "declared" }],
+              coverage: { exhausted: true },
+              source_coverage: { status: "partial" },
+            },
+          });
+        } else {
+          expect(retained).toEqual(complete);
+          expect(evidence.evidence_id).toBe(baseline.value.evidence_id);
+        }
+      } finally {
+        scheduled.mockRestore();
+      }
+    } finally {
+      await resources.close();
+    }
+  },
+);
+
+it.each(["path-admission", "invalid-paths"] as const)(
+  "retains authenticated partial facts when %s exhausts the facts allowance",
+  async (stage) => {
+    const { path } = await inputFile("{}");
+    // Leave enough allowance for invalid-info, but not a second diagnostic.
+    const titleLength = Math.floor(
+      (API_CONTRACT_FACT_BYTES -
+        "3.0.4".length * 12 -
+        4096 -
+        path.length * 12 -
+        (1024 + "/info".length * 12) -
+        500) /
+        12,
+    );
+    const document =
+      stage === "invalid-paths"
+        ? {
+            openapi: "3.0.4",
+            info: { title: "a".repeat(titleLength) },
+            paths: null,
+          }
+        : {
+            openapi: "3.0.4",
+            info: { title: "Capacity", version: "1" },
+            paths: {
+              "/retained": { get: {} },
+              [`/${"a".repeat(Math.ceil(API_CONTRACT_FACT_BYTES / 16))}`]: {},
+            },
+          };
+    const bytes = JSON.stringify(document);
+    await writeFile(path, bytes);
+    const resources = new ArtifactResourceScope();
+    try {
+      const result = await inspectApiContractEvidence({ path }, resources);
+      if (result.ok) throw new Error("Expected a retained-facts refusal");
+      expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+      const evidence = parseEvidence(result.error.partialObservation);
+      const retained = apiContractSchema.parse(evidence.normalized_result);
+      expect(retained.artifact).toEqual({
+        path,
+        bytes: Buffer.byteLength(bytes),
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
+      expect(retained.source_coverage).toMatchObject({
+        status: "partial",
+        paths_state: stage === "invalid-paths" ? "malformed" : "object",
+        path_entries_examined: stage === "invalid-paths" ? 0 : 1,
+      });
+      if (stage === "invalid-paths") {
+        expect(retained.info).toEqual({
+          title: document.info.title,
+          version: null,
+        });
+        expect(retained.diagnostics.map((row) => row.code)).toEqual([
+          "invalid-info",
+        ]);
+        expect(retained.operations).toEqual([]);
+      } else {
+        expect(retained.operations.map((row) => row.path)).toEqual([
+          "/retained",
+        ]);
+        expect(retained.diagnostics).toEqual([]);
+      }
+      expect(await readFile(path, "utf8")).toBe(bytes);
+    } finally {
+      await resources.close();
+    }
+  },
+);

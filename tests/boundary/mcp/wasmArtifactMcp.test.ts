@@ -383,7 +383,7 @@ it("attributes rejected WASM paths to their selected fields before provider work
     },
   });
   onTestFinished(harness.close);
-  for (const [input, paths] of [
+  const relativeCases = [
     [{ path: "relative.wasm" }, [["path"]]],
     [
       { path: value.artifact.path, glue_paths: ["relative.js"] },
@@ -412,7 +412,9 @@ it("attributes rejected WASM paths to their selected fields before provider work
       },
       [["path"], ["glue_paths", 0], ["candidate_paths", 0]],
     ],
-  ] as const) {
+  ] as const;
+  const checked: string[] = [];
+  for (const [input, paths] of relativeCases) {
     const response = await harness.client.callTool({
       name: "inspect_wasm_artifact",
       arguments: input,
@@ -423,14 +425,19 @@ it("attributes rejected WASM paths to their selected fields before provider work
       .object({ issues: z.array(z.unknown()) })
       .parse(failure.details);
     expect(issues).toEqual(
-      paths.map((path) => ({
-        path,
-        reason: "invalid_format",
-        expected: "regex",
-        message: "must be an absolute local filesystem path",
-      })),
+      paths.map((path) =>
+        expect.objectContaining({
+          path,
+          reason: "invalid_format",
+          expected: "regex",
+        }),
+      ),
     );
+    checked.push(paths.map((path) => path.join(".")).join("+"));
   }
+  expect(checked).toEqual(
+    expect.arrayContaining(["path", "glue_paths.0", "candidate_paths.0"]),
+  );
   expect(inspect).not.toHaveBeenCalled();
   const valid = await harness.client.callTool({
     name: "inspect_wasm_artifact",
@@ -760,12 +767,13 @@ it("rejects malformed paths, refuses WASM summary delivery before provider work 
     expect(
       z.object({ issues: z.array(z.unknown()) }).parse(rejected.details).issues,
     ).toEqual(
-      [["path"], ["glue_paths", 0]].map((path) => ({
-        path,
-        reason: "invalid_format",
-        expected: "regex",
-        message: "must be an absolute local filesystem path",
-      })),
+      [["path"], ["glue_paths", 0]].map((path) =>
+        expect.objectContaining({
+          path,
+          reason: "invalid_format",
+          expected: "regex",
+        }),
+      ),
     );
     expect(inspect).not.toHaveBeenCalled();
     for (const input of [

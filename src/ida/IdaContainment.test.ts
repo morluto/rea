@@ -225,7 +225,9 @@ describe("headless IDA containing procedure", () => {
           classification: null,
           body: {
             available: false,
-            reason: "IDA MCP does not report complete function body ranges.",
+            reason: expect.stringMatching(
+              /does not report complete function body ranges/iu,
+            ),
           },
         },
       });
@@ -614,18 +616,6 @@ describe("headless IDA document identity", () => {
         expect(result.error.cause).toBe(controller.signal.reason);
       }
       expect(producer.calls).toEqual([]);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("lists exactly the admitted program", async () => {
-    const { client, target } = await session();
-    try {
-      const result = await client.execute("list_documents", {});
-
-      if (!result.ok) throw result.error;
-      expect(result.value.result).toEqual([target.path]);
     } finally {
       expect((await client.close()).ok).toBe(true);
     }

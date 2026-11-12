@@ -1,24 +1,37 @@
+import { processInspectionCleanupFailures } from "../../process/ProcessInspectionCleanup.js";
+import { samplingInspectionFailures } from "../../process/capture/ProcessSamplingObservation.js";
+import type { DesktopLibraryPolicyInput } from "../../domain/desktop/libraryPolicy.js";
 import { arch, hostname, userInfo } from "node:os";
-import { dirname } from "node:path";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  bindProcessInspectionCancellations,
+  retainProcessInspectionCleanup,
+} from "../../providers/OwnedCommandCleanup.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../../domain/analysisErrorProjection.js";
-import type {
-  DesktopApplicationCapture,
-  DesktopSession,
+import {
+  unretainedOpenedDirectories,
+  unretainedOpenedLimitation,
+} from "../../domain/desktop/appExportUnowned.js";
+import {
+  checkpointTaken,
+  type DesktopApplicationCapture,
+  type DesktopCaptureEvent,
+  type DesktopSession,
 } from "../../domain/desktop/desktopCapture.js";
-import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import {
+  DesktopSessionCleanupError,
   runDesktopSession,
   runningApplicationWindows,
   type SessionRequest,
 } from "../../desktop/DesktopApplicationSession.js";
 import { inspectLinuxApplication } from "../../desktop/LinuxApplicationInventory.js";
+import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
 import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import {
   discardFailedCapture,
@@ -26,11 +39,7 @@ import {
   projectFailure,
   publishedCaptureCleanup,
 } from "./DesktopCaptureFailure.js";
-import {
-  CaptureFile,
-  canonicalPath,
-  prepareOutputDirectory,
-} from "./DesktopCaptureOutput.js";
+import { CaptureFile, prepareOutputDirectory } from "./DesktopCaptureOutput.js";
 import {
   DESKTOP_OPERATION,
   DESKTOP_PROVIDER,
@@ -53,6 +62,7 @@ const POLL_INTERVAL_MS = 500;
 
 /** What the caller asked to capture, after CLI parsing. */
 export interface DesktopCaptureRequest {
+  readonly libraryPolicy?: DesktopLibraryPolicyInput;
   readonly desktopEntry: string | undefined;
   readonly executable: string | undefined;
   readonly arguments: readonly string[];
@@ -74,15 +84,17 @@ export interface DesktopCaptureHost {
   /** Directory relative executables and paths are resolved from. */
   readonly callerDirectory: string;
   readonly nextRequest: () => SessionRequest | undefined;
-  readonly report: (message: string) => Promise<void>;
+  /** Progress text, with the event a driver waits on when there is one. */
+  readonly report: (
+    message: string,
+    event?: DesktopCaptureEvent,
+  ) => Promise<void>;
 }
 
 /** Safe failure returned to the CLI adapter. */
 export interface DesktopCaptureErrorOutput extends AnalysisErrorProjection {
   readonly error: "Desktop capture failed";
 }
-
-const unique = (paths: readonly string[]) => [...new Set(paths)];
 
 /** The host's name and the user's, each left out when the system cannot say, as for a user with no passwd entry. */
 const hostIdentity = (): { hostname?: string; user?: string } => {
@@ -104,6 +116,7 @@ const limitationsFor = (
   recorder: CheckpointRecorder,
   facts: {
     readonly unretained: readonly string[];
+    readonly home: string;
     readonly broadArguments: readonly string[];
     readonly unreadableWindowSamples: number;
   },
@@ -150,10 +163,8 @@ const limitationsFor = (
     session.processes.some((process) => !process.started_by_capture),
     "An application window belonged to a process the capture did not start; that process was left running.",
   );
-  add(
-    facts.unretained.length > 0,
-    "The application held files open in directories whose starting content was not retained; pass them with --state-path to retain it.",
-  );
+  const unretained = unretainedOpenedLimitation(facts.unretained, facts.home);
+  if (unretained !== undefined) limitations.push(unretained);
   return limitations;
 };
 
@@ -171,6 +182,9 @@ const captureEvidence = (
       state_path_count: request.statePaths.length,
       exclude_count: request.excludes.length,
       package_file: request.packageFile !== undefined,
+      ...(request.libraryPolicy === undefined
+        ? {}
+        : { library_policy: request.libraryPolicy }),
     },
     result: capture,
     confidence: "observed",
@@ -216,13 +230,16 @@ const admit = async (
       request.desktopEntry === undefined ? "executable" : "desktop_entry",
       running.windows,
     );
-  signal?.throwIfAborted();
+  if (signal?.aborted === true)
+    throw new AnalysisCancelledError(DESKTOP_OPERATION, {
+      cause: signal.reason,
+    });
   const prepared = await prepareOutputDirectory(request.output);
   if ("refusal" in prepared)
     throw outputRefusal(request.output, prepared.refusal);
   return {
     display,
-    home: await canonicalPath(home),
+    home: await canonicalCallerPath(home),
     output: prepared.path,
     inventory,
     limitations,
@@ -234,7 +251,7 @@ const admit = async (
 
 type Admitted = Awaited<ReturnType<typeof admit>>;
 
-/** Record the baseline, run the session and publish `capture.json`. */
+/** Record the baseline, run the session and assemble its Evidence. */
 const recordCapture = async (
   request: DesktopCaptureRequest,
   host: DesktopCaptureHost,
@@ -242,7 +259,6 @@ const recordCapture = async (
     readonly admitted: Admitted;
     readonly scope: CaptureScope;
     readonly store: DesktopContentStore;
-    readonly captureFile: CaptureFile;
   },
   signal: AbortSignal | undefined,
 ) => {
@@ -255,8 +271,23 @@ const recordCapture = async (
     store,
   );
   const recorder = new CheckpointRecorder(scope, store);
+  const acknowledge = async (titles: readonly string[] = []) => {
+    const taken = recorder.checkpoints.at(-1);
+    if (taken === undefined) return;
+    const event = checkpointTaken(
+      taken,
+      home,
+      context.scope.selectedPaths.map(({ physical }) => physical),
+      titles,
+    );
+    await host.report(
+      `Recorded checkpoint ${taken.name}: ${String(event.changes)} change(s), ${String(event.retained_files)} file(s) retained.`,
+      event,
+    );
+  };
   await host.report("Recording the starting state.");
   await recorder.record("baseline", "baseline", 0, signal);
+  await acknowledge();
   await host.report(`Launching ${inventory.argv.join(" ")}.`);
   const outcome = await runDesktopSession({
     argv: inventory.argv,
@@ -268,19 +299,19 @@ const recordCapture = async (
     maxDurationMs: request.maxDurationSeconds * 1000,
     pollIntervalMs: POLL_INTERVAL_MS,
     nextRequest: host.nextRequest,
-    checkpoint: async (name, trigger, atMs, openedFiles) => {
+    checkpoint: async (name, trigger, atMs, seen) => {
       await host.report(`Recording checkpoint ${name}.`);
-      recorder.openedFiles = openedFiles;
+      recorder.openedFiles = seen.openedFiles;
       await recorder.record(name, trigger, atMs, signal);
+      await acknowledge(seen.titles);
     },
     report: host.report,
     signal,
   });
   const { session, unreleased } = outcome;
-  const unretained = unique(
-    session.opened_files
-      .map((file) => dirname(file.path))
-      .filter((directory) => !isWithinAny(directory, scope.contentRoots)),
+  const unretained = unretainedOpenedDirectories(
+    session.opened_files.map((file) => file.path),
+    { ...scope, home },
   );
   const capture: DesktopApplicationCapture = {
     host: {
@@ -295,26 +326,28 @@ const recordCapture = async (
     state: {
       roots: [...scope.roots],
       content_roots: [...scope.contentRoots],
+      baseline_non_files: recorder.baselineNonFiles,
       state_directories: [...scope.stateDirectories],
+      selected_paths: [...context.scope.selectedPaths],
       excluded: [...scope.excluded],
       checkpoints: recorder.checkpoints,
       content_files: store.files,
       content_bytes: store.bytes,
       omitted_content: [...store.omissions],
-      unretained_opened_directories: unretained,
+      unretained_opened_directories: [...unretained],
     },
     limitations: [
       ...admitted.limitations,
       ...limitationsFor(session, recorder, {
         unretained,
+        home,
         broadArguments: context.scope.broadArguments,
         unreadableWindowSamples: outcome.unreadableWindowSamples,
       }),
     ],
   };
   const evidence = captureEvidence(request, capture);
-  const published = await context.captureFile.publish(evidence);
-  return { evidence, published, session, unreleased };
+  return { evidence, session, unreleased };
 };
 
 const runCapture = async (
@@ -332,28 +365,67 @@ const runCapture = async (
   );
   await store.prepare();
   const captureFile = new CaptureFile(output);
-  let recorded: Awaited<ReturnType<typeof recordCapture>>;
+  let recorded: Awaited<ReturnType<typeof recordCapture>> | undefined;
+  let published: string;
   try {
     recorded = await recordCapture(
       request,
       host,
-      { admitted, scope, store, captureFile },
+      { admitted, scope, store },
       signal,
     );
+    published = await captureFile.publish(recorded.evidence);
   } catch (cause: unknown) {
+    // Adopt inspection cleanup before the capture's existing store close retries it.
+    const primary =
+      cause instanceof DesktopSessionCleanupError ? cause.primary : cause;
+    const projected = projectFailure(primary, undefined);
+    const inspections = samplingInspectionFailures(primary);
+    const cleanupInspections = inspections.filter(
+      (inspection) => processInspectionCleanupFailures(inspection).length > 0,
+    );
+    // The supervisor owns every cleanup-bearing fact in this explicit source vector.
+    const sessionOwnsInspection =
+      cause instanceof DesktopSessionCleanupError &&
+      cleanupInspections.length > 0 &&
+      cleanupInspections.every(
+        (inspection) =>
+          cause.cleanup.inspectionCleanup?.causes.includes(inspection) === true,
+      );
+    let failure = projected;
+    for (const inspection of inspections.length === 0 ? [primary] : inspections)
+      failure = sessionOwnsInspection
+        ? bindProcessInspectionCancellations(
+            inspection,
+            failure,
+            DESKTOP_OPERATION,
+          )
+        : retainProcessInspectionCleanup(
+            inspection,
+            failure,
+            store.resourceScope,
+            DESKTOP_OPERATION,
+          );
+    const sessionCleanup =
+      cause instanceof DesktopSessionCleanupError
+        ? cause.cleanup
+        : recorded?.unreleased;
     // Nothing was published, so a failure or cancellation removes what was written.
     throw failedCaptureError(
-      cause,
+      sessionCleanup === undefined
+        ? failure
+        : new DesktopSessionCleanupError(failure, sessionCleanup),
       await discardFailedCapture(store, captureFile),
     );
   }
-  const { evidence, published, session, unreleased } = recorded;
+  const { evidence, session, unreleased } = recorded;
   const cleanup = await publishedCaptureCleanup(published, store, unreleased);
   if (cleanup !== undefined) throw cleanup;
   // A cancellation that arrives during publication must not read as success.
   if (signal?.aborted === true && session.end_reason !== "cancelled")
     throw new AnalysisCancelledError(DESKTOP_OPERATION, {
       cause: signal.reason,
+      partialObservation: evidence,
     });
   return evidence;
 };

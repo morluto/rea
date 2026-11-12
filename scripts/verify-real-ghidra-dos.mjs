@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpOperationResult,
@@ -99,427 +103,440 @@ const transport = new StdioClientTransport({
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-dos-proof", version: "1" });
-let opened = false;
 let stderr = "";
+let connected = false;
+let verifierRun;
 let report;
-try {
-  await client.connect(transport);
-  transport.stderr?.on("data", (chunk) => {
-    stderr = (stderr + chunk.toString()).slice(-65536);
-  });
-  const target = await call("open_binary", {
-    path: targetPath,
-    provider_id: "ghidra",
-  });
-  opened = true;
-  assert.equal(target.format, "dos-mz");
-  assert.equal(target.kind, "executable");
-  assert.equal(target.architecture, "x86");
-  assert.equal(target.sha256, sha256);
-  const image = await call("inspect_native_load_image");
-  assert.equal(
-    image.status,
-    "verified",
-    JSON.stringify(image.checks?.filter((check) => !check.matched)),
-  );
-  assert.equal(image.target_sha256, sha256);
-  assert.equal(image.header_bytes, fixture.header_bytes);
-  assert.equal(image.module_bytes, fixture.module_bytes);
-  assert.equal(image.entry.linear_address, expected.entry);
-  assert.ok(image.checks.every((check) => check.matched));
-  assert.ok(image.observations.relocations.length > 0);
-  assert.ok(
-    image.observations.relocations.every(
-      ({ symbol }) => symbol === null || typeof symbol === "string",
-    ),
-    "Each real Ghidra relocation must record its symbol observation",
-  );
-  const cliImage = await cliEvidence("inspect-native-load-image");
-  // Snapshot filenames are session-specific. Every measured byte/range/check is stable.
-  const stableImage = (value) => ({
-    ...value,
-    observations: {
-      ...value.observations,
-      source_files: value.observations.source_files.map(
-        ({ name: _name, ...file }) => file,
-      ),
-    },
-  });
-  assert.deepEqual(stableImage(cliImage.normalized_result), stableImage(image));
-  const mapped = await call("address_to_file_offset", {
-    address: expected.entry,
-  });
-  assert.equal(mapped.file_offset, fixture.header_bytes);
-  const headerMapping = await call("address_to_file_offset", {
-    address: "HEADER:0x0",
-  });
-  assert.equal(headerMapping.file_offset, 0);
-  const fileRelocation = await call("address_to_file_offset", {
-    address: address(fixture.relocation_offset),
-  });
-  assert.equal(
-    fileRelocation.file_offset,
-    fixture.header_bytes + fixture.relocation_offset,
-  );
-  const memoryRelocation = await call("read_bytes", {
-    address: address(fixture.relocation_offset),
-    length: 2,
-  });
-  assert.equal(memoryRelocation.bytes_hex, "0410");
-  assert.equal(memoryRelocation.complete, true);
-  assert.deepEqual(
-    (
-      await cliEvidence("read-bytes", address(fixture.relocation_offset), [
-        "--length",
-        "2",
-      ])
-    ).normalized_result,
-    memoryRelocation,
-  );
-  assert.deepEqual(
-    (await cliEvidence("address-to-file-offset", expected.entry))
-      .normalized_result,
-    mapped,
-  );
-  const tail = await call("read_bytes", {
-    address: address(fixture.module_bytes - 2),
-    length: 8,
-  });
-  assert.equal(tail.returned_bytes, 2);
-  assert.equal(tail.complete, false);
-  const unmapped = await call("read_bytes", { address: "0x80000", length: 8 });
-  assert.equal(unmapped.returned_bytes, 0);
-  assert.equal(unmapped.complete, false);
-  const noSource = await client.callTool({
-    name: "address_to_file_offset",
-    arguments: { address: "0x80000" },
-  });
-  assert.equal(noSource.isError, true);
-  const procedures = await call("list_procedures");
-  assert.ok(
-    Array.isArray(procedures),
-    "Public procedure inventory is not an array",
-  );
-  const identities = Object.fromEntries(
-    Object.entries(expected).map(([key, value]) => {
-      const item = procedures.find((candidate) => candidate.address === value);
-      assert.ok(
-        item,
-        `Source-owned ${key} procedure ${value} was not discovered from MZ entry/call flow`,
-      );
-      return [key, item];
-    }),
-  );
-  const session = await call("binary_session");
-  const profile = session.analysis_provider_binding?.analysis_profile;
-  assert.ok(profile, "Public session omitted committed profile");
-  assertProfile(profile);
-  assert.equal(session.sha256, sha256);
-  assert.equal(session.open, true);
-  const facts = {};
-  for (const [key, identity] of Object.entries(identities)) {
-    const procedure = identity.address; // Use returned addresses, never symbol-name heuristics.
-    assert.match(procedure, /^0x[0-9a-f]+$/u);
-    const resolved = await call("procedure_address", { procedure });
-    assert.equal(resolved, procedure, "Flat address round-trip drifted");
-    const info = await call("procedure_info", { procedure });
-    const dossierResult = await evidenceCall("analyze_function", {
-      procedure,
-      detail: "complete",
-    });
-    const dossier = functionDossierSchema.parse(
-      dossierResult.normalized_result,
-    );
-    assertBody(info.body, procedure);
-    assertBody(dossier.procedure.body, procedure);
-    assert.equal(info.entrypoint, procedure);
-    assert.equal(info.length, info.body.total_bytes);
-    assert.deepEqual(dossier.procedure.body, info.body);
-    const containingQueries = [procedure, info.body.ranges.at(-1).end];
-    for (const query of containingQueries) {
-      const containing = await call("resolve_containing_procedure", {
-        address: query,
-      });
-      assert.equal(containing.found, true);
-      assert.equal(containing.query_address, query);
-      assert.equal(containing.procedure.address, procedure);
-      assert.deepEqual(containing.procedure.body, info.body);
-    }
-    if (key === "entry") {
-      const gap = await call("resolve_containing_procedure", {
-        address: address(0x10),
-      });
-      assert.equal(
-        gap.found,
-        false,
-        "Gap inside enclosing span was treated as function body",
-      );
-      assert.equal(gap.reason, "not_in_procedure");
-    }
-
-    assert.ok(
-      dossier.pseudocode.trim().length > 0,
-      "Real DOS decompilation returned empty pseudocode",
-    );
-    assert.equal(dossier.procedure.address, procedure);
-    const window = await call("read_function_instructions", { procedure });
-    assert.deepEqual(window.procedure.body, info.body);
-    assert.ok(window.instructions.length > 0);
-    if (key === "entry") {
-      assert.deepEqual(info.body.ranges, [
-        { start: procedure, end: address(fixture.entry_first_bytes - 1) },
-        {
-          start: address(fixture.entry_tail_offset),
-          end: address(
-            fixture.entry_tail_offset + fixture.entry_tail_bytes - 1,
-          ),
-        },
-      ]);
-      assert.equal(
-        info.body.total_bytes,
-        fixture.entry_first_bytes + fixture.entry_tail_bytes,
-      );
-      assert.equal(
-        info.body.span_bytes,
-        fixture.entry_tail_offset + fixture.entry_tail_bytes,
-      );
-      assert.equal(info.body.non_contiguous, true);
-    } else {
-      const size =
-        key === "near" ? fixture.near_body_bytes : fixture.far_body_bytes;
-      assert.deepEqual(info.body.ranges, [
-        {
-          start: procedure,
-          end: address(
-            (key === "near" ? fixture.near_offset : fixture.far_offset) +
-              size -
-              1,
-          ),
-        },
-      ]);
-      assert.equal(info.body.total_bytes, size);
-      assert.equal(info.body.span_bytes, size);
-    }
-    const cli = await cliEvidence("function", procedure);
-    if (captureDirectory !== undefined) {
-      await writeFile(
-        join(captureDirectory, `public-fixture-${key}-cli.json`),
-        `${JSON.stringify(cli, null, 2)}\n`,
-        { mode: 0o600 },
-      );
-      await writeFile(
-        join(captureDirectory, `public-fixture-${key}-mcp.json`),
-        `${JSON.stringify(dossierResult, null, 2)}\n`,
-        { mode: 0o600 },
-      );
-    }
-    const cliDossier = functionDossierSchema.parse(cli.normalized_result);
-    assert.deepEqual(
-      stableDossierObservations(cliDossier),
-      stableDossierObservations(dossier),
-      "CLI/MCP stable DOS dossier observations differ",
-    );
-    facts[key] = {
-      address: procedure,
-      body: info.body,
-      instruction_count: window.instructions.length,
-      pseudocode_nonempty: true,
-      pseudocode: dossier.pseudocode,
-      cli_mcp_observations_equal: true,
-      containing_procedure_body_equal: true,
-      limitations: dossier.limitations,
-    };
-  }
-  const move = await call("inspect_native_instruction", {
-    address: identities.entry.address,
-  });
-  assert.equal(move.status, "decoded");
-  assert.equal(move.length, 3);
-  assert.equal(hexBytes(move.bytes), "b83412");
-  assert.match(move.mnemonic, /^MOV$/iu);
-  assert.ok(
-    move.operands
-      .flatMap((operand) => operand.components)
-      .some(
-        (part) =>
-          part.kind === "register" &&
-          /^AX$/iu.test(part.text) &&
-          part.bit_width === 16,
-      ),
-    "DOS entry was not decoded as 16-bit AX",
-  );
-  const nearMemory = await call("inspect_native_instruction", {
-    address: identities.near.address,
-  });
-  assert.equal(nearMemory.status, "decoded");
-  assert.equal(nearMemory.length, 2);
-  assert.equal(hexBytes(nearMemory.bytes), "fe00");
-  assert.match(nearMemory.mnemonic, /^INC$/iu);
-  const nearCall = await call("inspect_native_instruction", {
-    address: address(fixture.near_call_offset),
-  });
-  const farCall = await call("inspect_native_instruction", {
-    address: address(fixture.far_call_offset),
-  });
-  assert.equal(hexBytes(nearCall.bytes), "e81a00");
-  // Source far segment 0004 is relocated by the independently fixed 1000 load segment.
-  assert.equal(hexBytes(farCall.bytes), "9a00000410");
-  for (const [key, instruction] of [
-    ["near", nearCall],
-    ["far", farCall],
-  ]) {
-    assert.equal(instruction.flow.kind, "call");
-    assert.ok(
-      instruction.flow.direct_destinations.includes(identities[key].address),
-    );
-    const targets = await call("resolve_native_call_targets", {
-      address: instruction.address,
-    });
-    assert.equal(targets.status, "direct");
-    assert.ok(
-      targets.targets.some(
-        (target) => target.address === identities[key].address,
-      ),
-    );
-  }
-  const invalid = await client.callTool({
-    name: "procedure_info",
-    arguments: { procedure: "0xffffffffffffffff" },
-  });
-  assert.equal(invalid.isError, true, "Unmapped address did not fail");
-  // The CLI reads a fresh session, so compare it with MCP before the boundary
-  // helper's temporary rename and restoration.
-  const entryWindow = await call("read_function_instructions", {
-    procedure: identities.entry.address,
-  });
-  const cliWindow = await cliEvidence("instructions", identities.entry.address);
-  assert.deepEqual(cliWindow.normalized_result, entryWindow);
-  await verifyGhidraAddressBoundaries(
-    client,
-    identities.entry.address,
-    cliEvidence,
-    { mutable: !windows },
-  );
-  const entrySymbol = entryWindow.procedure.symbol;
-  assert.ok(entrySymbol != null, "The DOS entry needs observed symbol facts");
-  // Restoring the name is itself a user edit, so Ghidra records user provenance.
-  // Windows P0 refuses edits and never renames, so its entry stays unchanged.
-  assert.deepEqual(
-    await call("read_function_instructions", {
-      procedure: identities.entry.address,
-    }),
-    windows
-      ? entryWindow
-      : {
-          ...entryWindow,
-          procedure: {
-            ...entryWindow.procedure,
-            symbol: { ...entrySymbol, source: "user_defined" },
-          },
-        },
-    "Restoring the entry name changed more than its symbol provenance",
-  );
-  assert.equal(
-    digest(await readFile(targetPath)),
-    sha256,
-    "Analysis changed original bytes",
-  );
-  await call("close_binary");
-  opened = false;
-  assert.equal((await call("binary_session")).open, false);
-  report = {
-    ok: true,
-    mocked: false,
-    lane: "ghidra-dos",
-    host: process.platform,
-    provider: { id: "ghidra", version: installation.providerVersion },
-    target: {
-      format: "dos-mz",
-      architecture: "x86",
-      sha256,
-      bytes: fixture.bytes.length,
-    },
-    profile: {
-      digest: profile.digest,
-      loader: profile.parameters.loader,
-      language_id: profile.parameters.language_id,
-      compiler_spec_id: profile.parameters.compiler_spec_id,
-      load_segment: profile.parameters.load_segment,
-    },
-    transport: { cli: true, stdio_mcp: true },
-    load_image: {
-      status: image.status,
-      checks: image.checks.length,
-      mappings: image.observations.mappings.length,
-      relocations: image.observations.relocations.length,
-      cli_mcp_parity: true,
-    },
-    memory_evidence: {
-      relocated_word_hex: memoryRelocation.bytes_hex,
-      entry_file_offset: mapped.file_offset,
-      header_file_offset: headerMapping.file_offset,
-      partial_read_bytes: tail.returned_bytes,
-      unmapped_read_bytes: unmapped.returned_bytes,
-      unmapped_file_offset_rejected: true,
-      cli_mcp_parity: true,
-    },
-    functions: facts,
-    instruction_oracles: {
-      entry_bytes: hexBytes(move.bytes),
-      near_memory_bytes: hexBytes(nearMemory.bytes),
-      near_call_bytes: hexBytes(nearCall.bytes),
-      relocated_far_call_bytes: hexBytes(farCall.bytes),
-      near_target: expected.near,
-      far_target: expected.far,
-    },
-    invalid_address_rejected: true,
-    address_truncation_rejected: true,
-    original_unchanged: true,
-    limitations: [
-      "Read-only import/decompilation evidence, not DOS runtime execution or whole-program semantic equivalence.",
-      "The complete body is Ghidra's observed AddressSet, not independently proven historical compiler ownership.",
-      "Language/compiler identity is bound by the production authenticated bridge handshake; profile loader is the declared import policy.",
-      "Native high-pcode flow is excluded from cross-runtime parity: LOAD/STORE address-space selector constants are process-specific in current Ghidra output. Both dossiers are still strictly parsed.",
-      ...(windows
-        ? [
-            "Windows P0 is read-only: annotation and naming edits were checked as refused, not exercised.",
-          ]
-        : []),
-    ],
-  };
-} catch (error) {
-  if (stderr.trim())
-    process.stderr.write(`DOS verifier MCP diagnostics:\n${stderr}\n`);
-  throw error;
-} finally {
+await withVerifierCleanup(async () => {
   try {
-    if (opened) {
-      try {
-        await call("close_binary");
-      } catch (error) {
-        process.stderr.write(`DOS cleanup close failed: ${String(error)}\n`);
+    await client.connect(transport);
+    connected = true;
+    transport.stderr?.on("data", (chunk) => {
+      stderr = (stderr + chunk.toString()).slice(-65536);
+    });
+    const target = await call("open_binary", {
+      path: targetPath,
+      provider_id: "ghidra",
+    });
+    assert.equal(target.format, "dos-mz");
+    assert.equal(target.kind, "executable");
+    assert.equal(target.architecture, "x86");
+    assert.equal(target.sha256, sha256);
+    const image = await call("inspect_native_load_image");
+    assert.equal(
+      image.status,
+      "verified",
+      JSON.stringify(image.checks?.filter((check) => !check.matched)),
+    );
+    assert.equal(image.target_sha256, sha256);
+    assert.equal(image.header_bytes, fixture.header_bytes);
+    assert.equal(image.module_bytes, fixture.module_bytes);
+    assert.equal(image.entry.linear_address, expected.entry);
+    assert.ok(image.checks.every((check) => check.matched));
+    assert.ok(image.observations.relocations.length > 0);
+    assert.ok(
+      image.observations.relocations.every(
+        ({ symbol }) => symbol === null || typeof symbol === "string",
+      ),
+      "Each real Ghidra relocation must record its symbol observation",
+    );
+    const cliImage = await cliEvidence("inspect-native-load-image");
+    // Snapshot filenames are session-specific. Every measured byte/range/check is stable.
+    const stableImage = (value) => ({
+      ...value,
+      observations: {
+        ...value.observations,
+        source_files: value.observations.source_files.map(
+          ({ name: _name, ...file }) => file,
+        ),
+      },
+    });
+    assert.deepEqual(
+      stableImage(cliImage.normalized_result),
+      stableImage(image),
+    );
+    const mapped = await call("address_to_file_offset", {
+      address: expected.entry,
+    });
+    assert.equal(mapped.file_offset, fixture.header_bytes);
+    const headerMapping = await call("address_to_file_offset", {
+      address: "HEADER:0x0",
+    });
+    assert.equal(headerMapping.file_offset, 0);
+    const fileRelocation = await call("address_to_file_offset", {
+      address: address(fixture.relocation_offset),
+    });
+    assert.equal(
+      fileRelocation.file_offset,
+      fixture.header_bytes + fixture.relocation_offset,
+    );
+    const memoryRelocation = await call("read_bytes", {
+      address: address(fixture.relocation_offset),
+      length: 2,
+    });
+    assert.equal(memoryRelocation.bytes_hex, "0410");
+    assert.equal(memoryRelocation.complete, true);
+    assert.deepEqual(
+      (
+        await cliEvidence("read-bytes", address(fixture.relocation_offset), [
+          "--length",
+          "2",
+        ])
+      ).normalized_result,
+      memoryRelocation,
+    );
+    assert.deepEqual(
+      (await cliEvidence("address-to-file-offset", expected.entry))
+        .normalized_result,
+      mapped,
+    );
+    const tail = await call("read_bytes", {
+      address: address(fixture.module_bytes - 2),
+      length: 8,
+    });
+    assert.equal(tail.returned_bytes, 2);
+    assert.equal(tail.complete, false);
+    const unmapped = await call("read_bytes", {
+      address: "0x80000",
+      length: 8,
+    });
+    assert.equal(unmapped.returned_bytes, 0);
+    assert.equal(unmapped.complete, false);
+    const noSource = await client.callTool({
+      name: "address_to_file_offset",
+      arguments: { address: "0x80000" },
+    });
+    assert.equal(noSource.isError, true);
+    const procedures = await call("list_procedures");
+    assert.ok(
+      Array.isArray(procedures),
+      "Public procedure inventory is not an array",
+    );
+    const identities = Object.fromEntries(
+      Object.entries(expected).map(([key, value]) => {
+        const item = procedures.find(
+          (candidate) => candidate.address === value,
+        );
+        assert.ok(
+          item,
+          `Source-owned ${key} procedure ${value} was not discovered from MZ entry/call flow`,
+        );
+        return [key, item];
+      }),
+    );
+    const session = await call("binary_session");
+    const profile = session.analysis_provider_binding?.analysis_profile;
+    assert.ok(profile, "Public session omitted committed profile");
+    assertProfile(profile);
+    assert.equal(session.sha256, sha256);
+    assert.equal(session.open, true);
+    const facts = {};
+    for (const [key, identity] of Object.entries(identities)) {
+      const procedure = identity.address; // Use returned addresses, never symbol-name heuristics.
+      assert.match(procedure, /^0x[0-9a-f]+$/u);
+      const resolved = await call("procedure_address", { procedure });
+      assert.equal(resolved, procedure, "Flat address round-trip drifted");
+      const info = await call("procedure_info", { procedure });
+      const dossierResult = await evidenceCall("analyze_function", {
+        procedure,
+        detail: "complete",
+      });
+      const dossier = functionDossierSchema.parse(
+        dossierResult.normalized_result,
+      );
+      assertBody(info.body, procedure);
+      assertBody(dossier.procedure.body, procedure);
+      assert.equal(info.entrypoint, procedure);
+      assert.equal(info.length, info.body.total_bytes);
+      assert.deepEqual(dossier.procedure.body, info.body);
+      const containingQueries = [procedure, info.body.ranges.at(-1).end];
+      for (const query of containingQueries) {
+        const containing = await call("resolve_containing_procedure", {
+          address: query,
+        });
+        assert.equal(containing.found, true);
+        assert.equal(containing.query_address, query);
+        assert.equal(containing.procedure.address, procedure);
+        assert.deepEqual(containing.procedure.body, info.body);
       }
+      if (key === "entry") {
+        const gap = await call("resolve_containing_procedure", {
+          address: address(0x10),
+        });
+        assert.equal(
+          gap.found,
+          false,
+          "Gap inside enclosing span was treated as function body",
+        );
+        assert.equal(gap.reason, "not_in_procedure");
+      }
+
+      assert.ok(
+        dossier.pseudocode.trim().length > 0,
+        "Real DOS decompilation returned empty pseudocode",
+      );
+      assert.equal(dossier.procedure.address, procedure);
+      const window = await call("read_function_instructions", { procedure });
+      assert.deepEqual(window.procedure.body, info.body);
+      assert.ok(window.instructions.length > 0);
+      if (key === "entry") {
+        assert.deepEqual(info.body.ranges, [
+          { start: procedure, end: address(fixture.entry_first_bytes - 1) },
+          {
+            start: address(fixture.entry_tail_offset),
+            end: address(
+              fixture.entry_tail_offset + fixture.entry_tail_bytes - 1,
+            ),
+          },
+        ]);
+        assert.equal(
+          info.body.total_bytes,
+          fixture.entry_first_bytes + fixture.entry_tail_bytes,
+        );
+        assert.equal(
+          info.body.span_bytes,
+          fixture.entry_tail_offset + fixture.entry_tail_bytes,
+        );
+        assert.equal(info.body.non_contiguous, true);
+      } else {
+        const size =
+          key === "near" ? fixture.near_body_bytes : fixture.far_body_bytes;
+        assert.deepEqual(info.body.ranges, [
+          {
+            start: procedure,
+            end: address(
+              (key === "near" ? fixture.near_offset : fixture.far_offset) +
+                size -
+                1,
+            ),
+          },
+        ]);
+        assert.equal(info.body.total_bytes, size);
+        assert.equal(info.body.span_bytes, size);
+      }
+      const cli = await cliEvidence("function", procedure);
+      if (captureDirectory !== undefined) {
+        await writeFile(
+          join(captureDirectory, `public-fixture-${key}-cli.json`),
+          `${JSON.stringify(cli, null, 2)}\n`,
+          { mode: 0o600 },
+        );
+        await writeFile(
+          join(captureDirectory, `public-fixture-${key}-mcp.json`),
+          `${JSON.stringify(dossierResult, null, 2)}\n`,
+          { mode: 0o600 },
+        );
+      }
+      const cliDossier = functionDossierSchema.parse(cli.normalized_result);
+      assert.deepEqual(
+        stableDossierObservations(cliDossier),
+        stableDossierObservations(dossier),
+        "CLI/MCP stable DOS dossier observations differ",
+      );
+      facts[key] = {
+        address: procedure,
+        body: info.body,
+        instruction_count: window.instructions.length,
+        pseudocode_nonempty: true,
+        pseudocode: dossier.pseudocode,
+        cli_mcp_observations_equal: true,
+        containing_procedure_body_equal: true,
+        limitations: dossier.limitations,
+      };
     }
-    try {
-      await client.close();
-    } finally {
-      await transport.close();
+    const move = await call("inspect_native_instruction", {
+      address: identities.entry.address,
+    });
+    assert.equal(move.status, "decoded");
+    assert.equal(move.length, 3);
+    assert.equal(hexBytes(move.bytes), "b83412");
+    assert.match(move.mnemonic, /^MOV$/iu);
+    assert.ok(
+      move.operands
+        .flatMap((operand) => operand.components)
+        .some(
+          (part) =>
+            part.kind === "register" &&
+            /^AX$/iu.test(part.text) &&
+            part.bit_width === 16,
+        ),
+      "DOS entry was not decoded as 16-bit AX",
+    );
+    const nearMemory = await call("inspect_native_instruction", {
+      address: identities.near.address,
+    });
+    assert.equal(nearMemory.status, "decoded");
+    assert.equal(nearMemory.length, 2);
+    assert.equal(hexBytes(nearMemory.bytes), "fe00");
+    assert.match(nearMemory.mnemonic, /^INC$/iu);
+    const nearCall = await call("inspect_native_instruction", {
+      address: address(fixture.near_call_offset),
+    });
+    const farCall = await call("inspect_native_instruction", {
+      address: address(fixture.far_call_offset),
+    });
+    assert.equal(hexBytes(nearCall.bytes), "e81a00");
+    // Source far segment 0004 is relocated by the independently fixed 1000 load segment.
+    assert.equal(hexBytes(farCall.bytes), "9a00000410");
+    for (const [key, instruction] of [
+      ["near", nearCall],
+      ["far", farCall],
+    ]) {
+      assert.equal(instruction.flow.kind, "call");
+      assert.ok(
+        instruction.flow.direct_destinations.includes(identities[key].address),
+      );
+      const targets = await call("resolve_native_call_targets", {
+        address: instruction.address,
+      });
+      assert.equal(targets.status, "direct");
+      assert.ok(
+        targets.targets.some(
+          (target) => target.address === identities[key].address,
+        ),
+      );
     }
+    const invalid = await client.callTool({
+      name: "procedure_info",
+      arguments: { procedure: "0xffffffffffffffff" },
+    });
+    assert.equal(invalid.isError, true, "Unmapped address did not fail");
+    // The CLI reads a fresh session, so compare it with MCP before the boundary
+    // helper's temporary rename and restoration.
+    const entryWindow = await call("read_function_instructions", {
+      procedure: identities.entry.address,
+    });
+    const cliWindow = await cliEvidence(
+      "instructions",
+      identities.entry.address,
+    );
+    assert.deepEqual(cliWindow.normalized_result, entryWindow);
+    await verifyGhidraAddressBoundaries(
+      client,
+      identities.entry.address,
+      cliEvidence,
+      { mutable: !windows },
+    );
+    const entrySymbol = entryWindow.procedure.symbol;
+    assert.ok(entrySymbol != null, "The DOS entry needs observed symbol facts");
+    // Restoring the name is itself a user edit, so Ghidra records user provenance.
+    // Windows P0 refuses edits and never renames, so its entry stays unchanged.
+    assert.deepEqual(
+      await call("read_function_instructions", {
+        procedure: identities.entry.address,
+      }),
+      windows
+        ? entryWindow
+        : {
+            ...entryWindow,
+            procedure: {
+              ...entryWindow.procedure,
+              symbol: { ...entrySymbol, source: "user_defined" },
+            },
+          },
+      "Restoring the entry name changed more than its symbol provenance",
+    );
+    assert.equal(
+      digest(await readFile(targetPath)),
+      sha256,
+      "Analysis changed original bytes",
+    );
+    await call("close_binary");
+    assert.equal((await call("binary_session")).open, false);
+    report = {
+      ok: true,
+      mocked: false,
+      lane: "ghidra-dos",
+      host: process.platform,
+      provider: { id: "ghidra", version: installation.providerVersion },
+      target: {
+        format: "dos-mz",
+        architecture: "x86",
+        sha256,
+        bytes: fixture.bytes.length,
+      },
+      profile: {
+        digest: profile.digest,
+        loader: profile.parameters.loader,
+        language_id: profile.parameters.language_id,
+        compiler_spec_id: profile.parameters.compiler_spec_id,
+        load_segment: profile.parameters.load_segment,
+      },
+      transport: { cli: true, stdio_mcp: true },
+      load_image: {
+        status: image.status,
+        checks: image.checks.length,
+        mappings: image.observations.mappings.length,
+        relocations: image.observations.relocations.length,
+        cli_mcp_parity: true,
+      },
+      memory_evidence: {
+        relocated_word_hex: memoryRelocation.bytes_hex,
+        entry_file_offset: mapped.file_offset,
+        header_file_offset: headerMapping.file_offset,
+        partial_read_bytes: tail.returned_bytes,
+        unmapped_read_bytes: unmapped.returned_bytes,
+        unmapped_file_offset_rejected: true,
+        cli_mcp_parity: true,
+      },
+      functions: facts,
+      instruction_oracles: {
+        entry_bytes: hexBytes(move.bytes),
+        near_memory_bytes: hexBytes(nearMemory.bytes),
+        near_call_bytes: hexBytes(nearCall.bytes),
+        relocated_far_call_bytes: hexBytes(farCall.bytes),
+        near_target: expected.near,
+        far_target: expected.far,
+      },
+      invalid_address_rejected: true,
+      address_truncation_rejected: true,
+      original_unchanged: true,
+      limitations: [
+        "Read-only import/decompilation evidence, not DOS runtime execution or whole-program semantic equivalence.",
+        "The complete body is Ghidra's observed AddressSet, not independently proven historical compiler ownership.",
+        "Language/compiler identity is bound by the production authenticated bridge handshake; profile loader is the declared import policy.",
+        "Native high-pcode flow is excluded from cross-runtime parity: LOAD/STORE address-space selector constants are process-specific in current Ghidra output. Both dossiers are still strictly parsed.",
+        ...(windows
+          ? [
+              "Windows P0 is read-only: annotation and naming edits were checked as refused, not exercised.",
+            ]
+          : []),
+      ],
+    };
+  } catch (error) {
+    if (stderr.trim())
+      process.stderr.write(`DOS verifier MCP diagnostics:\n${stderr}\n`);
+    throw error;
+  }
+}, [
+  async () => {
+    await closeVerifierResources([
+      async () => {
+        if (connected) await call("close_binary", {});
+      },
+      () => client.close(),
+      () => transport.close(),
+    ]);
     assert.equal(
       digest(await readFile(targetPath)),
       sha256,
       "Original changed during cleanup",
     );
-    const leftovers = (await readdir(runtime)).filter((name) =>
-      name.startsWith("rea-ghidra-"),
+    assert.deepEqual(
+      (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
+      [],
+      "Owned Ghidra runtime survived close",
     );
-    assert.deepEqual(leftovers, [], "Owned Ghidra runtime survived close");
-  } finally {
+    verifierRun = await completeVerifierRun(run);
+    if (process.platform !== "win32") {
+      assert.equal(verifierRun.process_lineage.status, "verified");
+      assert.deepEqual(verifierRun.process_lineage.descendants, []);
+    }
     await rm(workspace, { recursive: true, force: true });
-  }
-}
+  },
+]);
 assert.ok(report, "No DOS proof report was produced");
-const verifierRun = await completeVerifierRun(run);
+verifierRun = await completeVerifierRun(run);
 // Windows provider jobs are verified by their native owners, as in the 6502 lane.
 if (!windows) assertVerifierCleanupComplete(verifierRun.process_lineage);
 process.stdout.write(

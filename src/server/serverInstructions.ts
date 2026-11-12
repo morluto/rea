@@ -19,6 +19,9 @@ const ACTIVE_TARGET_INSTRUCTIONS =
 const FUNCTION_DOSSIER_INSTRUCTIONS =
   "analyze_function provides a function dossier, and focused procedure tools return individual facets.";
 
+const EVIDENCE_INTERPRETATION_INSTRUCTIONS =
+  "Preserve caller-selected paths and returned IDs; do not rebase REA host paths onto the client workspace. An unresolved lookup or exhausted page with partial source coverage does not establish target absence.";
+
 /** Whether the scope advertises the family that owns a named tool. */
 const advertisesToolFamily = (
   advertisedToolFamilies: ReadonlySet<string> | undefined,
@@ -39,6 +42,6 @@ export const serverInstructions = (
     advertisesToolFamily(advertisedToolFamilies, "update_analysis_settings"),
   );
   if (!hasSession)
-    return `${ACTIVE_TARGET_INSTRUCTIONS}${guidance("analyze_function", FUNCTION_DOSSIER_INSTRUCTIONS)} ${recovery} ${UNTRUSTED_CONTENT_INSTRUCTIONS}`;
-  return `${TARGET_FREE_INSTRUCTIONS}${guidance("close_binary", SESSION_LIFECYCLE_INSTRUCTIONS)} ${recovery} ${UNTRUSTED_CONTENT_INSTRUCTIONS}`;
+    return `${ACTIVE_TARGET_INSTRUCTIONS}${guidance("analyze_function", FUNCTION_DOSSIER_INSTRUCTIONS)} ${EVIDENCE_INTERPRETATION_INSTRUCTIONS} ${recovery} ${UNTRUSTED_CONTENT_INSTRUCTIONS}`;
+  return `${TARGET_FREE_INSTRUCTIONS}${guidance("close_binary", SESSION_LIFECYCLE_INSTRUCTIONS)} ${EVIDENCE_INTERPRETATION_INSTRUCTIONS} ${recovery} ${UNTRUSTED_CONTENT_INSTRUCTIONS}`;
 };

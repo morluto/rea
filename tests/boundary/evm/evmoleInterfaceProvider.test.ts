@@ -23,6 +23,14 @@ const requestSchema = z.strictObject({
   reply_path: z.string(),
   failure_marker_path: z.string(),
   encoding: z.enum(["raw", "hex"]),
+  producer_limits: z.object({
+    input_bytes: z.number(),
+    output_bytes: z.number(),
+    diagnostic_bytes: z.number(),
+    address_space_bytes: z.number(),
+    file_bytes: z.number(),
+    cpu_seconds: z.number(),
+  }),
 });
 const fixture = async () => {
   const workspace = await createTestWorkspace("rea-evm-interface-boundary-");

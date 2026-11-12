@@ -1,4 +1,5 @@
 import {
+  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
@@ -316,14 +317,17 @@ function* pathItem(
   return ok(undefined);
 }
 
-const completedInventory = (
+interface ContractReportContext {
+  readonly openapi: string;
+  readonly info: ApiContract["info"];
+  readonly pathsState: ApiContract["source_coverage"]["paths_state"];
+  examined: number;
+}
+
+const contractReport = (
   inventory: ContractInventory,
-  context: {
-    openapi: string;
-    info: ApiContract["info"];
-    pathsState: ApiContract["source_coverage"]["paths_state"];
-    examined: number;
-  },
+  context: ContractReportContext,
+  incomplete = false,
 ): ApiContract => {
   const artifact = inventory.artifact;
   let declared = 0;
@@ -348,7 +352,9 @@ const completedInventory = (
     source_coverage: {
       scope: "inline-path-operations",
       status:
-        inventory.references.length > 0 || inventory.diagnostics.length > 0
+        incomplete ||
+        inventory.references.length > 0 ||
+        inventory.diagnostics.length > 0
           ? "partial"
           : "complete-within-scope",
       paths_state: context.pathsState,
@@ -358,6 +364,11 @@ const completedInventory = (
       duplicate_json_members: "last-value-wins",
     },
     limitations: [
+      ...(incomplete
+        ? [
+            "Traversal stopped before the inventory was complete. Row counts describe retained facts; path_entries_examined counts fully traversed entries, excluding an interrupted entry whose rows may be retained.",
+          ]
+        : []),
       "Operations are document declarations, not evidence of runtime implementation, reachability or authorization.",
       "Only inline operations under paths are inventoried; callbacks, webhooks, components, servers, parameters, schemas, request/response contracts and security are not analyzed.",
       "No reference is resolved, including local fragments. A Path Item reference makes its effective operations unknown; adjacent inline slots are preserved without merging referenced definitions.",
@@ -367,6 +378,32 @@ const completedInventory = (
     ],
   };
 };
+
+function* collectPaths(
+  sourcePaths: Record<string, unknown>,
+  inventory: ContractInventory,
+  context: ContractReportContext,
+  modern: boolean,
+): Generator<void, Result<void, AnalysisError>> {
+  for (const path in sourcePaths) {
+    if (!Object.hasOwn(sourcePaths, path) || path.startsWith("x-")) continue;
+    yield;
+    // Reserve expanded pointer/path strings before escaping or building a row.
+    const admitted = inventory.reserve(512 + path.length * 16);
+    if (!admitted.ok) return admitted;
+    const pointer = `/paths/${pointerPart(path)}`;
+    const read = path.startsWith("/")
+      ? yield* pathItem(sourcePaths[path], { inventory, path, pointer, modern })
+      : inventory.diagnostic(
+          "invalid-path-key",
+          pointer,
+          "A Paths entry must start with /; it was not interpreted as an endpoint.",
+        );
+    if (!read.ok) return read;
+    context.examined++;
+  }
+  return ok(undefined);
+}
 
 /** Enumerate declarations only; never resolve references, servers, callbacks or runtime expressions. */
 export function* parseApiContractSteps(
@@ -406,6 +443,21 @@ export function* parseApiContractSteps(
       : Object.hasOwn(root, "paths")
         ? "malformed"
         : "absent";
+  const context: ContractReportContext = {
+    openapi: root.openapi,
+    info: info.value,
+    pathsState,
+    examined: 0,
+  };
+  const interrupted = (error: AnalysisError) => {
+    const retainedRows =
+      inventory.operations.length +
+      inventory.references.length +
+      inventory.diagnostics.length;
+    if (retainedRows > 0)
+      error.retainPartialObservation(contractReport(inventory, context, true));
+    return err(error);
+  };
   if (
     pathsState === "malformed" ||
     (pathsState === "absent" && version[1] === "0")
@@ -415,38 +467,19 @@ export function* parseApiContractSteps(
       "/paths",
       "paths must be an object and is required for OpenAPI 3.0; a missing or malformed inventory is not proof of zero operations.",
     );
-    if (!diagnosed.ok) return diagnosed;
+    if (!diagnosed.ok) return interrupted(diagnosed.error);
   }
-  let examined = 0;
-  const sourcePaths = paths ?? {};
-  for (const path in sourcePaths) {
-    if (!Object.hasOwn(sourcePaths, path) || path.startsWith("x-")) continue;
-    yield;
-    examined++;
-    // Reserve expanded pointer/path strings before escaping or building a row.
-    const admitted = inventory.reserve(512 + path.length * 16);
-    if (!admitted.ok) return admitted;
-    const pointer = `/paths/${pointerPart(path)}`;
-    const read = path.startsWith("/")
-      ? yield* pathItem(sourcePaths[path], {
-          inventory,
-          path,
-          pointer,
-          modern: version[1] === "2",
-        })
-      : inventory.diagnostic(
-          "invalid-path-key",
-          pointer,
-          "A Paths entry must start with /; it was not interpreted as an endpoint.",
-        );
-    if (!read.ok) return read;
+  try {
+    const read = yield* collectPaths(
+      paths ?? {},
+      inventory,
+      context,
+      version[1] === "2",
+    );
+    if (!read.ok) return interrupted(read.error);
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisCancelledError) return interrupted(cause);
+    throw cause;
   }
-  return ok(
-    completedInventory(inventory, {
-      openapi: root.openapi,
-      info: info.value,
-      pathsState,
-      examined,
-    }),
-  );
+  return ok(contractReport(inventory, context));
 }

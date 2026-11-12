@@ -1,3 +1,7 @@
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../../scripts/lib/verifier-cleanup.mjs";
 import { ok as resultOk, err, ok } from "../../../src/domain/result.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -28,6 +32,7 @@ import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import {
   createCacheProvider,
@@ -48,12 +53,77 @@ import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { serveStreamableHttp } from "../../../src/server/http/serveStreamableHttp.js";
 
-const resources: Array<{ close(): Promise<unknown> }> = [];
-
-afterEach(async () => {
-  await Promise.allSettled(
-    resources.splice(0).map((resource) => resource.close()),
+type PromptResource = {
+  close(): Promise<void | Awaited<ReturnType<BinarySession["close"]>>>;
+};
+const resources = new Set<PromptResource>();
+const retainPromptResources = (...owners: readonly PromptResource[]): void => {
+  for (const owner of owners) resources.add(owner);
+};
+const closePromptResources = (): Promise<void> =>
+  closeVerifierResources(
+    [...resources].map((resource) => async () => {
+      const closed = await resource.close();
+      if (closed !== undefined && !closed.ok) throw closed.error;
+      resources.delete(resource);
+    }),
   );
+
+afterEach(closePromptResources);
+
+it("retains rejected MCP and failed session closes while releasing independent prompt resources", async () => {
+  const session = fixtureSession();
+  const server = createServer({ kind: "session", session });
+  const client = await connect(server);
+  retainPromptResources(session);
+  await client.ping();
+  const sdkFailure = new Error("controlled prompt client cleanup failure");
+  const sessionFailure = new ProviderCleanupError(
+    "fixture",
+    ["prompt-session"],
+    {
+      reason: "controlled prompt session cleanup failure",
+    },
+  );
+  const clientClose = vi
+    .spyOn(client, "close")
+    .mockRejectedValueOnce(sdkFailure);
+  const sessionClose = vi
+    .spyOn(session, "close")
+    .mockResolvedValueOnce(err(sessionFailure));
+  const serverClose = vi.spyOn(server, "close");
+  await withVerifierCleanup(async () => {
+    const failure: unknown = await closePromptResources().catch(
+      (cause: unknown) => cause,
+    );
+    expect(serverClose).toHaveBeenCalledTimes(1);
+    expect(failure).toMatchObject({ errors: [sdkFailure, sessionFailure] });
+    expect(resources.has(client)).toBe(true);
+    expect(resources.has(session)).toBe(true);
+    expect(resources.has(server)).toBe(false);
+    await closePromptResources();
+    expect(clientClose).toHaveBeenCalledTimes(2);
+    expect(sessionClose).toHaveBeenCalledTimes(2);
+    expect(serverClose).toHaveBeenCalledTimes(1);
+    expect(resources.size).toBe(0);
+  }, [
+    async () => {
+      clientClose.mockRestore();
+      sessionClose.mockRestore();
+      serverClose.mockRestore();
+    },
+    () => closePromptResources(),
+    // Exact owners remain available even when testing a registry-dropping mutation.
+    () =>
+      closeVerifierResources([
+        () => client.close(),
+        () => server.close(),
+        async () => {
+          const closed = await session.close();
+          if (!closed.ok) throw closed.error;
+        },
+      ]),
+  ]);
 });
 
 describe("guided prompts over MCP", () => {
@@ -67,7 +137,7 @@ function registerPromptDiscoveryParameterContract(): void {
     const session = fixtureSession();
     const server = createServer({ kind: "session", session });
     const [peer, transport] = InMemoryTransport.createLinkedPair();
-    resources.push(server, peer, session);
+    retainPromptResources(server, peer, session);
     await server.connect(transport);
     await peer.start();
     let id = 0;
@@ -134,7 +204,7 @@ function registerPromptRenderingContracts(): void {
   it("lists and renders all workflows without changing the tool inventory", async () => {
     const session = fixtureSession();
     const client = await connect(createServer({ kind: "session", session }));
-    resources.push(session);
+    retainPromptResources(session);
 
     const toolsBeforePrompts = (await client.listTools()).tools;
     const prompts = await client.listPrompts();
@@ -213,7 +283,7 @@ function registerPromptRenderingContracts(): void {
       executions += 1;
     });
     const client = await connect(createServer({ kind: "session", session }));
-    resources.push(session);
+    retainPromptResources(session);
 
     for (const contract of PROMPT_CONTRACTS) {
       const arguments_ = MINIMUM_PROMPT_ARGUMENTS[contract.name];
@@ -246,7 +316,7 @@ function registerPromptRenderingContracts(): void {
       executions += 1;
     });
     const client = await connect(createServer({ kind: "session", session }));
-    resources.push(session);
+    retainPromptResources(session);
     const result = await client.getPrompt({
       name: "prepare_bounded_process_capture",
       arguments: MINIMUM_PROMPT_ARGUMENTS.prepare_bounded_process_capture,
@@ -273,7 +343,7 @@ function registerPromptInputContracts(): void {
       executions += 1;
     });
     const client = await connect(createServer({ kind: "session", session }));
-    resources.push(session);
+    retainPromptResources(session);
 
     for (const contract of PROMPT_CONTRACTS)
       await expect(client.getPrompt({ name: contract.name })).rejects.toThrow(
@@ -328,7 +398,7 @@ describe("guided prompt family scope", () => {
         { environment: { ...process.env, REA_MCP_TOOL_FAMILIES: "session" } },
       ),
     );
-    resources.push(session);
+    retainPromptResources(session);
 
     const prompts = (await client.listPrompts()).prompts;
     expect(prompts.map(({ name }) => name).sort()).toEqual([
@@ -391,7 +461,7 @@ it("preserves caller-selected paths and verbatim crash signals", async () => {
   await expect(readFile(targetPath.trim(), "utf8")).rejects.toThrow();
   const session = fixtureSession();
   const client = await connect(createServer({ kind: "session", session }));
-  resources.push(session);
+  retainPromptResources(session);
 
   for (const [name, arguments_] of [
     [
@@ -445,7 +515,7 @@ describe("guided prompt completion registry", () => {
         ).ok,
       ).toBe(true);
     const client = await connect(createServer({ kind: "session", session }));
-    resources.push(session);
+    retainPromptResources(session);
 
     const result = await client.complete({
       ref: { type: "ref/prompt", name: "verify_reconstruction" },
@@ -494,7 +564,7 @@ describe("guided prompt completion registry", () => {
       );
     });
     await connectPair(server, client);
-    resources.push(session);
+    retainPromptResources(session);
     const contract = PROMPT_CONTRACTS.find(
       ({ name }) => name === "investigate_feature",
     );
@@ -561,16 +631,25 @@ it("guided prompt completion avoids cold startup and cancels warm lookup on clos
 
   const startup = fixture.holdStartup();
   const warming = client.callTool({ name: "list_documents", arguments: {} });
-  await startup.started;
-  expect(await complete(client, "document", "")).toEqual([]);
-  expect(await complete(client, "procedure", "")).toEqual([]);
-  expect(fixture.childrenCreated()).toBe(1);
-  startup.finish();
-  const warmed = await warming;
-  expect(warmed.isError, JSON.stringify(warmed)).not.toBe(true);
-  expect(fixture.childrenCreated()).toBe(1);
-  expect(await complete(client, "document", "fixture")).toEqual([
-    "fixture-document",
+  await withVerifierCleanup(async () => {
+    await startup.started;
+    expect(await complete(client, "document", "")).toEqual([]);
+    expect(await complete(client, "procedure", "")).toEqual([]);
+    expect(fixture.childrenCreated()).toBe(1);
+    startup.finish();
+    const warmed = await warming;
+    expect(warmed.isError, JSON.stringify(warmed)).not.toBe(true);
+    expect(fixture.childrenCreated()).toBe(1);
+    expect(await complete(client, "document", "fixture")).toEqual([
+      "fixture-document",
+    ]);
+  }, [
+    async () => {
+      startup.finish();
+    },
+    async () => {
+      await warming;
+    },
   ]);
 
   const cancellation = fixture.holdCompletion();
@@ -651,10 +730,10 @@ it.each(["replacement", "shutdown"])(
       port: 0,
       createMcpServer: () => server,
     });
-    resources.push(served);
+    retainPromptResources(served);
     const connectHttp = async () => {
       const client = new Client({ name: "completion-http", version: "1" });
-      resources.push(client);
+      retainPromptResources(client);
       await client.connect(
         new StreamableHTTPClientTransport(new URL(served.url)),
       );
@@ -704,6 +783,10 @@ describe("guided prompt completion lifecycle", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let producerDone!: () => void;
+    const producerFinished = new Promise<void>((resolve) => {
+      producerDone = resolve;
+    });
     const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
     const server = new EvidenceMcpServer(
       { name: "prompt-cancellation-test", version: "1" },
@@ -716,8 +799,12 @@ describe("guided prompt completion lifecycle", () => {
         calls += 1;
         if (calls === 1) {
           markStarted();
-          await gate;
-          return observed(["late-document"]);
+          try {
+            await gate;
+            return observed(["late-document"]);
+          } finally {
+            producerDone();
+          }
         }
         return observed(["fresh-document"]);
       },
@@ -732,16 +819,29 @@ describe("guided prompt completion lifecycle", () => {
       },
       { signal: controller.signal },
     );
-    await started;
-    controller.abort();
-    await expect(pending).rejects.toThrow();
-    release();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await withVerifierCleanup(async () => {
+      await started;
+      controller.abort();
+      await expect(pending).rejects.toThrow();
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(await complete(client, "document", "fresh")).toEqual([
-      "fresh-document",
+      expect(await complete(client, "document", "fresh")).toEqual([
+        "fresh-document",
+      ]);
+      expect(calls).toBe(2);
+    }, [
+      async () => {
+        controller.abort();
+        release();
+      },
+      async () => {
+        await pending.catch(() => undefined);
+      },
+      async () => {
+        await producerFinished;
+      },
     ]);
-    expect(calls).toBe(2);
   });
 
   it("refreshes wire completions across open, switch, concurrency, and close", async () => {
@@ -754,7 +854,7 @@ describe("guided prompt completion lifecycle", () => {
       lifecycleClient(basename(target.path, ".hop"), procedureRequests),
     );
     const client = await connect(createServer({ kind: "session", session }));
-    resources.push(session);
+    retainPromptResources(session);
 
     expect(await complete(client, "document", "")).toEqual([]);
     const opened = await client.callTool({
@@ -893,7 +993,7 @@ const createWarmCompletionFixture = async (target: string) => {
     auxiliary,
   ]);
   const client = await connect(createServer({ kind: "session", session }));
-  resources.push(session);
+  retainPromptResources(session);
   return {
     client,
     childrenCreated: () => childrenCreated,
@@ -1071,7 +1171,7 @@ const connectPair = async (
 ): Promise<void> => {
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
+  retainPromptResources(client, server);
   await server.connect(serverTransport);
   await client.connect(clientTransport);
 };

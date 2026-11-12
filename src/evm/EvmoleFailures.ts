@@ -27,43 +27,40 @@ import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
   MAX_EVM_TIMEOUT_MS,
+  selectedEvmProducerLimits,
+  evmProducerLimitRecovery,
+  type EvmProducerLimits,
 } from "../domain/evm/evmInterface.js";
-import {
-  EVM_CPU_SECONDS,
-  EVM_INTERFACE_LIMITS,
-  EVM_FILE_SIZE_FAILURE_EXIT,
-} from "./EvmoleRelease.js";
+import { EVM_FILE_SIZE_FAILURE_EXIT } from "./EvmoleRelease.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 
 /** Both a structured worker refusal and reply-file admission name this allowance. */
 export const evmReplyBudgetFailure = (
   reason: string,
   options: AnalysisErrorOptions,
+  limits: EvmProducerLimits = selectedEvmProducerLimits(undefined),
 ) =>
   new AnalysisResourceConstraintError(
     "inspect_evm_interface",
     "file-size",
     reason,
-    { maximum_reply_bytes: EVM_INTERFACE_LIMITS.outputBytes },
+    {
+      maximum_reply_bytes: limits.output_bytes,
+      parameter: "producer_limits.output_bytes",
+    },
     {
       ...options,
-      ...fixedAllowanceOptions(
-        `The complete EVMole worker reply allowance of ${String(EVM_INTERFACE_LIMITS.outputBytes)} bytes (this release has no runtime override)`,
-        "report",
-      ),
+      retryable: false,
+      remediationAction: evmProducerLimitRecovery(limits, "output_bytes"),
     },
   );
-
-const fixedEvmRecovery = (allowance: string): string =>
-  `${allowance}. This release has no runtime override. timeout_ms does not raise it. Repeating the unchanged request fails the same way.`;
 
 const evmTimeoutRecovery = (timeoutMs: number): string =>
   `${
     timeoutMs < MAX_EVM_TIMEOUT_MS
       ? `Increase timeout_ms above ${String(timeoutMs)} (integer milliseconds, maximum ${String(MAX_EVM_TIMEOUT_MS)}), or use rea inspect-evm-interface <path> <encoding> --timeout-ms <milliseconds> on the CLI.`
       : `timeout_ms is already at the maximum supported ${String(MAX_EVM_TIMEOUT_MS)} ms; no higher worker deadline is supported. Report this blocker or select another suitable complete carrier with caller approval.`
-  } This is a per-call setting; no server restart is needed. It covers the owned EVMole worker command, not carrier acquisition or final reply reads. Allow the MCP client deadline to cover acquisition, the worker, reply reads, cleanup and delivery; increasing only that client deadline does not change this budget. Fixed input (${String(EVM_INTERFACE_LIMITS.inputBytes)} bytes), reply (${String(EVM_INTERFACE_LIMITS.outputBytes)} bytes), diagnostic (${String(EVM_INTERFACE_LIMITS.diagnosticBytes)} bytes), address-space (${String(EVM_INTERFACE_LIMITS.addressSpaceBytes)} bytes), and CPU (${String(EVM_CPU_SECONDS)} seconds) allowances stay unchanged, and timeout_ms does not raise them. Resolve any incomplete cleanup before retrying; do not repeat the unchanged failed call.`;
+  } This is a per-call setting; no server restart is needed. It covers the owned EVMole worker command, not carrier acquisition or final reply reads. Allow the MCP client deadline to cover acquisition, the worker, reply reads, cleanup and delivery; increasing only that client deadline does not change this budget. Separate producer_limits control carrier/reply/diagnostic bytes, address-space/file bytes and CPU seconds; timeout_ms does not raise them. The 256 MiB worker heap stays independent. Resolve any incomplete cleanup before retrying; do not repeat the unchanged failed call.`;
 
 /** Correlate a reserved exit with the owned worker's actual failure branch. */
 export interface EvmFileSizeFailureEvidence {
@@ -72,14 +69,27 @@ export interface EvmFileSizeFailureEvidence {
 }
 
 /** Keep carrier read, engine and owned lifecycle failures distinct. */
+export interface EvmFailureContext {
+  readonly phase: "configuration" | "artifact-read" | "worker";
+  readonly path: string;
+  readonly workerLimits?: EvmWorkerLimits | undefined;
+  readonly limiter?: string | undefined;
+  readonly fileFailure?: EvmFileSizeFailureEvidence | undefined;
+  readonly timeoutMs?: number | undefined;
+  readonly producerLimits?: EvmProducerLimits | undefined;
+}
+
 export const evmInterfaceFailure = (
   cause: unknown,
-  phase: "configuration" | "artifact-read" | "worker",
-  path: string,
-  workerLimits?: EvmWorkerLimits,
-  limiter = "/usr/bin/prlimit",
-  fileFailure?: EvmFileSizeFailureEvidence,
-  timeoutMs = DEFAULT_EVM_TIMEOUT_MS,
+  {
+    phase,
+    path,
+    workerLimits,
+    limiter = "/usr/bin/prlimit",
+    fileFailure,
+    timeoutMs = DEFAULT_EVM_TIMEOUT_MS,
+    producerLimits = selectedEvmProducerLimits(undefined),
+  }: EvmFailureContext,
 ): AnalysisError => {
   const cleanup =
     cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
@@ -124,9 +134,14 @@ export const evmInterfaceFailure = (
     if (cause.reason === "output-limit")
       return new AnalysisOutputError("inspect_evm_interface", cause.message, {
         ...outputOptions,
-        userMessage: `EVMole worker diagnostics exceeded the ${String(EVM_INTERFACE_LIMITS.diagnosticBytes)}-byte capture allowance. This release has no runtime override.`,
-        remediationAction: fixedEvmRecovery(
-          `The EVMole diagnostic capture allowance is ${String(EVM_INTERFACE_LIMITS.diagnosticBytes)} bytes`,
+        userMessage: `EVMole worker diagnostics exceeded producer_limits.diagnostic_bytes (${String(producerLimits.diagnostic_bytes)} bytes).`,
+        diagnostics: {
+          parameter: "producer_limits.diagnostic_bytes",
+          effective_value: producerLimits.diagnostic_bytes,
+        },
+        remediationAction: evmProducerLimitRecovery(
+          producerLimits,
+          "diagnostic_bytes",
         ),
       });
     if (
@@ -159,12 +174,8 @@ export const evmInterfaceFailure = (
           retryable: false,
           remediationAction:
             cause.snapshot.signal === "SIGXCPU"
-              ? fixedEvmRecovery(
-                  `The EVMole CPU ceiling is ${String(EVM_CPU_SECONDS)} seconds, or a tighter inherited limit when one applies`,
-                )
-              : fixedEvmRecovery(
-                  `The EVMole file-size ceiling is ${String(EVM_INTERFACE_LIMITS.outputBytes)} bytes, or a tighter inherited limit when one applies`,
-                ),
+              ? evmProducerLimitRecovery(producerLimits, "cpu_seconds")
+              : evmProducerLimitRecovery(producerLimits, "file_bytes"),
         },
       );
   }
@@ -204,13 +215,19 @@ export const evmInterfaceFailure = (
       return new AnalysisResourceConstraintError(
         "inspect_evm_interface",
         "file-size",
-        `${cause.message} The input allowance is ${String(EVM_INTERFACE_LIMITS.inputBytes)} bytes. This release has no runtime override. timeout_ms does not raise it.`,
-        { maximum_input_bytes: EVM_INTERFACE_LIMITS.inputBytes },
+        `${cause.message} producer_limits.input_bytes is ${String(producerLimits.input_bytes)} bytes; timeout_ms does not raise it.`,
+        {
+          maximum_input_bytes: producerLimits.input_bytes,
+          parameter: "producer_limits.input_bytes",
+        },
         {
           cause,
           ...cleanupOptions,
           retryable: false,
-          remediationAction: `Select a suitable complete carrier within the ${String(EVM_INTERFACE_LIMITS.inputBytes)}-byte input allowance. This release has no runtime override. timeout_ms does not raise it, and reply or diagnostic allowances do not admit a larger carrier. Do not truncate required bytes; repeating the unchanged request fails the same way.`,
+          remediationAction: evmProducerLimitRecovery(
+            producerLimits,
+            "input_bytes",
+          ),
         },
       );
     if (phase === "artifact-read" && ["path", "format"].includes(cause.reason))

@@ -729,8 +729,7 @@ describe("wide state value validation", () => {
     expect(store.replace(document).ok).toBe(true);
     const retained = store.snapshot().rea_state.entities[0]?.fields.caller_wide;
     if (!Array.isArray(retained)) throw new Error("Expected the wide value");
-    expect(retained).toHaveLength(wide.length);
-    expect(retained.at(-1)).toBe(wide.at(-1));
+    expect(retained).toEqual(wide);
     const retainedObject =
       store.snapshot().rea_state.entities[0]?.fields.caller_wide_object;
     expect(retainedObject).toEqual(wideObject);
@@ -748,11 +747,9 @@ it("retains arbitrary dictionary keys and owned JSON references at state intake"
   const entity = document.rea_state.entities[0]!;
   const fields = entity.fields;
   const owned = parseStateDocument(state, document, true);
-  expect(owned.ok).toBe(true);
   if (!owned.ok) throw owned.error;
   expect(owned.value.entities[0]?.fields).toBe(fields);
   const copied = parseStateDocument(state, document);
-  expect(copied.ok).toBe(true);
   if (!copied.ok) throw copied.error;
   expect(copied.value.entities[0]?.fields).not.toBe(fields);
   expect(copied.value.entities[0]?.fields).toEqual(fields);

@@ -356,6 +356,27 @@ const inspected = async (options: FixtureOptions = {}) => {
   };
 };
 
+it.skipIf(process.platform === "win32")(
+  "carries compatible library ownership through application inventory into the export install plan",
+  async () => {
+    const { root, inspect } = await vendorFixture();
+    // A foreign same-name library in $ORIGIN must not shadow the native cache entry.
+    await writeFile(
+      join(root, "bin/libnss3.so"),
+      elfImage({ machine: 62, needed: ["libdecoy.so"] }),
+    );
+    const result = await inspect();
+    if (!result.ok) throw new Error(result.error.reason);
+    const installed = result.value.inventory.package;
+    expect(installed.library_packages).toEqual(["libnspr4", "libnss3"]);
+    expect(installed.missing_libraries).not.toContain("libdecoy.so");
+    expect(installed.library_packages_reason).toBeUndefined();
+    const plan = exportInstall(installed, "typora", "arm64");
+    if (!plan.ok) throw new Error(plan.error.reason);
+    expect(plan.value.libraryPackages).toEqual(["libnspr4", "libnss3"]);
+  },
+);
+
 describe.skipIf(process.platform === "win32")("vendor repositories", () => {
   it("records the repository apt names with the key gpgv verified, though another signature fails gpgv", async () => {
     const {
@@ -506,8 +527,9 @@ describe.skipIf(process.platform === "win32")("vendor repositories", () => {
         },
       ],
       library_packages: [],
-      library_packages_reason:
-        "ldconfig -p did not list the dynamic linker cache",
+      library_packages_reason: expect.stringMatching(
+        /ldconfig -p.*did not list.*dynamic linker cache/iu,
+      ),
     });
     expect(result.value.signingKeys.size).toBe(0);
   });
@@ -668,6 +690,29 @@ describe.skipIf(process.platform === "win32")("library packages", () => {
       ],
       library_packages: ["libnspr4", "libnss3"],
       uninstallable_library_packages: [],
+    });
+  });
+
+  // dpkg-query exits 1 when no package owns a path and 2 when it could not tell.
+  it("reports a failed library owner query rather than calling the libraries unpackaged", async () => {
+    const { runQuery, inspect } = await vendorFixture();
+    const failing: QueryRunner = async (command, argv, signal) =>
+      command === "dpkg-query" &&
+      argv[0] === "-S" &&
+      argv[1]?.endsWith("/bin/typora") !== true
+        ? { stdout: "", exitCode: 2 }
+        : runQuery(command, argv, signal);
+
+    const result = await inspect(failing);
+
+    if (!result.ok) throw new Error(result.error.reason);
+    expect(result.value.inventory.package).toMatchObject({
+      library_packages: [],
+      // The soname the fixture never provides stays missing; the two it locates are not called unpackaged.
+      missing_libraries: ["libsecret-1.so.0"],
+      unpackaged_libraries: [],
+      library_packages_reason:
+        "dpkg-query could not say which packages own the libraries",
     });
   });
 });
@@ -886,13 +931,15 @@ describe.skipIf(process.platform === "win32")("desktop entry package", () => {
     expect(fromLocal.installed).toMatchObject({
       name: "libreoffice-writer",
       executable_package: "libreoffice-common",
-      executable_package_reason:
-        "neither the Ubuntu 24.04 archive nor a vendor repository the export declares offers libreoffice-common",
+      executable_package_reason: expect.stringMatching(
+        /neither.*Ubuntu 24\.04.*vendor repository.*offers libreoffice-common/iu,
+      ),
     });
     expect(fromUnasked.installed).toMatchObject({
       executable_package: "libreoffice-common",
-      executable_package_reason:
-        "apt-cache policy did not say where libreoffice-common comes from",
+      executable_package_reason: expect.stringMatching(
+        /apt-cache policy.*did not.*libreoffice-common/iu,
+      ),
     });
   });
 
@@ -1017,5 +1064,54 @@ describe.skipIf(process.platform === "win32")(
       });
       expect(installed).not.toHaveProperty("executable_package_reason");
     });
+  },
+);
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "keeps apt list presence unknown when its directory cannot be read",
+  async () => {
+    const { root, inspect } = await writerFixture();
+    const lists = join(root, "lists");
+    await chmod(lists, 0o000);
+    try {
+      const { installed, limitations } = await inspect({
+        executable: "libreoffice",
+      });
+      expect(installed.package_lists_present).toBeNull();
+      expect(limitations.join("\n")).toContain("could not be read");
+      expect(limitations.join("\n")).toContain("EACCES");
+    } finally {
+      await chmod(lists, 0o755);
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps package ownership unknown for a literal path dpkg would treat as a pattern",
+  async () => {
+    const { root, runQuery, inspect } = await writerFixture();
+    const executable = join(root, "bin/libreoffice[1]");
+    await writeFile(executable, "#!/bin/sh\n");
+    await chmod(executable, 0o755);
+    const result = await inspect(
+      { executable },
+      {
+        run: async (command, argv, signal) => {
+          if (
+            command === "dpkg-query" &&
+            argv[0] === "-S" &&
+            argv.includes(executable)
+          )
+            // A glob search can name another file without establishing who owns the literal brackets.
+            return {
+              stdout: `other-package: ${executable.replace("[1]", "1")}`,
+              exitCode: 0,
+            };
+          return runQuery(command, argv, signal);
+        },
+      },
+    );
+    expect(result.installed).toMatchObject({ kind: "unknown", name: null });
+    expect(result.limitations.join("\n")).toContain("pattern characters");
   },
 );

@@ -23,7 +23,7 @@ import {
   expectDroppedPartial,
   expectKeptPartial,
   expectOwnerError,
-} from "../ownerObservationExpectation.fixture.js";
+} from "../../../tests/fixtures/ownerObservationExpectation.js";
 
 const identity = { id: "electron-fixture", name: "Fixture", version: "1" };
 const pageProvider = (failure: AnalysisError): ElectronObservationPort => ({
@@ -188,7 +188,7 @@ it("retains completed target facts when cancellation arrives before Evidence pub
         isolation: "none",
       },
       limitations: expect.arrayContaining([
-        "Browser host platform and architecture were not observed.",
+        expect.stringMatching(/platform.*architecture.*not observed/iu),
       ]),
       normalized_result: targets,
     });
@@ -236,6 +236,7 @@ it.each(["list", "inspect"] as const)(
 
 it("keeps cancellation when the retained Electron inspection is incomplete", async () => {
   const reason = { requested: "stop before page inspection completed" };
+  // A JSON-safe but incomplete inspection cannot be converted into Evidence.
   const partial = {
     kind: "electron-page-observation",
     inspection: { target_id: "electron-page" },
@@ -273,3 +274,132 @@ it.each([
     );
   },
 );
+
+it.each([
+  { ...inspection, target: { ...inspection.target, target_id: "other-page" } },
+  {
+    ...inspection,
+    capture_window: { ...inspection.capture_window, observation_ms: 1 },
+  },
+])(
+  "refuses to attest a different selected page or capture window",
+  async (report) => {
+    const provider = pageProvider(
+      new AnalysisCancelledError("inspect_electron_page"),
+    );
+    const result = await inspectElectronPage(
+      { ...provider, inspectPage: async () => ok(report) },
+      input,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError", partialObservation: report },
+    });
+    const failure = new AnalysisCancelledError("inspect_electron_page", {
+      partialObservation: {
+        kind: "electron-page-observation",
+        inspection: report,
+        cleanup: "transport-closed",
+      },
+    });
+    const partial = failure.partialObservation;
+    const cancelled = await inspectElectronPage(pageProvider(failure), input);
+    expect(cancelled).toMatchObject({ ok: false, error: failure });
+    expect(failure.partialObservation).toEqual(partial);
+    expect(failure.secondaryFailures).toMatchObject([
+      { _tag: "AnalysisOutputError" },
+    ]);
+  },
+);
+
+it.each(["completed", "partial"] as const)(
+  "does not invoke hidden provider getters in a %s page report",
+  async (phase) => {
+    const report = { ...inspection };
+    let getterCalls = 0;
+    Object.defineProperty(report, "target", {
+      enumerable: false,
+      get() {
+        getterCalls += 1;
+        throw new Error("Hidden target getter must not run");
+      },
+    });
+    const failure = new AnalysisCancelledError("inspect_electron_page", {
+      partialObservation: {
+        kind: "electron-page-observation",
+        inspection: report,
+        cleanup: "transport-closed",
+      },
+    });
+    const provider = pageProvider(failure);
+    const result = inspectElectronPage(
+      phase === "partial"
+        ? provider
+        : { ...provider, inspectPage: async () => ok(report) },
+      input,
+    );
+    await expect(result).resolves.toMatchObject({
+      ok: false,
+      error:
+        phase === "partial"
+          ? { _tag: "AnalysisCancelledError" }
+          : { _tag: "AnalysisOutputError" },
+    });
+    expect(getterCalls).toBe(0);
+  },
+);
+
+it.each(["extension", "omission"])(
+  "retains passive Electron source %s before named contract normalization",
+  async (kind) => {
+    const { workers: _workers, ...withoutWorkers } = inspection;
+    const source =
+      kind === "extension"
+        ? { ...inspection, provider_metadata: { source_id: "own-source" } }
+        : withoutWorkers;
+    const provider: ElectronObservationPort = {
+      identity: () => identity,
+      listTargets: async () =>
+        err(new AnalysisCancelledError("list_electron_targets")),
+      inspectPage: async () => ok(source as typeof inspection),
+    };
+    const result = await inspectElectronPage(provider, input);
+    if (!result.ok) throw result.error;
+    expect(result.value.raw_result).toEqual(source);
+    expect(result.value.normalized_result).toHaveProperty("workers", []);
+    expect(result.value.normalized_result).not.toHaveProperty(
+      "provider_metadata",
+    );
+  },
+);
+
+it("retains passive source metadata when promoting a completed failure inspection", async () => {
+  const source = {
+    ...inspection,
+    provider_metadata: { source_id: "partial-source" },
+  };
+  const failure = new AnalysisCancelledError("inspect_electron_page", {
+    partialObservation: {
+      kind: "electron-page-observation",
+      inspection: source,
+      cleanup: "transport-closed",
+    },
+  });
+  const result = await inspectElectronPage(pageProvider(failure), input);
+  if (result.ok) throw new Error("expected retained failure");
+  expect(parseEvidence(result.error.partialObservation).raw_result).toEqual(
+    source,
+  );
+});
+
+it("does not duplicate unchanged passive Electron source JSON", async () => {
+  const result = await inspectElectronPage(
+    {
+      ...pageProvider(new AnalysisCancelledError("inspect_electron_page")),
+      inspectPage: async () => ok(inspection),
+    },
+    input,
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.raw_result).toBeNull();
+});

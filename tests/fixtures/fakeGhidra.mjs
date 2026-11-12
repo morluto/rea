@@ -178,6 +178,19 @@ const handleOutputFailure = (socket, state) => {
 };
 
 const handleRequest = (socket, server, request, state) => {
+  if (state.mode.startsWith("checkpoint")) {
+    if (request.method === "set_address_name") {
+      state.checkpointDirty = true;
+      socket.write(
+        JSON.stringify({ id: request.id, ok: true, result: "renamed" }) + "\n",
+      );
+      return;
+    }
+    if (request.method === "checkpoint_program") {
+      void handleCheckpoint(socket, request, state);
+      return;
+    }
+  }
   if (request.method === "ping") {
     handlePing(socket, request, state);
     return;
@@ -323,9 +336,73 @@ const handleRequest = (socket, server, request, state) => {
     );
     return;
   }
+  if (["valid_then_invalid", "valid_then_invalid_split"].includes(state.mode)) {
+    if (request.method === "list_procedures") return;
+    if (request.method === "list_strings") {
+      const valid = Buffer.from(
+        `${JSON.stringify({ id: request.id, ok: true, result: "completed" })}\n`,
+      );
+      const invalid = Buffer.concat([
+        Buffer.from(`{"id":${request.id + 1},"ok":true,"result":"`),
+        Buffer.from([0xff]),
+        Buffer.from('"}\n'),
+      ]);
+      if (state.mode === "valid_then_invalid")
+        socket.write(Buffer.concat([valid, invalid]));
+      else {
+        socket.write(valid);
+        setTimeout(() => socket.write(invalid), 5);
+      }
+      return;
+    }
+  }
+  if (request.method === "list_strings" && state.mode === "valid_utf8_end") {
+    socket.end(JSON.stringify({ id: request.id, ok: true, result: "�雪🦊" }));
+    return;
+  }
+  if (request.method === "list_strings" && state.mode === "invalid_utf8_end") {
+    socket.end(
+      Buffer.concat([
+        Buffer.from(`{"id":${request.id},"ok":true,"result":"`),
+        Buffer.from([0xe2]),
+      ]),
+    );
+    return;
+  }
+  if (
+    request.method === "list_strings" &&
+    state.mode === "invalid_utf8_split"
+  ) {
+    socket.write(
+      Buffer.concat([
+        Buffer.from(
+          `{"id":${request.id},"ok":true,"result":[{"address":"0x2000","value":"`,
+        ),
+        Buffer.from([0xe2]),
+      ]),
+    );
+    setTimeout(
+      () =>
+        socket.write(Buffer.from([0x28, 0xa1, 0x22, 0x7d, 0x5d, 0x7d, 0x0a])),
+      5,
+    );
+    return;
+  }
+  if (request.method === "list_strings" && state.mode === "invalid_utf8") {
+    socket.write(
+      Buffer.concat([
+        Buffer.from(
+          `{"id":${request.id},"ok":true,"result":[{"address":"0x2000","value":"`,
+        ),
+        Buffer.from([0xff]),
+        Buffer.from('"}]}\n'),
+      ]),
+    );
+    return;
+  }
   const inventory =
     request.method === "list_strings" && state.mode === "fragmented"
-      ? [stringItem("0x2000", "fixture 雪🦊")]
+      ? [stringItem("0x2000", "fixture �雪🦊")]
       : request.method === "list_strings" && state.mode === "oversized_result"
         ? [stringItem("0x2000", "x".repeat(64 * 1024 * 1024 + 1))]
         : state.mode === "unicode_search" &&
@@ -373,6 +450,63 @@ const handleRequest = (socket, server, request, state) => {
     server.close(() => process.exit(0));
   }
 };
+
+async function handleCheckpoint(socket, request, state) {
+  const { path, force } = request.params;
+  if (!force && !state.checkpointDirty) {
+    socket.write(
+      JSON.stringify({ id: request.id, ok: true, result: { saved: false } }) +
+        "\n",
+    );
+    return;
+  }
+  if (
+    !force &&
+    state.mode === "checkpoint_fail_close" &&
+    !state.failedCheckpoint
+  ) {
+    state.failedCheckpoint = true;
+    await writeFile(path, "controlled incomplete packed Program");
+    socket.write(
+      JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "checkpoint_failed",
+          message: "Controlled checkpoint failure",
+        },
+      }) + "\n",
+    );
+    return;
+  }
+  await writeFile(
+    path,
+    `fixture checkpoint ${state.checkpointDirty ? "edited" : "initial"}`,
+  );
+  if (
+    (force && state.mode === "checkpoint_hold_startup") ||
+    (!force && state.mode === "checkpoint_hold_close")
+  ) {
+    await new Promise((resolve) => {
+      const release = (message) => {
+        if (message === "release_checkpoint") {
+          process.off("message", release);
+          resolve();
+        }
+      };
+      process.on("message", release);
+      process.send?.({ event: "checkpoint-held" });
+    });
+  }
+  state.checkpointDirty = false;
+  socket.write(
+    JSON.stringify({
+      id: request.id,
+      ok: true,
+      result: { saved: true, path },
+    }) + "\n",
+  );
+}
 
 const handlePing = (socket, request, state) => {
   if (
@@ -566,6 +700,7 @@ const inventoryResultFor = (method, params) => {
             },
           ],
           skipped_not_loaded: [],
+          skipped_overlays: [],
         },
         complete: !paged,
         next_cursor: paged ? "fixture-second-page" : null,

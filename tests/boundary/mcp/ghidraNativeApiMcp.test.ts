@@ -229,11 +229,23 @@ describe("Ghidra MCP native API evidence", () => {
         degraded,
       );
       failed = false;
-      expect((await inspect()).normalized_result).toMatchObject({
+      const recovered = await inspect();
+      expect(recovered.normalized_result).toMatchObject({
         boundary: { available: true },
       });
-      await inspect();
-      expect(harness.calls).toEqual(["analyze_function", "analyze_function"]);
+      expect(recovered.evidence_id).not.toBe(degraded.evidence_id);
+      // A successful observation remains live too. A later refusal must not
+      // be hidden by replaying the recovered dossier or its composed answer.
+      failed = true;
+      expect(await inspect()).toEqual(degraded);
+      expect(harness.session.evidenceById(recovered.evidence_id)).toEqual(
+        recovered,
+      );
+      expect(harness.calls).toEqual([
+        "analyze_function",
+        "analyze_function",
+        "analyze_function",
+      ]);
     } finally {
       await harness.close();
     }
@@ -285,7 +297,7 @@ describe("Ghidra MCP native API evidence", () => {
   }, 30_000);
 });
 
-it("retains unavailable Ghidra native API observations across provenance and exact replay", async () => {
+it("retains unavailable Ghidra native API observations across live reobservation and provenance", async () => {
   const residual = "The controlled provider omitted native API boundary facts.";
   // This wire fixture is controlled and never launches Ghidra.
   const harness = await connectGhidraMcp(
@@ -352,23 +364,27 @@ it("retains unavailable Ghidra native API observations across provenance and exa
     };
 
     const first = await inspect("0x401000");
-    const replay = await inspect("0x401000");
-    expect(replay.normalized_result).toEqual(first.normalized_result);
-    expect(replay.evidence_id).not.toBe(first.evidence_id);
-    expect(replay.limitations).toEqual(
+    const repeated = await inspect("0x401000");
+    expect(repeated).toEqual(first);
+    expect(repeated.limitations).not.toEqual(
       expect.arrayContaining([
-        expect.stringContaining("Loaded from a local REA analysis snapshot"),
+        expect.stringMatching(/snapshot.*did not re.run the provider/iu),
       ]),
     );
     const warmBundle = session.exportEvidenceBundle();
-    const warmReplay = await inspect("0x401000");
-    expect(warmReplay.evidence_id).toBe(replay.evidence_id);
+    const warmObservation = await inspect("0x401000");
+    expect(warmObservation.evidence_id).toBe(first.evidence_id);
     expect(session.exportEvidenceBundle()).toEqual(warmBundle);
+    expect(harness.calls).toEqual([
+      "analyze_function",
+      "analyze_function",
+      "analyze_function",
+    ]);
 
     const second = await inspect("0x401100");
     expect(second.evidence_id).not.toBe(first.evidence_id);
     expect(session.evidenceById(first.evidence_id)).toEqual(first);
-    expect(session.evidenceById(replay.evidence_id)).toEqual(replay);
+    expect(session.evidenceById(repeated.evidence_id)).toEqual(repeated);
 
     const listed = await mcp.callTool({
       name: "list_unknowns",
@@ -378,16 +394,12 @@ it("retains unavailable Ghidra native API observations across provenance and exa
     const unknownPage = toolContract("list_unknowns").outputSchema.parse(
       listed.structuredContent,
     ).result;
-    expect(unknownPage.total).toBe(3);
+    expect(unknownPage.total).toBe(2);
     expect(unknownPage.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           question: expect.stringContaining(first.evidence_id),
           supporting_evidence_ids: [first.evidence_id],
-        }),
-        expect.objectContaining({
-          question: expect.stringContaining(replay.evidence_id),
-          supporting_evidence_ids: [replay.evidence_id],
         }),
         expect.objectContaining({
           question: expect.stringContaining(second.evidence_id),

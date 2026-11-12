@@ -15,8 +15,10 @@ import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { cliDecimalField, cliDecimalShape } from "./options.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { producerLimitsOption } from "./producerLimitsOption.js";
 export const registerCaptureCommands = (
   cli: CliInstance,
   logger: Logger,
@@ -26,18 +28,25 @@ export const registerCaptureCommands = (
     "inspect" | "inspectFields" | "close"
   > = createPacketCaptureService(environment),
 ): void => {
+  const { producer_limits: discoveryLimits, ...discoveryShape } =
+    inspectPacketFieldsInputSchema.shape;
+  const { producer_limits: selectedLimits, ...selectedShape } =
+    packetCaptureOptionsSchema.shape;
   cli.command(CLI_COMMANDS.inspectPacketFields, {
     description: "Search installed TShark protocol and field definitions",
     options: z
       .object({
-        ...inspectPacketFieldsInputSchema.shape,
-        limit: z
-          .number()
-          .int()
-          .positive()
-          .max(Number.MAX_SAFE_INTEGER)
-          .optional()
-          .describe("Maximum matching records to return; defaults to 50"),
+        ...cliDecimalShape(discoveryShape),
+        producerLimits: producerLimitsOption(discoveryLimits.unwrap()),
+        limit: cliDecimalField(
+          z
+            .number()
+            .int()
+            .positive()
+            .max(Number.MAX_SAFE_INTEGER)
+            .optional()
+            .describe("Maximum matching records to return; defaults to 50"),
+        ),
         all: z
           .boolean()
           .default(false)
@@ -50,14 +59,26 @@ export const registerCaptureCommands = (
             path: ["all"],
             message: "all and limit are mutually exclusive",
           });
+      })
+      .meta({
+        not: {
+          required: ["all", "limit"],
+          properties: { all: { const: true } },
+        },
       }),
-    run: ({ options: { all, ...options } }) =>
+    run: ({ options: { all, producerLimits, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectPacketFields, async () =>
           finishAnalysisCommand(
             () =>
               service.inspectFields(
-                { ...options, ...(all ? { limit: null } : {}) },
+                {
+                  ...options,
+                  ...(producerLimits === undefined
+                    ? {}
+                    : { producer_limits: producerLimits }),
+                  ...(all ? { limit: null } : {}),
+                },
                 { signal },
               ),
             service,
@@ -76,13 +97,16 @@ export const registerCaptureCommands = (
     }),
     options: z
       .object({
-        ...packetCaptureOptionsSchema.shape,
-        match_limit: z
-          .number()
-          .int()
-          .positive()
-          .optional()
-          .describe("Returned matching frames per page; default 50"),
+        ...cliDecimalShape(selectedShape),
+        producerLimits: producerLimitsOption(selectedLimits.unwrap()),
+        match_limit: cliDecimalField(
+          z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Returned matching frames per page; default 50"),
+        ),
         all_matches: z
           .boolean()
           .default(false)
@@ -101,8 +125,14 @@ export const registerCaptureCommands = (
       .refine(
         withinPacketCaptureSelectorBudget,
         packetCaptureSelectorBudgetIssue,
-      ),
-    run: ({ args, options: { all_matches, ...options } }) =>
+      )
+      .meta({
+        not: {
+          required: ["all_matches", "match_limit"],
+          properties: { all_matches: { const: true } },
+        },
+      }),
+    run: ({ args, options: { all_matches, producerLimits, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectPacketCapture, async () => {
           return finishCliEvidenceCommand(
@@ -111,6 +141,9 @@ export const registerCaptureCommands = (
               service.inspect(
                 {
                   ...options,
+                  ...(producerLimits === undefined
+                    ? {}
+                    : { producer_limits: producerLimits }),
                   ...(all_matches ? { match_limit: null } : {}),
                   path: absoluteCallerPath(args.path),
                 },
