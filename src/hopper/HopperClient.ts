@@ -11,6 +11,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import {
+  hopperAppleEventsDenial,
   hopperCancelledBySignal,
   type HopperCancelledError,
   type HopperError,
@@ -1054,11 +1055,7 @@ export class HopperClient {
       nativeHopperLaunchWasDenied(launcherFailure)
     ) {
       this.#resources.shutdownConfirmed = true;
-      return new HopperStartError({
-        userMessage:
-          "macOS denied permission to send Apple Events to Hopper. Allow the application that starts REA under System Settings > Privacy & Security > Automation, then retry opening the target.",
-        launcherFailure,
-      });
+      return hopperAppleEventsDenial(launcherFailure);
     }
     if (hopperLauncherReportedApplicationNotFound(launcherFailure)) {
       // Only the verified native helper's Spotlight exit precedes any target

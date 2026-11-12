@@ -40,6 +40,23 @@ export type HopperLauncherOutcome = {
 export const HOPPER_STARTUP_TIMEOUT_REMEDIATION =
   "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, set REA_HOPPER_STARTUP_TIMEOUT_MS higher in the environment of a new REA invocation, then rerun the command; that invocation starts Hopper again. Resolve retained cleanup before rerunning.";
 
+/**
+ * Recovery for a macOS Apple Events denial before the Hopper launch handoff.
+ *
+ * macOS evaluates `kTCCServiceAppleEvents` against the *responsible* application of the process
+ * tree, and a hardened-runtime application without
+ * `com.apple.security.automation.apple-events` is never prompted: tccd logs
+ * `Prompting policy for hardened runtime; service: kTCCServiceAppleEvents requires entitlement
+ * com.apple.security.automation.apple-events but it is missing for responsible={...}` and denies
+ * the event. Such a client never appears under System Settings > Privacy & Security > Automation,
+ * so pointing at that pane gives an instruction the user cannot carry out, and repeating the same
+ * call in the same client reproduces the denial.
+ *
+ * Both recoveries named here are available without knowing the client's bundle identity.
+ */
+export const HOPPER_APPLE_EVENTS_DENIAL_REMEDIATION =
+  "macOS denied the Apple Event that opens a document in Hopper, before any target handoff. macOS evaluates this permission against the application that started REA: a hardened-runtime application without the com.apple.security.automation.apple-events entitlement is never prompted for it and is never listed under System Settings > Privacy & Security > Automation. Start REA from a client macOS can authorize, or add com.apple.security.automation.apple-events to the responsible application, then reopen the target. Repeating this call in the same client reproduces the same denial.";
+
 /** Startup-timeout recovery for a caller whose REA runtime keeps running. */
 export const HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION =
   "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, use update_analysis_settings with setting hopper.startup_timeout_ms and action set for the next startup attempt without restarting REA, or increase REA_HOPPER_STARTUP_TIMEOUT_MS for future REA processes. Allow at least that long in the MCP client. Resolve retained cleanup before reopening.";
@@ -218,6 +235,23 @@ export type HopperLaunchRejection =
           readonly argument_index: number;
         }
     ));
+
+/**
+ * A launch refused because macOS denied the Apple Event that opens the document.
+ *
+ * Retrying is not presented as the next step: the denial follows from the responsible
+ * application's entitlements, which a retry cannot change.
+ */
+export const hopperAppleEventsDenial = (
+  launcherFailure?: HopperLauncherOutcome,
+): HopperStartError =>
+  new HopperStartError({
+    userMessage: "macOS denied permission to send Apple Events to Hopper.",
+    ...(launcherFailure === undefined ? {} : { launcherFailure }),
+    continuingCallerGuidance: {
+      remediationAction: HOPPER_APPLE_EVENTS_DENIAL_REMEDIATION,
+    },
+  });
 
 /** Hopper or the repository bridge could not be started. */
 export class HopperStartError extends HopperError {
