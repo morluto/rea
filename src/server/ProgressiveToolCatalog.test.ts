@@ -284,9 +284,11 @@ it("ranks a leading task word ahead of an alphabetical later mention", async () 
   ]);
   const latePreview = tools[1]?.description ?? "";
   expect(latePreview.length).toBeLessThanOrEqual(240);
+  expect(latePreview.startsWith("notes")).toBe(true);
   expect(latePreview).toContain("javascript");
   const buriedPreview = tools[2]?.description ?? "";
   expect(buriedPreview.length).toBeLessThanOrEqual(240);
+  expect(buriedPreview.startsWith("padding")).toBe(true);
   expect(buriedPreview).toContain("javascript");
   const notesPage = await f.discover({ query: "notes javascript", limit: 1 });
   const notesTool = z
@@ -297,6 +299,40 @@ it("ranks a leading task word ahead of an alphabetical later mention", async () 
   expect(notesTool?.name).toBe("notes_misc");
   expect(notesTool?.description.length ?? 0).toBeLessThanOrEqual(240);
   expect(notesTool?.description).toContain("javascript");
+  expect(notesTool?.description.startsWith("notes")).toBe(true);
+});
+
+it("ranks an affirmative task ahead of an alphabetical denial and keeps that task sentence", async () => {
+  const task = "Inspect a saved local HAR capture.";
+  const description = `${task}${" recorded ".repeat(30)}This does not prove network loss.`;
+  const f = await connect({
+    extra: [
+      {
+        name: "alpha_misc",
+        description: "Export packets without network access.",
+      },
+      { name: "network_misc", description: "calendar export" },
+      { name: "zebra_misc", description: "Inspect captured network records." },
+      { name: "notes_misc", description },
+    ],
+  });
+  const page = await f.discover({ query: "network", limit: 4 });
+  const tools = z
+    .object({
+      tools: z.array(z.object({ name: z.string(), description: z.string() })),
+    })
+    .parse(page.structuredContent).tools;
+  expect(tools.map((tool) => tool.name)).toEqual([
+    "network_misc",
+    "zebra_misc",
+    "alpha_misc",
+    "notes_misc",
+  ]);
+  const preview = tools[3]?.description ?? "";
+  expect(preview.length).toBeLessThanOrEqual(240);
+  expect(preview.startsWith(task)).toBe(true);
+  expect(preview).toContain("network");
+  expect(preview).toContain("not");
 });
 
 it("drops tools loaded by the previous connection on the same server", async () => {

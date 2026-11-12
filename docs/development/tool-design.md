@@ -97,9 +97,10 @@ before proposing another issue, and avoid treating lack of API parity as a bug.
 
 Start with the analyst task, selected source and useful result. Put material
 effects and the deciding boundary between neighboring tools early. Progressive
-discovery shows at most 240 characters. A query match past that prefix is
-windowed into the same cap; a names lookup still shows the start. Those opening
-characters should identify the operation without requiring the rest of its
+discovery shows at most 240 characters. The opening sentence stays, and a
+query word past that cap is appended in the remaining space. A names lookup
+still shows the start. A mention governed by not, never, or without ranks
+after a tool that states the task. Those opening characters should identify the operation without requiring the rest of its
 reference documentation.
 
 Keep exact call syntax where the advertised schema cannot convey it. The compact

@@ -15,50 +15,116 @@ import {
 } from "../catalogDiscovery.js";
 
 const DISCOVERY_PREVIEW_CHARS = 240;
+const OPENING_CHARS = 160;
 
-/** Short text the model reads. A late match stays visible inside the cap. */
+const indexesOf = (text: string, word: string): number[] => {
+  const found: number[] = [];
+  let from = 0;
+  while (from < text.length) {
+    const index = text.indexOf(word, from);
+    if (index < 0) return found;
+    found.push(index);
+    from = index + word.length;
+  }
+  return found;
+};
+
+/** A nearby not/without governs this mention. "imports without execution" does not. */
+const negatedAt = (lower: string, index: number): boolean => {
+  const clauseStart = Math.max(
+    lower.lastIndexOf(".", index - 1) + 1,
+    index - 80,
+  );
+  if (/\b(not|never|without|no)\b/u.test(lower.slice(clauseStart, index)))
+    return true;
+  return /\b(?:is|are|was|were|does|do|did|cannot|can)\s+not\b/u.test(
+    lower.slice(index, index + 32),
+  );
+};
+
+const openingOf = (description: string): string => {
+  const mark = /[.!?](?=\s|$)/u.exec(description);
+  const sentence =
+    mark === null ? description : description.slice(0, mark.index + 1);
+  return sentence.length <= OPENING_CHARS
+    ? sentence
+    : sentence.slice(0, OPENING_CHARS);
+};
+
+const excerptAround = (
+  description: string,
+  hit: number,
+  room: number,
+): string => {
+  const lower = description.toLowerCase();
+  const sentenceStart = lower.lastIndexOf(".", hit - 1) + 1;
+  const negationAt = [" not ", " without ", " never ", " no "]
+    .map((mark) => lower.lastIndexOf(mark, hit))
+    .reduce((earliest, index) => Math.max(earliest, index), -1);
+  const start =
+    negationAt >= sentenceStart && hit - negationAt <= 80
+      ? negationAt + 1
+      : Math.max(0, hit - 24);
+  const excerpt = description.slice(start, hit + room);
+  return excerpt.length <= room
+    ? excerpt
+    : excerpt.slice(excerpt.length - room);
+};
+
+/** The opening task stays. A query word past 240 is appended, not substituted. */
 export const discoveryPreview = (
   description: string,
   words: readonly string[],
 ): string => {
   if (description.length <= DISCOVERY_PREVIEW_CHARS) return description;
   const lower = description.toLowerCase();
-  const late = words
-    .map((word) => lower.indexOf(word))
+  const hidden = words
+    .flatMap((word) => indexesOf(lower, word))
     .filter((index) => index >= DISCOVERY_PREVIEW_CHARS);
-  if (late.length === 0) return description.slice(0, DISCOVERY_PREVIEW_CHARS);
-  const candidates = late.map((index) => Math.max(0, index - 48));
-  let start = candidates[0] ?? 0;
-  let covered = -1;
-  for (const candidate of candidates) {
-    const end = candidate + DISCOVERY_PREVIEW_CHARS - 1;
-    const count = late.filter(
-      (index) => index >= candidate && index < end,
-    ).length;
-    if (count > covered || (count === covered && candidate < start)) {
-      covered = count;
-      start = candidate;
-    }
-  }
-  return `…${description.slice(start, start + DISCOVERY_PREVIEW_CHARS - 1)}`;
+  if (hidden.length === 0) return description.slice(0, DISCOVERY_PREVIEW_CHARS);
+  const separator = " … ";
+  const opening = openingOf(description).slice(
+    0,
+    DISCOVERY_PREVIEW_CHARS - separator.length - 48,
+  );
+  const room = DISCOVERY_PREVIEW_CHARS - opening.length - separator.length;
+  return `${opening}${separator}${excerptAround(description, Math.min(...hidden), room)}`;
 };
 
-const nameHits = (name: string, words: readonly string[]): number => {
-  const lowered = name.toLowerCase();
-  const spaced = lowered.replaceAll("_", " ");
-  return words.filter((word) => lowered.includes(word) || spaced.includes(word))
-    .length;
+const nameToken = (name: string, word: string): boolean =>
+  name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/u)
+    .includes(word);
+
+const placement = (name: string, description: string, word: string): number => {
+  if (nameToken(name, word)) return 4;
+  const lower = description.toLowerCase();
+  const hits = indexesOf(lower, word);
+  const affirmative = hits.filter((index) => !negatedAt(lower, index));
+  if (affirmative.length === 0) return hits.length === 0 ? 0 : 1;
+  return Math.min(...affirmative) < DISCOVERY_PREVIEW_CHARS ? 3 : 2;
 };
 
-const earliestDescriptionHit = (
+const rankScore = (
+  name: string,
+  description: string,
+  words: readonly string[],
+): number =>
+  words.reduce((sum, word) => sum + placement(name, description, word), 0);
+
+const earliestAffirmative = (
   description: string,
   words: readonly string[],
 ): number => {
   const lower = description.toLowerCase();
   return words.reduce((earliest, word) => {
-    const index = lower.indexOf(word);
-    if (index < 0) return earliest;
-    return earliest < 0 || index < earliest ? index : earliest;
+    const live = indexesOf(lower, word).filter(
+      (index) => !negatedAt(lower, index),
+    );
+    const index =
+      live.length === 0 ? Number.MAX_SAFE_INTEGER : Math.min(...live);
+    return Math.min(earliest, index);
   }, Number.MAX_SAFE_INTEGER);
 };
 
@@ -68,16 +134,20 @@ const compareDiscoveryNames = (
   words: readonly string[],
   descriptions: ReadonlyMap<string, { description: string }>,
 ): number => {
-  const leftHits = nameHits(left, words);
-  const rightHits = nameHits(right, words);
-  if (leftHits !== rightHits) return rightHits - leftHits;
-  if (leftHits === 0) {
-    const position =
-      earliestDescriptionHit(descriptions.get(left)?.description ?? "", words) -
-      earliestDescriptionHit(descriptions.get(right)?.description ?? "", words);
-    if (position !== 0) return position;
-  }
-  return left < right ? -1 : left > right ? 1 : 0;
+  const leftDescription = descriptions.get(left)?.description ?? "";
+  const rightDescription = descriptions.get(right)?.description ?? "";
+  const score =
+    rankScore(right, rightDescription, words) -
+    rankScore(left, leftDescription, words);
+  if (score !== 0) return score;
+  const named = (name: string) =>
+    words.filter((word) => nameToken(name, word)).length;
+  if (named(left) > 0 && named(left) === named(right))
+    return left < right ? -1 : left > right ? 1 : 0;
+  const position =
+    earliestAffirmative(leftDescription, words) -
+    earliestAffirmative(rightDescription, words);
+  return position !== 0 ? position : left < right ? -1 : left > right ? 1 : 0;
 };
 
 /** Per-connection visibility; canonical SDK handles retain validation and authority. */
