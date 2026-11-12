@@ -772,6 +772,42 @@ describe("production MCP doctor child lifecycle", () => {
     expect(result.checks[0]?.detail).not.toContain("REA_MCP_STARTUP");
     await expect(waitForExit(pid)).resolves.toBeUndefined();
   }, 10_000);
+
+  it("stops the owned process family when a descendant outlives the launcher", async () => {
+    const root = await createTestTempDirectory("rea-mcp-doctor-descendant-");
+    const pidPath = join(root, "pids.json");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const pending = runProductionMcpDoctor({
+      command: process.execPath,
+      args: [resolve("tests/fixtures/mcpDoctorForkDescendant.mjs")],
+      cwd: process.cwd(),
+      environment: {
+        ...process.env,
+        REA_MCP_DOCTOR_PID_PATH: pidPath,
+        REA_MCP_DOCTOR_DEADLINE_MS: "60000",
+      },
+    });
+    const pids = await vi.waitFor(
+      async () => {
+        const value = JSON.parse(await readFile(pidPath, "utf8")) as {
+          launcher: number;
+          descendant: number;
+        };
+        expect(Number.isSafeInteger(value.descendant)).toBe(true);
+        return value;
+      },
+      { timeout: 10_000 },
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+    vi.useRealTimers();
+    // The launcher exits at once, so only owned cleanup can stop the descendant;
+    // a joined SDK close would leave it running and report no cleanup failure.
+    expect(result.healthy).toBe(false);
+    expect(result.checks.map(({ name }) => name)).toEqual(["transport"]);
+    expectDoctorDeadline(result.checks[0]?.detail, 60_000);
+    await expect(waitForExit(pids.descendant)).resolves.toBeUndefined();
+  }, 20_000);
 });
 
 describe("production MCP doctor request-flow deadline", () => {
