@@ -146,6 +146,32 @@ const expectUnknownProviderKeepsBinding = async (
   );
 };
 
+const expectRefreshedExplicitBinding = async (mcp: Client): Promise<void> => {
+  for (const detail of ["summary", "complete"] as const) {
+    const refreshed = structured(
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: { detail, refresh_candidates: true },
+      }),
+    );
+    expect(refreshed.result).toMatchObject({
+      analysis_provider_binding: { selection_source: "request" },
+      analysis_provider_candidates: [
+        {
+          provider: { id: "alpha" },
+          selected: false,
+          selection_source: null,
+        },
+        {
+          provider: { id: "beta" },
+          selected: true,
+          selection_source: "request",
+        },
+      ],
+    });
+  }
+};
+
 describe("provider selection over MCP", () => {
   it("keeps open_binary and binary_session binding semantics exact", async () => {
     const directory = await createTestTempDirectory("rea-provider-mcp-");
@@ -286,6 +312,9 @@ describe("provider selection over MCP", () => {
       ],
     });
 
+    await expectRefreshedExplicitBinding(mcp);
+    expect(starts).toEqual(["beta"]);
+
     await expectUnknownProviderKeepsBinding(
       mcp,
       session,
@@ -415,24 +444,43 @@ const candidateStatus = (candidates: unknown) =>
     z
       .array(z.record(z.string(), z.unknown()))
       .parse(candidates)
-      .map(({ provider, selected, availability, target_support }) => {
-        const state = (value: unknown) => {
-          const { status, code, reason } = z
-            .object({
-              status: z.string(),
-              code: z.unknown(),
-              reason: z.unknown(),
-            })
-            .parse(value);
-          return { status, code, reason };
-        };
-        return {
+      .map(
+        ({
           provider,
           selected,
-          availability: state(availability),
-          target_support: state(target_support),
-        };
-      }),
+          selection_source,
+          availability,
+          target_support,
+          rejections,
+        }) => {
+          const state = (value: unknown) => {
+            const { status, code, reason } = z
+              .object({
+                status: z.string(),
+                code: z.unknown(),
+                reason: z.unknown(),
+              })
+              .parse(value);
+            return { status, code, reason };
+          };
+          return {
+            provider,
+            selected,
+            selection_source,
+            availability: state(availability),
+            target_support: state(target_support),
+            rejections: z
+              .array(z.record(z.string(), z.unknown()))
+              .parse(rejections)
+              .map(({ provider_id, origin, code, reason }) => ({
+                provider_id,
+                origin,
+                code,
+                reason,
+              })),
+          };
+        },
+      ),
   );
 
 const expectSummaryKeepsDecisionFacts = (

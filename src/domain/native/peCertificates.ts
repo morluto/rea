@@ -66,6 +66,8 @@ const distinguishedNameSchema = z.strictObject({
       oid: z.string(),
       oid_name: z.string().nullable(),
       value: z.string(),
+      // Older retained Evidence omitted RDN grouping.
+      rdn_index: uint.optional(),
     }),
   ),
 });

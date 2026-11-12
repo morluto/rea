@@ -266,30 +266,36 @@ describe("registration ownership in maintenance", () => {
     ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          status: expect.objectContaining({ client: "codex", state: "stale" }),
+          status: expect.objectContaining({
+            client: "codex",
+            state: "stale",
+            command_identity: "owned",
+          }),
           activation: "enabled",
-          commandIdentity: "owned",
         }),
         expect.objectContaining({
-          status: expect.objectContaining({ client: "cursor", state: "stale" }),
+          status: expect.objectContaining({
+            client: "cursor",
+            state: "stale",
+            command_identity: "foreign",
+          }),
           activation: "enabled",
-          commandIdentity: "foreign",
         }),
         expect.objectContaining({
           status: expect.objectContaining({
             client: "opencode",
             state: "stale",
+            command_identity: "owned",
           }),
           activation: "disabled",
-          commandIdentity: "owned",
         }),
         expect.objectContaining({
           status: expect.objectContaining({
             client: "claude_code",
             state: "missing",
+            command_identity: "unknown",
           }),
           activation: "unknown",
-          commandIdentity: "unknown",
         }),
       ]),
     );

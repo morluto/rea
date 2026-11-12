@@ -1,11 +1,17 @@
+import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import { access } from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   AnalysisCancelledError,
+  AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import {
+  createSystemProcessOwnershipHost,
+  LinuxOwnedProcessPrerequisiteError,
+} from "../../process/ProcessOwnershipObservation.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -17,9 +23,13 @@ import {
 import { traceSourceMap } from "./TraceSourceMap.js";
 import {
   runSourceMapCommand,
-  SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
   type SourceMapCleanupRetention,
 } from "./SourceMapCommand.js";
+
+const expectedProcessMemoryLimitBytes =
+  process.platform === "win32" && process.versions.bun !== undefined
+    ? 704 * 1024 * 1024
+    : null;
 
 const report = traceSourceMap(
   JSON.stringify({ version: 3, sources: [], names: [], mappings: "" }),
@@ -33,7 +43,7 @@ const completedReport: WebSourceMapReport = {
       ? { ...report.runtime, v8_heap_limit_bytes: 200 * 1024 * 1024 }
       : {
           ...report.runtime,
-          process_memory_limit_bytes: SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+          process_memory_limit_bytes: expectedProcessMemoryLimitBytes,
         },
 };
 const completedCodec = `process.stdout.write(${JSON.stringify(JSON.stringify({ state: "success", report: completedReport }))})`;
@@ -80,6 +90,102 @@ const runChild = (
 
 const exitsAfterHoldingOutput =
   'const {spawn}=require("node:child_process"); spawn(process.execPath,["-e","setTimeout(()=>{},400)"],{stdio:["ignore","inherit","inherit"]}); process.stderr.write("physical exit 7"); process.exit(7)';
+
+it("preserves Linux process inspection failure and recovery before launching the codec", async () => {
+  const cause = Object.assign(new Error("ps permission denied"), {
+    code: "EACCES",
+  });
+  const host = createSystemProcessOwnershipHost(
+    "linux",
+    {},
+    {
+      execFileOutput: async () => {
+        throw cause;
+      },
+    },
+  );
+  const result = await runSourceMapCommand(
+    "{}",
+    "/probe/source.map",
+    undefined,
+    {
+      prepareOwnership: () => host.prepare!(),
+      launcher: async () => {
+        throw new Error("must not launch");
+      },
+    },
+    unexpectedCleanup,
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected prerequisite failure");
+  expect(result.error).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
+  expect(result.error).toMatchObject({
+    cause,
+    remediationAction: expect.stringContaining("EACCES"),
+  });
+});
+
+it("retains a physical process inspection failure when the caller cancels concurrently", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancelled during inspection" };
+  const physical = Object.assign(new Error("ps permission denied"), {
+    code: "EACCES",
+  });
+  const host = createSystemProcessOwnershipHost(
+    "linux",
+    {},
+    {
+      execFileOutput: async () => {
+        controller.abort(reason);
+        throw physical;
+      },
+    },
+  );
+  const result = await runSourceMapCommand(
+    "{}",
+    "/probe/source.map",
+    { signal: controller.signal },
+    {
+      prepareOwnership: () => host.prepare!(),
+      launcher: async () => {
+        throw new Error("must not launch");
+      },
+    },
+    unexpectedCleanup,
+  );
+  if (result.ok) throw new Error("expected inspection failure");
+  expect(result.error).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
+  expect(result.error.cause).toBe(physical);
+  expect(result.error.secondaryFailures).toHaveLength(1);
+  expect(result.error.secondaryFailures[0]).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: reason,
+  });
+});
+
+it("does not adopt an opaque typed cancellation reason as an ownership failure", async () => {
+  const controller = new AbortController();
+  const reason = new AnalysisOutputError("unrelated", "opaque caller reason");
+  const result = await runSourceMapCommand(
+    "{}",
+    "/probe/source.map",
+    { signal: controller.signal },
+    {
+      prepareOwnership: async () => {
+        controller.abort(reason);
+        throw reason;
+      },
+      launcher: async () => {
+        throw new Error("must not launch");
+      },
+    },
+    unexpectedCleanup,
+  );
+  if (result.ok) throw new Error("expected cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+});
+
 const exitsThenDescendantExceedsStderrBudget =
   'const {spawn}=require("node:child_process"); spawn(process.execPath,["-e",`setTimeout(()=>{process.stderr.write("x".repeat(1024*1024+64)); setInterval(()=>{},1000)},25)`],{stdio:["ignore","inherit","inherit"]}); process.stderr.write("physical exit 7"); process.exit(7)';
 
@@ -227,6 +333,11 @@ it("preserves an observed nonzero exit before caller cancellation during output 
     output_complete: false,
   });
   expect(result.error.capturedOutput?.truncated).toBe(true);
+  expect(
+    result.error.secondaryFailures.find(
+      (failure) => failure instanceof AnalysisCancelledError,
+    )?.cause,
+  ).toBe(reason);
   if (runtimePath === undefined) throw new Error("runtime was not acquired");
   await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
 });
@@ -322,7 +433,7 @@ it("preserves an observed process-memory limit over the codec exit status", asyn
   expect(result.error).toMatchObject({
     resource: "memory",
     reportedLimits: {
-      codec_process_memory_limit_bytes: SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+      codec_process_memory_limit_bytes: expectedProcessMemoryLimitBytes,
     },
     capturedOutput: { stderr: "memory limit reached" },
   });
@@ -402,4 +513,29 @@ it("applies a non-default decode deadline and releases its runtime", async () =>
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("retains a physical process admission error alongside cancellation", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "during admission" };
+  const physical = new ProcessAdmissionError("reader_closed");
+  const result = await runSourceMapCommand(
+    "{}",
+    "/probe/source.map",
+    { signal: controller.signal },
+    {
+      prepareOwnership: async () => {
+        controller.abort(reason);
+        throw physical;
+      },
+    },
+    unexpectedCleanup,
+  );
+  if (result.ok) throw new Error("expected admission failure");
+  expect(result.error._tag).toBe("ProviderAdapterError");
+  expect(result.error.cause).toBe(physical);
+  expect(result.error.secondaryFailures[0]).toBeInstanceOf(
+    AnalysisCancelledError,
+  );
+  expect(result.error.secondaryFailures[0]?.cause).toBe(reason);
 });

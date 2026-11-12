@@ -1,5 +1,6 @@
 import {
   captureDecoderHeapRecovery,
+  captureDecoderHeapContinuingRecovery,
   CAPTURE_DECODER_OLD_GENERATION_SETTING,
   DEFAULT_CAPTURE_DECODER_HEAP,
 } from "../../../src/config/captureDecoderHeap.js";
@@ -87,7 +88,8 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
             setting: "capture.decoder_old_generation_mib",
             effective_value: testHeap.oldGenerationMiB,
             source: testHeap.source,
-            rea_restart_required: false,
+            update_mode: "runtime",
+            pending_restart: false,
           },
           reported_limits:
             jobLimit === null
@@ -111,7 +113,9 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
     expect(JSON.stringify(response)).not.toContain("caller-marked");
     expect(JSON.stringify(response)).not.toContain("rea doctor");
     const remediation = String(exhausted.error.remediation?.action ?? "");
-    expect(remediation).toContain(captureDecoderHeapRecovery(testHeap));
+    expect(remediation).toContain(
+      captureDecoderHeapContinuingRecovery(testHeap),
+    );
     const failed: unknown = await execute(
       process.execPath,
       [
@@ -147,7 +151,8 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
           setting: "capture.decoder_old_generation_mib",
           effective_value: testHeap.oldGenerationMiB,
           source: testHeap.source,
-          rea_restart_required: false,
+          update_mode: "runtime",
+          pending_restart: false,
         },
       },
       remediation: {
@@ -166,15 +171,7 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
       normalized_result: { total_records: 2 },
     });
     const controlText = JSON.stringify(control.structuredContent);
-    expect(controlText).toContain(
-      "The effective REA_CAPTURE_DECODER_OLD_GENERATION_MIB value is 64 MiB (source setting; default 192 MiB, floor 8 MiB, maximum 16384 MiB).",
-    );
-    expect(controlText).toContain("source setting");
-    expect(controlText).toContain("floor 8 MiB");
-    expect(controlText).toContain("maximum 16384 MiB");
-    expect(controlText).toContain(
-      "Set REA_CAPTURE_DECODER_OLD_GENERATION_MIB in the environment that starts REA",
-    );
+    expect(controlText).toContain(captureDecoderHeapRecovery(testHeap));
     const defaultServer = await connectLocalToolsMcp();
     const defaultControl = await defaultServer.call(
       "inspect_web_network_capture",

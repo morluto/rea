@@ -1,4 +1,5 @@
 import { z } from "incur";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 import {
   executableFormatHintSchema,
@@ -169,9 +170,7 @@ export const providerSelectionOption = analysisProviderSelectorSchema
   );
 
 /** Optional path to the local analysis snapshot loaded or updated by a command. */
-export const snapshotSelectionOption = z
-  .string()
-  .min(1)
+export const snapshotSelectionOption = localPathStringSchema
   .optional()
   .describe("Load and update a local analysis snapshot");
 
@@ -179,7 +178,7 @@ export const snapshotSelectionOption = z
  * Explicit interpretation for headerless native executable formats. Flash
  * dumps take their offsets on the artifact commands instead.
  */
-export const formatSelectionOption = executableFormatHintSchema
+const formatSelectionOption = executableFormatHintSchema
   .exclude(["esp-flash-image"])
   .optional()
   .describe(

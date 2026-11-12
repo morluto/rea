@@ -9,12 +9,14 @@ import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
   omitUnretainedEvidenceFromError,
   projectAnalysisError,
+  unretainedEvidenceCandidates,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { NoBinaryOpenError } from "../domain/configurationErrors.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
+import { estimateJsonStorage } from "../application/JsonAuthenticationHeadroom.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
@@ -305,8 +307,22 @@ export class ToolResultDelivery {
     const partial = safeParseEvidence(error.partialObservation);
     if (!partial.ok) return this.toErrorToolResult(error, targetContent);
     const recorded = recordEvidence(partial.value);
-    if (!recorded.ok) return this.toErrorToolResult(error, targetContent);
     const projected = projectAnalysisError(error);
+    if (!recorded.ok)
+      return this.projectedErrorResult(
+        {
+          ...projected,
+          details: {
+            ...projected.details,
+            partial_observation: {
+              kind: "inline-evidence",
+              retention: "unknown",
+              evidence: partial.value,
+            },
+          },
+        },
+        targetContent,
+      );
     return this.projectedErrorResult(
       {
         ...projected,
@@ -335,21 +351,43 @@ export class ToolResultDelivery {
       "error-text",
       targetContent,
     );
-    if (!encoded.ok) {
-      const compact = omitUnretainedEvidenceFromError(projected, encoded);
-      if (compact !== undefined) {
-        const compactContent = { error: compact };
+    let candidateProjection = projected;
+    while (!encoded.ok) {
+      const limit = encoded;
+      const candidates = [...unretainedEvidenceCandidates(candidateProjection)]
+        .map((candidate) => ({
+          candidate,
+          size: estimateJsonStorage(candidate.value, {
+            maximumValueBytes: this.resultBudgetBytes,
+            includeSerialized: false,
+          }).valueBytes,
+        }))
+        .sort((left, right) => right.size - left.size);
+      let next: AnalysisErrorProjection | undefined;
+      for (const { candidate } of candidates) {
+        const compact = omitUnretainedEvidenceFromError(
+          candidateProjection,
+          limit,
+          candidate,
+        );
+        if (compact === undefined) continue;
+        next ??= compact;
+        const content = { error: compact };
         const compactEncoded = encodeToolResult(
-          compactContent,
+          content,
           this.resultBudgetBytes,
           "error-text",
           targetContent,
         );
         if (compactEncoded.ok) {
-          structuredContent = compactContent;
+          structuredContent = content;
           encoded = compactEncoded;
+          break;
         }
       }
+      if (encoded.ok) break;
+      if (next === undefined) break;
+      candidateProjection = next;
     }
     // The transport retains an oversized projected error before replacing it
     // with a recoverable delivery constraint, using this same budget.

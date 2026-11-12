@@ -1,19 +1,19 @@
+import { captureBudgets } from "../CaptureBudgets.js";
 import { err, ok, type Result } from "../../../domain/result.js";
 import { setImmediate } from "node:timers/promises";
 import type { ProtobufField } from "../../../domain/protobufWire.js";
 import { CaptureFormatError } from "../CaptureFormatError.js";
-import { WEB_NETWORK_CAPTURE_LIMITS } from "../../../domain/webNetworkCapture.js";
 
 /** One charge covers all selected records, including temporary interpretation strings. */
 export class ProtobufBudget {
-  #remaining = WEB_NETWORK_CAPTURE_LIMITS.outputBytes;
+  #remaining = captureBudgets().outputBytes;
   #work = 0;
   constructor(readonly signal?: AbortSignal) {}
   charge(bytes: number): void {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.#remaining)
       throw new CaptureFormatError(
         "limit",
-        "Protobuf decoding exceeds the shared 96 MiB encoded-result and working-set budget.",
+        `Protobuf decoding exceeds max_reply_bytes (${String(captureBudgets().outputBytes)} bytes); raise that per-call allowance and retry.`,
       );
     this.#remaining -= bytes;
   }
@@ -115,7 +115,7 @@ const messageCandidate = async (
     if (!parsed.ok) return false;
     const field = parsed.value;
     if (field.type === 3) {
-      if (groups.length >= WEB_NETWORK_CAPTURE_LIMITS.depth) return false;
+      if (groups.length >= captureBudgets().depth) return false;
       groups.push(field.number);
     } else if (field.type === 4 && groups.pop() !== field.number) return false;
     start = field.next;
@@ -189,8 +189,10 @@ export const decodeProtobufWire = async (
         return group === number
           ? { end: next, payloadEnd: at }
           : fail("Unexpected or mismatched end-group tag");
-      if (type === 3 && depth >= WEB_NETWORK_CAPTURE_LIMITS.depth)
-        return fail("Group nesting exceeds the 64-level decoder budget");
+      if (type === 3 && depth >= captureBudgets().depth)
+        return fail(
+          `Group nesting exceeds max_nesting_depth (${String(captureBudgets().depth)} levels)`,
+        );
       let value = parsed.value.value?.toString();
       if (type === 1 || type === 5) {
         let integer = 0n;
@@ -265,11 +267,10 @@ export const decodeProtobufWire = async (
         next = nested.end;
       } else if (type === 2 && schema?.nested(field)) {
         const error =
-          depth >= WEB_NETWORK_CAPTURE_LIMITS.depth
+          depth >= captureBudgets().depth
             ? {
                 offset: payloadOffset,
-                reason:
-                  "Schema message nesting exceeds the 64-level decoder budget",
+                reason: `Schema message nesting exceeds max_nesting_depth (${String(captureBudgets().depth)} levels)`,
               }
             : (await walk(payloadOffset, next, field, depth + 1)).error;
         // The outer length is an observed boundary. A bad interpretation of its

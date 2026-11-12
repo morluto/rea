@@ -14,6 +14,19 @@ export const DEFAULT_ASAR_MAX_HEADER_BYTES = 16 * 1024 * 1024;
  */
 export const MAXIMUM_ASAR_MAX_HEADER_BYTES = 256 * 1024 * 1024;
 
+/** Expanded ASAR path/entry retention is independent of packed header bytes. */
+export const DEFAULT_ASAR_MAX_LISTING_BYTES = 64 * 1024 * 1024;
+/** Accounting must remain exactly representable; actual heap admission is separate. */
+export const MAXIMUM_ASAR_MAX_LISTING_BYTES = Number.MAX_SAFE_INTEGER;
+
+export const DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS = 3_000;
+export const DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION = 64;
+export const DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES = 12_000;
+/** Bridge counters and p-code input indices are Java signed integers. */
+export const MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS = 2_147_483_647;
+/** Ghidra 12.1.4 shifts MiB by 20 into a signed Java int response capacity. */
+export const MAXIMUM_GHIDRA_DECOMPILE_PAYLOAD_MIB = 2_047;
+
 /** Native function-matching representation admitted when the setting is unset. */
 export const DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES = 96 * 1024 * 1024;
 
@@ -178,3 +191,28 @@ export const MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES = Math.floor(
  * a caller cap below this budget must not truncate those required replies.
  */
 export const DEBUGGER_CONTROL_REPLY_BYTES = 16 * 1024 * 1024;
+
+/** Hopper, Ghidra, and Cutter request payload ceiling. Same bound as the bridge owner. */
+export const DEFAULT_BRIDGE_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
+export const MINIMUM_BRIDGE_MAX_REQUEST_BYTES = 7464;
+export const MAXIMUM_BRIDGE_MAX_REQUEST_BYTES = 536_870_888 - 1;
+
+/** MCP client SDK default request timeout. JEB uses it when the setting is unset. */
+export const DEFAULT_JEB_MCP_TIMEOUT_MS = 60_000;
+
+/** Kuna project export and whole-program scans. */
+export const DEFAULT_KUNA_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
+/** One Kuna function decompile. */
+export const DEFAULT_KUNA_FUNCTION_TIMEOUT_MS = 120_000;
+
+/** Pwntools artifact admission when producer_limits.input_bytes is omitted. */
+export const DEFAULT_PWNTOOLS_MAX_INPUT_BYTES = 32 * 1024 * 1024;
+export const MAXIMUM_PWNTOOLS_MAX_INPUT_BYTES = 1024 * 1024 * 1024;
+
+/** Windows ChangeTime settle window, poll, and poll count. */
+export const DEFAULT_WINDOWS_CHANGE_TIME_DRIFT_MS = 2_000;
+export const MAXIMUM_WINDOWS_CHANGE_TIME_DRIFT_MS = 60_000;
+export const DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS = 25;
+export const MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS = 1_000;
+export const DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS = 40;
+export const MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS = 1_000;

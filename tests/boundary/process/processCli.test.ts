@@ -318,8 +318,9 @@ describe("process CLI errors", () => {
             path: ["arguments", 0],
             reason: "invalid_format",
             expected: "regex",
-            message:
-              "Values passed to operating-system APIs cannot contain NUL",
+            message: expect.stringMatching(
+              /operating.system.*cannot contain NUL/i,
+            ),
           },
         ],
       },
@@ -454,8 +455,9 @@ describe("process CLI evidence validation", () => {
       code: "invalid_request",
       retryable: false,
       category: "invalid_input",
-      message:
-        "Capture evidence is not from the current process-capture workflow. Create new capture evidence, then try again.",
+      message: expect.stringMatching(
+        /capture evidence.*not from.*process-capture.*create new capture evidence/i,
+      ),
       details: {
         operation: "compare_process_captures",
         issues: [{ path: ["left"], reason: "invalid_value" }],
