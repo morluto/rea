@@ -65,6 +65,7 @@ export type DelphiFormValue =
       readonly text: string;
       readonly bytes_hex: string;
       readonly code_page: string;
+      readonly declared_bytes: number;
       readonly truncated: boolean;
       readonly location: DelphiFormRange;
     }
@@ -202,10 +203,13 @@ export type DelphiFormResource = {
 };
 
 const uint = z.number().int().min(0).max(0xffffffff);
+// A wide string's declared byte count doubles a uint32 character count.
+const declaredStringBytes = z.number().int().min(0).max(0x1fffffffe);
+const hexSchema = z.string().regex(/^(?:[0-9a-f]{2})*$/u);
 const rangeSchema = z.strictObject({ offset: uint, bytes: uint });
 const textSchema = z.strictObject({
   text: z.string(),
-  bytes_hex: z.string(),
+  bytes_hex: hexSchema,
   code_page: z.string(),
   location: rangeSchema,
 });
@@ -267,27 +271,28 @@ const valueSchemaOf = <V extends z.ZodType, C extends z.ZodType>(
     z.strictObject({
       kind: z.literal("float"),
       text: z.string().nullable(),
-      bytes_hex: z.string(),
+      bytes_hex: hexSchema,
       note: z.string(),
       location: rangeSchema,
     }),
     z.strictObject({
       kind: z.literal("string"),
       text: z.string(),
-      bytes_hex: z.string(),
+      bytes_hex: hexSchema,
       code_page: z.string(),
+      declared_bytes: declaredStringBytes,
       truncated: z.boolean(),
       location: rangeSchema,
     }),
     z.strictObject({
       kind: z.literal("identifier"),
       text: z.string(),
-      bytes_hex: z.string(),
+      bytes_hex: hexSchema,
       location: rangeSchema,
     }),
     z.strictObject({
       kind: z.literal("binary"),
-      bytes_hex: z.string(),
+      bytes_hex: hexSchema,
       declared_bytes: uint,
       truncated: z.boolean(),
       location: rangeSchema,
@@ -310,7 +315,7 @@ const valueSchemaOf = <V extends z.ZodType, C extends z.ZodType>(
     z.strictObject({
       kind: z.literal("unknown"),
       reason: z.string(),
-      bytes_hex: z.string(),
+      bytes_hex: hexSchema,
       truncated: z.boolean(),
       location: rangeSchema,
     }),
@@ -331,7 +336,7 @@ const objectSchemaOf = <P extends z.ZodType, O extends z.ZodType>(
     unknown: z
       .strictObject({
         reason: z.string(),
-        bytes_hex: z.string(),
+        bytes_hex: hexSchema,
         truncated: z.boolean(),
         location: rangeSchema,
       })
@@ -384,7 +389,7 @@ export const delphiFormResourceSchema: z.ZodType<DelphiFormResource> =
     prefix: z
       .strictObject({
         location: rangeSchema,
-        bytes_hex: z.string(),
+        bytes_hex: hexSchema,
         note: z.string(),
       })
       .nullable(),

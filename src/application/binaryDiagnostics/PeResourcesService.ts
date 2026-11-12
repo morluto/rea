@@ -216,7 +216,7 @@ const validReport = (
         prefixMatches &&
         form.root.location.offset === signatureEnd &&
         within(form.root.location) &&
-        insideLocations(form.root, within)
+        insideLocations(form.root, within, form.code_page)
       );
     })
   );
@@ -226,19 +226,21 @@ const validReport = (
 const insideLocations = (
   object: DelphiFormObject,
   within: (range: { offset: number; bytes: number }) => boolean,
+  codePage: string,
 ): boolean => {
   if (!within(object.location)) return false;
   if (object.unknown !== null && !within(object.unknown.location)) return false;
   const text = (item: DelphiFormText | null): boolean =>
-    item === null || within(item.location);
+    item === null || (within(item.location) && item.code_page === codePage);
   if (!text(object.class_name) || !text(object.component_name)) return false;
   return (
     object.properties.every(
       (property) =>
         within(property.location) &&
         text(property.name) &&
-        insideValue(property.value, within),
-    ) && object.children.every((child) => insideLocations(child, within))
+        insideValue(property.value, within, codePage),
+    ) &&
+    object.children.every((child) => insideLocations(child, within, codePage))
   );
 };
 
@@ -267,16 +269,19 @@ const codePageSourceMatches = (form: DelphiFormResource): boolean => {
 const insideValue = (
   value: DelphiFormValue,
   within: (range: { offset: number; bytes: number }) => boolean,
+  codePage: string,
 ): boolean => {
   if (value.kind === "list")
     return (
       within(value.location) &&
-      value.items.every((item) => insideValue(item, within))
+      value.items.every((item) => insideValue(item, within, codePage))
     );
   if (value.kind === "set")
     return (
       within(value.location) &&
-      value.names.every((item) => within(item.location))
+      value.names.every(
+        (item) => within(item.location) && item.code_page === codePage,
+      )
     );
   if (value.kind === "collection")
     return (
@@ -288,7 +293,8 @@ const insideValue = (
             (property) =>
               within(property.location) &&
               within(property.name.location) &&
-              insideValue(property.value, within),
+              property.name.code_page === codePage &&
+              insideValue(property.value, within, codePage),
           ),
       )
     );

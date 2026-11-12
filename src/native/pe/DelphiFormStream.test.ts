@@ -433,7 +433,80 @@ describe("Delphi form string and structural values", () => {
     const root = rootOf(payload);
     expect(root.unknown?.reason).toContain("string budget exhausted");
   });
+});
 
+describe("Delphi form truncated length prefixes", () => {
+  it("keeps a completed binary length when the payload is truncated", () => {
+    const declared = Buffer.alloc(4);
+    declared.writeUInt32LE(200, 0);
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Data",
+          Buffer.concat([bytes(10), declared, bytes(0xaa, 0xbb)]),
+        ),
+      ]),
+    );
+    // Drop the property and child terminators so the declared length runs past
+    // the payload instead of consuming them as binary content.
+    const value = propertyOf(
+      rootOf(payload.subarray(0, payload.length - 2)),
+      "Data",
+    ).value;
+    expect(value).toMatchObject({
+      kind: "binary",
+      declared_bytes: 200,
+      bytes_hex: "aabb",
+      truncated: true,
+    });
+    expect(value.location).toMatchObject({ bytes: 6 });
+  });
+
+  it("keeps a completed long-string length when the payload is truncated", () => {
+    const declared = Buffer.alloc(4);
+    declared.writeUInt32LE(100, 0);
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Text",
+          Buffer.concat([bytes(12), declared, Buffer.from("abc", "latin1")]),
+        ),
+      ]),
+    );
+    expect(
+      propertyOf(rootOf(payload.subarray(0, payload.length - 2)), "Text").value,
+    ).toMatchObject({
+      kind: "string",
+      text: "abc",
+      declared_bytes: 100,
+      truncated: true,
+    });
+  });
+
+  it("keeps a completed wide-string length when the payload is truncated", () => {
+    const declared = Buffer.alloc(4);
+    declared.writeUInt32LE(50, 0);
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Text",
+          Buffer.concat([bytes(22), declared, Buffer.from("ab", "utf16le")]),
+        ),
+      ]),
+    );
+    expect(
+      propertyOf(rootOf(payload.subarray(0, payload.length - 2)), "Text").value,
+    ).toMatchObject({
+      kind: "string",
+      text: "ab",
+      code_page: "utf-16le",
+      declared_bytes: 100,
+      truncated: true,
+    });
+  });
+});
+
+describe("Delphi form binary and container values", () => {
   it("decodes binary payloads as binary and caps their hex projection", () => {
     const root = rootOf(
       form(component("TForm1", "Form1", [property_("Data", binary(200))])),
@@ -486,6 +559,30 @@ describe("Delphi form string and structural values", () => {
       value: { kind: "integer", text: "64" },
     });
     expect(columns.items[1]?.position).toBeNull();
+  });
+
+  it("includes the value tag in marker-only source ranges", () => {
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_("Items", list(bytes(9), bytes(8), bytes(13))),
+        ]),
+      ),
+    );
+    const value = propertyOf(root, "Items").value;
+    if (value.kind !== "list") throw new Error("Expected a list");
+    expect(value.items.map((item) => item.kind)).toEqual([
+      "boolean",
+      "boolean",
+      "nil",
+    ]);
+    expect(value.items.map((item) => item.location.bytes)).toEqual([1, 1, 1]);
+    expect(value.items[1]?.location.offset).toBe(
+      (value.items[0]?.location.offset ?? 0) + 1,
+    );
+    expect(value.items[2]?.location.offset).toBe(
+      (value.items[1]?.location.offset ?? 0) + 1,
+    );
   });
 
   it("records null and nil as distinct value kinds", () => {

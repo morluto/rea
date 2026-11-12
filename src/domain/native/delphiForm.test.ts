@@ -111,6 +111,7 @@ describe("delphi form advertised schema", () => {
               text: "Hi",
               bytes_hex: "4869",
               code_page: "windows-1252",
+              declared_bytes: 2,
               truncated: false,
               location: range,
             },
@@ -127,5 +128,45 @@ describe("delphi form advertised schema", () => {
     const validate = ajv.compile(advertised);
     expect(validate(resource)).toBe(true);
     expect(validate.errors).toBeNull();
+  });
+
+  it("rejects byte projections that are not lowercase even-length hex", () => {
+    const range = { offset: 0, bytes: 4 };
+    const resource = {
+      resource_index: 0,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: range,
+      prefix: null,
+      declared_code_page: 0,
+      code_page: "windows-1252",
+      code_page_source: "default",
+      root: {
+        location: range,
+        flags: [],
+        child_position: null,
+        class_name: {
+          text: "TForm1",
+          bytes_hex: "54466f726d31",
+          code_page: "windows-1252",
+          location: range,
+        },
+        component_name: null,
+        properties: [],
+        children: [],
+        unknown: null,
+      },
+    };
+    expect(delphiFormResourceSchema.safeParse(resource).success).toBe(true);
+    for (const bytes_hex of ["zz", "A", "0G", "ABCD", "54466F"])
+      expect(
+        delphiFormResourceSchema.safeParse({
+          ...resource,
+          root: {
+            ...resource.root,
+            class_name: { ...resource.root.class_name, bytes_hex },
+          },
+        }).success,
+      ).toBe(false);
   });
 });

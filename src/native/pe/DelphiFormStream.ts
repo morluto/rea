@@ -107,6 +107,8 @@ export const DELPHI_FORM_LIMITATIONS: readonly string[] = [
 /** A read that leaves the payload, or exceeds a decode budget. */
 class StreamEnd extends Error {}
 
+const STREAM_END_MESSAGE = "Payload ended before the stream was complete.";
+
 /**
  * A `vaList` or `vaCollection` whose later entries stopped decoding. The value
  * built so far travels with the error so the enclosing property keeps it as a
@@ -149,14 +151,13 @@ class Stream {
   }
 
   peek(): number {
-    if (this.at >= this.end)
-      throw new StreamEnd("Payload ended before the stream was complete.");
+    if (this.at >= this.end) throw new StreamEnd(STREAM_END_MESSAGE);
     return this.bytes[this.at] ?? 0;
   }
 
   take(length: number): Buffer {
     if (length < 0 || this.at + length > this.end)
-      throw new StreamEnd("Payload ended before the stream was complete.");
+      throw new StreamEnd(STREAM_END_MESSAGE);
     const slice = this.bytes.subarray(this.at, this.at + length);
     this.at += length;
     return slice;
@@ -449,15 +450,19 @@ function readValue(
     );
   const numeric = readNumericValue(stream, ordinal);
   if (numeric !== null) return numeric;
+  // Every caller consumes the value type byte before this call. Marker-only
+  // values have no payload, so their range covers that byte; otherwise a list
+  // item would point at a zero-byte range after its only source byte.
+  const marker = range(Math.max(0, at - 1), at);
   switch (ordinal) {
     case 0:
-      return { kind: "null", location: range(at, at) };
+      return { kind: "null", location: marker };
     case 13:
-      return { kind: "nil", location: range(at, at) };
+      return { kind: "nil", location: marker };
     case 8:
-      return { kind: "boolean", value: false, location: range(at, at) };
+      return { kind: "boolean", value: false, location: marker };
     case 9:
-      return { kind: "boolean", value: true, location: range(at, at) };
+      return { kind: "boolean", value: true, location: marker };
     case 6:
     case 7: {
       const text = readShortString(stream, codePage, budget);
@@ -467,6 +472,7 @@ function readValue(
             text: text.text,
             bytes_hex: text.bytes_hex,
             code_page: codePage,
+            declared_bytes: text.location.bytes - 1,
             truncated: false,
             location: text.location,
           }
@@ -480,44 +486,67 @@ function readValue(
     case 12:
     case 20: {
       const declared = stream.uint32();
-      // Reject a large declared length before decoding allocates the string.
-      spendText(budget, declared * 10 + 256);
-      const raw = stream.take(declared);
+      // Reject a large retained projection before decoding it. A truncated
+      // value keeps its declaration and the bytes the payload holds.
+      const available = Math.min(declared, stream.remaining);
+      spendText(budget, available * 10 + 256);
+      const raw = stream.take(available);
       const page = ordinal === 20 ? "utf-8" : codePage;
-      return {
+      const hex = hexOf(raw);
+      const value: DelphiFormValue = {
         kind: "string",
         text: decodeText(raw, page),
-        ...hexOf(raw),
+        ...hex,
         code_page: page,
+        declared_bytes: declared,
+        truncated: hex.truncated || available < declared,
         location: range(at, stream.position),
       };
+      if (available < declared)
+        throw new StoppedValue(STREAM_END_MESSAGE, value);
+      return value;
     }
     case 18:
     case 22: {
       const characters = stream.uint32();
-      spendText(budget, characters * 2 * 10 + 256);
-      const raw = stream.take(characters * 2);
-      return {
+      const declared = characters * 2;
+      const available = Math.min(declared, stream.remaining) & ~1;
+      spendText(budget, available * 10 + 256);
+      const raw = stream.take(available);
+      const hex = hexOf(raw);
+      const value: DelphiFormValue = {
         kind: "string",
         text: raw.toString("utf16le"),
-        ...hexOf(raw),
+        ...hex,
         code_page: "utf-16le",
+        declared_bytes: declared,
+        truncated: hex.truncated || available < declared,
         location: range(at, stream.position),
       };
+      if (available < declared)
+        throw new StoppedValue(STREAM_END_MESSAGE, value);
+      return value;
     }
     case 10: {
       const declared = stream.uint32();
       // The hex projection is capped, but every value still retains one.
       // Charge it before allocation so a list of binaries cannot bypass the
       // retained-text bound and only fail the post-decode metadata account.
-      spendText(budget, Math.min(declared, HEX_LIMIT_BYTES) * 2 + 256);
-      const raw = stream.take(declared);
-      return {
+      // A truncated value keeps the declared count with the bytes it holds.
+      const available = Math.min(declared, stream.remaining);
+      spendText(budget, Math.min(available, HEX_LIMIT_BYTES) * 2 + 256);
+      const raw = stream.take(available);
+      const hex = hexOf(raw);
+      const value: DelphiFormValue = {
         kind: "binary",
-        ...hexOf(raw),
+        ...hex,
         declared_bytes: declared,
+        truncated: hex.truncated || available < declared,
         location: range(at, stream.position),
       };
+      if (available < declared)
+        throw new StoppedValue(STREAM_END_MESSAGE, value);
+      return value;
     }
     case 1: {
       const items: DelphiFormValue[] = [];

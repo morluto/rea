@@ -363,6 +363,49 @@ it("rejects a non-default label for a zero declared code page", async () => {
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
 });
 
+it("rejects nested form text whose code page contradicts the form", async () => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  const pages = codePageFields(resource.code_page);
+  const otherPage = pages.code_page === "utf-8" ? "latin1" : "utf-8";
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signatureAt(resource.payload.location),
+      prefix: null,
+      ...pages,
+      root: {
+        ...validRoot(rootAfterSignature(resource.payload.location)),
+        properties: [
+          {
+            name: {
+              text: "Caption",
+              bytes_hex: "43",
+              code_page: otherPage,
+              location: resource.payload.location,
+            },
+            value_type: "vaNull",
+            value: { kind: "null", location: resource.payload.location },
+            location: resource.payload.location,
+          },
+        ],
+      },
+    },
+  ];
+  const service = new PeResourcesService({
+    identity: PE_RESOURCES_PROVIDER,
+    inspect: () => Promise.resolve(ok(report)),
+  });
+  expect(
+    await service.inspect({ path: "/fixtures/example.exe" }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+});
+
 it("rejects a signature-bearing form without a root", async () => {
   const report = await observedReport();
   const index = report.resources.findIndex(
