@@ -51,8 +51,9 @@ body:
       label: Expected interaction with targets
       description: >-
         Select all known effects, including upstream tool behavior. Add "Not sure
-        yet" if anything is unclear. Use "No target interaction" only on its own.
-        These selections help discussion and do not establish scope approval.
+        yet; investigation or maintainer guidance needed." if anything is unclear.
+        Use "Documentation or usability only; no target interaction." only on its
+        own. These selections help discussion and do not establish scope approval.
       multiple: true
       options:
         - Read existing files or captured data.
