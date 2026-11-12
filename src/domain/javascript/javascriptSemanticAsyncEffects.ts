@@ -19,7 +19,10 @@ import {
 } from "./javascriptSemanticState.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import {
+  createGlobalReferenceReader,
+  isUnmodifiedGlobalReference,
+} from "./javascriptSemanticAmbientWrites.js";
 import {
   semanticOpaqueGlobalMayHaveChanged,
   semanticOpaqueNameMayHaveChanged,
@@ -112,6 +115,10 @@ interface TimerCollectionInput {
   readonly ownerCallableId: string | null;
   readonly state: JavaScriptSemanticAnalysisState;
   readonly output: TimerCandidate[];
+  readonly delayConstructors: ReadonlyMap<
+    string,
+    ReturnType<typeof createGlobalReferenceReader>
+  >;
   readonly ancestors: readonly t.Node[];
 }
 
@@ -123,6 +130,10 @@ export const collectJavaScriptSemanticAsyncEffects = (
 ): AsyncEffectAnalysis => {
   const events: JavaScriptSemanticEventOperation[] = [];
   const timers: TimerCandidate[] = [];
+  const delayConstructors = new Map([
+    ["Symbol", createGlobalReferenceReader(state, ["Symbol"])],
+    ["BigInt", createGlobalReferenceReader(state, ["BigInt"])],
+  ]);
   const callableIds = new Set(callables.map(({ callableId }) => callableId));
   const callableStack = createSemanticCallableIdStack(callableIds);
   const ancestors: t.Node[] = [];
@@ -137,6 +148,7 @@ export const collectJavaScriptSemanticAsyncEffects = (
           ownerCallableId,
           state,
           output: timers,
+          delayConstructors,
           ancestors,
         });
       }
@@ -385,6 +397,7 @@ const schedulesWithNonFunctionCallback = (
 const schedulesWithInvalidDelay = (
   node: t.CallExpression | t.OptionalCallExpression,
   state: JavaScriptSemanticAnalysisState,
+  delayConstructors: TimerCollectionInput["delayConstructors"],
 ): boolean => {
   if (
     node.arguments.slice(0, 2).some((argument) => t.isSpreadElement(argument))
@@ -403,8 +416,8 @@ const schedulesWithInvalidDelay = (
   return (
     t.isCallExpression(value) &&
     t.isIdentifier(value.callee) &&
-    ["BigInt", "Symbol"].includes(value.callee.name) &&
-    isUnmodifiedGlobalReference(value.callee, state, value.callee.name) &&
+    delayConstructors.get(value.callee.name)?.(value.callee).status ===
+      "unmodified" &&
     !semanticOpaqueNameMayHaveChanged(value.callee, state) &&
     !semanticOpaqueGlobalMayHaveChanged(value.callee, state)
   );
@@ -420,7 +433,7 @@ const collectTimer = (input: TimerCollectionInput): void => {
     nodeBuiltinTimerMethod(node.callee, state) !== null &&
     (schedulesWithNonFunctionCallback(node, state) ||
       ((method === "setTimeout" || method === "setInterval") &&
-        schedulesWithInvalidDelay(node, state)))
+        schedulesWithInvalidDelay(node, state, input.delayConstructors)))
   )
     return;
   const kind = TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method)
