@@ -162,6 +162,8 @@ export class GodotPckArtifactReader extends PositionalArtifactReader {
       header.pack_end,
       sourcePath,
     );
+    if (start < header.pack_start)
+      throw formatFailure(`member begins before the pack: ${sourcePath}`);
     if (size > BigInt(header.pack_end - start))
       throw formatFailure(`member exceeds the pack: ${sourcePath}`);
     return {
