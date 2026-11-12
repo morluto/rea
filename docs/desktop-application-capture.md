@@ -138,7 +138,8 @@ that could not be released.
 If the capture fails for any other reason before `capture.json` is written,
 the application is closed the same way and the content already retained is
 removed from the capture folder. The error names any process or file that
-could not be removed.
+could not be removed. An already-failed capture retains its original failure
+and reports cancellation during cleanup separately.
 
 A person types these lines in the terminal. An agent can drive the
 application with a tool such as `xdotool` and write the lines to a FIFO that

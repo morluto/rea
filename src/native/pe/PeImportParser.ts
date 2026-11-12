@@ -395,6 +395,18 @@ export const parsePeImports = async (
       await checkpoint();
       const descriptorRva =
         importDirectory.address + index * IMPORT_DESCRIPTOR_BYTES;
+      if (
+        index * IMPORT_DESCRIPTOR_BYTES + IMPORT_DESCRIPTOR_BYTES >
+        importDirectory.size
+      ) {
+        issues.push({
+          code: "malformed_entry",
+          location: hex(descriptorRva),
+          message:
+            "Import directory ends before a null descriptor; its declared size does not cover the complete descriptor slot",
+        });
+        break;
+      }
       const descriptor = mapDescriptor(
         descriptorRva,
         IMPORT_DESCRIPTOR_BYTES,
@@ -469,6 +481,18 @@ export const parsePeImports = async (
       await checkpoint();
       const descriptorRva =
         delayDirectory.address + index * DELAY_DESCRIPTOR_BYTES;
+      if (
+        index * DELAY_DESCRIPTOR_BYTES + DELAY_DESCRIPTOR_BYTES >
+        delayDirectory.size
+      ) {
+        issues.push({
+          code: "malformed_entry",
+          location: hex(descriptorRva),
+          message:
+            "Delay-load directory ends before a null descriptor; its declared size does not cover the complete descriptor slot",
+        });
+        break;
+      }
       const descriptor = mapDescriptor(
         descriptorRva,
         DELAY_DESCRIPTOR_BYTES,

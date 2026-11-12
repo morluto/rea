@@ -1,5 +1,7 @@
 import { isAbsolute } from "node:path";
 
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { defaultKunaCacheDirectory } from "../config/kunaCacheDirectory.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
@@ -43,8 +45,13 @@ export interface KunaConfiguration {
   readonly cacheRoot: string;
   readonly cacheMaxBytes: number;
   readonly projectTimeoutMs: number;
+  readonly projectTimeoutSource: "default" | "setting" | "runtime";
   /** Deadline for one single-function `kuna decompile` run. */
   readonly functionTimeoutMs: number;
+  readonly functionTimeoutSource: "default" | "setting" | "runtime";
+  /** False when the launch seed was invalid and only a runtime override admitted the open. */
+  readonly projectTimeoutLaunchValid?: boolean;
+  readonly functionTimeoutLaunchValid?: boolean;
   readonly jobs: number;
 }
 
@@ -52,23 +59,56 @@ export interface KunaConfiguration {
 export interface KunaDeadline {
   readonly setting: "REA_KUNA_TIMEOUT_MS" | "REA_KUNA_PROJECT_TIMEOUT_MS";
   readonly ms: number;
+  readonly source: "default" | "setting" | "runtime";
 }
 
 /** Single-function decompiles and the standalone inventory. */
+const kunaDeadline = (
+  configuration: KunaConfiguration,
+  setting: KunaDeadline["setting"],
+  overrideSetting: "kuna.function_timeout_ms" | "kuna.project_timeout_ms",
+  ms: number,
+  source: KunaDeadline["source"],
+  launchValid: boolean | undefined,
+): KunaDeadline => {
+  const override =
+    currentAnalysisOperationSnapshot()?.overrides[overrideSetting];
+  if (override !== undefined)
+    return { setting, ms: override, source: "runtime" };
+  if (launchValid === false) {
+    const constraint = `${setting} is not a valid launch seed and no runtime override is active.`;
+    throw new ConfigurationError(constraint, {
+      settings: [{ setting, constraint, update_mode: "runtime" }],
+      remediationAction: `Use update_analysis_settings to set ${overrideSetting} to a valid millisecond timeout, then retry the operation. The launch seed is ${setting}.`,
+    });
+  }
+  return { setting, ms, source };
+};
+
 export const kunaFunctionDeadline = (
   configuration: KunaConfiguration,
-): KunaDeadline => ({
-  setting: "REA_KUNA_TIMEOUT_MS",
-  ms: configuration.functionTimeoutMs,
-});
+): KunaDeadline =>
+  kunaDeadline(
+    configuration,
+    "REA_KUNA_TIMEOUT_MS",
+    "kuna.function_timeout_ms",
+    configuration.functionTimeoutMs,
+    configuration.functionTimeoutSource,
+    configuration.functionTimeoutLaunchValid,
+  );
 
 /** The project export and whole-program string, graph and xref scans. */
 export const kunaProjectDeadline = (
   configuration: KunaConfiguration,
-): KunaDeadline => ({
-  setting: "REA_KUNA_PROJECT_TIMEOUT_MS",
-  ms: configuration.projectTimeoutMs,
-});
+): KunaDeadline =>
+  kunaDeadline(
+    configuration,
+    "REA_KUNA_PROJECT_TIMEOUT_MS",
+    "kuna.project_timeout_ms",
+    configuration.projectTimeoutMs,
+    configuration.projectTimeoutSource,
+    configuration.projectTimeoutLaunchValid,
+  );
 
 /** Why the configured environment cannot select a Kuna installation. */
 export interface KunaConfigurationFailure {
@@ -99,6 +139,43 @@ const positiveInteger = (value: string): number | undefined =>
   /^[1-9]\d*$/u.test(value) && Number.isSafeInteger(Number(value))
     ? Number(value)
     : undefined;
+
+/**
+ * A runtime override replaces an invalid launch string. Cache size and jobs
+ * stay launch-only and still fail closed.
+ */
+const configuredTimeout = (
+  raw: string | undefined,
+  setting: string,
+  fallback: number,
+): Result<
+  {
+    readonly ms: number;
+    readonly source: "default" | "setting";
+    readonly launchValid: boolean;
+  },
+  KunaConfigurationFailure
+> => {
+  if (raw === undefined)
+    return ok({ ms: fallback, source: "default", launchValid: true });
+  const parsed = providerStartupTimeoutSchema.safeParse(raw);
+  if (parsed.success)
+    return ok({ ms: parsed.data, source: "setting", launchValid: true });
+  return ok({ ms: fallback, source: "default", launchValid: false });
+};
+
+const refuseInvalidLaunch = (
+  raw: string | undefined,
+  setting: string,
+  parsed: { readonly launchValid: boolean },
+): Result<void, KunaConfigurationFailure> => {
+  if (parsed.launchValid) return ok(undefined);
+  return failure(
+    "open_options_invalid",
+    `${setting} must be a decimal millisecond count from 1 to 2147483647; received ${String(raw)}.`,
+    setting,
+  );
+};
 
 /** Parse the Kuna settings without touching the filesystem or the executable. */
 export const readKunaConfiguration = (
@@ -137,29 +214,35 @@ export const readKunaConfiguration = (
       "REA_KUNA_CACHE_MAX_BYTES",
     );
 
-  const rawTimeout = environment.REA_KUNA_PROJECT_TIMEOUT_MS;
-  const timeout =
-    rawTimeout === undefined
-      ? undefined
-      : providerStartupTimeoutSchema.safeParse(rawTimeout);
-  if (timeout !== undefined && !timeout.success)
-    return failure(
-      "open_options_invalid",
-      `REA_KUNA_PROJECT_TIMEOUT_MS must be a decimal millisecond count from 1 to 2147483647; received ${String(rawTimeout)}.`,
+  const overrides = currentAnalysisOperationSnapshot()?.overrides;
+  const projectTimeout = configuredTimeout(
+    environment.REA_KUNA_PROJECT_TIMEOUT_MS,
+    "REA_KUNA_PROJECT_TIMEOUT_MS",
+    DEFAULT_PROJECT_TIMEOUT_MS,
+  );
+  if (!projectTimeout.ok) return projectTimeout;
+  if (overrides?.["kuna.project_timeout_ms"] === undefined) {
+    const refused = refuseInvalidLaunch(
+      environment.REA_KUNA_PROJECT_TIMEOUT_MS,
       "REA_KUNA_PROJECT_TIMEOUT_MS",
+      projectTimeout.value,
     );
-
-  const rawFunctionTimeout = environment.REA_KUNA_TIMEOUT_MS;
-  const functionTimeout =
-    rawFunctionTimeout === undefined
-      ? undefined
-      : providerStartupTimeoutSchema.safeParse(rawFunctionTimeout);
-  if (functionTimeout !== undefined && !functionTimeout.success)
-    return failure(
-      "open_options_invalid",
-      `REA_KUNA_TIMEOUT_MS must be a decimal millisecond count from 1 to 2147483647; received ${String(rawFunctionTimeout)}.`,
+    if (!refused.ok) return refused;
+  }
+  const functionTimeout = configuredTimeout(
+    environment.REA_KUNA_TIMEOUT_MS,
+    "REA_KUNA_TIMEOUT_MS",
+    DEFAULT_FUNCTION_TIMEOUT_MS,
+  );
+  if (!functionTimeout.ok) return functionTimeout;
+  if (overrides?.["kuna.function_timeout_ms"] === undefined) {
+    const refused = refuseInvalidLaunch(
+      environment.REA_KUNA_TIMEOUT_MS,
       "REA_KUNA_TIMEOUT_MS",
+      functionTimeout.value,
     );
+    if (!refused.ok) return refused;
+  }
 
   const rawJobs = environment.REA_KUNA_JOBS;
   const jobs = rawJobs === undefined ? DEFAULT_JOBS : positiveInteger(rawJobs);
@@ -180,8 +263,12 @@ export const readKunaConfiguration = (
         platform,
       ),
     cacheMaxBytes,
-    projectTimeoutMs: timeout?.data ?? DEFAULT_PROJECT_TIMEOUT_MS,
-    functionTimeoutMs: functionTimeout?.data ?? DEFAULT_FUNCTION_TIMEOUT_MS,
+    projectTimeoutMs: projectTimeout.value.ms,
+    projectTimeoutSource: projectTimeout.value.source,
+    projectTimeoutLaunchValid: projectTimeout.value.launchValid,
+    functionTimeoutMs: functionTimeout.value.ms,
+    functionTimeoutSource: functionTimeout.value.source,
+    functionTimeoutLaunchValid: functionTimeout.value.launchValid,
     jobs,
   });
 };

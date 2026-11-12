@@ -114,6 +114,7 @@ export const desktopPathConventions = (path: string, rootName?: string) => {
     electronArchive:
       folded.at(-2) === "resources" &&
       (name === "app.asar" || name === "default_app.asar"),
+    electronFramework: folded.includes("electron framework.framework"),
     unrealContainer:
       (name.endsWith(".pak") || name.endsWith(".utoc")) &&
       folded.some(

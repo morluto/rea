@@ -38,12 +38,15 @@ const documentSchema = documentVersionSchema
 
 /** Malformed or unsupported dependency-section bytes. */
 export class RustAuditableFormatFailure extends Error {
+  /** The image holds the metadata, in a form this reader cannot decode. */
+  readonly undecodedContent: boolean;
   constructor(
     readonly kind: "malformed" | "unsupported",
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly undecodedContent?: boolean },
   ) {
     super(message, options);
+    this.undecodedContent = options?.undecodedContent ?? false;
     this.name = "RustAuditableFormatFailure";
   }
 }

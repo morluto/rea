@@ -19,7 +19,11 @@ import {
   observeStableFile,
   stableFileHashCause,
 } from "../filesystem/StableFileHash.js";
-import { hostFileKind, isRefusedRead } from "./HostFileRead.js";
+import {
+  hostReadFailure,
+  hostFileKind,
+  isRefusedRead,
+} from "./HostFileRead.js";
 import type { QueryRunner } from "./HostQuery.js";
 
 type PackageFileFacts = Pick<
@@ -55,7 +59,8 @@ const hashPackageFile = async (
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure && lease !== undefined)
       throw new ArtifactFileCleanupFailure(cause, lease);
-    signal?.throwIfAborted();
+    const failure = hostReadFailure(cause);
+    if (failure !== cause) throw failure;
     const read = stableFileHashCause(cause);
     if (!(cause instanceof StableFileHashFailure) || !isRefusedRead(read))
       throw cause;
