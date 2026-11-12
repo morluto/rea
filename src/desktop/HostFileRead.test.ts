@@ -19,6 +19,21 @@ describe.skipIf(process.platform === "win32")("probeHostFile", () => {
     });
   });
 
+  it("settles a symlink chain that loops", async () => {
+    // The loader also abandons a RUNPATH/RPATH entry whose link chain loops and
+    // goes on to the linker cache, so ELOOP is a settled unreachable candidate
+    // rather than a transient check.
+    const root = await createTestTempDirectory("rea-host-file-probe-");
+    const first = join(root, "first.so");
+    const second = join(root, "second.so");
+    await symlink(second, first);
+    await symlink(first, second);
+    await expect(probeHostFile(first)).resolves.toEqual({
+      kind: "unknown",
+      unreachable: true,
+    });
+  });
+
   it("keeps a transient failure unresolved", async () => {
     // EIO is not a refusal and does not settle the candidate, so the walk still
     // treats it as a check that may succeed on a retry.

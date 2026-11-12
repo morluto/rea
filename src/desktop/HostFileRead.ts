@@ -97,12 +97,14 @@ export type HostFileProbe =
 /**
  * Codes whose failure means the candidate cannot be reached at all.
  *
- * A denied folder is one; so is a name the filesystem refuses to look up. The
- * loader treats a RUNPATH/RPATH entry that makes `stat` fail this way as
- * unusable and goes on to the next entry, so retrying it in place would stop
- * the walk before the candidate that was actually loaded.
+ * A denied folder is one; so are a name the filesystem refuses to look up and a
+ * link chain that loops. The loader treats a RUNPATH/RPATH entry that makes
+ * `stat` fail this way as unusable and goes on to the next entry, so retrying
+ * it in place would stop the walk before the candidate that was actually
+ * loaded. It still continues to the linker cache, so this stays `unreachable`
+ * rather than a settled absence.
  */
-const UNREACHABLE_CODES = new Set(["EACCES", "EPERM", "ENAMETOOLONG"]);
+const UNREACHABLE_CODES = new Set(["EACCES", "EPERM", "ENAMETOOLONG", "ELOOP"]);
 
 /** The host file at `path`, with why a check could not tell it. */
 export const probeHostFile = async (path: string): Promise<HostFileProbe> => {
