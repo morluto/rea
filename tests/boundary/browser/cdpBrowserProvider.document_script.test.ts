@@ -318,11 +318,16 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: `${origin}/app` },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: `${origin}/app`,
+                },
                 childFrames: [
                   {
                     frame: {
                       id: "child",
+                      loaderId: "loader-child",
                       parentId: "frame-main",
                       url: `${origin}/child`,
                     },
@@ -416,7 +421,11 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: `${origin}/app` },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: `${origin}/app`,
+                },
                 childFrames: [
                   {
                     frame: {
@@ -1213,7 +1222,11 @@ it.each([undefined, 7, ""])(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: `${origin}/app` },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: `${origin}/app`,
+                },
                 childFrames: [
                   {
                     frame: {

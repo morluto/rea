@@ -47,6 +47,8 @@ import {
   normalizeCaptureFailure,
   processCaptureCancelled,
   ProcessCaptureError,
+  ProcessCaptureInspectionFailure,
+  retainCaptureInspectionCancellations,
 } from "./ProcessCaptureError.js";
 import { assertNotCancelled } from "./ProcessScenarioRuntimeValidation.js";
 import {
@@ -641,7 +643,7 @@ export const observeSelectedExecutable = async (
       const reason = filesystemFailure(cause.outcome.cause);
       if (reason !== undefined) return { sha256: null, identity: null, reason };
     }
-    const failure = normalizeCaptureFailure(cause, signal);
+    const failure = normalizeCaptureFailure(cause);
     if (failure instanceof ProcessCaptureError) throw failure;
     const reason = filesystemFailure(failure);
     if (reason !== undefined) return { sha256: null, identity: null, reason };
@@ -1109,20 +1111,10 @@ const releaseCapturedProcessGroup = async (
     readonly pid: number;
     readonly diagnostic: string;
   }> = [];
-  try {
-    const cleaned = await host.cleanupProcessGroup(ownership);
-    unverified.push(...(cleaned.unverified ?? []));
-    if (!cleaned.cleaned)
-      outcome = { state: "unverified", reason: cleaned.reason };
-  } catch (cause: unknown) {
-    outcome = {
-      state: "failed",
-      reason:
-        cause instanceof Error
-          ? cause.message || cause.name || "owned process cleanup failed"
-          : "owned process cleanup failed",
-    };
-  }
+  const cleaned = await host.cleanupProcessGroup(ownership);
+  unverified.push(...(cleaned.unverified ?? []));
+  if (!cleaned.cleaned)
+    outcome = { state: "unverified", reason: cleaned.reason };
   return unverified.length === 0
     ? outcome
     : {
@@ -1149,6 +1141,8 @@ export interface ProcessCaptureResourceCleanupOptions {
   /** Shared with settlement observations for this exact captured run. */
   readonly ownershipEvidence?: ProcessOwnershipEvidenceOwner;
   readonly host?: ProcessCaptureCleanupHost;
+  /** Parsed facts from this captured run, never other concurrent captures. */
+  readonly inspectionFailures?: readonly ProcessCaptureInspectionFailure[];
 }
 
 /** Historical cleanup facts and the exact authority that can confirm recovery. */
@@ -1156,6 +1150,8 @@ export interface ProcessCaptureCleanupOutcome {
   readonly report: ProcessCaptureCleanupReport;
   /** Undefined means that only historical facts, not an owner, are available. */
   readonly cleanupLease: AnalysisCleanupLease | undefined;
+  /** Explicit failures observed by this cleanup owner, absent for plain historical reports. */
+  readonly inspectionFailures?: readonly ProcessCaptureInspectionFailure[];
 }
 
 /** One capture's exact resource owner, with completion tracked per resource. */
@@ -1163,6 +1159,8 @@ class ProcessCaptureResourceOwner {
   readonly cleanupLease: AnalysisCleanupLease;
   readonly #host: ProcessCaptureCleanupHost;
   readonly #ownershipEvidence: ProcessOwnershipEvidenceOwner;
+  readonly #inspections: Set<ProcessCaptureInspectionFailure>;
+  readonly #cleanupInspections = new Set<ProcessCaptureInspectionFailure>();
   #terminalRenderer:
     | ProcessCaptureCleanupReport["terminal_renderer"]
     | undefined;
@@ -1173,6 +1171,7 @@ class ProcessCaptureResourceOwner {
 
   constructor(private readonly options: ProcessCaptureResourceCleanupOptions) {
     this.#host = options.host ?? processCaptureCleanupHost;
+    this.#inspections = new Set(options.inspectionFailures);
     this.#ownershipEvidence =
       options.ownershipEvidence ?? new ProcessOwnershipEvidenceOwner();
     if (options.renderer === undefined)
@@ -1181,7 +1180,11 @@ class ProcessCaptureResourceOwner {
       this.#ownedProcessGroup = { state: "not_required", reason: null };
     this.cleanupLease = new AnalysisCleanupLease(async () => {
       const report = await this.close();
-      const failure = cleanupReportFailure(report);
+      const failure =
+        cleanupReportFailure(report) ??
+        (this.#hasPendingInspection()
+          ? "Process ownership inspection cleanup remains incomplete."
+          : undefined);
       if (failure === undefined) return;
       const error = new ProcessCaptureError(failure, {
         reason: "cleanup_incomplete",
@@ -1194,9 +1197,18 @@ class ProcessCaptureResourceOwner {
   }
 
   get cleanupResources(): readonly string[] {
-    return unresolvedCleanupResources(this.report).map((resource) =>
-      resource === "temporary_root" ? this.options.temporaryRoot : resource,
-    );
+    return [
+      ...new Set([
+        ...unresolvedCleanupResources(this.report).map((resource) =>
+          resource === "temporary_root" ? this.options.temporaryRoot : resource,
+        ),
+        ...[...this.#inspections].flatMap((failure) =>
+          failure.cleanupLeases.flatMap((lease) =>
+            lease.released ? [] : (lease.cleanupResources ?? []),
+          ),
+        ),
+      ]),
+    ];
   }
 
   get report(): ProcessCaptureCleanupReport {
@@ -1219,6 +1231,15 @@ class ProcessCaptureResourceOwner {
 
   async close(): Promise<ProcessCaptureCleanupReport> {
     for (const timer of this.options.timers) timer.cancel();
+    for (const lease of new Set(
+      [...this.#inspections].flatMap((failure) => failure.cleanupLeases),
+    )) {
+      try {
+        await lease.release();
+      } catch {
+        /* The same child remains held for retry. */
+      }
+    }
     await this.#releaseOwnedProcessGroup();
     await this.#releaseRenderer();
     await this.#releaseTemporaryRoot();
@@ -1228,14 +1249,26 @@ class ProcessCaptureResourceOwner {
   async release(): Promise<ProcessCaptureCleanupOutcome> {
     try {
       await this.cleanupLease.release();
-      return { report: this.report, cleanupLease: this.cleanupLease };
+      return {
+        report: this.report,
+        cleanupLease: this.cleanupLease,
+        ...(this.#cleanupInspections.size === 0
+          ? {}
+          : { inspectionFailures: [...this.#cleanupInspections] }),
+      };
     } catch (cause: unknown) {
       if (
         !(cause instanceof ProcessCaptureError) ||
         cause.cleanupReport === undefined
       )
         throw cause;
-      return { report: cause.cleanupReport, cleanupLease: this.cleanupLease };
+      return {
+        report: cause.cleanupReport,
+        cleanupLease: this.cleanupLease,
+        ...(this.#cleanupInspections.size === 0
+          ? {}
+          : { inspectionFailures: [...this.#cleanupInspections] }),
+      };
     }
   }
 
@@ -1264,21 +1297,52 @@ class ProcessCaptureResourceOwner {
       this.#ownedProcessGroup?.state === "not_required"
     )
       return;
-    this.#ownedProcessGroup = await releaseCapturedProcessGroup(
-      {
-        runId: this.options.runId,
-        leaderPid: this.options.terminal.pid,
-        processGroupId: this.options.terminal.pid,
-        sweepTokenOwnedProcesses: true,
-        evidenceOwner: this.#ownershipEvidence,
-        ...(this.options.sampledProcessGroupIds === undefined
-          ? {}
-          : { sampledProcessGroupIds: this.options.sampledProcessGroupIds }),
-        ...(this.options.captureBaseline === undefined
-          ? {}
-          : { captureBaseline: this.options.captureBaseline }),
-      },
-      this.#host,
+    if (this.#hasPendingInspection()) {
+      this.#ownedProcessGroup = {
+        state: "unverified",
+        reason:
+          "Process ownership inspection cleanup remains incomplete; fresh ownership inspection was not attempted.",
+      };
+      return;
+    }
+    try {
+      this.#ownedProcessGroup = await releaseCapturedProcessGroup(
+        {
+          runId: this.options.runId,
+          leaderPid: this.options.terminal.pid,
+          processGroupId: this.options.terminal.pid,
+          sweepTokenOwnedProcesses: true,
+          evidenceOwner: this.#ownershipEvidence,
+          ...(this.options.sampledProcessGroupIds === undefined
+            ? {}
+            : { sampledProcessGroupIds: this.options.sampledProcessGroupIds }),
+          ...(this.options.captureBaseline === undefined
+            ? {}
+            : { captureBaseline: this.options.captureBaseline }),
+        },
+        this.#host,
+      );
+    } catch (cause: unknown) {
+      const normalized = normalizeCaptureFailure(cause);
+      if (
+        normalized instanceof ProcessCaptureInspectionFailure &&
+        !this.#inspections.has(normalized)
+      ) {
+        this.#inspections.add(normalized);
+        this.#cleanupInspections.add(normalized);
+      }
+      this.#ownedProcessGroup = {
+        state: "failed",
+        reason:
+          describeProcessCaptureExecutionFailure(cause) ??
+          "owned process cleanup failed",
+      };
+    }
+  }
+
+  #hasPendingInspection(): boolean {
+    return [...this.#inspections].some((failure) =>
+      failure.cleanupLeases.some((lease) => !lease.released),
     );
   }
 
@@ -1345,11 +1409,25 @@ export class ProcessCaptureResourceScope {
     if (!lease.released) this.#pending.add(lease);
   }
 
+  /** Adopt only the inspection owner's exact leases into this capture lifetime. */
+  retainInspectionFailure(
+    cause: unknown,
+  ): ProcessCaptureInspectionFailure | undefined {
+    const normalized = normalizeCaptureFailure(cause);
+    if (!(normalized instanceof ProcessCaptureInspectionFailure))
+      return undefined;
+    for (const lease of normalized.cleanupLeases) this.retain(lease);
+    return normalized;
+  }
+
   async release(
     options: ProcessCaptureResourceCleanupOptions,
   ): Promise<ProcessCaptureCleanupOutcome> {
     const owner = new ProcessCaptureResourceOwner(options);
     this.#pending.add(owner.cleanupLease);
+    // The same child capabilities now follow this capture's resource owner.
+    for (const inspection of options.inspectionFailures ?? [])
+      for (const lease of inspection.cleanupLeases) this.#pending.delete(lease);
     const outcome = await owner.release();
     if (owner.cleanupLease.released) this.#pending.delete(owner.cleanupLease);
     return outcome;
@@ -1679,6 +1757,16 @@ export const resolveProcessResult = (
       new AnalysisCleanupLeaseGroup(cleanupError, [
         cleanupOutcome.cleanupLease,
       ]);
+    for (const inspection of cleanupOutcome.inspectionFailures ?? []) {
+      if (inspection !== executionFailure)
+        cleanupError.retainSecondaryFailure(inspection);
+      retainCaptureInspectionCancellations(
+        executionFailure instanceof AnalysisError
+          ? executionFailure
+          : cleanupError,
+        inspection,
+      );
+    }
     if (executionFailure instanceof ProcessCaptureError)
       throw executionFailure.withFinalization({
         ...(executionFailureReason === undefined
@@ -1769,7 +1857,7 @@ export const prepareProcessCapture = async (
   signal: AbortSignal | undefined,
   captureSnapshot: typeof snapshotRoots = snapshotRoots,
   host: ProcessPreparationHost = systemProcessPreparationHost,
-  resourceScope?: ProcessCaptureResourceScope,
+  resourceScope: ProcessCaptureResourceScope,
 ): Promise<{
   readonly temporaryRoot: string;
   readonly runId: string;
@@ -1777,15 +1865,15 @@ export const prepareProcessCapture = async (
   readonly before: ProcessFilesystemSnapshot;
 }> => {
   assertNotCancelled(signal);
-  await host.prepareOwnershipInspector?.(signal);
-  assertNotCancelled(signal);
   let before: ProcessFilesystemSnapshot | undefined;
   let temporaryRoot: string | undefined;
   const runId = randomUUID();
   try {
+    await host.prepareOwnershipInspector?.(signal);
+    assertNotCancelled(signal);
     temporaryRoot = await host.createTemporaryRoot();
     before = await captureSnapshot(scenario, signal, undefined, {
-      ...(resourceScope === undefined ? {} : { cleanup: resourceScope }),
+      cleanup: resourceScope,
       observerPaths: [temporaryRoot],
     });
     assertNotCancelled(signal);
@@ -1797,9 +1885,11 @@ export const prepareProcessCapture = async (
     let failure = cause;
     if (cause instanceof ProcessCaptureSnapshotFailure) {
       before = cause.snapshot;
-      for (const lease of cause.cleanupLeases) resourceScope?.retain(lease);
+      for (const lease of cause.cleanupLeases) resourceScope.retain(lease);
       failure = cause.failureForCaller();
     }
+    const normalized = normalizeCaptureFailure(failure);
+    resourceScope.retainInspectionFailure(normalized);
     const cleanupOptions =
       temporaryRoot === undefined
         ? undefined
@@ -1809,6 +1899,9 @@ export const prepareProcessCapture = async (
             renderer: undefined,
             runId,
             temporaryRoot,
+            ...(normalized instanceof ProcessCaptureInspectionFailure
+              ? { inspectionFailures: [normalized] }
+              : {}),
             host: {
               ...processCaptureCleanupHost,
               removeTemporaryRoot: host.cleanup,
@@ -1824,12 +1917,10 @@ export const prepareProcessCapture = async (
             },
             cleanupLease: undefined,
           }
-        : resourceScope === undefined
-          ? await releaseProcessResources(cleanupOptions)
-          : await resourceScope.release(cleanupOptions);
+        : await resourceScope.release(cleanupOptions);
     resolveProcessResult(
       undefined,
-      normalizeCaptureFailure(failure, signal),
+      normalized,
       cleanup,
       createProcessCaptureObservationBuffer({
         frames: [],

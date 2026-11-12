@@ -1,3 +1,4 @@
+import type { RegexConfigurationSnapshot } from "../process/RegexMatcher.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -5,9 +6,8 @@ import {
 } from "../domain/analysisErrorCore.js";
 import {
   analysisSearchPredicate,
-  analysisSearchQuerySchema,
+  type AnalysisSearchQuery,
 } from "../domain/analysisSearch.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { normalizeKunaAddress } from "./KunaAddress.js";
@@ -36,6 +36,8 @@ export class KunaStringQueries {
     parameters: Readonly<Record<string, JsonValue>>,
     installation: KunaInstallation,
     signal: AbortSignal | undefined,
+    query: AnalysisSearchQuery | undefined,
+    regex: RegexConfigurationSnapshot | undefined,
   ): Promise<
     Result<
       { readonly result: JsonValue; readonly source: JsonValue },
@@ -45,14 +47,6 @@ export class KunaStringQueries {
     if (signal?.aborted === true)
       return err(
         new AnalysisCancelledError(operation, { cause: signal?.reason }),
-      );
-    const query =
-      operation === "search_strings"
-        ? analysisSearchQuerySchema.safeParse(parameters)
-        : undefined;
-    if (query !== undefined && !query.success)
-      return err(
-        analysisInputErrorFromIssues(operation, query.error.issues, parameters),
       );
     const address =
       operation === "list_strings" && parameters.address !== undefined
@@ -81,19 +75,20 @@ export class KunaStringQueries {
     let items: KunaStringItem[] | undefined;
     if (address !== undefined)
       items = kunaStringsAtAddress(inventory.value, address);
-    if (query?.success === true) {
-      if (query.data.mode === "regex") {
+    if (query !== undefined) {
+      if (query.mode === "regex") {
         const matched = await this.work.match({
           operation,
-          pattern: query.data.pattern,
-          caseSensitive: query.data.case_sensitive,
+          pattern: query.pattern,
+          caseSensitive: query.case_sensitive,
           values: () => available.map((item) => item.value),
           signal,
+          ...regex,
         });
         if (!matched.ok) return matched;
         items = matched.value.map((index) => available[index]!);
       } else {
-        const predicate = analysisSearchPredicate(query.data);
+        const predicate = analysisSearchPredicate(query);
         items = available.filter((item) => predicate(item.value));
       }
     }

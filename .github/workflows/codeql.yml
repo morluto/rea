@@ -14,7 +14,8 @@ permissions:
 
 concurrency:
   group: codeql-production-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Let a main-branch baseline finish; supersede stale pull-request scans only.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:
@@ -52,7 +53,7 @@ jobs:
           threads: 2
           ram: 4096
       - name: Retain complete analysis evidence
-        if: always()
+        if: always() && !cancelled()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: codeql-production-${{ matrix.language }}

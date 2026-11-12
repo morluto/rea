@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -437,3 +438,50 @@ it("retains an owner's finalization report independently of pending primary sema
   assertReport(outer);
   expect(outer.cleanupIncomplete).toBe(false);
 });
+
+it.each(["primary", "cleanup", "default", "cleanup-continuing"] as const)(
+  "preserves the explicit %s remediation owner through cleanup projection",
+  (owner) => {
+    const primaryAction =
+      "Inspect the selected compiler before retrying this request.";
+    const cleanupAction =
+      "Release the recorded cleanup resource before retrying.";
+    const primary = new AnalysisTimeoutError(
+      "inspect",
+      123,
+      owner === "default" ? {} : { remediationAction: primaryAction },
+    );
+    const cleanup = new AnalysisCapabilityUnavailableError(
+      "process-ownership",
+      "close",
+      "retained cleanup",
+      {
+        cleanup: { reason: "close failed", resources: ["owned resource"] },
+        ...(owner === "cleanup" ? { remediationAction: cleanupAction } : {}),
+        ...(owner === "cleanup-continuing"
+          ? { continuingCallerGuidance: { remediationAction: cleanupAction } }
+          : {}),
+      },
+    );
+    const composed = analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      "inspect",
+    );
+    const expected =
+      owner === "cleanup"
+        ? cleanupAction
+        : owner === "default"
+          ? "This analysis is unavailable for the current target. Choose another analysis or target."
+          : primaryAction;
+    expect(projectAnalysisError(composed).remediation.action).toBe(
+      owner === "cleanup-continuing" ? cleanupAction : expected,
+    );
+    expect(
+      projectAnalysisError(composed, "invocation").remediation.action,
+    ).toBe(expected);
+    expect(composed.cleanupPrimary).toBe(primary);
+    expect(composed.cleanupResources).toEqual(["owned resource"]);
+    expect(projectAnalysisError(composed).code).toBe("cleanup_incomplete");
+  },
+);

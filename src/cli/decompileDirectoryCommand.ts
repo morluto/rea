@@ -9,6 +9,7 @@ import {
   cliDecimalField,
   directAnalysisOptionsFromCli,
   nativeOpenOptionFields,
+  snapshotSelectionOption,
 } from "./options.js";
 import { decompileDirectoryInputSchema } from "../contracts/decompileDirectory.js";
 import type { CliInstance } from "./types.js";
@@ -72,13 +73,9 @@ export const registerDecompileDirectoryCommand = (
       ).describe(
         "Maximum functions to attempt after skipping verified files and recorded external functions",
       ),
-      snapshot: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "Load a local analysis snapshot. decompile-all does not update it.",
-        ),
+      snapshot: snapshotSelectionOption.describe(
+        "Load a local analysis snapshot. decompile-all does not update it.",
+      ),
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>

@@ -42,6 +42,49 @@ it("reads named PE32+ imports and a pefile-compatible import hash", async () => 
   expect(report.delay_imports).toEqual([]);
 });
 
+it.each(["standard", "delay"] as const)(
+  "does not read %s descriptors past the declared directory size",
+  async (kind) => {
+    const bytes = peImportImage(
+      kind === "standard"
+        ? {
+            dlls: [
+              { name: "ONE.dll", functions: [{ name: "First" }] },
+              { name: "TWO.dll", functions: [{ name: "Second" }] },
+            ],
+          }
+        : {
+            dlls: [],
+            delayDlls: [
+              { name: "ONE.dll", functions: [{ name: "First" }] },
+              { name: "TWO.dll", functions: [{ name: "Second" }] },
+            ],
+          },
+    );
+    const directoryAt = 152 + 112 + (kind === "standard" ? 1 : 13) * 8;
+    const directoryRva = bytes.readUInt32LE(directoryAt);
+    const descriptorBytes = kind === "standard" ? 20 : 32;
+    bytes.writeUInt32LE(descriptorBytes, directoryAt + 4);
+
+    const report = await parse(bytes);
+    const rows = kind === "standard" ? report.imports : report.delay_imports;
+    const directory =
+      kind === "standard"
+        ? report.import_directory
+        : report.delay_import_directory;
+    expect(rows.map((row) => row.name)).toEqual(["ONE.dll"]);
+    expect(directory?.locations).toHaveLength(1);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_entry",
+        location: `0x${(directoryRva + descriptorBytes).toString(16)}`,
+        message: expect.stringContaining("ends before a null descriptor"),
+      }),
+    );
+  },
+);
+
 const parse = (bytes: Buffer) => parsePeImports(bytes, artifact(bytes), input);
 
 it.each([
