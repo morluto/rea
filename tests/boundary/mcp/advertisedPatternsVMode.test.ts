@@ -139,6 +139,14 @@ it("advertises portable NUL escapes and patterns that compile in all JS modes", 
   ).toEqual([]);
   expect(patterns.some(({ pattern }) => pattern.includes("\\x00"))).toBe(true);
 
+  // The surrogate block sits above `\xFF`, so it has no two-digit `\x`
+  // spelling and advertising it needs a `\uXXXX` escape. RE2 and Rust
+  // validators reject that spelling the same way they reject the NUL escapes
+  // above, and one such pattern refuses the complete tools request.
+  expect(
+    patterns.filter(({ pattern }) => /\\u[dD][89abAB]/u.test(pattern)),
+  ).toEqual([]);
+
   expect(canonicalBase64Leaves.length).toBeGreaterThan(0);
   const sdkValidator = new AjvJsonSchemaValidator();
   const validators = canonicalBase64Leaves.map((schema) =>

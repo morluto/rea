@@ -16,11 +16,22 @@ export const nulFreeStringSchema = z
   .string()
   .regex(/^[^\x00]*$/u, "Local filesystem paths cannot contain NUL");
 
-/** A selected local filesystem path: nonempty, NUL-free, and representable without replacement. */
+/**
+ * A selected local filesystem path: nonempty, NUL-free, and representable
+ * without replacement.
+ *
+ * The well-formed-Unicode rule is a `.refine`, not a `.regex`. The surrogate
+ * block sits above `\xFF`, so it has no two-digit `\x` spelling: advertising it
+ * needs a `\uXXXX` escape, which RE2 and Rust validators do not accept. One
+ * pattern that cannot compile refuses the complete tools request rather than
+ * the affected call, so the rule stays runtime-only and the advertised schema
+ * keeps just the `\x00` pattern. `canonicalBase64Schema` splits its grammar at
+ * the same boundary.
+ */
 export const localPathStringSchema = nulFreeStringSchema
   .min(1)
-  .regex(
-    /^[^\uD800-\uDFFF]*$/u,
+  .refine(
+    (value) => !/[\uD800-\uDFFF]/u.test(value),
     "Local filesystem paths must contain well-formed Unicode",
   );
 
