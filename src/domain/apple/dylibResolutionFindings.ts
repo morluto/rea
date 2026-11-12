@@ -40,7 +40,7 @@ export const deriveFindings = (
         edge_index: index,
         image: edge.loader,
         basis: "derived",
-        explanation: `The modeled dyld search checks ${earlier.join(", ")} before ${edge.resolution.image ?? edge.install_name}. A compatible Mach-O placed at an earlier modeled path could take precedence over that fallback, subject to unmodeled search inputs and code-signing library validation; library validation is not evaluated here (see inspect_signature).${edge.loader_conditional ? " This loader loads only conditionally; if it never loads, this search never occurs." : ""}${edge.resolution.status === "conditional" ? " Unmodeled environment overrides or earlier unknown candidates may take precedence; placing an image at this rpath does not establish which image dyld will load." : ""}`,
+        explanation: `The modeled dyld search checks ${earlier.join(", ")} before ${edge.resolution.image ?? edge.install_name}. A compatible Mach-O placed at an earlier modeled path could take precedence over that fallback, subject to unmodeled search inputs and code-signing library validation; library validation is not evaluated here (see inspect_signature).${edge.loader_conditional ? " This dependency-expansion chain is conditional; this search applies only if that chain is used." : ""}${edge.resolution.status === "conditional" ? " Unmodeled environment overrides or earlier unknown candidates may take precedence; placing an image at this rpath does not establish which image dyld will load." : ""}`,
       });
   });
   // Capability-bit variants can share an architecture name, so each
@@ -74,9 +74,9 @@ const unresolvedFinding = (edge: Edge, index: number): Finding => {
     edge,
     dependencyPhrase(edge, lazy),
   );
-  // Below a conditional fallback, every consequence applies only if it loads.
+  // Consequences depend on the expansion chain, not just the image loading.
   const when = edge.loader_conditional
-    ? `. ${edge.loader} loads only conditionally; if it loads, `
+    ? `. The dependency-expansion chain for ${edge.loader} is conditional; if that chain is used, `
     : "; ";
   if (lazy)
     return {

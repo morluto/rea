@@ -271,93 +271,108 @@ cliTest(
   },
 );
 
-for (const dependency of ["eager", "lazy", "none", "conditional"]) {
+const loadedSiblingFixture = async (
+  dependency: "eager" | "lazy" | "none" | "conditional",
+) => {
+  const uncertain = dependency === "conditional";
+  const nested = dependency === "eager" || uncertain;
+  const app = await createTestTempDirectory("rea-dyld-sibling-chain-");
+  const root = "App";
+  await writeFiles(app, {
+    [root]: machoImage({
+      commands: [
+        buildVersionCommand(1),
+        rpathCommand("@executable_path/fallback"),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/A.dylib"),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/B.dylib"),
+      ],
+    }),
+    "A.dylib": machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [
+        buildVersionCommand(1),
+        ...(uncertain
+          ? [rpathCommand("@loader_path/search"), rpathCommand("@loader_path")]
+          : []),
+        rpathCommand("@loader_path/private"),
+        ...(dependency === "none"
+          ? []
+          : [
+              dylibCommand(
+                nested ? LC.LOAD_DYLIB : LC.LAZY_LOAD_DYLIB,
+                uncertain ? "@rpath/B.dylib" : "@loader_path/B.dylib",
+              ),
+            ]),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/C.dylib"),
+      ],
+    }),
+    "B.dylib": machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [
+        buildVersionCommand(1),
+        ...(uncertain
+          ? [dylibCommand(LC.ID_DYLIB, "@rpath/cached-B.dylib")]
+          : []),
+        dylibCommand(LC.LOAD_DYLIB, "@rpath/leaf.dylib"),
+        // The cycle must not expand B's dependencies a second time.
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/A.dylib"),
+        ...(uncertain
+          ? [
+              dylibCommand(LC.LOAD_DYLIB, "@rpath/missing.dylib"),
+              dylibCommand(LC.LOAD_DYLIB, "@rpath/fallback-leaf.dylib"),
+            ]
+          : []),
+      ],
+    }),
+    "private/leaf.dylib": machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [buildVersionCommand(1)],
+    }),
+    "fallback/leaf.dylib": machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [buildVersionCommand(1)],
+    }),
+    "C.dylib": machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [
+        buildVersionCommand(1),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/fallback/other.dylib"),
+        ...(uncertain
+          ? [dylibCommand(LC.LOAD_DYLIB, "@rpath/cached-B.dylib")]
+          : []),
+      ],
+    }),
+    "fallback/other.dylib": machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [buildVersionCommand(1)],
+    }),
+  });
+  if (uncertain) {
+    await writeFiles(app, {
+      // Unknown platform compatibility prevents ruling this candidate out.
+      "search/B.dylib": machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(999)],
+      }),
+      "fallback/fallback-leaf.dylib": machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      }),
+      "search/leaf.dylib": machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      }),
+    });
+  }
+  return { app, root, nested, uncertain };
+};
+
+for (const dependency of ["eager", "lazy", "none", "conditional"] as const) {
   cliTest(
     `uses the first expansion chain for a loaded sibling (${dependency} nested dependency)`,
     async ({ cli }) => {
-      const uncertain = dependency === "conditional";
-      const nested = dependency === "eager" || uncertain;
-      const app = await createTestTempDirectory("rea-dyld-sibling-chain-");
-      const root = "App";
-      await writeFiles(app, {
-        [root]: machoImage({
-          commands: [
-            buildVersionCommand(1),
-            rpathCommand("@executable_path/fallback"),
-            dylibCommand(LC.LOAD_DYLIB, "@loader_path/A.dylib"),
-            dylibCommand(LC.LOAD_DYLIB, "@loader_path/B.dylib"),
-          ],
-        }),
-        "A.dylib": machoImage({
-          fileType: FILE_TYPE.dylib,
-          commands: [
-            buildVersionCommand(1),
-            ...(uncertain
-              ? [
-                  rpathCommand("@loader_path/search"),
-                  rpathCommand("@loader_path"),
-                ]
-              : []),
-            rpathCommand("@loader_path/private"),
-            ...(dependency === "none"
-              ? []
-              : [
-                  dylibCommand(
-                    nested ? LC.LOAD_DYLIB : LC.LAZY_LOAD_DYLIB,
-                    uncertain ? "@rpath/B.dylib" : "@loader_path/B.dylib",
-                  ),
-                ]),
-            dylibCommand(LC.LOAD_DYLIB, "@loader_path/C.dylib"),
-          ],
-        }),
-        "B.dylib": machoImage({
-          fileType: FILE_TYPE.dylib,
-          commands: [
-            buildVersionCommand(1),
-            ...(uncertain
-              ? [dylibCommand(LC.ID_DYLIB, "@rpath/cached-B.dylib")]
-              : []),
-            dylibCommand(LC.LOAD_DYLIB, "@rpath/leaf.dylib"),
-            // The cycle must not expand B's dependencies a second time.
-            dylibCommand(LC.LOAD_DYLIB, "@loader_path/A.dylib"),
-          ],
-        }),
-        "private/leaf.dylib": machoImage({
-          fileType: FILE_TYPE.dylib,
-          commands: [buildVersionCommand(1)],
-        }),
-        "fallback/leaf.dylib": machoImage({
-          fileType: FILE_TYPE.dylib,
-          commands: [buildVersionCommand(1)],
-        }),
-        "C.dylib": machoImage({
-          fileType: FILE_TYPE.dylib,
-          commands: [
-            buildVersionCommand(1),
-            dylibCommand(LC.LOAD_DYLIB, "@loader_path/fallback/other.dylib"),
-            ...(uncertain
-              ? [dylibCommand(LC.LOAD_DYLIB, "@rpath/cached-B.dylib")]
-              : []),
-          ],
-        }),
-        "fallback/other.dylib": machoImage({
-          fileType: FILE_TYPE.dylib,
-          commands: [buildVersionCommand(1)],
-        }),
-      });
-      if (uncertain) {
-        await writeFiles(app, {
-          // Unknown platform compatibility prevents ruling this candidate out.
-          "search/B.dylib": machoImage({
-            fileType: FILE_TYPE.dylib,
-            commands: [buildVersionCommand(999)],
-          }),
-          "search/leaf.dylib": machoImage({
-            fileType: FILE_TYPE.dylib,
-            commands: [buildVersionCommand(1)],
-          }),
-        });
-      }
+      const { app, root, nested, uncertain } =
+        await loadedSiblingFixture(dependency);
       const output = await runFileCli(cli, {
         arguments: ["trace-dylib-resolution", join(app, root), "--json"],
         environment: ENVIRONMENT,
@@ -372,7 +387,12 @@ for (const dependency of ["eager", "lazy", "none", "conditional"]) {
         ...(dependency === "none" ? [] : ["A.dylib"]),
         "A.dylib",
         ...(nested
-          ? ["B.dylib", "B.dylib", "C.dylib"]
+          ? [
+              "B.dylib",
+              "B.dylib",
+              ...(uncertain ? ["B.dylib", "B.dylib"] : []),
+              "C.dylib",
+            ]
           : ["C.dylib", "B.dylib", "B.dylib"]),
         ...(uncertain ? ["C.dylib"] : []),
       ]);
@@ -411,6 +431,25 @@ for (const dependency of ["eager", "lazy", "none", "conditional"]) {
             expect.objectContaining({ outcome: "resolved" }),
           ],
         });
+        expect(trace.edges[1]).toMatchObject({
+          loader: root,
+          loader_conditional: false,
+          resolution: { status: "resolved", image: "B.dylib" },
+        });
+        for (const [name, kind] of [
+          ["@rpath/missing.dylib", "required-load-unresolved"],
+          ["@rpath/fallback-leaf.dylib", "earlier-rpath-candidate-absent"],
+        ]) {
+          const finding = trace.findings.find(
+            (item) =>
+              item.kind === kind &&
+              trace.edges[item.edge_index ?? -1]?.install_name === name,
+          );
+          expect(finding?.explanation).toContain("dependency-expansion chain");
+          expect(finding?.explanation).not.toContain(
+            "loads only conditionally",
+          );
+        }
         // B itself was loaded definitively by App. Its uncertain expansion
         // chain must not contaminate later install-name reuse from C.
         expect(trace.edges.at(-1)).toMatchObject({
