@@ -10,6 +10,7 @@
 
 ### Changes
 
+- Analyze targets and create private runtimes on fixed local ReFS volumes as well as NTFS, preserving persistent ACL, file identity, snapshot and cleanup checks. [#10086](https://github.com/morluto/rea/pull/10086). Thanks @QianNangong.
 - Capture, export and witness desktop tasks inside a build computer; keep an agentenv computer available through MCP and prepare a build host from one command. [#8954](https://github.com/morluto/rea/pull/8954), [#9041](https://github.com/morluto/rea/pull/9041), [#9045](https://github.com/morluto/rea/pull/9045), [#9049](https://github.com/morluto/rea/pull/9049), [#9199](https://github.com/morluto/rea/pull/9199). Thanks @earakely-scale.
 - Install desktop apps from SHA-256-pinned AppImages or upstream archives, retain selected package dependencies, and isolate explicitly declared build secrets. [#9215](https://github.com/morluto/rea/pull/9215), [#9112](https://github.com/morluto/rea/pull/9112), [#9225](https://github.com/morluto/rea/pull/9225). Thanks @earakely-scale.
 - Choose seed/end checkpoints, open seed documents at launch, build several tasks from one capture, and evaluate unreadable app state through headless checks or a screen judge. [#9037](https://github.com/morluto/rea/pull/9037), [#9054](https://github.com/morluto/rea/pull/9054), [#9216](https://github.com/morluto/rea/pull/9216), [#9217](https://github.com/morluto/rea/pull/9217), [issue morluto/rea#9676](https://github.com/morluto/rea/issues/9676). Thanks @earakely-scale.
@@ -138,7 +139,7 @@
 - `inspect_ntfs_journal` omits detailed `mftMetadata.record_headers` by default and leaves continuation at the first omitted record. Select `mft_record_limit` from 1 to 32 when those details are needed; inventory counts and explicit coverage remain inline. [1a8a9b749a](https://github.com/morluto/rea/commit/1a8a9b749a86e4b065a6b3ee6b8bad3b2761bac6). Thanks @gensokyo-dev, @N0zoM1z0.
 - Desktop state directories now use `application.state_directories[].exists_at_start: null` plus `existence_error` when inspection fails (for example, access denial). Accept the tri-state field and preserve unknown instead of treating it as absence. [#9899](https://github.com/morluto/rea/pull/9899).
 
-Full contribution record: [1845 commits and 1072 merged PRs](https://github.com/morluto/rea/blob/rea-agents-6.9.0/docs/releases/6.9.0.contributions.json).
+Full contribution record: [1846 commits and 1073 merged PRs](https://github.com/morluto/rea/blob/rea-agents-6.9.0/docs/releases/6.9.0.contributions.json).
 
 ## [6.8.0](https://github.com/morluto/rea/compare/rea-agents-6.7.0...rea-agents-6.8.0) (2026-10-25)
 
