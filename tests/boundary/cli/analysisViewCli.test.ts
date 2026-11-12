@@ -46,6 +46,64 @@ import {
 } from "../../../src/domain/evidenceBundle.js";
 import { inspectEvidenceBundle } from "../../../src/application/investigation/InspectEvidenceBundle.js";
 
+cliTest.for([false, true])(
+  "requires source agreement before treating a HAR response as empty: %s",
+  async (emptyReported, { cli }) => {
+    const capture = environmentManifestCaptureFixture([
+      {
+        request: {
+          method: "POST",
+          url: "http://app.example/jobs",
+          postData: { mimeType: "application/json", text: '{"name":"one"}' },
+        },
+        response: {
+          status: 201,
+          content: {
+            mimeType: "application/octet-stream",
+            encoding: "base64",
+            text: emptyReported
+              ? ""
+              : Buffer.from("not empty").toString("base64"),
+          },
+        },
+      },
+    ]);
+    capture.records[0]!.binary_fields = [
+      {
+        pointer: "/response/content/text",
+        representation: "har-base64-content",
+        state: "retained",
+        content_base64: "",
+        bytes: 0,
+        sha256: createHash("sha256").update("").digest("hex"),
+      },
+    ];
+    const root = await createTestTempDirectory("rea-har-body-source-");
+    const request = join(root, "request.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        source: {
+          kind: "inline",
+          evidence: analysisViewCaptureEvidence(capture),
+        },
+        view: { kind: "environment-manifest" },
+      }),
+    );
+    const response = await cli.run({
+      arguments: ["inspect-analysis-view", request, "--json"],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const view = z
+      .object({
+        kind: z.literal("environment-manifest"),
+        tools: z.array(z.unknown()),
+      })
+      .parse(parseEvidence(response.json).normalized_result);
+    expect(view.tools).toHaveLength(emptyReported ? 1 : 0);
+  },
+);
+
 cliTest(
   "reads a saved scalar pseudocode observation without starting an analysis engine",
   async ({ cli }) => {

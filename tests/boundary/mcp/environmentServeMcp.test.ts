@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import { timedCaptureEvidence } from "../../fixtures/analysisView.js";
+import {
+  analysisViewCaptureEvidence,
+  environmentManifestCaptureFixture,
+  timedCaptureEvidence,
+} from "../../fixtures/analysisView.js";
 import { INITIAL_TRASH_ROWS } from "../../fixtures/environmentStateLaterReads.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 
@@ -58,6 +62,65 @@ const connect = async (url: URL) => {
   await client.connect(transport);
   return client;
 };
+
+for (const mode of ["different-content", "wrong-role", "whitespace"] as const)
+  processTest(
+    `checks retained HAR response source before replay: ${mode}`,
+    async ({ processes }) => {
+      const reported = Buffer.from('{"id":2,"name":"reported"}');
+      const bytes =
+        mode === "different-content"
+          ? Buffer.from('{"id":2,"name":"sidecar"}')
+          : reported;
+      const encoded = reported.toString("base64");
+      const capture = environmentManifestCaptureFixture([
+        {
+          request: { method: "GET", url: "http://app.example/api/proof" },
+          response: {
+            status: 200,
+            content: {
+              mimeType: "application/json",
+              encoding: "base64",
+              text: mode === "whitespace" ? ` \t\r\n${encoded}\n` : encoded,
+            },
+          },
+        },
+      ]);
+      capture.records[0]!.binary_fields = [
+        {
+          pointer: "/response/content/text",
+          representation:
+            mode === "wrong-role" ? "producer-bytes" : "har-base64-content",
+          state: "retained",
+          content_base64: bytes.toString("base64"),
+          bytes: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
+      ];
+      const fixture = environmentStateServeFixture(
+        analysisViewCaptureEvidence(capture),
+      );
+      const tool = environmentServeSource(fixture).manifest.tools[0]!;
+      const started = await serveReplayOnly(processes, {}, fixture);
+      const client = await connect(started.url);
+      try {
+        const response = await client.callTool({
+          name: tool.name,
+          arguments: {},
+        });
+        expect(response.isError).toBeFalsy();
+        expect(response.structuredContent).toMatchObject({
+          status: 200,
+          content_type: "application/json",
+          body: mode === "whitespace" ? { id: 2, name: "reported" } : null,
+          replay: { body_recorded: mode === "whitespace" },
+        });
+      } finally {
+        await client.close();
+      }
+    },
+    HTTP_BOUNDARY_TIMEOUT_MS,
+  );
 
 processTest(
   "replays a recorded list containing an initially deleted entity",
