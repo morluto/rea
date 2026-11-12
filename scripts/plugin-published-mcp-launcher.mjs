@@ -3,9 +3,13 @@
 import { spawn } from "node:child_process";
 import {
   accessSync,
-  chmodSync,
+  closeSync,
+  constants as fsConstants,
+  fchmodSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -46,9 +50,40 @@ const cacheRoot = join(
 );
 
 /**
+ * Tighten an already-admitted owner directory without following a replacement
+ * symlink. Matches OwnedLease's O_DIRECTORY|O_NOFOLLOW + fchmod boundary.
+ */
+const tightenOwnedDirectory = (path, kind) => {
+  const fd = openSync(
+    path,
+    fsConstants.O_RDONLY |
+      (fsConstants.O_DIRECTORY ?? 0) |
+      (fsConstants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const opened = fstatSync(fd);
+    if (opened.isSymbolicLink() || !opened.isDirectory() || opened.uid !== uid)
+      throw new Error(`executable cache ${kind} is not owned by this user`);
+    if ((opened.mode & 0o077) === 0) return;
+    fchmodSync(fd, 0o700);
+    const after = fstatSync(fd);
+    if (
+      after.isSymbolicLink() ||
+      !after.isDirectory() ||
+      after.uid !== uid ||
+      (after.mode & 0o077) !== 0
+    )
+      throw new Error(`executable cache ${kind} is not private to this user`);
+  } finally {
+    closeSync(fd);
+  }
+};
+
+/**
  * Refuse foreign or group/other-writable cache paths before trusting an
  * executable entry. Owner-only directories match PrivateRuntimeRoot's POSIX
- * boundary; files must not be group/other-writable.
+ * boundary; files must not be group/other-writable. Never chmod a path before
+ * an lstat ownership/symlink check — path chmod follows symlinks.
  */
 const verifyOwnedCachePath = (path, kind) => {
   if (uid === undefined) return;
@@ -67,20 +102,11 @@ const verifyOwnedCachePath = (path, kind) => {
   if ((stats.mode & foreign) === 0) return;
   if (kind === "entry" || kind === "ready")
     throw new Error(`executable cache ${kind} is writable by others`);
-  chmodSync(path, 0o700);
-  const after = lstatSync(path);
-  if (
-    after.isSymbolicLink() ||
-    !after.isDirectory() ||
-    after.uid !== uid ||
-    (after.mode & 0o077) !== 0
-  )
-    throw new Error(`executable cache ${kind} is not private to this user`);
+  tightenOwnedDirectory(path, kind);
 };
 
 const ensurePrivateCacheRoot = () => {
   mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
-  if (uid !== undefined) chmodSync(cacheRoot, 0o700);
   verifyOwnedCachePath(cacheRoot, "root");
 };
 
@@ -170,7 +196,6 @@ const tryAcquireInstallLock = (lockPath) => {
       return false;
     }
   }
-  if (uid !== undefined) chmodSync(lockPath, 0o700);
   verifyOwnedCachePath(lockPath, "lock");
   writeFileSync(join(lockPath, "pid"), `${String(process.pid)}\n`, {
     mode: 0o600,
@@ -365,7 +390,6 @@ if (process.exitCode === 1) {
       try {
         rmSync(staging, { recursive: true, force: true });
         mkdirSync(staging, { recursive: true, mode: 0o700 });
-        if (uid !== undefined) chmodSync(staging, 0o700);
         verifyOwnedCachePath(staging, "prefix");
 
         let invocation;

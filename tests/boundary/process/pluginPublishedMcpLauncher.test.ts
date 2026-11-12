@@ -6,6 +6,7 @@ import {
   mkdir,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -395,6 +396,45 @@ it.skipIf(uid === undefined)(
     expect(result.stderr).toMatch(
       /refused an untrusted executable cache: executable cache entry is writable by others/u,
     );
+  },
+);
+
+it.skipIf(uid === undefined)(
+  "refuses a symlinked cache root without changing the target mode",
+  async () => {
+    const version = "6.8.0-published-symlink-root";
+    const workspace = await createTestTempDirectory(
+      "rea-published-symlink-root-",
+    );
+    const target = join(workspace, "served");
+    await mkdir(target, { mode: 0o755 });
+    await chmod(target, 0o755);
+    const temporaryRoot = join(workspace, "tmp");
+    await mkdir(temporaryRoot, { mode: 0o700 });
+    const linkedRoot = cacheRootFor(temporaryRoot);
+    await symlink(target, linkedRoot);
+    onTestFinished(async () => {
+      await rm(linkedRoot, { force: true });
+      await chmod(target, 0o700).catch(() => undefined);
+    });
+    const missingBin = await createTestTempDirectory(
+      "rea-published-symlink-root-bin-",
+    );
+    const { child, closed } = start([version], {
+      ...process.env,
+      PATH: missingBin,
+      TEMP: temporaryRoot,
+      TMP: temporaryRoot,
+      TMPDIR: temporaryRoot,
+    });
+    child.stdin.end();
+    const result = await closed;
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toMatch(
+      /refused an untrusted executable cache: executable cache root must not be a symlink/u,
+    );
+    expect((await lstat(target)).mode & 0o777).toBe(0o755);
   },
 );
 
