@@ -9,9 +9,15 @@ import {
 } from "../../../src/application/SetupSkill.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-// Original guide at main 72d5e72e6, rendered with the repository Markdown stack.
+// Native guide through main a8527d43b8, rendered with the repository Markdown stack.
 // Moving a section must retain its old fragment through a heading or HTML anchor.
 const legacyAnchors = [
+  "deno-compile-executables",
+  "linux-kernel-build-config",
+  "elf-unwind-function-ranges",
+  "elf-and-mach-o-initializer-functions",
+  "windows-shell-link-shortcuts",
+  "release-exposure",
   "apple-app-resources",
   "apple-ips-crash-reports",
   "binary-hardening",

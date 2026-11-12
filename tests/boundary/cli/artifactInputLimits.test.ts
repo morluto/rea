@@ -9,12 +9,12 @@ for (const { command, limit, recovery } of [
   {
     command: "inspect-go-binary",
     limit: 256 * 1024 * 1024,
-    recovery: "input byte allowance",
+    recovery: "max_input_bytes",
   },
   {
     command: "inspect-rust-binary",
     limit: 256 * 1024 * 1024,
-    recovery: "within the fixed Rust input allowance",
+    recovery: "producer_limits.input_bytes",
   },
   {
     command: "inspect-il2cpp-metadata",
@@ -24,11 +24,11 @@ for (const { command, limit, recovery } of [
   {
     command: "inspect-wasm-artifact",
     limit: 8 * 1024 * 1024,
-    recovery: "input byte allowance",
+    recovery: "max_input_bytes",
   },
 ]) {
   cliTest.skipIf(process.platform === "win32")(
-    `${command} identifies fixed input-size refusal and recovery`,
+    `${command} identifies input-size refusal and applicable recovery`,
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-artifact-input-limit-");
       const selected = join(root, "oversized.bin");

@@ -13,6 +13,7 @@ import { DesktopSessionCleanupError } from "../../desktop/DesktopApplicationSess
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import { walkHomeState } from "../../desktop/HomeStateWalker.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { captureDesktopApplication } from "./DesktopApplicationCapture.js";
 import { CaptureFile } from "./DesktopCaptureOutput.js";
 import {
   discardFailedCapture,
@@ -236,6 +237,105 @@ describe("failedCaptureError", () => {
 });
 
 describe("projectFailure", () => {
+  it.each([
+    {
+      oversized: false,
+      closeFails: true,
+      category: "cancelled",
+      code: "cleanup_incomplete",
+    },
+    {
+      oversized: true,
+      closeFails: true,
+      category: "execution_failure",
+      code: "cleanup_incomplete",
+    },
+    {
+      oversized: false,
+      closeFails: false,
+      category: "cancelled",
+      code: "cancelled",
+    },
+    {
+      oversized: true,
+      closeFails: false,
+      category: "invalid_input",
+      code: "invalid_request",
+    },
+  ])(
+    "preserves the physical read outcome beside final cancellation (oversized: $oversized, close fails: $closeFails)",
+    async ({ oversized, closeFails, category, code }) => {
+      const root = await createTestTempDirectory("desktop-inventory-cancel-");
+      const entry = join(root, "notes.desktop");
+      await writeFile(
+        entry,
+        oversized
+          ? "x".repeat(1024 * 1024 + 1)
+          : "[Desktop Entry]\nType=Application\nName=Notes\nExec=notes\n",
+      );
+      const controller = new AbortController();
+      const reason = new Error("cancelled while closing the desktop entry");
+      let owner: OwnedFileHandle | undefined;
+      const actualClose = OwnedFileHandle.prototype.close;
+      const close = vi
+        .spyOn(OwnedFileHandle.prototype, "close")
+        .mockImplementation(async function (this: OwnedFileHandle) {
+          // oxlint-disable-next-line typescript/no-this-alias -- Release the exact denied descriptor after the public call.
+          owner = this;
+          if (!closeFails) await actualClose.call(this);
+          controller.abort(reason);
+          if (closeFails) throw new Error("close denied");
+        });
+      try {
+        const result = await captureDesktopApplication(
+          {
+            desktopEntry: entry,
+            executable: undefined,
+            arguments: [],
+            output: join(root, "capture"),
+            statePaths: [],
+            excludes: [],
+            maxDurationSeconds: 1,
+            maxEntries: 10,
+            maxFileBytes: 1024,
+            maxContentBytes: 1024,
+            packageFile: undefined,
+          },
+          {
+            platform: "linux",
+            callerDirectory: root,
+            environment: {
+              HOME: root,
+              DISPLAY: ":controlled",
+              REA_XPROP_COMMAND: process.execPath,
+            },
+            nextRequest: () => undefined,
+            report: async () => {
+              throw new Error(
+                "inventory failure must precede target execution",
+              );
+            },
+          },
+          controller.signal,
+        );
+        expect(owner).toBeDefined();
+        expect(result).toMatchObject({
+          error: "Desktop capture failed",
+          code,
+          category,
+          ...(closeFails ? { details: { resources: [entry] } } : {}),
+        });
+        if (oversized && !closeFails)
+          expect(result).toMatchObject({
+            message: expect.stringContaining("larger than 1 MiB"),
+          });
+      } finally {
+        close.mockRestore();
+        await owner?.close();
+      }
+    },
+  );
+
   it("keeps the owner of a resource the inventory could not release", async () => {
     const resources = new ArtifactResourceScope();
     let attempts = 0;

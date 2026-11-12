@@ -265,8 +265,7 @@ the framing LF still fits. Cutter measures, signs, and writes a fitting
 response in bounded chunks. The bridge searches only the newly read bytes
 for the framing LF. The client unescapes each socket chunk into one response
 string before parsing it, so this ceiling does not keep the paged wire frame
-and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. Set the variable in the environment that starts REA, restart REA,
-and start Hopper or Cutter from that same environment. An out-of-band bridge
+and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. `bridge.max_request_bytes` can be changed at runtime with `update_analysis_settings`. The launch seed is `REA_BRIDGE_MAX_REQUEST_BYTES`. Start Hopper or Cutter from that same environment so the bridge keeps the ceiling it started with until that bridge starts again. An out-of-band bridge
 without the setting stays at 16777216 bytes. The client reports that mismatch
 during discovery only after the hello proves a live authenticated bridge, and
 does not send a status request or the command. A stale descriptor is ignored.
@@ -469,3 +468,9 @@ anchors preserve older links without creating duplicate searchable sections.
 - <a id="esp-images"></a>[ESP images](firmware-and-raw-images.md#esp-images)
 - <a id="esp-flash-images"></a>[ESP flash images](firmware-and-raw-images.md#esp-flash-images)
 - <a id="bun-standalone-executables"></a>[Bun standalone executables](packages-and-archives.md#bun-standalone-executables)
+- <a id="release-exposure"></a>[Release exposure](format-inspectors.md#release-exposure)
+- <a id="windows-shell-link-shortcuts"></a>[Windows Shell Link shortcuts](format-inspectors.md#windows-shell-link-shortcuts)
+- <a id="elf-and-mach-o-initializer-functions"></a>[ELF and Mach-O initializer functions](format-inspectors.md#elf-and-mach-o-initializer-functions)
+- <a id="elf-unwind-function-ranges"></a>[ELF unwind function ranges](format-inspectors.md#elf-unwind-function-ranges)
+- <a id="linux-kernel-build-config"></a>[Linux kernel build config](format-inspectors.md#linux-kernel-build-config)
+- <a id="deno-compile-executables"></a>[Deno compile executables](packages-and-archives.md#deno-compile-executables)

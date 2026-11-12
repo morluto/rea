@@ -2,17 +2,22 @@
 
 Read only the sections needed for the selected task.
 
+- [Release exposure](#release-exposure)
 - [Go build metadata](#go-build-metadata)
 - [Model files](#model-files)
 - [IL2CPP metadata](#il2cpp-metadata)
 - [Rust dependency metadata](#rust-dependency-metadata)
 - [PE Authenticode certificate tables](#pe-authenticode-certificate-tables)
 - [PE import and delay-load tables](#pe-import-and-delay-load-tables)
+- [Windows Shell Link shortcuts](#windows-shell-link-shortcuts)
 - [PE TLS callbacks and load configuration](#pe-tls-callbacks-and-load-configuration)
 - [Binary hardening](#binary-hardening)
 - [ELF note tables](#elf-note-tables)
+- [ELF and Mach-O initializer functions](#elf-and-mach-o-initializer-functions)
+- [ELF unwind function ranges](#elf-unwind-function-ranges)
 - [Apple IPS crash reports](#apple-ips-crash-reports)
 - [Linux kernel modules](#linux-kernel-modules)
+- [Linux kernel build config](#linux-kernel-build-config)
 - [CPython pyc files](#cpython-pyc-files)
 - [Erlang BEAM files](#erlang-beam-files)
 - [SQLite snapshots](#sqlite-snapshots)
@@ -24,6 +29,16 @@ Read only the sections needed for the selected task.
 - [Offline PE and ELF export tables](#offline-pe-and-elf-export-tables)
 - [EVM bytecode](#evm-bytecode)
 - [Embedded GPU code objects](#embedded-gpu-code-objects)
+
+## Release exposure
+
+Use `audit_release_exposure` (`rea audit-release-exposure PATH`) when the question is what static analysis of a shipped `.app`, install directory, ASAR, or executable recovers. Each check has a stable id, a status, the observation behind it, and fixed remediation. Unknown and unassessed checks stay in the report. The report does not establish that the application is secure.
+
+`text.credential_markers` reports a rule id and location only. Matched bytes, previews, lengths, and hashes of matched bytes are omitted.
+
+`native.hardening`, `macho.hardened_runtime`, and `android.manifest` are not assessed here. Their next probes are `inspect_binary_hardening`, `inspect_signature`, and `inspect_android_package`.
+
+See [release exposure](https://github.com/morluto/rea/blob/main/docs/release-exposure.md).
 
 ## Go build metadata
 
@@ -129,6 +144,20 @@ table or overlay. Bound snapshots, loaded IAT contents, and export-forward
 resolution remain unobserved. See
 [PE import and delay-load tables](https://github.com/morluto/rea/blob/main/docs/pe-imports.md).
 
+## Windows Shell Link shortcuts
+
+Use `inspect_windows_shortcut` for an explicit local `.lnk` file when the
+question concerns the recorded target path, arguments, working directory, icon
+location, volume serial, network share names, ExtraData blocks, or Tracker
+droid identifiers. No `open_binary`, Windows SDK, COM, or target execution is
+required. The CLI equivalent is `inspect-windows-shortcut PATH`. Preserve
+artifact SHA-256, FILETIME raw decimals, IDList type bytes, and ExtraData
+signatures. Unknown IDList items and ExtraData signatures remain raw with
+SHA-256; they are not guessed. Version-1 UUID MAC and timestamp values are
+labelled derived. A missing optional section is observed absence of that
+structure. See
+[Windows Shell Link shortcuts](https://github.com/morluto/rea/blob/main/docs/guides/native/windows-shortcut.md).
+
 ## PE TLS callbacks and load configuration
 
 Preserve each callback's RVA, file offset and section alongside its VA and the
@@ -174,6 +203,36 @@ absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
 
+## ELF and Mach-O initializer functions
+
+Use `inspect_native_initializers` for an explicit local ELF or Mach-O image
+when the question is which functions run before `main` or at exit: ELF
+`DT_PREINIT_ARRAY`, `DT_INIT`, `DT_INIT_ARRAY`, `DT_FINI`, `DT_FINI_ARRAY` and
+legacy `.ctors`/`.dtors`, or Mach-O `__mod_init_func`, `__init_offsets` and
+`__mod_term_func`. Pass `architecture` for a universal Mach-O. The CLI
+equivalent is `inspect-native-initializers PATH`. PIE slots are resolved
+through RELATIVE, RELR and section relocations, and Mach-O slots through
+chained fixups. Keep each entry's `resolution`: `unresolved` means the value was
+not established, and `unresolved_import` names an external symbol. Page with
+`offset` and `limit`. See
+[ELF and Mach-O initializer functions](https://github.com/morluto/rea/blob/main/docs/guides/native/native-initializers.md).
+
+## ELF unwind function ranges
+
+Use `inspect_elf_unwind_ranges` for an explicit local ELF32/ELF64 image when
+the question concerns function starts and lengths that survive `strip`, which
+functions have an LSDA, or which ranges have no exact symbol. No
+`open_binary` or target execution is required. The CLI equivalent is
+`inspect-elf-unwind-ranges PATH`. Preserve artifact SHA-256, FDE start and
+end, containing section, exact symbol name, CIE index, LSDA, and personality.
+Page later ranges with `offset` and `limit`. A missing `.eh_frame` is
+observed absence of that declaration and of `PT_GNU_EH_FRAME`, not proof the
+image has no functions. Header disagreement is a limitation and does not drop
+decoded ranges. `.debug_frame` is reported present or absent and is not
+decoded. CFA instructions are counted and not evaluated. Indirect EH pointers
+are not dereferenced. See
+[ELF unwind function ranges](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-unwind-ranges.md).
+
 ## Apple IPS crash reports
 
 Use `inspect_apple_ips` for an explicit local Apple `.ips` file when the
@@ -183,7 +242,10 @@ Xcode, atos, or target execution is required. The CLI equivalent is
 `inspect-apple-ips PATH`. Preserve artifact SHA-256, `bug_type` as a string,
 uppercase image UUIDs, and integer literals that exceed IEEE-754 range. Only
 `bug_type` `"309"` yields a crash body; other DiagnosticReports types return
-no crash result. Opened Mach-O and dSYM UUID joins remain unobserved. See
+no crash result. Select `join_path` for one local Mach-O or dSYM to match
+report images to slices by UUID and architecture. Preserve the selected
+artifact identity, slice facts and unjoined reasons; a joined static address
+does not resolve function names or dSYM symbols. See
 [Apple IPS crash reports](https://github.com/morluto/rea/blob/main/docs/apple-ips.md).
 
 ## Linux kernel modules
@@ -204,6 +266,27 @@ container. gzip, xz, and zstd whole-file containers are unsupported and name
 `external_decompression` as the next probe: use an external codec utility to
 decompress into a separate file, then call `inspect_kernel_module` on that file. See
 [Linux kernel modules](https://github.com/morluto/rea/blob/main/docs/kernel-modules.md).
+
+## Linux kernel build config
+
+Use `inspect_kernel_build_config` for an explicit local kernel image (`vmlinux`
+ELF, raw arm64 `Image`, x86 `bzImage`/`zImage`, or `configs.ko`) when the
+question is which kernel version it is or how it was configured. No
+`open_binary`, Linux host, or `extract-ikconfig` is required. The CLI
+equivalent is `inspect-kernel-build-config PATH`; pass `name` for one exact
+`CONFIG_*` option and `offset`/`limit` to page the rest. Preserve the banner
+version, builder, and compiler, the config SHA-256 and option count, and each
+entry's value kind (`y`, `m`, `string`, `number`, `not_set`). A config is
+accepted only when `IKCFG_ST` is immediately followed by a valid gzip member
+and `IKCFG_ED`, so an ordinary `IKCFG_ST` string is not a config. Offsets with
+`space: "inflated_payload"` are positions in an inflated bzImage payload, not
+file offsets. An absent config describes only the searched bytes; the kernel
+may have been built without `CONFIG_IKCONFIG` or with it as a module. Truncated
+payloads are incomplete, not absent. A framed blob that does not decode, has a
+bad CRC, or holds non-config text is `malformed`, not absent. xz, lz4, lzma, zstd, bzip2, and lzo
+payloads are unsupported and name `external_decompression`: decompress with an
+external utility, then call `inspect_kernel_build_config` on the result. See
+[Linux kernel build config](https://github.com/morluto/rea/blob/main/docs/guides/native/kernel-build-config.md).
 
 ## CPython pyc files
 
@@ -349,8 +432,9 @@ exports are absent. Use `inspect_macho` for Mach-O. See
 
 Explicit local EVM bytecode carrier: `inspect_evm_interface` with caller-selected
 `raw` or `hex` encoding. The owned worker deadline is `timeout_ms` (default
-30000 ms, range 1..2147483647, next call). It does not raise the fixed byte,
-address-space, or CPU allowances. Preserve carrier/decoded digests and treat selectors,
+30000 ms, range 1..2147483647, next call). Select byte, address-space and CPU
+allowances separately through `producer_limits`; tighter inherited OS limits
+remain enforced, and the 256 MiB worker heap is independent. Preserve carrier/decoded digests and treat selectors,
 argument strings and mutability as inferred candidates; this performs no chain
 lookup or target execution. For the complete inferred interface without hex or
 duplicate stdout, discover support and select `detail: "summary"`; complete

@@ -1,3 +1,4 @@
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { expect, it } from "vitest";
 
 import { createBrowserEvidence } from "../../../src/application/BrowserEvidence.js";
@@ -64,14 +65,14 @@ it("records an explicit command deadline and omits the default", () => {
       ...base,
       command_timeout_ms: 1_500,
     }),
-    bundle,
+    { source: jsonValueSchema.parse(bundle), facts: bundle },
     CDP_BROWSER_PROVIDER_IDENTITY,
   );
   expect(explicit.parameters.command_timeout_ms).toBe(1_500);
   const omitted = createBrowserEvidence(
     "analyze_web_bundle",
     analyzeWebBundleInputSchema.parse(base),
-    bundle,
+    { source: jsonValueSchema.parse(bundle), facts: bundle },
     CDP_BROWSER_PROVIDER_IDENTITY,
   );
   expect(omitted.parameters).not.toHaveProperty("command_timeout_ms");
@@ -89,7 +90,7 @@ it("rejects a command deadline on target listing and leaves it out of Evidence",
     listBrowserTargetsInputSchema.parse({
       cdp_endpoint: "http://127.0.0.1:9222",
     }),
-    targetList,
+    { source: jsonValueSchema.parse(targetList), facts: targetList },
     CDP_BROWSER_PROVIDER_IDENTITY,
   );
   expect(evidence.parameters).not.toHaveProperty("command_timeout_ms");
@@ -102,7 +103,7 @@ it("records an explicit discovery deadline and omits the default", () => {
       cdp_endpoint: "ws://127.0.0.1:9222/devtools/browser/fake",
       discovery_timeout_ms: 25_000,
     }),
-    targetList,
+    { source: jsonValueSchema.parse(targetList), facts: targetList },
     CDP_BROWSER_PROVIDER_IDENTITY,
   );
   expect(explicitListing.parameters.discovery_timeout_ms).toBe(25_000);
@@ -111,7 +112,7 @@ it("records an explicit discovery deadline and omits the default", () => {
     listBrowserTargetsInputSchema.parse({
       cdp_endpoint: "ws://127.0.0.1:9222/devtools/browser/fake",
     }),
-    targetList,
+    { source: jsonValueSchema.parse(targetList), facts: targetList },
     CDP_BROWSER_PROVIDER_IDENTITY,
   );
   expect(omittedListing.parameters).not.toHaveProperty("discovery_timeout_ms");
@@ -127,14 +128,14 @@ it("records an explicit discovery deadline and omits the default", () => {
       ...baseBundle,
       discovery_timeout_ms: 15_000,
     }),
-    bundle,
+    { source: jsonValueSchema.parse(bundle), facts: bundle },
     CDP_BROWSER_PROVIDER_IDENTITY,
   );
   expect(explicitBundle.parameters.discovery_timeout_ms).toBe(15_000);
   const omittedBundle = createBrowserEvidence(
     "analyze_web_bundle",
     analyzeWebBundleInputSchema.parse(baseBundle),
-    bundle,
+    { source: jsonValueSchema.parse(bundle), facts: bundle },
     CDP_BROWSER_PROVIDER_IDENTITY,
   );
   expect(omittedBundle.parameters).not.toHaveProperty("discovery_timeout_ms");
@@ -152,14 +153,14 @@ it("records an explicit source-map fetch deadline and omits the default", () => 
       ...base,
       source_map_fetch_timeout_ms: 1_500,
     }),
-    bundle,
+    { source: jsonValueSchema.parse(bundle), facts: bundle },
     CDP_BROWSER_PROVIDER_IDENTITY,
   );
   expect(explicit.parameters.source_map_fetch_timeout_ms).toBe(1_500);
   const omitted = createBrowserEvidence(
     "analyze_web_bundle",
     analyzeWebBundleInputSchema.parse(base),
-    bundle,
+    { source: jsonValueSchema.parse(bundle), facts: bundle },
     CDP_BROWSER_PROVIDER_IDENTITY,
   );
   expect(omitted.parameters).not.toHaveProperty("source_map_fetch_timeout_ms");

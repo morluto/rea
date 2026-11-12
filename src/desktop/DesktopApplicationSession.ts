@@ -1,5 +1,15 @@
+import {
+  SamplingReadBatchFailure,
+  samplingInspectionFailures,
+} from "../process/capture/ProcessSamplingObservation.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  assertProcessOwnershipInspectionActive,
+  isProcessOwnershipInspectionCancellation,
+  waitForProcessOwnershipInspection,
+} from "../process/ProcessInspectionCancellation.js";
 import { randomUUID } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
@@ -13,6 +23,7 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
   type SpawnedOwnedProviderProcess,
+  type ProviderProcessInspectionCleanup,
 } from "../process/ProviderProcess.js";
 import { terminateTokenOwnedProcesses } from "../process/TokenOwnedTermination.js";
 import {
@@ -28,6 +39,7 @@ import {
 } from "./DesktopSessionObservations.js";
 import type { WindowSample, X11WindowObserver } from "./X11WindowObserver.js";
 
+/** The most of the launched process's stderr a session keeps: its latest bytes, where a failing app's last words are. */
 const STDERR_BYTES = 8 * 1024;
 const TERMINATION_GRACE_MS = 5_000;
 
@@ -35,6 +47,8 @@ const TERMINATION_GRACE_MS = 5_000;
 export interface UnresolvedCleanup {
   readonly reason: string;
   readonly leases: readonly AnalysisCleanupLease[];
+  /** Failure-time facts remain available after the lease releases its owners. */
+  readonly inspectionCleanup?: ProviderProcessInspectionCleanup;
 }
 
 /** The session record and, when cleanup was not verified, what remains owned. */
@@ -76,11 +90,15 @@ export interface DesktopSessionPlan {
   readonly maxDurationMs: number;
   readonly pollIntervalMs: number;
   readonly nextRequest: () => SessionRequest | undefined;
+  /** Record a checkpoint, given the files the app holds open and the titles its windows have shown so far. */
   readonly checkpoint: (
     name: string,
     trigger: CheckpointTrigger,
     atMs: number,
-    openedFiles: ReadonlySet<string>,
+    seen: {
+      readonly openedFiles: ReadonlySet<string>;
+      readonly titles: readonly string[];
+    },
   ) => Promise<void>;
   /** Progress text, with the event a driver waits on when there is one. */
   readonly report: (
@@ -151,12 +169,12 @@ const checkpointNow = (
   name: string,
   trigger: CheckpointTrigger,
 ): Promise<void> =>
-  plan.checkpoint(
-    name,
-    trigger,
-    observations.now(),
-    new Set(observations.openedFiles.keys()),
-  );
+  plan.checkpoint(name, trigger, observations.now(), {
+    openedFiles: new Set(observations.openedFiles.keys()),
+    titles: [...observations.windows.values()]
+      .filter((window) => window.application)
+      .flatMap((window) => window.titles),
+  });
 
 /** Record a requested checkpoint, or report why its name was refused and carry on. */
 const requestCheckpoint = async (
@@ -207,7 +225,7 @@ const watch = async (
   let quietSamples = 0;
   const taken = new Set<string>();
   for (;;) {
-    signal.throwIfAborted();
+    assertProcessOwnershipInspectionActive(signal);
     if (observations.now() >= plan.maxDurationMs) return "time_limit";
     // One request per sample, so queued lines cannot starve observation.
     const request = plan.nextRequest();
@@ -221,9 +239,14 @@ const watch = async (
       (await noStartedProcessLeft(observations, signal));
     quietSamples = quiet ? quietSamples + 1 : 0;
     if (quietSamples >= 2) return "application_exited";
-    await delay(plan.pollIntervalMs, undefined, { signal });
+    await waitForProcessOwnershipInspection(plan.pollIntervalMs, signal);
   }
 };
+
+interface SessionRelease {
+  readonly cleanup: DesktopSession["cleanup"];
+  readonly inspectionCleanup?: ProviderProcessInspectionCleanup;
+}
 
 /**
  * Ask the launched process, its process group and every process carrying the
@@ -234,22 +257,44 @@ const watch = async (
 const release = async (
   spawned: SpawnedOwnedProviderProcess,
   supervisor: ProviderProcessSupervisor,
-): Promise<DesktopSession["cleanup"]> => {
+): Promise<SessionRelease> => {
+  const inspected = await supervisor.retryInspectionCleanup();
   // One SIGTERM each, since some applications treat a second one as a forced exit.
-  const { launchGroupSignalled } = await terminateTokenOwnedProcesses(
-    spawned.ownership,
-    TERMINATION_GRACE_MS,
-  );
+  let launchGroupSignalled = false;
+  if (inspected.ok) {
+    const termination = await terminateTokenOwnedProcesses(
+      spawned.ownership,
+      TERMINATION_GRACE_MS,
+    );
+    launchGroupSignalled = termination.ok
+      ? termination.value.launchGroupSignalled
+      : termination.error.launchGroupSignalled;
+    if (!termination.ok)
+      supervisor.retainInspectionFailure(termination.error.cause);
+  }
   if (!launchGroupSignalled && supervisor.observedExit() === undefined) {
     spawned.process.kill("SIGTERM");
     await supervisor.waitForExit(TERMINATION_GRACE_MS);
   }
   let stopped = await supervisor.stop();
+  let inspectionCleanup = inspected.ok
+    ? stopped.status === "incomplete"
+      ? stopped.inspectionCleanup
+      : undefined
+    : inspected.error;
   // An incomplete stop leaves the supervisor owning the processes; try once more.
-  if (stopped.status === "incomplete") stopped = await supervisor.stop();
-  return stopped.status === "incomplete"
-    ? { verified: false, reason: stopped.reason }
-    : { verified: true, reason: null };
+  if (stopped.status === "incomplete") {
+    stopped = await supervisor.stop();
+    if (inspectionCleanup === undefined && stopped.status === "incomplete")
+      inspectionCleanup = stopped.inspectionCleanup;
+  }
+  return {
+    cleanup:
+      stopped.status === "incomplete"
+        ? { verified: false, reason: stopped.reason }
+        : { verified: true, reason: null },
+    ...(inspectionCleanup === undefined ? {} : { inspectionCleanup }),
+  };
 };
 
 /**
@@ -259,12 +304,15 @@ const release = async (
 const unreleased = (
   spawned: SpawnedOwnedProviderProcess,
   supervisor: ProviderProcessSupervisor,
-  cleanup: DesktopSession["cleanup"],
+  result: SessionRelease,
 ): UnresolvedCleanup | undefined =>
-  cleanup.verified
+  result.cleanup.verified
     ? undefined
     : {
-        reason: cleanup.reason ?? "cleanup was not verified",
+        reason: result.cleanup.reason ?? "cleanup was not verified",
+        ...(result.inspectionCleanup === undefined
+          ? {}
+          : { inspectionCleanup: result.inspectionCleanup }),
         leases: [
           new AnalysisCleanupLease(async () => {
             const stopped = await supervisor.stop();
@@ -278,15 +326,19 @@ const unreleased = (
  * The caller's environment without the agent environment's own variables,
  * such as its control token: agentenv launches the exported app without
  * them, and the app must not hold a credential to the computer it runs on.
+ * glibc writes a fatal error, such as an abort's reason, to stderr rather
+ * than the terminal, so a failed launch reports it.
  */
 const applicationEnvironment = (
   environment: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv =>
-  Object.fromEntries(
+): NodeJS.ProcessEnv => ({
+  ...Object.fromEntries(
     Object.entries(environment).filter(
       ([name]) => !name.startsWith("AGENTENV_"),
     ),
-  );
+  ),
+  LIBC_FATAL_STDERR_: "1",
+});
 
 const launch = async (
   plan: DesktopSessionPlan,
@@ -312,7 +364,10 @@ const launch = async (
       cleanup:
         spawned.cleanup ?? (() => cleanupOwnedProcessGroup(spawned.ownership)),
     },
-    { maxDiagnosticBytes: { stdout: 0, stderr: STDERR_BYTES } },
+    {
+      maxDiagnosticBytes: { stdout: 0, stderr: STDERR_BYTES },
+      diagnosticRetention: "tail",
+    },
   );
   return { spawned, supervisor };
 };
@@ -337,9 +392,9 @@ export const runDesktopSession = async (
     plan.windowMatching,
   );
   let endReason: DesktopSession["end_reason"];
-  let cleanup: DesktopSession["cleanup"];
+  let releaseResult: SessionRelease;
   // Released at most once: a second release would signal the processes again.
-  let released: Promise<DesktopSession["cleanup"]> | undefined;
+  let released: Promise<SessionRelease> | undefined;
   const releaseOnce = () => (released ??= release(spawned, supervisor));
   try {
     await trackProcess(observations, spawned.ownership.leaderPid, signal);
@@ -351,12 +406,26 @@ export const runDesktopSession = async (
         endReason === "stop_requested" ? "stop" : "time-limit",
         "stop",
       );
-    cleanup = await releaseOnce();
+    releaseResult = await releaseOnce();
+    assertProcessOwnershipInspectionActive(signal);
     await checkpointNow(plan, observations, "exit", "exit");
+    assertProcessOwnershipInspectionActive(signal);
   } catch (cause: unknown) {
-    cleanup = await releaseOnce();
-    if (!signal.aborted) {
-      const left = unreleased(spawned, supervisor, cleanup);
+    const inspections = samplingInspectionFailures(cause);
+    for (const inspection of inspections)
+      supervisor.retainInspectionFailure(inspection);
+    const cancelled =
+      cause instanceof AnalysisCancelledError ||
+      (cause instanceof ArtifactReaderFailure &&
+        cause.reason === "cancelled") ||
+      isProcessOwnershipInspectionCancellation(cause) ||
+      (cause instanceof SamplingReadBatchFailure &&
+        cause.otherFailures.length === 0 &&
+        inspections.length > 0 &&
+        inspections.every(isProcessOwnershipInspectionCancellation));
+    releaseResult = await releaseOnce();
+    if (!cancelled) {
+      const left = unreleased(spawned, supervisor, releaseResult);
       if (left === undefined) throw cause;
       throw new DesktopSessionCleanupError(cause, left);
     }
@@ -373,11 +442,11 @@ export const runDesktopSession = async (
     ...observedSession(observations),
     stderr: snapshot.stderr.text,
     stderr_truncated: snapshot.stderr.bytes < snapshot.stderr.observedBytes,
-    cleanup,
+    cleanup: releaseResult.cleanup,
   };
   return {
     session,
-    unreleased: unreleased(spawned, supervisor, cleanup),
+    unreleased: unreleased(spawned, supervisor, releaseResult),
     unreadableWindowSamples: observations.unreadableWindowSamples,
   };
 };

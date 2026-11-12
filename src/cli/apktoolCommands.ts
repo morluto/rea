@@ -9,6 +9,7 @@ import {
   apktoolInputSchemas,
   type ApktoolOperation,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
@@ -59,7 +60,7 @@ export const registerApktoolCommands = (
     description:
       "Decode one APK's manifest, metadata, and string resources with apktool",
     args: z.object({
-      path: z.string().min(1).describe("Local APK file to decode"),
+      path: localPathStringSchema.describe("Local APK file to decode"),
     }),
     // The locale grammar and the string-projection default belong to the
     // apktool input owner. Read them from that schema rather than restating a
@@ -75,6 +76,23 @@ export const registerApktoolCommands = (
         ),
       decodeTimeoutMs: cliDecimalField(
         apktoolInputSchemas.decode_android_resources.shape.decode_timeout_ms,
+      ),
+      stringOffset: cliDecimalField(
+        apktoolInputSchemas.decode_android_resources.shape.string_offset,
+      ),
+      stringLimit: cliDecimalField(
+        apktoolInputSchemas.decode_android_resources.shape.string_limit,
+      ),
+      maxTotalStrings: cliDecimalField(
+        apktoolInputSchemas.decode_android_resources.shape.max_total_strings,
+      ),
+      maxStringTableBytes: cliDecimalField(
+        apktoolInputSchemas.decode_android_resources.shape
+          .max_string_table_bytes,
+      ),
+      maxTotalStringTableBytes: cliDecimalField(
+        apktoolInputSchemas.decode_android_resources.shape
+          .max_total_string_table_bytes,
       ),
       strings: z
         .boolean()
@@ -104,6 +122,23 @@ export const registerApktoolCommands = (
           ...(options.decodeTimeoutMs === undefined
             ? {}
             : { decode_timeout_ms: options.decodeTimeoutMs }),
+          ...(options.stringOffset === undefined
+            ? {}
+            : { string_offset: options.stringOffset }),
+          ...(options.stringLimit === undefined
+            ? {}
+            : { string_limit: options.stringLimit }),
+          ...(options.maxTotalStrings === undefined
+            ? {}
+            : { max_total_strings: options.maxTotalStrings }),
+          ...(options.maxStringTableBytes === undefined
+            ? {}
+            : { max_string_table_bytes: options.maxStringTableBytes }),
+          ...(options.maxTotalStringTableBytes === undefined
+            ? {}
+            : {
+                max_total_string_table_bytes: options.maxTotalStringTableBytes,
+              }),
         },
         args.path,
       ),

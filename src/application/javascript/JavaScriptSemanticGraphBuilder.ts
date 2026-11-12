@@ -480,10 +480,8 @@ export const createJavaScriptSemanticGraphProjection = (
           limit,
         );
       }
-      state.fileNodeBudget = Math.min(
-        fileNodeCeiling,
-        Math.max(0, nodeCeiling - state.nodes.size),
-      );
+      const remainingTreeBudget = Math.max(0, nodeCeiling - state.nodes.size);
+      state.fileNodeBudget = Math.min(fileNodeCeiling, remainingTreeBudget);
       const module = retainNode(state, file, {
         kind: "module",
         roleKey: "module",
@@ -493,6 +491,14 @@ export const createJavaScriptSemanticGraphProjection = (
       });
       state.fileNodeBudget = null;
       if (module !== null) state.roots.add(module.node_id);
+      else {
+        truncatedFiles += 1;
+        noteSemanticCeilingReached(
+          nodeCeilingsReached,
+          remainingTreeBudget,
+          fileNodeCeiling,
+        );
+      }
       const evidence = {
         ...observedSemanticEvidence(file, null),
         authority: "unknown" as const,
@@ -723,15 +729,17 @@ const projectFileResourceLimits = (
       family: "data-flow",
       relation_kinds: ["defines"],
       reason: "resource-limit",
-      detail: semanticResourceLimitReason(limit),
+      detail: semanticResourceLimitReason(limit, context.ir.coverage.precision),
       candidate_node_ids: [],
       evidence: {
         ...unknownSemanticEvidence(context.file, null),
         coverage: partialApplicationCoverage(
-          semanticResourceLimitCoverage([limit]),
+          semanticResourceLimitCoverage([limit], context.ir.coverage.precision),
           null,
         ),
-        limitations: [semanticResourceLimitReason(limit)],
+        limitations: [
+          semanticResourceLimitReason(limit, context.ir.coverage.precision),
+        ],
       },
     });
   }
@@ -859,15 +867,17 @@ function* createCallSiteNodes(
           family: "call-flow",
           relation_kinds: ["argument-to-parameter"],
           reason: "resource-limit",
-          detail: semanticResourceLimitReason(limit),
+          detail: semanticResourceLimitReason(limit, ir.coverage.precision),
           candidate_node_ids: [],
           evidence: {
             ...unknownSemanticEvidence(file, call.location),
             coverage: partialApplicationCoverage(
-              semanticResourceLimitCoverage([limit]),
+              semanticResourceLimitCoverage([limit], ir.coverage.precision),
               null,
             ),
-            limitations: [semanticResourceLimitReason(limit)],
+            limitations: [
+              semanticResourceLimitReason(limit, ir.coverage.precision),
+            ],
           },
         });
       }

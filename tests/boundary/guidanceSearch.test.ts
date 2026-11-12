@@ -130,9 +130,14 @@ it.each([
     fact: "without fetching recorded URLs",
   },
   {
-    query: "npx rea-agents",
+    query: "CLI fallback JavaScript",
     guide: "references/connection-and-recovery.md",
     fact: PRODUCT_IDENTITY.registrationPackageSpecifier,
+  },
+  {
+    query: "Cursor plugin",
+    guide: "references/connection-and-recovery.md",
+    fact: "version pinned in the plugin",
   },
   {
     query: "CLI summary receipt",

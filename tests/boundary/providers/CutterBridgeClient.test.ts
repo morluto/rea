@@ -11,6 +11,7 @@ import {
   readFile,
   rm,
   symlink,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -517,8 +518,12 @@ describe("CutterBridgeClient: scenario group 2", () => {
     const port = await listen(server);
     await writeDescriptor(directory, sessionId, port, token);
     await writeFile(
-      join(directory, "cutter-1-11111111-1111-1111-1111-111111111111.json"),
+      join(
+        directory,
+        `cutter-${process.pid}-11111111-1111-1111-1111-111111111111.json`,
+      ),
       "{",
+      { mode: 0o600 },
     );
     await writeFile(
       join(
@@ -526,6 +531,7 @@ describe("CutterBridgeClient: scenario group 2", () => {
         `cutter-${process.pid}-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.json`,
       ),
       "{}",
+      { mode: 0o600 },
     );
     await writeFile(
       join(
@@ -546,9 +552,25 @@ describe("CutterBridgeClient: scenario group 2", () => {
       { mode: 0o600 },
     );
 
-    const result = await createClient({
-      REA_CUTTER_BRIDGE_DIR: directory,
-    }).listSessions();
+    const client = createClient({ REA_CUTTER_BRIDGE_DIR: directory });
+    if (process.platform !== "win32") {
+      for (const id of [
+        "11111111-1111-1111-1111-111111111111",
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      ]) {
+        expect(
+          (await stat(join(directory, `cutter-${process.pid}-${id}.json`)))
+            .mode & 0o777,
+        ).toBe(0o600);
+      }
+    }
+    // Parsing and filename identity reject only the malformed candidates;
+    // the authenticated candidate remains discoverable before status checking.
+    expect(
+      (await client.listDescriptors()).map(({ session_id }) => session_id),
+    ).toEqual([sessionId]);
+    const result = await client.listSessions();
     expect(result).toMatchObject({
       discovery_status: "no_live_bridge_found",
       sessions: [],

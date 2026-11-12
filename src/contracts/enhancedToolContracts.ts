@@ -32,12 +32,12 @@ const enhanced = <
 export const ENHANCED_TOOL_CONTRACTS = [
   enhanced(
     "inspect_native_dispatch_metadata",
-    "Inspect the bound provider's name inventory for Objective-C class/method symbols and Swift mangled symbols, returning at most max_records decoded names. Optional objc_class_import_addresses request exact pointer-slot binding facts for those addresses; they are decoded only from the selected Mach-O slice and retain partial or unsupported coverage when not established. Includes target SHA-256 when available, provider identity/version, analysis-profile digest, facet coverage, and per-record Evidence. This is static symbol and metadata evidence, not runtime metadata: ivar layouts, protocol conformances, witness/class tables, and relative pointers are explicitly marked unsupported unless a provider supplies those decoders. The provider controls how its name inventory is acquired. The Mach-O byte reader holds the whole file in memory: max_input_bytes (default 64 MiB, at most 1 GiB) bounds it, and results record input_admission.",
+    "Inspect analyzed Objective-C class/method and Swift mangled symbols, with optional exact Objective-C import-pointer binding facts from the selected Mach-O slice. Returns decoded names up to max_records, provider/profile identity, target digest when available, facet coverage and per-record Evidence. Symbol observations do not establish runtime layouts, conformances or witness/class tables. The selected provider owns name discovery. max_input_bytes bounds the whole-file Mach-O read; unresolved bindings remain partial or unsupported.",
     enhancedInputSchemas.inspect_native_dispatch_metadata,
   ),
   enhanced(
     "get_objc_classes",
-    "Discover Objective-C class labels, optionally filtering by literal substring. Rows are coalesced only when exact selected-image pointer-fixup evidence proves that their own addresses bind the same imported class symbol, binding stream, raw library ordinal and resolved library, weak status, and addend. Rows without that evidence remain separate, with identity coverage reported as unknown, partial, or unsupported.",
+    "Find Objective-C class labels, optionally by literal substring. Labels remain separate unless exact selected-image pointer-fixup Evidence establishes the same imported class binding, including library, ordinal, weak status and addend. Missing binding proof remains unknown, partial or unsupported.",
     enhancedInputSchemas.get_objc_classes,
   ),
   enhanced(
@@ -47,42 +47,42 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "batch_decompile",
-    "Decompile each explicit procedure symbol or address, with one provider read active per batch. Preserves each input selector in address and reports the observed canonical entry and entry label in procedure; identity or label failures remain explicit without discarding usable pseudocode. Returns ordered per-item outcomes and aggregate counts. An unavailable item means the provider returned null pseudocode; its limitations retain any reported reason without asserting provider capability or retryability. Errors report failed operations or malformed output. Failed counts include unavailable items. The complete reply carries every pseudocode body. Select detail summary to retain the batch and receive only counts, then read rows or one body by index through inspect_analysis_view. A per-function limit is not a batch deadline; allow for every item or split calls.",
+    "Decompile an explicit list of procedure symbols/addresses in input order, with one provider read active per batch. Returns per-item pseudocode, unavailable or error outcomes and aggregate counts; input selectors and observed canonical procedure identities remain separate. Null pseudocode is unavailable, without an inferred capability or retry reason; failed counts include unavailable items. detail summary retains the batch for inspect_analysis_view item/body pages; complete includes every body. Per-function limits do not bound the whole batch.",
     enhancedInputSchemas.batch_decompile.extend({
       detail: analysisDetailSchema,
     }),
   ),
   enhanced(
     "decompile_all",
-    "Write provider pseudocode for every analyzed function, or a filtered subset, into a caller-selected directory and return only a manifest. Each file records the provider function name, canonical address, inclusive body ranges when procedure_info supplies them, and that function's procedure_info and pseudocode limitations. Each function's index record keeps its latest attempt and its complete limitations; the journal keeps earlier attempts and their limitations. Evidence keeps at most eight first-observed distinct per-function limitations within an encoded-text budget; the omitted count measures observations, not distinct warnings. The manifest reports counts, the output directory, the index path, at most 32 failure details within 2,048 JSON-encoded UTF-8 bytes (names can be omitted; full names remain in the index), provider identity, and the analysis-profile digest. Pseudocode stays in the files. An existing directory is refused unless resume is set and the journal matches the target SHA-256, provider, and analysis profile; verified files are skipped and conflicting files are left unchanged. layout dwarf reports that compilation-unit paths are unavailable and names files by address. Set retry_failed: independent_fresh to retry a null result explicitly reported as a function failure when supported; the failed attempt stays in the journal and the new attempt may use different analysis context. Errors and omissions without that typed fact are not retried. A failure of one function does not stop the others. Functions procedure_info classifies as external are counted as external, get no file, and are not decompiled; a resume skips them. Cancellation leaves files already written. Per-function limits do not bound the whole call; use limit and resume to select work that fits the client deadline, including import, listing and file work.",
+    "Export pseudocode for all or selected analyzed functions to a directory; returns a manifest/index, with bodies kept in files. Existing output requires resume with matching target, provider, profile and layout; verified files are skipped and conflicts preserved. External functions produce no file. Item failures do not stop others; cancellation keeps written files. retry_failed: independent_fresh retries only provider-reported function failures when supported, retaining each attempt and its limitations; independent attempts may use different analysis context. layout dwarf falls back to address filenames when compilation-unit paths are unavailable. Select limit/resume to fit the whole client deadline; per-function limits do not bound the export.",
     enhancedInputSchemas.decompile_all,
   ),
   enhanced(
     "get_call_graph",
-    "Resolve one symbol or address to its canonical procedure entry, then traverse the bound provider's caller or callee relationships until the reachable graph is exhausted. Every node uses a canonical address and has an ok/error status; failures use safe typed projections. Unresolved indirect calls may be missing and results are not a whole-program CFG. Select detail summary for a bounded first node page with shared message references; native-observation pages and native-context fields retain complete source access.",
+    "Traverse the provider-observed caller or callee graph from one symbol/address, returning canonical-address nodes with per-node outcomes. Use trace_call_path for a shortest path to a goal, or build_call_path to compose existing function dossiers without provider reads. Indirect calls may be unresolved; this is not a whole-program CFG. detail summary retains the complete graph for native-observation pages and native-context caveats.",
     enhancedInputSchemas.get_call_graph.extend({
       detail: analysisDetailSchema,
     }),
   ),
   enhanced(
     "analyze_swift_types",
-    'Categorize analyzed Swift procedure names using their manglings or same-address Swift symbol aliases. Decodes legacy and literal modern nominal contexts into classes, structs, enums, protocols, and extensions. Preserves provider names and supporting mangled_names; unresolved categories appear in other and in unclassified, which remains inline even under category filters. Returns deduplicated procedure-name counts, not unique source types, plus identification limitations. Optionally select one category and/or apply a case-sensitive literal filter to provider names or supporting manglings; for example, use {category: "structs", pattern: "Pair"}.',
+    'Classify analyzed Swift procedure names into classes, structs, enums, protocols and extensions using manglings or same-address symbol aliases. Returns deduplicated procedure-name counts, not unique source types; provider names, mangled_names and unresolved classifications remain available. Category and case-sensitive literal pattern filters do not suppress unclassified rows. Example: {category: "structs", pattern: "Pair"}.',
     enhancedInputSchemas.analyze_swift_types,
   ),
   enhanced(
     "find_xrefs_to_name",
-    "Resolve an exact name against the bound provider's name inventory and return a resolved or unresolved result. Unresolved names use the stable name_not_found reason; this xref workflow returns address-only projections. Kuna lacks this general name inventory; xrefs can instead resolve names present in Kuna's inventory, but unlisted names may still exist in the target.",
+    "Find references to an exact analyzed symbol name: resolves the name, then returns its address and referencing addresses. name_not_found means lookup is unresolved, not that a reference search found none or the target lacks the symbol. References are address-only; use inspect_native_instruction for typed incoming references where supported. Kuna lacks the required general name inventory; xrefs can resolve names its inventory knows.",
     enhancedInputSchemas.find_xrefs_to_name,
   ),
   enhanced(
     "binary_overview",
-    "Return the bound document and procedure/string counts totalling every row of the bound provider's inventories (inventory_coverage: provider scope, discovery unknown; not comparable across providers), plus every segment and segment_count when the provider supports segment enumeration. If segment fields are omitted, segment coverage is unavailable rather than empty. When every observed segment agrees on an analysis image base, return it as image_base so callers can relate provider addresses to their loader coordinates. Use search_procedures, list_procedures, or analyze_function directly when you already know which procedure to inspect.",
+    "Summarize the bound document, complete provider-inventory procedure/string row counts, and segments when supported. Counts do not establish discovery of every function/string and are not comparable across providers. Omitted segments mean unavailable coverage. image_base is returned only when observed segments agree. Use search_procedures, list_procedures or analyze_function directly when the procedure is already known.",
     enhancedInputSchemas.binary_overview,
   ),
   ...FUNCTION_WORKFLOW_TOOL_CONTRACTS,
   enhanced(
     "trace_feature",
-    "Search provider string and procedure inventories for the complete literal query, preserving spaces, then query xrefs at each matched start address. References to interior bytes of strings and procedures are not searched. An empty result or truncated: false does not prove there are no references. Preserve an explicit unavailable owner for a non-retryable containment capability refusal; reference kinds remain unknown. For a procedure match, use procedure_references with direction incoming for provider-reported kinds when supported; it covers the procedure body, so compare target addresses when selecting exact-entry references. Select detail summary to retain complete Evidence and page matches, references and unknowns with inspect_analysis_view kind native-feature-trace.",
+    "Search procedure/string inventories for the complete literal query, then query xrefs at matched start addresses. Interior-byte references are not searched; empty results or truncated: false never establish no references. Containment refusals preserve an unavailable owner, and reference kinds remain unknown. For typed incoming procedure references use procedure_references, comparing target addresses for exact-entry matches. detail summary retains matches/references/unknowns for inspect_analysis_view kind native-feature-trace.",
     enhancedInputSchemas.trace_feature.extend({ detail: analysisDetailSchema }),
   ),
   enhanced(
@@ -97,7 +97,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "trace_native_values",
-    "Trace a bounded static dependency graph from one explicit native procedure. Includes high-p-code def-use, constants, operators, memory and branch operations, resolved call edges, and derived argument/parameter and return/output bindings. Missing bindings, alias semantics, persistent state and RNG roles remain unknown. Budgets bound depth, decompilations, graph size and payloads; nodes are paginated. A Ghidra per-function timeout does not bound the whole traversal; allow startup, every attempted function and other work, or reduce max_functions.",
+    "Trace static value dependencies across resolved calls from one native procedure: high-p-code def-use, constants, operators, memory/branch operations and derived argument/return bindings. Alias effects, missing bindings, persistent state and RNG roles remain unknown. Caller-selected budgets bound traversal and retained facts; nodes are paged. A Ghidra per-function timeout does not bound the traversal: allow startup and every attempted function, or reduce max_functions.",
     enhancedInputSchemas.trace_native_values,
   ),
 ] as const satisfies readonly ToolContract[];
