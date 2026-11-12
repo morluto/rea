@@ -39,7 +39,7 @@ const codexServerConfig = (version: string, launch = version) => ({
     rea: {
       command: "npx",
       args: ["-y", `rea-agents@${launch}`, "mcp"],
-      cwd: ".",
+      cwd: "/tmp",
       startup_timeout_sec: 30,
     },
   },

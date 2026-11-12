@@ -375,7 +375,7 @@ describe("plugin release pins", () => {
         rea: {
           command: "npx",
           args: ["-y", `rea-agents@${packageJson.version}`, "mcp"],
-          cwd: ".",
+          cwd: "/tmp",
         },
       },
     });

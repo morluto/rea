@@ -252,7 +252,7 @@ export async function verifyPackagePack({ root, workspace, commands }) {
         ? manifest.skills !== ".cursor-plugin/skills" ||
           manifest.mcpServers !== "./.codex-plugin/mcp.json" ||
           serverConfig.mcpServers?.rea?.command !== "npx" ||
-          serverConfig.mcpServers?.rea?.cwd !== "." ||
+          serverConfig.mcpServers?.rea?.cwd !== "/tmp" ||
           serverConfig.mcpServers?.rea?.startup_timeout_sec !== 30 ||
           JSON.stringify(serverConfig.mcpServers?.rea?.args) !==
             JSON.stringify(expectedCodexArgs)

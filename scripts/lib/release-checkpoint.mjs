@@ -27,7 +27,7 @@ const codexServerConfigSchema = z.object({
     rea: z.object({
       command: z.literal("npx"),
       args: z.tuple([z.literal("-y"), z.string(), z.literal("mcp")]),
-      cwd: z.literal("."),
+      cwd: z.literal("/tmp"),
       startup_timeout_sec: z.number().int().positive(),
     }),
   }),

@@ -7,7 +7,7 @@
         "rea-agents@6.9.0",
         "mcp"
       ],
-      "cwd": ".",
+      "cwd": "/tmp",
       "startup_timeout_sec": 30
     }
   }
