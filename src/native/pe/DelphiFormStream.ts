@@ -4,8 +4,11 @@
  * The layout is the Object Pascal filer stream, documented here against the
  * Free Pascal runtime rather than from memory: `TBinaryObjectReader` in
  * `rtl/objpas/classes/reader.inc` (`BeginComponent`, `ReadStr`, `ReadString`,
- * `ReadIdent`, `SkipValue`, `SkipSetBody`, `EndOfList`) and the `TValueType` and
- * `TFilerFlag` declarations in `classesh.inc`.
+ * `ReadIdent`, `SkipValue`, `SkipSetBody`, `EndOfList`) and the `TFilerFlag`
+ * declaration in `classesh.inc`. Ordinal value types follow Delphi's
+ * `System.Classes.TValueType`, the table used by the Delphi/C++Builder
+ * producer this decoder targets; Free Pascal's table differs at ordinals
+ * 21–23.
  *
  * Decoding is bounded and side-effect free: it reads bytes that a PE resource
  * inventory has already located, never executes the owning image, never resolves
@@ -14,13 +17,14 @@
  * any claim back to the resource payload.
  */
 
-import type {
-  DelphiFormCollectionItem,
-  DelphiFormObject,
-  DelphiFormProperty,
-  DelphiFormRange,
-  DelphiFormText,
-  DelphiFormValue,
+import {
+  DEFAULT_CODE_PAGE,
+  type DelphiFormCollectionItem,
+  type DelphiFormObject,
+  type DelphiFormProperty,
+  type DelphiFormRange,
+  type DelphiFormText,
+  type DelphiFormValue,
 } from "../../domain/native/delphiForm.js";
 
 /** Signature match at the start of a candidate payload. */
@@ -43,7 +47,7 @@ export interface DelphiFormDecode {
   readonly root: DelphiFormObject | null;
 }
 
-/** `TValueType` from `classesh.inc`, indexed by ordinal. */
+/** Delphi `System.Classes.TValueType`, indexed by ordinal. */
 const VALUE_TYPES: readonly string[] = [
   "vaNull",
   "vaList",
@@ -66,9 +70,9 @@ const VALUE_TYPES: readonly string[] = [
   "vaWString",
   "vaInt64",
   "vaUTF8String",
+  "vaDouble",
   "vaUString",
   "vaQWord",
-  "vaDouble",
 ];
 
 const valueTypeName = (ordinal: number): string =>
@@ -96,7 +100,7 @@ const MAX_DEPTH = 32;
 /** Reported once per inventory; the decoder itself stays free of policy text. */
 export const DELPHI_FORM_LIMITATIONS: readonly string[] = [
   "Static TPF0 filer-stream decode over the located resource payload; class semantics, event-handler binding and runtime form state are not resolved.",
-  "String bytes are decoded with the recorded code page and retained verbatim; no code page is guessed when the resource does not declare one.",
+  'String bytes are decoded with the recorded code page and retained verbatim; a resource that declares no code page is decoded as windows-1252 and reported as code_page_source: "default".',
   "Undecodable value types and truncated streams are reported as explicit unknowns instead of failing the whole inventory.",
 ];
 
@@ -343,14 +347,6 @@ function readNumericValue(
         signed: true,
         location: range(at, stream.position),
       };
-    case 22:
-      return {
-        kind: "integer",
-        text: stream.take(8).readBigUInt64LE(0).toString(),
-        width: 64,
-        signed: false,
-        location: range(at, stream.position),
-      };
     case 15: {
       const raw = stream.take(4);
       const value = raw.readFloatLE(0);
@@ -362,7 +358,7 @@ function readNumericValue(
         location: range(at, stream.position),
       };
     }
-    case 23: {
+    case 21: {
       const raw = stream.take(8);
       const value = raw.readDoubleLE(0);
       return {
@@ -373,6 +369,14 @@ function readNumericValue(
         location: range(at, stream.position),
       };
     }
+    case 23:
+      return {
+        kind: "integer",
+        text: stream.take(8).readBigUInt64LE(0).toString(),
+        width: 64,
+        signed: false,
+        location: range(at, stream.position),
+      };
     case 5: {
       const raw = stream.take(10);
       const value = decodeExtended(raw);
@@ -478,7 +482,7 @@ function readValue(
       };
     }
     case 18:
-    case 21: {
+    case 22: {
       const characters = stream.uint32();
       spendText(budget, characters * 2 * 10 + 256);
       const raw = stream.take(characters * 2);
@@ -583,17 +587,27 @@ function readValue(
         spend(budget, "values");
         const itemAt = stream.position;
         let position: string | null = null;
-        const next = stream.peek();
-        if (next === 2 || next === 3 || next === 4) {
-          stream.byte();
-          position = readInteger(stream, next === 2 ? 8 : next === 3 ? 16 : 32);
+        try {
+          const next = stream.peek();
+          if (next === 2 || next === 3 || next === 4) {
+            stream.byte();
+            position = readInteger(
+              stream,
+              next === 2 ? 8 : next === 3 ? 16 : 32,
+            );
+          }
+          // `ReadListBegin` consumes the vaList marker that opens each item.
+          const marker = stream.byte();
+          if (marker !== 1)
+            throw new StreamEnd(
+              `Collection item does not start with vaList (found ${valueTypeName(marker)}).`,
+            );
+        } catch (error) {
+          if (!(error instanceof StreamEnd)) throw error;
+          // The next item could not be positioned. Keep every item decoded
+          // before it instead of collapsing the whole property to one unknown.
+          stop(error.message);
         }
-        // `ReadListBegin` consumes the vaList marker that opens each item.
-        const marker = stream.byte();
-        if (marker !== 1)
-          throw new StreamEnd(
-            `Collection item does not start with vaList (found ${valueTypeName(marker)}).`,
-          );
         const properties: DelphiFormProperty[] = [];
         for (;;) {
           let nextProperty: number;
@@ -729,7 +743,10 @@ function readObject(
     children,
     unknown: {
       reason,
-      bytes_hex: hexOf(stream.bytes.subarray(at, stream.position)).bytes_hex,
+      // Keep the bytes that could not be decoded, not the header bytes the
+      // object fields and their locations already describe.
+      bytes_hex: hexOf(stream.bytes.subarray(stream.position, stream.end))
+        .bytes_hex,
     },
   });
   try {
@@ -869,7 +886,7 @@ export const decodeDelphiFormStream = (
   if (start < 0 || end > bytes.length || end <= start) return null;
   const signature = detectDelphiFormSignature(bytes, start, end);
   if (signature === null) return null;
-  const codePage = options.code_page ?? "windows-1252";
+  const codePage = options.code_page ?? DEFAULT_CODE_PAGE;
   const budget: Budget = {
     objects: MAX_OBJECTS,
     properties: MAX_PROPERTIES,

@@ -282,6 +282,15 @@ describe("Delphi forms inside PE resources", () => {
       code_page_source: "default",
       declared_code_page: 0,
     });
+    // The reported limitations must describe the same fallback clients see.
+    expect(
+      result.limitations.some(
+        (line) =>
+          line.includes("declares no code page") &&
+          line.includes("windows-1252") &&
+          line.includes('code_page_source: "default"'),
+      ),
+    ).toBe(true);
   });
 
   it("reports a declared code page this host cannot label as unsupported", async () => {

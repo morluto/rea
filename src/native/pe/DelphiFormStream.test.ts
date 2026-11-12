@@ -281,6 +281,51 @@ describe("Delphi form property values", () => {
   });
 });
 
+describe("Delphi value ordinal table", () => {
+  it("decodes ordinals 21-23 with the Delphi value table", () => {
+    // Pins the wire ordinals independently of the fixture helpers: Delphi's
+    // TValueType uses 21 vaDouble, 22 vaUString, 23 vaQWord, while FPC assigns
+    // those ordinals to different types.
+    const double = Buffer.alloc(8);
+    double.writeDoubleLE(2.5, 0);
+    const wide = Buffer.from("宽", "utf16le");
+    const wideLength = Buffer.alloc(4);
+    wideLength.writeUInt32LE(1, 0);
+    const unsigned = Buffer.alloc(8);
+    unsigned.writeBigUInt64LE(18446744073709551615n, 0);
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_("Scale", Buffer.concat([bytes(21), double])),
+          property_("Wide", Buffer.concat([bytes(22), wideLength, wide])),
+          property_("Unsigned", Buffer.concat([bytes(23), unsigned])),
+        ]),
+      ),
+    );
+    expect(propertyOf(root, "Scale")).toMatchObject({
+      value_type: "vaDouble",
+      value: {
+        kind: "float",
+        text: "2.5",
+        bytes_hex: "0000000000000440",
+      },
+    });
+    expect(propertyOf(root, "Wide")).toMatchObject({
+      value_type: "vaUString",
+      value: { kind: "string", text: "宽", code_page: "utf-16le" },
+    });
+    expect(propertyOf(root, "Unsigned")).toMatchObject({
+      value_type: "vaQWord",
+      value: {
+        kind: "integer",
+        text: "18446744073709551615",
+        width: 64,
+        signed: false,
+      },
+    });
+  });
+});
+
 describe("Delphi form string and structural values", () => {
   it("decodes strings with the recorded code page and retains their bytes", () => {
     const root = rootOf(
@@ -660,6 +705,21 @@ describe("Delphi form truncation and limits", () => {
   });
 });
 
+describe("Delphi form unread object suffix", () => {
+  it("keeps the unread suffix in the object unknown", () => {
+    // The class name and the truncated component-name length are decoded and
+    // covered by object fields; the object unknown must retain the bytes that
+    // actually remain unread instead.
+    const unread = Buffer.from("Form", "latin1");
+    const root = rootOf(
+      form(Buffer.concat([shortString("TForm1"), bytes(200), unread])),
+    );
+    expect(root.class_name?.text).toBe("TForm1");
+    expect(root.unknown?.bytes_hex).toBe(unread.toString("hex"));
+    expect(root.unknown?.bytes_hex).not.toContain("54466f726d31");
+  });
+});
+
 describe("Delphi form partial collections", () => {
   it("keeps collection items when a nested list stops", () => {
     // A collection whose second item has a list-valued property that ends
@@ -719,6 +779,52 @@ describe("Delphi form partial collections", () => {
       throw new Error("Expected a collection");
     expect(property.value.items).toHaveLength(2);
     expect(property.value.items[0]?.properties[0]?.name.text).toBe("Width");
+  });
+
+  it("keeps earlier items when the next item position is truncated", () => {
+    const root = rootOf(
+      form(
+        Buffer.concat([
+          shortString("TForm1"),
+          shortString("Form1"),
+          shortString("Columns"),
+          bytes(14),
+          collectionItem(int8(0), property_("Width", int32(64))),
+          // Position marker declares vaInt32 but only one byte follows.
+          bytes(4, 0x11),
+        ]),
+      ),
+    );
+    const property = root.properties[0];
+    expect(property?.value.kind).toBe("collection");
+    if (property?.value.kind !== "collection")
+      throw new Error("Expected a collection");
+    expect(property.value.items).toHaveLength(1);
+    expect(property.value.items[0]?.properties[0]?.name.text).toBe("Width");
+    expect(root.unknown?.reason).toContain("Payload ended");
+  });
+
+  it("keeps earlier items when the next item vaList marker is truncated", () => {
+    const root = rootOf(
+      form(
+        Buffer.concat([
+          shortString("TForm1"),
+          shortString("Form1"),
+          shortString("Columns"),
+          bytes(14),
+          collectionItem(int8(0), property_("Width", int32(64))),
+          // Complete position, then the payload ends before the vaList marker.
+          bytes(2, 5),
+        ]),
+      ),
+    );
+    const property = root.properties[0];
+    expect(property?.value.kind).toBe("collection");
+    if (property?.value.kind !== "collection")
+      throw new Error("Expected a collection");
+    expect(property.value.items).toHaveLength(1);
+    expect(property.value.items[0]?.properties[0]?.name.text).toBe("Width");
+    expect(root.unknown?.reason).toContain("Payload ended");
   });
 });
 

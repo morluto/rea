@@ -122,6 +122,9 @@ export type DelphiFormObject = {
 /** Where the code page came from: the resource, a default, or neither. */
 export type DelphiFormCodePageSource = "resource" | "default" | "unsupported";
 
+/** Delphi 7 ANSI default, used only when the resource declares no code page. */
+export const DEFAULT_CODE_PAGE = "windows-1252";
+
 /**
  * Windows code page ids that the host's `TextDecoder` can label. The decoder
  * and the Evidence boundary share this table so both agree on which
@@ -136,7 +139,7 @@ export const RESOURCE_CODE_PAGES: Readonly<Record<number, string>> = {
   1200: "utf-16le",
   1250: "windows-1250",
   1251: "windows-1251",
-  1252: "windows-1252",
+  1252: DEFAULT_CODE_PAGE,
   1253: "windows-1253",
   1254: "windows-1254",
   1255: "windows-1255",

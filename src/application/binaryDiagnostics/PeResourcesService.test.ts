@@ -197,6 +197,37 @@ it.each([
   },
 );
 
+it("rejects a non-default label for a zero declared code page", async () => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  resource.code_page = 0;
+  // A zero declared page always decodes as windows-1252; any other label is
+  // not the observation the producer could have made.
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: resource.payload.location,
+      prefix: null,
+      declared_code_page: 0,
+      code_page: "utf-8",
+      code_page_source: "default",
+      root: null,
+    },
+  ];
+  const service = new PeResourcesService({
+    identity: PE_RESOURCES_PROVIDER,
+    inspect: () => Promise.resolve(ok(report)),
+  });
+  expect(
+    await service.inspect({ path: "/fixtures/example.exe" }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+});
+
 it.each([
   ["i386 PE32", 0x014c, "pe32", "x86"],
   ["AMD64 PE32+", 0x8664, "pe32-plus", "x86_64"],

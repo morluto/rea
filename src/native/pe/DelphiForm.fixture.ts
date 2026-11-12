@@ -43,7 +43,7 @@ export const delphiInt64 = (value: bigint): Buffer => {
 export const delphiQWord = (value: bigint): Buffer => {
   const raw = Buffer.alloc(8);
   raw.writeBigUInt64LE(value, 0);
-  return Buffer.concat([Buffer.from([22]), raw]);
+  return Buffer.concat([Buffer.from([23]), raw]);
 };
 
 export const delphiFloat32 = (value: number): Buffer => {
@@ -55,7 +55,7 @@ export const delphiFloat32 = (value: number): Buffer => {
 export const delphiFloat64 = (value: number): Buffer => {
   const raw = Buffer.alloc(8);
   raw.writeDoubleLE(value, 0);
-  return Buffer.concat([Buffer.from([23]), raw]);
+  return Buffer.concat([Buffer.from([21]), raw]);
 };
 
 export const delphiLString = (text: string): Buffer =>
@@ -69,7 +69,7 @@ export const delphiWideString = (text: string): Buffer => {
   const raw = Buffer.from(text, "utf16le");
   const length = Buffer.alloc(4);
   length.writeUInt32LE(text.length, 0);
-  return Buffer.concat([Buffer.from([21]), length, raw]);
+  return Buffer.concat([Buffer.from([22]), length, raw]);
 };
 
 export const delphiBinary = (length: number): Buffer =>

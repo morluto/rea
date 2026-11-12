@@ -12,6 +12,7 @@ import {
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   BYTE_PRESERVING_CODE_PAGE,
+  DEFAULT_CODE_PAGE,
   RESOURCE_CODE_PAGES,
   type DelphiFormObject,
   type DelphiFormResource,
@@ -230,7 +231,11 @@ const insideLocations = (
 
 /** The source classification and label must agree with the declared page. */
 const codePageSourceMatches = (form: DelphiFormResource): boolean => {
-  if (form.declared_code_page === 0) return form.code_page_source === "default";
+  if (form.declared_code_page === 0)
+    return (
+      form.code_page_source === "default" &&
+      form.code_page === DEFAULT_CODE_PAGE
+    );
   const label = RESOURCE_CODE_PAGES[form.declared_code_page];
   if (label !== undefined)
     return form.code_page_source === "resource" && form.code_page === label;
