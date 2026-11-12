@@ -507,6 +507,10 @@ function readValue(
     }
     case 10: {
       const declared = stream.uint32();
+      // The hex projection is capped, but every value still retains one.
+      // Charge it before allocation so a list of binaries cannot bypass the
+      // retained-text bound and only fail the post-decode metadata account.
+      spendText(budget, Math.min(declared, HEX_LIMIT_BYTES) * 2 + 256);
       const raw = stream.take(declared);
       return {
         kind: "binary",

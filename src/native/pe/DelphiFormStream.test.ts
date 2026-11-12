@@ -883,6 +883,28 @@ describe("Delphi form text budgets and partial sets", () => {
     expect(value.names.map((name) => name.text)).toEqual(["foo", "bar"]);
   });
 
+  it("charges binary hex projections against the text budget", () => {
+    // 32,767 128-byte vaBinary entries fit the value allowance, but their
+    // capped 256-character hex projections exceed the 8 MiB text budget. The
+    // decoder must stop with the entries decoded so far instead of allocating
+    // every projection and failing the post-decode metadata account.
+    const entries = Buffer.concat(
+      Array.from({ length: 32767 }, () => binary(128)),
+    );
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Blob", Buffer.concat([bytes(1), entries, bytes(0)])),
+      ]),
+    );
+    const root = rootOf(payload);
+    expect(root.unknown?.reason).toContain("string budget exhausted");
+    const value = propertyOf(root, "Blob").value;
+    expect(value.kind).toBe("list");
+    if (value.kind !== "list") throw new Error("Expected a list");
+    expect(value.items.length).toBeGreaterThan(0);
+    expect(value.items.length).toBeLessThan(32767);
+  });
+
   it("charges short strings against the text budget", () => {
     // 3,200 maximum-length names exceed the 8 MiB retained-text budget even
     // though the payload is under 1 MiB.
