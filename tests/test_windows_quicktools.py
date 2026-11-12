@@ -22,6 +22,7 @@ arguments; the tests assert exactly that boundary.
 """
 
 import base64
+import json
 from pathlib import Path
 import os
 import shutil
@@ -279,6 +280,85 @@ class LauncherBehaviorTests(unittest.TestCase):
         # positional the CLI would misparse as an option.
         self.assertIn("--pattern=--help", payload.replace(" ", ""))
         self.assertNotIn('"--help"', payload)
+
+    @windows_only
+    def test_thai_multiword_selector_arrives_as_one_argument(self):
+        # Regression: an ASCII-only allowlist flagged Thai letters as
+        # metacharacters and dispatched the value unquoted, so Node saw
+        # two pattern positionals and rejected the surplus argument.
+        self.clear_log()
+        target = self.tmp / "sample.dll"
+        target.write_bytes(b"MZ")
+        needle = "เข้าสู่ ระบบ"
+        result = self.run_launcher(
+            [
+                "3\r\n",
+                f"{target}\r\n",
+                "4\r\n",
+                f"{needle}\r\n",
+                ".\r\n",
+                "7\r\n",
+                "5\r\n",
+            ]
+        )
+        self.assertSuccess(result)
+        dispatches = self.logged_dispatches()
+        self.assertEqual(len(dispatches), 1, dispatches)
+        argv = json.loads(dispatches[0])
+        # The whole phrase must be ONE argv entry, not split on the
+        # space; the CLI sees exactly one pattern positional.
+        self.assertIn(needle, argv, argv)
+        self.assertEqual(argv.count(needle), 1, argv)
+
+    @windows_only
+    def test_operator_bearing_selector_arrives_as_one_argument(self):
+        # Regression: the allowlist sent & -bearing selectors down the
+        # raw path, where cmd split the value into several argv entries.
+        # Operators stay DATA here: one exec, one argument, no redirect.
+        self.clear_log()
+        target = self.tmp / "sample.dll"
+        target.write_bytes(b"MZ")
+        needle = "a & b > c"
+        result = self.run_launcher(
+            [
+                "3\r\n",
+                f"{target}\r\n",
+                "4\r\n",
+                f"{needle}\r\n",
+                ".\r\n",
+                "7\r\n",
+                "5\r\n",
+            ]
+        )
+        self.assertSuccess(result)
+        dispatches = self.logged_dispatches()
+        self.assertEqual(len(dispatches), 1, dispatches)
+        argv = json.loads(dispatches[0])
+        self.assertIn(needle, argv, argv)
+
+    @windows_only
+    def test_bang_bearing_selector_is_refused_not_mangled(self):
+        # '!' is consumed by delayed expansion on any batch line, so no
+        # batch transport preserves it. Running an altered selector
+        # silently searches for the wrong text; refuse instead.
+        self.clear_log()
+        target = self.tmp / "sample.dll"
+        target.write_bytes(b"MZ")
+        needle = "a!b"
+        result = self.run_launcher(
+            [
+                "3\r\n",
+                f"{target}\r\n",
+                "4\r\n",
+                f"{needle}\r\n",
+                ".\r\n",
+                "7\r\n",
+                "5\r\n",
+            ]
+        )
+        self.assertSuccess(result)
+        self.assertEqual(len(self.logged_dispatches()), 0)
+        self.assertIn("ERROR", result[1])
 
     @windows_only
     def test_pasted_search_term_cannot_inject_commands(self):

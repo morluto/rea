@@ -1,4 +1,7 @@
 @echo off
+:: An inherited /V:ON would consume ! in the pre-relaunch expansions, so
+:: the launcher always starts from expansion off.
+setlocal DisableDelayedExpansion
 setlocal EnableExtensions
 
 :: ---- Own console for the interactive session ------------------------------
@@ -29,9 +32,15 @@ color 0A
 :: Directory default only when Ghidra is absent from PATH: REA treats an
 :: explicit GHIDRA_INSTALL_DIR as authoritative, so this fallback must not
 :: mask a caller-selected installation discoverable from PATH.
+:: Directory default only when no owning Ghidra launcher is discoverable
+:: from PATH (the resolver searches ghidraRun.bat / ghidra.bat /
+:: analyzeHeadless.bat, not just the support tool): an explicit
+:: GHIDRA_INSTALL_DIR is authoritative for REA, so this fallback must not
+:: mask a caller-selected installation. REA discovery below always runs.
 if not defined GHIDRA_INSTALL_DIR (
-    for %%I in (analyzeHeadless.bat) do if exist "%%~$PATH:I" goto HAVE_REA
-    if exist "C:\tools\ghidra_12.1.4_PUBLIC\support\analyzeHeadless.bat" set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
+    set "GHIDRA_ON_PATH="
+    for %%I in (ghidraRun.bat ghidra.bat analyzeHeadless.bat) do if exist "%%~$PATH:I" set "GHIDRA_ON_PATH=1"
+    if not defined GHIDRA_ON_PATH if exist "C:\tools\ghidra_12.1.4_PUBLIC\support\analyzeHeadless.bat" set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
 )
 :: No JAVA_HOME guessing here: release identity and java.exe selection
 :: belong to REA's GhidraInstallation (doctor reads the real release and
@@ -189,20 +198,19 @@ goto FILE_DROPPED
 set "FUNC_NAME="
 set /p FUNC_NAME="พิมพ์ชื่อฟังก์ชันหรือ Memory Address (เช่น FUN_1400021b4): "
 if not defined FUNC_NAME goto FILE_DROPPED
-:: A leading-dash symbol would parse as an option; the decompile contract's
-:: --procedure=<value> selector routes it as the function name.
-:: Selector dispatch: the symbol crosses to the child inside a FOR-carrier
-:: ("!FUNC_NAME!" -> quoted %%P), which preserves every byte (quotes,
-:: spaces) as ONE argv entry; an options-shaped symbol routes through the
-:: documented --procedure= selector. An &-containing symbol cannot cross
-:: any cmd exec boundary intact and is dispatched raw (safe: & stays data;
-:: the CLI reports the surplus positional with a clear error).
+:: Selector transport: the symbol crosses to the child inside a FOR-carrier
+:: (quoted %%P), which preserves every byte -- spaces, Thai/CJK and even
+:: & | < > -- as ONE argv entry. A leading-dash symbol would otherwise
+:: parse as an option, so it rides the decompile contract's documented
+:: --procedure=<value> selector. Quotes and ! have no faithful batch
+:: transport (a quote ends the carrier token, ! is eaten by delayed
+:: expansion), so those are refused here with a clear message instead of
+:: silently running an altered selector.
 call :SCAN_VALUE "FUNC_NAME"
 if defined SCAN_HAS_QUOTE (
     echo [ERROR] ค่าที่มีอักขระ " รันผ่านเมนูนี้ไม่ได้ ใช้บรรทัดคำสั่งแทน:  rea decompile "!TARGET!" ...
-) else if defined META_VALUE (
-    set "REA_ARGS=decompile "!TARGET!" !FUNC_NAME! --provider ghidra"
-    call :RUN_REA
+) else if defined SCAN_HAS_BANG (
+    echo [ERROR] ค่าที่มีอักขระ !BANG! รันผ่านเมนูนี้ไม่ได้ (batch กินเครื่องหมายนี้^) ใช้บรรทัดคำสั่งแทน:  rea decompile "!TARGET!" ...
 ) else if "!FUNC_NAME:~0,1!"=="-" (
     for %%P in ("--procedure=!FUNC_NAME!") do "%NODE_EXE%" "%REA_ENTRY%" decompile "!TARGET!" %%P --provider ghidra
 ) else (
@@ -223,23 +231,18 @@ goto FILE_DROPPED
 set "SEARCH_TERM="
 set /p SEARCH_TERM="พิมพ์คำที่ต้องการค้นหาใน Strings: "
 if not defined SEARCH_TERM goto FILE_DROPPED
-:: A leading-dash term such as --help would parse as an option; the CLI's
-:: documented selector form --pattern=<value> routes it as the pattern.
-:: Selector dispatch (same rules as the function search): the needle
+:: Selector transport (same rules as the function search): the needle
 :: crosses to the child inside a FOR-carrier (quoted %%P), preserving
-:: every byte as ONE argv entry; an options-shaped needle routes through
-:: --pattern=<value>; an &-containing needle is dispatched raw (safe).
-:: Selector boundary: the charset scan rejects any value carrying cmd
-:: metacharacters (" ^ %% ! & | < >) -- the same set the repository batch
-:: boundary rejects -- so the quoted FOR-carrier below only ever receives
-:: values cmd cannot reparse. Rejected values dispatch raw through
-:: :RUN_REA (safe: they stay data; the CLI reports the surplus positional).
+:: every byte as ONE argv entry. A leading-dash term such as --help
+:: would parse as an option, so it routes through the documented
+:: --pattern=<value> selector. Quotes and ! are refused here with a
+:: clear message: no batch transport carries them faithfully, so
+:: running would mean running an altered selector.
 call :SCAN_VALUE "SEARCH_TERM"
 if defined SCAN_HAS_QUOTE (
     echo [ERROR] ค่าที่มีอักขระ " รันผ่านเมนูนี้ไม่ได้ ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
-) else if defined META_VALUE (
-    set "REA_ARGS=search "!TARGET!" !SEARCH_TERM! --kind strings --provider ghidra"
-    call :RUN_REA
+) else if defined SCAN_HAS_BANG (
+    echo [ERROR] ค่าที่มีอักขระ !BANG! รันผ่านเมนูนี้ไม่ได้ (batch กินเครื่องหมายนี้^) ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
 ) else if "!SEARCH_TERM:~0,1!"=="-" (
     for %%P in ("--pattern=!SEARCH_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind strings --provider ghidra
 ) else (
@@ -255,9 +258,8 @@ if not defined PROC_TERM goto FILE_DROPPED
 call :SCAN_VALUE "PROC_TERM"
 if defined SCAN_HAS_QUOTE (
     echo [ERROR] ค่าที่มีอักขระ " รันผ่านเมนูนี้ไม่ได้ ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
-) else if defined META_VALUE (
-    set "REA_ARGS=search "!TARGET!" !PROC_TERM! --kind procedures --provider ghidra"
-    call :RUN_REA
+) else if defined SCAN_HAS_BANG (
+    echo [ERROR] ค่าที่มีอักขระ !BANG! รันผ่านเมนูนี้ไม่ได้ (batch กินเครื่องหมายนี้^) ใช้บรรทัดคำสั่งแทน:  rea search "!TARGET!" ...
 ) else if "!PROC_TERM:~0,1!"=="-" (
     for %%P in ("--pattern=!PROC_TERM!") do "%NODE_EXE%" "%REA_ENTRY%" search "!TARGET!" %%P --kind procedures --provider ghidra
 ) else (
@@ -289,46 +291,41 @@ goto MENU
 start notepad "!GUIDE_FILE!"
 goto MENU
 
-:: ---- selector charset scan -------------------------------------------------
-:: Splits no value: walks %1-named variable one char at a time and rejects
-:: any character outside the safe set. Sets META_VALUE=1 when a cmd
-:: metacharacter (" ^ %% ! & | < >) or ! is present, clears it otherwise;
-:: rejected values keep every byte and cross through :RUN_REA raw.
+:: ---- selector transport scan ---------------------------------------------
+:: Decides HOW a selector can cross the cmd exec boundary, not whether it is
+:: "allowed". Every byte is legal input; the only question is which
+:: transport preserves it:
+::   * a quote ends the quoted FOR-carrier token, so the value is reparsed
+::     as argv syntax and silently altered -> refuse with a clear message
+::   * ! is eaten by delayed expansion on every batch line, so no batch
+::     transport can carry it                 -> refuse with a clear message
+::   * everything else -- spaces, Thai/CJK, & | < > %% ^ ? * -- rides the
+::     quoted FOR-carrier at the action sites and arrives as ONE argv
+::     entry, byte-exact.
+:: The scan walks the %1-named variable one character at a time and sets
+:: SCAN_HAS_QUOTE / SCAN_HAS_BANG; it never alters the value.
 :SCAN_VALUE
-set "META_VALUE="
 set "SCAN_HAS_QUOTE="
+set "SCAN_HAS_BANG="
 set "SCAN_REST=!%~1!"
+:: Caret-built constants: a comparison must never embed a literal quote or
+:: bang in the source line (both are parse-significant in batch).
 set QUOTE=^"
-:: a quote alters argv parsing no matter the transport (raw dispatch
-:: strips it, the FOR carrier re-parses it); flag it for an explicit
-:: refusal instead of silently running an altered selector.
-:: (quote detection happens per-char inside SCAN_LOOP below, where the
-:: comparison never embeds a literal quote in an if statement.)
-:: ! anywhere: reject (delayed expansion consumes it); quotes are rejected
-:: too: they cannot be tested per-char without reparse-prone constructions
-:: (the CLI pattern/procedure values accept these characters, but the
-:: launcher surfaces them raw through :RUN_REA instead, where they stay
-:: data and the CLI reports the surplus positional).
-set "SCAN_SAFE=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .:-_()[]{}^+*=@/,~?"
+set "BANG=^!"
 goto SCAN_LOOP
 
 :SCAN_LOOP
 if not defined SCAN_REST goto SCAN_DONE
 set "SCAN_CH=!SCAN_REST:~0,1!"
-:: !QUOTE! holds the quote character (caret-built at parse time), so no
-:: comparison below embeds a literal quote; ! is rejected by the safe
-:: walk because the substitution syntax cannot test it per-char.
 if "!SCAN_CH!"=="!QUOTE!" set "SCAN_HAS_QUOTE=1"
-for %%C in ("!SCAN_CH!") do if not "%%~C"=="!QUOTE!" if "!SCAN_SAFE:%%~C=!"=="!SCAN_SAFE!" set "META_VALUE=1"
+if "!SCAN_CH!"=="!BANG!" set "SCAN_HAS_BANG=1"
 set "SCAN_REST=!SCAN_REST:~1!"
 goto SCAN_LOOP
 
 :SCAN_DONE
 set "SCAN_REST="
-set "SCAN_SAFE="
 set "SCAN_CH="
 goto :eof
-
 :: ---- run rea with the resolved launcher ------------------------------------
 :: REA_ARGS is built with delayed expansion at the action sites. Expanding it
 :: once here keeps operator and percent characters inside the value literal;
