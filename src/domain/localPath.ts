@@ -19,8 +19,8 @@ export const nulFreeStringSchema = z
 /** A selected local filesystem path: nonempty, NUL-free, and representable without replacement. */
 export const localPathStringSchema = nulFreeStringSchema
   .min(1)
-  .regex(
-    /^[^\uD800-\uDFFF]*$/u,
+  .refine(
+    (value) => !/[\uD800-\uDFFF]/u.test(value),
     "Local filesystem paths must contain well-formed Unicode",
   );
 
