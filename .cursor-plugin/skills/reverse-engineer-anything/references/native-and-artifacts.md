@@ -747,15 +747,18 @@ Use `inspect_byte_entropy` to triage high- and low-entropy ranges before extract
 
 For other headerless images (embedded firmware without ELF/Mach-O/PE/MZ
 headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,
-`arm`, `arm64`, `6502`, or `m68k`), and `entry_point` (`0x` hex). File offset 0 is mapped at
-that address. Hopper and IDA refuse this interpretation; Ghidra uses
-`BinaryLoader` with a generic language: big-endian for `m68k`, little-endian
-otherwise. Big-endian ARM, Thumb-only, and Cortex-M variants are unsupported.
-`6502` selects NMOS 6502; the entry and complete file mapping must fit within
+`arm`, `arm64`, `cortex-m`, `6502`, or `m68k`), and `entry_point` (`0x` hex). File offset 0 is mapped at
+that address. Use `cortex-m` for a Cortex-M flash image and pass the
+vector-table base, such as `0x08000000` for STM32 internal flash; REA reads
+the reset vector there and disassembles Thumb at `reset_handler`. Hopper and
+IDA refuse this interpretation. Ghidra uses `BinaryLoader`. `cortex-m` selects
+`ARM:LE:32:Cortex`. `6502` selects NMOS 6502; the entry and complete file mapping must fit within
 `0x0000..0xffff`. 65C02, 65816, cartridge containers, bank switching, and mapper
 semantics are unsupported. `m68k` requires an even entry and decodes the 68040
 superset of the 68000 family; Amiga/Atari containers and vector-table entry
-discovery are unsupported. Windows Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/providers/raw-binary.md).
+discovery are unsupported. Big-endian ARM and Thumb-only variants other than
+`cortex-m` remain unsupported. Windows Ghidra P0 admits raw images for `6502`
+and `cortex-m`, plus DOS MZ executables. A hardware name follows one claim rule: an observed address, a chip-map hit, an architectural register, a caller-selected board profile, or a value the image itself computes. A probe table lists supported chips. One name in that table is not the fitted part until a separate observation identifies it. A separate board disagreement, such as a color note, keeps its own subject and source. Driver-string presence stays unsettled as boot proof and keeps the driver id and image digest. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/providers/raw-binary.md).
 
 Intel HEX, S-record, UF2 and DfuSe files are containers, not raw images:
 `inspect_artifact` lists address regions (UF2 per familyID, DfuSe per element
