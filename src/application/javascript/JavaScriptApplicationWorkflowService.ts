@@ -2,9 +2,10 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import {
   resolveEvidenceRequest,
   type EvidenceLookup,
+  readEvidenceFileFields,
 } from "../EvidenceInputResolver.js";
 import {
-  compareApplicationVersionsRequestSchema,
+  compareApplicationVersionsResolvedRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
   compareSourceToBundleCliInputSchema,
   compareSourceToBundleRequestSchema,
@@ -12,6 +13,7 @@ import {
 } from "../../contracts/javascript/applicationWorkflowInputContracts.js";
 import type { EvidenceWorkflowExecution } from "../investigation/EvidenceWorkflowExecution.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { EvidenceFileReadOptions } from "../analysisView/evidenceFileSource.js";
 import type { ResolvedSourceToBundleReference } from "./SourceToBundleReference.js";
 
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -153,21 +155,30 @@ export const traceApplicationFeatureEvidence = (
 };
 
 /** Authenticate both graphs and derive a tiered cross-version change graph. */
-export const compareApplicationVersionsEvidence = (
+export const compareApplicationVersionsEvidence = async (
   rawInput: unknown,
   lookup?: EvidenceLookup,
-  options: Pick<ExecutionOptions, "signal"> = {},
-): Result<
-  ApplicationWorkflowExecution<ApplicationVersionComparisonResult>,
-  AnalysisError
+  options: EvidenceFileReadOptions = {},
+): Promise<
+  Result<
+    ApplicationWorkflowExecution<ApplicationVersionComparisonResult>,
+    AnalysisError
+  >
 > => {
   const operation = "compare_application_versions";
-  const request = resolveEvidenceRequest(
+  const read = await readEvidenceFileFields(
     operation,
     rawInput,
-    compareApplicationVersionsRequestSchema,
-    lookup,
+    ["left", "right"],
     options,
+  );
+  if (!read.ok) return read;
+  const request = resolveEvidenceRequest(
+    operation,
+    read.value,
+    compareApplicationVersionsResolvedRequestSchema,
+    lookup,
+    options.signal === undefined ? {} : { signal: options.signal },
   );
   if (!request.ok) return request;
   const input = request.value.input;

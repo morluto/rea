@@ -302,7 +302,10 @@ describe("historical native comparison projections", () => {
     const left = historical("open");
     const before = JSON.stringify(left);
     for (const right of [historical("close"), historical("open", true)]) {
-      const compared = compareApplicationVersionsEvidence({ left, right });
+      const compared = await compareApplicationVersionsEvidence({
+        left,
+        right,
+      });
       if (!compared.ok) throw compared.error;
       const bindings = compared.value.result.items.filter(
         ({ node_kind, match }) =>
@@ -324,7 +327,7 @@ describe("complete comparison projections", () => {
       analyzeFixture(fixtures.left),
       analyzeFixture(fixtures.right),
     ]);
-    const compared = compareApplicationVersionsEvidence({ left, right });
+    const compared = await compareApplicationVersionsEvidence({ left, right });
     if (!compared.ok) throw compared.error;
     expect(compared.value.sources[0]).toBe(left);
     expect(compared.value.sources[1]).toBe(right);
@@ -387,7 +390,7 @@ describe("complete comparison projections", () => {
       analyzeFixture(fixtures.left),
       analyzeFixture(fixtures.right),
     ]);
-    const compared = compareApplicationVersionsEvidence({ left, right });
+    const compared = await compareApplicationVersionsEvidence({ left, right });
     if (!compared.ok) throw compared.error;
     const result = compared.value.result;
     expect(result.items).toContainEqual(

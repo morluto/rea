@@ -872,6 +872,13 @@ repeatable `--type` selection applied to both sides, and
 option above selects an input; producer options that write a new bundle, such
 as `inspect-managed-members --evidence-bundle`, retain their existing meaning.
 File selectors remain available only on contracts that explicitly support them.
+`compare-application-versions` accepts an `evidence-file` source for `left` and
+`right`, so two saved analyses compare without merging their bundles:
+`{"left":{"kind":"evidence-file","path":"old.json"},"right":{"kind":"evidence-file","path":"new.json","evidence_id":"ev_…"}}`.
+Relative paths resolve from the working directory; `evidence_id` selects one
+record from a bundle holding more than one, such as a summary's
+`normalized_result.parent_evidence_id`. Native-observation arrays still take
+inline Evidence or retained references.
 
 Compare two artifact inventories with `compare-artifacts`. It takes the same
 `left` and `right` input as MCP `compare_artifacts`: complete Evidence, or an

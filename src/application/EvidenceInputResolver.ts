@@ -10,7 +10,10 @@ import {
   type EvidenceRequestFrameInput,
   type ResolvedEvidenceRequestInput,
 } from "../domain/evidenceInputContract.js";
-import { retainedEvidenceReferenceSchema } from "../domain/evidenceReference.js";
+import {
+  evidenceFileReferenceSchema,
+  retainedEvidenceReferenceSchema,
+} from "../domain/evidenceReference.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { EvidenceReferenceError } from "../domain/evidenceErrors.js";
@@ -246,4 +249,57 @@ const resolveEvidenceSource = async (
   return selected.ok
     ? (options.resolveEvidence?.(selected.value, lookup, side) ?? selected)
     : selected;
+};
+
+/**
+ * Read Evidence-file sources at caller-named top-level request fields before
+ * request resolution. Each admitted reference is replaced by its authenticated
+ * record; inline Evidence, retained references and every other field pass
+ * through unchanged to the request owner.
+ */
+export const readEvidenceFileFields = async (
+  operation: string,
+  rawInput: unknown,
+  fields: readonly string[],
+  options: EvidenceFileReadOptions,
+): Promise<Result<unknown, AnalysisError>> => {
+  if (
+    typeof rawInput !== "object" ||
+    rawInput === null ||
+    Array.isArray(rawInput)
+  )
+    return ok(rawInput);
+  let selected = rawInput as Readonly<Record<string, unknown>>;
+  for (const field of fields) {
+    const value = selected[field];
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !("kind" in value) ||
+      value.kind !== "evidence-file"
+    )
+      continue;
+    const reference = evidenceFileReferenceSchema.safeParse(value);
+    if (!reference.success)
+      return err(
+        analysisInputErrorFromIssues(
+          operation,
+          reference.error.issues.map((issue) => ({
+            ...issue,
+            path: [field, ...issue.path],
+          })),
+          rawInput,
+          { cause: reference.error },
+        ),
+      );
+    const record = await readEvidenceFileSource(
+      reference.data.path,
+      options,
+      reference.data.evidence_id,
+      { operation, path: [field] },
+    );
+    if (!record.ok) return record;
+    selected = { ...selected, [field]: record.value };
+  }
+  return ok(selected);
 };

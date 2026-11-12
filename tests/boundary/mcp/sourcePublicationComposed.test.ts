@@ -100,7 +100,7 @@ it("preserves the source when an inline result with unknown retention exceeds de
 
 it("preserves both identities and distinct retention when neither payload fits the original ten-KiB reply", async () => {
   const maximumResponseBytes = 10 * 1024;
-  const completed = compareApplicationVersionsEvidence(
+  const completed = await compareApplicationVersionsEvidence(
     JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   );
   if (!completed.ok) throw completed.error;
@@ -152,7 +152,7 @@ it("preserves both identities and distinct retention when neither payload fits t
 });
 
 it("does not infer ledger membership from an independently registered reader", async () => {
-  const computed = compareApplicationVersionsEvidence(
+  const computed = await compareApplicationVersionsEvidence(
     JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   );
   if (!computed.ok) throw computed.error;

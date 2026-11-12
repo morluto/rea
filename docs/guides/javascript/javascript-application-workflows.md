@@ -382,6 +382,13 @@ the resolved slot node or its relations.
 
 ## Version comparison
 
+Each side is complete inline Evidence, a retained reference, or an
+`evidence-file` source naming a saved Evidence file or bundle (with
+`evidence_id` to select one record from a multi-record bundle). Two saved
+`analyze_javascript_application` bundles therefore compare directly; select each
+summary's `normalized_result.parent_evidence_id`. All three forms resolve to the
+same records and give the same comparison Evidence.
+
 REA pairs entities only when a tier produces one unique candidate on each side.
 The tiers are exact content digest, exact module-source digest, exact node
 identity, source-map identity, structural fingerprint, and a semantic key for
