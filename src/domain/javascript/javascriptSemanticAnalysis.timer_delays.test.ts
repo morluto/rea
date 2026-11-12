@@ -54,3 +54,50 @@ it("retains uncertain delays, shifted arguments and shadowed constructors", () =
   `);
   expect(result).toHaveLength(5);
 });
+
+it.each([
+  'eval("Symbol = () => 1; BigInt = () => 1");',
+  '(0, eval)("Symbol = () => 1; BigInt = () => 1");',
+  'Function("Symbol = () => 1; BigInt = () => 1")();',
+])(
+  "retains delays after global code may replace constructors: %s",
+  (effect) => {
+    expect(
+      operations(`
+    import { setTimeout, setInterval } from "node:timers";
+    ${effect}
+    setTimeout(() => {}, Symbol("delay"));
+    setInterval(() => {}, BigInt("1"));
+  `).map(({ method }) => method),
+    ).toEqual(["setTimeout", "setInterval"]);
+  },
+);
+
+it("keeps literal rejection independent of global code effects", () => {
+  expect(
+    operations(`
+    import { setTimeout } from "node:timers";
+    eval(code);
+    setTimeout(() => {}, 1n);
+  `),
+  ).toEqual([]);
+});
+
+it("ignores later global code and shadowed eval for constructor identity", () => {
+  expect(
+    operations(`
+    import { setTimeout } from "node:timers";
+    setTimeout(() => {}, Symbol("delay"));
+    eval("Symbol = () => 1");
+  `),
+  ).toEqual([]);
+  expect(
+    operations(`
+    import { setTimeout } from "node:timers";
+    function run(eval) {
+      eval("Symbol = () => 1");
+      setTimeout(() => {}, Symbol("delay"));
+    }
+  `),
+  ).toEqual([]);
+});
