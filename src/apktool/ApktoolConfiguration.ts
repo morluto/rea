@@ -1,3 +1,7 @@
+import {
+  processInspectionCancellationError,
+  processInspectionFailure,
+} from "../providers/OwnedCommandCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { capturedApktoolFailureOutput } from "./ApktoolCommandOutput.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -463,27 +467,39 @@ const versionProbeFailure = (
   observed: ApktoolClientIdentity | undefined,
 ): AnalysisError | ApktoolConfigurationFailure => {
   if (cause instanceof AnalysisError) return cause;
-  const preparation =
-    cause instanceof OwnedCommandFailure
-      ? cause.preparationFailure
-      : cause instanceof DarwinProcessOwnershipInspectionError
-        ? cause
-        : undefined;
+  const preparation = processInspectionFailure(cause);
   const output = capturedApktoolFailureOutput(cause);
-  if (cause instanceof OwnedCommandFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError("inspect_apktool_client", {
-      cause: cause.cancellation?.reason,
-      ...(output === undefined ? {} : { capturedOutput: output }),
-      ...(observed === undefined
-        ? {}
-        : { diagnostics: { client: { version: observed.version } } }),
-    });
-  if (preparation !== undefined)
+  const inspectionCancellation =
+    !(cause instanceof OwnedCommandFailure) ||
+    cause.preparationFailure !== undefined
+      ? processInspectionCancellationError(cause, "inspect_apktool_client")
+      : undefined;
+  if (
+    cause instanceof OwnedCommandFailure &&
+    cause.reason === "cancelled" &&
+    cause.cancellation !== undefined
+  )
+    return (
+      inspectionCancellation ??
+      new AnalysisCancelledError("inspect_apktool_client", {
+        cause: cause.cancellation.reason,
+        ...(output === undefined ? {} : { capturedOutput: output }),
+        ...(observed === undefined
+          ? {}
+          : { diagnostics: { client: { version: observed.version } } }),
+      })
+    );
+  if (inspectionCancellation !== undefined) return inspectionCancellation;
+  if (
+    preparation !== undefined &&
+    !(cause instanceof OwnedCommandFailure && cause.reason === "timeout")
+  )
     return new ProviderAdapterError("apktool", "inspect_apktool_client", {
       cause,
       diagnostics: {
         stage: "ownership_preparation",
-        ...(preparation.compilerOutcome === undefined
+        ...(!(preparation instanceof DarwinProcessOwnershipInspectionError) ||
+        preparation.compilerOutcome === undefined
           ? {}
           : {
               compiler_outcome: jsonValueSchema.parse(
@@ -491,7 +507,8 @@ const versionProbeFailure = (
               ),
             }),
       },
-      ...(preparation.capturedOutput === undefined
+      ...(!(preparation instanceof DarwinProcessOwnershipInspectionError) ||
+      preparation.capturedOutput === undefined
         ? {}
         : { capturedOutput: preparation.capturedOutput }),
     });

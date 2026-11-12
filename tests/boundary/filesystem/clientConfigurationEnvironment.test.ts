@@ -1011,7 +1011,10 @@ it("treats a variable-expanding client's recorded expression as unresolved", () 
     }),
     "json",
   );
-  const qwen = clientRegistrationEnvironmentDetails(parsed, "qwen_code");
+  const qwen = clientRegistrationEnvironmentDetails(parsed, {
+    name: "qwen_code",
+    registrationProfile: supportedClientRegistrationProfile("qwen_code"),
+  });
   if (!qwen.ok) throw qwen.error;
   // Qwen expands the expression from its own environment, so REA records the
   // name as unresolved rather than treating the literal text as the value.
@@ -1019,7 +1022,10 @@ it("treats a variable-expanding client's recorded expression as unresolved", () 
   expect(qwen.value.values.PATH).toBe("${PATH}:/opt/jdk/bin");
 
   // A client that does not expand expressions keeps the same text as a value.
-  const cursor = clientRegistrationEnvironmentDetails(parsed, "cursor");
+  const cursor = clientRegistrationEnvironmentDetails(parsed, {
+    name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+  });
   if (!cursor.ok) throw cursor.error;
   expect(cursor.value.unresolvedSettings).toEqual(new Set());
   expect(cursor.value.values.PATH).toBe("${PATH}:/opt/jdk/bin");
@@ -1038,7 +1044,10 @@ it("keeps a typed Qwen setting unresolved without discarding its recorded expres
     }),
     "json",
   );
-  const details = clientRegistrationEnvironmentDetails(parsed, "qwen_code");
+  const details = clientRegistrationEnvironmentDetails(parsed, {
+    name: "qwen_code",
+    registrationProfile: supportedClientRegistrationProfile("qwen_code"),
+  });
   expect(details.ok).toBe(true);
   if (!details.ok) return;
   expect(details.value.values.REA_GHIDRA_STARTUP_TIMEOUT_MS).toBe("${JOBS}");
@@ -1062,7 +1071,10 @@ it("keeps a differently cased Qwen expression unresolved on Windows", () => {
   );
   const details = clientRegistrationEnvironmentDetails(
     parsed,
-    "qwen_code",
+    {
+      name: "qwen_code",
+      registrationProfile: supportedClientRegistrationProfile("qwen_code"),
+    },
     {},
     "fragment",
     "win32",
@@ -1073,3 +1085,45 @@ it("keeps a differently cased Qwen expression unresolved on Windows", () => {
     [...details.value.unresolvedSettings].map((name) => name.toUpperCase()),
   ).toEqual(["REA_GHIDRA_STARTUP_TIMEOUT_MS"]);
 });
+
+it.each([
+  ["cline", "selected"],
+  ["cline", 42],
+  ["cursor", "metadata"],
+  ["cursor", 42],
+] as const)(
+  "reads only the profile-selected %s environment with nested value %j",
+  (name, value) => {
+    const parsed = parseClientConfiguration(
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "outer",
+            env: { SELECTED: "outer" },
+            transport: {
+              type: "stdio",
+              command: "nested",
+              env: { SELECTED: value },
+            },
+          },
+        },
+      }),
+      "json",
+    );
+    const details = clientRegistrationEnvironmentDetails(parsed, {
+      name,
+      registrationProfile: supportedClientRegistrationProfile(name),
+    });
+    if (name === "cline" && typeof value !== "string") {
+      expect(details).toMatchObject({
+        ok: false,
+        error: { settings: [{ setting: "transport.env.SELECTED" }] },
+      });
+    } else {
+      expect(details).toMatchObject({
+        ok: true,
+        value: { values: { SELECTED: name === "cline" ? value : "outer" } },
+      });
+    }
+  },
+);

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
+import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
 import { recordedProviderSettings } from "../../../src/application/ClientRegistrationEnvironment.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
@@ -342,7 +343,10 @@ it("does not classify an unresolved Qwen expression as a differing literal", () 
   expect(
     recordedProviderSettings(
       parsed,
-      "qwen_code",
+      {
+        name: "qwen_code",
+        registrationProfile: supportedClientRegistrationProfile("qwen_code"),
+      },
       { REA_KUNA_COMMAND: "/opt/kuna" },
       "linux",
     ),

@@ -787,7 +787,7 @@ const readZcodeFallbackServers = async (
         path,
         detail: ownershipBlocker,
       });
-    const environment = clientRegistrationEnvironment(parsed, client.name);
+    const environment = clientRegistrationEnvironment(parsed, client);
     if (!environment.ok)
       return err({
         kind: "malformed",
@@ -908,7 +908,7 @@ const clientConfigurationDesired = async (
   if (format === "dsh") {
     const validated = clientRegistrationEnvironment(
       effective,
-      client.name,
+      client,
       providerEnvironment,
     );
     if (!validated.ok) throw validated.error;
@@ -922,7 +922,7 @@ const clientConfigurationDesired = async (
   }
   const validated = await clientRegistrationEnvironmentDetailsWithBudget(
     effective,
-    client.name,
+    client,
     providerEnvironment,
     "effective",
     client.name === "codex" || client.name === "kimi"
@@ -935,7 +935,7 @@ const clientConfigurationDesired = async (
   // timeout facts; the target file's fragment remains the value being written.
   const environment = clientRegistrationEnvironment(
     parsed,
-    client.name,
+    client,
     providerEnvironment,
     "fragment",
   );
