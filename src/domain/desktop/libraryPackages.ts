@@ -116,9 +116,10 @@ async function* libraryCandidates(
       if (probe.kind === "file") {
         if (probe.isFile) yield { path: candidate, unprobed: false };
       }
-      // A denied folder cannot be searched by the linker either, so this is not
-      // the object it loads. It is only evidence that the soname may be there.
-      else if (probe.deniedSearch) unprobed.push(candidate);
+      // A folder the linker cannot search, or a name it refuses to look up, is
+      // not the object it loads. It is only evidence that the soname may be
+      // there.
+      else if (probe.unreachable) unprobed.push(candidate);
       // Any other failed check may be transient, so the candidate keeps its
       // search position instead of falling behind every cache entry.
       else yield { path: candidate, unprobed: false };
@@ -133,8 +134,8 @@ export type LibraryFileProbe =
   | { readonly kind: "file"; readonly isFile: boolean }
   | {
       readonly kind: "unknown";
-      /** The check refused search of the folder, rather than failing transiently. */
-      readonly deniedSearch: boolean;
+      /** The check settled the candidate, rather than failing transiently. */
+      readonly unreachable: boolean;
     };
 /** Host reads the closure walk needs. */
 export interface LibraryWalkHost {

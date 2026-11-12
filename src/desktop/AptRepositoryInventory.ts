@@ -162,13 +162,17 @@ const signedRelease = async (
   const inRelease = await hostFileKind(`${prefix}InRelease`);
   if (inRelease) return [`${prefix}InRelease`];
   // An InRelease that could not be probed does not rule out the detached pair,
-  // so keep looking rather than losing a signature apt still holds.
+  // so keep looking rather than losing a signature apt still holds. It also
+  // rules out absence: only an InRelease known to be missing lets a missing
+  // detached pair settle that apt holds no signed release here.
+  const noSignedRelease = (): null | undefined =>
+    inRelease === false ? undefined : null;
   const signed = await hostFileKind(`${prefix}Release.gpg`);
-  if (!signed && signed !== null) return undefined;
+  if (!signed && signed !== null) return noSignedRelease();
   const release = await hostFileKind(`${prefix}Release`);
   // A detached release needs both members, so a Release known to be absent
   // settles the pair even when Release.gpg could not be probed.
-  if (release === false) return undefined;
+  if (release === false) return noSignedRelease();
   if (signed === null || release === null) return null;
   return [`${prefix}Release.gpg`, `${prefix}Release`];
 };

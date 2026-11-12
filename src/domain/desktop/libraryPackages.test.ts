@@ -127,7 +127,7 @@ describe("libraryClosure", () => {
                 }),
         isFile: async (path: string) =>
           path === "/denied/libcore.so"
-            ? { kind: "unknown" as const, deniedSearch: true }
+            ? { kind: "unknown" as const, unreachable: true }
             : {
                 kind: "file" as const,
                 isFile: path === "/native/libcore.so",
@@ -163,7 +163,7 @@ describe("libraryClosure", () => {
               }),
         isFile: async () => ({
           kind: "unknown" as const,
-          deniedSearch: true,
+          unreachable: true,
         }),
       },
       10,
@@ -198,7 +198,7 @@ describe("libraryClosure", () => {
                 }),
         isFile: async (path: string) =>
           path === "/volatile/libcore.so"
-            ? { kind: "unknown" as const, deniedSearch: false }
+            ? { kind: "unknown" as const, unreachable: false }
             : { kind: "file" as const, isFile: true },
       },
       10,

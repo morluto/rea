@@ -82,16 +82,27 @@ export const readHostFile = async (
 };
 
 /**
- * Whether a host path names a regular file, following links. A failed check
- * says whether search of that folder is refused: a denial means the linker
- * cannot use the folder either, a transient failure does not.
+ * Whether a host path names a regular file, following links. A failed check is
+ * either one no retry can change, which settles the candidate the same way for
+ * the linker, or a transient failure, which leaves it unresolved.
  */
 export type HostFileProbe =
   | { readonly kind: "file"; readonly isFile: boolean }
-  | { readonly kind: "unknown"; readonly deniedSearch: boolean };
+  | {
+      readonly kind: "unknown";
+      /** The check settled the candidate; the linker cannot use this path either. */
+      readonly unreachable: boolean;
+    };
 
-/** Codes whose failure means this folder cannot be searched at all. */
-const DENIED_SEARCH_CODES = new Set(["EACCES", "EPERM"]);
+/**
+ * Codes whose failure means the candidate cannot be reached at all.
+ *
+ * A denied folder is one; so is a name the filesystem refuses to look up. The
+ * loader treats a RUNPATH/RPATH entry that makes `stat` fail this way as
+ * unusable and goes on to the next entry, so retrying it in place would stop
+ * the walk before the candidate that was actually loaded.
+ */
+const UNREACHABLE_CODES = new Set(["EACCES", "EPERM", "ENAMETOOLONG"]);
 
 /** The host file at `path`, with why a check could not tell it. */
 export const probeHostFile = async (path: string): Promise<HostFileProbe> => {
@@ -102,7 +113,7 @@ export const probeHostFile = async (path: string): Promise<HostFileProbe> => {
     // Only a missing name establishes that no file is there.
     return code === "ENOENT" || code === "ENOTDIR"
       ? { kind: "file", isFile: false }
-      : { kind: "unknown", deniedSearch: DENIED_SEARCH_CODES.has(code) };
+      : { kind: "unknown", unreachable: UNREACHABLE_CODES.has(code) };
   }
 };
 
