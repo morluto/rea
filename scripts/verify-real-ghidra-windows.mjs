@@ -327,7 +327,7 @@ try {
     supported_target_architectures: [...WINDOWS_P0_NATIVE_PE_ARCHITECTURES],
     limitations: [
       "approved-non-sensitive-fixtures-only",
-      "windows-x64-local-ntfs-only",
+      "windows-x64-local-ntfs-refs-only",
       "native-pe-applications-and-dlls-only",
       "no-gui-or-mutation-authority",
     ],
