@@ -5,7 +5,10 @@ import {
   hopperAppleEventsDenial,
   HopperCancelledError,
 } from "./hopperErrors.js";
-import { analysisErrorRemediationAction } from "./analysisErrorPresentation.js";
+import {
+  analysisErrorRemediationAction,
+  analysisErrorUserMessage,
+} from "./analysisErrorPresentation.js";
 
 it("omits a cause when the caller does not supply one", () => {
   const error = new HopperCancelledError();
@@ -33,23 +36,37 @@ it("retains an opaque caller reason by identity", () => {
 });
 
 it("replaces the launch retry advice with an Apple Events recovery a client can act on", () => {
-  // The reporter saw `retryable: true` with "Allow the application that starts REA under
-  // System Settings > Privacy & Security > Automation": a hardened client without
-  // com.apple.security.automation.apple-events is never prompted and never listed there.
   const error = hopperAppleEventsDenial();
-  const remediation = analysisErrorRemediationAction(error, "continuing");
-  expect(remediation).toBe(HOPPER_APPLE_EVENTS_DENIAL_REMEDIATION);
-  expect(remediation).not.toContain("then retry opening the target");
-  // The two recoveries that work, without needing the client's bundle identity.
-  expect(remediation).toContain("com.apple.security.automation.apple-events");
-  expect(remediation).toContain("Start REA from a client macOS can authorize");
   expect(error._tag).toBe("HopperStartError");
+  for (const lifetime of ["continuing", "invocation"] as const)
+    expect(analysisErrorRemediationAction(error, lifetime)).toBe(
+      HOPPER_APPLE_EVENTS_DENIAL_REMEDIATION,
+    );
+  expect(analysisErrorRemediationAction(error, "invocation")).not.toContain(
+    "then retry opening the target",
+  );
 });
 
-it("keeps the denial message free of the instruction it cannot support", () => {
+it("names both causes, because one launcher signature covers them", () => {
+  // `nativeHopperLaunchWasDenied` matches the vendor's -1743 text, which the launcher emits both
+  // when the user denied Hopper under Automation and when the responsible app never had the
+  // entitlement and was therefore never prompted. Asserting only one cause would be wrong for the
+  // other, so the recovery is conditional and names the pane as well as the entitlement.
   const error = hopperAppleEventsDenial();
-  expect(error.userMessage).toBe(
-    "macOS denied permission to send Apple Events to Hopper.",
+  const message = analysisErrorUserMessage(error, "invocation");
+  expect(message).toContain("Automation");
+  expect(message).toContain("com.apple.security.automation.apple-events");
+  expect(message).toContain("start REA from a client macOS can authorize");
+  expect(message).toContain("never prompted");
+});
+
+it("reaches a one-shot invocation caller, which ignores continuing guidance", () => {
+  const error = hopperAppleEventsDenial();
+  // `finishAnalysisCommand` projects with the invocation lifetime, where
+  // `analysisErrorRemediationAction` skips `continuingCallerGuidance`.
+  expect(error.continuingCallerGuidance).toBeUndefined();
+  expect(analysisErrorRemediationAction(error, "invocation")).toBe(
+    HOPPER_APPLE_EVENTS_DENIAL_REMEDIATION,
   );
-  expect(error.userMessage).not.toContain("Automation");
+  expect(analysisErrorUserMessage(error, "invocation")).toContain("Automation");
 });

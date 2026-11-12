@@ -43,19 +43,21 @@ export const HOPPER_STARTUP_TIMEOUT_REMEDIATION =
 /**
  * Recovery for a macOS Apple Events denial before the Hopper launch handoff.
  *
- * macOS evaluates `kTCCServiceAppleEvents` against the *responsible* application of the process
- * tree, and a hardened-runtime application without
- * `com.apple.security.automation.apple-events` is never prompted: tccd logs
- * `Prompting policy for hardened runtime; service: kTCCServiceAppleEvents requires entitlement
- * com.apple.security.automation.apple-events but it is missing for responsible={...}` and denies
- * the event. Such a client never appears under System Settings > Privacy & Security > Automation,
- * so pointing at that pane gives an instruction the user cannot carry out, and repeating the same
- * call in the same client reproduces the denial.
+ * One vendor signature covers two different causes, and the launcher's stderr does not tell them
+ * apart:
  *
- * Both recoveries named here are available without knowing the client's bundle identity.
+ * - the user denied or revoked Hopper under System Settings > Privacy & Security > Automation, in
+ *   which case that pane is exactly where the permission is granted;
+ * - the responsible application lacks `com.apple.security.automation.apple-events`, in which case
+ *   macOS never prompts and the application never appears in that pane. tccd logs
+ *   `Prompting policy for hardened runtime; service: kTCCServiceAppleEvents requires entitlement
+ *   com.apple.security.automation.apple-events but it is missing for responsible={...}`.
+ *
+ * The recovery therefore names both, conditionally, instead of asserting one — and names the two
+ * changes that do work for the second case, neither of which needs the client's bundle identity.
  */
 export const HOPPER_APPLE_EVENTS_DENIAL_REMEDIATION =
-  "macOS denied the Apple Event that opens a document in Hopper, before any target handoff. macOS evaluates this permission against the application that started REA: a hardened-runtime application without the com.apple.security.automation.apple-events entitlement is never prompted for it and is never listed under System Settings > Privacy & Security > Automation. Start REA from a client macOS can authorize, or add com.apple.security.automation.apple-events to the responsible application, then reopen the target. Repeating this call in the same client reproduces the same denial.";
+  "macOS refused the Apple Event that opens a document in Hopper, before any target handoff. If the application that starts REA is listed under System Settings > Privacy & Security > Automation, allow it there and reopen the target. A hardened-runtime application without the com.apple.security.automation.apple-events entitlement is never prompted and never listed in that pane; for that case, start REA from a client macOS can authorize, or add com.apple.security.automation.apple-events to the responsible application, then reopen the target. Repeating this call without either change reproduces the same denial.";
 
 /** Startup-timeout recovery for a caller whose REA runtime keeps running. */
 export const HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION =
@@ -246,17 +248,25 @@ export const hopperAppleEventsDenial = (
   launcherFailure?: HopperLauncherOutcome,
 ): HopperStartError =>
   new HopperStartError({
-    userMessage: "macOS denied permission to send Apple Events to Hopper.",
+    // The outcome carries the recovery because a one-shot invocation caller sees only this, and
+    // because the two causes are not separable from the launcher's stderr.
+    userMessage: HOPPER_APPLE_EVENTS_DENIAL_REMEDIATION,
+    remediationAction: HOPPER_APPLE_EVENTS_DENIAL_REMEDIATION,
     ...(launcherFailure === undefined ? {} : { launcherFailure }),
-    continuingCallerGuidance: {
-      remediationAction: HOPPER_APPLE_EVENTS_DENIAL_REMEDIATION,
-    },
   });
 
 /** Hopper or the repository bridge could not be started. */
 export class HopperStartError extends HopperError {
   readonly _tag = "HopperStartError";
   override readonly userMessage: string | undefined;
+  /**
+   * Recovery this failure owns, when the category default would not describe it.
+   *
+   * Declared on the error rather than only as continuing guidance so a one-shot invocation
+   * caller receives it too: `analysisErrorRemediationAction` ignores
+   * `continuingCallerGuidance` for that lifetime.
+   */
+  readonly remediationAction: string | undefined;
   readonly ownerRunId: string | undefined;
   readonly launcherFailure: HopperLauncherOutcome | undefined;
   readonly launchRejection: HopperLaunchRejection | undefined;
@@ -264,6 +274,7 @@ export class HopperStartError extends HopperError {
   constructor(
     options?: AnalysisErrorOptions & {
       readonly userMessage?: string;
+      readonly remediationAction?: string;
       readonly ownerRunId?: string;
       readonly launcherFailure?: HopperLauncherOutcome;
       readonly launchRejection?: HopperLaunchRejection;
@@ -271,6 +282,7 @@ export class HopperStartError extends HopperError {
   ) {
     super("Hopper application bridge could not be started", options);
     this.userMessage = options?.userMessage;
+    this.remediationAction = options?.remediationAction;
     this.ownerRunId = options?.ownerRunId;
     this.launcherFailure = options?.launcherFailure;
     this.launchRejection = options?.launchRejection;

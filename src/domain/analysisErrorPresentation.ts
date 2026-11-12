@@ -170,6 +170,11 @@ export const analysisErrorRemediationAction = (
       : error.stage === "launch"
         ? "Review the captured launcher diagnostics and Hopper setup, then retry opening the target."
         : RERUN_HOPPER_INVOCATION;
+  if (
+    error instanceof HopperStartError &&
+    error.remediationAction !== undefined
+  )
+    return error.remediationAction;
   if (error instanceof HopperStartError)
     return error.ownerRunId === undefined
       ? "Check the Hopper launcher and target details, then retry opening the target."
