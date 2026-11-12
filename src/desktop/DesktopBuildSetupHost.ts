@@ -231,7 +231,7 @@ const readSetupFacts = async (
       ? {}
       : {
           packBlocker:
-            "Packing REA's build-computer runtime needs a REA checkout: run rea setup --desktop-build from one (see docs/installation.md#run-rea-from-a-checkout), or pack an archive yourself and set REA_BUILD_COMPUTER_REA_ARCHIVE.",
+            "Packing REA's build-computer runtime needs a REA checkout: run rea setup --desktop-build from one (see docs/getting-started/installation.md#run-rea-from-a-checkout), or pack an archive yourself and set REA_BUILD_COMPUTER_REA_ARCHIVE.",
         }),
     ...(agentEnv === undefined
       ? {}
