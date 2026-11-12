@@ -3,7 +3,7 @@
   "repository": "morluto/rea",
   "version": "6.9.0",
   "base": "160d821ac9a0310afcb8d1fc427862dd6508add5",
-  "target": "166cba488a743f167060bcf679add036166b9399",
+  "target": "047d75a498f18a6608f35ee5e36cf1bf0f81ca97",
   "commits": [
     {
       "sha": "bc143125edd223b7e0d315d5ea7efdc270c29f9e",
@@ -36335,6 +36335,198 @@
         }
       ],
       "pullRequests": [10134]
+    },
+    {
+      "sha": "dae1551403b661cf1af079ea3f7b6e98b0f0e0a2",
+      "subject": "feat(setup): support Cline as a client (#10128)",
+      "body": "feat(setup): support Cline as a client (#10128)\n\n* feat(setup): support Cline as a client\n\n* test(setup): cover Cline doctor and uninstall ownership\n\n* docs(setup): document Cline support\n\n* test(setup): verify Cline against an installed client\n\n* test(setup): include Cline in the exhaustive client detection list\n\n* docs(setup): note that a hand-written rea entry blocks Cline setup\n\n* fix(setup): isolate Cline verification and await MCP discovery\n\n* fix(verification): own and isolate Cline discovery\n\n* fix(setup): preserve native Cline transport settings\n\n---------\n\nCo-authored-by: morluto <76467478+morluto@users.noreply.github.com>",
+      "parents": ["166cba488a743f167060bcf679add036166b9399"],
+      "authors": [
+        {
+          "name": "Luqman Bramantyo Rahmadi",
+          "email": "bram.rahmadi@gmail.com",
+          "user": {
+            "login": "bramrahmadi",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10128]
+    },
+    {
+      "sha": "9ba61e8949aef4ae1ca0ecac58b9945f6f2c9124",
+      "subject": "fix(ci): let CodeQL main baselines finish (#10146)",
+      "body": "fix(ci): let CodeQL main baselines finish (#10146)",
+      "parents": ["dae1551403b661cf1af079ea3f7b6e98b0f0e0a2"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10146]
+    },
+    {
+      "sha": "4a5b24c3faf1d5a7c5790f32299cc764461e7148",
+      "subject": "fix(browser): count only grammatical CSP nonce and hash sources (#10135)",
+      "body": "fix(browser): count only grammatical CSP nonce and hash sources (#10135)\n\nCSP3 requires a complete base64-value, so truncated and illegal nonce\nand hash tokens were being reported as real sources.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>",
+      "parents": ["9ba61e8949aef4ae1ca0ecac58b9945f6f2c9124"],
+      "authors": [
+        {
+          "name": "Rudy Mizrahi Celekli",
+          "email": "47457359+rudycelekli@users.noreply.github.com",
+          "user": {
+            "login": "rudycelekli",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10135]
+    },
+    {
+      "sha": "4505477903cf502310c68cd63ea4c9ef576a541a",
+      "subject": "fix(elf): reject tables inside the declared ELF header (#10133)",
+      "body": "fix(elf): reject tables inside the declared ELF header (#10133)\n\nAdmission compared table offsets with the class minimum, so a larger e_ehsize still parsed those header bytes as program or section entries.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>",
+      "parents": ["4a5b24c3faf1d5a7c5790f32299cc764461e7148"],
+      "authors": [
+        {
+          "name": "Rudy Mizrahi Celekli",
+          "email": "47457359+rudycelekli@users.noreply.github.com",
+          "user": {
+            "login": "rudycelekli",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10133]
+    },
+    {
+      "sha": "6b2f9918088c02ea00efc417051362f260d1cee2",
+      "subject": "fix(ci): restore lifecycle ownership coverage (#10147)",
+      "body": "fix(ci): restore lifecycle ownership coverage (#10147)\n\n* fix(process): retain CLI input cleanup ownership\n\n* test(ci): align lifecycle fixtures with typed ownership contracts\n\n---------\n\nCo-authored-by: Nianze Wu <wunianze666@gmail.com>",
+      "parents": ["4505477903cf502310c68cd63ea4c9ef576a541a"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Nianze Wu",
+          "email": "wunianze666@gmail.com",
+          "user": {
+            "login": "wunianze666-netizen",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10147]
+    },
+    {
+      "sha": "fadfdf13e617fa9a6025b6180459a13844f2a9ca",
+      "subject": "fix(elf): reject unmatched NT_FILE pathnames (#10138)",
+      "body": "fix(elf): reject unmatched NT_FILE pathnames (#10138)\n\nCo-authored-by: morluto <76467478+morluto@users.noreply.github.com>",
+      "parents": ["6b2f9918088c02ea00efc417051362f260d1cee2"],
+      "authors": [
+        {
+          "name": "Nianze Wu",
+          "email": "wunianze666@gmail.com",
+          "user": {
+            "login": "wunianze666-netizen",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10138]
+    },
+    {
+      "sha": "9cffd5a3347d1b6e4ea70d82a97422e329179279",
+      "subject": "fix(swift): classify private nested types by their own kind (#10085)",
+      "body": "fix(swift): classify private nested types by their own kind (#10085)\n\n* fix(swift): classify private nested types by their own kind\n\nSkip swiftc's file discriminator before the nominal marker so a private\nnested enum, struct, or class is not filed under its enclosing type.\n\n* ci: retrigger checks stuck in the Actions queue\n\nThe original workflow runs stayed queued while later runs on other\npull requests completed.\n\n---------\n\nCo-authored-by: morluto <76467478+morluto@users.noreply.github.com>",
+      "parents": ["fadfdf13e617fa9a6025b6180459a13844f2a9ca"],
+      "authors": [
+        {
+          "name": "Beqa",
+          "email": "91750923+BeqaKs@users.noreply.github.com",
+          "user": {
+            "login": "BeqaKs",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10085]
+    },
+    {
+      "sha": "047d75a498f18a6608f35ee5e36cf1bf0f81ca97",
+      "subject": "fix(pe): honor import directory bounds (#10044)",
+      "body": "fix(pe): honor import directory bounds (#10044)\n\nCo-authored-by: morluto <76467478+morluto@users.noreply.github.com>",
+      "parents": ["9cffd5a3347d1b6e4ea70d82a97422e329179279"],
+      "authors": [
+        {
+          "name": "ShuaixinHuang",
+          "email": "1836656514@qq.com",
+          "user": {
+            "login": "ShuaixinHuang",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [10044]
     }
   ],
   "pullRequests": [
@@ -55146,6 +55338,19 @@
       "issues": []
     },
     {
+      "number": 10044,
+      "title": "fix(pe): honor import directory bounds",
+      "url": "https://github.com/morluto/rea/pull/10044",
+      "author": {
+        "login": "ShuaixinHuang",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "047d75a498f18a6608f35ee5e36cf1bf0f81ca97"
+      },
+      "issues": []
+    },
+    {
       "number": 10045,
       "title": "fix(browser): retain initialization through cancelled startup",
       "url": "https://github.com/morluto/rea/pull/10045",
@@ -55689,6 +55894,31 @@
       "issues": []
     },
     {
+      "number": 10085,
+      "title": "fix(swift): classify private nested types by their own kind",
+      "url": "https://github.com/morluto/rea/pull/10085",
+      "author": {
+        "login": "BeqaKs",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "9cffd5a3347d1b6e4ea70d82a97422e329179279"
+      },
+      "issues": [
+        {
+          "number": 7501,
+          "url": "https://github.com/morluto/rea/issues/7501",
+          "author": {
+            "login": "Rinkia",
+            "__typename": "User"
+          },
+          "repository": {
+            "nameWithOwner": "morluto/rea"
+          }
+        }
+      ]
+    },
+    {
       "number": 10087,
       "title": "fix(recovery): preserve bounded Wakaru failure and cleanup facts",
       "url": "https://github.com/morluto/rea/pull/10087",
@@ -56023,6 +56253,44 @@
       "issues": []
     },
     {
+      "number": 10128,
+      "title": "feat(setup): support Cline as a client",
+      "url": "https://github.com/morluto/rea/pull/10128",
+      "author": {
+        "login": "bramrahmadi",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "dae1551403b661cf1af079ea3f7b6e98b0f0e0a2"
+      },
+      "issues": [
+        {
+          "number": 10127,
+          "url": "https://github.com/morluto/rea/issues/10127",
+          "author": {
+            "login": "bramrahmadi",
+            "__typename": "User"
+          },
+          "repository": {
+            "nameWithOwner": "morluto/rea"
+          }
+        }
+      ]
+    },
+    {
+      "number": 10133,
+      "title": "fix(elf): reject tables inside the declared ELF header",
+      "url": "https://github.com/morluto/rea/pull/10133",
+      "author": {
+        "login": "rudycelekli",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "4505477903cf502310c68cd63ea4c9ef576a541a"
+      },
+      "issues": []
+    },
+    {
       "number": 10134,
       "title": "fix(adb): classify mDNS wireless serials as TCP",
       "url": "https://github.com/morluto/rea/pull/10134",
@@ -56036,6 +56304,19 @@
       "issues": []
     },
     {
+      "number": 10135,
+      "title": "fix(browser): count only grammatical CSP nonce and hash sources",
+      "url": "https://github.com/morluto/rea/pull/10135",
+      "author": {
+        "login": "rudycelekli",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "4a5b24c3faf1d5a7c5790f32299cc764461e7148"
+      },
+      "issues": []
+    },
+    {
       "number": 10136,
       "title": "fix(native): normalize the CPU names lipo prints for i386 slices",
       "url": "https://github.com/morluto/rea/pull/10136",
@@ -56045,6 +56326,19 @@
       },
       "mergeCommit": {
         "oid": "0c9ae2f783d918fbe23f50009ce61e96664c95b2"
+      },
+      "issues": []
+    },
+    {
+      "number": 10138,
+      "title": "fix(elf): reject unmatched NT_FILE pathnames",
+      "url": "https://github.com/morluto/rea/pull/10138",
+      "author": {
+        "login": "wunianze666-netizen",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "fadfdf13e617fa9a6025b6180459a13844f2a9ca"
       },
       "issues": []
     },
@@ -56096,6 +56390,32 @@
       },
       "mergeCommit": {
         "oid": "04c622f6e9e02f7413332d6f0093f27534ed43a0"
+      },
+      "issues": []
+    },
+    {
+      "number": 10146,
+      "title": "fix(ci): let CodeQL main baselines finish",
+      "url": "https://github.com/morluto/rea/pull/10146",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "9ba61e8949aef4ae1ca0ecac58b9945f6f2c9124"
+      },
+      "issues": []
+    },
+    {
+      "number": 10147,
+      "title": "fix(ci): restore lifecycle ownership coverage",
+      "url": "https://github.com/morluto/rea/pull/10147",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "6b2f9918088c02ea00efc417051362f260d1cee2"
       },
       "issues": []
     }

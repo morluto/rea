@@ -37,6 +37,7 @@
 - Make resource-budget failures actionable across CLI/MCP and read per-call limits from the selected operation snapshot. [#9706](https://github.com/morluto/rea/pull/9706), [#9889](https://github.com/morluto/rea/pull/9889), [issue morluto/rea#9881](https://github.com/morluto/rea/issues/9881).
 - Ship self-contained Claude Code/Codex plugin installs and a Cursor Marketplace plugin; add CodeBuddy and LM Studio setup registration. [#7514](https://github.com/morluto/rea/pull/7514), [#9878](https://github.com/morluto/rea/pull/9878), [#2492](https://github.com/morluto/rea/pull/2492), [#8611](https://github.com/morluto/rea/pull/8611), [issue morluto/rea#2490](https://github.com/morluto/rea/issues/2490). Thanks @cainiao1992, @cpruijsen, @GamerDubz, @gensokyo-dev.
 - Inspect Windows Shell Link files and qualify recognized Python 3.14/3.15 pyc headers; choose Rizin decoder and map address for one-shot commands. [#7859](https://github.com/morluto/rea/pull/7859), [#8927](https://github.com/morluto/rea/pull/8927), [#8991](https://github.com/morluto/rea/pull/8991), [issue morluto/rea#8206](https://github.com/morluto/rea/issues/8206). Thanks @Entrpi, @mvanhorn, @XiaoBinGan, @xuanhieu.
+- Register REA with Cline through its native MCP client settings during setup. [#10128](https://github.com/morluto/rea/pull/10128), [issue morluto/rea#10127](https://github.com/morluto/rea/issues/10127). Thanks @bramrahmadi.
 
 ### Fixes
 
@@ -64,6 +65,10 @@
 - Preserve physical web-worker launch failures as the primary error when cancellation overlaps; retain cancellation separately from the exact launcher observation. [#10145](https://github.com/morluto/rea/pull/10145).
 - Classify adb wireless-debugging mDNS serials as TCP while preserving USB precedence and unknown device kind. [#10134](https://github.com/morluto/rea/pull/10134). Thanks @rudycelekli.
 - Normalize lipo’s i386 CPU spelling before Mach-O slice selection and recognize the `__chk_fail` FORTIFY handler import. [#10136](https://github.com/morluto/rea/pull/10136), [#10036](https://github.com/morluto/rea/pull/10036), [issue morluto/rea#10025](https://github.com/morluto/rea/issues/10025). Thanks @2SinceJuly, @coygeek, @rudycelekli.
+- Retain process CLI cleanup owners until delivery, preserve known local retry leases alongside unknown prior cleanup, and align lifecycle boundaries with tagged cancellation facts. [#10147](https://github.com/morluto/rea/pull/10147). Thanks @wunianze666-netizen.
+- Count only syntactically valid CSP nonce/hash sources when reporting browser policy. [#10135](https://github.com/morluto/rea/pull/10135). Thanks @rudycelekli.
+- Reject ELF tables inside the declared header and unmatched NT_FILE mapping pathnames; keep PE imports within their declared directory bounds. [#10133](https://github.com/morluto/rea/pull/10133), [#10138](https://github.com/morluto/rea/pull/10138), [#10044](https://github.com/morluto/rea/pull/10044). Thanks @rudycelekli, @ShuaixinHuang, @wunianze666-netizen.
+- Classify private nested Swift types by their own kind rather than their enclosing declaration. [#10085](https://github.com/morluto/rea/pull/10085), [issue morluto/rea#7501](https://github.com/morluto/rea/issues/7501). Thanks @BeqaKs, @Rinkia.
 
 ### ⚠ BREAKING CHANGES
 
@@ -133,7 +138,7 @@
 - `inspect_ntfs_journal` omits detailed `mftMetadata.record_headers` by default and leaves continuation at the first omitted record. Select `mft_record_limit` from 1 to 32 when those details are needed; inventory counts and explicit coverage remain inline. [1a8a9b749a](https://github.com/morluto/rea/commit/1a8a9b749a86e4b065a6b3ee6b8bad3b2761bac6). Thanks @gensokyo-dev, @N0zoM1z0.
 - Desktop state directories now use `application.state_directories[].exists_at_start: null` plus `existence_error` when inspection fails (for example, access denial). Accept the tri-state field and preserve unknown instead of treating it as absence. [#9899](https://github.com/morluto/rea/pull/9899).
 
-Full contribution record: [1837 commits and 1064 merged PRs](https://github.com/morluto/rea/blob/rea-agents-6.9.0/docs/releases/6.9.0.contributions.json).
+Full contribution record: [1845 commits and 1072 merged PRs](https://github.com/morluto/rea/blob/rea-agents-6.9.0/docs/releases/6.9.0.contributions.json).
 
 ## [6.8.0](https://github.com/morluto/rea/compare/rea-agents-6.7.0...rea-agents-6.8.0) (2026-10-25)
 
