@@ -1013,14 +1013,21 @@ const rejectsPortMember = (
  * An own `__proto__` key is read by `Object.assign` as a normal key, but assigning it to the
  * target runs the prototype accessor, so the target's prototype becomes this value and its
  * setters fire for every remaining key.
+ *
+ * A spread produces the same own key as the direct spelling. Measured on Node 24.22.1,
+ * `tls.connect({}, {...{["__proto__"]: {set port(_) { this.path = "/tmp/x"; }}}, port: -1})`
+ * connects while `tls.connect({}, {...{}, port: -1})` throws `ERR_SOCKET_BAD_PORT`.
  */
 const installsPrototype = (options: t.ObjectExpression): boolean =>
-  options.properties.some(
-    (property) =>
-      !t.isSpreadElement(property) &&
-      semanticStaticPropertyKey(property.key, property.computed) ===
-        "__proto__",
-  );
+  options.properties.some((property) => {
+    if (t.isSpreadElement(property)) {
+      const spread = unwrapJavaScriptExpression(property.argument).node;
+      return t.isObjectExpression(spread) && installsPrototype(spread);
+    }
+    return (
+      semanticStaticPropertyKey(property.key, property.computed) === "__proto__"
+    );
+  });
 
 /**
  * Whether a known non-number, non-string port member is a type error.

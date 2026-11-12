@@ -118,3 +118,23 @@ it("keeps the acquisition when the later object supplies a good port", () => {
     acquisitionsFor(`tls.connect({ port: -1 }, { port: 443 })`),
   ).toHaveLength(1);
 });
+
+it.each([
+  // A spread produces the same own `__proto__` key as the direct spelling, so the installed
+  // prototype's setter fires for the remaining keys. Measured on Node 24.22.1.
+  [
+    `tls.connect({}, { ...{ ["__proto__"]: { set port(_) { this.path = "/tmp/x"; } } }, port: -1 })`,
+  ],
+  [
+    `tls.connect({}, { ["__proto__"]: { set port(_) { this.path = "/tmp/x"; } }, port: -1 })`,
+  ],
+] as const)(
+  "keeps the acquisition for a prototype installed by the source: %s",
+  (call) => {
+    expect(acquisitionsFor(call)).toHaveLength(1);
+  },
+);
+
+it("emits no acquisition when the spread carries no prototype", () => {
+  expect(acquisitionsFor(`tls.connect({}, { ...{}, port: -1 })`)).toEqual([]);
+});
