@@ -4,6 +4,13 @@ Pushes to main automatically open or refresh a Release Please PR with the next
 version and changelog. Review its migration notes and wait for its current CI
 checks to pass. Merging that PR into main starts publication automatically.
 
+The push caused by merging a same-repository Release Please PR skips proposal
+generation: the separate merged-release workflow owns tag creation and
+publication. This avoids looking for the new version's tag before that workflow
+has created it. The next ordinary main push resumes proposals. API lookup
+failures and missing release boundaries on ordinary pushes or manual preparation
+still fail closed.
+
 The Release workflow validates the merged release metadata and ancestry before
 creating a tag. npm and MCP Registry publication use the exact reviewed merge
 SHA returned by Release Please. Before either registry is published, the release

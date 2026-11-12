@@ -583,6 +583,7 @@ it("checks the live merged PR and exact Git snapshot before either publication r
     body: f.notes,
     merged_at: "2026-10-11T00:00:00Z",
     merge_commit_sha: source,
+    base: { ref: "main" },
     head: {
       ref: "release-please--branches--main--components--rea-agents",
       repo: { full_name: "fixture/rea" },
@@ -615,6 +616,18 @@ it("checks the live merged PR and exact Git snapshot before either publication r
     "--source",
     source,
   ]);
+  await writeFile(prFile, JSON.stringify({ ...pr, body: null }));
+  await expect(
+    f.invoke([
+      "publication",
+      "--repository",
+      "fixture/rea",
+      "--source",
+      source,
+    ]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("no release notes body"),
+  });
   await writeFile(
     prFile,
     JSON.stringify({
