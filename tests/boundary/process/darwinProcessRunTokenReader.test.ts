@@ -1,3 +1,8 @@
+import {
+  isProcessOwnershipInspectionCancellation,
+  rethrowProcessOwnershipInspectionFailure,
+} from "../../../src/process/ProcessInspectionCancellation.js";
+import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import {
@@ -177,17 +182,9 @@ it("reports an actionable missing Swift compiler without installing it", async (
     },
   });
   try {
-    await expect(
-      reader.read([
-        {
-          pid: 1,
-          parentPid: 0,
-          processGroupId: 1,
-          state: "S",
-          command: "fixture",
-        },
-      ]),
-    ).rejects.toThrow(/requires the Apple Swift compiler via xcrun/u);
+    await expect(reader.read([{ pid: 1 }])).rejects.toThrow(
+      /requires the Apple Swift compiler via xcrun/u,
+    );
   } finally {
     await reader.close();
   }
@@ -235,7 +232,7 @@ it.skipIf(process.platform === "win32")(
       expect(failure.message).toMatch(
         /diagnostics truncated at 512 bytes.*no runtime override/iu,
       );
-      const normalized = normalizeCaptureFailure(failure, undefined);
+      const normalized = normalizeCaptureFailure(failure);
       if (!(normalized instanceof ProcessCaptureError))
         throw new Error("Expected a normalized process capture error");
       expect(projectAnalysisError(normalized)).toMatchObject({
@@ -792,10 +789,16 @@ it.skipIf(process.platform === "win32")(
         throw new Error(
           "aborted native reader compilation unexpectedly succeeded",
         );
-      expect(outcome.cause).toMatchObject({ name: "AbortError" });
-      expect(
-        normalizeCaptureFailure(outcome.cause, controller.signal),
-      ).toMatchObject({ reason: "cancelled", userCategory: "cancelled" });
+      expect(isProcessOwnershipInspectionCancellation(outcome.cause)).toBe(
+        true,
+      );
+      if (!isProcessOwnershipInspectionCancellation(outcome.cause))
+        throw new Error("Expected producer-owned inspection cancellation");
+      expect(outcome.cause.reason).toBe(controller.signal.reason);
+      expect(normalizeCaptureFailure(outcome.cause)).toMatchObject({
+        reason: "cancelled",
+        userCategory: "cancelled",
+      });
       await expect(access(firstAttempt.root)).rejects.toThrow();
 
       await reader.prepare();
@@ -886,7 +889,11 @@ it.skipIf(process.platform === "win32")(
       expect(state.temporary.startsWith(`${state.root}/`)).toBe(true);
 
       controller.abort();
-      expect(await preparation).toMatchObject({ name: "AbortError" });
+      const cancelled = await preparation;
+      expect(isProcessOwnershipInspectionCancellation(cancelled)).toBe(true);
+      if (!isProcessOwnershipInspectionCancellation(cancelled))
+        throw new Error("Expected producer-owned inspection cancellation");
+      expect(cancelled.reason).toBe(controller.signal.reason);
       await reader.close();
       // A job that outlived the compiler would recreate the root by now.
       await new Promise((resolve) => setTimeout(resolve, 600));
@@ -927,15 +934,19 @@ it.skipIf(process.platform === "win32").each(["first", "second"] as const)(
         cancelledWaiter === "first" ? firstWaiter : secondWaiter;
       const surviving =
         cancelledWaiter === "first" ? secondWaiter : firstWaiter;
-      (cancelledWaiter === "first"
-        ? firstController
-        : secondController
-      ).abort();
+      const cancelledController =
+        cancelledWaiter === "first" ? firstController : secondController;
+      cancelledController.abort();
       const firstOutcome = await cancelled;
       expect(firstOutcome.state).toBe("rejected");
       if (firstOutcome.state !== "rejected")
         throw new Error("cancelled compilation waiter unexpectedly succeeded");
-      expect(firstOutcome.cause).toMatchObject({ name: "AbortError" });
+      expect(isProcessOwnershipInspectionCancellation(firstOutcome.cause)).toBe(
+        true,
+      );
+      if (!isProcessOwnershipInspectionCancellation(firstOutcome.cause))
+        throw new Error("Expected producer-owned inspection cancellation");
+      expect(firstOutcome.cause.reason).toBe(cancelledController.signal.reason);
       await expect(access(state.root)).resolves.toBeUndefined();
       await writeFile(fakeCompiler.releasePath, "release");
       return { state, outcome: await surviving };
@@ -1009,7 +1020,13 @@ it
         const stopped = new AbortController();
         const reason = { request: "probe reader remains open" };
         stopped.abort(reason);
-        await expect(reader.prepare(stopped.signal)).rejects.toBe(reason);
+        const cancelled: unknown = await reader
+          .prepare(stopped.signal)
+          .catch((cause: unknown) => cause);
+        expect(isProcessOwnershipInspectionCancellation(cancelled)).toBe(true);
+        if (!isProcessOwnershipInspectionCancellation(cancelled))
+          throw new Error("Expected producer-owned inspection cancellation");
+        expect(cancelled.reason).toBe(reason);
       }
       await expect(access(state.root)).rejects.toThrow();
     } finally {
@@ -1044,7 +1061,15 @@ it.skipIf(process.platform === "win32")(
       expect(outcome.state).toBe("rejected");
       if (outcome.state !== "rejected")
         throw new Error("closed reader compilation unexpectedly succeeded");
-      expect(outcome.cause).toMatchObject({ name: "AbortError" });
+      expect(isProcessOwnershipInspectionCancellation(outcome.cause)).toBe(
+        true,
+      );
+      if (!isProcessOwnershipInspectionCancellation(outcome.cause))
+        throw new Error("Expected producer-owned inspection cancellation");
+      expect(outcome.cause.reason).toBeInstanceOf(DOMException);
+      if (!(outcome.cause.reason instanceof DOMException))
+        throw new Error("Expected the reader's default abort reason");
+      expect(outcome.cause.reason.name).toBe("AbortError");
       await expect(access(state.root)).rejects.toThrow();
       await expect(reader.prepare()).rejects.toMatchObject({
         _tag: "ProcessAdmissionError",
@@ -1099,7 +1124,7 @@ it.skipIf(process.platform === "win32")(
       if (outcome.state !== "result") throw outcome.cause;
       expect(outcome.value).toMatchObject({
         ok: false,
-        error: { reason: "cancelled", userCategory: "cancelled" },
+        error: { _tag: "AnalysisCancelledError" },
       });
       expect(launchSpy).not.toHaveBeenCalled();
       await expect(access(compileState.root)).rejects.toThrow();
@@ -1129,18 +1154,7 @@ it.skipIf(process.platform === "win32").each(["baseline", "tokens"] as const)(
     const inspection =
       kind === "baseline"
         ? host.captureBaseline?.(controller.signal)
-        : host.runTokens?.(
-            [
-              {
-                pid: process.pid,
-                parentPid: process.ppid,
-                processGroupId: process.pid,
-                state: "S",
-                command: process.execPath,
-              },
-            ],
-            controller.signal,
-          );
+        : host.runTokens?.([{ pid: process.pid }], controller.signal);
     const baseline =
       inspection?.then(
         () => ({ state: "fulfilled" as const }),
@@ -1157,10 +1171,16 @@ it.skipIf(process.platform === "win32").each(["baseline", "tokens"] as const)(
       expect(outcome.state).toBe("rejected");
       if (outcome.state !== "rejected")
         throw new Error("aborted identity inspection unexpectedly succeeded");
-      expect(outcome.cause).toMatchObject({ name: "AbortError" });
-      expect(
-        normalizeCaptureFailure(outcome.cause, controller.signal),
-      ).toMatchObject({ reason: "cancelled", userCategory: "cancelled" });
+      expect(isProcessOwnershipInspectionCancellation(outcome.cause)).toBe(
+        true,
+      );
+      if (!isProcessOwnershipInspectionCancellation(outcome.cause))
+        throw new Error("Expected producer-owned inspection cancellation");
+      expect(outcome.cause.reason).toBe(controller.signal.reason);
+      expect(normalizeCaptureFailure(outcome.cause)).toMatchObject({
+        reason: "cancelled",
+        userCategory: "cancelled",
+      });
       await expect(access(helper.root)).resolves.toBeUndefined();
     } finally {
       if (!controller.signal.aborted) controller.abort();
@@ -1189,18 +1209,19 @@ it.skipIf(process.platform === "win32")(
     const baselineSpy = vi
       .spyOn(systemProcessOwnershipHost, "captureBaseline")
       .mockImplementation(async (signal) => {
-        await reader.identities(
-          [
-            {
-              pid: process.pid,
-              parentPid: process.ppid,
-              processGroupId: process.pid,
-              state: "S",
-              command: process.execPath,
-            },
-          ],
-          signal,
-        );
+        const processes = [
+          {
+            pid: process.pid,
+            parentPid: process.ppid,
+            processGroupId: process.pid,
+            state: "S",
+            command: process.execPath,
+          },
+        ];
+        await reader.identities(processes, signal).catch((cause: unknown) => {
+          rethrowProcessOwnershipInspectionFailure(cause);
+          throw cause;
+        });
         return [];
       });
     const launchSpy = vi.spyOn(electron, "launch");
@@ -1227,10 +1248,11 @@ it.skipIf(process.platform === "win32")(
 
       expect(outcome.state).toBe("result");
       if (outcome.state !== "result") throw outcome.cause;
-      expect(outcome.value).toMatchObject({
-        ok: false,
-        error: { reason: "cancelled", userCategory: "cancelled" },
-      });
+      expect(outcome.value.ok).toBe(false);
+      if (outcome.value.ok) throw new Error("Expected baseline cancellation");
+      expect(primaryAnalysisError(outcome.value.error)._tag).toBe(
+        "AnalysisCancelledError",
+      );
       expect(launchSpy).not.toHaveBeenCalled();
       await expect(access(helper.root)).resolves.toBeUndefined();
     } finally {
@@ -1711,7 +1733,7 @@ it.skipIf(process.platform === "win32").each([
         exit_code: 7,
         signal: null,
       });
-      const normalized = normalizeCaptureFailure(failure, undefined);
+      const normalized = normalizeCaptureFailure(failure);
       if (!(normalized instanceof ProcessCaptureError))
         throw new Error("Expected capture failure");
       expect(normalized.capturedOutput).toEqual(failure.capturedOutput);

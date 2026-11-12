@@ -28,6 +28,14 @@ const fixture = async (mode = "ok", failCleanup = false) => {
     script,
     `import {readFileSync, writeFileSync, chmodSync, truncateSync} from 'node:fs';
 if (process.argv.includes('--version')) { console.log(${JSON.stringify(mode)} === 'bad-version' ? 'TShark (Wireshark) 3.0.0' : ${JSON.stringify(mode)} === 'foreign-version' ? 'tcpdump version 4.99.4' : 'TShark (Wireshark) 4.6.9 (fixture)'); console.error('version warning'); }
+else if (['invalid-stdout', 'invalid-stderr', 'replacement', 'invalid-nonzero'].includes(${JSON.stringify(mode)})) {
+  const marker = ${JSON.stringify(mode)}.startsWith('invalid-') && ${JSON.stringify(mode)} !== 'invalid-stderr' ? Buffer.from([0xff]) : Buffer.from('�');
+  if (${JSON.stringify(mode)} === 'invalid-stderr') process.stderr.write(Buffer.from([0xff]));
+  if (${JSON.stringify(mode)} === 'invalid-nonzero') { console.error('physical decoder failure'); process.exitCode = 1; }
+  process.stdout.write(Buffer.concat(process.argv.includes('-G')
+    ? [Buffer.from('P\\t'), marker, Buffer.from('\\tobserved\\n')]
+    : [Buffer.from('[{"_source":{"layers":{"frame.number":["1"],"observed":["'), marker, Buffer.from('"]}}}]')]));
+}
 else if (${JSON.stringify(mode)} === 'nonzero') { console.error('invalid decoder'); process.exitCode = 1; }
 else if (${JSON.stringify(mode)} === 'malformed-copy') { chmodSync('capture', 0o600); writeFileSync('capture', 'changed'); }
 else if (${JSON.stringify(mode)} === 'oversized-copy') { chmodSync('capture', 0o600); truncateSync('capture', 32 * 1024 * 1024 + 1); console.log('[]'); }
@@ -141,6 +149,57 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
     },
   };
 };
+
+it.each(
+  ["invalid-stdout", "invalid-stderr"].flatMap((mode) =>
+    [false, true].map((discovery) => ({ mode, discovery })),
+  ),
+)(
+  "rejects lossy producer text before Evidence (mode: $mode; glossary: $discovery)",
+  async ({ mode, discovery }) => {
+    const f = await fixture(mode);
+    const result = discovery
+      ? await f.service.inspectFields({})
+      : await f.service.inspect({ path: f.path, fields: ["observed"] });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        operation: discovery
+          ? "inspect_packet_fields"
+          : "inspect_packet_capture",
+        diagnostics: { invalid_utf8_streams: [mode.slice("invalid-".length)] },
+        capturedOutput: {
+          [mode.slice("invalid-".length)]: expect.stringContaining("�"),
+        },
+      },
+    });
+    if (result.ok) throw new Error("Expected malformed producer text refusal");
+    expect(result.error.partialObservation).toBeUndefined();
+    expect(
+      (await readdir(f.directory)).filter((name) =>
+        name.startsWith("decoder-"),
+      ),
+    ).toEqual([]);
+  },
+);
+
+it("preserves a valid replacement character in packet values and glossary names", async () => {
+  const f = await fixture("replacement");
+  const capture = await f.service.inspect({
+    path: f.path,
+    fields: ["observed"],
+  });
+  if (!capture.ok) throw capture.error;
+  expect(capture.value.normalized_result).toMatchObject({
+    packets: [{ observed: ["�"] }],
+  });
+  const glossary = await f.service.inspectFields({});
+  if (!glossary.ok) throw glossary.error;
+  expect(glossary.value.normalized_result).toMatchObject({
+    records: [{ name: "�" }],
+  });
+});
 
 it("recovers the same capture with CLI producer budgets and retains a tighter inherited file limit", async () => {
   const f = await fixture();
@@ -931,5 +990,67 @@ it.each(
     await f.service.close();
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(primary?.cause).toBe(f.controller.signal.reason);
+  },
+);
+
+it.each([false, true])(
+  "keeps a physical nonzero exit primary over malformed UTF-8 (glossary: %s)",
+  async (discovery) => {
+    const f = await fixture("invalid-nonzero");
+    const result = discovery
+      ? await f.service.inspectFields({})
+      : await f.service.inspect({ path: f.path, fields: ["observed"] });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        diagnostics: {
+          exit_code: 1,
+          stdout: expect.stringContaining("�"),
+          stderr: expect.stringContaining("physical decoder failure"),
+        },
+      },
+    });
+  },
+);
+
+it.each([false, true])(
+  "retains malformed-output failure and retries its workspace cleanup (glossary: %s)",
+  async (discovery) => {
+    const f = await fixture("invalid-stdout", true);
+    try {
+      const result = discovery
+        ? await f.service.inspectFields({})
+        : await f.service.inspect({ path: f.path, fields: ["observed"] });
+      if (result.ok)
+        throw new Error("Expected malformed output and cleanup failure");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      const primary = result.error.cleanupPrimary;
+      expect(primary).toMatchObject({
+        _tag: "AnalysisOutputError",
+        diagnostics: { invalid_utf8_streams: ["stdout"] },
+        capturedOutput: { stdout: expect.stringContaining("�") },
+      });
+      await expect(f.service.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+      });
+      expect(
+        (await readdir(f.directory)).filter((name) =>
+          name.startsWith("decoder-"),
+        ),
+      ).toHaveLength(1);
+      f.allowCleanup();
+      await f.service.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(primary?.capturedOutput?.stdout).toContain("�");
+      expect(
+        (await readdir(f.directory)).filter((name) =>
+          name.startsWith("decoder-"),
+        ),
+      ).toEqual([]);
+    } finally {
+      f.allowCleanup();
+      await f.service.close();
+    }
   },
 );

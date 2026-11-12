@@ -400,6 +400,34 @@ describe("safe CDP response metadata CSP sources", () => {
       hash_count: 0,
     });
   });
+
+  it("counts only complete CSP3 nonce and hash sources", () => {
+    const captured = safeResponseMetadata(
+      "request-csp-nonce",
+      `${origin}/api`,
+      {
+        headers: {
+          "Content-Security-Policy":
+            "script-src 'nonce-YQ==' 'nonce-@@@' 'nonce-truncated 'sha256-' 'sha384-abc=' 'sha512-abcd===' 'self'",
+        },
+      },
+      new Set([origin]),
+    );
+
+    expect(captured.response.csp).toEqual({
+      directives: [
+        {
+          name: "script-src",
+          sources: [{ kind: "keyword", value: "'self'" }],
+        },
+      ],
+      nonce_count: 1,
+      hash_count: 1,
+    });
+    const serialized = JSON.stringify(captured);
+    for (const secret of ["YQ", "@@@", "truncated", "sha384-abc", "abcd"])
+      expect(serialized).not.toContain(secret);
+  });
 });
 
 describe("Link header value delimiters", () => {

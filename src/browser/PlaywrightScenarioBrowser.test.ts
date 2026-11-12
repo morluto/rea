@@ -187,6 +187,92 @@ const launchScenario = browserScenarioSchema.parse({
   actions: [{ step_id: "settle", action: "wait_for_timeout", duration_ms: 1 }],
 });
 
+it("does not launch a browser for an already-cancelled opening", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancelled before browser acquisition" };
+  controller.abort(reason);
+  const launch = vi.fn(async () => {
+    throw new Error("unexpected launch after cancellation");
+  });
+  await expect(
+    openPlaywrightScenarioBrowser(
+      launchScenario,
+      {},
+      {
+        signal: controller.signal,
+        launcher: {
+          launchPersistentContext: launch,
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+  expect(launch).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "admits a late launch only while its caller is active (cancelled: %s)",
+  async (cancelled) => {
+    const controller = new AbortController();
+    const reason = { caller: "cancelled during browser launch" };
+    const started = deferred<void>();
+    const launched = deferred<BrowserContext>();
+    let profile = "";
+    const close = vi.fn(async () => undefined);
+    const newPage = vi.fn(async () => ({}) as Page);
+    const opening = openPlaywrightScenarioBrowser(
+      launchScenario,
+      {},
+      {
+        signal: controller.signal,
+        launcher: {
+          launchPersistentContext: (directory) => {
+            profile = directory;
+            started.resolve(undefined);
+            return launched.promise;
+          },
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+        },
+      },
+    ).then(
+      (value) => ({ ok: true as const, value }),
+      (cause: unknown) => ({ ok: false as const, cause }),
+    );
+    await started.promise;
+    if (cancelled) controller.abort(reason);
+    launched.resolve({
+      close,
+      browser: () => ({}) as Browser,
+      pages: () => [],
+      newPage,
+    } as unknown as BrowserContext);
+    const result = await opening;
+    if (result.ok) {
+      try {
+        expect(cancelled).toBe(false);
+        expect(newPage).toHaveBeenCalledOnce();
+        expect(close).not.toHaveBeenCalled();
+        expect(result.value.profilePath).toBe(profile);
+      } finally {
+        await result.value.cleanup.close();
+      }
+    } else {
+      expect(cancelled).toBe(true);
+      expect(result.cause).toMatchObject({ reason: "cancelled" });
+      if (!(result.cause instanceof AnalysisError))
+        throw new Error("Expected typed cancellation");
+      expect(result.cause.cause).toBe(reason);
+      expect(newPage).not.toHaveBeenCalled();
+    }
+    expect(close).toHaveBeenCalledOnce();
+    await expect(access(profile)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
 it.each([
   { environment: {}, sandbox: true },
   { environment: { REA_BROWSER_NO_SANDBOX: "false" }, sandbox: true },

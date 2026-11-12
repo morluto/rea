@@ -3,6 +3,12 @@ import { rm } from "node:fs/promises";
 
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionCancellationError,
+} from "../providers/OwnedCommandCleanup.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -104,18 +110,6 @@ export const runDesktopBuildOwnedCommand = async (input: {
       );
   } catch (cause: unknown) {
     let failure: unknown = cause;
-    const preparation =
-      cause instanceof DarwinProcessOwnershipInspectionError
-        ? cause
-        : cause instanceof OwnedCommandFailure
-          ? cause.preparationFailure
-          : undefined;
-    if (preparation?.cleanupOwner !== undefined)
-      input.resources.retain({
-        kind: "lease",
-        resource: "process ownership inspection",
-        lease: { release: () => preparation.cleanupOwner!.close() },
-      });
     if (!retained && paths.length > 0) {
       try {
         await removeOwnedPaths();
@@ -140,32 +134,86 @@ export const runDesktopBuildOwnedCommand = async (input: {
         `${desktopBuildOwnedCommandReason(cause)}; cleanup is incomplete: ${cleanupReason ?? "unknown reason"}`,
         { cause },
       );
-    if (input.signal?.aborted) {
-      const command = cause instanceof OwnedCommandFailure ? cause : undefined;
-      const reason = desktopBuildOwnedCommandReason(cause);
-      const cancelled = new AnalysisCancelledError("setup", {
-        cause: input.signal.reason,
-        diagnostics: {
-          setup_failure: reason,
-          ...(command === undefined ? {} : { command_failure: command.reason }),
-        },
-        ...(command?.snapshot == null
-          ? {}
-          : { capturedOutput: artifactCommandOutput(command.snapshot) }),
-      });
-      cancelled.retainSecondaryFailure(
-        new AnalysisOutputError("setup", reason, { cause: failure }),
-      );
-      throw cancelled;
+    const command = cause instanceof OwnedCommandFailure ? cause : undefined;
+    const preparation = command?.preparationFailure ?? cause;
+    const output =
+      command?.snapshot == null
+        ? preparation instanceof DarwinProcessOwnershipInspectionError
+          ? preparation.capturedOutput
+          : undefined
+        : artifactCommandOutput(command.snapshot);
+    const reason = desktopBuildOwnedCommandReason(failure);
+    const physical =
+      failure instanceof AnalysisError
+        ? failure
+        : new AnalysisOutputError("setup", reason, {
+            cause: failure,
+            ...(command === undefined
+              ? {}
+              : { diagnostics: { command_failure: command.reason } }),
+            ...(output === undefined ? {} : { capturedOutput: output }),
+          });
+    const inspectionCancellation =
+      command === undefined || command.preparationFailure !== undefined
+        ? processInspectionCancellationError(cause, "setup")
+        : undefined;
+    let primary: AnalysisError = physical;
+    if (command?.reason === "cancelled" && command.cancellation !== undefined) {
+      primary =
+        inspectionCancellation ??
+        new AnalysisCancelledError("setup", {
+          cause: command.cancellation.reason,
+          diagnostics: {
+            setup_failure: reason,
+            command_failure: command.reason,
+          },
+          ...(output === undefined ? {} : { capturedOutput: output }),
+        });
+      if (failure !== cause) primary.retainSecondaryFailure(physical);
+    } else if (inspectionCancellation !== undefined) {
+      primary = inspectionCancellation;
     }
-    throw failure;
+    // Executed command cleanup is already retained with its partial outputs
+    // by retainCleanup above. Only preparation owners transfer here.
+    primary =
+      command === undefined || command.preparationFailure !== undefined
+        ? retainProcessInspectionCleanup(
+            command?.preparationFailure ?? cause,
+            primary,
+            input.resources,
+            "setup",
+          )
+        : command.cancellation === undefined
+          ? primary
+          : analysisErrorWithCancellation(
+              primary,
+              new AnalysisCancelledError("setup", {
+                cause: command.cancellation.reason,
+              }),
+            );
+    // This finalization checkpoint records a later caller cancellation without
+    // reclassifying the established physical command or cleanup outcome.
+    if (input.signal?.aborted)
+      primary = analysisErrorWithCancellation(
+        primary,
+        new AnalysisCancelledError("setup", {
+          cause: input.signal.reason,
+        }),
+      );
+    throw primary;
   }
 };
 
 /** Keep the bounded command's stderr with its failure reason. */
 export const desktopBuildOwnedCommandReason = (cause: unknown): string => {
   const command = cause instanceof OwnedCommandFailure ? cause : undefined;
-  const stderr = command?.snapshot?.stderr.text.trim() ?? "";
+  const preparation = command?.preparationFailure ?? cause;
+  const stderr =
+    command?.snapshot?.stderr.text.trim() ??
+    (preparation instanceof DarwinProcessOwnershipInspectionError
+      ? preparation.capturedOutput?.stderr.trim()
+      : undefined) ??
+    "";
   const message = cause instanceof Error ? cause.message : String(cause);
   return stderr === "" ? message : `${message}: ${stderr.slice(-2000)}`;
 };

@@ -1,7 +1,11 @@
 import * as t from "@babel/types";
 
 import type { javascriptBootstrapAt } from "./javascriptBootstrap.js";
-import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  semanticWriteSiteTarget,
+  semanticWriteTargets,
+} from "./javascriptAstValues.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
@@ -285,8 +289,13 @@ const moduleObjectContained = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   let contained = true;
+  const writtenTargets = new Set<t.Node>();
   traverseJavaScriptValueAst(loader.body, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
+      const target = semanticWriteSiteTarget(node);
+      if (target !== null)
+        for (const leaf of semanticWriteTargets(target))
+          writtenTargets.add(leaf);
       if (!contained || !t.isIdentifier(node) || parent === null) return;
       const ancestors = readAncestors();
       if (semanticIdentifierRole(node, parent, () => ancestors) === null)
@@ -294,7 +303,7 @@ const moduleObjectContained = (
       if (bindingOf(state, node) !== moduleId) return;
       contained =
         !ancestors.some((ancestor) => t.isFunction(ancestor)) &&
-        moduleUse(node, [parent, ancestors.at(-2)], dispatch);
+        moduleUse(node, parent, dispatch, writtenTargets.has(parent));
     },
   });
   return contained;
@@ -302,21 +311,18 @@ const moduleObjectContained = (
 
 const moduleUse = (
   node: t.Identifier,
-  [parent, grandparent]: readonly [t.Node, t.Node | undefined],
+  parent: t.Node,
   dispatch: t.CallExpression,
+  written: boolean,
 ): boolean => {
   if (parent === dispatch) return dispatch.arguments.includes(node);
   if (!t.isMemberExpression(parent) || parent.object !== node) return false;
   const key = semanticStaticPropertyKey(parent.property, parent.computed);
-  const written =
-    (t.isAssignmentExpression(grandparent) && grandparent.left === parent) ||
-    t.isUpdateExpression(grandparent) ||
-    t.isUnaryExpression(grandparent, { operator: "delete" });
   if (written) return key !== null && key !== "exports";
   if (key !== "exports") return false;
   // `module.exports` passed to the factory, or read after the dispatch ran.
   return (
-    grandparent === dispatch ||
+    dispatch.arguments.some((argument) => argument === parent) ||
     (parent.start ?? -1) > (dispatch.end ?? Number.POSITIVE_INFINITY)
   );
 };

@@ -456,9 +456,13 @@ RPC client syntax also contributes network endpoint candidates, in both
 - `graphql:query`, `graphql:mutation`, and `graphql:subscription` record a
   named operation found at the start of a string or cooked template literal —
   the name must be followed by variable definitions (`($`), a directive, or a
-  selection set starting with a field name — or in a precompiled
-  `OperationDefinition` document object. A standalone Source object's `body`
-  remains an operation candidate even when it has `locationOffset` metadata.
+  selection set starting with a field, named fragment spread, or inline fragment
+  — or in a precompiled `OperationDefinition` document object. A precompiled
+  operation name must be one complete GraphQL Name token (ASCII letters,
+  digits, and underscores, with no leading digit). Recognition is limited to
+  static operation headers; it does not validate a complete GraphQL document or
+  prove that the application sends the operation. A standalone Source object's
+  `body` remains an operation candidate even when it has `locationOffset` metadata.
   A graphql-tag `loc.source.body` copy is suppressed only when that source
   belongs to a recovered document with the same operation and its containing
   document, location and source have proven private metadata ownership. Writes,
@@ -810,9 +814,8 @@ retained graph capacity, worker memory and deadlines. Both
 `primitive_bytes` charges six estimated JSON bytes per UTF-16 code unit plus
 quotes before creating concatenated strings. Ordinary ASCII can exhaust that
 conservative estimate before its actual JSON encoding reaches the selected
-byte count. The [calibration record](../../verification/javascript-precision-calibration.md)
-keeps existing defaults for its measured literal-value tasks; it does not
-establish optimal candidate, getter or alias budgets for larger applications.
+byte count. Candidate, getter and alias budgets can be adjusted for larger
+applications.
 
 All fields accept positive safe integers; worker memory, execution and JSON
 representation bounds remain independently enforced. Omission keeps the defaults;

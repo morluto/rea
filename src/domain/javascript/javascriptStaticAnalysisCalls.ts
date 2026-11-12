@@ -43,6 +43,7 @@ import type {
 import { VITE_OUTPUT_DEPENDENCY_PREFIX } from "./javascriptStaticAnalysisTypes.js";
 import {
   resolveSemanticBindingState,
+  semanticBindingLookupAt,
   semanticStableInitializer,
   type JavaScriptBindingIndex,
   type JavaScriptSemanticAnalysisState,
@@ -55,7 +56,10 @@ import {
   evaluateSemanticExpression,
   evaluateSemanticExpressionProvenance,
 } from "./javascriptSemanticValues.js";
-import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticFactoryLoaderMemberAt,
   semanticRequireCallAt,
@@ -411,7 +415,7 @@ const chunkLoadSpecifier = (
 const vitePreloadDependencySpecifiers = (
   node: JavaScriptCallLike,
   name: string,
-  table: readonly (string | undefined)[] | null,
+  table: FindingContext["vitePreloadDependencyTable"],
   bindings: JavaScriptSemanticAnalysisState,
 ): readonly (string | undefined)[] => {
   if (
@@ -420,10 +424,23 @@ const vitePreloadDependencySpecifiers = (
     !t.isArrayExpression(node.arguments[0])
   )
     return [];
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  const lookup = semanticBindingLookupAt(bindings, callee, name);
+  if (lookup.kind !== "binding" && lookup.kind !== "uncertain-binding")
+    return [];
+  const projected = semanticBindingAtRead(lookup.binding, callee, bindings);
+  // An ordered read drops assignments that have not happened yet. An
+  // unresolved read keeps the single stable initializer, which is how a
+  // captured call still names the helper when nothing else writes it.
+  const visible =
+    projected.status === "ordered" ? projected.binding : lookup.binding;
+  if (semanticStableInitializer(visible, bindings)?.node !== table.helper)
+    return [];
   const indexes = node.arguments[0].elements;
   // Explicit cache overrides change which table the helper reads. Retain the
   // call slots as unknown unless every override is statically undefined.
   if (
+    lookup.kind !== "binding" ||
     !node.arguments
       .slice(1)
       .every((argument) => isExplicitDefaultArgument(argument, bindings))
@@ -433,7 +450,7 @@ const vitePreloadDependencySpecifiers = (
     if (element === null || !t.isNumericLiteral(element)) return undefined;
     const index = element.value;
     return Number.isSafeInteger(index) && index >= 0
-      ? viteDependencySpecifier(table[index])
+      ? viteDependencySpecifier(table.dependencies[index])
       : undefined;
   });
 };
@@ -473,8 +490,9 @@ type ViteMapDepsFunction =
 /** Index the canonical Vite helper's cache initializer from parsed syntax. */
 export const indexVitePreloadDependencyTable = (
   program: t.Program,
-  erasedSyntaxNodes: WeakSet<t.Node>,
-): readonly (string | undefined)[] | null => {
+  bindings: JavaScriptSemanticAnalysisState,
+): FindingContext["vitePreloadDependencyTable"] => {
+  const { erasedSyntaxNodes } = bindings;
   const helpers: ViteMapDepsFunction[] = [];
   traverseJavaScriptValueAst(program, erasedSyntaxNodes, {
     enter: (node) => {
@@ -497,7 +515,7 @@ export const indexVitePreloadDependencyTable = (
   const mapIdentifier = t.isAssignmentPattern(mapParameter)
     ? mapParameter.left
     : mapParameter;
-  if (!t.isIdentifier(mapIdentifier)) return [];
+  if (!t.isIdentifier(mapIdentifier)) return { helper, dependencies: [] };
   const tables: t.ArrayExpression[] = [];
   traverseJavaScriptValueAst(helper, erasedSyntaxNodes, {
     skip: (node) => t.isFunction(node),
@@ -515,9 +533,9 @@ export const indexVitePreloadDependencyTable = (
         tables.push(node.right);
     },
   });
-  if (tables.length !== 1) return [];
+  if (tables.length !== 1) return { helper, dependencies: [] };
   const table = tables[0];
-  if (table === undefined) return [];
+  if (table === undefined) return { helper, dependencies: [] };
   // A spread contributes an unknown number of entries, so every later slot
   // has an unknown index; leave those out instead of shifting them.
   const spread = table.elements.findIndex((element) =>
@@ -540,6 +558,17 @@ export const indexVitePreloadDependencyTable = (
         semanticIdentifierRole(node, parent, readAncestors) === null
       )
         return;
+      const lookup = semanticBindingLookupAt(bindings, node, node.name);
+      if (lookup.kind === "ambient" || lookup.kind === "captured") return;
+      if (lookup.kind === "binding" || lookup.kind === "uncertain-binding") {
+        // A later reassignment removes the whole-binding initializer. The
+        // mutation is still the helper when the ordered read at this site is.
+        const projected = semanticBindingAtRead(lookup.binding, node, bindings);
+        const visible =
+          projected.status === "ordered" ? projected.binding : lookup.binding;
+        if (semanticStableInitializer(visible, bindings)?.node !== helper)
+          return;
+      }
       if (
         (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
         parent.callee === node
@@ -548,7 +577,12 @@ export const indexVitePreloadDependencyTable = (
       escapedOrMutated = true;
     },
   });
-  return escapedOrMutated ? dependencies.map(() => undefined) : dependencies;
+  return {
+    helper,
+    dependencies: escapedOrMutated
+      ? dependencies.map(() => undefined)
+      : dependencies,
+  };
 };
 
 const requestConstructorUrl = (
