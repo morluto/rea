@@ -445,9 +445,16 @@ export const projectAndroidJniBindings = (input: {
       const ambiguous = selected.some(
         (candidate) => candidate.class_attribution === "ambiguous-native-pair",
       );
+      // A caller who selected no library path has excluded every split library
+      // on purpose, so an inventory gap that could only add or remove those
+      // paths cannot change the answer, which the selection contract already
+      // states is unmatched.
+      const libraryInventoryMatters =
+        input.selection.library_paths === undefined;
       const incomplete =
-        input.libraryInventory.status !== "complete" ||
-        input.libraryInventory.unknowns.length > 0 ||
+        (libraryInventoryMatters &&
+          (input.libraryInventory.status !== "complete" ||
+            input.libraryInventory.unknowns.length > 0)) ||
         abiLibraries.some(
           (library) =>
             library.failure !== null ||
