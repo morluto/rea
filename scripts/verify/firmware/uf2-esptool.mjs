@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createVerifierCommands } from "../../lib/verify-commands.mjs";
-import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
+import { withVerifierWorkspace } from "../../lib/verifier-workspace.mjs";
 
 // Optional verification tool only; the UF2 reader starts no tool.
 const python = process.env.REA_ESPTOOL_PYTHON ?? "python3";
@@ -263,7 +263,7 @@ const checkLostBlock = async () => {
   };
 };
 
-await withVerifierCleanup(async () => {
+const verify = async () => {
   const versionText = await tool(["version"]);
   const version = /\bv?(\d+)\.(\d+)\.(\d+)\b/u.exec(versionText);
   assert.ok(version, `Unrecognized esptool version: ${versionText}`);
@@ -275,10 +275,6 @@ await withVerifierCleanup(async () => {
   report.cases.push(await check("concatenated.uf2", CASES));
   report.cases.push(await checkLostBlock());
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-}, [
-  () => commands.close(),
-  () =>
-    workspace === undefined
-      ? undefined
-      : rm(workspace, { recursive: true, force: true }),
-]);
+};
+
+await withVerifierWorkspace(verify, commands, () => workspace);

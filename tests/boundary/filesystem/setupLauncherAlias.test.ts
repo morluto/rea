@@ -209,16 +209,19 @@ it.skipIf(process.platform === "win32")(
       });
     expect(await inspect()).toContainEqual(
       expect.objectContaining({
-        commandIdentity: "owned",
-        status: expect.objectContaining({ client: "cursor", state: "aligned" }),
+        status: expect.objectContaining({
+          client: "cursor",
+          state: "aligned",
+          command_identity: "owned",
+        }),
       }),
     );
     await rm(executable);
     expect(classifyClientRegistrationCommand(command, script)).toBe("unknown");
     expect(await inspect()).toContainEqual(
       expect.objectContaining({
-        commandIdentity: "unknown",
         status: expect.objectContaining({
+          command_identity: "unknown",
           client: "cursor",
           state: "unknown",
           command,

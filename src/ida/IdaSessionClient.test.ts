@@ -1,3 +1,4 @@
+import { createIdaMcpConnection } from "./IdaMcpConnection.js";
 import {
   mkdir,
   readFile,
@@ -187,7 +188,8 @@ it.each(["initialize", "transport"])(
         applies_at: "next_operation",
         agent_editable: true,
         scope: "rea-runtime",
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
       diagnostics: { producer_fact: "retained" },
     });
@@ -2282,4 +2284,73 @@ it("attributes native IDA metadata timeout to the requested analysis operation",
   });
   expect(result.error.cause).toBe(timeout);
   await expectCleanClose(producer, client);
+});
+
+it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and body settle", async () => {
+  const { root, target } = await createIdaTarget();
+  roots.push(root);
+  let deliver!: (response: Response) => void;
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const response = new Promise<Response>((resolve) => {
+    deliver = resolve;
+  });
+  let release!: () => void;
+  const bodyCleanup = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cancel = vi.fn(() => bodyCleanup);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => {
+      entered();
+      return response;
+    }),
+  );
+  const config = {
+    url: "http://127.0.0.1:12345/mcp",
+    headers: {},
+    mode: "attached" as const,
+    timeoutMs: 30,
+  };
+  const client = new IdaSessionClient(
+    config,
+    target,
+    createIdaMcpConnection(config, {}),
+  );
+  const executing = client.execute("health", {});
+  try {
+    await started;
+    const result = await executing;
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisTimeoutError" },
+    });
+    const firstClose = await client.close();
+    expect(firstClose).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    deliver(new Response(new ReadableStream<Uint8Array>({ cancel })));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(await client.close()).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(await client.close()).toMatchObject({ ok: true });
+    if (firstClose.ok) throw new Error("Expected retained outer cleanup");
+    expect(firstClose.error.cleanupIncomplete).toBe(false);
+  } finally {
+    deliver(new Response(null, { status: 500 }));
+    release();
+    await executing;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await client.close();
+    vi.unstubAllGlobals();
+  }
 });

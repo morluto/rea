@@ -106,10 +106,22 @@ interface HeldComputer {
   readonly turns: DesktopBuildTurns;
   readonly cleanup: {
     resources: readonly string[];
-    errors: Set<WeakRef<ProviderCleanupError>>;
+    errors: Set<WeakRef<AnalysisError>>;
   };
   closing: boolean;
 }
+
+/** Bind every returned teardown failure to the computer retained for retry. */
+const bindCleanupFailure = (held: HeldComputer, error: AnalysisError): void => {
+  error.bindCleanupResourceOwner({
+    get cleanupResources() {
+      return held.cleanup.resources;
+    },
+  });
+  for (const reference of held.cleanup.errors)
+    if (reference.deref() === undefined) held.cleanup.errors.delete(reference);
+  held.cleanup.errors.add(new WeakRef(error));
+};
 
 /** What the build step tools work on: a live computer, its capture, its witness and the turns they take. */
 export interface BuildComputerSteps {
@@ -325,13 +337,21 @@ const withSeededLocks = async (
 ): Promise<unknown> => {
   if (source.kind !== "bundle" || !computerFailedOnReadiness(cause))
     return cause;
-  const locks = await seededLockFiles(source.path);
-  return locks.length === 0
+  const { locks, unreadable } = await seededLockFiles(source.path);
+  const notices = [
+    ...(locks.length === 0 ? [] : [seededLockStartNotice(locks)]),
+    ...(unreadable.length === 0
+      ? []
+      : [
+          `REA could not check these seed folders for lock files: ${unreadable.map(({ path, reason }) => `${path}: ${reason}`).join("; ")}. Other lock files remain unknown.`,
+        ]),
+  ];
+  return notices.length === 0
     ? cause
     : new ComputerStartFailure(
-        `${cause.message} ${seededLockStartNotice(locks)}`,
+        `${cause.message} ${notices.join(" ")}`,
         cause.remediation,
-        { cause: cause.cause, reason: cause.reason },
+        { cause, reason: cause.reason },
       );
 };
 
@@ -466,7 +486,7 @@ export class DesktopBuildComputers {
       target =
         source.kind === "bundle"
           ? { bundle: source.path, name: source.path }
-          : await writeRequestBundle(source, environment);
+          : await writeRequestBundle(source, environment, this.#work.resources);
     } catch (cause: unknown) {
       return err(failure(START, cause, signal));
     }
@@ -545,9 +565,16 @@ export class DesktopBuildComputers {
       const failed = signal.aborted
         ? cause
         : await withSeededLocks(source, cause);
-      return err(
-        startFailure(failed, signal, owner?.output(), { id, release }),
-      );
+      const error = startFailure(failed, signal, owner?.output(), {
+        id,
+        release,
+      });
+      const retained = this.#computers.get(id);
+      if (!release.verified && retained !== undefined) {
+        retained.cleanup.resources = release.resources;
+        bindCleanupFailure(retained, error);
+      }
+      return err(error);
     }
   }
 
@@ -699,15 +726,7 @@ export class DesktopBuildComputers {
       { reason: release.reason },
       { operation: CLOSE, remediationAction: release.reason },
     );
-    failure.bindCleanupResourceOwner({
-      get cleanupResources() {
-        return held.cleanup.resources;
-      },
-    });
-    for (const reference of held.cleanup.errors)
-      if (reference.deref() === undefined)
-        held.cleanup.errors.delete(reference);
-    held.cleanup.errors.add(new WeakRef(failure));
+    bindCleanupFailure(held, failure);
     return err(failure);
   }
 

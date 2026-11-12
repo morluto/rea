@@ -21,6 +21,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Linux kernel build config](guides/native/kernel-build-config.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
 - [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
+- [Acquired NTFS metadata and change journals](guides/native/ntfs-metadata.md)
 
 ## JavaScript and Electron
 
@@ -111,10 +112,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 ## Development and verification
 
 - [Settings and recovery](design/limits-and-recovery.md)
-- [Flutter budget calibration](verification/flutter-budget-calibration.md)
-- [Source-map budget calibration](verification/source-map-budget-calibration.md)
-- [Source-location delivery qualification](verification/source-location-delivery.md)
-- [JavaScript precision calibration](verification/javascript-precision-calibration.md)
+- [REA limit inventory](design/rea-limit-inventory.md)
 - [MCP tool design](development/tool-design.md)
 - [Testing REA](development/testing.md)
 - [Client and agent verification](development/client-verification.md)
@@ -199,6 +197,7 @@ the exact commit messages and references from the release they describe.
 - [Python packaged applications](python-packaged-applications.md)
 - [CPython pyc inspection](python-pyc.md)
 - [Reconstruction coverage](reconstruction-coverage.md)
+- [Release exposure](release-exposure.md)
 - [Reverse-engineering tool integrations](reverse-engineering-tools.md)
 - [Rust binary dependency metadata](rust-binaries.md)
 - [U-Boot legacy uImage containers](uimage.md)

@@ -13,6 +13,7 @@ import { currentClientRegistrationCommand } from "../../../src/application/Clien
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
 
 // These writer tests model setup running from REA's actual entrypoint, not Vitest's worker.
 vi.mock(
@@ -74,6 +75,7 @@ it.each([
     );
     const client = {
       name: "claude_code",
+      registrationProfile: supportedClientRegistrationProfile("claude_code"),
       configPath,
       format: "claude_code",
     } as const;
@@ -111,7 +113,12 @@ it("keeps the Windows direct launcher aligned through Codex TOML setup and remov
   const original =
     '\uFEFF# Keep this explanation.\nnotify = ["a", "b"]\nliteral = \'C:\\demo\\path\'\ndisabled_mcp_servers = ["rea"]\n\n[mcp_servers.other]\ncommand = "another-server"\n';
   await writeFile(configPath, original);
-  const client = { name: "codex", configPath, format: "toml" } as const;
+  const client = {
+    name: "codex",
+    registrationProfile: supportedClientRegistrationProfile("codex"),
+    configPath,
+    format: "toml",
+  } as const;
   const command = currentClientRegistrationCommand({ platform: "win32" });
   expect(await configureClientConfiguration(client, {}, command)).toMatchObject(
     { status: "configured" },
@@ -139,6 +146,7 @@ it("retains rea-named custom shell registrations without writing a backup", asyn
   const configPath = join(home, ".claude.json");
   const client = {
     name: "claude_code",
+    registrationProfile: supportedClientRegistrationProfile("claude_code"),
     configPath,
     format: "claude_code",
   } as const;
@@ -176,6 +184,7 @@ it.skipIf(process.platform !== "win32")(
     const configPath = join(home, ".claude.json");
     const setupClient = {
       name: "claude_code",
+      registrationProfile: supportedClientRegistrationProfile("claude_code"),
       configPath,
       format: "claude_code",
     } as const;

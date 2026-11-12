@@ -559,6 +559,7 @@ export const erlangBeamSummaryViewResultSchema = z.strictObject({
 });
 export const erlangBeamTableViewResultSchema = z.strictObject({
   ...viewResultBase,
+  coverage: nullableCollectionViewCoverageSchema,
   kind: z.literal("beam"),
   parent_operation: z.literal("inspect_erlang_beam"),
   view: erlangBeamViewRequestSchema,
@@ -624,6 +625,7 @@ export const rustBinarySummaryViewResultSchema = z.strictObject({
 
 export const rustBinaryPageViewResultSchema = z.strictObject({
   ...viewResultBase,
+  coverage: nullableCollectionViewCoverageSchema,
   ...rustBinaryViewContextSchema.shape,
   kind: z.literal("rust"),
   parent_operation: z.literal("inspect_rust_binary"),
@@ -1476,6 +1478,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: browserScenarioViewRequestSchema,
     items: browserScenarioViewItemsSchema,
     ...viewResultBase,
+    coverage: nullableCollectionViewCoverageSchema,
     ...browserScenarioViewContextSchema.shape,
     artifact: z.null(),
     parent_operation: z.literal("capture_browser_scenario"),
@@ -1505,6 +1508,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...viewResultBase,
     ...goBinaryViewContextSchema.shape,
+    coverage: nullableCollectionViewCoverageSchema,
     kind: z.literal("go"),
     parent_operation: z.literal("inspect_go_binary"),
     view: goBinaryViewRequestSchema,

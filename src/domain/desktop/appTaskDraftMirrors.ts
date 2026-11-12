@@ -3,12 +3,19 @@ import { isNameLikeKey } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 import { selectorOf } from "./viewSelector.js";
+import { zipEntryAt } from "./zipView.js";
 
 /** A file's views at its two ends. */
 interface Ends {
   readonly baseline: JsonValue | null;
   readonly final: JsonValue | null;
 }
+
+/** XML identifiers and field mirrors belong to one document, including within an archive. */
+const documentAt = (view: JsonValue | null, pointer: string) => {
+  const entry = zipEntryAt(view, pointer);
+  return typeof entry === "object" ? entry : view;
+};
 
 /** The value of the name-like attribute a pointer's last step names its element by, as `label` for `[name=elementInformation][@name=label]`. */
 const fieldKeyOf = (element: string) =>
@@ -38,22 +45,35 @@ export const mirrorsOf = (
     return element !== pointer &&
       typeof before === "string" &&
       typeof after === "string"
-      ? [{ pointer, element, before, after }]
+      ? [
+          {
+            pointer,
+            element,
+            before,
+            after,
+            document: documentAt(ends.final, pointer),
+          },
+        ]
       : [];
   });
   // The keys of the changed texts' elements, by what each was and became.
-  const keys = new Map<string, { pointer: string; key: string }[]>();
-  for (const { pointer, element, before, after } of texts) {
+  const keys = new Map<
+    string,
+    { pointer: string; key: string; document: ReturnType<typeof documentAt> }[]
+  >();
+  for (const { pointer, element, before, after, document } of texts) {
     const key = fieldKeyOf(element);
     const alike = JSON.stringify([before, after]);
     if (key === undefined) continue;
     const group = keys.get(alike) ?? [];
-    group.push({ pointer, key });
+    group.push({ pointer, key, document });
     keys.set(alike, group);
   }
   const mirrored = new Set(
     texts.flatMap((mirror) => {
-      const sources = keys.get(JSON.stringify([mirror.before, mirror.after]));
+      const sources = keys
+        .get(JSON.stringify([mirror.before, mirror.after]))
+        ?.filter(({ document }) => document === mirror.document);
       const record = sources?.some(({ pointer }) => pointer !== mirror.pointer)
         ? resolvePointer(
             ends.final,
@@ -136,13 +156,16 @@ export const idReferencesOf = (
 ) => {
   const added = change.added.flatMap((pointer) => {
     const element = resolvePointer(ends.final, pointer, "xml");
-    return isXmlElement(element) ? [{ pointer, element }] : [];
+    return isXmlElement(element)
+      ? [{ pointer, element, document: documentAt(ends.final, pointer) }]
+      : [];
   });
-  const mirrors = added.flatMap(({ pointer, element }) => {
+  const mirrors = added.flatMap(({ pointer, element, document }) => {
     const [key = ""] = Object.keys(element.attributes);
     return isIdReference(element) &&
       added.some(
         (record) =>
+          record.document === document &&
           record.element !== element &&
           !isIdReference(record.element) &&
           record.element.attributes[key] === element.attributes[key],

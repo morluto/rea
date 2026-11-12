@@ -23,9 +23,8 @@ cannot admit the same map. Related: #6176, #8434, #8978.
 
 A valid local map fails at an explicitly lowered admission, names map_bytes,
 and succeeds for the same point through the public CLI after increasing that
-budget. The calibrated 8 MiB default admits a complete map above 4 MiB while
-preserving an explicit smaller selection; see the
-[calibration record](../../../verification/source-map-budget-calibration.md).
+budget. The 8 MiB default admits a complete map above 4 MiB while
+preserving an explicit smaller selection.
 A finite fetched map similarly recovers after increasing decoded_records.
 Malformed maps, cancellation and failed cleanup retain their existing semantics.
 
