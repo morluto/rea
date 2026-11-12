@@ -115,6 +115,7 @@
     "mcp.json",
     "scripts/plugin-mcp-launcher.mjs",
     "scripts/plugin-published-mcp-launcher.mjs",
+    "scripts/lib/npm-invocation.mjs",
     "npm-shrinkwrap.json"
   ],
   "scripts": {

@@ -315,6 +315,10 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     !packedFiles.includes("package/scripts/plugin-published-mcp-launcher.mjs")
   )
     throw new Error("Packaged published-package plugin launcher is missing");
+  if (!packedFiles.includes("package/scripts/lib/npm-invocation.mjs"))
+    throw new Error(
+      "Packaged published-package plugin launcher is missing its shell-free npm helper",
+    );
   if (
     skill.includes(`${packedManifest.name}@latest`) ||
     !skill.includes(`${packedManifest.name}@${packedManifest.version}`)

@@ -1864,11 +1864,13 @@ use the repository checkout: Claude Code reads the local marketplace entry,
 Codex reads `.codex-plugin/plugin.json` with the committed
 `.cursor-plugin/skills` tree, and both launch MCP through
 `scripts/plugin-published-mcp-launcher.mjs`, which installs
-`rea-agents@<version>` under the OS temporary directory and runs that published
-runtime in-process so the plugin client owns REA's shutdown handlers. The
-client must have a supported standalone `node` and `npm` on its PATH. The
-existing release skill generator also pins CLI recovery commands to the same
-version.
+`rea-agents@<version>` under an owner-private cache in the OS temporary
+directory and runs that published runtime in-process so the plugin client owns
+REA's shutdown handlers. Installer output is kept off the MCP stdout stream,
+and npm is invoked through Node without a shell so temporary paths with spaces
+stay intact. The client must have a supported standalone `node` and `npm` on
+its PATH. The existing release skill generator also pins CLI recovery commands
+to the same version.
 
 The repository's single-plugin marketplaces are declared in
 `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`.
