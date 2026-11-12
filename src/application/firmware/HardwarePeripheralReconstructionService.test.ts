@@ -490,8 +490,8 @@ describe("captured RT-Spark vectors and extra loads", () => {
       settled: true,
     });
     expect(
-      report.hardwareClaims.find((claim) => claim.subject === "vector:22"),
-    ).toMatchObject({ settled: false, source: "0x08000058" });
+      report.hardwareClaims.find((claim) => claim.subject === "vector:7"),
+    ).toMatchObject({ settled: false, source: "0x0800001c" });
     expect(
       report.hardwareClaims.find((claim) => claim.subject === "WWDG"),
     ).toBeUndefined();

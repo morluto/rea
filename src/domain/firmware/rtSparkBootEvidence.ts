@@ -267,6 +267,7 @@ export const rtSparkBootEvidence = {
     { index: 14, name: "PendSV", word: "0x08000213" },
     { index: 15, name: "SysTick", word: "0x0800ca31" },
   ],
+  reservedVectorSlots: [7, 8, 9, 10, 13],
   irqVectorWords: [
     "0x0800c701",
     "0x0800c701",
@@ -593,6 +594,11 @@ export const rtSparkImageObservations: ImageHardwareDecodeInput = {
       kind: "vector-slot" as const,
       site: `0x${(0x08000000 + entry.index * 4).toString(16).padStart(8, "0")}`,
       index: entry.index,
+    })),
+    ...rtSparkBootEvidence.reservedVectorSlots.map((index) => ({
+      kind: "vector-slot" as const,
+      site: `0x${(0x08000000 + index * 4).toString(16).padStart(8, "0")}`,
+      index,
     })),
     ...rtSparkBootEvidence.irqVectorWords.map((_word, offset) => ({
       kind: "vector-slot" as const,
