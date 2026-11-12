@@ -1,7 +1,15 @@
 import { spawn } from "node:child_process";
-import { access, chmod, lstat, mkdir, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 
@@ -15,13 +23,16 @@ const launcher = fileURLToPath(
 );
 
 const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+const READY_MARKER = ".rea-plugin-ready";
 
-const installPrefix = (version: string) =>
+const cacheRootFor = (temporaryRoot = tmpdir()) =>
   join(
-    tmpdir(),
+    temporaryRoot,
     uid === undefined ? "rea-plugin-mcp" : `rea-plugin-mcp-${uid}`,
-    version,
   );
+
+const installPrefix = (version: string, temporaryRoot = tmpdir()) =>
+  join(cacheRootFor(temporaryRoot), version);
 
 const seedPublishedRuntime = async (version: string, runtime: string) => {
   const prefix = installPrefix(version);
@@ -34,12 +45,11 @@ const seedPublishedRuntime = async (version: string, runtime: string) => {
   );
   await mkdir(dirname(entry), { recursive: true, mode: 0o700 });
   if (uid !== undefined) {
-    await chmod(join(tmpdir(), `rea-plugin-mcp-${uid}`), 0o700).catch(
-      () => undefined,
-    );
+    await chmod(cacheRootFor(), 0o700).catch(() => undefined);
     await chmod(prefix, 0o700);
   }
   await writeFile(entry, runtime, { mode: 0o600 });
+  await writeFile(join(prefix, READY_MARKER), version, { mode: 0o600 });
   onTestFinished(async () => {
     await rm(installPrefix(version), { recursive: true, force: true });
   });
@@ -62,11 +72,14 @@ const start = (args: string[], env: NodeJS.ProcessEnv = process.env) => {
   });
   const closed = new Promise<{
     code: number | null;
+    signal: NodeJS.Signals | null;
     stdout: string;
     stderr: string;
   }>((resolve, reject) => {
     child.once("error", reject);
-    child.once("close", (code) => resolve({ code, stdout, stderr }));
+    child.once("close", (code, signal) =>
+      resolve({ code, signal, stdout, stderr }),
+    );
   });
   onTestFinished(async () => {
     if (child.exitCode === null && child.signalCode === null)
@@ -76,6 +89,23 @@ const start = (args: string[], env: NodeJS.ProcessEnv = process.env) => {
   return { child, closed };
 };
 
+const waitForFile = async (path: string) => {
+  for (;;) {
+    try {
+      return await readFile(path, "utf8");
+    } catch (cause) {
+      if (
+        cause === null ||
+        typeof cause !== "object" ||
+        !("code" in cause) ||
+        cause.code !== "ENOENT"
+      )
+        throw cause;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+};
+
 it.each([["latest"], ["6.8.0&echo wrong"], ["6.8.0", "extra"], []])(
   "rejects a non-exact or extra version argument: %j",
   async (...args) => {
@@ -83,6 +113,7 @@ it.each([["latest"], ["6.8.0&echo wrong"], ["6.8.0", "extra"], []])(
     child.stdin.end();
     expect(await closed).toEqual({
       code: 1,
+      signal: null,
       stdout: "",
       stderr: "REA plugin requires one exact rea-agents@VERSION pin.\n",
     });
@@ -155,6 +186,41 @@ it("runs the published runtime in-process from the owner-private install prefix"
   });
 });
 
+it("does not import an install prefix that lacks the ready marker", async () => {
+  const version = "6.8.0-published-incomplete";
+  const prefix = installPrefix(version);
+  const entry = join(
+    prefix,
+    "node_modules",
+    "rea-agents",
+    "scripts",
+    "rea.mjs",
+  );
+  await mkdir(dirname(entry), { recursive: true, mode: 0o700 });
+  if (uid !== undefined) {
+    await chmod(cacheRootFor(), 0o700).catch(() => undefined);
+    await chmod(prefix, 0o700);
+  }
+  await writeFile(entry, `process.stdout.write("should-not-run");`, {
+    mode: 0o600,
+  });
+  onTestFinished(async () => {
+    await rm(prefix, { recursive: true, force: true });
+  });
+  const missingBin = await createTestTempDirectory(
+    "rea-published-incomplete-bin-",
+  );
+  const { child, closed } = start([version], {
+    ...process.env,
+    PATH: missingBin,
+  });
+  child.stdin.end();
+  const result = await closed;
+  expect(result.code).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).not.toContain("should-not-run");
+});
+
 it("installs the pinned package under an owner-private temporary prefix when missing", async () => {
   const version = "6.8.0-published-install";
   const prefix = installPrefix(version);
@@ -195,20 +261,115 @@ writeFileSync(
   child.stdin.end();
   const result = await closed;
   expect(result.code).toBe(0);
-  expect(result.stdout).toBe(
-    JSON.stringify({
-      cwd: tmpdir(),
-      argv: ["mcp"],
-      prefix,
-    }),
+  const reported = JSON.parse(result.stdout) as {
+    cwd: string;
+    argv: string[];
+    prefix: string;
+  };
+  expect(reported.cwd).toBe(tmpdir());
+  expect(reported.argv).toEqual(["mcp"]);
+  expect(basename(reported.prefix)).toMatch(
+    new RegExp(`^${version}\\.staging-\\d+$`, "u"),
   );
+  expect(dirname(reported.prefix)).toBe(cacheRootFor());
   expect(result.stderr).toContain("added 1 package in 12ms");
   await access(entry);
+  await access(join(prefix, READY_MARKER));
+  expect(await readFile(join(prefix, READY_MARKER), "utf8")).toBe(version);
   if (uid !== undefined) {
-    const root = join(tmpdir(), `rea-plugin-mcp-${uid}`);
+    const root = cacheRootFor();
     expect((await lstat(root)).mode & 0o777).toBe(0o700);
     expect((await lstat(prefix)).mode & 0o777).toBe(0o700);
   }
+});
+
+it("coordinates concurrent cold starts through one installer publication", async () => {
+  const version = "6.8.0-published-concurrent";
+  const prefix = installPrefix(version);
+  await rm(prefix, { recursive: true, force: true });
+  await rm(join(cacheRootFor(), `${version}.lock`), {
+    recursive: true,
+    force: true,
+  });
+  onTestFinished(async () => {
+    await rm(prefix, { recursive: true, force: true });
+    await rm(join(cacheRootFor(), `${version}.lock`), {
+      recursive: true,
+      force: true,
+    });
+  });
+  const workspace = await createTestTempDirectory("rea-published-concurrent-");
+  const bin = join(workspace, "bin");
+  await mkdir(bin);
+  const npmEntry = join(bin, "npm-cli.cjs");
+  const counterPath = join(workspace, "install-count");
+  const releasePath = join(workspace, "release");
+  const startedPath = join(workspace, "started");
+  await writeFile(counterPath, "0", { mode: 0o600 });
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const counterPath = ${JSON.stringify(counterPath)};
+const startedPath = ${JSON.stringify(startedPath)};
+const releasePath = ${JSON.stringify(releasePath)};
+const sleep = (ms) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const count = Number(readFileSync(counterPath, "utf8")) + 1;
+writeFileSync(counterPath, String(count));
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.stdout.write('imported-too-early');", { mode: 0o600 });
+writeFileSync(startedPath, prefix);
+for (;;) {
+  try {
+    readFileSync(releasePath);
+    break;
+  } catch {
+    sleep(20);
+  }
+}
+writeFileSync(
+  entry,
+  "process.stdout.write(JSON.stringify({ installs: " + count + " }));",
+  { mode: 0o600 },
+);
+`,
+  );
+  const first = start([version], {
+    ...process.env,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+  });
+  const stagingPrefix = (await waitForFile(startedPath)).trim();
+  expect(basename(stagingPrefix)).toMatch(
+    new RegExp(`^${version}\\.staging-\\d+$`, "u"),
+  );
+  const second = start([version], {
+    ...process.env,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  expect(second.child.exitCode).toBeNull();
+  expect(await readFile(counterPath, "utf8")).toBe("1");
+  await writeFile(releasePath, "go", { mode: 0o600 });
+  first.child.stdin.end();
+  second.child.stdin.end();
+  const [firstResult, secondResult] = await Promise.all([
+    first.closed,
+    second.closed,
+  ]);
+  expect(firstResult.code).toBe(0);
+  expect(secondResult.code).toBe(0);
+  expect(firstResult.stdout).toBe(JSON.stringify({ installs: 1 }));
+  expect(secondResult.stdout).toBe(JSON.stringify({ installs: 1 }));
+  expect(firstResult.stdout).not.toContain("imported-too-early");
+  expect(secondResult.stdout).not.toContain("imported-too-early");
+  expect(await readFile(counterPath, "utf8")).toBe("1");
+  await access(join(prefix, READY_MARKER));
 });
 
 it.skipIf(uid === undefined)(
@@ -244,11 +405,8 @@ it("preserves a temporary install prefix that contains spaces as one npm argumen
   );
   const spacedTmp = join(spacedParent, "user temp dir");
   await mkdir(spacedTmp, { recursive: true, mode: 0o700 });
-  const spacedPrefix = join(
-    spacedTmp,
-    uid === undefined ? "rea-plugin-mcp" : `rea-plugin-mcp-${uid}`,
-    version,
-  );
+  const spacedRoot = cacheRootFor(spacedTmp);
+  const spacedPrefix = installPrefix(version, spacedTmp);
   onTestFinished(async () => {
     await rm(spacedPrefix, { recursive: true, force: true });
   });
@@ -284,9 +442,12 @@ writeFileSync(entry, "process.exitCode = 0;", { mode: 0o600 });
   const reported = JSON.parse(
     result.stderr.slice(result.stderr.indexOf("{")),
   ) as { argv: string[] };
-  expect(reported.argv[reported.argv.indexOf("--prefix") + 1]).toBe(
-    spacedPrefix,
+  const prefixArg = reported.argv[reported.argv.indexOf("--prefix") + 1];
+  expect(prefixArg).toEqual(
+    expect.stringMatching(new RegExp(`${version}\\.staging-\\d+$`, "u")),
   );
+  expect(dirname(prefixArg ?? "")).toBe(spacedRoot);
+  await access(join(spacedPrefix, READY_MARKER));
 });
 
 it.skipIf(process.platform === "win32")(
@@ -321,8 +482,71 @@ it.skipIf(process.platform === "win32")(
     child.kill("SIGTERM");
     expect(await closed).toEqual({
       code: 0,
+      signal: null,
       stdout: "ready",
       stderr: "cleaned",
     });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "terminates an in-flight npm install on SIGTERM and awaits its exit",
+  async () => {
+    const version = "6.8.0-published-install-sigterm";
+    const prefix = installPrefix(version);
+    await rm(prefix, { recursive: true, force: true });
+    onTestFinished(async () => {
+      await rm(prefix, { recursive: true, force: true });
+      await rm(join(cacheRootFor(), `${version}.lock`), {
+        recursive: true,
+        force: true,
+      });
+    });
+    const workspace = await createTestTempDirectory(
+      "rea-published-install-sigterm-",
+    );
+    const bin = join(workspace, "bin");
+    await mkdir(bin);
+    const npmEntry = join(bin, "npm-cli.cjs");
+    const pidPath = join(workspace, "npm.pid");
+    await writeFile(
+      npmEntry,
+      `#!/usr/bin/env node
+const { writeFileSync } = require("node:fs");
+writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+setInterval(() => {}, 1000);
+`,
+    );
+    const { child, closed } = start([version], {
+      ...process.env,
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      npm_execpath: npmEntry,
+    });
+    const npmPid = Number.parseInt((await waitForFile(pidPath)).trim(), 10);
+    expect(npmPid).toBeGreaterThan(0);
+    child.kill("SIGTERM");
+    const result = await closed;
+    expect(result.code).toBe(143);
+    expect(result.stdout).toBe("");
+    await expect(
+      (async () => {
+        for (let attempt = 0; attempt < 50; attempt += 1) {
+          try {
+            process.kill(npmPid, 0);
+          } catch (cause) {
+            if (
+              cause !== null &&
+              typeof cause === "object" &&
+              "code" in cause &&
+              cause.code === "ESRCH"
+            )
+              return;
+            throw cause;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        throw new Error(`npm installer ${String(npmPid)} remained running`);
+      })(),
+    ).resolves.toBeUndefined();
   },
 );
