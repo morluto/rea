@@ -1,3 +1,4 @@
+import { resolveInvestigationEvidenceClosure } from "./investigation/InvestigationEvidence.js";
 import { analysisEvidenceSources } from "./AnalysisEvidenceSources.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -180,6 +181,17 @@ export const publishEvidenceDelivery = async (input: {
   readonly signal?: AbortSignal | undefined;
 }): Promise<Result<PublishedEvidenceDelivery, AnalysisError>> => {
   const { signal, operation } = input;
+  // Partial analysis can hold only some of its linked sources. Both delivery
+  // adapters must establish closure before committing a complete source bundle.
+  const sources = new Map(
+    input.bundle.records.map((record) => [record.evidence_id, record]),
+  );
+  const closure = resolveInvestigationEvidenceClosure(
+    { evidenceForAnalysis: (id) => sources.get(id) },
+    [input.complete.evidence_id],
+  );
+  if (!closure.ok)
+    return err(closure.error.retainPartialObservation(input.complete));
   const written = await persistEvidenceBundleCommand(
     input.bundle,
     input.outputPath,

@@ -1,3 +1,4 @@
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
@@ -271,10 +272,9 @@ it("refuses summary delivery before calling a fixed provider without retention",
     { environment: {} },
   );
   const client = new Client({ name: "pseudocode-no-retention", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-  });
+  onTestFinished(() =>
+    closeVerifierResources([() => client.close(), () => server.close()]),
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

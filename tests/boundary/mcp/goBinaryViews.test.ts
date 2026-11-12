@@ -368,7 +368,7 @@ mcpTest(
       const page = goPage(parseEvidence(empty.structuredContent));
       expect(page).toMatchObject({
         page: { rows: [] },
-        coverage: { total: 0 },
+        coverage: { status: "unavailable", total: null, exhausted: false },
         source_coverage: {
           build_info_available: false,
           module_parse_complete: null,
@@ -406,6 +406,24 @@ goViewTest(
       ],
     });
     await writeFile(path, fixture.bytes);
+
+    const limited = goBinarySummaryViewResultSchema.parse(
+      (
+        await call("inspect_go_binary", {
+          path,
+          include_string_literals: true,
+          max_string_literals: 2,
+          detail: "summary",
+        })
+      ).normalized_result,
+    );
+    expect(limited.source_coverage.string_literals).toBe("truncated");
+    expect(limited.summary.string_literals).toMatchObject({
+      available_count: 2,
+      discovered_count: 3,
+      truncated: true,
+      limits_reached: ["max_string_literals"],
+    });
 
     const summary = goBinarySummaryViewResultSchema.parse(
       (

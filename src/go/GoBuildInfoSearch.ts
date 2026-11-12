@@ -1,9 +1,9 @@
+import type { FileMapping } from "../domain/virtualFileMapping.js";
 import {
   BinaryFormatFailure,
   BinaryReader,
   mappedFileOffset,
   type BinaryContainer,
-  type FileMapping,
 } from "../native/metadata/BinaryContainer.js";
 
 export interface GoBuildInfoSearchRange extends FileMapping {
@@ -70,6 +70,7 @@ export const goBuildInfoSearch = (
         throw new BinaryFormatFailure(
           "unsupported",
           "Compressed ELF build-info sections are unsupported",
+          true,
         );
       const search = {
         ...reader.fileRange(

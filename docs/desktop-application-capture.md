@@ -138,7 +138,8 @@ that could not be released.
 If the capture fails for any other reason before `capture.json` is written,
 the application is closed the same way and the content already retained is
 removed from the capture folder. The error names any process or file that
-could not be removed.
+could not be removed. An already-failed capture retains its original failure
+and reports cancellation during cleanup separately.
 
 A person types these lines in the terminal. An agent can drive the
 application with a tool such as `xdotool` and write the lines to a FIFO that
@@ -185,8 +186,9 @@ package that installed it. A Debian package records its name, version,
 architecture and the apt sources that list the installed version, with the
 origin (`o=`) apt reports for each source in `source_origins`, such as `Ubuntu`
 for the Ubuntu archive and its mirrors or `LP-PPA-<name>` for a PPA; an empty
-source list means the version came from a local `.deb` or the package lists
-are missing, which `package_lists_present` tells apart. apt's lists folder,
+source list means apt reports no source for the installed version.
+`package_lists_present` reports whether the lists are present. It is `null`
+when REA cannot read the lists directory. apt's lists folder,
 and the trusted keys below, are where `apt-config` resolves
 `Dir::State::Lists`, `Dir::Etc::TrustedParts` and `Dir::Etc::Trusted` under
 `Dir`, so an `APT_CONFIG` file that moves them is followed: on a computer
@@ -214,9 +216,9 @@ does not bring it. A program link that dpkg does not own counts as owned when
 dpkg owns the file it resolves to, as an alternatives link does. An
 `--executable` launch, or an entry no package owns, such as
 one in `~/.local/share/applications`, records the executable's package. When
-`dpkg-query` does not finish or exits with an error for the executable or the
-entry, the package is `unknown` and the limitations say which path, since a
-failed lookup is not proof that no package owns it. The sources, vendor
+`dpkg-query` fails for the executable or entry, or the selected path contains
+characters `dpkg-query -S` would interpret as a pattern, package ownership is
+`unknown` and the limitations name the path. The sources, vendor
 repositories and `--package-file` match below are the recorded package's; the
 library walk still reads the executable.
 
@@ -243,7 +245,9 @@ writes it on Ubuntu 24.04, has that key as its only candidate, as apt trusts
 no other for it: REA reads the field's continuation lines as deb822 writes
 them, a `.` line standing for an empty one, from the key block's `BEGIN` line
 to its last `END` line, and records the key's path as the entry's sources
-file. A key counts when gpgv reports a valid signature by it and no bad,
+file. A fingerprint restriction in `Signed-By` leaves `signing_key` null.
+The reason names the restriction that REA could not verify. A key counts
+when gpgv reports a valid signature by it and no bad,
 expired, revoked or unverifiable signature by it, whatever gpgv's exit status:
 a release also signed by a key the host lacks makes gpgv fail. Each candidate
 is copied, an armored key decoded to a binary keyring, into a private
@@ -272,8 +276,16 @@ looks each soname up as ld.so does: in the RPATH of the needing image and of
 each image up its chain of loaders to the executable when the needing image
 has no RUNPATH, then in its RUNPATH (with `$ORIGIN` expanded and paths
 normalized), and then in the `ldconfig -p` cache entries for the executable's
-machine. It asks `dpkg-query -S` for each library's package. Libraries in the
-executable's own folder belong to the application: they are walked but not
+machine. Each candidate's ELF machine, class and byte order must match the
+needing image before it is selected or its dependencies are walked. A foreign
+search-path candidate is skipped in favor of later directories or the cache; a
+cache architecture flag alone does not establish compatibility. If a candidate's
+identity cannot be read, that lookup stays unresolved, without selecting its
+package or guessing that a later candidate would load. A compatible identity
+remains available if a later header or dependency-table check fails; its package
+is retained with an incompleteness reason. REA asks `dpkg-query -S` for each
+selected library's package. Libraries in the executable's own folder belong to
+the application: they are walked but not
 listed, and neither is the application's own package. One batched
 `apt-cache policy` then keeps only the packages the Ubuntu 24.04 archive or a
 recorded vendor repository with a verified key offers, in any component its
@@ -290,8 +302,8 @@ found nowhere are listed in
 not an ELF image (a launcher script, for example), `ldconfig`, `dpkg-query` or
 `apt-cache` is missing, `dpkg-query -S` could not tell which package owns a
 library (it exits 2 rather than 1, which only says no package owns the paths
-it did not name), a library could not be read or names more than 512
-libraries, or the walk stopped after 512 libraries. A failed owner query does
+it did not name), a library could not be read or exceeds the selected dependency
+inventory budget, or the walk reached that budget. A failed owner query does
 not list the libraries it covered in `unpackaged_libraries`, since a lookup
 that could not finish is not proof that no package owns them. Completed batches
 retain their package and unowned-library facts. Paths containing package-query
@@ -428,3 +440,18 @@ evidence for attribution, not proof.
 
 Clicks and keystrokes are not recorded. Window titles are sampled every half
 second, so short-lived titles can be missed.
+
+Dependency inventory headroom is selected for each capture with
+`--library-policy '{"libraries":1024,"string_bytes":8192}'`. Unset fields retain
+their defaults: `libraries: 512` bounds both the closure walk and distinct
+DT_NEEDED offsets in each ELF image; `search_path_entries: 16` bounds distinct
+DT_RUNPATH and DT_RPATH offsets per kind; `string_bytes: 4096` includes the NUL
+terminator of each decoded string; `table_bytes: 1048576` bounds each program
+header or dynamic table. Values must be positive safe integers. A budget refusal
+names the field that needs headroom; partial package facts and unresolved
+coverage remain visible. The policy applies during this capture's admission,
+without restarting REA, and explicit selections are retained in Evidence. Raising
+content retention or a worker heap does not raise these inventory budgets.
+Choosing a new capture still launches the selected application; changing these
+read budgets does not add execution authority or recover an earlier capture's
+omitted inventory.

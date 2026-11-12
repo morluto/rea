@@ -1,3 +1,8 @@
+import {
+  processInspectionCancellationError,
+  retainProcessInspectionCleanup,
+} from "../providers/OwnedCommandCleanup.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   FIRMWARE_TOOL_REQUIREMENTS,
@@ -18,7 +23,6 @@ import type {
 import { projectAnalysisErrorWithoutCapturedOutput } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import {
-  firmwareCancellation,
   firmwareFailure,
   firmwareLimitRecovery,
   firmwarePhaseInterruption,
@@ -179,6 +183,7 @@ export const runFirmwareCommand = async (context: {
   signal: AbortSignal;
   deadline: FirmwareDeadline;
   launcher?: FirmwareLauncher;
+  resources: ArtifactResourceScope;
   outputBudget?: { root: string; bytes: number; entries: number };
   acceptReportedExtractionFailure?: boolean;
   retainCleanup(supervisor: ProviderProcessSupervisor): void;
@@ -228,18 +233,17 @@ export const runFirmwareCommand = async (context: {
       NO_COLOR: "1",
     },
   }).catch((cause: unknown) => {
-    // Owned admission can reject before a supervisor/child exists. Attribute
-    // only this signal's raw reason or a linked Node AbortError, never an
-    // unrelated failure merely because a timer also fired.
-    if (
-      signal.aborted &&
-      (cause === signal.reason ||
-        (cause instanceof Error &&
-          cause.name === "AbortError" &&
-          cause.cause === signal.reason))
-    )
-      throw firmwareCancellation(operation, signal.reason, context.deadline);
-    throw cause;
+    const cancellation = processInspectionCancellationError(cause, operation);
+    const primary =
+      cancellation === undefined
+        ? firmwareFailure(cause, context)
+        : firmwareFailure(cancellation, context);
+    throw retainProcessInspectionCleanup(
+      cause,
+      primary,
+      context.resources,
+      operation,
+    );
   });
   let failure: AnalysisError | undefined;
   const isFailedExit = (code: number | null | undefined) =>

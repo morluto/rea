@@ -834,6 +834,21 @@ const selectArchitecture = (
   const normalized =
     target.architecture === "x86" ? "i386" : target.architecture;
   const policy = MACHO_ARCHITECTURE_POLICIES[target.architecture];
+  if (target.format === "mach-o-universal") {
+    const admitted = available.find(
+      (candidate) =>
+        candidate.file_offset === target.universalSlice.offset &&
+        (candidate.size === null ||
+          candidate.size === target.universalSlice.size),
+    );
+    if (admitted === undefined)
+      return { status: "absent", architecture: normalized };
+    const toolName =
+      policy === undefined
+        ? admitted.name
+        : machoToolArchitectureName(policy, admitted);
+    return { status: "selected", architecture: admitted, toolName };
+  }
   const selected =
     policy === undefined
       ? available.find(({ name }) => name === normalized)

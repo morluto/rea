@@ -50,7 +50,8 @@ const tableFailure = (
   const minimumWidth = kind === "program" ? (wide ? 56 : 32) : wide ? 64 : 40;
   const label = `${kind} header table`;
   if (table.width < minimumWidth) return `invalid ELF ${label} entry width`;
-  if (table.offset < BigInt(wide ? 64 : 52))
+  // e_ehsize can extend past the class minimum. Bytes below it are the header.
+  if (table.offset < BigInt(header.headerSize))
     return `ELF ${label} overlaps the fixed header`;
   return rangeFailure(
     label,

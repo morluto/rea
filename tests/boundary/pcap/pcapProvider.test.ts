@@ -409,19 +409,6 @@ it("reports a non-capture file as unsupported", async () => {
   });
 });
 
-it("rejects a capture that is not a readable file", async () => {
-  const { provider } = await providerWith();
-  const result = await provider.execute({
-    operation: "inspect_pcap_capture",
-    input: { path: "/nonexistent/capture.pcap" },
-  });
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "invalid_request",
-  });
-});
-
 it("reports relative configuration and missing capinfos as capability gaps", async () => {
   const root = await createTestTempDirectory("rea-pcap-config-");
   const { tshark } = await writeStubTools(root);

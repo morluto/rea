@@ -3,7 +3,11 @@ import { createHash } from "node:crypto";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
-import { projectAnalysisView } from "./analysisView.js";
+import {
+  projectAnalysisView,
+  analysisViewRequestSchema,
+} from "./analysisView.js";
+import { timedCaptureEvidence } from "../../../tests/fixtures/analysisView.js";
 
 const capture = () => {
   const body = Buffer.from("original body");
@@ -800,18 +804,6 @@ it.each([
     "bytes that are not its text",
     { binaryFields: [retainedBytes("/request/path", "/b")] },
   ],
-  [
-    "a byte count that is not its text",
-    { binaryFields: [{ ...retainedBytes("/request/path", "/a"), bytes: 3 }] },
-  ],
-  [
-    "a digest that is not its text",
-    {
-      binaryFields: [
-        { ...retainedBytes("/request/path", "/a"), sha256: "0".repeat(64) },
-      ],
-    },
-  ],
 ] as const)(
   "keeps a mitmproxy path with %s out of the preview",
   (_label, facets) => {
@@ -1038,5 +1030,113 @@ it.each(["scheme", "host", "port", "authority"])(
       request: { method: "GET", path: "/users/42" },
     });
     expect(JSON.stringify(reported)).not.toContain("password");
+  },
+);
+
+it.each(["base64", "bytes", "sha256", "duplicate"] as const)(
+  "refuses inconsistent retained binary %s at parent admission",
+  (fault) => {
+    const { parent, report } = capture();
+    const record = report.records[0]!;
+    const binary = record.binary_fields[0]!;
+    if (binary.state !== "retained")
+      throw new Error("Expected retained source bytes");
+    const changed = {
+      ...binary,
+      ...(fault === "base64"
+        ? { content_base64: "!!!!" }
+        : fault === "bytes"
+          ? { bytes: binary.bytes + 1 }
+          : { sha256: "0".repeat(64) }),
+    };
+    const invalid = {
+      ...report,
+      records: [
+        {
+          ...record,
+          binary_fields: fault === "duplicate" ? [binary, binary] : [changed],
+        },
+      ],
+    };
+    const projected = projectAnalysisView(
+      { ...parent, normalizedResult: invalid },
+      { kind: "capture", detail: "preview", offset: 0, limit: 1 },
+    );
+    expect(projected).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+  },
+);
+
+it.each([
+  "/response/content/text",
+  "/response/content",
+  "/response",
+  "",
+  "binary-redaction",
+  "control",
+])(
+  "respects retained response-body authority without altering raw facts: %s",
+  (marker) => {
+    const seed = timedCaptureEvidence([
+      ["GET", "/api/items", [{ id: 1, name: "withheld-value" }]],
+    ]);
+    const report = webNetworkCaptureSchema.parse(seed.normalized_result);
+    const record = report.records[0]!;
+    if (marker === "binary-redaction")
+      record.binary_fields.push({
+        pointer: "/response/content/text",
+        representation: "har-base64-content",
+        state: "redacted",
+        content_base64: null,
+        bytes: null,
+        sha256: null,
+      });
+    else if (marker !== "control")
+      record.redactions.push({
+        pointer: marker,
+        reason: "explicit-sensitive-value",
+      });
+    const evidence = createEvidence(
+      {
+        path: report.artifact.path,
+        sha256: report.artifact.sha256!,
+        format: "file",
+      },
+      report.decoder,
+      {
+        operation: seed.operation,
+        parameters: seed.parameters,
+        result: report,
+      },
+    );
+    const parent = {
+      predicateType: evidence.predicate_type,
+      evidenceId: evidence.evidence_id,
+      operation: evidence.operation,
+      normalizedResult: evidence.normalized_result,
+      subject: evidence.subject,
+      parameters: evidence.parameters,
+      limitations: evidence.limitations,
+    };
+    const state = projectAnalysisView(
+      parent,
+      analysisViewRequestSchema.parse({ kind: "environment-state" }),
+    );
+    if (!state.ok || state.value.kind !== "environment-state")
+      throw new Error("Expected retained state projection");
+    expect(
+      JSON.stringify(state.value.entities).includes("withheld-value"),
+    ).toBe(marker === "control");
+    const complete = projectAnalysisView(parent, {
+      kind: "capture",
+      detail: "complete",
+      offset: 0,
+      limit: 1,
+    });
+    expect(
+      complete.ok && JSON.stringify(complete.value).includes("withheld-value"),
+    ).toBe(true);
   },
 );

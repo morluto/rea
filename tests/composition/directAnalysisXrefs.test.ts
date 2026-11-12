@@ -101,12 +101,32 @@ const fixture = (
 };
 
 describe("direct CLI cross-reference selectors", () => {
-  it("retains validation issues unrelated to symbol resolution", async () => {
+  it("rejects unknown arguments before opening a session", async () => {
     const [path] = await createBinarySessionTargets();
-    const issues = [
-      { path: ["address"], reason: "invalid_format" },
-      { path: ["extra"], reason: "unknown_argument" },
-    ] as const;
+    const provider = fixture({
+      xrefsError: new AnalysisInputError("xrefs", undefined, [
+        { path: ["address"], reason: "invalid_format" },
+      ]),
+    });
+    const result = await runDirectAnalysis(
+      provider.dependencies,
+      path,
+      "xrefs",
+      { address: "table_only", extra: true },
+    ).then(projectCliAnalysisResult);
+    expect(result).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "xrefs",
+        issues: [{ path: ["extra"], reason: "unknown_argument" }],
+      },
+    });
+    expect(provider.closed()).toBe(0);
+  });
+
+  it("retains provider validation issues unrelated to symbol resolution", async () => {
+    const [path] = await createBinarySessionTargets();
+    const issues = [{ path: ["address"], reason: "invalid_format" }] as const;
     const provider = fixture({
       xrefsError: new AnalysisInputError("xrefs", undefined, issues),
     });
@@ -114,7 +134,7 @@ describe("direct CLI cross-reference selectors", () => {
       provider.dependencies,
       path,
       "xrefs",
-      { address: "table_only", extra: true },
+      { address: "table_only" },
     ).then(projectCliAnalysisResult);
     expect(result).toMatchObject({
       code: "invalid_request",

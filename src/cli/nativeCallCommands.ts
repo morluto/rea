@@ -29,7 +29,7 @@ export const registerNativeCallCommands = (
       inputJson: z
         .string()
         .describe(
-          "Inline JSON or a JSON file path: breakpoints, arguments, environment, duration_ms, max_events, argument_registers, backtrace_frames",
+          "Inline JSON or a JSON file path: breakpoints, arguments, environment, duration_ms, max_events, argument_registers, backtrace_frames, capture_limits",
         ),
     }),
     run: ({ args }) =>

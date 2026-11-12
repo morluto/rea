@@ -946,13 +946,13 @@ it("tolerates malformed core notes by returning null without throwing", () => {
   const truncatedFile = elfNote(
     "CORE",
     0x46494c45,
-    Buffer.from("00000000000000010000000000001000", "hex"), // count 1, page_size 4096, but no map entries or filenames
+    Buffer.from("01000000000000000010000000000000", "hex"), // count 1, page_size 4096, but no map entries or filenames
   );
   const truncatedSiginfo = elfNote("CORE", 0x53494749, Buffer.alloc(4)); // requires 12 bytes
   const unterminatedAuxv = elfNote(
     "CORE",
     6,
-    Buffer.from("00000000000000060000000000001000", "hex"), // AT_PAGESZ=4096 but lacks AT_NULL terminator
+    Buffer.from("06000000000000000010000000000000", "hex"), // AT_PAGESZ=4096 but lacks AT_NULL terminator
   );
   const truncatedAuxv = elfNote("CORE", 6, Buffer.alloc(7)); // not multiple of entry size
   const notes = Buffer.concat([
@@ -981,6 +981,24 @@ it("tolerates malformed core notes by returning null without throwing", () => {
   expect(report.entries[3]?.type_name).toBe("core_auxv");
   expect(report.entries[4]?.core).toBeNull();
   expect(report.entries[4]?.type_name).toBe("core_auxv");
+  const valid = parse(
+    elfNoteFixture({
+      bits: 64,
+      ownership: "program",
+      notes: Buffer.concat([
+        coreFileNote([
+          { start: 0x1000, end: 0x2000, file_ofs: 0, path: "/bin/app" },
+        ]),
+        coreAuxvNote([[6, 4096]]),
+      ]),
+    }),
+  );
+  expect(valid.entries[0]?.core?.file?.mappings[0]?.path).toBe("/bin/app");
+  expect(valid.entries[1]?.core?.auxv).toContainEqual({
+    type: 6,
+    type_name: "AT_PAGESZ",
+    value: "0x1000",
+  });
 });
 
 it("decodes siginfo using target ABI for MIPS machines", () => {
@@ -1061,6 +1079,63 @@ it("rejects 64-bit auxv tags and out-of-range page sizes with core: null without
   expect(report.entries[1]?.core).toBeNull();
 });
 
+it.each([32, 64] as const)(
+  "leaves ELF%d NT_FILE mappings unknown when the descriptor contains a surplus pathname",
+  (bits) => {
+    const little = bits === 64;
+    const file = coreFileNote(
+      [{ start: 0x1000, end: 0x2000, file_ofs: 2, path: "/bin/app" }],
+      4096,
+      bits,
+      little,
+    );
+    const descriptorBytes = little
+      ? file.readUInt32LE(4)
+      : file.readUInt32BE(4);
+    // A five-byte CORE owner including its NUL pads to eight bytes.
+    const descriptor = file.subarray(20, 20 + descriptorBytes);
+    const inspect = (tail: Buffer) => {
+      const payload = Buffer.concat([descriptor, tail]);
+      return parse(
+        elfNoteFixture({
+          bits,
+          little,
+          machine: little ? 62 : 20,
+          type: 4,
+          ownership: "both",
+          notes: elfNote("CORE", 0x46494c45, payload, little),
+        }),
+      );
+    };
+    const exact = inspect(Buffer.alloc(0));
+    const padded = inspect(Buffer.alloc(3));
+    expect(exact.entries).toHaveLength(2);
+    expect(padded.entries.map(({ core }) => core)).toEqual(
+      exact.entries.map(({ core }) => core),
+    );
+    for (const entry of exact.entries)
+      expect(entry.core?.file?.mappings[0]).toMatchObject({
+        start_address: "0x1000",
+        end_address: "0x2000",
+        file_offset_pages: "0x2",
+        path: "/bin/app",
+      });
+
+    const tail = Buffer.from("/lib/extra.so\0");
+    const malformed = inspect(tail);
+    expect(malformed.coverage).toEqual(exact.coverage);
+    expect(malformed.entries).toHaveLength(2);
+    const payload = Buffer.concat([descriptor, tail]);
+    const sha256 = createHash("sha256").update(payload).digest("hex");
+    for (const entry of malformed.entries)
+      expect(entry).toMatchObject({
+        type_name: "core_file",
+        core: null,
+        descriptor: { bytes: payload.length, sha256 },
+      });
+  },
+);
+
 it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
   const header = Buffer.alloc(16);
   header.writeBigUInt64LE(2n, 0); // count = 2
@@ -1075,13 +1150,34 @@ it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
     0x46494c45,
     Buffer.concat([header, mappings, paths]),
   );
-  const bytes = elfNoteFixture({
+  const path = "p".repeat(128);
+  const valid = coreFileNote([
+    { start: 0x1000, end: 0x2000, file_ofs: 0, path },
+  ]);
+  const image = elfNoteFixture({
     bits: 64,
     ownership: "program",
-    notes: badFileNote,
+    notes: Buffer.concat([badFileNote, valid]),
   });
+  // Two CORE owners use 14 bytes each; one ELF64 mapping uses 54, and
+  // the retained Latin-1 path plus its hex spelling uses 3 bytes per byte.
+  const budget = 2 * 14 + 54 + 128 * 3;
+  expect(image.length).toBeLessThanOrEqual(budget);
+  const bytes = Buffer.concat([image, Buffer.alloc(budget - image.length)]);
   const report = parse(bytes);
   expect(report.entries[0]?.core).toBeNull();
+  expect(report.entries[1]?.core?.file?.mappings).toEqual([
+    {
+      start_address: "0x1000",
+      end_address: "0x2000",
+      file_offset_pages: "0x0",
+      path,
+      path_hex: Buffer.from(path).toString("hex"),
+    },
+  ]);
+  expect(() => parse(bytes.subarray(0, bytes.length - 1))).toThrow(
+    expect.objectContaining({ reason: "limit", boundary: "memory" }),
+  );
 });
 
 it.each([

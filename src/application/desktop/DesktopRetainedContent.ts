@@ -1,6 +1,8 @@
+import { DESKTOP_VIEW_DEFAULTS } from "../../domain/desktop/desktopViewPolicy.js";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import {
   ArtifactResourceScope,
@@ -12,6 +14,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   RegularFileCleanupFailure,
+  regularFileCancellation,
   withOwnedRegularFile,
 } from "../../filesystem/OwnedRegularFile.js";
 import {
@@ -22,7 +25,7 @@ import {
 const MIB = 1024 * 1024;
 
 /** Largest retained file the state view reads. */
-const DEFAULT_MAX_BYTES = 64 * MIB;
+const DEFAULT_MAX_BYTES = DESKTOP_VIEW_DEFAULTS.file_bytes;
 
 type FailedRelease = Extract<
   ArtifactCleanupAttempt,
@@ -66,7 +69,16 @@ export class RetainedContent {
         readStableFileBytes(handle, path, this.maxBytes, options),
       );
     } catch (cause: unknown) {
-      signal?.throwIfAborted();
+      const cancellation = regularFileCancellation(cause);
+      if (cancellation !== undefined)
+        throw new ArtifactReaderFailure(
+          "cancelled",
+          "Retained content read cancelled",
+          {
+            cause: cancellation.reason,
+            cancellation,
+          },
+        );
       const outcome =
         cause instanceof RegularFileCleanupFailure ? cause.outcome : undefined;
       // A read that finished keeps its bytes; its failed close is retried by `release`.

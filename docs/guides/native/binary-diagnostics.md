@@ -44,6 +44,11 @@ before dependency seeks. Structural inventory and the convenience-map engine
 still parse the snapshot separately; eliminating that remaining duplication
 requires preserving the upstream GOT/PLT and mitigation facts.
 
+The layout profile returns `unsupported_target` for `SHF_COMPRESSED` string,
+symbol, relocation or dynamic metadata sections before upstream convenience-map
+decoding. Their logical names and entry coordinates cannot be read from the
+compressed file bytes. Other compressed payload sections remain opaque.
+
 ## Interpreting results
 
 - Artifact path, SHA-256 and size identify original selected bytes. All parsing
@@ -120,7 +125,13 @@ CLI output are unchanged.
 
 Complete results have a 32 MiB input, 64 MiB reply, 1 MiB combined diagnostics
 and 30-second owned command deadline. `REA_PWNTOOLS_MAX_INPUT_BYTES` raises the
-input bound alone, up to 1 GiB; the reply and deadline bounds are unchanged. The
+launch input default alone, up to 1 GiB. Per-call `producer_limits` selects
+`input_bytes`, `output_bytes`, `diagnostic_bytes`, `address_space_bytes`,
+`file_bytes`, and `cpu_seconds`; positive safe integers apply on the next call
+without restart. `input_bytes` overrides the launch default. File admission
+follows selected `output_bytes` unless `file_bytes` is explicit. The separate
+`pwntools_timeout_ms` controls each command wall deadline. On CLI pass
+`--producer-limits '{"cpu_seconds":60,"output_bytes":134217728}'`. The
 reply budget applies to the decoder record; the CLI/MCP Evidence envelope adds
 copies and encoding overhead. The
 pinned MCP SDK defaults to a 10 MiB receive buffer. Large complete results need
@@ -128,8 +139,8 @@ a caller-configured `StdioClientTransport({ maxBufferSize: ... })` and a matchin
 server `REA_MCP_MAX_RESPONSE_BYTES`. See [MCP delivery budgets](../../reference/mcp-contracts.md#tool-results).
 These settings affect delivery, not decoder coverage or limits. The large
 extended-index verification uses 256 MiB and an explicit five-minute request
-timeout in its separate opt-in MCP lane. REA does not silently truncate the result. Python lowers resource soft limits to at most 3 GiB virtual address space,
-30 CPU seconds and 64 MiB file output. Inherited tighter soft/hard limits are
+timeout in its separate opt-in MCP lane. REA does not silently truncate the result. Python lowers resource soft limits to the selected policy: defaults are 3 GiB
+virtual address space, 30 CPU seconds and 64 MiB file output. Inherited tighter soft/hard limits are
 retained, and the effective values are returned in the result limitations. Virtual address space is not RSS;
 Unicorn needs a large virtual map. Limits fail with no partial success, and
 owned process/root cleanup completes independently of cancellation.
@@ -471,6 +482,13 @@ Enumerating dynamic symbols from that segment is not implemented. A present
 section directory with neither a dynamic symbol table nor a dynamic segment
 reports a complete empty inventory. Mach-O exports are reported by
 `inspect_macho`.
+
+ELF export tables marked `SHF_COMPRESSED` are not decompressed. A compressed
+dynamic symbol table or its string table reports `unsupported` coverage rather
+than treating stored bytes as symbols or names. Compressed version tables or
+their string tables keep readable export rows with `partial` coverage and
+unresolved versions. When version definition storage is compressed, requirement
+names also remain unknown because unseen definitions may override them.
 
 `max_file_bytes` defaults to 256 MiB (maximum 512 MiB; CLI `--max-file-bytes`).
 Export directories in PE headers are read like those in sections. An export or
