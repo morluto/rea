@@ -696,6 +696,67 @@ it("compares an icon with a full target path, ignoring case and separators", asy
   expect(iconDifference(different)).toBe(true);
 });
 
+it.each([
+  {
+    label: "LinkInfo enabled",
+    disabled: 0,
+    environment: false,
+    extension: ".exe",
+    differs: true,
+  },
+  {
+    label: "ForceNoLinkInfo",
+    disabled: 0x100,
+    environment: false,
+    extension: null,
+    differs: null,
+  },
+  {
+    label: "ForceNoLinkInfo with an environment path",
+    disabled: 0x100,
+    environment: true,
+    extension: ".txt",
+    differs: false,
+  },
+  {
+    label: "DisableLinkPathTracking",
+    disabled: 0x100000,
+    environment: true,
+    extension: ".exe",
+    differs: true,
+  },
+])(
+  "excludes disabled target sources ($label)",
+  async ({ disabled, environment, extension, differs }) => {
+    const report = await parse(
+      windowsShortcutBytes({
+        flags:
+          LINK_FLAG.HasLinkInfo |
+          LINK_FLAG.HasIconLocation |
+          LINK_FLAG.IsUnicode |
+          (environment ? LINK_FLAG.HasExpString : 0) |
+          disabled,
+        idList: null,
+        linkInfo: { localBasePath: "C:\\Cached\\stale.exe", unicode: true },
+        iconLocation: "D:\\Active\\selected.txt",
+        extraData: environment
+          ? [{ kind: "environment", unicode: "D:\\Active\\selected.txt" }]
+          : [],
+      }),
+    );
+    expect(report.coverage.status).toBe("complete");
+    expect(report.link_info?.local_base_path_unicode).toBe(
+      "C:\\Cached\\stale.exe",
+    );
+    expect(report.observations).toContainEqual({
+      kind: "target_extension",
+      evidence_kind: "derived",
+      extension,
+    });
+    expect(iconDifference(report)).toBe(differs);
+  },
+);
+
 it("compares an icon with a target only in a shared or ASCII encoding", async () => {
   // Windows stores the LinkInfo path only as ANSI when the system code page can
   // represent it. 0xB9 0xA4 0xBE 0xDF is "工具" in code page 936; Latin1 differs.

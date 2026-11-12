@@ -24,6 +24,8 @@ const FILETIME_UNIX_EPOCH = 116444736000000000n;
 const UUID_UNIX_EPOCH = 0x01b21dd213814000n;
 const ENTRIES_PER_YIELD = 32;
 const VOLUME_UNICODE_LABEL_SELECTOR = 0x14;
+const FORCE_NO_LINK_INFO = 0x00000100;
+const DISABLE_LINK_PATH_TRACKING = 0x00100000;
 /** ECMAScript Date range: 8.64e15 ms either side of the Unix epoch. */
 const MAX_DATE_MS = 8_640_000_000_000_000n;
 
@@ -41,7 +43,7 @@ const LINK_FLAG_NAMES: ReadonlyArray<readonly [number, string]> = [
   [0x00000020, "HasArguments"],
   [0x00000040, "HasIconLocation"],
   [0x00000080, "IsUnicode"],
-  [0x00000100, "ForceNoLinkInfo"],
+  [FORCE_NO_LINK_INFO, "ForceNoLinkInfo"],
   [0x00000200, "HasExpString"],
   [0x00000400, "RunInSeparateProcess"],
   [0x00001000, "HasDarwinID"],
@@ -51,7 +53,7 @@ const LINK_FLAG_NAMES: ReadonlyArray<readonly [number, string]> = [
   [0x00020000, "RunWithShimLayer"],
   [0x00040000, "ForceNoLinkTrack"],
   [0x00080000, "EnableTargetMetadata"],
-  [0x00100000, "DisableLinkPathTracking"],
+  [DISABLE_LINK_PATH_TRACKING, "DisableLinkPathTracking"],
   [0x00200000, "DisableKnownFolderTracking"],
   [0x00400000, "DisableKnownFolderAlias"],
   [0x00800000, "AllowLinkToLink"],
@@ -378,13 +380,17 @@ const linkInfoTargets = (
 };
 
 const targetPaths = (report: {
+  readonly header: WindowsShortcut["header"];
   readonly link_info: WindowsShortcut["link_info"];
   readonly string_data: WindowsShortcut["string_data"];
   readonly id_list: WindowsShortcut["id_list"];
   readonly extra_data: WindowsShortcut["extra_data"];
 }): RecordedPath[] => {
+  const flags = report.header.link_flags.raw;
   const values: RecordedPath[] =
-    report.link_info === null ? [] : linkInfoTargets(report.link_info);
+    report.link_info === null || (flags & FORCE_NO_LINK_INFO) !== 0
+      ? []
+      : linkInfoTargets(report.link_info);
   const relative = report.string_data.relative_path;
   if (relative !== null)
     values.push(recorded(relative.value, relative.encoding === "ansi"));
@@ -398,6 +404,7 @@ const targetPaths = (report: {
         recorded(lastFile.short_name, (lastFile.type_byte & 0x04) === 0),
       );
   }
+  if ((flags & DISABLE_LINK_PATH_TRACKING) !== 0) return values;
   // A stored literal target, never expanded: `%VAR%` text stays as written.
   for (const block of report.extra_data.blocks) {
     if (block.decoded.kind !== "environment_variable") continue;
