@@ -3,6 +3,11 @@ import { expect, it } from "vitest";
 import { PeResourcesService } from "./PeResourcesService.js";
 import { PE_RESOURCES_PROVIDER } from "../../domain/investigationProviders.js";
 import { inspectPeResourcesInputSchema } from "../../domain/native/peResources.js";
+import {
+  BYTE_PRESERVING_CODE_PAGE,
+  DEFAULT_CODE_PAGE,
+  RESOURCE_CODE_PAGES,
+} from "../../domain/native/delphiForm.js";
 import { parsePeResources } from "../../native/pe/PeResourceParser.js";
 import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
 import { ok } from "../../domain/result.js";
@@ -25,6 +30,85 @@ const observedReport = () => {
   );
 };
 
+const validRoot = (location: { offset: number; bytes: number }) => ({
+  location,
+  flags: [],
+  child_position: null,
+  class_name: null,
+  component_name: null,
+  properties: [],
+  children: [],
+  unknown: null,
+});
+
+const codePageFields = (declared: number) => {
+  if (declared === 0)
+    return {
+      declared_code_page: 0,
+      code_page: DEFAULT_CODE_PAGE,
+      code_page_source: "default" as const,
+    };
+  const label = RESOURCE_CODE_PAGES[declared];
+  return label === undefined
+    ? {
+        declared_code_page: declared,
+        code_page: BYTE_PRESERVING_CODE_PAGE,
+        code_page_source: "unsupported" as const,
+      }
+    : {
+        declared_code_page: declared,
+        code_page: label,
+        code_page_source: "resource" as const,
+      };
+};
+
+const applySignatureVersionMismatch = (
+  report: Awaited<ReturnType<typeof observedReport>>,
+): void => {
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  // detectDelphiFormSignature defines a one-to-one pairing; TPF0 cannot
+  // carry boVersion1.
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion1",
+      signature_location: resource.payload.location,
+      prefix: null,
+      ...codePageFields(resource.code_page),
+      root: validRoot(resource.payload.location),
+    },
+  ];
+};
+
+const applyCodePageSourceMismatch = (
+  report: Awaited<ReturnType<typeof observedReport>>,
+): void => {
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  // 1252 is a supported page, so claiming the byte-preserving fallback
+  // misreports the provenance.
+  resource.code_page = 1252;
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: resource.payload.location,
+      prefix: null,
+      declared_code_page: 1252,
+      code_page: "latin1",
+      code_page_source: "unsupported",
+      root: validRoot(resource.payload.location),
+    },
+  ];
+};
+
 it.each([
   "different-path",
   "outside-range",
@@ -34,6 +118,7 @@ it.each([
   "form-signature-outside-payload",
   "form-code-page-mismatch",
   "form-code-page-source-mismatch",
+  "form-signature-version-mismatch",
   "form-value-outside-payload",
   "mismatched-directory-path",
   "outside-directory-entry",
@@ -62,7 +147,7 @@ it.each([
           code_page: "windows-1252",
           code_page_source:
             report.resources[2]!.code_page === 0 ? "resource" : "default",
-          root: null,
+          root: validRoot(report.resources[2]!.payload.location),
         },
       ];
     if (problem === "form-points-at-icon-resource")
@@ -77,7 +162,7 @@ it.each([
           declared_code_page: 0,
           code_page: "windows-1252",
           code_page_source: "default",
-          root: null,
+          root: validRoot({ offset: 0x400, bytes: 4 }),
         },
       ];
     if (problem === "form-signature-outside-payload")
@@ -95,31 +180,13 @@ it.each([
           declared_code_page: 0,
           code_page: "windows-1252",
           code_page_source: "default",
-          root: null,
+          root: validRoot(report.resources[2]!.payload.location),
         },
       ];
-    if (problem === "form-code-page-source-mismatch") {
-      const index = report.resources.findIndex(
-        (resource) => resource.type.kind === "id" && resource.type.id === 10,
-      );
-      const resource = report.resources[index]!;
-      // 1252 is a supported page, so claiming the byte-preserving fallback
-      // misreports the provenance.
-      resource.code_page = 1252;
-      report.delphi_forms = [
-        {
-          resource_index: index,
-          signature: "TPF0",
-          version: "boVersion0",
-          signature_location: resource.payload.location,
-          prefix: null,
-          declared_code_page: 1252,
-          code_page: "latin1",
-          code_page_source: "unsupported",
-          root: null,
-        },
-      ];
-    }
+    if (problem === "form-code-page-source-mismatch")
+      applyCodePageSourceMismatch(report);
+    if (problem === "form-signature-version-mismatch")
+      applySignatureVersionMismatch(report);
     if (problem === "form-value-outside-payload") {
       const index = report.resources.findIndex(
         (resource) => resource.type.kind === "id" && resource.type.id === 10,
@@ -191,9 +258,11 @@ it.each([
       identity: PE_RESOURCES_PROVIDER,
       inspect: () => Promise.resolve(ok(report)),
     });
-    expect(
-      await service.inspect({ path: "/fixtures/example.exe" }),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+    const outcome = await service.inspect({ path: "/fixtures/example.exe" });
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
   },
 );
 
@@ -216,8 +285,36 @@ it("rejects a non-default label for a zero declared code page", async () => {
       declared_code_page: 0,
       code_page: "utf-8",
       code_page_source: "default",
-      root: null,
+      root: validRoot(resource.payload.location),
     },
+  ];
+  const service = new PeResourcesService({
+    identity: PE_RESOURCES_PROVIDER,
+    inspect: () => Promise.resolve(ok(report)),
+  });
+  expect(
+    await service.inspect({ path: "/fixtures/example.exe" }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+});
+
+it("rejects a signature-bearing form without a root", async () => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: resource.payload.location,
+      prefix: null,
+      ...codePageFields(resource.code_page),
+      // A provider that reports a recognized signature without the explicit
+      // unknown root the decoder always produces.
+      root: null,
+    } as unknown as (typeof report.delphi_forms)[number],
   ];
   const service = new PeResourcesService({
     identity: PE_RESOURCES_PROVIDER,

@@ -44,7 +44,7 @@ export interface DelphiFormSignature {
 export interface DelphiFormDecode {
   readonly signature: DelphiFormSignature;
   readonly code_page: string;
-  readonly root: DelphiFormObject | null;
+  readonly root: DelphiFormObject;
 }
 
 /** Delphi `System.Classes.TValueType`, indexed by ordinal. */
@@ -909,7 +909,7 @@ export const decodeDelphiFormStream = (
     end,
     signature.location.offset + signature.location.bytes,
   );
-  let root: DelphiFormObject | null = null;
+  let root: DelphiFormObject;
   try {
     if (stream.remaining > 0) root = readObject(stream, budget, codePage, 0);
     else
@@ -931,7 +931,7 @@ export const decodeDelphiFormStream = (
       };
     // A suffix after the root terminator is part of the payload but nothing
     // decoded claims it; report it instead of presenting a complete decode.
-    if (root !== null && root.unknown === null && stream.remaining > 0)
+    if (root.unknown === null && stream.remaining > 0)
       root = {
         ...root,
         unknown: formUnknown(

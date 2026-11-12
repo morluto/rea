@@ -8,10 +8,12 @@ import {
 } from "../../domain/native/peResources.js";
 import {
   delphiBinary,
+  delphiBytes,
   delphiComponent,
   delphiForm,
   delphiFormFixture,
   delphiProperty,
+  delphiShortString,
 } from "./DelphiForm.fixture.js";
 import {
   hasPeResourceName,
@@ -241,9 +243,9 @@ describe("portable PE resource parsing", () => {
 });
 
 describe("Delphi forms inside PE resources", () => {
-  const formFixture = (codePage: number) => {
+  const formFixture = (codePage: number, payload = delphiFormFixture()) => {
     const fixture = peResourceFixture(false, [
-      { type: 10, name: 7, language: 1033, payload: delphiFormFixture() },
+      { type: 10, name: 7, language: 1033, payload },
     ]);
     fixture.bytes.writeUInt32LE(codePage, (fixture.dataOffsets[0] ?? 0) + 8);
     return fixture;
@@ -304,6 +306,32 @@ describe("Delphi forms inside PE resources", () => {
       code_page: "ibm866",
       code_page_source: "resource",
       declared_code_page: 866,
+    });
+  });
+
+  it("decodes gb18030 when the resource declares it", async () => {
+    const payload = delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty(
+          "Caption",
+          Buffer.concat([
+            delphiBytes(6),
+            delphiShortString(Buffer.from([0xc4, 0xe3])),
+          ]),
+        ),
+      ]),
+    );
+    const result = peResourcesSchema.parse(
+      await parse(formFixture(54936, payload).bytes),
+    );
+    expect(result.delphi_forms[0]).toMatchObject({
+      code_page: "gb18030",
+      code_page_source: "resource",
+      declared_code_page: 54936,
+    });
+    expect(result.delphi_forms[0]?.root.properties[0]?.value).toMatchObject({
+      kind: "string",
+      text: "\u4f60",
     });
   });
 

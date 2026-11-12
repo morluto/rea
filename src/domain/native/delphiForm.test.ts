@@ -1,7 +1,14 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
-import { delphiFormResourceSchema } from "./delphiForm.js";
+import { delphiFormResourceSchema, RESOURCE_CODE_PAGES } from "./delphiForm.js";
+
+describe("delphi form code pages", () => {
+  it("maps every table entry to a label the host can decode", () => {
+    for (const label of Object.values(RESOURCE_CODE_PAGES))
+      expect(() => new TextDecoder(label)).not.toThrow();
+  });
+});
 
 describe("delphi form advertised schema", () => {
   it("keeps known fields and discriminators machine-readable", () => {
@@ -78,7 +85,7 @@ describe("delphi form advertised schema", () => {
     const resource = {
       resource_index: 0,
       signature: "TPF0",
-      version: "boVersion1",
+      version: "boVersion0",
       signature_location: range,
       prefix: null,
       declared_code_page: 1252,

@@ -199,11 +199,12 @@ const validReport = (
         // source classification must agree with it, so published Evidence
         // cannot claim a declaration the artifact did not make.
         form.declared_code_page === resource.code_page &&
+        signatureMatchesVersion(form) &&
         codePageSourceMatches(form) &&
         within(form.signature_location) &&
         (form.prefix === null || within(form.prefix.location)) &&
-        (form.root === null ||
-          (within(form.root.location) && insideLocations(form.root, within)))
+        within(form.root.location) &&
+        insideLocations(form.root, within)
       );
     })
   );
@@ -228,6 +229,12 @@ const insideLocations = (
     ) && object.children.every((child) => insideLocations(child, within))
   );
 };
+
+/** The filer signature and the version it derives are a one-to-one pair. */
+const signatureMatchesVersion = (form: DelphiFormResource): boolean =>
+  form.signature === "TPF0"
+    ? form.version === "boVersion0"
+    : form.version === "boVersion1";
 
 /** The source classification and label must agree with the declared page. */
 const codePageSourceMatches = (form: DelphiFormResource): boolean => {
