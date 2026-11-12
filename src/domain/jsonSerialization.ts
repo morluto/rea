@@ -20,12 +20,13 @@ export const jsonStringCodeUnits = (value: string): number => {
 
 /**
  * C1 controls and the bidi format characters that `JSON.stringify` leaves
- * literal. A document written for a terminal reader must not carry them: they
+ * literal, plus a zero-width no-break space (U+FEFF) that reads as nothing on a
+ * terminal. A document written for a terminal reader must not carry them: they
  * can erase or reorder the text around a value the producer did not choose for
  * display, such as a feed-reported release version.
  */
 const TERMINAL_UNSAFE =
-  /[\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+  /[\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/gu;
 const escapeTerminalControls = (encoded: string): string =>
   encoded.replace(
     TERMINAL_UNSAFE,

@@ -148,6 +148,16 @@ describe("terminal JSON representation", () => {
     );
   });
 
+  it("escapes a zero-width no-break space a terminal renders as nothing", () => {
+    // `JSON.stringify` leaves U+FEFF literal, so a version like "2.1\uFEFF0"
+    // would read as "2.10" instead of the feed-reported source identity.
+    const value = { release: "2.1\uFEFF0" };
+    expect([...terminalJsonParts(value)].join("")).toBe(
+      '{"release":"2.1\\ufeff0"}',
+    );
+    expect([...jsonParts(value)].join("")).toBe('{"release":"2.1\uFEFF0"}');
+  });
+
   it("leaves ordinary JSON identical to the pipe representation", () => {
     const value = { name: "GOOGLE.EXE", count: 7, nested: ["a", null] };
     expect([...terminalJsonParts(value, true)].join("")).toBe(
