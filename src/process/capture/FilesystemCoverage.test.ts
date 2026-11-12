@@ -1,3 +1,4 @@
+import { createTestProcessCaptureResourceScope } from "../../../tests/fixtures/processCaptureResourceScope.js";
 import { requirePermissionDenial } from "../../../tests/fixtures/permissionDenial.js";
 import {
   chmod,
@@ -576,6 +577,7 @@ it("allocates the observer directory before baseline and excludes it before entr
       createTemporaryRoot: () => mkdtemp(join(root, "rea-process-")),
       cleanup: (path) => rm(path, { recursive: true, force: true }),
     },
+    createTestProcessCaptureResourceScope(),
   );
   try {
     const after = await snapshotRoots(scenario, undefined, prepared.before, {

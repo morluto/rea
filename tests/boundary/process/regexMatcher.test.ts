@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { expect, it } from "vitest";
 
-import { regexMatchingDeadlineRecovery } from "../../../src/config/regexMatchingDeadline.js";
+import { regexMatchingDeadlineContinuingRecovery } from "../../../src/config/regexMatchingDeadline.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE_MS,
   MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
@@ -476,7 +476,10 @@ it("stops a slow match at the configured deadline and names the setting", async 
     pending_restart: false,
   });
   expect(projected.remediation.action).toContain(
-    regexMatchingDeadlineRecovery({ deadlineMs: 100, source: "setting" }),
+    regexMatchingDeadlineContinuingRecovery({
+      deadlineMs: 100,
+      source: "setting",
+    }),
   );
   expect(matched.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
