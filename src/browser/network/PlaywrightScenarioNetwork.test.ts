@@ -257,35 +257,48 @@ it.each([
   },
 );
 
-it("reads and redacts marked gzip content its received size bounds", async () => {
-  const { collector, events, secrets } = harness({
-    request_body: false,
-    response_body: true,
-    header_values: false,
-  });
-  const request = new RequestFixture("marked");
-  const body = '{"token":"secret-token"}';
-  request.responseSize = 20;
-  const response = new ResponseFixture(request, body);
-  vi.spyOn(response, "headers").mockReturnValue({
-    "content-type": "application/json",
-    "content-encoding": "gzip",
-  });
-  secrets.responseProtector("login", [
-    { name: "token", json_pointer: "/token", secret: true },
-  ])?.(request);
-  collector.request(request);
-  collector.response(response);
-  collector.finished(request);
-  await collector.finish();
-  const content = events.find(
-    (event) => event.kind === "network-content" && event.phase === "response",
-  );
-  expect(content).toBeDefined();
-  const text = bodyText(content!);
-  expect(text).not.toContain("secret-token");
-  expect(text).toContain("[REDACTED:page:login.token]");
-});
+it.each([
+  { size: 20, headers: { "content-encoding": "gzip" } },
+  { size: 0, headers: { "content-length": "24" } },
+  { size: 0, headers: { "content-length": "0024" } },
+  { size: 0, headers: { "content-length": "00000000000000000024" } },
+  {
+    size: 0,
+    headers: { "content-encoding": "gzip", "content-length": "0024" },
+  },
+])(
+  "reads and redacts marked content within its decoded bound: %j",
+  async (bounds) => {
+    const { collector, events, secrets } = harness({
+      request_body: false,
+      response_body: true,
+      header_values: false,
+    });
+    const request = new RequestFixture("marked");
+    const body = '{"token":"secret-token"}';
+    request.responseSize = bounds.size;
+    const response = new ResponseFixture(request, body);
+    vi.spyOn(response, "headers").mockReturnValue({
+      "content-type": "application/json",
+      ...bounds.headers,
+    });
+    secrets.responseProtector("login", [
+      { name: "token", json_pointer: "/token", secret: true },
+    ])?.(request);
+    collector.request(request);
+    collector.response(response);
+    collector.finished(request);
+    await collector.finish();
+    const content = events.find(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    );
+    expect(content).toBeDefined();
+    const text = bodyText(content!);
+    expect(text).not.toContain("secret-token");
+    expect(text).toContain("[REDACTED:page:login.token]");
+    expect(response.bodyReads).toBe(1);
+  },
+);
 
 it("preserves unselected source spellings while redacting escaped aliases", async () => {
   const { collector, events, secrets } = harness({
@@ -347,22 +360,28 @@ it("associates sensitive fields by request identity while keeping same-URL unmar
   );
 });
 
-it.each(["br", "cache"])(
-  "withholds marked response content when decoded bounds are unknown: %s",
-  async (kind) => {
+it.each([
+  { size: 64, headers: { "content-encoding": "br" } },
+  { size: 0, headers: {} },
+  { size: 0, headers: { "content-length": "0000" } },
+  { size: 0, headers: { "content-length": "24, 24" } },
+  { size: 0, headers: { "content-length": "0009007199254740993" } },
+  { size: 0, headers: { "content-length": "00012000001" } },
+])(
+  "withholds marked response content when decoded bounds are unknown or over budget: %j",
+  async (bounds) => {
     const { collector, events, secrets } = harness();
     const request = new RequestFixture("marked");
-    if (kind === "cache") request.responseSize = 0;
+    request.responseSize = bounds.size;
     const secret = "private-source-token";
     const response = new ResponseFixture(
       request,
       JSON.stringify({ token: secret }),
     );
-    if (kind === "br")
-      vi.spyOn(response, "headers").mockReturnValue({
-        "content-type": "application/json",
-        "content-encoding": "br",
-      });
+    vi.spyOn(response, "headers").mockReturnValue({
+      "content-type": "application/json",
+      ...bounds.headers,
+    });
     secrets.responseProtector("login", [
       { name: "token", json_pointer: "/token", secret: true },
     ])?.(request);
