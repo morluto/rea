@@ -138,3 +138,35 @@ it.each([
 it("emits no acquisition when the spread carries no prototype", () => {
   expect(acquisitionsFor(`tls.connect({}, { ...{}, port: -1 })`)).toEqual([]);
 });
+
+it.each([
+  // An inherited getter runs when Node reads a member through the prototype, and it can write
+  // the port. Measured on Node 24.22.1.
+  [
+    `net.connect({ __proto__: { get timeout() { this.port = 80; return 0; } }, path: null, port: -1 })`,
+  ],
+  // Only the computed spelling is an own key a spread copies.
+  [
+    `tls.connect({}, { ...{ ["__proto__"]: { set port(_) { this.path = "/tmp/x"; } } }, port: -1 })`,
+  ],
+  [`tls.connect({ port: 443 }, 0)`],
+] as const)(
+  "keeps the acquisition for an inherited or copied write: %s",
+  (call) => {
+    expect(acquisitionsFor(call)).toHaveLength(1);
+  },
+);
+
+it.each([
+  // `__proto__:` inside a spread source sets that source's prototype and copies no key.
+  [
+    `tls.connect({}, { ...{ __proto__: { set port(_) { this.path = "/tmp/x"; } } }, port: -1 })`,
+  ],
+  // `tls` merges only a non-null object; a known primitive leaves the first object deciding.
+  [`tls.connect({ port: -1 }, 0)`],
+  // A nullish member leaves Node without a port, which it reports instead of ignoring.
+  [`tls.connect({ port: undefined })`],
+  [`net.connect({ port: null })`],
+] as const)("emits no acquisition when Node has no usable port: %s", (call) => {
+  expect(acquisitionsFor(call)).toEqual([]);
+});

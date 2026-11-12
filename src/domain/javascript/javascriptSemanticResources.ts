@@ -896,7 +896,11 @@ const rejectsSocketOptionsPort = (
     value.properties.some(
       (property) => t.isObjectMethod(property) && property.kind === "get",
     );
-  if (accessorDecides(options)) return false;
+  // An inherited getter runs when Node reads a member through the prototype, and it can write
+  // the port: measured on Node 24.22.1,
+  // `net.connect({__proto__: {get timeout() { this.port = 80; return 0; }}, path: null,
+  // port: -1})` connects. A literal that installs a prototype is undecided for that reason.
+  if (accessorDecides(options) || installsPrototype(options)) return false;
   const second = node.arguments[1];
   if (
     specifier === "tls" &&
@@ -904,9 +908,12 @@ const rejectsSocketOptionsPort = (
     !t.isSpreadElement(second)
   ) {
     const secondValue = unwrapJavaScriptExpression(second).node;
-    // A listener is not merged. Anything else may be an options object:
-    // `const override = {port: 443}; tls.connect({port: -1}, override)` connects.
-    if (
+    // `tls` merges a non-null object and ignores everything else, including a known primitive.
+    // Measured on Node 24.22.1, `tls.connect({port: -1}, 0)` and `tls.connect({port: -1}, "x")`
+    // both throw `ERR_SOCKET_BAD_PORT`, and `tls.connect({port: 443}, 0)` connects.
+    if (isKnownNonObject(secondValue, context)) {
+      // Nothing is merged, so the first object decides below.
+    } else if (
       !t.isObjectExpression(secondValue) &&
       !t.isArrowFunctionExpression(secondValue) &&
       !t.isFunctionExpression(secondValue) &&
@@ -914,7 +921,10 @@ const rejectsSocketOptionsPort = (
       !isUnmodifiedGlobalReference(secondValue, context.state, "undefined")
     )
       return false;
-    if (t.isObjectExpression(secondValue)) {
+    if (
+      t.isObjectExpression(secondValue) &&
+      !isKnownNonObject(secondValue, context)
+    ) {
       // The later object replaces a member it writes, so its own `port` is the effective
       // one. `Object.assign` reads that object, so only its getters run, and an own
       // `__proto__` installs a prototype on the target whose setters then fire.
@@ -1004,8 +1014,41 @@ const rejectsPortMember = (
       : !usablePortText(cooked);
   }
   if (rejectsNonScalarPort(written)) return true;
+  // A nullish member leaves Node without a port, which it reports rather than ignoring.
+  // Measured on Node 24.22.1, `tls.connect({port: undefined})` and `net.connect({port: null})`
+  // both throw. The exemption in `rejectsPortValueNode` covers the positional slot, where a
+  // nullish value means "not given" and Node falls back to its default.
+  if (
+    isNullishJavaScriptSyntax(written) ||
+    isUnmodifiedGlobalReference(written, context.state, "undefined")
+  )
+    return true;
   return rejectsPortValueNode(written, specifier, context);
 };
+
+/** Whether an object literal copies an own `__proto__` key rather than setting its own prototype. */
+const copiesPrototypeKey = (options: t.ObjectExpression): boolean =>
+  options.properties.some(
+    (property) =>
+      !t.isSpreadElement(property) &&
+      property.computed &&
+      semanticStaticPropertyKey(property.key, property.computed) ===
+        "__proto__",
+  );
+
+/** Whether a value is a literal that `tls` provably does not merge. */
+const isKnownNonObject = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+): boolean =>
+  // Only scalars. An object literal is exactly what `tls` merges, so it must not land here.
+  t.isNumericLiteral(value) ||
+  t.isStringLiteral(value) ||
+  t.isBooleanLiteral(value) ||
+  t.isBigIntLiteral(value) ||
+  t.isNullLiteral(value) ||
+  (t.isTemplateLiteral(value) && value.expressions.length === 0) ||
+  isUnmodifiedGlobalReference(value, context.state, "undefined");
 
 /**
  * Whether copying this object onto a merge target replaces the target's prototype.
@@ -1022,7 +1065,11 @@ const installsPrototype = (options: t.ObjectExpression): boolean =>
   options.properties.some((property) => {
     if (t.isSpreadElement(property)) {
       const spread = unwrapJavaScriptExpression(property.argument).node;
-      return t.isObjectExpression(spread) && installsPrototype(spread);
+      // Inside a spread source only the computed spelling is an own key. Measured on Node
+      // 24.22.1, `{...{__proto__: {set port(_) { this.path = "/tmp/x"; }}}}` copies nothing and
+      // `tls.connect({}, {...}, port: -1)` throws `ERR_SOCKET_BAD_PORT`, while the computed
+      // `["__proto__"]` spelling does install the prototype.
+      return t.isObjectExpression(spread) && copiesPrototypeKey(spread);
     }
     return (
       semanticStaticPropertyKey(property.key, property.computed) === "__proto__"
