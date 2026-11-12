@@ -354,20 +354,24 @@ const LIMITATIONS = [
   "Callchains, sampled instruction addresses, module build identities and symbol names are absent; resolved functions require a later step.",
 ];
 
-const emptyRecording = (
+/**
+ * A recording whose magic was not found: the byte order, header extent and
+ * stride were never observed, so each stays unknown instead of naming the
+ * layout the caller happened to expect.
+ */
+const noHeaderRecording = (
   artifact: PerfDataArtifact,
   diagnostics: Diagnostic[],
-  byteOrder: "little-endian" | "big-endian",
 ): PerfData => ({
   recording_id: digest("perf_data", artifact.sha256),
   format: "perf-data",
   artifact,
   file_header: {
     magic: "PERFILE2",
-    byte_order: byteOrder,
-    header_bytes: 0,
-    attribute_bytes: 0,
-    feature_bitmap: "absent",
+    byte_order: null,
+    header_bytes: null,
+    attribute_bytes: null,
+    feature_bitmap: null,
   },
   attribute_section: INERT_SECTION,
   data_section: INERT_SECTION,
@@ -381,6 +385,26 @@ const emptyRecording = (
   },
   source_coverage: coverage(false),
   limitations: LIMITATIONS,
+});
+
+/**
+ * A recording whose header was read but whose sections were not walked: the
+ * magic and byte order are kept, and the extents are stated as 0 because this
+ * inventory published no attribute or data section from them.
+ */
+const emptyRecording = (
+  artifact: PerfDataArtifact,
+  diagnostics: Diagnostic[],
+  byteOrder: "little-endian" | "big-endian",
+): PerfData => ({
+  ...noHeaderRecording(artifact, diagnostics),
+  file_header: {
+    magic: "PERFILE2",
+    byte_order: byteOrder,
+    header_bytes: 0,
+    attribute_bytes: 0,
+    feature_bitmap: "absent",
+  },
 });
 
 /**
@@ -441,7 +465,7 @@ export const parsePerfData = (
       "not-a-perf-data-file",
       "The file does not start with the PERFILE2 magic in either byte order.",
     );
-    return ok(emptyRecording(artifact, state.diagnostics, "little-endian"));
+    return ok(noHeaderRecording(artifact, state.diagnostics));
   }
   const read = readerFor(little);
   const order = little ? "little-endian" : "big-endian";

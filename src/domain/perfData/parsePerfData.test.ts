@@ -123,6 +123,15 @@ describe("parsePerfData rejection diagnostics", () => {
       expect.objectContaining({ code: "not-a-perf-data-file" }),
     ]);
     expect(archive.source_coverage.status).toBe("partial");
+    // The spec requires a null header for a non-perf file: nothing about the
+    // byte order, extents or feature bitmap was observed, so none is published.
+    expect(archive.file_header).toEqual({
+      magic: "PERFILE2",
+      byte_order: null,
+      header_bytes: null,
+      attribute_bytes: null,
+      feature_bitmap: null,
+    });
   });
 
   it("reports a header shorter than the fixed layout", () => {

@@ -92,18 +92,23 @@ export const perfDataSchema = z.strictObject({
   recording_id: prefixedDigestSchema("perf_data"),
   format: z.literal("perf-data"),
   artifact: perfDataArtifactSchema,
+  /**
+   * The facts the file's own header states. A file that is not a perf recording
+   * observed none of them, so each is null rather than naming the layout the
+   * caller happened to expect.
+   */
   file_header: z.strictObject({
     magic: z.literal("PERFILE2"),
-    byte_order: z.enum(["little-endian", "big-endian"]),
+    byte_order: z.enum(["little-endian", "big-endian"]).nullable(),
     /** Header extent the file states in its own `size` field. */
-    header_bytes: z.int().nonnegative(),
+    header_bytes: z.int().nonnegative().nullable(),
     /**
      * Per-attribute entry stride the writer used (`attr_size`); null when the
      * recorded value exceeds Number.MAX_SAFE_INTEGER and cannot be represented.
      */
     attribute_bytes: z.int().nonnegative().nullable(),
-    /** Whether this file states the feature bitmap the newest writers append. */
-    feature_bitmap: z.literal("present").or(z.literal("absent")),
+    /** Whether this file states the feature bitmap the newest writers append; null when the header was not read. */
+    feature_bitmap: z.literal("present").or(z.literal("absent")).nullable(),
   }),
   /** Event attribute region, as the file header states it. */
   attribute_section: perfFileSectionSchema,
