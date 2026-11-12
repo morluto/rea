@@ -11,6 +11,7 @@ import {
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
   machoArchitectureName,
+  machoKnownArm32Subtype,
   machoKnownArm64Subtype,
   machoKnownX86_64Subtype,
 } from "../../domain/apple/machoCpuIdentity.js";
@@ -197,6 +198,15 @@ const architectureRelation = (
 ): "match" | "mismatch" | "unknown" => {
   const left = ARCH_ALIASES.get(comparableArch(recorded));
   if (left === undefined) return "unknown";
+  if (slice.cpuType === 12) {
+    const right = machoKnownArm32Subtype(slice.cpuSubtype);
+    const arm32 = ["arm", "armv7", "armv7s"].includes(left);
+    if (!arm32) return "mismatch";
+    if (right === undefined) return "unknown";
+    // A generic ARM report keeps its family meaning; explicit subtypes must
+    // agree with byte-header identity rather than the shared "arm" display.
+    return left === "arm" || left === right ? "match" : "mismatch";
+  }
   if (
     slice.cpuType === 0x0100000c &&
     machoKnownArm64Subtype(slice.cpuSubtype) === undefined
