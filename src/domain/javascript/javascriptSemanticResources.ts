@@ -37,6 +37,7 @@ import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
 import {
   builtinDataEffectIdentity,
@@ -507,27 +508,52 @@ const releaseMethodMayHaveChanged = (
         state.parentsByNode,
       )
     );
+  const targetsAcquisition = (
+    effect: JavaScriptSemanticMemberEffect,
+  ): boolean => {
+    const capture = effect.receiverAt ?? effect.node;
+    if (capture === undefined) return true;
+    const selected = semanticBindingAtRead(binding, capture, state);
+    if (selected.status !== "ordered") return true;
+    // Empty incoming values cannot be the fresh acquisition selected later.
+    // Keep ambiguous aliases and projections unless the owner excludes them.
+    return [
+      ...selected.binding.initializers,
+      ...selected.binding.referenceInitializers,
+    ].some(
+      ({ node, projection }) =>
+        projection.length > 0 ||
+        !binding.initializers.some((source) => source.node === node) ||
+        acquisitions.has(resourceInitializer(node).value),
+    );
+  };
   return (
     // A const binding still exposes mutable receiver properties to direct eval.
     [...semanticOpaqueBindingEffects(binding, state, "reference")].some(
       mayPrecede,
     ) ||
-    binding.memberWrites.some(
-      ({ path, node }) =>
+    binding.memberWrites.some((effect) => {
+      const { path, node } = effect;
+      return (
+        targetsAcquisition(effect) &&
         (path.length === 0 ||
           (path.length === 1 &&
             semanticPropertyPathKeyMatches(path[0]!, method)) ||
           prototype(path[0]!)) &&
-        mayPrecede(node),
-    ) ||
-    binding.escapedPaths.some(
-      ({ path, node }) =>
-        // Passing the function itself cannot replace its native [[Call]].
+        mayPrecede(node)
+      );
+    }) ||
+    binding.escapedPaths.some((effect) => {
+      const { path, node } = effect;
+      // Passing the function itself cannot replace its native [[Call]].
+      return (
+        targetsAcquisition(effect) &&
         (path.length === 0 || prototype(path[0]!)) &&
         // This invocation receives the receiver after selecting its method.
         node !== state.parentsByNode.get(read) &&
-        mayPrecede(node),
-    )
+        mayPrecede(node)
+      );
+    })
   );
 };
 

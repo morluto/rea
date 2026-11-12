@@ -1345,14 +1345,18 @@ export function* collectSemanticMemberMutationsSteps(
           // Stored receiver projections preserve their raw capture authority.
           // Initializer origins retain the normalized mutation traversal below.
           retainsInitializers = receiver?.retainsOrigin !== false;
+          // A direct receiver keeps its alias capture. Projected receivers
+          // select their child at the member read, after capturing the root.
+          const receiverAt =
+            current.path.length > 1
+              ? (current.memberReadAt ?? current.originAt)
+              : current.originAt;
           if (effect === "escape")
             recordBindingEffect(binding.escapedPaths, {
               path,
               node: mutation,
               receiverInitializers,
-              ...(current.originAt === undefined
-                ? {}
-                : { receiverAt: current.memberReadAt ?? current.originAt }),
+              ...(receiverAt === undefined ? {} : { receiverAt }),
             });
           else
             recordBindingEffect(binding.memberWrites, {
@@ -1360,9 +1364,7 @@ export function* collectSemanticMemberMutationsSteps(
               path,
               node: mutation,
               receiverInitializers,
-              ...(current.originAt === undefined
-                ? {}
-                : { receiverAt: current.memberReadAt ?? current.originAt }),
+              ...(receiverAt === undefined ? {} : { receiverAt }),
               ...(assignedSources === undefined ? {} : { assignedSources }),
             });
           clearSemanticValueCaches(state);

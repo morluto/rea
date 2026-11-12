@@ -195,3 +195,30 @@ it("retains prior mutations and persistent receiver effects", () => {
   `).map(({ resolution }) => resolution),
   ).toEqual(["partial", "partial"]);
 });
+
+it.each([
+  'stream.close=()=>{}; stream=createReadStream("new");',
+  'decorate(stream); stream=createReadStream("new");',
+  'const old=stream; old.close=()=>{}; stream=createReadStream("new");',
+  'const old=stream; stream=createReadStream("new"); old.close=()=>{};',
+])(
+  "does not transfer an incoming receiver effect to its replacement: %s",
+  (body) => {
+    expect(
+      releases(
+        `import {createReadStream} from "node:fs"; function run(stream) {${body} stream.close();}`,
+      ),
+    ).toMatchObject([{ resolution: "complete" }]);
+  },
+);
+
+it.each([
+  'stream.close=()=>{}; if (flag) stream=createReadStream("new");',
+  'stream=createReadStream("new"); const alias=stream; alias.close=()=>{};',
+])("keeps effects on a possible current receiver: %s", (body) => {
+  expect(
+    releases(
+      `import {createReadStream} from "node:fs"; function run(stream) {${body} stream.close();}`,
+    ),
+  ).toMatchObject([{ resolution: "partial" }]);
+});
