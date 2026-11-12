@@ -10,6 +10,7 @@ import {
 } from "../../domain/apple/machoSegmentHeader.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
+  machoArchitectureFamily,
   machoArchitectureName,
   machoKnownArm64Subtype,
   machoKnownX86_64Subtype,
@@ -212,7 +213,7 @@ const architectureRelation = (
   const right = ARCH_ALIASES.get(comparableArch(slice.arch));
   return right === undefined
     ? "unknown"
-    : left === right
+    : machoArchitectureFamily(left) === machoArchitectureFamily(right)
       ? "match"
       : "mismatch";
 };
