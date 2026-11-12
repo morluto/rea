@@ -20,20 +20,30 @@ export const nulFreeStringSchema = z
  * A selected local filesystem path: nonempty, NUL-free, and representable
  * without replacement.
  *
- * The well-formed-Unicode rule is a `.refine`, not a `.regex`. The surrogate
- * block sits above `\xFF`, so it has no two-digit `\x` spelling: advertising it
- * needs a `\uXXXX` escape, which RE2 and Rust validators do not accept. One
+ * The well-formed-Unicode rule cannot be advertised. The surrogate block sits
+ * above `\xFF`, so it has no two-digit `\x` spelling: a JSON Schema `pattern`
+ * would need a `\uXXXX` escape, which RE2 and Rust validators reject. One
  * pattern that cannot compile refuses the complete tools request rather than
  * the affected call, so the rule stays runtime-only and the advertised schema
  * keeps just the `\x00` pattern. `canonicalBase64Schema` splits its grammar at
  * the same boundary.
+ *
+ * The check is a `.superRefine` rather than a `.refine` because it must raise
+ * `invalid_format`, the code `.regex` emitted before this rule stopped being
+ * advertised. Callers distinguish that code from `invalid_value`; see
+ * `tests/boundary/cli/cliDomainFieldSchema.test.ts`.
  */
 export const localPathStringSchema = nulFreeStringSchema
   .min(1)
-  .refine(
-    (value) => !/[\uD800-\uDFFF]/u.test(value),
-    "Local filesystem paths must contain well-formed Unicode",
-  );
+  .superRefine((value, context) => {
+    if (!/[\uD800-\uDFFF]/u.test(value)) return;
+    context.addIssue({
+      code: "invalid_format",
+      format: "regex",
+      message: "Local filesystem paths must contain well-formed Unicode",
+      input: value,
+    });
+  });
 
 /**
  * A Windows absolute path: rooted, UNC, or drive-qualified. The classes spell
