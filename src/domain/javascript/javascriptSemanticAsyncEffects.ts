@@ -20,7 +20,10 @@ import {
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
-import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import {
+  semanticOpaqueGlobalMayHaveChanged,
+  semanticOpaqueNameMayHaveChanged,
+} from "./javascriptSemanticOpaqueEffects.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   builtinDataEffectIdentity,
@@ -402,7 +405,8 @@ const schedulesWithInvalidDelay = (
     t.isIdentifier(value.callee) &&
     ["BigInt", "Symbol"].includes(value.callee.name) &&
     isUnmodifiedGlobalReference(value.callee, state, value.callee.name) &&
-    !semanticOpaqueNameMayHaveChanged(value.callee, state)
+    !semanticOpaqueNameMayHaveChanged(value.callee, state) &&
+    !semanticOpaqueGlobalMayHaveChanged(value.callee, state)
   );
 };
 
