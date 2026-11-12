@@ -43,12 +43,17 @@ it("rejects carrier mutation between physical member reads", async () => {
         changed = true;
         const writer = await open(path, "r+");
         try {
+          const before = await writer.stat();
           await writer.write(
             Buffer.alloc(65536, 0x42),
             0,
             65536,
             start + 65536,
           );
+          // The in-place write keeps the carrier size, and filesystems with
+          // coarse timestamps can leave mtime unchanged within one tick. Move
+          // mtime so the mutation is observable independently of granularity.
+          await writer.utimes(before.atime, new Date(before.mtimeMs + 1000));
         } finally {
           await writer.close();
         }
