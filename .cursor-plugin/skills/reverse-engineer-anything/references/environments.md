@@ -1,5 +1,13 @@
 # Agent environments from a live application
 
+Read only the sections needed for the selected task.
+
+- [Before recording](#before-recording)
+- [Record a session an environment can learn writes from](#record-a-session-an-environment-can-learn-writes-from)
+- [Check coverage](#check-coverage)
+- [Export and hand off](#export-and-hand-off)
+- [Tasks for a desktop application environment](#tasks-for-a-desktop-application-environment)
+
 Use this when the user asks for an agent environment (an AgentEnv bundle) of a
 web application: a folder `agent-env` deploys, whose MCP tools answer from what
 one recording of the application observed and serve the writes that recording
