@@ -406,7 +406,15 @@ export const prefetchMetadataSchema = z.strictObject({
   version: z.enum(["17", "23"]),
   file_bytes: prefetchFileBytesSchema,
   declared_file_bytes: uint32,
-  executable_name: z.string().nullable(),
+  // Bound to what the reader emits: a NUL-terminated UTF-16LE name inside the
+  // 60-byte header field, so 1-30 code units and no embedded NUL. A malformed or
+  // external value cannot become a valid forensic identity.
+  executable_name: z
+    .string()
+    .min(1)
+    .max(30)
+    .refine((name) => !name.includes("\u0000"))
+    .nullable(),
   // A successful parse always holds the complete 84-byte header, so the hash
   // word is reachable and renders as eight hex digits, zero included.
   executable_path_hash: z.string().regex(/^[0-9a-f]{8}$/u),

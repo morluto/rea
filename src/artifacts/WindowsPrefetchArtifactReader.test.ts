@@ -321,6 +321,34 @@ it("rejects a name hash that is not eight lowercase hex digits", async () => {
     ).toThrow();
 });
 
+it("bounds the executable name to what the header field holds", async () => {
+  // `utf16Name()` reads at most 30 UTF-16 code units and stops at the first
+  // NUL, so an empty, NUL-bearing or over-long name is impossible Evidence.
+  const facts = {
+    kind: "windows-prefetch",
+    version: "23",
+    file_bytes: 84,
+    declared_file_bytes: 0,
+    executable_name: "GOOGLE.EXE",
+    executable_path_hash: "1a2b3c4d",
+    run_count: null,
+    run_time_slots: null,
+  } as const;
+  expect(prefetchMetadataSchema.parse(facts)).toMatchObject({
+    executable_name: "GOOGLE.EXE",
+  });
+  expect(
+    prefetchMetadataSchema.parse({ ...facts, executable_name: null }),
+  ).toMatchObject({ executable_name: null });
+  expect(
+    prefetchMetadataSchema.parse({ ...facts, executable_name: "A".repeat(30) }),
+  ).toMatchObject({ executable_name: "A".repeat(30) });
+  for (const invalid of ["", "GOOGLE\u0000.EXE", "A".repeat(31)])
+    expect(() =>
+      prefetchMetadataSchema.parse({ ...facts, executable_name: invalid }),
+    ).toThrow();
+});
+
 it("retries a shared preparation cancelled by another traversal", async () => {
   const reader = await readerFor(prefetchFixture({ version: "23" }));
   const controller = new AbortController();
