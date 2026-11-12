@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { accessSync, constants, realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +17,13 @@ const provableRoot = (() => {
   for (const candidate of [tmpdir(), "/tmp"]) {
     try {
       const resolved = realpathSync(candidate);
-      if (!/[_"\\]/u.test(resolved)) return resolved;
+      // Both the spelling and its canonical form have to survive the Inspector URL rewrite;
+      // a safe alias over an unsafe target still produces an encoded URL.
+      if (/[_"\\]/u.test(candidate) || /[_"\\]/u.test(resolved)) continue;
+      // A safe spelling is not enough: these cases create directories under this root, and a
+      // read-only mount would pass the spelling test and then fail every `mkdtemp`.
+      accessSync(resolved, constants.W_OK);
+      return candidate;
     } catch {
       // Try the next candidate.
     }
@@ -25,7 +31,14 @@ const provableRoot = (() => {
   return undefined;
 })();
 
-const cancellationCase =
+/**
+ * Cancellation cases that create a temporary target file.
+ *
+ * They need a root whose canonical spelling carries no character the Inspector URL rewrites, so
+ * the target is expressible. The Electron cases below reach the same code paths without a target
+ * file and run everywhere.
+ */
+const targetFileCase =
   process.platform !== "win32" && provableRoot === undefined ? it.skip : it;
 
 const fileAccess = vi.hoisted(() => ({
@@ -140,7 +153,7 @@ const targetFile = async (): Promise<string> => {
   return path;
 };
 
-cancellationCase(
+targetFileCase(
   "stops Inspector target authorization after the current stat settles",
   async () => {
     const path = await targetFile();
@@ -188,143 +201,134 @@ cancellationCase(
   },
 );
 
-cancellationCase(
-  "stops Electron target authorization after the current stat settles",
-  async () => {
-    const path = await targetFile();
-    const fake = await startFakeCdpBrowser({
-      electronFileUrl: pathToFileURL(path).href,
-      additionalElectronPageCount: 2,
+it("stops Electron target authorization after the current stat settles", async () => {
+  const path = await targetFile();
+  const fake = await startFakeCdpBrowser({
+    electronFileUrl: pathToFileURL(path).href,
+    additionalElectronPageCount: 2,
+  });
+  fixtures.push(fake);
+  const controller = new AbortController();
+  const reason = new Error("cancel after Electron target stat");
+  fileAccess.reason = reason;
+  fileAccess.controller = controller;
+  fileAccess.abortOnStatCall = 1;
+
+  const result = await new CdpElectronProvider().listTargets(
+    listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
+    { signal: controller.signal },
+  );
+
+  if (result.ok) throw new Error("Expected Electron listing cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(result.error.diagnostics).toMatchObject({
+    completed_prefix: {
+      coverage: expect.stringMatching(
+        /partial.*authorization stopped.*targets are unknown/iu,
+      ),
+    },
+  });
+  const prefix = record(record(result.error.diagnostics)?.completed_prefix);
+  const examined = prefix?.examined_targets;
+  const discovered = prefix?.discovered_targets;
+  expect(typeof examined).toBe("number");
+  expect(typeof discovered).toBe("number");
+  if (typeof examined !== "number" || typeof discovered !== "number")
+    throw new Error("Expected target-prefix coverage diagnostics");
+  expect(examined).toBeGreaterThan(0);
+  expect(discovered).toBeGreaterThan(examined);
+  expect(fileAccess.calls).toEqual(["stat"]);
+});
+
+it("retains a target whose authorization completes before the next abort check", async () => {
+  const path = await targetFile();
+  const fake = await startFakeCdpBrowser({
+    electronFileUrl: pathToFileURL(path).href,
+    additionalElectronPageCount: 2,
+  });
+  fixtures.push(fake);
+  const controller = new AbortController();
+  const reason = new Error("cancel after complete target authorization");
+  fileAccess.afterAuthorization = () => controller.abort(reason);
+
+  const result = await new CdpElectronProvider().listTargets(
+    listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
+    { signal: controller.signal },
+  );
+
+  if (result.ok) throw new Error("Expected Electron listing cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  const prefix = record(record(result.error.diagnostics)?.completed_prefix);
+  const allowed = prefix?.allowed_targets;
+  expect(Array.isArray(allowed)).toBe(true);
+  if (!Array.isArray(allowed))
+    throw new Error("Expected completed target authorization fact");
+  expect(allowed).toHaveLength(1);
+  expect(fileAccess.afterAuthorization).toBeUndefined();
+});
+
+it("drains pending Electron discovery before shutdown cleanup completes", async () => {
+  const path = await targetFile();
+  const fake = await startFakeCdpBrowser({
+    electronFileUrl: pathToFileURL(path).href,
+  });
+  fixtures.push(fake);
+  let markStarted: () => void = () => undefined;
+  let releaseDiscovery: () => void = () => undefined;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const discoveryWait = new Promise<void>((resolve) => {
+    releaseDiscovery = resolve;
+  });
+  fileAccess.discoveryGate = { started: markStarted, wait: discoveryWait };
+
+  const provider = new CdpElectronProvider();
+  const listing = provider.listTargets(
+    listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
+  );
+  let closed = false;
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(started, listing, "Electron discovery");
+    closing = provider.close().then(() => {
+      closed = true;
     });
-    fixtures.push(fake);
-    const controller = new AbortController();
-    const reason = new Error("cancel after Electron target stat");
-    fileAccess.reason = reason;
-    fileAccess.controller = controller;
-    fileAccess.abortOnStatCall = 1;
-
-    const result = await new CdpElectronProvider().listTargets(
-      listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
-      { signal: controller.signal },
-    );
-
-    if (result.ok) throw new Error("Expected Electron listing cancellation");
-    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-    expect(result.error.cause).toBe(reason);
-    expect(result.error.diagnostics).toMatchObject({
-      completed_prefix: {
-        coverage: expect.stringMatching(
-          /partial.*authorization stopped.*targets are unknown/iu,
-        ),
-      },
-    });
-    const prefix = record(record(result.error.diagnostics)?.completed_prefix);
-    const examined = prefix?.examined_targets;
-    const discovered = prefix?.discovered_targets;
-    expect(typeof examined).toBe("number");
-    expect(typeof discovered).toBe("number");
-    if (typeof examined !== "number" || typeof discovered !== "number")
-      throw new Error("Expected target-prefix coverage diagnostics");
-    expect(examined).toBeGreaterThan(0);
-    expect(discovered).toBeGreaterThan(examined);
-    expect(fileAccess.calls).toEqual(["stat"]);
-  },
-);
-
-cancellationCase(
-  "retains a target whose authorization completes before the next abort check",
-  async () => {
-    const path = await targetFile();
-    const fake = await startFakeCdpBrowser({
-      electronFileUrl: pathToFileURL(path).href,
-      additionalElectronPageCount: 2,
-    });
-    fixtures.push(fake);
-    const controller = new AbortController();
-    const reason = new Error("cancel after complete target authorization");
-    fileAccess.afterAuthorization = () => controller.abort(reason);
-
-    const result = await new CdpElectronProvider().listTargets(
-      listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
-      { signal: controller.signal },
-    );
-
-    if (result.ok) throw new Error("Expected Electron listing cancellation");
-    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-    expect(result.error.cause).toBe(reason);
-    const prefix = record(record(result.error.diagnostics)?.completed_prefix);
-    const allowed = prefix?.allowed_targets;
-    expect(Array.isArray(allowed)).toBe(true);
-    if (!Array.isArray(allowed))
-      throw new Error("Expected completed target authorization fact");
-    expect(allowed).toHaveLength(1);
-    expect(fileAccess.afterAuthorization).toBeUndefined();
-  },
-);
-
-cancellationCase(
-  "drains pending Electron discovery before shutdown cleanup completes",
-  async () => {
-    const path = await targetFile();
-    const fake = await startFakeCdpBrowser({
-      electronFileUrl: pathToFileURL(path).href,
-    });
-    fixtures.push(fake);
-    let markStarted: () => void = () => undefined;
-    let releaseDiscovery: () => void = () => undefined;
-    const started = new Promise<void>((resolve) => {
-      markStarted = resolve;
-    });
-    const discoveryWait = new Promise<void>((resolve) => {
-      releaseDiscovery = resolve;
-    });
-    fileAccess.discoveryGate = { started: markStarted, wait: discoveryWait };
-
-    const provider = new CdpElectronProvider();
-    const listing = provider.listTargets(
-      listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
-    );
-    let closed = false;
-    let closing: Promise<void> | undefined;
-    await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(started, listing, "Electron discovery");
-      closing = provider.close().then(() => {
-        closed = true;
-      });
-      const closedBeforeDiscovery = await Promise.race([
-        closing.then(() => true),
-        new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
-      ]);
-      expect(closedBeforeDiscovery).toBe(false);
-      expect(closed).toBe(false);
-      releaseDiscovery();
-
-      const [listed] = await Promise.all([listing, closing]);
-      expect(closed).toBe(true);
-      expect(listed.ok).toBe(true);
-      expect(fileAccess.calls).toContain("stat");
-      const rejected = await provider.listTargets(
-        listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
-      );
-      expect(rejected.ok).toBe(false);
-      if (rejected.ok)
-        throw new Error("Expected closed provider admission failure");
-      expect(rejected.error.cleanupIncomplete).toBe(false);
-      expect(rejected.error.cleanupResources).toEqual([]);
-    }, [
-      releaseDiscovery,
-      async () => {
-        await listing;
-      },
-      async () => {
-        await closing;
-      },
-      () => provider.close(),
+    const closedBeforeDiscovery = await Promise.race([
+      closing.then(() => true),
+      new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
     ]);
-  },
-);
+    expect(closedBeforeDiscovery).toBe(false);
+    expect(closed).toBe(false);
+    releaseDiscovery();
 
-cancellationCase(
+    const [listed] = await Promise.all([listing, closing]);
+    expect(closed).toBe(true);
+    expect(listed.ok).toBe(true);
+    expect(fileAccess.calls).toContain("stat");
+    const rejected = await provider.listTargets(
+      listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
+    );
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok)
+      throw new Error("Expected closed provider admission failure");
+    expect(rejected.error.cleanupIncomplete).toBe(false);
+    expect(rejected.error.cleanupResources).toEqual([]);
+  }, [
+    releaseDiscovery,
+    async () => {
+      await listing;
+    },
+    async () => {
+      await closing;
+    },
+    () => provider.close(),
+  ]);
+});
+
+targetFileCase(
   "keeps ordinary and malformed file-location authorization unchanged",
   async () => {
     const path = await targetFile();
