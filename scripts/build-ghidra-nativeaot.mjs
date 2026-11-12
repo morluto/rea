@@ -20,7 +20,7 @@ const source = resolve(
 const install = process.env.GHIDRA_INSTALL_DIR;
 if (!install)
   throw new Error(
-    "NativeAOT build lane requires existing GHIDRA_INSTALL_DIR (Ghidra 12.1.x).",
+    "NativeAOT build lane requires existing GHIDRA_INSTALL_DIR (Ghidra 12.x, >=12.1).",
   );
 const properties = await readFile(
   join(install, "Ghidra/application.properties"),
@@ -29,7 +29,7 @@ const properties = await readFile(
 const ghidraVersion = propertyValue(properties, "application.version");
 if (!ghidraReleaseLineAccepted(ghidraVersion))
   throw new Error(
-    `NativeAOT build lane accepts Ghidra 12.1.x (verified with 12.1.4). Observed application.version=${ghidraVersion ?? "missing"}.`,
+    `NativeAOT build lane accepts Ghidra 12.x (>=12.1) (verified with 12.2). Observed application.version=${ghidraVersion ?? "missing"}.`,
   );
 const output = resolve(
   process.env.REA_NATIVEAOT_BUILD_ROOT ??
@@ -160,7 +160,7 @@ function propertyValue(content, name) {
 /** Release line supported by the separately pinned NativeAOT integration. */
 function ghidraReleaseLineAccepted(raw) {
   const match = /^(\d+)\.(\d+)(?:\.(\d+))?([-+].*)?$/u.exec(raw ?? "");
-  return match !== null && Number(match[1]) === 12 && Number(match[2]) === 1;
+  return match !== null && Number(match[1]) === 12 && Number(match[2]) >= 1;
 }
 
 function capture(command, args) {
