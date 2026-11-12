@@ -402,9 +402,14 @@ explicit path or endpoint and do not need it.
   no active target or engine; opaque payloads retain file ranges and SHA-256.
 - PE export directories and ELF dynamic-symbol exports: `inspect_native_exports`
   with an explicit path; portable, no active target or engine.
-- Native executable, library, or analysis database: `open_binary`, then
-  use focused analysis tools directly; call `binary_overview` when metadata or
-  inventory context is useful and available from the selected provider.
+- Native executable or library requiring deep analysis: prefer Ghidra when it
+  is configured and supports the target. Set `provider_id: "ghidra"` on
+  `open_binary` or pass `--provider ghidra` in the CLI. Honor an explicit
+  provider request and use the compatible provider for a supplied analysis
+  database. If Ghidra is unavailable, see [Ghidra setup](https://github.com/morluto/rea/blob/main/docs/getting-started/installation.md#ghidra)
+  or use an available provider that supports the target and needed operation.
+  After opening, use focused analysis tools directly. Call `binary_overview`
+  when metadata or inventory context is useful and the selected provider offers it.
 
 For an existing IDA MCP configuration, use `open_binary` with the original
 input binary and `provider_id: "ida"`; do not pass an `.idb` or `.i64` database.
