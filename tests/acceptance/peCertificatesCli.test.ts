@@ -11,8 +11,78 @@ import {
   pkcs7SignedDataIndefiniteEnvelopeFixture,
 } from "../../src/native/pe/PeCertificates.fixture.js";
 import { repeatedCertificateSignedData } from "../fixtures/peCertificateAllowance.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+
+cliTest.for([0x00, 0x01, 0x7f, 0xfe, 0xff, null])(
+  "requires canonical extension critical encoding %s through CLI and MCP",
+  async (critical, { cli }) => {
+    const root = await createTestTempDirectory("rea-pe-cert-critical-");
+    const path = join(root, "signed.exe");
+    // Extension ::= SEQUENCE { extnID, critical BOOLEAN DEFAULT FALSE, extnValue }.
+    // The extension OID and opaque value stay identical in every control.
+    const fields = Buffer.concat([
+      Buffer.from([0x06, 0x03, 0x55, 0x1d, 0x0e]),
+      critical === null ? Buffer.alloc(0) : Buffer.from([0x01, 0x01, critical]),
+      Buffer.from([0x04, 0x03, 0x04, 0x01, 0xaa]),
+    ]);
+    const extension = Buffer.concat([
+      Buffer.from([0x30, fields.length]),
+      fields,
+    ]);
+    const extensions = Buffer.concat([
+      Buffer.from([0x30, extension.length]),
+      extension,
+    ]);
+    const bytes = peCertificateFixture(
+      false,
+      pkcs7SignedDataFixture(undefined, undefined, undefined, undefined, {
+        extensions,
+      }),
+    );
+    await writeFile(path, bytes);
+    const result = await runFileCli(cli, {
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_pe_certificates", { path });
+    const valid = critical === null || critical === 0xff;
+    expect(result.exitCode, result.stdout).toBe(valid ? 0 : 1);
+    if (valid)
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    else expect(response.isError, JSON.stringify(response)).toBe(true);
+    for (const value of [
+      result.json,
+      valid ? response.structuredContent : parseMcpToolError(response).error,
+    ]) {
+      if (valid) {
+        const report = toolContract(
+          "inspect_pe_certificates",
+        ).outputSchema.parse(value).normalized_result;
+        expect(report.coverage.status).toBe("complete");
+        expect(report.entries[0]?.pkcs7?.certificates[0]?.serial_hex).toBe(
+          "11223344",
+        );
+      } else {
+        expect(value).toMatchObject({
+          code: "invalid_request",
+          details: {
+            operation: "inspect_pe_certificates",
+            issues: [
+              expect.objectContaining({
+                path: ["path"],
+                reason: "invalid_format",
+                message: expect.stringContaining("critical"),
+              }),
+            ],
+          },
+        });
+      }
+    }
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest.for(["extra-field", "empty-rdn"] as const)(
   "rejects a malformed certificate name %s through CLI and MCP",

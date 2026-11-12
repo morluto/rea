@@ -1258,6 +1258,10 @@ it("rejects malformed and repeated certificate extensions", () => {
     derSeq(ski, derInt(1)),
     derSeq(ski, derInt(1), skiValue),
     derSeq(ski, critical(0xff, 0xff), skiValue),
+    // X.690 11.1 requires DER TRUE=0xff; 11.5 omits DEFAULT FALSE.
+    ...[0x00, 0x01, 0x7f, 0xfe].map((value) =>
+      derSeq(ski, critical(value), skiValue),
+    ),
     derSeq(ski, skiValue, critical(0xff)),
     derSeq(ski, skiValue, der(0x05, Buffer.alloc(0))),
   ])

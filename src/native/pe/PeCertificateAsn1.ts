@@ -442,6 +442,11 @@ const requireExtensions = (extensions: readonly Asn1BerNode[]): void => {
       return fail(
         "TBSCertificate extension is not an OID, optional BOOLEAN, and OCTET STRING.",
       );
+    // X.690 11.1 requires DER TRUE=0xff; 11.5 omits DEFAULT FALSE.
+    if (critical !== undefined && critical.content[0] !== 0xff)
+      return fail(
+        "TBSCertificate extension critical must be omitted for FALSE or encoded as DER TRUE (0xff).",
+      );
     const oid = decodeOid(extnId.content);
     if (seen.has(oid)) return fail(`TBSCertificate repeats extension ${oid}.`);
     seen.add(oid);
