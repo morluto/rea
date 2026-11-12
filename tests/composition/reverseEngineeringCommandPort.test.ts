@@ -13,9 +13,20 @@ import { execFileOutput } from "../../src/process/ExecFileOutput.js";
 
 type ExecFileOutputOptions = NonNullable<Parameters<typeof execFileOutput>[2]>;
 
-it("documents the shared combined capture limit for both command tools", () => {
-  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-    expect(contract.description).toContain("shared 16 MiB combined limit");
+it("documents caller-selected combined capture budgets for both command tools", () => {
+  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS) {
+    expect(contract.description).toMatch(/max_output_bytes.*combined output/u);
+    expect(contract.description).toContain("16 MiB default");
+    expect(contract.description).toContain("next call without restart");
+    expect(contract.description).toContain("client receive limits");
+    for (const example of contract.examples)
+      expect(
+        contract.inputSchema.safeParse({
+          ...example.input,
+          max_output_bytes: 32 * 1024 * 1024,
+        }).success,
+      ).toBe(true);
+  }
 });
 
 it("passes a caller-selected Windows executable through provider composition", () => {
