@@ -183,6 +183,22 @@ it("fails closed on a foreign magic", () => {
   );
 });
 
+it("admits the unpadded 28-byte header a 32-bit V8 build writes", () => {
+  // V8 pads seven header words to the pointer size: 32 bytes on this 64-bit host, 28 on
+  // a 32-bit build. Drop the four zero padding bytes to lay the same cache out the way a
+  // 32-bit producer does, with the declared payload length left untouched.
+  expect(real.readUInt32LE(28)).toBe(0);
+  const unpadded = Buffer.concat([real.subarray(0, 28), real.subarray(32)]);
+  const report = parse(unpadded);
+  expect(report.header.header_bytes).toBe(28);
+  expect(report.payload.offset).toBe(28);
+  expect(report.payload.bytes).toBe(real.readUInt32LE(20));
+  expect(report.payload.sha256).toBe(parse(real).payload.sha256);
+  expect(report.header.fields.map((field) => field.offset)).toEqual([
+    0, 4, 8, 12, 16, 20, 24,
+  ]);
+});
+
 it("fails closed on a payload-length mismatch", () => {
   const corrupt = withHeaderWord(real, 5, real.readUInt32LE(20) + 8);
   expect(() => parse(corrupt)).toThrow(

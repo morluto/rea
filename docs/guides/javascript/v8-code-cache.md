@@ -20,7 +20,9 @@ A V8 code cache is a producer-written container, not a documented file format. T
 admits one container shape and reports everything else as an observation, so a build it
 has never seen still yields facts instead of a false parse.
 
-The 32-byte header is eight little-endian 32-bit words. Every word is reported in
+The header is seven little-endian 32-bit words, padded to the producer's pointer size: 32
+bytes (eight words) from a 64-bit V8 and 28 bytes (seven words) from a 32-bit V8 such as
+Node `linux-armv7l` or Electron `ia32`. Every word is reported in
 `header.fields` with its byte offset, its observed value, the role this reader believes it
 has, and how confident that role is:
 
@@ -34,6 +36,8 @@ has, and how confident that role is:
 | `0x14`         | payload length | confirmed   |
 | `0x18`, `0x1c` | reserved       | unconfirmed |
 
+A 28-byte header has no `0x1c` word.
+
 `confirmed` means the role is demonstrated by the reader's own tests against the producer.
 `inferred` means the word's behaviour is consistent with the role but a different producer
 could plausibly differ. `unconfirmed` means the word is reported and nothing more is
@@ -41,7 +45,8 @@ claimed.
 
 Only three facts gate admission:
 
-1. the header size this reader pins (32 bytes);
+1. the header size this reader pins (32 bytes, or 28 bytes when the declared payload
+   length matches the unpadded 32-bit layout);
 2. the V8 code cache magic high half, `0xc0de`. The low half is
    `ExternalReferenceTable::kSize` and varies per V8 build, so it is reported as a build
    fingerprint and never required to match a fixed value;

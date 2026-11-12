@@ -15,6 +15,13 @@ export const MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES = 67108864;
 /** Hard ceiling on the V8 code cache container header this reader accepts. */
 export const V8_CODE_CACHE_HEADER_BYTES = 32;
 /**
+ * Header size a 32-bit V8 build writes. `SerializedCodeData::kHeaderSize` is
+ * `POINTER_SIZE_ALIGN` of seven `uint32_t` words (V8 13.6
+ * `src/snapshot/code-serializer.h`), so 64-bit builds pad it to 32 bytes and 32-bit
+ * builds (Node `linux-armv7l`, Electron `ia32`) keep it at 28.
+ */
+export const V8_CODE_CACHE_UNPADDED_HEADER_BYTES = 28;
+/**
  * V8 stamps every serialized code cache with `0xC0DE0000 ^ ExternalReferenceTable::kSize`.
  * Only the high half is stable across builds, so the low half is a build fingerprint and
  * is never used as an admission condition.
@@ -106,7 +113,7 @@ const headerSchema = z.strictObject({
   /** High half of the magic, the only part stable across V8 builds. */
   magic_build_stable: uint,
   /** Every header word, in container order. */
-  fields: z.array(headerFieldSchema).length(8),
+  fields: z.array(headerFieldSchema).min(7).max(8),
   /** Bytes this reader treats as header before the payload begins. */
   header_bytes: uint,
   /** Source length in UTF-16 code units, as recorded by the producer, if determinable. */
@@ -169,11 +176,20 @@ export const v8CodeCacheSchema = z
     limitations: z.array(z.string().min(1)).min(1),
   })
   .superRefine((report, context) => {
-    if (report.header.header_bytes !== V8_CODE_CACHE_HEADER_BYTES)
+    if (
+      report.header.header_bytes !== V8_CODE_CACHE_HEADER_BYTES &&
+      report.header.header_bytes !== V8_CODE_CACHE_UNPADDED_HEADER_BYTES
+    )
       context.addIssue({
         code: "custom",
         path: ["header", "header_bytes"],
-        message: "This reader only accepts its pinned container header size.",
+        message: "This reader only accepts its pinned container header sizes.",
+      });
+    if (report.header.fields.length * 4 !== report.header.header_bytes)
+      context.addIssue({
+        code: "custom",
+        path: ["header", "fields"],
+        message: "Every reported header word must lie inside the header.",
       });
     if (report.header.magic_build_stable !== V8_CODE_CACHE_MAGIC_HIGH)
       context.addIssue({
