@@ -732,6 +732,28 @@ export interface FakeAgentEnvRunner {
   notes(name: string): Promise<unknown[]>;
 }
 
+/**
+ * JSONL notes from the fake build computer. A trailing fragment without a
+ * newline is still being appended. Every newline-terminated line is a record
+ * and must parse.
+ */
+export const parseAgentEnvNotes = (text: string): unknown[] => {
+  if (text.length === 0) return [];
+  const terminated = text.endsWith("\n");
+  const lines = text.split("\n");
+  if (terminated) lines.pop();
+  const records: unknown[] = [];
+  for (const [index, line] of lines.entries()) {
+    try {
+      records.push(JSON.parse(line) as unknown);
+    } catch (error) {
+      if (!terminated && index === lines.length - 1) break;
+      throw error;
+    }
+  }
+  return records;
+};
+
 export const fakeAgentEnvRunner = async (
   computer: Pick<FakeComputer, "url" | "token">,
 ): Promise<FakeAgentEnvRunner> => {
@@ -769,10 +791,7 @@ export const fakeAgentEnvRunner = async (
       } catch {
         return [];
       }
-      return (await readFile(path, "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as unknown);
+      return parseAgentEnvNotes(await readFile(path, "utf8"));
     },
   };
 };

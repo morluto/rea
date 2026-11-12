@@ -10,8 +10,53 @@ import {
   completeSemanticSteps,
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
-import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
+import {
+  createGlobalPathReader,
+  createGlobalReferenceReader,
+} from "./javascriptSemanticAmbientWrites.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+
+it.each([
+  [
+    "await value; Object.prototype.then=null; await value;",
+    ["unmodified", "null"],
+  ],
+  [
+    "Object.prototype.then=function(resolve){resolve()}; await value;",
+    ["function"],
+  ],
+  ["if(flag) Object.prototype.then=null; await value;", ["unknown"]],
+  ["mutate(Object.prototype); await value;", ["unknown"]],
+  ["await value; mutate(Object.prototype);", ["unmodified"]],
+  ["Array.prototype.then=null; await value;", ["unmodified"]],
+] as const)(
+  "reads intrinsic property facts at implicit await sites: %s",
+  (source, expected) => {
+    const parsed = parseJavaScriptSource(source, "app.mjs");
+    if (parsed === null) throw new Error("Expected implicit read fixture");
+    const state = completeSemanticSteps(
+      indexJavaScriptBindingsSteps(parsed.program),
+    );
+    const read = createGlobalPathReader(state, ["Object", "prototype", "then"]);
+    const statuses: string[] = [];
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (!t.isAwaitExpression(node)) return;
+        const fact = read(node);
+        statuses.push(
+          fact.status === "replacement"
+            ? t.isNullLiteral(fact.value)
+              ? "null"
+              : t.isFunction(fact.value)
+                ? "function"
+                : "other"
+            : fact.status,
+        );
+      },
+    });
+    expect(statuses).toEqual(expected);
+  },
+);
 
 it("keeps wrapper module aliases distinct from global-object module properties", () => {
   const parsed = parseJavaScriptSource(
@@ -305,6 +350,11 @@ it.each([
     "a direct replacement read through the namespace",
     "Object.defineProperty=()=>{};inspect(globalThis.Object.defineProperty);",
     ["replacement"],
+  ],
+  [
+    "an escaped global owner",
+    "mutate(Object);inspect(Object.defineProperty);",
+    ["unknown"],
   ],
   [
     "a namespaced global",

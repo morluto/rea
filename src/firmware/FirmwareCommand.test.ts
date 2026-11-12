@@ -1,3 +1,4 @@
+import { createTestArtifactResourceScope } from "../../tests/fixtures/artifactResourceScope.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { EventEmitter } from "node:events";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
@@ -24,7 +25,10 @@ import {
   type OwnedProviderProcessSpawnOptions,
 } from "../process/ProviderProcess.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "../process/ProcessInspectionCancellation.js";
 
 const it = test.skipIf(process.platform !== "linux");
 
@@ -44,6 +48,7 @@ it.each([
         : { caller: "opaque admission cancellation" };
     const retainCleanup = vi.fn();
     const failure: unknown = await runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
       fileSizeCeiling: Number.MAX_SAFE_INTEGER,
       engine: "binwalk",
       operation: "inspect_firmware_regions",
@@ -67,7 +72,7 @@ it.each([
           : spawnOwnedProviderProcess(options);
         (source === "analysis" ? analysis : caller).abort(reason);
         if (admission !== undefined) return admission;
-        throw new ExecFileOutputCancelledError(reason);
+        throw new ProcessOwnershipInspectionCancelled(reason);
       },
       retainCleanup,
     }).catch((cause: unknown) => cause);
@@ -90,11 +95,99 @@ it.each([
   },
 );
 
+test.each([
+  "direct",
+  "batch",
+  "deadline-batch",
+  "physical-identity",
+  "physical-name",
+] as const)(
+  "classifies %s by the ownership producer rather than abort resemblance",
+  async (kind) => {
+    const controller = new AbortController();
+    const reason = { caller: "typed admission cancellation" };
+    const cancelled = new ProcessOwnershipInspectionCancelled(reason);
+    const physical = new Error("physical admission failure", { cause: reason });
+    physical.name = "AbortError";
+    const batch = new ProcessOwnershipIdentityBatchFailure(
+      [{ pid: 42, requestIndex: 0, cause: cancelled }],
+      new Map([
+        [
+          44,
+          {
+            state: "unavailable" as const,
+            reason: "completed sibling observation",
+          },
+        ],
+      ]),
+    );
+    const source =
+      kind === "direct" ? cancelled : kind.endsWith("batch") ? batch : physical;
+    const failure = await runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
+      fileSizeCeiling: Number.MAX_SAFE_INTEGER,
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+      command: "/unused/binwalk",
+      limiter: "/unused/prlimit",
+      args: [],
+      cwd: "/unused",
+      environment: {},
+      signal: controller.signal,
+      deadline: {
+        phase: "analysis",
+        signal:
+          kind === "deadline-batch"
+            ? controller.signal
+            : new AbortController().signal,
+        timeoutMs: 30_000,
+        expiresAtMs: performance.now() + 30_000,
+      },
+      launcher: async () => {
+        if (kind.startsWith("physical"))
+          controller.abort(kind === "physical-identity" ? physical : reason);
+        else if (kind === "deadline-batch") controller.abort(reason);
+        throw source;
+      },
+      retainCleanup: vi.fn(),
+    }).catch((cause: unknown) => cause);
+    if (!(failure instanceof AnalysisError)) throw failure;
+    if (kind.startsWith("physical")) {
+      expect(failure).toMatchObject({
+        _tag: "ProviderAdapterError",
+        cause: physical,
+      });
+      expect(failure.cause).toBe(physical);
+    } else if (kind === "deadline-batch") {
+      expect(failure).toMatchObject({
+        _tag: "AnalysisTimeoutError",
+        cause: reason,
+      });
+      const [cancelled, ...extra] = failure.secondaryFailures;
+      expect(extra).toEqual([]);
+      if (cancelled === undefined || !("inspectionFailure" in cancelled))
+        throw new Error("Missing deadline inspection origin");
+      expect(cancelled.cause).toBe(reason);
+      expect(cancelled.inspectionFailure).toBe(batch);
+    } else {
+      expect(failure).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      });
+      expect(failure.cause).toBe(reason);
+      if (!("inspectionFailure" in failure))
+        throw new Error("Missing ownership inspection origin");
+      expect(failure.inspectionFailure).toBe(source);
+    }
+  },
+);
+
 it("does not relabel an unrelated launch failure when a deadline also fires", async () => {
   const analysis = new AbortController();
   const failure = new Error("distinct launch refusal");
   await expect(
     runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
       fileSizeCeiling: Number.MAX_SAFE_INTEGER,
       engine: "binwalk",
       operation: "inspect_firmware_regions",
@@ -116,7 +209,7 @@ it("does not relabel an unrelated launch failure when a deadline also fires", as
       },
       retainCleanup: vi.fn(),
     }),
-  ).rejects.toBe(failure);
+  ).rejects.toMatchObject({ _tag: "ProviderAdapterError", cause: failure });
 });
 
 test("names the host and tool requirement of an unconfigured engine", async () => {
@@ -258,6 +351,7 @@ const analysisDeadline = (signal: AbortSignal) => ({
 it("keeps captured tool output when firmware stops on SIGXCPU", async () => {
   const analysis = new AbortController();
   const failure: unknown = await runFirmwareCommand({
+    resources: createTestArtifactResourceScope(),
     fileSizeCeiling: Number.MAX_SAFE_INTEGER,
     engine: "binwalk",
     operation: "inspect_firmware_regions",
@@ -308,6 +402,7 @@ it.each([
     const root = await createTestTempDirectory("rea-firmware-fsize-signal-");
     const analysis = new AbortController();
     const failure: unknown = await runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
       fileSizeCeiling: inherited,
       engine: "unblob",
       operation: "extract_firmware",
@@ -380,28 +475,31 @@ test.each([
         throw refused;
       },
     );
-    await expect(
-      runFirmwareCommand({
-        engine: "unblob",
-        operation: "extract_firmware",
-        command: "/synthetic/unblob",
-        limiter: "/synthetic/prlimit",
-        fileSizeCeiling: inherited,
-        args: [],
-        cwd: root,
-        environment: {},
+    const failure: unknown = await runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
+      engine: "unblob",
+      operation: "extract_firmware",
+      command: "/synthetic/unblob",
+      limiter: "/synthetic/prlimit",
+      fileSizeCeiling: inherited,
+      args: [],
+      cwd: root,
+      environment: {},
+      signal: new AbortController().signal,
+      deadline: {
+        phase: "analysis",
         signal: new AbortController().signal,
-        deadline: {
-          phase: "analysis",
-          signal: new AbortController().signal,
-          timeoutMs: 120_000,
-          expiresAtMs: performance.now() + 120_000,
-        },
-        launcher,
-        outputBudget: { root, bytes: selected, entries: 10 },
-        retainCleanup: vi.fn(),
-      }),
-    ).rejects.toBe(refused);
+        timeoutMs: 120_000,
+        expiresAtMs: performance.now() + 120_000,
+      },
+      launcher,
+      outputBudget: { root, bytes: selected, entries: 10 },
+      retainCleanup: vi.fn(),
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({ _tag: "ProviderAdapterError" });
+    if (!(failure instanceof AnalysisError)) throw failure;
+    expect(failure.cause).toBe(refused);
+    expect(failure.cleanupResources).toEqual([]);
     expect(launcher).toHaveBeenCalledOnce();
   },
 );
@@ -419,6 +517,7 @@ test.each([
     let cleanupCalls = 0;
     const retained: ProviderProcessSupervisor[] = [];
     const failure: unknown = await runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
       engine: "binwalk",
       operation: "inspect_firmware_regions",
       command: process.execPath,
@@ -556,6 +655,7 @@ test.skipIf(process.platform === "win32").each([
     let closed = false;
     let exited = false;
     const failure: unknown = await runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
       engine: "binwalk",
       operation: "inspect_firmware_regions",
       command: process.execPath,

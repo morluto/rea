@@ -53,7 +53,7 @@ import {
   analysisViewInputError,
 } from "./analysisViewErrors.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import { digestSchema } from "../digests.js";
+import { prefixedDigestSchema } from "../digests.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { safeParseOwnedBinaryLayout } from "../native/binaryLayout.js";
@@ -270,7 +270,7 @@ export const sealAnalysisView = (
     view_digest: digestCanonicalValue(projection, "Analysis view"),
   });
 
-const parentDigest = (evidenceId: string): string => evidenceId.slice(3);
+const parentEvidenceIdSchema = prefixedDigestSchema("ev");
 
 const parseJavaScriptParent = (
   input: unknown,
@@ -475,8 +475,7 @@ export const projectAnalysisView = (
   view: AnalysisViewRequest,
   accumulators: AnalysisViewAccumulators = {},
 ): Result<AnalysisViewResult, AnalysisError> => {
-  const digest = parentDigest(parent.evidenceId);
-  if (!digestSchema.safeParse(digest).success)
+  if (!parentEvidenceIdSchema.safeParse(parent.evidenceId).success)
     return err(
       analysisViewInputError([
         {

@@ -18,6 +18,7 @@ import {
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
 import { parseNativeMatchingAllowance } from "../config/nativeMatchingAllowance.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Resolve portable input bundles, then use the same read-only matching service as MCP. */
 export const registerNativeFunctionMatchingCommands = (
@@ -37,14 +38,12 @@ export const registerNativeFunctionMatchingCommands = (
     }),
     options: z.object({
       source_bundle: z
-        .array(z.string())
+        .array(localPathStringSchema)
         .default([])
         .describe(
           "Canonical source Evidence bundle for retained references; repeat for each input",
         ),
-      evidence_output: z
-        .string()
-        .min(1)
+      evidence_output: localPathStringSchema
         .optional()
         .describe(
           "Save full matching Evidence and selected sources; required for default summary; never overwrites",

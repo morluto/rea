@@ -1,7 +1,11 @@
 import { IL2CPP_METADATA_PROVIDER_IDENTITY } from "./Il2CppMetadataProviderIdentity.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
-import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
+import {
+  Il2cppBinaryFormatFailure,
+  IL2CPP_BINARY_BYTES,
+} from "./Il2cppBinaryFormat.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
+import { inspectIl2cppMetadataV108 } from "./Il2cppMetadataV108.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { setImmediate } from "node:timers/promises";
@@ -59,8 +63,6 @@ import {
 
 const OPERATION = "inspect_il2cpp_metadata";
 const INPUT_BYTES = 256 * 1024 * 1024;
-// GameAssembly binaries of large games reach several hundred megabytes.
-const BINARY_BYTES = 1024 * 1024 * 1024;
 // A 12.9 MB Unity 6000.4 file with 112,232 methods serializes to 7.8 MB.
 const OUTPUT_BYTES = 64 * 1024 * 1024;
 /** Instruction form the module-array fallback matched, per architecture. */
@@ -298,6 +300,7 @@ const metadataSourceEvidence = (
       }
     | undefined = undefined,
   previous?: AnalysisPartialObservation,
+  v108?: NonNullable<Awaited<ReturnType<typeof inspectIl2cppMetadataV108>>>,
 ) =>
   createEvidence(
     {
@@ -350,10 +353,16 @@ const metadataSourceEvidence = (
         ...(counts === undefined
           ? {}
           : { validated_section_row_counts: { ...counts } }),
+        ...(v108 === undefined ? {} : { version_108_partial_inventory: v108 }),
       },
       confidence: "observed",
       limitations: [
         "This partial source observation does not contain a complete metadata inventory. Section row counts, when available, are derived from the validated header extents and record layout; names and relationships may remain unexamined.",
+        ...(v108 === undefined
+          ? []
+          : [
+              "The version 108 header layout has not been checked against the reporter's file. Only section extents and a bounded sample of metadata strings were observed; type, method, literal, and binary layouts remain unverified and are not decoded.",
+            ]),
       ],
       locations: [
         { kind: "artifact-path", path: artifact.path },
@@ -469,6 +478,29 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         const artifact = sourceArtifact(input.path, snapshot);
         observed.artifact = artifact;
         assertArtifactReadActive(options?.signal);
+        const v108 = await inspectIl2cppMetadataV108(
+          snapshot.bytes,
+          async () => {
+            await this.yieldControl();
+            assertArtifactReadActive(options?.signal);
+          },
+        );
+        assertArtifactReadActive(options?.signal);
+        if (v108 !== null) {
+          const failure = new AnalysisUnsupportedTargetError(
+            OPERATION,
+            input.path,
+            "unsupported-version: metadata version 108 has a partial header and string observation; type, method and binary layouts are not decoded",
+          );
+          failure.partialObservation = metadataSourceEvidence(
+            artifact,
+            undefined,
+            selectedBinarySource(),
+            undefined,
+            v108,
+          );
+          return err(failure);
+        }
         const limit = this.outputBytes;
         const admission = createIl2cppMetadataAdmission(
           limit,
@@ -523,7 +555,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
           try {
             const binary = await this.#readArtifact(
               binaryPath,
-              BINARY_BYTES,
+              IL2CPP_BINARY_BYTES,
               options?.signal,
               (artifact) => {
                 observed.binary = artifact;
@@ -556,7 +588,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               cause,
               binaryPath,
               "binary_path",
-              BINARY_BYTES,
+              IL2CPP_BINARY_BYTES,
               input.path,
             );
             failure.partialObservation = metadataSourceEvidence(

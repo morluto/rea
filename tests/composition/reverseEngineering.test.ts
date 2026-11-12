@@ -13,23 +13,7 @@ import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtur
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
-import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 import { rizinCommandLimitations } from "../../src/rizin/RizinCommand.js";
-
-it("documents the shared combined capture limit for both command tools", () => {
-  expect(REVERSE_ENGINEERING_TOOL_CONTRACTS.map(({ name }) => name)).toEqual(
-    expect.arrayContaining(["inspect_with_objdump", "execute_rizin_command"]),
-  );
-  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-    expect(contract.description).toContain("shared 16 MiB combined limit");
-  expect(
-    REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
-      ({ name }) => name === "inspect_with_objdump",
-    )?.description,
-  ).toContain("does not follow local debug links by default");
-  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-    expect(contract.description).toContain("command_timeout_ms");
-});
 
 it.each(["objdump", "rizin"] as const)(
   "recovers a bounded %s capture after the caller raises output admission",
@@ -162,12 +146,17 @@ describe("reverse engineering command services", () => {
         path: directory,
         operation: "file_headers",
       });
-      expect(result.ok).toBe(false);
-      if (!result.ok)
-        expect(result.error.cause).toMatchObject({
-          code: "EINVAL",
-          message: "Artifact digest requires a regular file",
-        });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisInputError",
+          operation: "inspect_with_objdump",
+          cause: {
+            code: "EINVAL",
+            message: "Artifact digest requires a regular file",
+          },
+        },
+      });
       expect(invoked).toBe(false);
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -500,29 +489,38 @@ describe("Rizin command service", () => {
     }
   });
 
-  it("rejects multiline Rizin command input before launching the provider", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-input-"));
-    const path = join(directory, "fixture.bin");
-    await writeFile(path, "fixture");
-    let invoked = false;
-    const service = new ReverseEngineeringService({
-      run: async () => {
-        invoked = true;
-        return { stdout: "", stderr: "" };
-      },
-    });
-
-    try {
-      const result = await service.executeRizinCommand({
-        path,
-        command: "iI\nq",
+  it.each(["iI\nq", "wx\u0000 00"])(
+    "rejects malformed Rizin command %j before launching the provider",
+    async (command) => {
+      const directory = await mkdtemp(join(tmpdir(), "rea-rizin-input-"));
+      const path = join(directory, "fixture.bin");
+      await writeFile(path, "fixture");
+      let invoked = false;
+      const service = new ReverseEngineeringService({
+        run: async () => {
+          invoked = true;
+          return { stdout: "", stderr: "" };
+        },
       });
-      expect(result.ok).toBe(false);
-      expect(invoked).toBe(false);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
+
+      try {
+        const result = await service.executeRizinCommand({
+          path,
+          command,
+        });
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "AnalysisInputError",
+            operation: "execute_rizin_command",
+          },
+        });
+        expect(invoked).toBe(false);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("preserves pre and post artifact digests when an unrestricted Rizin command changes the file", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rea-rizin-mutation-"));

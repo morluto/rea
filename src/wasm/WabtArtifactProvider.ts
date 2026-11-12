@@ -35,11 +35,14 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   wasmArtifactSchema,
+  WABT_SOURCE_COMMIT,
+  WABT_VERSION,
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   wasmResourceLimits,
   type InspectWasmArtifactInput,
@@ -58,8 +61,6 @@ import {
 import { WabtRuntime } from "./WabtRuntime.js";
 import {
   WABT_PROVIDER_IDENTITY,
-  WABT_SOURCE_COMMIT,
-  WABT_VERSION,
   admitWabtVersion,
   wabtReleaseLine,
 } from "./WabtRelease.js";
@@ -229,6 +230,10 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       input.command_timeout_ms ??
       options?.commandTimeoutMs ??
       DEFAULT_WASM_COMMAND_TIMEOUT_MS;
+    const commandTimeoutSource =
+      input.command_timeout_ms !== undefined
+        ? "request"
+        : options?.commandTimeoutSource;
     try {
       if (options?.signal?.aborted)
         throw new AnalysisCancelledError(OPERATION, {
@@ -337,6 +342,23 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           },
         );
         capturedOutput = artifactCommandOutput(snapshot);
+        const invalidUtf8Streams = [
+          ...(snapshot.stdout.invalidUtf8 ? ["stdout"] : []),
+          ...(snapshot.stderr.invalidUtf8 ? ["stderr"] : []),
+        ];
+        // Nonzero validation retains its physical rejection and diagnostics.
+        if (snapshot.exitCode === 0 && invalidUtf8Streams.length > 0)
+          throw new AnalysisOutputError(
+            OPERATION,
+            "WABT output is not valid UTF-8; retained text contains replacement characters.",
+            {
+              capturedOutput,
+              diagnostics: {
+                tool: command.tool,
+                invalid_utf8_streams: invalidUtf8Streams,
+              },
+            },
+          );
         await assertArtifactCommandPath(command.selection, OPERATION, {
           ...(options?.signal === undefined ? {} : { signal: options.signal }),
           capturedOutput,
@@ -695,6 +717,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         phase === "artifact" ? artifactInput.path : input.path,
         {
           commandTimeoutMs,
+          ...(commandTimeoutSource === undefined
+            ? {}
+            : { commandTimeoutSource }),
           limits,
           inputField: artifactInput.field,
           observedOutput: capturedOutput,
@@ -728,12 +753,17 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           "observed",
         );
       }
-      if (result.ok && options?.signal?.aborted) {
+      if (options?.signal?.aborted) {
         result = err(
-          new AnalysisCancelledError(OPERATION, {
-            cause: options?.signal?.reason,
-            ...(partialObservation === undefined ? {} : { partialObservation }),
-          }),
+          analysisErrorWithCancellation(
+            result.ok ? undefined : result.error,
+            new AnalysisCancelledError(OPERATION, {
+              cause: options.signal.reason,
+              ...(partialObservation === undefined
+                ? {}
+                : { partialObservation }),
+            }),
+          ),
         );
       }
       if (cleanup.kind === "failed") {

@@ -32,7 +32,6 @@ import {
   type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
 import type { JavaScriptReceiverIndex } from "./javascriptSemanticAnalysis.js";
-import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
 interface NativeBindingInput {
@@ -364,5 +363,6 @@ const isNativeSpecifier = (
 ): boolean => {
   const path =
     moduleKind === "require" ? specifier : stripQueryAndFragment(specifier);
-  return path.toLowerCase().endsWith(".node");
+  // Extension dispatch uses exact spelling, independently of filesystem casing.
+  return path.endsWith(".node");
 };

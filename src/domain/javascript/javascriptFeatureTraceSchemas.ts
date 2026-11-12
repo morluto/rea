@@ -144,7 +144,7 @@ const nativeHandoffSchema = z.strictObject({
   artifact_sha256: digestSchema,
   artifact_path: z.string().min(1).nullable(),
   export_node_ids: z.array(nodeIdSchema),
-  requested_exports: z.array(boundedTextSchema),
+  requested_exports: z.array(z.string()),
   status: z.enum(["evidence-linked", "requires-provider-analysis"]),
   providers: z.array(providerSchema),
   evidence_ids: z.array(evidenceIdSchema),

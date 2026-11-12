@@ -1,6 +1,7 @@
 import { registerPlaywrightTraceCommand } from "./playwrightTraceCommand.js";
 import { registerApiContractCommand } from "./apiContractCommand.js";
 import { registerNugetPackageCommand } from "./nugetPackageCommand.js";
+import { registerNtfsJournalCommand } from "./ntfsJournalCommand.js";
 import { Cli, z } from "incur";
 
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -79,6 +80,7 @@ export const registerApplicationCommands = (
   registerStaticObservedEndpointsCommand(cli, logger);
   registerApiContractCommand(cli, logger);
   registerNugetPackageCommand(cli, logger);
+  registerNtfsJournalCommand(cli, logger);
   registerPlaywrightTraceCommand(cli, logger);
   registerEvidenceJsonCommand({
     cli,

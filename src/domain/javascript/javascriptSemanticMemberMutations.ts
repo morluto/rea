@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import {
   createAmbientPathResolver,
+  createGlobalPathReader,
   retainSemanticAmbientEffect,
 } from "./javascriptSemanticAmbientWrites.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
@@ -37,6 +38,7 @@ import {
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {
   semanticProjectedSourceFactsAtRead,
+  semanticCapturedSelectionsAfterPropertyRead,
   semanticShiftCapturedSelections,
   semanticNormalizeCapturedSelections,
   type SemanticCapturedSelection,
@@ -49,6 +51,7 @@ import {
   semanticClassAccessorReferences,
   semanticObjectPropertyReferences,
   semanticObjectAccessorReferences,
+  semanticNativePrototypeChain,
   type JavaScriptSemanticObjectReference,
 } from "./javascriptSemanticObjectReferences.js";
 import {
@@ -122,27 +125,55 @@ const arrayPrototypeIterationMayChange = (path: PropertyPath): boolean => {
 
 /** Preserve uncertainty from property writes and references exposed to calls, yielding during traversal and fixpoint iteration. */
 
-/** Accessor selection uses the same slots, prototype shadowing and array indices as aliases. */
-const localAccessorMethods = (
+/** Local methods use the same slots, prototype shadowing and array indices as aliases. */
+const localPropertyMethods = (
   root: t.Node,
   path: PropertyPath,
-  accessor: "get" | "set",
+  accessor: "get" | "set" | "invoke",
   state: JavaScriptSemanticAnalysisState,
   keyMayExist: (
     key: PropertyPath[number] | undefined,
     kind: "get" | "set",
   ) => boolean,
   lookup: "prototype" | "own" = "prototype",
-): readonly (t.ObjectMethod | t.ClassMethod)[] | undefined => {
-  if (!keyMayExist(path.at(-1), accessor)) return [];
-  const methods = new Set<t.ObjectMethod | t.ClassMethod>();
-  const pending = [{ node: root, path }];
+): readonly t.Function[] | undefined => {
+  if (accessor !== "invoke" && !keyMayExist(path.at(-1), accessor)) return [];
+  const methods = new Set<t.Function>();
+  const pending: (MutationSelectionContext & {
+    node: t.Node;
+    path: PropertyPath;
+  })[] = [{ node: root, path, memberReadAt: root }];
   const examined = new WeakMap<t.Node, Set<string>>();
+  const nativeReaders = new Map<
+    string,
+    ReturnType<typeof createGlobalPathReader>
+  >();
+  const nativeRead = (
+    prototype: "Object" | "Array",
+    key: string,
+    at: t.Node,
+  ) => {
+    const identity = JSON.stringify([prototype, key]);
+    let read = nativeReaders.get(identity);
+    if (read === undefined) {
+      read = createGlobalPathReader(state, [prototype, "prototype", key]);
+      nativeReaders.set(identity, read);
+    }
+    return read(at);
+  };
   let selections = 0;
   for (let cursor = 0; cursor < pending.length; cursor++) {
     const current = pending[cursor]!;
     const node = unwrapJavaScriptExpression(current.node).node;
-    const key = JSON.stringify(current.path);
+    const key = JSON.stringify([
+      current.path,
+      current.capturedSelections?.map(({ at, depth, ownEnumerable }) => [
+        at.start,
+        at.end,
+        depth,
+        ownEnumerable,
+      ]),
+    ]);
     const paths = examined.get(node) ?? new Set<string>();
     if (paths.has(key)) continue;
     paths.add(key);
@@ -152,7 +183,10 @@ const localAccessorMethods = (
       return undefined;
     }
     if (
-      (t.isObjectMethod(node) || t.isClassMethod(node)) &&
+      t.isFunction(node) &&
+      (accessor === "invoke" ||
+        t.isObjectMethod(node) ||
+        t.isClassMethod(node)) &&
       current.path.length === 0
     ) {
       methods.add(node);
@@ -160,15 +194,42 @@ const localAccessorMethods = (
     }
     if (t.isIdentifier(node)) {
       const binding = resolveSemanticBindingState(state, node, node.name);
-      if (binding === undefined) continue;
-      const selected = semanticBindingAtRead(binding, node, state).binding;
-      for (const source of [
-        ...selected.initializers,
-        ...selected.referenceInitializers,
-      ])
+      if (binding === undefined) {
+        if (accessor === "invoke") return undefined;
+        continue;
+      }
+      if (
+        accessor === "invoke" &&
+        !semanticBindingAtRead(binding, node, state).hasDefiniteInitializer
+      )
+        return undefined;
+      const selected = semanticProjectedSourceFactsAtRead(
+        binding,
+        node,
+        current.path,
+        state,
+        true,
+        current.memberReadAt,
+        current.capturedSelections,
+        false,
+        // A spread copy escapes the copied values. That must not make the
+        // source's own accessors unknown, or the next read escapes the
+        // receiver itself.
+        accessor === "invoke",
+      );
+      if (selected === undefined) return undefined;
+      for (const source of selected.sources)
         pending.push({
           node: source.node,
-          path: [...source.projection, ...current.path],
+          path: source.path,
+          memberReadAt: current.memberReadAt,
+          capturedSelections: semanticNormalizeCapturedSelections([
+            ...(semanticShiftCapturedSelections(
+              current.capturedSelections,
+              source.path.length - current.path.length,
+            ) ?? []),
+            ...(source.capturedSelections ?? []),
+          ]),
         });
     } else if (
       t.isMemberExpression(node) ||
@@ -180,15 +241,57 @@ const localAccessorMethods = (
           semanticStaticPropertyKey(node.property, node.computed),
           ...current.path,
         ],
+        memberReadAt: current.memberReadAt,
+        capturedSelections: semanticShiftCapturedSelections(
+          current.capturedSelections,
+          1,
+        ),
       });
     } else if (
       current.path.length > 0 &&
       (t.isObjectExpression(node) || t.isArrayExpression(node))
     ) {
       const [selected, ...remaining] = current.path;
+      if (
+        accessor === "invoke" &&
+        lookup === "prototype" &&
+        !current.capturedSelections?.some(
+          (capture) => capture.depth === 1 && capture.ownEnumerable,
+        )
+      ) {
+        for (const prototype of semanticNativePrototypeChain(node, selected!)) {
+          if (selected === null || typeof selected === "object")
+            return undefined;
+          const at = current.memberReadAt ?? root;
+          const member = nativeRead(prototype, String(selected), at);
+          if (member.status === "unknown" || member.status === "unrelated")
+            return undefined;
+          if (member.status === "replacement") {
+            pending.push({
+              node: member.value,
+              path: remaining,
+              memberReadAt: at,
+              capturedSelections: semanticShiftCapturedSelections(
+                current.capturedSelections,
+                -1,
+              ),
+            });
+            break;
+          }
+          // A changed native link selects its retained source rather than the
+          // default next prototype. Null naturally ends that lookup.
+          const link = nativeRead(prototype, "__proto__", at);
+          if (link.status === "unknown" || link.status === "unrelated")
+            return undefined;
+          if (link.status === "replacement") {
+            pending.push({ ...current, node: link.value });
+            break;
+          }
+        }
+      }
       const references = t.isArrayExpression(node)
         ? semanticArrayPropertyReferences(node, [selected!])
-        : remaining.length === 0
+        : remaining.length === 0 && accessor !== "invoke"
           ? semanticObjectAccessorReferences(
               node,
               selected!,
@@ -197,11 +300,24 @@ const localAccessorMethods = (
               lookup,
             )
           : semanticObjectPropertyReferences(node, [selected!], state);
-      for (const source of references)
+      for (const source of references) {
+        if (
+          source.inherited &&
+          current.capturedSelections?.some(
+            (capture) => capture.depth === 1 && capture.ownEnumerable,
+          )
+        )
+          continue;
         pending.push({
           node: source.node,
           path: [...source.path, ...remaining],
+          memberReadAt: current.memberReadAt,
+          capturedSelections: semanticCapturedSelectionsAfterPropertyRead(
+            current.capturedSelections,
+            source,
+          ),
         });
+      }
     } else if (
       (t.isClass(node) || t.isNewExpression(node)) &&
       current.path.length > 0
@@ -218,23 +334,39 @@ const localAccessorMethods = (
         const references =
           remaining.length > 0
             ? semanticClassPropertyReferences(selection, [selected!], state)
-            : lookup === "own"
-              ? []
-              : semanticClassAccessorReferences(
-                  selection,
-                  selected!,
-                  state,
-                  accessor,
-                );
+            : accessor === "invoke"
+              ? semanticClassPropertyReferences(selection, [selected!], state)
+              : lookup === "own"
+                ? []
+                : semanticClassAccessorReferences(
+                    selection,
+                    selected!,
+                    state,
+                    accessor,
+                  );
         for (const source of references)
           pending.push({
             node: source.node,
             path: [...source.path, ...remaining],
+            memberReadAt: current.memberReadAt,
+            capturedSelections: semanticCapturedSelectionsAfterPropertyRead(
+              current.capturedSelections,
+              source,
+            ),
           });
       }
     } else {
-      for (const source of branchReferenceValues(node, current.path))
-        pending.push(source);
+      const references = branchReferenceValues(node, current.path);
+      if (accessor === "invoke" && references.length === 0) {
+        const value = evaluateSemanticExpression(
+          node,
+          state,
+          current.memberReadAt,
+        );
+        if (!["literal", "union", "object", "array"].includes(value.status))
+          return undefined;
+      }
+      for (const source of references) pending.push({ ...current, ...source });
     }
   }
   return [...methods];
@@ -247,6 +379,7 @@ type AccessorEffectOperand =
       readonly node: t.Node;
       readonly path: PropertyPath;
       readonly lookup: "prototype" | "own";
+      readonly invoke?: true;
       readonly guards?: SemanticPropertyReadSource;
     }
   | {
@@ -333,6 +466,7 @@ const accessorEffectOperands = (
         node: source.node,
         path: source.projection,
         lookup: source.lookup,
+        ...(source.invoke ? { invoke: true } : {}),
         guards: source,
       });
     if (
@@ -383,13 +517,14 @@ export function* collectSemanticMemberMutationsSteps(
     );
   };
   const returnedReferences = createSemanticReturnedReferences(state);
-  const getterEffects = (
+  const propertyReadEffects = (
     root: t.Node,
     path: PropertyPath,
     lookup: "prototype" | "own" = "prototype",
+    invoke = false,
   ): readonly JavaScriptSemanticObjectReference[] => {
-    if (!accessorKeyMayExist(path.at(-1), "get")) return [];
-    const pending = [{ node: root, path, lookup }];
+    if (!invoke && !accessorKeyMayExist(path.at(-1), "get")) return [];
+    const pending = [{ node: root, path, lookup, invoke }];
     const examined = new Set<string>();
     const effects: JavaScriptSemanticObjectReference[] = [];
     for (let cursor = 0; cursor < pending.length; cursor++) {
@@ -397,12 +532,14 @@ export function* collectSemanticMemberMutationsSteps(
         node: selectedRoot,
         path: selected,
         lookup: selectedLookup,
+        invoke: selectedInvoke,
       } = pending[cursor]!;
       const identity = JSON.stringify([
         selectedRoot.start,
         selectedRoot.end,
         selected,
         selectedLookup,
+        selectedInvoke,
       ]);
       if (examined.has(identity)) continue;
       examined.add(identity);
@@ -410,7 +547,20 @@ export function* collectSemanticMemberMutationsSteps(
         state.valueResourceLimits.add("alias-selections");
         return [{ node: root, path: [] }];
       }
-      const methods = localAccessorMethods(
+      const receiver = selected.slice(0, -1);
+      if (
+        selectedInvoke &&
+        (localPropertyMethods(
+          selectedRoot,
+          selected,
+          "invoke",
+          state,
+          accessorKeyMayExist,
+          selectedLookup,
+        )?.length ?? 1) > 0
+      )
+        effects.push({ node: selectedRoot, path: receiver });
+      const methods = localPropertyMethods(
         selectedRoot,
         selected,
         "get",
@@ -418,12 +568,12 @@ export function* collectSemanticMemberMutationsSteps(
         accessorKeyMayExist,
         selectedLookup,
       );
-      const receiver = selected.slice(0, -1);
       if (methods === undefined) {
         effects.push({ node: selectedRoot, path: receiver });
         continue;
       }
       for (const method of methods) {
+        if (!t.isObjectMethod(method) && !t.isClassMethod(method)) continue;
         const callables: t.Function[] = [method];
         const visitedCallables = new Set<t.Function>();
         for (let index = 0; index < callables.length; index++) {
@@ -441,7 +591,8 @@ export function* collectSemanticMemberMutationsSteps(
             }
             if (
               operand.kind === "read" &&
-              (!accessorKeyMayExist(operand.path.at(-1), "get") ||
+              ((!operand.invoke &&
+                !accessorKeyMayExist(operand.path.at(-1), "get")) ||
                 (operand.guards !== undefined &&
                   semanticReferenceSourcesInactive(operand.guards, state)))
             )
@@ -465,6 +616,7 @@ export function* collectSemanticMemberMutationsSteps(
                   node: targetRoot,
                   path: [...target, ...operand.path],
                   lookup: operand.lookup,
+                  invoke: operand.invoke === true,
                 });
             }
           }
@@ -1114,7 +1266,7 @@ export function* collectSemanticMemberMutationsSteps(
           if (
             origins.initializers.some(
               (source) =>
-                (localAccessorMethods(
+                (localPropertyMethods(
                   source.node,
                   [...source.projection, ...selectedPath],
                   "set",
@@ -1596,7 +1748,7 @@ export function* collectSemanticMemberMutationsSteps(
           source.kind === "reference-store" &&
           source.target !== undefined &&
           !state.escapingReferenceStores.has(source.target) &&
-          (localAccessorMethods(
+          (localPropertyMethods(
             source.target.object,
             [
               semanticStaticPropertyKey(
@@ -1658,17 +1810,18 @@ export function* collectSemanticMemberMutationsSteps(
       }
       for (const source of semanticPropertyReadSources(node, parent, state)) {
         if (semanticReferenceSourcesInactive(source, state)) continue;
-        for (const effect of getterEffects(
+        for (const effect of propertyReadEffects(
           source.node,
           source.projection,
           source.lookup,
+          source.invoke === true,
         ))
           markEscaped(effect.node, source.mutation, effect.path);
       }
       if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
         // The write owner classifies direct and destructuring stores once.
         if (!writeOnlyMembers.has(node))
-          for (const effect of getterEffects(node.object, [
+          for (const effect of propertyReadEffects(node.object, [
             semanticStaticPropertyKey(node.property, node.computed),
           ]))
             markEscaped(effect.node, node, effect.path);

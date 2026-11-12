@@ -337,7 +337,12 @@ describe("related sweep candidates during cleanup", () => {
     let childReads = 0;
     const adapter: ProcessOwnershipHost = {
       listProcesses: async () => processes,
-      processIdentities: async (members) => identitiesWithRelations(members),
+      processIdentities: async (members) =>
+        identitiesWithRelations(
+          processes.filter(({ pid }) =>
+            members.some((member) => member.pid === pid),
+          ),
+        ),
       environment: async () => ({}),
       runTokens: async (members) =>
         new Map(

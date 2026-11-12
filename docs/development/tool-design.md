@@ -93,6 +93,38 @@ include the smallest useful reproduction, impact and coverage limits. Do not
 claim autonomous-agent selection from a scripted trace. Check related reports
 before proposing another issue, and avoid treating lack of API parity as a bug.
 
+### Write descriptions for selection and a valid first call
+
+Start with the analyst task, selected source and useful result. Put material
+effects and the deciding boundary between neighboring tools early. Progressive
+discovery previews the first 240 characters, so those characters should identify
+the operation without requiring the rest of its reference documentation.
+
+Keep exact call syntax where the advertised schema cannot convey it. The compact
+input profile strips most annotation prose and can reduce nested controls to
+`{type: "object"}`. Moving selectors into parameter descriptions alone does not
+make them available to those clients. For example, retained pseudocode needs
+both `source.kind: "retained-evidence"` and `view: {kind: "native", facet:
+"pseudocode"}`; a short exact example can be more useful than many paragraphs.
+Use the producer's handoff for other supported views rather than maintaining
+another supposedly exhaustive list in the shared consumer description.
+
+Keep configuration tutorials and detailed matching algorithms with their owning
+parameter contracts, product guides and actionable failures. Retain applicability,
+source identity, uncertainty, authority and cleanup facts needed to choose or
+safely continue the operation. An unresolved symbol lookup is not a completed
+reference search; an exhausted page does not establish absence in unexamined
+source. Shorter copy must preserve these distinctions.
+
+For wording changes, use a small set of representative agent tasks at the affected
+boundaries. Hold schemas, tool order, fixtures and host configuration fixed when
+comparing copy; add repetitions only for failures or ambiguous outcomes. Score
+actual arguments, corrective calls and supported final claims separately. A
+correct eventual answer can conceal malformed-call loops, while a valid call
+can still produce an overstated answer. Report whole-task usage, including
+retries and cached input, rather than treating fewer description bytes as proof
+of lower token cost.
+
 ## Design recovery around the failure
 
 Distinguish a request that violates its input contract from a valid selection
@@ -326,7 +358,9 @@ In multi-stage work, retain each completed, admitted observation before awaiting
 the next stage. Later reads, validation, cancellation, or finalization can fail
 without erasing those facts. Carry them through typed failure outcomes with
 explicit coverage of unperformed work; do not construct a successful result for
-stages that never ran.
+stages that never ran. For concurrent reads, the batch owner settles every
+admitted peer before reporting a failure. Retain completed observations together with each
+failed request's physical, cancellation and cleanup facts.
 
 - Keep target admission, provider readiness, active work, observed process exit,
   and resource release separate. A valid process handle, successful launcher,
@@ -366,12 +400,13 @@ stages that never ran.
   primary failure and let incomplete cleanup retain its own classification.
   Preserve the caller's abort reason as the typed cancellation error's cause,
   including when cancellation is observed only after provider completion.
-  Shared command owners must retain the observed cancellation reason separately
-  from physical failures and cleanup ownership. Carry that fact through failure
-  wrapping so adapters can preserve the exact reason without interpreting it.
-  ZIP member streams retain the exact signal reason; hdiutil wrappers consume
-  the command owner's typed cancellation record and keep physical command
-  failures separate, even if a host error is named `AbortError`.
+  The producing boundary records cancellation separately from physical failures
+  and cleanup ownership. A caller's abort reason is opaque: its value, error
+  type, name or cause chain cannot establish failure origin or cleanup authority.
+  Consumers use the owner's parsed facts. An established command timeout keeps
+  its timeout or refusal policy when preparation records a cancellation.
+  Failure wrapping and operation rebinding preserve these facts and already
+  classified secondary failures.
   Client cancellation alone does not prove native work stopped.
   For atomic publication, document the cancellation cutoff and preserve any
   committed output's publication receipt.
@@ -389,7 +424,9 @@ stages that never ran.
   original failure and completed observations. Later failure composition must
   report only resources whose cleanup remains unresolved. Carry cleanup
   capabilities explicitly in typed outcomes so consumers can bind returned errors
-  to exact owners without reparsing diagnostic cause chains.
+  to exact owners without reparsing diagnostic cause chains. A cleanup-status
+  observer does not replace a callable close capability retained by the caller's
+  scope.
   Bind every caller-visible retry error and aggregate, including an error already
   produced by the provider. An aggregate remains incomplete until all owners it
   reports are released; releasing one child cannot clear another child's status.

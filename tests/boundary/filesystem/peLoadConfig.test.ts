@@ -8,7 +8,7 @@ import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { peLoadConfigImage } from "../../../src/native/pe/PeLoadConfig.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-describe("PE import stable filesystem boundary", () => {
+describe("PE load-config stable filesystem boundary", () => {
   it("reports non-file and malformed PE selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-pe-load-config-files-");
     const path = join(root, "app.exe");
