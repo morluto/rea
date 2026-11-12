@@ -65,14 +65,14 @@ cancellation can still prevent upload.
 that analysis was complete. A successful operation can retain partial analysis,
 unknowns, and limitations. Exit zero is not a security verdict, proof of complete
 coverage, or a policy gate for those findings. Inspect the saved Evidence and
-coverage before making such a decision. See [output and exit status](cli.md#output-and-exit-status).
+coverage before making such a decision. See [output and exit status](getting-started/cli.md#output-and-exit-status).
 
 A nonzero exit can represent invalid input, unavailable tooling, an unsupported
 host/capability, or another operation failure. Keep the original JSON error (when
 emitted), stderr, and exit code, and use their category/message to diagnose it.
 An early startup failure may leave `analysis.json` empty; do not parse that as
 successful analysis. Select a supported operation or explicitly provision its
-[documented prerequisites](installation.md); do not silently switch providers,
+[documented prerequisites](getting-started/installation.md); do not silently switch providers,
 execute the artifact, or ignore the failure to obtain a green job.
 
 To exercise the failure path, temporarily set `ARTIFACT_PATH` to

@@ -16,8 +16,9 @@ import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { parseEnvironmentName } from "../config/environmentName.js";
 import {
+  mcpHttpHostSchema,
+  mcpHttpPortSchema,
   parseMcpHttpEndpoint,
-  mcpHttpListenerPortSchema,
   type McpHttpEndpoint,
 } from "../config/mcpHttpEndpoint.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -37,6 +38,7 @@ import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
+import { cliDecimalField } from "./options.js";
 
 /** Same envelope label as the other JSON-input commands and `parseCliJsonInput`. */
 const cliError = (error: AnalysisError): JsonValue => ({
@@ -333,6 +335,7 @@ const conflictingRules = (): JsonValue =>
 /** Inspect a HAR as inspect-web-network-capture does and serialize the Evidence as it prints it; a refusal is the command's output. */
 const inspectBuildHar = async (
   capturePath: string,
+  callerInputPath: string,
   captureTimeoutMs: number | undefined,
   environment: Readonly<NodeJS.ProcessEnv>,
   signal: AbortSignal,
@@ -355,6 +358,7 @@ const inspectBuildHar = async (
             : { capture_timeout_ms: captureTimeoutMs }),
         },
         { signal },
+        { capture: callerInputPath },
       ),
     service,
     "web-network-capture",
@@ -416,6 +420,7 @@ const buildEnvironmentCommand = async (
     progress("inspect");
     const inspected = await inspectBuildHar(
       capturePath,
+      input.capture,
       input.captureTimeoutMs,
       environment,
       signal,
@@ -511,8 +516,10 @@ const registerBuildCommand = (
         .boolean()
         .default(false)
         .describe("Run every stage and report, but write nothing"),
-      captureTimeoutMs:
+      // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
+      captureTimeoutMs: cliDecimalField(
         inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -678,12 +685,11 @@ export const registerEnvironmentCommands = (
         .describe(
           "Serve pure replay: derive no state, serve every manifest tool from its retained records and answer every /agentenv method as not found",
         ),
-      host: z
-        .string()
-        .min(1)
+      // Flags use the MCP_HOST and MCP_PORT owners shared with rea mcp --http.
+      host: mcpHttpHostSchema
         .optional()
         .describe("Listener address; default MCP_HOST, else 127.0.0.1"),
-      port: mcpHttpListenerPortSchema
+      port: mcpHttpPortSchema
         .optional()
         .describe(
           "Listener port; default MCP_PORT, else 0 for an ephemeral port",

@@ -48,6 +48,7 @@ import {
   buildInterfaceBuilderAnalysis,
   interfaceBuilderLimitsSchema,
   type InterfaceBuilderDocumentInput,
+  type InterfaceBuilderAnalysis,
 } from "../../domain/apple/interfaceBuilderGraph.js";
 import { projectNibViewHierarchy } from "./NibViewHierarchy.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
@@ -124,9 +125,9 @@ const decodeInterfaceBuilderBundle = async (
   const decodeBudget = new InterfaceBuilderDecodeBudget(
     MAX_AGGREGATE_DECODE_BYTES,
   );
-  let outcome: { kind: "completed" } | { kind: "failed"; cause: unknown } = {
-    kind: "completed",
-  };
+  let outcome:
+    | { kind: "completed"; value: InterfaceBuilderAnalysis }
+    | { kind: "failed"; cause: unknown };
   const retainOmittedArchive = (
     path: string,
     reason: string,
@@ -289,6 +290,34 @@ const decodeInterfaceBuilderBundle = async (
         else unreportedInvalidArchives += 1;
       }
     }
+    const result = buildInterfaceBuilderAnalysis({
+      targetSha256: input.targetSha256,
+      ...(input.resourceRoot === undefined
+        ? {}
+        : { resourceRoot: input.resourceRoot }),
+      toolVersion: "rea-interface-builder/1",
+      documents,
+      limits,
+    });
+    const value = finalizeHierarchyCoverage(result, {
+      unexaminedSources,
+      incompleteHierarchies,
+      unresolvedConnections,
+      unknownDates,
+      datePrecisionOverlaps,
+      unknownScalars,
+      nonFiniteReals,
+      negativeZeroReals,
+      invalid,
+      unreportedInvalidArchives,
+      omittedArchives,
+      unreportedOmittedArchives,
+      omissionCounts,
+      attempted,
+      omitted,
+      traversal: traversal.snapshot(),
+    });
+    outcome = { kind: "completed", value };
   } catch (cause: unknown) {
     outcome = { kind: "failed", cause };
   }
@@ -297,36 +326,25 @@ const decodeInterfaceBuilderBundle = async (
     reader,
     resource: input.bundlePath,
   });
+  const finalOutcome =
+    outcome.kind === "completed" && input.signal?.aborted
+      ? {
+          kind: "failed" as const,
+          cause: new ArtifactReaderFailure(
+            "cancelled",
+            "Interface Builder inspection cancelled during reader finalization",
+            { cause: input.signal.reason, partialObservation: outcome.value },
+          ),
+        }
+      : outcome;
   if (released.kind === "failed")
-    throw resources.cleanupFailure(outcome, [released]);
-  if (outcome.kind === "failed") throw outcome.cause;
-  const result = buildInterfaceBuilderAnalysis({
-    targetSha256: input.targetSha256,
-    ...(input.resourceRoot === undefined
-      ? {}
-      : { resourceRoot: input.resourceRoot }),
-    toolVersion: "rea-interface-builder/1",
-    documents,
-    limits,
-  });
-  return finalizeHierarchyCoverage(result, {
-    unexaminedSources,
-    incompleteHierarchies,
-    unresolvedConnections,
-    unknownDates,
-    datePrecisionOverlaps,
-    unknownScalars,
-    nonFiniteReals,
-    negativeZeroReals,
-    invalid,
-    unreportedInvalidArchives,
-    omittedArchives,
-    unreportedOmittedArchives,
-    omissionCounts,
-    attempted,
-    omitted,
-    traversal: traversal.snapshot(),
-  });
+    throw resources.cleanupFailure(
+      finalOutcome,
+      [released],
+      outcome.kind === "completed" ? outcome.value : undefined,
+    );
+  if (finalOutcome.kind === "failed") throw finalOutcome.cause;
+  return finalOutcome.value;
 };
 
 /** Select lexically earliest document paths independent of host traversal order. */

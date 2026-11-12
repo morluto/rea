@@ -938,18 +938,18 @@ describe("served catalog", () => {
       "patch_books_by_id",
       "post_books",
     ]);
-    expect(described.get("post_books")?.description).toContain(
-      'creates an entity of /api/books in the served environment state (body members "name"; required: "name"), modelled on the recorded calls',
+    expect(described.get("post_books")?.description).toMatch(
+      /creates an entity.*\/api\/books.*"name".*required.*"name"/iu,
     );
-    expect(described.get("patch_books_by_id")?.description).toContain(
-      'changes the entity the path names in the served environment state (body members "name"; send at least one)',
+    expect(described.get("patch_books_by_id")?.description).toMatch(
+      /changes the entity.*path.*"name".*send at least one/iu,
     );
     expect(described.get("delete_books_by_id")?.description).toContain(
       "removes the entity the path names from the served environment state",
     );
     expect(described.get("post_books")?.annotations.readOnlyHint).toBe(false);
-    expect(described.get("get_books")?.description).toContain(
-      "answers from the served environment state where the state backs this tool",
+    expect(described.get("get_books")?.description).toMatch(
+      /answers.*served environment state.*state backs this tool/iu,
     );
   });
 

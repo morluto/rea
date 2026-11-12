@@ -205,6 +205,19 @@ export class DecompileExport {
   async writeIndex(input: {
     readonly layoutStatus: "address" | "debug_layout_unavailable";
     readonly limitations: readonly string[];
+    readonly latestRun: {
+      readonly resume: boolean;
+      readonly selected: number;
+      readonly excluded: number;
+      readonly selection: {
+        readonly name: string | null;
+        readonly namespace: string | null;
+        readonly address_start: string | null;
+        readonly address_end: string | null;
+        readonly limit: number | null;
+      };
+      readonly inventoryLimitations: readonly string[];
+    };
   }): Promise<Result<void, AnalysisError>> {
     // Appends update this owner only after journal sync; resume parses once.
     // Reuse those committed facts instead of re-reading and reinterpreting them.
@@ -215,6 +228,13 @@ export class DecompileExport {
       analysis_profile_digest: this.identity.analysisProfileDigest,
       layout: this.identity.layout,
       layout_status: input.layoutStatus,
+      latest_run: {
+        resume: input.latestRun.resume,
+        selected: input.latestRun.selected,
+        excluded: input.latestRun.excluded,
+        selection: input.latestRun.selection,
+        inventory_limitations: [...input.latestRun.inventoryLimitations],
+      },
       limitations: [...input.limitations],
       functions: [...this.records.values()].sort((left, right) =>
         compareProcedureAddresses(left.address, right.address),
@@ -687,7 +707,16 @@ const parseJournal = (
   // an interrupted append and are not part of the journal. Offsets are bytes,
   // so damaged UTF-8 cannot move the truncation point.
   const committedBytes = bytes.lastIndexOf(0x0a) + 1;
-  const lines = bytes.subarray(0, committedBytes).toString("utf8").split("\n");
+  let committed: string;
+  try {
+    committed = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(bytes.subarray(0, committedBytes));
+  } catch {
+    return err(incompatibleJournal());
+  }
+  const lines = committed.split("\n");
   lines.pop();
   const header = decompileJournalHeaderSchema.safeParse(parseJson(lines[0]));
   if (!header.success) return err(incompatibleJournal());

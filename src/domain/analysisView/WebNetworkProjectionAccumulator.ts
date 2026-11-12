@@ -13,7 +13,7 @@ import {
 } from "../webNetworkCapture.js";
 import { admitAnalysisViewData } from "./analysisViewDataAdmission.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { analysisViewResultInputError } from "./analysisViewParent.js";
+import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ENTRY_BYTES,
@@ -32,6 +32,7 @@ export abstract class WebNetworkProjectionAccumulator {
   protected constructor(
     readonly maximumBytes: number,
     private readonly budgetSubject: string,
+    private readonly operation = "inspect_analysis_view",
   ) {}
 
   protected retain(bytes: number): boolean {
@@ -72,7 +73,7 @@ export abstract class WebNetworkProjectionAccumulator {
   protected overBudget(): Result<never, AnalysisError> {
     return err(
       new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
+        this.operation,
         "memory",
         `${this.budgetSubject} retained state and temporary work exceed the projection representation budget.`,
         { output_bytes: this.maximumBytes },
@@ -104,13 +105,52 @@ export abstract class WebNetworkProjectionAccumulator {
   }
 
   addLimitations(limitations: readonly string[]): Result<void, AnalysisError> {
-    for (const limitation of limitations) {
-      if (this.#limitations.has(limitation)) continue;
-      if (!this.retain(ENTRY_BYTES + textBytes(limitation.length)))
-        return this.overBudget();
-      this.#limitations.add(limitation);
-    }
+    const prepared = this.prepareLimitations(limitations);
+    if (!prepared.ok) return prepared;
+    prepared.value();
     return ok(undefined);
+  }
+
+  /** Admit record qualifications without publishing them before the record commits. */
+  protected prepareLimitations(
+    limitations: readonly string[],
+  ): Result<() => void, AnalysisError> {
+    const rollbackAdmission = this.retainedCheckpoint();
+    const pending = new Set<string>();
+    for (const limitation of limitations) {
+      if (this.#limitations.has(limitation) || pending.has(limitation))
+        continue;
+      if (!this.retain(ENTRY_BYTES + textBytes(limitation.length))) {
+        rollbackAdmission();
+        return this.overBudget();
+      }
+      pending.add(limitation);
+    }
+    return ok(() => {
+      for (const limitation of pending) this.#limitations.add(limitation);
+    });
+  }
+
+  /** Derive budgeted qualifications for this snapshot without retaining old snapshots. */
+  protected snapshotLimitations(
+    derived: readonly string[],
+  ): Result<string[], AnalysisError> {
+    const release = this.temporaryCheckpoint();
+    if (
+      !this.scratch(
+        derived.reduce(
+          (bytes, limitation) =>
+            bytes + ENTRY_BYTES + textBytes(limitation.length),
+          0,
+        ),
+      )
+    )
+      return this.overBudget();
+    try {
+      return ok([...new Set([...this.#limitations, ...derived])].sort(compare));
+    } finally {
+      release();
+    }
   }
 
   protected sortedLimitations(): string[] {
@@ -123,13 +163,17 @@ export const admitHarCaptureParent = (
   parent: AnalysisViewParent,
   viewKind: "api-surface" | "environment-manifest" | "environment-state",
   accumulator: WebNetworkProjectionAccumulator,
+  context: { readonly operation?: string; readonly sourceField?: string } = {},
 ): Result<WebNetworkCapture, AnalysisError> => {
-  const unsupported = (reason: string) =>
+  const operation = context.operation ?? "inspect_analysis_view";
+  const sourceField = context.sourceField ?? "source";
+  const unsupported = (reason: string, remediationAction?: string) =>
     err(
       new AnalysisUnsupportedTargetError(
-        "inspect_analysis_view",
+        operation,
         parent.evidenceId,
         reason,
+        remediationAction === undefined ? undefined : { remediationAction },
       ),
     );
   if (parent.operation !== "inspect_web_network_capture")
@@ -141,7 +185,15 @@ export const admitHarCaptureParent = (
   const parsed = safeParseOwnedWebNetworkCapture(parent.normalizedResult);
   if (!parsed.success)
     return err(
-      analysisViewResultInputError(parent.normalizedResult, parsed.error),
+      analysisInputErrorFromIssues(
+        operation,
+        parsed.error.issues.map((issue) => ({
+          ...issue,
+          path: [sourceField, "normalized_result", ...issue.path],
+        })),
+        { [sourceField]: { normalized_result: parent.normalizedResult } },
+        { cause: parsed.error },
+      ),
     );
   if (parsed.data.format !== "har")
     return unsupported(
@@ -171,6 +223,9 @@ export const admitHarCaptureParent = (
     .object({ sensitive_value_count: z.number().int().nonnegative() })
     .safeParse(parent.parameters);
   if (!declarations.success || declarations.data.sensitive_value_count > 0)
-    return unsupported("sensitive_values_unretained");
+    return unsupported(
+      "sensitive_values_unretained",
+      "This view cannot safely project this capture because sensitivity declarations are not retained. Use a compatible capture or summary view to inspect retained observations. Do not remove sensitivity declarations to bypass this restriction.",
+    );
   return ok(parsed.data);
 };

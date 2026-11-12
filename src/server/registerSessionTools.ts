@@ -8,9 +8,14 @@ import { workflowUnknownInput } from "../application/investigation/WorkflowUnkno
 import {
   getNavigationContext,
   inspectAddressContext,
+  omitContextEvidenceForDelivery,
 } from "../application/AnalysisContextQueries.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
-import { createProcessCaptureEvidence } from "../application/process/ProcessEvidence.js";
+import {
+  createProcessCaptureEvidence,
+  createProcessScenarioPlanEvidence,
+} from "../application/process/ProcessEvidence.js";
+import { prepareProcessScenarioPlan } from "../application/process/ProcessScenarioPreparation.js";
 import { captureProcessScenario } from "../process/capture/ProcessHarness.js";
 import { ProcessCaptureResourceScope } from "../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../process/capture/ProcessCaptureError.js";
@@ -110,6 +115,39 @@ const registerProcessTools = ({
         context.mcpReq.signal,
         async () => {
           const progress = mcpProgressReporter(context);
+          if (input.dry_run) {
+            const prepared = await logToolExecution(
+              logger,
+              captureContract.name,
+              () =>
+                prepareProcessScenarioPlan(
+                  input,
+                  environment,
+                  process.platform,
+                  context.mcpReq.signal,
+                ),
+            );
+            if (!prepared.ok)
+              return server.delivery.toCallToolResult(
+                prepared,
+                captureContract,
+              );
+            const evidence = createProcessScenarioPlanEvidence(
+              prepared.value,
+              process.platform,
+            );
+            const recorded = session.recordEvidence(evidence);
+            if (!recorded.ok)
+              return server.delivery.toCallToolResult(
+                recorded,
+                captureContract,
+              );
+            return server.delivery.toEvidenceToolResult(
+              evidence,
+              captureContract,
+              recorded,
+            );
+          }
           const captured = await logToolExecution(
             logger,
             captureContract.name,
@@ -237,12 +275,9 @@ const registerOpenLifecycleTool = ({
             },
             openContract,
           )
-        : server.delivery.toErrorToolResult(
-            opened.error,
+        : server.delivery.toOpenFailureToolResult(
+            opened,
             openContract.returnsTargetContent,
-            {
-              selection_at_failure: opened.selection,
-            },
           );
     },
   );
@@ -289,11 +324,30 @@ const registerContextTools = (
       const admitted = await admission(
         addressContract.name,
         context.mcpReq.signal,
-        async (analysis) =>
-          server.delivery.toCallToolResult(
-            await inspectAddressContext(analysis, input, context.mcpReq.signal),
+        async (analysis) => {
+          const result = await inspectAddressContext(
+            analysis,
+            input,
+            context.mcpReq.signal,
+          );
+          if (!result.ok)
+            return server.delivery.toCallToolResult(result, addressContract);
+          const value = result.value;
+          return server.delivery.toCallToolResult(
+            result,
             addressContract,
-          ),
+            {},
+            (failure, budgetBytes) =>
+              (function* () {
+                for (const alternative of omitContextEvidenceForDelivery(
+                  value,
+                  failure,
+                  budgetBytes,
+                ))
+                  yield { result: alternative };
+              })(),
+          );
+        },
       );
       return admitted.ok
         ? admitted.value

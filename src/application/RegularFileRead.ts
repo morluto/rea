@@ -1,8 +1,8 @@
 import type { Stats } from "node:fs";
-import { lstat, stat, type FileHandle } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 
 import {
-  sameRegularFileState,
+  assertStableRegularFileIdentity,
   RegularFileChangedError,
   RegularFileOperationCancelled,
   assertRegularFileActive,
@@ -53,16 +53,20 @@ export class RetainedRegularFileCleanupFailure<
 }
 
 /** Bind only explicit cleanup capabilities, never resource labels or opaque causes. */
+export const regularFileCleanupLeases = (
+  cause: unknown,
+): readonly AnalysisCleanupLease[] | undefined =>
+  cause instanceof RetainedRegularFileCleanupFailure
+    ? [cause.cleanupLease]
+    : cause instanceof ArtifactReaderFailure
+      ? cause.cleanupLeases
+      : undefined;
+
 export const bindRegularFileCleanup = (
   cause: unknown,
   error: AnalysisError,
 ): void => {
-  const leases =
-    cause instanceof RetainedRegularFileCleanupFailure
-      ? [cause.cleanupLease]
-      : cause instanceof ArtifactReaderFailure
-        ? cause.cleanupLeases
-        : undefined;
+  const leases = regularFileCleanupLeases(cause);
   if (leases !== undefined) new AnalysisCleanupLeaseGroup(error, leases);
 };
 
@@ -211,15 +215,10 @@ export const withRegularFileCompletion = async <Value>(
           assertRegularFileActive(signal);
           const value = await read(handle, stats);
           assertRegularFileActive(signal);
-          const [opened, currentPath] = await Promise.all([
-            handle.stat(),
-            options.symlinks === "reject" ? lstat(path) : stat(path),
-          ]);
-          if (
-            !sameRegularFileState(stats, opened) ||
-            !sameRegularFileState(stats, currentPath)
-          )
-            throw new RegularFileChangedError(path);
+          await assertStableRegularFileIdentity(handle, path, stats, {
+            symlinks: options.symlinks ?? "follow",
+            ...(signal === undefined ? {} : { signal }),
+          });
           assertRegularFileActive(signal);
           return value;
         },

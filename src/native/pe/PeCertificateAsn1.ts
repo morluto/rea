@@ -28,7 +28,12 @@ const OID_NAMES: Readonly<Record<string, string>> = {
 
 /** A fixed per-payload decoder allowance and its limit. */
 export interface PeCertificateDecodeAllowance {
-  readonly allowance: "asn1-nodes" | "decoded-text";
+  readonly allowance:
+    | "asn1-nodes"
+    | "asn1-depth"
+    | "decoded-text"
+    | "oid-bytes"
+    | "oid-arc-bytes";
   readonly limit: number;
 }
 
@@ -62,9 +67,15 @@ export const readAsn1 = (bytes: Buffer): Asn1BerNode => {
     if (cause instanceof Asn1BerFailure)
       throw new PeCertificateAsn1Failure(
         cause.message,
-        cause.kind === "budget-exceeded"
-          ? { allowance: "asn1-nodes", limit: cause.limit ?? ASN1_NODE_BUDGET }
-          : null,
+        cause.constraint === null
+          ? null
+          : {
+              allowance:
+                cause.constraint.resource === "nodes"
+                  ? "asn1-nodes"
+                  : "asn1-depth",
+              limit: cause.constraint.limit,
+            },
       );
     throw cause;
   }
@@ -112,12 +123,14 @@ export const decodeOid = (content: Buffer): string => {
     case "empty":
       return fail("Empty OBJECT IDENTIFIER.");
     case "byte-limit":
-      return fail(
+      throw new PeCertificateAsn1Failure(
         `OBJECT IDENTIFIER exceeds ${String(decoded.error.limit)} bytes.`,
+        { allowance: "oid-bytes", limit: decoded.error.limit },
       );
     case "arc-limit":
-      return fail(
+      throw new PeCertificateAsn1Failure(
         `OBJECT IDENTIFIER arc exceeds ${String(decoded.error.limit)} bytes.`,
+        { allowance: "oid-arc-bytes", limit: decoded.error.limit },
       );
     case "non-minimal":
       return fail("Non-minimal OBJECT IDENTIFIER component.");
@@ -217,11 +230,7 @@ const decodeDirectoryString = (
 // X.690 8.3.1 and 8.3.2 hold for BER as well as DER: an INTEGER has at least
 // one content octet, and its first nine bits are never all zeros or all ones.
 // Padded encodings would otherwise collapse onto the minimal serial's hex.
-const integerHex = (
-  content: Buffer,
-  budget: DecodedNameBudget,
-  label: string,
-): string => {
+const requireIntegerContent = (content: Buffer, label: string): void => {
   if (content.length === 0) return fail(`${label} INTEGER is empty.`);
   const second = content[1];
   if (
@@ -230,6 +239,14 @@ const integerHex = (
       (content[0] === 0xff && second >= 0x80))
   )
     return fail(`${label} INTEGER is not minimally encoded.`);
+};
+
+const integerHex = (
+  content: Buffer,
+  budget: DecodedNameBudget,
+  label: string,
+): string => {
+  requireIntegerContent(content, label);
   let start = 0;
   while (start < content.length - 1 && content[start] === 0) start += 1;
   chargeDecodedName(budget, (content.length - start) * 2);
@@ -280,6 +297,7 @@ interface Attribute {
   readonly oid: string;
   readonly oid_name: string | null;
   readonly value: string;
+  readonly rdn_index: number;
 }
 
 const decodeName = (
@@ -290,10 +308,13 @@ const decodeName = (
   readonly attributes: readonly Attribute[];
 } => {
   const attributes: Attribute[] = [];
-  for (const rdn of sequence(node, "Name")) {
+  for (const [rdnIndex, rdn] of sequence(node, "Name").entries()) {
     if (rdn.tag !== 0x31) return fail("Name RDN is not a SET.");
+    if (rdn.children.length === 0) return fail("Name RDN is empty.");
     for (const attribute of rdn.children) {
       const parts = sequence(attribute, "AttributeTypeAndValue");
+      if (parts.length !== 2)
+        return fail("AttributeTypeAndValue must have exactly two fields.");
       const oidNode = parts[0];
       const valueNode = parts[1];
       if (
@@ -307,16 +328,29 @@ const decodeName = (
         oid,
         oid_name: oidName(oid),
         value: decodeDirectoryString(valueNode, budget),
+        rdn_index: rdnIndex,
       });
     }
   }
-  const text = attributes
-    .map((attribute) => {
-      const key = attribute.oid_name ?? attribute.oid;
-      return `${key}=${attribute.value}`;
-    })
-    .join(", ");
-  return { text, attributes };
+  // RFC 4514 joins one RDN's attributes with "+" and RDNs with a comma.
+  // Keep encoded order: reversing RDNs would change every existing name.
+  const renderedRdns: string[] = [];
+  let openRdn = -1;
+  let openAttributes: string[] = [];
+  const finishRdn = (): void => {
+    if (openAttributes.length > 0) renderedRdns.push(openAttributes.join("+"));
+  };
+  for (const attribute of attributes) {
+    if (attribute.rdn_index !== openRdn) {
+      finishRdn();
+      openRdn = attribute.rdn_index;
+      openAttributes = [];
+    }
+    const key = attribute.oid_name ?? attribute.oid;
+    openAttributes.push(`${key}=${attribute.value}`);
+  }
+  finishRdn();
+  return { text: renderedRdns.join(", "), attributes };
 };
 
 // RFC 5280 4.1.2.5 and X.690 11.7-11.8: UTC with seconds, a final "Z", and
@@ -389,15 +423,44 @@ const requireSubjectPublicKeyInfo = (node: Asn1BerNode): void => {
   requireBitString(key, "SubjectPublicKeyInfo subjectPublicKey");
 };
 
+// RFC 5280 4.1 and 4.2: an Extension is extnID, an optional critical BOOLEAN
+// and an extnValue OCTET STRING. A certificate MUST NOT repeat an extnID.
+const requireExtensions = (extensions: readonly Asn1BerNode[]): void => {
+  const seen = new Set<string>();
+  for (const extension of extensions) {
+    const fields = sequence(extension, "TBSCertificate extension");
+    const extnId = fields[0];
+    const critical = fields.length === 3 ? fields[1] : undefined;
+    const extnValue = fields[fields.length - 1];
+    if (
+      (fields.length !== 2 && fields.length !== 3) ||
+      extnId?.tag !== 0x06 ||
+      (critical !== undefined &&
+        (critical.tag !== 0x01 || critical.content.length !== 1)) ||
+      extnValue?.tag !== 0x04
+    )
+      return fail(
+        "TBSCertificate extension is not an OID, optional BOOLEAN, and OCTET STRING.",
+      );
+    const oid = decodeOid(extnId.content);
+    if (seen.has(oid)) return fail(`TBSCertificate repeats extension ${oid}.`);
+    seen.add(oid);
+  }
+};
+
 // issuerUniqueID [1], subjectUniqueID [2], and extensions [3] are optional
-// and ordered. Anything else is not a TBSCertificate field.
+// and ordered. Anything else is not a TBSCertificate field. RFC 5280
+// 4.1.2.8-4.1.2.9: unique identifiers need v2 or v3; extensions need v3.
 const finishTbsCertificate = (
   children: readonly Asn1BerNode[],
   start: number,
+  version: number,
 ): void => {
   let cursor = start;
   const issuerUniqueId = children[cursor];
   if (issuerUniqueId?.tag === 0x81) {
+    if (version < 1)
+      return fail("TBSCertificate issuerUniqueID requires version 2 or 3.");
     requireBitStringContent(
       issuerUniqueId.content,
       "TBSCertificate issuerUniqueID",
@@ -406,6 +469,8 @@ const finishTbsCertificate = (
   }
   const subjectUniqueId = children[cursor];
   if (subjectUniqueId?.tag === 0x82) {
+    if (version < 1)
+      return fail("TBSCertificate subjectUniqueID requires version 2 or 3.");
     requireBitStringContent(
       subjectUniqueId.content,
       "TBSCertificate subjectUniqueID",
@@ -414,6 +479,8 @@ const finishTbsCertificate = (
   }
   const extensions = children[cursor];
   if (extensions?.tag === 0xa3) {
+    if (version !== 2)
+      return fail("TBSCertificate extensions require version 3.");
     const body = extensions.children[0];
     if (
       extensions.children.length !== 1 ||
@@ -421,6 +488,7 @@ const finishTbsCertificate = (
       body.tag !== 0x30
     )
       return fail("TBSCertificate extensions are not a SEQUENCE.");
+    requireExtensions(body.children);
     cursor += 1;
   }
   if (cursor !== children.length)
@@ -454,15 +522,22 @@ export const parseCertificate = (
   requireBitString(signatureValue, "Certificate signatureValue");
   const tbsChildren = sequence(tbs, "TBSCertificate");
   let index = 0;
-  const version = tbsChildren[0];
-  if (version?.tag === 0xa0) {
-    const versionNumber = version.children[0];
+  // An omitted version is the DEFAULT v1, encoded as 0.
+  let version = 0;
+  const versionField = tbsChildren[0];
+  if (versionField?.tag === 0xa0) {
+    const versionNumber = versionField.children[0];
     if (
-      version.children.length !== 1 ||
+      versionField.children.length !== 1 ||
       versionNumber === undefined ||
       versionNumber.tag !== 0x02
     )
       return fail("TBSCertificate version is not an INTEGER.");
+    // RFC 5280 4.1.2.1: v1(0), v2(1) or v3(2), one minimal octet each.
+    const [value] = versionNumber.content;
+    if (versionNumber.content.length !== 1 || value === undefined || value > 2)
+      return fail("TBSCertificate version is not v1, v2 or v3.");
+    version = value;
     index = 1;
   }
   const serial = tbsChildren[index];
@@ -494,7 +569,7 @@ export const parseCertificate = (
       "Certificate signatureAlgorithm differs from the TBSCertificate signature.",
     );
   requireSubjectPublicKeyInfo(subjectPublicKeyInfo);
-  finishTbsCertificate(tbsChildren, index + 6);
+  finishTbsCertificate(tbsChildren, index + 6, version);
   const validityChildren = sequence(validity, "Validity");
   const notBefore = validityChildren[0];
   const notAfter = validityChildren[1];
@@ -589,6 +664,16 @@ const parseSigner = (
     sid,
     names,
   );
+  // RFC 5652 5.3: issuerAndSerialNumber requires version 1 and
+  // subjectKeyIdentifier requires version 3.
+  const [expected, identifier] =
+    sid.tag === 0x80
+      ? [3, "subjectKeyIdentifier"]
+      : [1, "issuerAndSerialNumber"];
+  if (version.content.length !== 1 || version.content[0] !== expected)
+    return fail(
+      `SignerInfo version must be ${String(expected)} with ${identifier}.`,
+    );
   let cursor = 3;
   const authenticated = children[cursor]?.tag === 0xa0;
   if (authenticated) {
@@ -649,6 +734,7 @@ const parseSignedData = (
   const [version, digestSet, encapContentInfo] = children;
   if (version === undefined || version.tag !== 0x02)
     return fail("SignedData is missing version.");
+  requireIntegerContent(version.content, "SignedData version");
   if (digestSet === undefined || digestSet.tag !== 0x31)
     return fail("SignedData is missing digestAlgorithms.");
   if (

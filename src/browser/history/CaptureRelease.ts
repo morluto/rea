@@ -24,10 +24,4 @@ export const captureDecoderProcessMemoryLimitBytes = (
 export const NODE_CAPTURE_HEAP_ENFORCED =
   javaScriptRuntime(process.versions).id === "node";
 
-/** Commit limit for the default heap. A configured heap uses `captureDecoderProcessMemoryLimitBytes`. */
-export const NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES =
-  captureDecoderProcessMemoryLimitBytes(
-    NODE_CAPTURE_HEAP_LIMITS.oldGenerationMiB,
-  );
-
 /** Fixed offline interpretation profile, not an authenticated producer claim. */

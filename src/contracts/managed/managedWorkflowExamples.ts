@@ -79,6 +79,7 @@ const runtimeMembers = (): ManagedMemberInspection => {
   );
   return {
     ...result,
+    method_rows: { offset: 0, count: 1, total: 1 },
     methods: [
       {
         token: "0x06000001",

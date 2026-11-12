@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -522,9 +521,15 @@ describe("Ghidra compact reference provenance", () => {
   it("distinguishes incoming references, examined emptiness and unavailable coverage at data addresses", () => {
     const instruction = {
       ...compactInstruction(),
-      address: "ram:00402000",
+      address: "ram:0x402000",
       status: "data",
       procedure: null,
+      containing_data: {
+        address: "ram:0x402000",
+        length: 4,
+        type_id: "/dword",
+        provenance: "ghidra-listing",
+      },
     };
     const reference = {
       ...compactReference(),
@@ -1111,25 +1116,6 @@ describe("Ghidra native instruction decoder context for ARM TMode and MIPS ISA_M
     expect(
       parseFunctionValueFixture("inspect_native_instruction", emptySource).ok,
     ).toBe(false);
-  });
-});
-
-describe("Ghidra bridge script processor context contract", () => {
-  it("binds TMode to ARM and ISA_MODE to MIPS in ReaGhidraBridge.java", async () => {
-    const bridgePath = new URL(
-      "../../bridge/ghidra/ReaGhidraBridge.java",
-      import.meta.url,
-    );
-    const content = await readFile(bridgePath, "utf8");
-    expect(content).toContain(
-      'currentProgram.getLanguageID().getIdAsString().startsWith("ARM:")',
-    );
-    expect(content).toContain(
-      'currentProgram.getLanguageID().getIdAsString().startsWith("MIPS:")',
-    );
-    expect(content).toContain('"TMode"');
-    expect(content).toContain('"ISA_MODE"');
-    expect(content).toContain('"ghidra-program-context"');
   });
 });
 

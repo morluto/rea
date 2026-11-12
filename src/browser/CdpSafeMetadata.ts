@@ -100,6 +100,10 @@ const normalizedHeaders = (
   return headers;
 };
 
+// CSP3 §2.3.1: base64-value is 1*(ALPHA / DIGIT / "+" / "/" / "-" / "_") *2("=").
+const cspNonceSource = /^'nonce-[a-z0-9+/_-]+={0,2}'$/u;
+const cspHashSource = /^'sha(?:256|384|512)-[a-z0-9+/_-]+={0,2}'$/u;
+
 /**
  * Each field line is a CSP3 serialized policy list, with policies separated by
  * commas. Directives of every policy are returned in order; the schema does not
@@ -130,16 +134,15 @@ const parseCsp = (
         [];
       for (const token of tokens) {
         const lower = token.toLowerCase();
-        if (lower.startsWith("'nonce-")) {
-          nonceCount += 1;
-          continue;
-        }
+        // A nonce or hash lookalike is never retained, even when it is not a source.
         if (
+          lower.startsWith("'nonce-") ||
           lower.startsWith("'sha256-") ||
           lower.startsWith("'sha384-") ||
           lower.startsWith("'sha512-")
         ) {
-          hashCount += 1;
+          if (cspNonceSource.test(lower)) nonceCount += 1;
+          else if (cspHashSource.test(lower)) hashCount += 1;
           continue;
         }
         sources.push(cspSource(token, baseUrl, allowedOrigins));

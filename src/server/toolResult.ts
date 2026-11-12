@@ -78,14 +78,29 @@ const retainedEvidenceContinuation = (
 
 /** The first page an owner offers when its complete retained result does not fit. */
 const ownerFirstPage = (evidence: Evidence): JsonValue | undefined =>
-  evidence.operation === "analyze_function"
-    ? { kind: "native", facet: "pseudocode", offset: 0 }
-    : evidence.operation === "trace_application_feature"
-      ? { kind: "feature-trace", collection: "paths", offset: 0, limit: 64 }
-      : evidence.operation === "batch_decompile"
-        ? { kind: "batch-decompile", collection: "items", offset: 0, limit: 64 }
-        : isNativeInventoryOperation(evidence.operation)
-          ? { kind: "native-inventory", offset: 0, limit: 64 }
-          : isNativeObservationOperation(evidence.operation)
-            ? { kind: "native-observation", offset: 0, limit: 64 }
-            : undefined;
+  evidence.operation === "trace_web_source_location"
+    ? { kind: "source-location", collection: "matches", offset: 0 }
+    : evidence.operation === "analyze_function" ||
+        evidence.operation === "procedure_pseudo_code"
+      ? { kind: "native", facet: "pseudocode", offset: 0 }
+      : evidence.operation === "inspect_native_instruction"
+        ? {
+            kind: "native-instruction-references",
+            collection: "incoming_references",
+            offset: 0,
+            limit: 64,
+          }
+        : evidence.operation === "trace_application_feature"
+          ? { kind: "feature-trace", collection: "paths", offset: 0, limit: 64 }
+          : evidence.operation === "batch_decompile"
+            ? {
+                kind: "batch-decompile",
+                collection: "items",
+                offset: 0,
+                limit: 64,
+              }
+            : isNativeInventoryOperation(evidence.operation)
+              ? { kind: "native-inventory", offset: 0, limit: 64 }
+              : isNativeObservationOperation(evidence.operation)
+                ? { kind: "native-observation", offset: 0, limit: 64 }
+                : undefined;

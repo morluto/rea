@@ -10,6 +10,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
   symlink,
   truncate,
   writeFile,
@@ -428,7 +429,6 @@ it("applies a non-default capture deadline and releases its runtime", async () =
       capture_timeout_ms: 250,
     }),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected capture timeout");
   expect(result.error._tag).toBe("AnalysisTimeoutError");
   expect(result.error.userMessage).toContain("250");
@@ -554,14 +554,12 @@ it("retains a failed capture reader and retries it before a fresh load", async (
   });
   try {
     const first = await decoder.inspect(input);
-    expect(first.ok).toBe(false);
     if (first.ok) throw new Error("Reader close failure must fail inspection");
     expect(first.error.cleanupIncomplete).toBe(true);
     expect(first.error.cleanupResources).toContain(path);
     expect(decoderCalls).toBe(0);
 
     const refused = await decoder.inspect(input);
-    expect(refused.ok).toBe(false);
     if (refused.ok) throw new Error("Fresh read must wait for owner cleanup");
     expect(refused.error.cleanupIncomplete).toBe(true);
     expect(refused.error.cleanupResources).toContain(path);
@@ -848,7 +846,6 @@ it("retains completed capture facts and binds final root cleanup to its retry le
       format: "har",
     }),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Root close failure must be reported");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(runtimePath).toBeDefined();
@@ -1029,9 +1026,14 @@ it.each([
           },
         },
       });
-      expect(projected.remediation.action).toContain("no runtime override");
       expect(projected.remediation.action).toContain(
-        "no completed capture Evidence",
+        `Increase max_reply_bytes above ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}`,
+      );
+      expect(projected.remediation.action).toContain(
+        "next inspect_web_network_capture call",
+      );
+      expect(projected.remediation.action).toContain(
+        "do not recreate a completed report from a refused decode",
       );
       expect(projected.remediation.action).not.toContain("rea doctor");
       expect(result.error.partialObservation).toMatchObject({
@@ -1218,17 +1220,28 @@ it.each([
     const controller = new AbortController();
     const reason = { caller: "reply descriptor close" };
     const originalClose = OwnedFileHandle.prototype.close;
-    let closes = 0;
+    let replyPath: string | undefined;
+    let replyCloses = 0;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
       .mockImplementation(async function (this: OwnedFileHandle) {
-        closes += 1;
-        if (closes === 2 && closeFails) {
+        let isReply = false;
+        if (replyPath !== undefined) {
+          try {
+            const named = await stat(replyPath);
+            const opened = await this.handle.stat();
+            isReply = named.dev === opened.dev && named.ino === opened.ino;
+          } catch (cause) {
+            if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+          }
+        }
+        if (isReply) replyCloses += 1;
+        if (isReply && replyCloses === 1 && closeFails) {
           controller.abort(reason);
           throw new Error("controlled reply close denial");
         }
         await originalClose.call(this);
-        if (closes === 2) controller.abort(reason);
+        if (isReply && replyCloses === 1) controller.abort(reason);
       });
     const decoder = new HistoricalCaptureDecoder(
       [
@@ -1236,6 +1249,7 @@ it.each([
           format: "har",
           identity: HAR_CAPTURE_PROVIDER_IDENTITY,
           command: async (_, runtimePath) => {
+            replyPath = join(runtimePath, "reply.json");
             const bytes =
               reply === "malformed UTF-8"
                 ? Buffer.concat([
@@ -1264,7 +1278,7 @@ it.each([
               arguments: [
                 "-e",
                 `require('node:fs').writeFileSync(process.argv[1],Buffer.from(${JSON.stringify(bytes.toString("base64"))},'base64'))`,
-                join(runtimePath, "reply.json"),
+                replyPath,
               ],
             };
           },
@@ -1325,7 +1339,7 @@ it.each([
         if (reply === "malformed schema")
           expect(primary.message).toContain("Reply violates its schema");
       } else expect(primary.cause).toBe(reason);
-      expect(closes).toBe(closeFails ? 3 : 2);
+      expect(replyCloses).toBe(closeFails ? 2 : 1);
     } finally {
       close.mockRestore();
       await decoder.close();

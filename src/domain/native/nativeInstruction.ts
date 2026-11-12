@@ -57,6 +57,34 @@ export const nativeInstructionSchema = z.strictObject({
       "decoded is an instruction at the address; not-instruction-boundary is inside a listed instruction; data is defined data; outside-memory is outside the program's memory. Ghidra's not-in-listing means the address is in memory with no listed instruction or defined data; no decode was attempted, and memory may be uninitialized. The legacy undecodable value in older Evidence has the same ambiguous meaning and does not prove decoding failed.",
     ),
   procedure: z.string().nullable(),
+  containing_instruction: z
+    .strictObject({
+      address: z.string().min(1),
+      length: z.int().positive(),
+      mnemonic: z.string().min(1),
+      raw_disassembly: z.string().min(1),
+      provenance: z.string().min(1),
+    })
+    .optional()
+    .describe(
+      "Provider-observed listed instruction containing the exact requested interior address. Its address and length describe the containing instruction; the query address remains unchanged. Omission means not recorded or not applicable, including older Evidence. This does not imply a function, alternate decode, reachability, or runtime execution.",
+    ),
+  containing_data: z
+    .strictObject({
+      address: z.string().min(1),
+      length: z
+        .int()
+        .positive()
+        .describe(
+          "Observed object length in bytes; a dynamic type may not have a fixed size.",
+        ),
+      type_id: z.string().min(1),
+      provenance: z.string().min(1),
+    })
+    .optional()
+    .describe(
+      "Provider-observed containing defined data object, including its start and type identity; the selected address remains unchanged. Inspect its start with inspect_native_data_type for its layout. This does not choose a field or union member or prove runtime use. Omission means not recorded or not applicable, including older Evidence.",
+    ),
   architecture: z.string(),
   mode: z
     .string()

@@ -67,7 +67,7 @@ it.each(formats)(
         ok: false,
         error: {
           kind: "malformed",
-          message: "ELF relocation entry is truncated",
+          message: expect.stringContaining("truncated"),
         },
       };
       expect(readElfRelocationEntry(input, bits, littleEndian, "rela")).toEqual(

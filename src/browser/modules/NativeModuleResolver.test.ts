@@ -105,6 +105,9 @@ describe("native module resolver cleanup ownership", () => {
     expect(result.error.cleanupResources).toEqual([]);
     if (!blocked.ok) expect(blocked.error.cleanupIncomplete).toBe(false);
   });
+});
+
+describe("native module resolver shutdown admission", () => {
   it("awaits acquisition and cleanup while refusing queued work during shutdown", async () => {
     let acquired: () => void = () => {
       throw new Error("acquisition gate missing");
@@ -150,10 +153,25 @@ describe("native module resolver cleanup ownership", () => {
     await first;
     const blocked = await queued;
     expect(blocked.ok).toBe(false);
+    if (!blocked.ok) {
+      expect(blocked.error.cleanupIncomplete).toBe(false);
+      expect(blocked.error.cleanupResources).toEqual([]);
+      expect(projectAnalysisError(blocked.error).code).toBe(
+        "capability_unavailable",
+      );
+    }
     await closing;
     expect(closed).toBe(true);
     expect([launches, closes]).toEqual([1, 1]);
-    expect((await provider.resolve(input)).ok).toBe(false);
+    const afterClose = await provider.resolve(input);
+    expect(afterClose.ok).toBe(false);
+    if (!afterClose.ok) {
+      expect(afterClose.error.cleanupIncomplete).toBe(false);
+      expect(afterClose.error.cleanupResources).toEqual([]);
+      expect(projectAnalysisError(afterClose.error).code).toBe(
+        "capability_unavailable",
+      );
+    }
   });
 });
 
@@ -375,6 +393,12 @@ it.each([
       cause: physicalFailure,
     });
     expect(projectAnalysisError(result.error).code).not.toBe("cancelled");
+    expect(result.error.secondaryFailures).toContainEqual(
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      }),
+    );
     await provider.close();
     expect(closes).toBe(stage === "launch" ? 0 : 1);
   },

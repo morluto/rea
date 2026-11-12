@@ -4,7 +4,7 @@ import {
   HopperProtocolError,
   HopperRemoteError,
 } from "../domain/hopperErrors.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { safeParseJson } from "../domain/safeJson.js";
 
@@ -28,7 +28,7 @@ const responseSchema = z.union([
   z
     .object({
       id: z.int().nonnegative(),
-      result: jsonValueSchema,
+      result: ownedJsonValueSchema,
     })
     .strict(),
   z

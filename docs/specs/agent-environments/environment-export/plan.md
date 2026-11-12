@@ -19,7 +19,7 @@
    `scripts/verify-agentenv-environment.mjs`, wire `ci.yml` and extend the
    `ciRequiredLanes` and `ciChangeScope` tables.
 6. Add services, conformance and cli-boundary tests; document the command in
-   `docs/cli.md`, the bundle and lane in `docs/agent-environments.md` and
-   `docs/testing.md`; record the spec.
+   `docs/getting-started/cli.md`, the bundle and lane in `docs/agent-environments.md` and
+   `docs/development/testing.md`; record the spec.
 
 No new dependency is introduced; the CLI inventory gains one command.

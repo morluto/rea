@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
 import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
@@ -41,6 +42,9 @@ const injected = vi.hoisted(() => ({
         abort: () => void;
       }
     | undefined,
+  commandHashClose: undefined as
+    | { entered: () => void; release: Promise<void> }
+    | undefined,
   handles: [] as import("node:fs/promises").FileHandle[],
   nativeCloses: new Map<
     import("node:fs/promises").FileHandle,
@@ -60,6 +64,7 @@ afterEach(async () => {
   injected.failReadStage = undefined;
   injected.abortOnReadFailure = undefined;
   injected.abortOnClose = undefined;
+  injected.commandHashClose = undefined;
   for (const [handle, close] of injected.nativeCloses)
     if (handle.fd >= 0) await close();
   injected.nativeCloses.clear();
@@ -87,18 +92,21 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
         const failCloseReadStage = injected.failCloseReadStage;
         const failReadStage = injected.failReadStage;
         const abortOnClose = injected.abortOnClose;
+        const commandHashClose = injected.commandHashClose;
         if (
           !failNextClose &&
           !injected.holdCloseFailures &&
           !failCloseReadStage &&
           !failReadStage &&
-          !abortOnClose
+          !abortOnClose &&
+          !commandHashClose
         )
           return descriptor;
         injected.failNextClose = false;
         let readStageMatched = false;
         let failedClose = false;
         let abortCloseMatched = false;
+        let commandHashMatched = false;
         let fingerprintStage:
           | "preProbeFingerprint"
           | "fingerprint"
@@ -148,6 +156,8 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
                 : length > 2
                   ? fingerprintStage
                   : undefined;
+            if (commandHashClose && isInstallation && length > 2)
+              commandHashMatched = true;
             if (abortOnClose?.stage === readStage) abortCloseMatched = true;
             if (failReadStage !== undefined && failReadStage === readStage) {
               readStageMatched = true;
@@ -164,6 +174,11 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
         );
         vi.spyOn(handle, "close").mockImplementation(async () => {
           injected.closeCalls += 1;
+          if (commandHashMatched && commandHashClose !== undefined) {
+            commandHashMatched = false;
+            commandHashClose.entered();
+            await commandHashClose.release;
+          }
           if (abortCloseMatched) abortOnClose?.abort();
           if (
             (failNextClose && !failedClose) ||
@@ -190,6 +205,87 @@ import { kunaInstallationCancellation } from "../../../../src/kuna/KunaInstallat
 import { inspectKunaInstallationOwned } from "./kunaResourceScope.js";
 import { fakeKunaCalls } from "./fakeKuna.js";
 import { run, session } from "./kunaSessionFixture.js";
+
+it.skipIf(process.platform === "win32").each([
+  { operation: "list_strings", input: {}, command: "strings" },
+  { operation: "xrefs", input: { address: "0x2000" }, command: "xrefs" },
+  {
+    operation: "procedure_callees",
+    input: { procedure: "0x1000" },
+    command: "decompile-graph",
+  },
+] as const)(
+  "preserves $operation retained hash cleanup for a later waiter",
+  async ({ operation, input, command }) => {
+    const fixture = await session("rea-kuna-draining-hash-close-");
+    const client = fixture.open();
+    await run(client, "health");
+    let entered!: () => void;
+    let release!: () => void;
+    const closeEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const closeRelease = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const controller = new AbortController();
+    const reason = { caller: "abandoned string scan" };
+    injected.installationPath = fixture.kuna;
+    injected.closeCalls = 0;
+    injected.commandHashClose = { entered, release: closeRelease };
+    const first = client.execute(operation, input, {
+      signal: controller.signal,
+    });
+    let second: ReturnType<typeof client.execute> | undefined;
+    try {
+      await awaitAcknowledgement(closeEntered, first, "Kuna hash close");
+      injected.holdCloseFailures = true;
+      controller.abort(reason);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      second = client.execute(operation, input);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      release();
+      const firstResult = await first;
+      const secondResult = await second;
+      if (firstResult.ok || secondResult.ok)
+        throw new Error("Expected the retained hash cleanup failure");
+      expect(firstResult.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+        cleanupIncomplete: true,
+        cleanupResources: [fixture.kuna],
+      });
+      expect(secondResult.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+        cleanupIncomplete: true,
+        cleanupResources: [fixture.kuna],
+      });
+      expect(injected.closeCalls).toBe(1);
+      expect(
+        (await fakeKunaCalls(fixture.kuna)).some(
+          ({ argv }) => argv[0] === command,
+        ),
+      ).toBe(false);
+      injected.releaseCloseFailures = true;
+      await run(client, operation, input);
+      expect(firstResult.error.cleanupIncomplete).toBe(false);
+      expect(secondResult.error.cleanupIncomplete).toBe(false);
+      expect(
+        (await fakeKunaCalls(fixture.kuna)).filter(
+          ({ argv }) => argv[0] === command,
+        ),
+      ).toHaveLength(1);
+    } finally {
+      release();
+      controller.abort();
+      injected.releaseCloseFailures = true;
+      await Promise.allSettled([first, second]);
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32").each(
   (["identity"] as const).flatMap((stage) =>
@@ -278,7 +374,11 @@ it.skipIf(process.platform === "win32")(
         installation: installed.value,
         operation: "list_procedures",
         arguments: (input) => ["functions", input, "--json"],
-        deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+        deadline: {
+          setting: "REA_KUNA_TIMEOUT_MS",
+          source: "setting",
+          ms: 10_000,
+        },
         outputBytes: 1024 * 1024,
         signal: controller.signal,
       });
@@ -362,7 +462,11 @@ it.skipIf(process.platform === "win32")(
         installation: installed.value,
         operation: "list_procedures",
         arguments: (input) => ["functions", input, "--json"],
-        deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+        deadline: {
+          setting: "REA_KUNA_TIMEOUT_MS",
+          source: "setting",
+          ms: 10_000,
+        },
         outputBytes: 1024 * 1024,
         signal: controller.signal,
       });
@@ -409,11 +513,14 @@ it.skipIf(process.platform === "win32")(
         installation: installed.value,
         operation: "list_procedures",
         arguments: (input) => ["functions", input, "--json"],
-        deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+        deadline: {
+          setting: "REA_KUNA_TIMEOUT_MS",
+          source: "setting",
+          ms: 10_000,
+        },
         outputBytes: 1024 * 1024,
         signal: controller.signal,
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Kuna command unexpectedly ran");
       const originatingError = result.error;
       const originalCause = originatingError.cause;
@@ -460,7 +567,11 @@ it.skipIf(process.platform === "win32")(
           installation: installed.value,
           operation: "list_procedures",
           arguments: (input) => ["functions", input, "--json"],
-          deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+          deadline: {
+            setting: "REA_KUNA_TIMEOUT_MS",
+            source: "setting",
+            ms: 10_000,
+          },
           outputBytes: 1024 * 1024,
           signal: controller.signal,
           releaseRun: () => {
@@ -473,11 +584,9 @@ it.skipIf(process.platform === "win32")(
       if (first.ok)
         throw new Error("hash descriptor close unexpectedly passed");
       const blocked = await request();
-      expect(blocked.ok).toBe(false);
       if (blocked.ok) throw new Error("Kuna ran with retained hash cleanup");
       expect(blocked.error).toMatchObject({ cleanupIncomplete: true });
       const prepared = await commands.prepare();
-      expect(prepared.ok).toBe(false);
       if (prepared.ok) throw new Error("prepare passed retained hash cleanup");
       expect(prepared.error).toMatchObject({ cleanupIncomplete: true });
 
@@ -518,7 +627,11 @@ it.skipIf(process.platform === "win32")(
           installation: installed.value,
           operation: "list_procedures",
           arguments: (input) => ["functions", input, "--json"],
-          deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+          deadline: {
+            setting: "REA_KUNA_TIMEOUT_MS",
+            source: "setting",
+            ms: 10_000,
+          },
           outputBytes: 1024 * 1024,
           signal: controller.signal,
         });
@@ -535,7 +648,6 @@ it.skipIf(process.platform === "win32")(
       });
 
       const blocked = await request();
-      expect(blocked.ok).toBe(false);
       if (blocked.ok) throw new Error("Kuna ran with retained hash cleanup");
       expect(blocked.error).toMatchObject({ cleanupIncomplete: true });
       expect(injected.closeCalls).toBe(2);
@@ -607,7 +719,6 @@ it.skipIf(process.platform === "win32")(
     injected.releaseCloseFailures = false;
 
     const resolved = await binary.previewTarget(fixture.target);
-    expect(resolved.ok).toBe(false);
     if (resolved.ok) throw new Error("Kuna readiness unexpectedly succeeded");
     expect(resolved.error).toMatchObject({
       cleanupIncomplete: true,
