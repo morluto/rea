@@ -22,7 +22,12 @@ import {
 import { parsePeResources } from "./PeResourceParser.js";
 import { peResourceFixture } from "./PeResources.fixture.js";
 
-const parse = (bytes: Buffer, maxEntries = 4096, signal?: AbortSignal) =>
+const parse = (
+  bytes: Buffer,
+  maxEntries = 4096,
+  signal?: AbortSignal,
+  options?: { readonly decodePayloads?: boolean },
+) =>
   parsePeResources(
     bytes,
     {
@@ -35,6 +40,7 @@ const parse = (bytes: Buffer, maxEntries = 4096, signal?: AbortSignal) =>
       max_entries: maxEntries,
     }),
     signal,
+    options,
   );
 
 describe("word-aligned PE resource records", () => {
@@ -374,6 +380,38 @@ describe("Delphi forms inside PE resources", () => {
       await parse(peResourceFixture().bytes),
     );
     expect(result.delphi_forms).toEqual([]);
+  });
+
+  it("skips Delphi form projections in inventory-only mode", async () => {
+    const { bytes } = formFixture(1252);
+    const full = await parse(bytes);
+    expect(full.delphi_forms).toHaveLength(1);
+    const inventory = peResourcesSchema.parse(
+      await parse(bytes, 4096, undefined, { decodePayloads: false }),
+    );
+    expect(inventory.resources).toHaveLength(1);
+    expect(inventory.delphi_forms).toEqual([]);
+    expect(
+      inventory.limitations.some((line) => line.includes("Inventory-only")),
+    ).toBe(true);
+  });
+});
+
+describe("inventory-only PE resource projections", () => {
+  it("keeps the inventory readable when an unrelated payload projection is malformed", async () => {
+    const fixture = peResourceFixture(false, [
+      { type: 14, name: 42, language: 1033, payload: Buffer.from([0, 0]) },
+    ]);
+    // Decoding the malformed RT_GROUP_ICON payload is a full-report concern.
+    await expect(parse(fixture.bytes)).rejects.toMatchObject({
+      reason: "format",
+    });
+    // A carrier probe that reads only the inventory must not inherit it.
+    const inventory = peResourcesSchema.parse(
+      await parse(fixture.bytes, 4096, undefined, { decodePayloads: false }),
+    );
+    expect(inventory.resources).toHaveLength(1);
+    expect(inventory.icon_groups).toEqual([]);
   });
 });
 

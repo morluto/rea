@@ -58,16 +58,28 @@ const jsonBytes = (value: unknown, maximum: number): number => {
 const identityKey = (id: PeResourceIdentity): string =>
   id.kind === "id" ? `id:${String(id.id)}` : `name:${id.utf16le_hex}`;
 
+/** Options for probes that own their layout policy or read only the inventory. */
+interface PeResourceParseOptions {
+  /** Already admitted from these same bytes; used by carrier probes that own layout failure policy. */
+  readonly admittedLayout?: PeResourceLayout;
+  /**
+   * Decode RT_GROUP_ICON and Delphi/C++Builder form payload projections.
+   * Carrier probes that read only `resources` turn this off so a malformed or
+   * oversized payload cannot abort an unrelated layout decision.
+   */
+  readonly decodePayloads?: boolean;
+}
+
 /** Decode the conventional type/name/language tree; never infer payload meaning or runtime loading. */
 export const parsePeResources = async (
   bytes: Buffer,
   artifact: PeResources["artifact"],
   input: InspectPeResourcesInput,
   signal?: AbortSignal,
-  /** Already admitted from these same bytes; used by carrier probes that own layout failure policy. */
-  admittedLayout?: PeResourceLayout,
+  options: PeResourceParseOptions = {},
 ): Promise<PeResources> => {
   assertArtifactReadActive(signal);
+  const { admittedLayout, decodePayloads = true } = options;
   const layout = admittedLayout ?? readPeResourceLayout(bytes);
   const directories: PeResources["directories"] = [];
   const resources: PeResources["resources"] = [];
@@ -271,13 +283,12 @@ export const parsePeResources = async (
     }
     resource.payload.sha256 = digest;
   }
-  const iconGroups = readIconGroups(bytes, resources, account, ensureCapacity);
-  const delphiForms = readDelphiForms(
-    bytes,
-    resources,
-    account,
-    ensureCapacity,
-  );
+  const iconGroups = decodePayloads
+    ? readIconGroups(bytes, resources, account, ensureCapacity)
+    : [];
+  const delphiForms = decodePayloads
+    ? readDelphiForms(bytes, resources, account, ensureCapacity)
+    : [];
   const report: PeResources = {
     artifact,
     format: layout.format,
@@ -299,12 +310,17 @@ export const parsePeResources = async (
       examined_entries: examined,
       resources: resources.length,
     },
-    limitations: [
-      "Static PE32/PE32+ type/name/language resource inventory; payloads other than RT_GROUP_ICON and Delphi/C++Builder forms (TPF0/TPF1 RT_RCDATA) remain opaque.",
-      ...DELPHI_FORM_LIMITATIONS,
-      "Icon candidates are resource-table relationships. Language fallback, image decoding and actual shell/window loading are not observed.",
-      "Exact shared byte ranges are retained; non-identical overlapping resource structures or payloads are rejected.",
-    ],
+    limitations: decodePayloads
+      ? [
+          "Static PE32/PE32+ type/name/language resource inventory; payloads other than RT_GROUP_ICON and Delphi/C++Builder forms (TPF0/TPF1 RT_RCDATA) remain opaque.",
+          ...DELPHI_FORM_LIMITATIONS,
+          "Icon candidates are resource-table relationships. Language fallback, image decoding and actual shell/window loading are not observed.",
+          "Exact shared byte ranges are retained; non-identical overlapping resource structures or payloads are rejected.",
+        ]
+      : [
+          "Inventory-only parse for carrier probes; RT_GROUP_ICON and Delphi/C++Builder form payload projections were not decoded.",
+          "Exact shared byte ranges are retained; non-identical overlapping resource structures or payloads are rejected.",
+        ],
   };
   assertArtifactReadActive(signal);
   if (jsonBytes(report, METADATA_BYTES) > METADATA_BYTES)

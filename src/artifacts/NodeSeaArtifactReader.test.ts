@@ -1091,6 +1091,32 @@ it.each([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe])(
   },
 );
 
+it("locates a SEA blob without decoding unrelated resource payloads", async () => {
+  const fixture = peResourceFixture(true, [
+    {
+      type: 10,
+      name: "NODE_SEA_BLOB",
+      language: 1033,
+      payload: buildNodeSeaBlob(populated),
+    },
+    // A full report would reject this malformed icon group; the SEA probe
+    // reads only the resource inventory and must still locate its blob.
+    { type: 14, name: 42, language: 1033, payload: Buffer.from([0, 0]) },
+  ]);
+  const handle = await open(
+    await writeCarrier("sea-malformed-icon", fixture.bytes),
+    "r",
+  );
+  try {
+    expect(await locateNodeSea(handle, fixture.bytes.length)).toMatchObject({
+      carrier: "pe",
+      blobLength: buildNodeSeaBlob(populated).length,
+    });
+  } finally {
+    await handle.close();
+  }
+});
+
 it("confirms SEA naming before rejecting an unrelated cyclic PE resource branch", async () => {
   const fixture = peResourceFixture(true, [
     { type: 3, name: 1, language: 1033, payload: Buffer.from("other") },

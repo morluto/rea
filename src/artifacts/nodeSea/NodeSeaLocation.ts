@@ -678,7 +678,9 @@ const locatePeResources = async (carrier: Carrier): Promise<BlobRange[]> => {
       max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
     },
     carrier.signal,
-    layout,
+    // This probe reads only the inventory; payload projections are unrelated
+    // to blob location and must not abort an otherwise valid carrier.
+    { admittedLayout: layout, decodePayloads: false },
   );
   return resources.resources.flatMap((resource) => {
     if (
