@@ -75,14 +75,16 @@ const releaseExtraFiles = [
     path: cursorPluginServer,
     jsonpath: "$.mcpServers.rea.args[1]",
   },
-  ...[
-    ".claude-plugin/marketplace.json",
-    ".agents/plugins/marketplace.json",
-  ].map((path) => ({
+  {
     type: "json",
-    path,
-    jsonpath: "$.plugins[0].source.version",
-  })),
+    path: ".claude-plugin/marketplace.json",
+    jsonpath: "$.plugins[0].version",
+  },
+  {
+    type: "json",
+    path: ".claude-plugin/marketplace.json",
+    jsonpath: "$.plugins[0].mcpServers.rea.args[1]",
+  },
 ];
 
 describe("release configuration", () => {
@@ -184,7 +186,7 @@ describe("release configuration", () => {
 });
 
 describe("plugin manifests", () => {
-  it("distributes both plugins with generated canonical skills from the exact npm release", async () => {
+  it("distributes both plugins with skills that exist in the package and local marketplace checkouts", async () => {
     const pkg = (await readJson("package.json")) as {
       version: string;
       files: string[];
@@ -199,23 +201,39 @@ describe("plugin manifests", () => {
         "skills",
       ]),
     );
-    for (const path of pluginManifests)
-      expect(await readJson(path)).toMatchObject({ skills: "./skills" });
-    for (const path of [
-      ".claude-plugin/marketplace.json",
-      ".agents/plugins/marketplace.json",
-    ])
-      expect(await readJson(path)).toMatchObject({
-        plugins: [
-          {
-            source: {
-              source: "npm",
-              package: "rea-agents",
-              version: pkg.version,
+    expect(await readJson(".claude-plugin/plugin.json")).toMatchObject({
+      skills: "./skills",
+    });
+    expect(await readJson(".codex-plugin/plugin.json")).toMatchObject({
+      skills: ".cursor-plugin/skills",
+    });
+    expect(await readJson(".claude-plugin/marketplace.json")).toMatchObject({
+      plugins: [
+        {
+          source: "./",
+          strict: false,
+          version: pkg.version,
+          skills: ["./.cursor-plugin/skills/reverse-engineer-anything"],
+          mcpServers: {
+            rea: {
+              command: "npx",
+              args: ["-y", `rea-agents@${pkg.version}`, "mcp"],
             },
           },
-        ],
-      });
+          icon: "./assets/rea-plugin.png",
+        },
+      ],
+    });
+    expect(await readJson(".agents/plugins/marketplace.json")).toMatchObject({
+      plugins: [
+        {
+          source: {
+            source: "local",
+            path: "./",
+          },
+        },
+      ],
+    });
   });
 
   it.each(pluginManifests)(
@@ -312,7 +330,8 @@ describe("plugin release pins", () => {
     expect(updatedJson.get(pluginServerConfig)).toMatchObject({
       mcpServers: {
         rea: {
-          args: ["./scripts/plugin-mcp-launcher.mjs", nextVersion],
+          command: "npx",
+          args: ["-y", `rea-agents@${nextVersion}`, "mcp"],
           startup_timeout_sec: 30,
         },
       },
@@ -329,21 +348,21 @@ describe("plugin release pins", () => {
         },
       },
     });
-    for (const path of [
-      ".claude-plugin/marketplace.json",
-      ".agents/plugins/marketplace.json",
-    ])
-      expect(updatedJson.get(path)).toMatchObject({
-        plugins: [
-          {
-            source: {
-              source: "npm",
-              package: "rea-agents",
-              version: nextVersion,
+    expect(updatedJson.get(".claude-plugin/marketplace.json")).toMatchObject({
+      plugins: [
+        {
+          source: "./",
+          strict: false,
+          version: nextVersion,
+          mcpServers: {
+            rea: {
+              command: "npx",
+              args: ["-y", `rea-agents@${nextVersion}`, "mcp"],
             },
           },
-        ],
-      });
+        },
+      ],
+    });
   });
 
   it("pins the plugin server launch from the shared MCP declaration", async () => {
@@ -354,8 +373,8 @@ describe("plugin release pins", () => {
     expect(await readJson(pluginServerConfig)).toMatchObject({
       mcpServers: {
         rea: {
-          command: "node",
-          args: ["./scripts/plugin-mcp-launcher.mjs", packageJson.version],
+          command: "npx",
+          args: ["-y", `rea-agents@${packageJson.version}`, "mcp"],
           cwd: ".",
         },
       },
@@ -367,6 +386,7 @@ describe("plugin release pins", () => {
     pluginServerConfig,
     cursorPluginManifest,
     cursorPluginServer,
+    ".claude-plugin/marketplace.json",
   ])("stores %s in the form Release Please rewrites it to", async (path) => {
     // Release Please reserializes JSON extra-files, so any other layout
     // would change formatting in every release PR.

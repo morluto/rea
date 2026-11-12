@@ -37,8 +37,8 @@ const pluginManifest = (version: string, launch = version) => ({
 const codexServerConfig = (version: string, launch = version) => ({
   mcpServers: {
     rea: {
-      command: "node",
-      args: ["./scripts/plugin-mcp-launcher.mjs", launch],
+      command: "npx",
+      args: ["-y", `rea-agents@${launch}`, "mcp"],
       cwd: ".",
       startup_timeout_sec: 30,
     },
@@ -634,12 +634,15 @@ it.each([
   {
     path: ".claude-plugin/plugin.json",
     manifest: pluginManifest("6.0.0", "5.1.0"),
+    failure: "launches version 5.1.0; release branch requires 6.0.0",
   },
   {
     path: ".codex-plugin/mcp.json",
     manifest: codexServerConfig("6.0.0", "5.1.0"),
+    failure:
+      "launches rea-agents@5.1.0; release branch requires rea-agents@6.0.0",
   },
-])("reads the release pin from $path", async ({ path, manifest }) => {
+])("reads the release pin from $path", async ({ path, manifest, failure }) => {
   const f = await fixture();
   await candidate(f, "6.0.0");
   await writeFile(join(f.directory, path), JSON.stringify(manifest));
@@ -647,9 +650,7 @@ it.each([
   await git(f.directory, ["commit", "-m", "chore: stale plugin launch"]);
   await expect(verify(f)).rejects.toMatchObject({
     code: 1,
-    stderr: expect.stringContaining(
-      `launches version 5.1.0; release branch requires 6.0.0`,
-    ),
+    stderr: expect.stringContaining(failure),
   });
 });
 

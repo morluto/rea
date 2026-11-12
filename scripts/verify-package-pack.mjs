@@ -237,21 +237,29 @@ export async function verifyPackagePack({ root, workspace, commands }) {
           ).stdout,
         )
       : manifest;
-    const expectedArgs = [
-      `${path.startsWith(".claude") ? "${CLAUDE_PLUGIN_ROOT}/" : "./"}scripts/plugin-mcp-launcher.mjs`,
+    const expectedClaudeArgs = [
+      "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
       packedManifest.version,
+    ];
+    const expectedCodexArgs = [
+      "-y",
+      `${packedManifest.name}@${packedManifest.version}`,
+      "mcp",
     ];
     if (
       manifest.version !== packedManifest.version ||
-      manifest.skills !== "./skills" ||
       (path.startsWith(".codex")
-        ? manifest.mcpServers !== "./.codex-plugin/mcp.json" ||
+        ? manifest.skills !== ".cursor-plugin/skills" ||
+          manifest.mcpServers !== "./.codex-plugin/mcp.json" ||
+          serverConfig.mcpServers?.rea?.command !== "npx" ||
           serverConfig.mcpServers?.rea?.cwd !== "." ||
-          serverConfig.mcpServers?.rea?.startup_timeout_sec !== 30
-        : false) ||
-      serverConfig.mcpServers?.rea?.command !== "node" ||
-      JSON.stringify(serverConfig.mcpServers?.rea?.args) !==
-        JSON.stringify(expectedArgs)
+          serverConfig.mcpServers?.rea?.startup_timeout_sec !== 30 ||
+          JSON.stringify(serverConfig.mcpServers?.rea?.args) !==
+            JSON.stringify(expectedCodexArgs)
+        : manifest.skills !== "./skills" ||
+          serverConfig.mcpServers?.rea?.command !== "node" ||
+          JSON.stringify(serverConfig.mcpServers?.rea?.args) !==
+            JSON.stringify(expectedClaudeArgs))
     )
       throw new Error(
         `Packaged plugin ${path} does not match the exact runtime and canonical skill release`,
