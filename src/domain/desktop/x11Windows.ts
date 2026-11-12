@@ -62,12 +62,46 @@ const decodeQuotedString = (source: string): string | null => {
   return valid ? decoded : null;
 };
 
+const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const ENCODER = new TextEncoder();
+
+/**
+ * A `UTF8_STRING` value. Outside a UTF-8 locale xprop writes every non-ASCII
+ * byte of the value as an octal escape, so escapes are UTF-8 bytes rather
+ * than characters; text that is not UTF-8 stays unknown.
+ */
+const decodeQuotedUtf8 = (source: string): string | null => {
+  const bytes: number[] = [];
+  for (const [, escape, literal] of source.matchAll(
+    /\\([0-7]{3}|.)|([^\\]+)/gu,
+  )) {
+    if (literal !== undefined) bytes.push(...ENCODER.encode(literal));
+    else if (escape !== undefined && /^[0-7]{3}$/u.test(escape)) {
+      const byte = Number.parseInt(escape, 8);
+      if (byte > 0xff) return null;
+      bytes.push(byte);
+    } else {
+      const value = XPROP_STRING_ESCAPES.get(escape ?? "");
+      if (value === undefined) return null;
+      bytes.push(value.charCodeAt(0));
+    }
+  }
+  try {
+    return UTF8.decode(Uint8Array.from(bytes));
+  } catch {
+    return null;
+  }
+};
+
 /** Read `xprop`'s quoted list; an uninterpretable member keeps its position unknown. */
-const quotedStrings = (value: string): readonly (string | null)[] => {
+const quotedStrings = (
+  value: string,
+  decode: (source: string) => string | null = decodeQuotedString,
+): readonly (string | null)[] => {
   const strings: (string | null)[] = [];
   const pattern = /"((?:[^"\\]|\\.)*)"/gu;
   for (const match of value.matchAll(pattern))
-    strings.push(decodeQuotedString(match[1] ?? ""));
+    strings.push(decode(match[1] ?? ""));
   return strings;
 };
 
@@ -99,7 +133,7 @@ export const parseX11WindowProperties = (
   const values = propertyValues(output);
   const [instance, class_] = quotedStrings(values.get("WM_CLASS") ?? "");
   const title =
-    quotedStrings(values.get("_NET_WM_NAME") ?? "")[0] ??
+    quotedStrings(values.get("_NET_WM_NAME") ?? "", decodeQuotedUtf8)[0] ??
     quotedStrings(values.get("WM_NAME") ?? "")[0] ??
     null;
   const pid = Number(values.get("_NET_WM_PID"));
