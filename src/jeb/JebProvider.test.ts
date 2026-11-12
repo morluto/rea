@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createJebAnalysisProvider } from "../composition/jeb.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import {
+  jebMcpTimeoutGuidance,
+  selectedJebMcpTimeout,
+} from "./JebMcpDeadline.js";
 import { JebProvider } from "./JebProvider.js";
 import { decodeJebToolResult } from "./JebMcpConnection.js";
 import type {
@@ -27,6 +32,7 @@ const scriptedConnection = (
 ): JebMcpConnection & { readonly calls: unknown[][] } => {
   const calls: unknown[][] = [];
   return {
+    sessionGeneration: 1,
     calls,
     async connect() {
       return Object.keys(responses);
@@ -103,13 +109,44 @@ describe("JebProvider live availability", () => {
     await provider.close();
   });
 
+  it("keeps the selected JEB deadline source", () => {
+    expect(selectedJebMcpTimeout(undefined)).toEqual({
+      ms: 60_000,
+      source: "default",
+    });
+    expect(selectedJebMcpTimeout(900_000)).toEqual({
+      ms: 900_000,
+      source: "setting",
+    });
+    expect(
+      runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "jeb.mcp_timeout_ms": 1500 } },
+        () => selectedJebMcpTimeout(900_000),
+      ),
+    ).toEqual({ ms: 1500, source: "runtime" });
+    expect(
+      jebMcpTimeoutGuidance("tools/call", 1500, "runtime").limit,
+    ).toMatchObject({
+      setting: "jeb.mcp_timeout_ms",
+      effective_value: 1500,
+      source: "runtime",
+      update_mode: "runtime",
+      pending_restart: false,
+    });
+    expect(
+      jebMcpTimeoutGuidance("discovery", 60_000, "default").limit,
+    ).toMatchObject({ source: "default", update_mode: "runtime" });
+  });
+
   it("rejects an invalid JEB timeout before constructing its MCP connection", async () => {
     let constructed = false;
     const provider = createJebAnalysisProvider(
       { REA_JEB_MCP_TIMEOUT_MS: "0" },
       () => {
         constructed = true;
-        return scriptedConnection({});
+        return scriptedConnection({
+          get_client_information: { success: true, version: "5.48.0" },
+        });
       },
     );
     expect(constructed).toBe(false);
@@ -117,6 +154,16 @@ describe("JebProvider live availability", () => {
       status: "unavailable",
       diagnostics: { setting: "REA_JEB_MCP_TIMEOUT_MS" },
     });
+    const accepted = await runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "jeb.mcp_timeout_ms": 1500 } },
+      () =>
+        provider.execute({
+          operation: "inspect_jeb_client",
+          input: {},
+        }),
+    );
+    expect(constructed).toBe(true);
+    expect(accepted.ok).toBe(true);
     await provider.close();
   });
 
@@ -453,12 +500,15 @@ describe("JebProvider target and endpoint selection", () => {
 });
 
 it("refuses remote endpoints before constructing a connection", () => {
+  const connectionFactory = vi.fn(() => scriptedConnection({}));
   expect(
     () =>
       new JebProvider({
+        connectionFactory,
         environment: { REA_JEB_MCP_URL: "http://example.com/mcp" },
       }),
   ).toThrow(AnalysisInputError);
+  expect(connectionFactory).not.toHaveBeenCalled();
 });
 
 it.each(["list_jeb_units", "decompile_jeb_item"] as const)(
@@ -491,6 +541,7 @@ it("forwards in-flight cancellation to the MCP call", async () => {
     entered = resolve;
   });
   const provider = providerWith({
+    sessionGeneration: 1,
     async connect() {
       return ["get_client_information"];
     },
@@ -641,7 +692,6 @@ it("project-open refusal retains the selected engine-host artifact path", async 
     operation: "open_jeb_project",
     input: { path: "/targets/Example.apk" },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Refused artifact accepted");
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "execution_failure",
@@ -710,7 +760,6 @@ it.each([
     const result = await provider.execute(request, {
       signal: controller.signal,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Cancelled metadata lookup accepted");
     expect(result.error).toMatchObject({
       _tag: "AnalysisCancelledError",
@@ -738,7 +787,6 @@ it.each([
       }),
     );
     const completed = await control.execute(request);
-    expect(completed.ok).toBe(true);
     if (!completed.ok) throw completed.error;
     expect(completed.value.result).toMatchObject({
       engine: { version: "5.48.0" },

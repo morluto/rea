@@ -1,4 +1,9 @@
 import {
+  resolveJavaScriptSemanticPrecision,
+  type JavaScriptSemanticPrecisionInput,
+} from "./javascriptSemanticPrecision.js";
+import { semanticPatternPropertyReadSources } from "./javascriptSemanticIterationSources.js";
+import {
   createSemanticOpaqueGlobalObserver,
   indexSemanticOpaqueEffects,
   semanticOpaqueBindingEffects,
@@ -9,7 +14,7 @@ import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFac
 import * as t from "@babel/types";
 
 import {
-  semanticComputedMethodKey,
+  semanticMethodDefinitionExpression,
   semanticBranchMayBeSkipped,
   semanticPriorStatementMayExit,
   semanticIterationCardinality,
@@ -39,15 +44,15 @@ import {
   semanticWriteSiteTarget,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import type {
-  JavaScriptSemanticAnalysisState,
-  JavaScriptSemanticBindingState,
-  JavaScriptSemanticScopeState,
-  JavaScriptBindingIndex,
-  JavaScriptSemanticReferenceEffectsAtSite,
-} from "./javascriptSemanticState.js";
 import {
+  type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticScopeState,
+  type JavaScriptBindingIndex,
+  type JavaScriptSemanticReferenceEffectsAtSite,
   currentSemanticScope,
+  semanticPrototypeOwners,
+  type SemanticPrototypeOwner,
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   resolveSemanticBindingFromScope,
@@ -66,12 +71,17 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   semanticRequireOrigin,
+  semanticRequireOriginCandidate,
   observePossibleCommonJsDelegateWrite,
   invalidateSemanticRequireDelegateWrites,
 } from "./javascriptSemanticRequireOrigin.js";
-import { semanticBundledRequireOrigin } from "./javascriptBundledRequireOrigin.js";
+import {
+  semanticBundledRequireOrigin,
+  semanticBundledRequireOriginCandidate,
+} from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import {
+  semanticBindingAtRead,
   semanticEffectTiming,
   semanticEffectTimingWithinActivation,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -176,11 +186,12 @@ interface AddBindingInput {
 /** Recover lexical bindings, aliases, constants, and module links. */
 export const analyzeJavaScriptSemantics = (
   source: string,
+  precision?: JavaScriptSemanticPrecisionInput,
 ): JavaScriptSemanticIr => {
   const file = parseJavaScriptSource(source);
   return file === null
     ? failedJavaScriptSemanticIr()
-    : analyzeParsedJavaScriptSemantics(file);
+    : analyzeParsedJavaScriptSemantics(file, "import", precision);
 };
 
 /** Recover lexical references, optionally for one name, without evaluating values or provenance. */
@@ -228,6 +239,7 @@ function* indexSemanticMemberMutationFactsSteps(
     (site, reference, path) =>
       referenceEffectsMayHaveChanged(state, site, reference, path),
   );
+  state.memberMutationFactsComplete = true;
   indexedMemberMutationStates.add(state);
   invalidateSemanticRequireDelegateWrites(state);
 }
@@ -399,8 +411,9 @@ const semanticPathsOverlap = (
 /** Share the lexical index with bounded, demand-driven boundary analyses. */
 export function* indexJavaScriptBindingsSteps(
   program: t.Program,
+  precision?: JavaScriptSemanticPrecisionInput,
 ): Generator<void, JavaScriptSemanticAnalysisState> {
-  const state = createState(program);
+  const state = createState(program, "import", precision);
   yield* collectDefinitionsSteps(program, state);
   yield* indexSemanticAmbientWritesSteps(state);
   return state;
@@ -410,9 +423,15 @@ export function* indexJavaScriptBindingsSteps(
 export const analyzeParsedJavaScriptSemantics = (
   file: ParsedJavaScriptSource,
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
+  precision?: JavaScriptSemanticPrecisionInput,
 ): JavaScriptSemanticIr =>
   completeSemanticSteps(
-    analyzeParsedJavaScriptSemanticsSteps(file, staticImportResolutionMode),
+    analyzeParsedJavaScriptSemanticsSteps(
+      file,
+      staticImportResolutionMode,
+      undefined,
+      precision,
+    ),
   );
 
 /**
@@ -425,8 +444,13 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   file: ParsedJavaScriptSource,
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
   expressionNodeBudget?: number,
+  precision?: JavaScriptSemanticPrecisionInput,
 ): Generator<void, JavaScriptSemanticIr> {
-  const state = createState(file.program, staticImportResolutionMode);
+  const state = createState(
+    file.program,
+    staticImportResolutionMode,
+    precision,
+  );
   yield* collectDefinitionsSteps(file.program, state);
   yield* indexSemanticAmbientWritesSteps(state);
   yield* indexSemanticMemberMutationFactsSteps(state);
@@ -460,6 +484,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
       ...new Set([...state.valueResourceLimits, ...state.getterResourceLimits]),
     ].sort(),
     [...state.returnedReferenceWidenings].map(range),
+    state.precision,
   );
   return {
     schema: "JavaScriptSemanticIR",
@@ -479,14 +504,14 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
           ]
         : []),
       ...(state.valueResourceLimits.has("alias-selections")
-        ? [semanticResourceLimitReason("alias-selections")]
+        ? [semanticResourceLimitReason("alias-selections", state.precision)]
         : []),
       ...(state.returnedReferenceWidenings.size > 0
         ? [RETURNED_REFERENCE_WIDENING_LIMITATION]
         : []),
       ...[...state.getterResourceLimits]
         .sort()
-        .map(semanticResourceLimitReason),
+        .map((limit) => semanticResourceLimitReason(limit, state.precision)),
       ...(parserPartial
         ? [
             "The parser recovered from syntax errors; affected bindings are partial.",
@@ -530,8 +555,9 @@ export interface JavaScriptReceiverIndex extends JavaScriptBindingIndex {
 export function* indexJavaScriptBindingsWithReceiversSteps(
   program: t.Program,
   hostContext?: "commonjs-wrapper",
+  precision?: JavaScriptSemanticPrecisionInput,
 ): Generator<void, JavaScriptReceiverIndex> {
-  const state = createState(program);
+  const state = createState(program, "import", precision);
   if (hostContext === "commonjs-wrapper") {
     const scope = currentSemanticScope(state.scopes);
     const binding: JavaScriptSemanticBindingState = {
@@ -842,12 +868,16 @@ const resolveGlobalAliasFact = (
 export interface JavaScriptElectronIdentity {
   /** Proven export paths keyed by call/construction root offset; absence is unknown. */
   readonly bindings: ReadonlyMap<number, readonly string[]>;
+  /** Conditional export paths whose require loader is not established. */
+  readonly candidateBindings: ReadonlyMap<number, readonly string[]>;
   readonly intactExport: (path: readonly (string | null)[]) => boolean;
   readonly exportPath: (root: t.Node) => readonly string[] | undefined;
+  readonly candidateExportPath: (root: t.Node) => readonly string[] | undefined;
   readonly invocationPath: (
     node: t.CallExpression | t.OptionalCallExpression,
   ) => readonly string[] | undefined;
   readonly mayChangeAppPath: (node: t.Node) => boolean;
+  readonly candidateMayChangeAppPath: (node: t.Node) => boolean;
 }
 
 export function* indexJavaScriptElectronIdentitySteps(
@@ -855,15 +885,33 @@ export function* indexJavaScriptElectronIdentitySteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, JavaScriptElectronIdentity> {
   const facts = new Map<number, readonly string[]>();
+  const candidateFacts = new Map<number, readonly string[]>();
+  let hasCandidateElectronSource = false;
   const interop = createSemanticModuleInterop(state);
   const writes = new SemanticPropertyPathCoverage();
   let collectedWrites = false;
   const exportsByBinding = new Map<string, readonly string[] | null>();
+  const candidatesByBinding = new Map<string, readonly string[] | null>();
+  const originAvailableAtRead = (
+    binding: JavaScriptSemanticBindingState,
+    read: t.Node,
+  ): boolean => {
+    if (
+      binding.directOrigins.length > 0 ||
+      semanticStableInitializer(binding, state) === undefined
+    )
+      return true;
+    const access = semanticBindingAtRead(binding, read, state);
+    // An unresolved activation can still carry a possible identity, while an
+    // ordered read before its initializer cannot refer to that value.
+    return access.status !== "ordered" || access.hasDefiniteInitializer;
+  };
   const rootOrigin = (root: t.Node): readonly string[] | undefined => {
     if (t.isIdentifier(root)) {
       if (semanticResolutionBlocked(state, root, root.name)) return undefined;
       const binding = resolveSemanticBindingState(state, root, root.name);
-      if (binding === undefined) return undefined;
+      if (binding === undefined || !originAvailableAtRead(binding, root))
+        return undefined;
       let exported = exportsByBinding.get(binding.bindingId);
       if (exported === undefined) {
         exported = electronExport(binding, state, interop);
@@ -891,11 +939,75 @@ export function* indexJavaScriptElectronIdentitySteps(
       const binding = resolveSemanticBindingState(state, root, root.name);
       if (
         binding !== undefined &&
-        semanticOpaqueBindingReadMayHaveChanged(binding, root, state)
+        (semanticOpaqueBindingReadMayHaveChanged(binding, root, state) ||
+          interop.aliasMayHaveChanged(binding))
       )
         return undefined;
     }
     return rootOrigin(root);
+  };
+  const candidateRootExport = (root: t.Node): readonly string[] | undefined => {
+    if (t.isIdentifier(root)) {
+      if (semanticResolutionBlocked(state, root, root.name)) return undefined;
+      const binding = resolveSemanticBindingState(state, root, root.name);
+      if (
+        binding === undefined ||
+        (collectedWrites && interop.invalidated(binding))
+      )
+        return undefined;
+      if (binding.directOrigins.length === 0) {
+        if (semanticStableInitializer(binding, state) === undefined)
+          return undefined;
+        if (!originAvailableAtRead(binding, root)) return undefined;
+      }
+      if (
+        state.opaqueEffects.byScope.size > 0 &&
+        (semanticOpaqueBindingReadMayHaveChanged(binding, root, state) ||
+          interop.aliasMayHaveChanged(binding))
+      )
+        return undefined;
+      let candidate = candidatesByBinding.get(binding.bindingId);
+      if (candidate === undefined) {
+        const provenance = evaluateSemanticProvenance(binding, state);
+        const initializer = semanticStableInitializer(binding, state);
+        const bundled =
+          initializer === undefined
+            ? undefined
+            : semanticBundledRequireOriginCandidate(initializer.node, state)
+                ?.origin;
+        const origin =
+          bundled?.loaderAuthority === "candidate" &&
+          initializer?.projection.every(
+            (key): key is string => typeof key === "string",
+          )
+            ? {
+                ...bundled,
+                importedPath: [
+                  ...bundled.importedPath,
+                  ...initializer.projection,
+                ],
+              }
+            : provenance.status === "ambiguous" &&
+                provenance.origins.length === 1
+              ? provenance.origins[0]
+              : undefined;
+        candidate =
+          origin?.loaderAuthority === "candidate" &&
+          ELECTRON_MODULE.test(origin.specifier)
+            ? electronExportPath(origin.importedPath)
+            : null;
+        candidatesByBinding.set(binding.bindingId, candidate);
+      }
+      return candidate ?? undefined;
+    }
+    const origin = (
+      semanticRequireOriginCandidate(root, state) ??
+      semanticBundledRequireOriginCandidate(root, state)
+    )?.origin;
+    return origin?.loaderAuthority === "candidate" &&
+      ELECTRON_MODULE.test(origin.specifier)
+      ? electronExportPath(origin.importedPath)
+      : undefined;
   };
   yield* collectJavaScriptIdentityWritesSteps(
     program,
@@ -903,7 +1015,10 @@ export function* indexJavaScriptElectronIdentitySteps(
     (node, kind) => {
       if (kind === "opaque-call") return [interop.opaqueMutationPath(node)];
       const { root, members } = electronMemberPath(node);
-      const exported = kind === "binding" ? undefined : rootOrigin(root);
+      const exported =
+        kind === "binding"
+          ? undefined
+          : (rootOrigin(root) ?? candidateRootExport(root));
       const path =
         exported === undefined
           ? (interop.intrinsicPath(root) ??
@@ -933,6 +1048,17 @@ export function* indexJavaScriptElectronIdentitySteps(
         !t.isNewExpression(node)
       )
         return;
+      if (
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        t.isIdentifier(node.callee, { name: "require" })
+      ) {
+        const origin = semanticRequireOriginCandidate(node, state)?.origin;
+        if (
+          origin?.loaderAuthority === "candidate" &&
+          ELECTRON_MODULE.test(origin.specifier)
+        )
+          hasCandidateElectronSource = true;
+      }
       const { root, members } = electronMemberPath(node.callee);
       const exported = rootExport(root);
       if (
@@ -940,6 +1066,14 @@ export function* indexJavaScriptElectronIdentitySteps(
         intactExport(["electron", ...exported, ...members])
       )
         facts.set(root.start ?? -1, exported);
+      else {
+        const candidate = candidateRootExport(root);
+        if (
+          candidate !== undefined &&
+          intactExport(["electron", ...candidate, ...members])
+        )
+          candidateFacts.set(root.start ?? -1, candidate);
+      }
     },
   });
   const invocationPath = (
@@ -962,14 +1096,23 @@ export function* indexJavaScriptElectronIdentitySteps(
   };
   return {
     bindings: facts,
+    candidateBindings: candidateFacts,
     intactExport,
     exportPath: rootExport,
+    candidateExportPath: candidateRootExport,
     invocationPath,
     mayChangeAppPath: createSemanticElectronAppPathChangeQuery(
       state,
       rootOrigin,
       interop,
     ),
+    candidateMayChangeAppPath: hasCandidateElectronSource
+      ? createSemanticElectronAppPathChangeQuery(
+          state,
+          candidateRootExport,
+          interop,
+        )
+      : () => false,
   };
 }
 
@@ -1030,6 +1173,7 @@ const bindingOrigin = (
 const createState = (
   program: t.Program,
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
+  precision?: JavaScriptSemanticPrecisionInput,
 ): JavaScriptSemanticAnalysisState => {
   const root: JavaScriptSemanticScopeState = {
     scopeId: semanticScopeId("program", program),
@@ -1040,10 +1184,12 @@ const createState = (
     bindings: new Map(),
   };
   return {
+    precision: resolveJavaScriptSemanticPrecision(precision),
     arrayIterationUnknown: false,
+    memberMutationFactsComplete: false,
     program,
     opaqueEffects: {
-      mayReferenceGlobalEval: false,
+      mayReferenceGlobalCode: false,
       sites: new WeakSet(),
       sloppySites: new WeakSet(),
       byScope: new Map(),
@@ -1063,6 +1209,8 @@ const createState = (
     bindingWrites: new Map(),
     prototypeRequireMutationObserved: false,
     prototypeEnumerationMayAffect: false,
+    prototypeMutationSites: [],
+    implicitPropertyReads: new WeakMap(),
     callables: [],
     callableNodesById: new Map(),
     moduleLinks: [],
@@ -1081,8 +1229,9 @@ const createState = (
   };
 };
 
-const globalEvalRoots = new Set([
+const globalCodeRoots = new Set([
   "eval",
+  "Function",
   "globalThis",
   "global",
   "window",
@@ -1120,6 +1269,8 @@ function* collectDefinitionsSteps(
     scope: JavaScriptSemanticScopeState;
   }[] = [];
   let needsPrototypeFacts = false;
+  const implicitReadCalls: (t.CallExpression | t.OptionalCallExpression)[] = [];
+  let mayReferenceReflect = false;
   const functionBodies: {
     readonly body: t.BlockStatement;
     readonly scope: JavaScriptSemanticScopeState;
@@ -1138,15 +1289,17 @@ function* collectDefinitionsSteps(
       if (
         t.isWithStatement(node) ||
         t.isForInStatement(node) ||
-        t.isForOfStatement(node)
+        t.isForOfStatement(node) ||
+        t.isArrayExpression(node) ||
+        t.isFunction(node)
       )
         needsPrototypeFacts = true;
       let parentScope = currentSemanticScope(stack);
       if (
-        semanticComputedMethodKey(parent ?? undefined, node) &&
+        semanticMethodDefinitionExpression(parent ?? undefined, node) &&
         parentScope.parentScopeId !== null
       ) {
-        // A computed method key is evaluated before entering the method's
+        // A method definition expression is evaluated before entering the method's
         // parameter and body environments.
         const keyScope = state.scopesById.get(parentScope.parentScopeId);
         if (keyScope !== undefined) {
@@ -1211,12 +1364,26 @@ function* collectDefinitionsSteps(
         state,
       });
       bindInnerDeclaration(node, parent, scope, state);
+      if (
+        t.isIdentifier(node, { name: "Reflect" }) ||
+        t.isStringLiteral(node, { value: "Reflect" }) ||
+        (t.isTemplateLiteral(node) &&
+          semanticStaticPropertyKey(node, true) === "Reflect")
+      )
+        mayReferenceReflect = true;
+      // Aliases and optional/call/apply/bind forms share the intrinsic owner;
+      // callee spelling alone cannot identify the property-read operation.
+      if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+        implicitReadCalls.push(node);
       if (t.isThrowStatement(node))
         thrownValues.push({ node, ancestors: readAncestors() });
-      // Every supported global eval origin starts with one of these decoded
+      // Every supported global-code origin starts with one of these decoded
       // identifiers, including computed properties and destructured aliases.
-      if (t.isIdentifier(node) && globalEvalRoots.has(node.name))
-        state.opaqueEffects.mayReferenceGlobalEval = true;
+      if (
+        t.isThisExpression(node) ||
+        (t.isIdentifier(node) && globalCodeRoots.has(node.name))
+      )
+        state.opaqueEffects.mayReferenceGlobalCode = true;
       if (
         t.isCallExpression(node) &&
         t.isIdentifier(unwrapJavaScriptExpression(node.callee).node, {
@@ -1328,6 +1495,15 @@ function* collectDefinitionsSteps(
         parent.handler != null &&
         child === parent.block
       ) {
+        if (parent.handler.param != null)
+          state.implicitPropertyReads.set(
+            node,
+            semanticPatternPropertyReadSources(
+              parent.handler.param,
+              { node: node.argument, projection: [] },
+              node,
+            ),
+          );
         const scope = state.scopeByNode.get(parent.handler);
         if (scope !== undefined && parent.handler.param != null)
           bindPattern({
@@ -1398,36 +1574,85 @@ function* collectDefinitionsSteps(
         if (t.isIdentifier(identifier))
           copyParameterToBody({ identifier, body, scope, state });
   }
+  const readInterop = mayReferenceReflect
+    ? createSemanticModuleInterop(state)
+    : undefined;
+  for (const node of readInterop === undefined ? [] : implicitReadCalls) {
+    const invocation = readInterop?.intrinsicInvocation(node);
+    if (
+      invocation?.kind !== "known" ||
+      invocation.path.join(".") !== "intrinsic.Reflect.get"
+    )
+      continue;
+    const [receiver, key] = invocation.arguments ?? [];
+    const receiverUnknown =
+      invocation.arguments === undefined || t.isSpreadElement(receiver);
+    if (!receiverUnknown && !t.isExpression(receiver)) continue;
+    const selected =
+      !receiverUnknown && (t.isStringLiteral(key) || t.isNumericLiteral(key))
+        ? key.value
+        : null;
+    state.implicitPropertyReads.set(node, [
+      {
+        node: receiverUnknown ? node : (receiver ?? node),
+        projection: receiverUnknown ? [null, selected] : [selected],
+        mutation: node,
+        lookup: "prototype",
+      },
+    ]);
+  }
   indexSemanticOpaqueEffects(opaqueCandidates, state);
   if (state.opaqueEffects.byScope.size > 0) clearSemanticValueCaches(state);
 }
-
-type PrototypeOwner = "Object" | "Array" | "String";
-
-const prototypeOwners = ["Object", "Array", "String"] as const;
 
 /** Preserve uncertainty when source can change or expose a built-in prototype. */
 function* indexPrototypeUncertaintySteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
-  const taint = (owner: PrototypeOwner): void => {
+  let effectSite: t.Node = program;
+  const seen = new Map<SemanticPrototypeOwner, WeakSet<t.Node>>();
+  const possiblePrototypeReferences = createAmbientPathResolver(state, false);
+  const taint = (owner: SemanticPrototypeOwner, inherited = true): void => {
+    let sites = seen.get(owner);
+    if (sites === undefined) {
+      sites = new WeakSet();
+      seen.set(owner, sites);
+    }
+    if (inherited && !sites.has(effectSite)) {
+      sites.add(effectSite);
+      state.prototypeMutationSites.push({ owner, node: effectSite });
+    }
     if (owner === "Object") state.prototypeRequireMutationObserved = undefined;
     state.prototypeEnumerationMayAffect = undefined;
   };
-  const globalOwner = (node: t.Node): PrototypeOwner | undefined => {
+  const globalOwner = (node: t.Node): SemanticPrototypeOwner | undefined => {
     const value = unwrapJavaScriptExpression(node).node;
-    for (const owner of prototypeOwners) {
-      if (isUnmodifiedGlobalReference(value, state, owner)) return owner;
-      if (
-        t.isIdentifier(value, { name: owner }) &&
-        resolveSemanticBindingState(state, value, owner) === undefined
-      )
-        return owner;
+    const member =
+      t.isMemberExpression(value) || t.isOptionalMemberExpression(value);
+    const key = t.isIdentifier(value)
+      ? value.name
+      : member
+        ? semanticStaticPropertyKey(value.property, value.computed)
+        : null;
+    const owner = semanticPrototypeOwners.find(
+      (candidate) => candidate === key,
+    );
+    if (owner === undefined) return undefined;
+    if (isUnmodifiedGlobalReference(value, state, owner)) return owner;
+    if (member) {
+      const { paths, callerPaths } = possiblePrototypeReferences(value);
+      const selectsOwner = (path: readonly (string | null)[]) =>
+        path.length === 2 && path[0] === "global" && path[1] === owner;
+      return paths.some(selectsOwner) || callerPaths.some(selectsOwner)
+        ? owner
+        : undefined;
     }
-    return undefined;
+    return resolveSemanticBindingState(state, value, owner) === undefined
+      ? owner
+      : undefined;
   };
-  const prototypeOwner = (node: t.Node): PrototypeOwner | undefined => {
+  const prototypeOwner = (node: t.Node): SemanticPrototypeOwner | undefined => {
     const value = unwrapJavaScriptExpression(node).node;
     return (t.isMemberExpression(value) ||
       t.isOptionalMemberExpression(value)) &&
@@ -1451,6 +1676,7 @@ function* indexPrototypeUncertaintySteps(
   ]);
   yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
+      effectSite = node;
       const write = semanticWriteSiteTarget(node);
       if (write !== null) {
         for (const target of semanticWriteTargets(write)) {
@@ -1459,9 +1685,15 @@ function* indexPrototypeUncertaintySteps(
             t.isMemberExpression(value) ||
             t.isOptionalMemberExpression(value)
           ) {
-            const owner =
-              prototypeOwner(value.object) ?? globalOwner(value.object);
-            if (owner !== undefined) taint(owner);
+            const prototype = prototypeOwner(value.object);
+            const owner = prototype ?? globalOwner(value.object);
+            if (owner !== undefined)
+              taint(
+                owner,
+                prototype !== undefined ||
+                  semanticStaticPropertyKey(value.property, value.computed) ===
+                    "prototype",
+              );
           } else {
             const owner = globalOwner(value);
             if (owner !== undefined) taint(owner);

@@ -89,34 +89,58 @@ const optionalIndex = z.number().int().min(-1);
 const indexWidth = z.union([z.literal(1), z.literal(2), z.literal(4)]);
 
 /** One explicit local file; detail selects delivery, never decoding coverage. */
-export const inspectIl2cppMetadataInputSchema = z.strictObject({
-  path: absoluteLocalPathStringSchema.describe(
-    "Absolute filesystem path to a Unity IL2CPP global-metadata.dat file",
-  ),
-  detail: z
-    .enum(["complete", "summary"])
-    .default("summary")
-    .describe(
-      "summary (default) retains complete Evidence and returns identity and collection counts; complete returns every image, type, method, member, parameter and string-literal row inline",
+export const inspectIl2cppMetadataInputSchema = z
+  .strictObject({
+    path: absoluteLocalPathStringSchema.describe(
+      "Absolute filesystem path to a Unity IL2CPP global-metadata.dat file",
     ),
-  binary_path: absoluteLocalPathStringSchema
-    .optional()
-    .describe(
-      "Absolute path to the caller-selected matching 64-bit IL2CPP binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so); static reading, never executed",
-    ),
-  binary_architecture: z
-    .enum(["arm64", "amd64"])
-    .optional()
-    .describe(
-      "Slice to read from a universal Mach-O binary_path; required for universal binaries and rejected otherwise",
-    ),
-  generic_instances: z
-    .boolean()
-    .optional()
-    .describe(
-      "Also link generic method instances (genericMethodTable rows) to code addresses with Il2CppDumper-style Type<Args>$$Method<Args> names; needs binary_path",
-    ),
-});
+    detail: z
+      .enum(["complete", "summary"])
+      .default("summary")
+      .describe(
+        "summary (default) retains complete Evidence and returns identity and collection counts; complete returns every image, type, method, member, parameter and string-literal row inline",
+      ),
+    binary_path: absoluteLocalPathStringSchema
+      .optional()
+      .describe(
+        "Absolute path to the caller-selected matching 64-bit IL2CPP binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so); static reading, never executed",
+      ),
+    binary_architecture: z
+      .enum(["arm64", "amd64"])
+      .optional()
+      .describe(
+        "Slice to read from a universal Mach-O binary_path; required for universal binaries and rejected otherwise",
+      ),
+    generic_instances: z
+      .boolean()
+      .optional()
+      .describe(
+        "Also link generic method instances (genericMethodTable rows) to code addresses with Il2CppDumper-style Type<Args>$$Method<Args> names; needs binary_path",
+      ),
+  })
+  .superRefine((input, context) => {
+    if (input.binary_path !== undefined) return;
+    if (input.binary_architecture !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["binary_architecture"],
+        message: "binary_architecture selects a slice of binary_path.",
+      });
+    if (input.generic_instances === true)
+      context.addIssue({
+        code: "custom",
+        path: ["generic_instances"],
+        message: "generic_instances links generic methods in binary_path.",
+      });
+  })
+  .meta({
+    dependentRequired: { binary_architecture: ["binary_path"] },
+    if: {
+      properties: { generic_instances: { const: true } },
+      required: ["generic_instances"],
+    },
+    then: { required: ["binary_path"] },
+  });
 
 export type IL2cppMetadataSectionName = z.infer<
   typeof il2cppMetadataSectionSchema
@@ -444,6 +468,14 @@ const validateMetadataFacts = (
               "Type reference is outside the linked type table or names an unavailable type.",
           });
       });
+  report.binary?.code_gen_modules.forEach((row, index) => {
+    if (row.image >= report.images.length)
+      context.addIssue({
+        code: "custom",
+        path: ["binary", "code_gen_modules", index, "image"],
+        message: "Code-generation module image is outside the retained images.",
+      });
+  });
   report.method_addresses?.forEach((row, index) => {
     if (codeRowContradicts(row, report.binary?.image_base))
       context.addIssue({

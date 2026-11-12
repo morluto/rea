@@ -88,9 +88,9 @@ export class FridaInstrumentationManager {
 }
 `,
     );
-    await writeFile(
+    await copyFile(
+      new URL("../../../dist/domain/fridaRemoteAddress.js", import.meta.url),
       join(root, "dist", "domain", "fridaRemoteAddress.js"),
-      "export const isValidFridaRemoteAddress = () => false;\n",
     );
   } else {
     await mkdir(join(root, "dist", "composition"));

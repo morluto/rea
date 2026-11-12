@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · **繁體中文** · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA：逆向一切
 
@@ -10,7 +10,7 @@
 **看到喜歡的功能，弄清它的工作原理，深入到二進位層面。**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
+[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
@@ -80,9 +80,13 @@ npx rea-agents setup
 
 選擇 AI 代理，檢查計劃中的變更並核准。設定流程會添加 REA 的 MCP 服務和對應的工作流程指引，並備份已有組態。完成後重新啟動 AI 代理。
 
-設定流程支援 Claude Code、Codex、Cursor、Gemini CLI、Grok Build 和[其他 AI 代理](../installation.md#supported-agents)。提供者組態和手動註冊 MCP 的方法見[安裝與設定](../installation.md)。
+設定流程支援 Claude Code、Codex、Cursor、Gemini CLI、Grok Build 和[其他 AI 代理](../getting-started/installation.md#supported-agents)。提供者組態和手動註冊 MCP 的方法見[安裝與設定](../getting-started/installation.md)。
 
 MCP 預設使用精簡輸入 Schema，以減少上下文開銷。需要完整欄位說明和巢狀驗證細節時，請在 MCP 註冊中設定 `REA_MCP_INPUT_SCHEMA_PROFILE=full`。兩種設定都保留完整工具集和標準的伺服器驗證；見 MCP 合約指南。
+
+設定會直接登記所選執行環境和 REA 入口指令碼。使用套件執行器時，請保留其快取項目及執行環境，並從目標專案以外的可信任目錄取得套件。 請參閱安裝指南。
+
+預設會公布完整輸出 Schema。若用戶端限制 `tools/list` 的大小，請在 MCP 登記中設定 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 或 `off`。伺服器驗證和結構化結果仍保持完整。 請參閱 MCP 合約指南中的「Output schemas」。
 
 ### 詢問 AI 代理
 
@@ -109,7 +113,7 @@ npm install --global rea-agents
 rea --help
 ```
 
-原生分析需要先設定分析提供者。原生命令、提供者選擇、快照和腳本用法見 [CLI 與 Evidence 指南](../cli.md)。
+原生分析需要先設定分析提供者。原生命令、提供者選擇、快照和腳本用法見 [CLI 與 Evidence 指南](../getting-started/cli.md)。
 
 ### 更新 REA
 
@@ -149,44 +153,47 @@ AI 代理通過 MCP 呼叫 REA，檢查目標並追蹤相關程式碼。REA 返�
 
 REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)，以及 npm。額外工具和主機支援取決於分析目標：
 
-| 目標                  | REA 返回的內容                                                               | 要求與指南                                                                                                         |
-| --------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 原生二進位檔案        | 偽程式碼、組合語言、字串、符號、呼叫和引用                                   | Hopper、Ghidra、IDA 或 Kuna；[原生分析](../native-investigation.md)                                                |
-| 離線 ELF 佈局         | 節、段、原始符號/重定位資訊及靜態防護機制候選項                              | Linux x64 上由呼叫方提供的 pwntools；[二進位診斷](../binary-diagnostics.md)                                        |
-| Go 二進位檔案         | 內嵌編譯器版本、模組、替換項和建置設定                                       | 內建靜態 ELF/PE/thin Mach-O 檢查；無需安裝 Go                                                                      |
-| WASM 工件             | 驗證、節、精確的匯入/匯出 WAT 形式及解碼後的 WAT                             | 呼叫方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                  |
-| EVM 位元組碼          | 分派選擇器、位元組偏移、推斷的參數和狀態可變性                               | Linux x64 上的本地原始位元組/十六進位輸入載體；[離線 EVM 指南](../evm-bytecode.md)                                 |
-| Rust binaries         | Embedded cargo-auditable dependency list                                     | [Rust binaries](../rust-binaries.md)                                                                               |
-| Erlang BEAM           | IFF chunks, atoms, exports, and tables                                       | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                  |
-| PE certificates       | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                            |
-| PE imports            | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash   | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                      |
-| ELF notes             | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields              | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                       |
-| Apple IPS crashes     | .ips metadata, threads, images, registers and crash classes                  | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                      |
-| Linux kernel modules  | .modinfo keys, __versions CRCs, this_module presence, and signature trailer  | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                             |
-| 已記錄的 Linux 崩潰   | 原始 note 記錄、每個已記錄執行緒的暫存器/訊號及可選的對映候選項              | Linux x64 上由呼叫方提供的 pwntools；可選的 GDB/pwndbg；[已記錄崩潰](../recorded-crashes.md)                       |
-| 桌面安裝目錄          | 執行階段候選、支持檔案、元件標記與後續操作                                   | 有界的目錄與檔頭檢查；[桌面應用](../desktop-applications.md)                                                       |
-| JavaScript / Electron | 模組、匯入、source map、路由、IPC 和原生附加元件關係                         | Node.js 和 npm；[應用分析](../javascript-application-workflows.md); Linux: procps `ps`                             |
-| 網站                  | 頁面結構、腳本、網路觀察結果和按請求獲取的螢幕擷取畫面                       | Chrome 系瀏覽器；[瀏覽器分析](../browser-observation.md)                                                           |
-| 已保存的網路擷取      | 請求、回應、可訪問的酬載和來源位置                                           | HAR / Fiddler Everywhere SAZ；原生 mitmproxy 擷取需要 Linux 上的 mitmdump；[擷取指南](../web-network-captures.md)  |
-| 封包擷取              | 端點、DNS、TLS SNI、通訊協定分佈和 HTTP 請求                                 | 呼叫端提供的 tshark 和 capinfos；[pcap 指南](../pcap-analysis.md)                                                  |
-| .NET 程式集           | 中繼資料、CIL 指令、聲明的原生依賴和建置對比                                 | 靜態檢查；[托管程式碼指南](../managed-code-analysis.md)                                                            |
-| PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                              |
-| Android APK           | 清單聲明、類別、反編譯的方法和引用                                           | Linux/macOS/Windows x64 上的無界面 JADX 和完整 JDK；[Android 指南](../android-analysis.md)                         |
-| Android 裝置          | 裝置、套件、程序、日誌、傾印、螢幕擷取以及 APK/檔案傳輸                      | 呼叫端提供的 adb（模擬器或實體裝置）；[ADB 指南](../adb-device-analysis.md)                                        |
-| JEB 專案              | 引擎支援的專案單元、成品摘要和型別/方法的虛擬碼                              | 由呼叫端啟動、提供 MCP 的 JEB 用戶端，透過 REA_JEB_MCP_URL 選擇；[JEB 指南](../jeb-analysis.md)                    |
-| Android 資源          | 解碼後的清單、字串表、語系和版本資訊                                         | 呼叫端提供的 Apktool 啟動器；[資源指南](../apktool-resource-analysis.md)                                           |
-| Flutter 應用          | Dart 快照雜湊、依 ABI 的程式庫雜湊及引擎建置來源                             | 無（靜態 APK 解析）；[Flutter 指南](../flutter-analysis.md)                                                        |
-| 韌體                  | 區域、提取結果和轉交原生分析的內容                                           | Linux 上的 Binwalk / Unblob；[韌體指南](../firmware-analysis.md)                                                   |
-| 封包記錄              | 指定欄位、重複值、篩選條件與解碼規則                                         | Linux: TShark 4.x + prlimit; [封包分析指南](../packet-captures.md)                                                 |
-| 錄製的邏輯訊號        | 解碼註解、樣本範圍與診斷資訊                                                 | Linux: sigrok-cli 0.7.2 + prlimit; [訊號記錄指南](../signal-recordings.md)                                         |
-| 軟體包與資源          | 檔案清單、摘要、plist、Apple bundle 結構和提取的資源                         | [製品與 JavaScript 指南](../javascript-artifact-reconstruction.md)、[Apple 應用](../apple-application-analysis.md) |
-| 處理程序行為          | 終端輸出、互動、退出和檔案系統觀察結果，以及執行對比                         | 支援原生 PTY 的 Linux/macOS；[處理程序擷取](../process-capture.md)                                                 |
-| SQLite 資料庫         | 資料表、欄位、索引、檢視、觸發器和選定普通資料表的列                         | 本機資料庫/WAL 快照；Node.js 24.x >=24.15 或 26+，具備原生 SQLite 限制 API                                         |
-| GPU 程式碼物件        | CUDA/HIP 目標、選定核心參數和資源、保留的 PTX 文字                           | 內建靜態檢查 ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                |
-| 模型檔案              | GGUF / safetensors 中繼資料、張量宣告和衍生總量                              | 標頭檢查；可選完整檔案雜湊; [GGUF / safetensors](../model-artifacts.md)                                            |
-| IL2CPP 中繼資料       | Unity global-metadata.dat 組件映像、型別與方法名稱、索引範圍                 | 靜態解碼版本 24、27、29、31 和 39；無需 Unity                                                                      |
-| Godot PCK             | 封存清單與擷取、原始標頭和目錄資訊、選定內容身分                             | 靜態格式 2、3 和 4；無需 Godot                                                                                     |
-| APK 簽章              | v1/v2/v3/v3.1 簽署者、憑證指紋、金鑰輪換和摘要自洽性                         | 內建靜態檢查; `inspect_apk_signature`                                                                              |
+| 目標                  | REA 返回的內容                                                               | 要求與指南                                                                                                                                        |
+| --------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 原生二進位檔案        | 偽程式碼、組合語言、字串、符號、呼叫和引用                                   | Hopper、Ghidra、IDA 或 Kuna；[原生分析](../guides/native/native-investigation.md)                                                                 |
+| 離線 ELF 佈局         | 節、段、原始符號/重定位資訊及靜態防護機制候選項                              | Linux x64 上由呼叫方提供的 pwntools；[二進位診斷](../guides/native/binary-diagnostics.md)                                                         |
+| Go 二進位檔案         | 內嵌編譯器版本、模組、替換項和建置設定                                       | 內建靜態 ELF/PE/thin Mach-O 檢查；無需安裝 Go                                                                                                     |
+| WASM 工件             | 驗證、節、精確的匯入/匯出 WAT 形式及解碼後的 WAT                             | 呼叫方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                                                 |
+| EVM 位元組碼          | 分派選擇器、位元組偏移、推斷的參數和狀態可變性                               | Linux x64 上的本地原始位元組/十六進位輸入載體；[離線 EVM 指南](../guides/evm/evm-bytecode.md)                                                     |
+| Rust binaries         | Embedded cargo-auditable dependency list                                     | [Rust binaries](../rust-binaries.md)                                                                                                              |
+| Erlang BEAM           | IFF chunks, atoms, exports, and tables                                       | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                 |
+| PE certificates       | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                           |
+| PE imports            | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash   | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                     |
+| Windows shortcuts     | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                         |
+| ELF notes             | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields              | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                      |
+| Binary hardening      | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O          | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                     |
+| Apple IPS crashes     | .ips metadata, threads, images, registers and crash classes                  | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                     |
+| Linux kernel modules  | .modinfo keys, __versions CRCs, this_module presence, and signature trailer  | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                            |
+| 已記錄的 Linux 崩潰   | 原始 note 記錄、每個已記錄執行緒的暫存器/訊號及可選的對映候選項              | Linux x64 上由呼叫方提供的 pwntools；可選的 GDB/pwndbg；[已記錄崩潰](../guides/native/recorded-crashes.md)                                        |
+| 桌面安裝目錄          | 執行階段候選、支持檔案、元件標記與後續操作                                   | 有界的目錄與檔頭檢查；[桌面應用](../desktop-applications.md)                                                                                      |
+| JavaScript / Electron | 模組、匯入、source map、路由、IPC 和原生附加元件關係                         | Node.js 和 npm；[應用分析](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                          |
+| 網站                  | 頁面結構、腳本、網路觀察結果和按請求獲取的螢幕擷取畫面                       | Chrome 系瀏覽器；[瀏覽器分析](../guides/web/browser-observation.md)                                                                               |
+| 已保存的網路擷取      | 請求、回應、可訪問的酬載和來源位置                                           | HAR / Fiddler Everywhere SAZ；原生 mitmproxy 擷取需要 Linux 上的 mitmdump；[擷取指南](../guides/web/web-network-captures.md)                      |
+| 封包擷取              | 端點、DNS、TLS SNI、通訊協定分佈和 HTTP 請求                                 | 呼叫端提供的 tshark 和 capinfos；[pcap 指南](../guides/data/pcap-analysis.md)                                                                     |
+| .NET 程式集           | 中繼資料、CIL 指令、聲明的原生依賴和建置對比                                 | 靜態檢查；[托管程式碼指南](../guides/managed/managed-code-analysis.md)                                                                            |
+| PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                             |
+| Deno compile binaries | Virtual files, entry point, recorded options, npm snapshot length            | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                              |
+| Android APK           | 清單聲明、類別、反編譯的方法和引用                                           | Linux/macOS/Windows x64 上的無界面 JADX 和完整 JDK；[Android 指南](../guides/android/android-analysis.md)                                         |
+| Android 裝置          | 裝置、套件、程序、日誌、傾印、螢幕擷取以及 APK/檔案傳輸                      | 呼叫端提供的 adb（模擬器或實體裝置）；[ADB 指南](../guides/android/adb-device-analysis.md)                                                        |
+| JEB 專案              | 引擎支援的專案單元、成品摘要和型別/方法的虛擬碼                              | 由呼叫端啟動、提供 MCP 的 JEB 用戶端，透過 REA_JEB_MCP_URL 選擇；[JEB 指南](../providers/jeb-analysis.md)                                         |
+| Android 資源          | 解碼後的清單、字串表、語系和版本資訊                                         | 呼叫端提供的 Apktool 啟動器；[資源指南](../guides/android/apktool-resource-analysis.md)                                                           |
+| Flutter 應用          | Dart 快照雜湊、依 ABI 的程式庫雜湊及引擎建置來源                             | 無（靜態 APK 解析）；[Flutter 指南](../guides/android/flutter-analysis.md)                                                                        |
+| 韌體                  | 區域、提取結果和轉交原生分析的內容                                           | Linux 上的 Binwalk / Unblob；[韌體指南](../guides/firmware/firmware-analysis.md)                                                                  |
+| 封包記錄              | 指定欄位、重複值、篩選條件與解碼規則                                         | Linux: TShark 4.x + prlimit; [封包分析指南](../guides/data/packet-captures.md)                                                                    |
+| 錄製的邏輯訊號        | 解碼註解、樣本範圍與診斷資訊                                                 | Linux: sigrok-cli 0.7.2 + prlimit; [訊號記錄指南](../guides/signals/signal-recordings.md)                                                         |
+| 軟體包與資源          | 檔案清單、摘要、plist、Apple bundle 結構和提取的資源                         | [製品與 JavaScript 指南](../guides/javascript/javascript-artifact-reconstruction.md)、[Apple 應用](../guides/apple/apple-application-analysis.md) |
+| 處理程序行為          | 終端輸出、互動、退出和檔案系統觀察結果，以及執行對比                         | 支援原生 PTY 的 Linux/macOS；[處理程序擷取](../guides/runtime/process-capture.md)                                                                 |
+| SQLite 資料庫         | 資料表、欄位、索引、檢視、觸發器和選定普通資料表的列                         | 本機資料庫/WAL 快照；Node.js 24.x >=24.15 或 26+，具備原生 SQLite 限制 API                                                                        |
+| GPU 程式碼物件        | CUDA/HIP 目標、選定核心參數和資源、保留的 PTX 文字                           | 內建靜態檢查 ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                               |
+| 模型檔案              | GGUF / safetensors 中繼資料、張量宣告和衍生總量                              | 標頭檢查；可選完整檔案雜湊; [GGUF / safetensors](../model-artifacts.md)                                                                           |
+| IL2CPP 中繼資料       | Unity global-metadata.dat 組件映像、型別與方法名稱、索引範圍                 | 靜態解碼版本 24、27、29、31 和 39；無需 Unity                                                                                                     |
+| Godot PCK             | 封存清單與擷取、原始標頭和目錄資訊、選定內容身分                             | 靜態格式 2、3 和 4；無需 Godot                                                                                                                    |
+| APK 簽章              | v1/v2/v3/v3.1 簽署者、憑證指紋、金鑰輪換和摘要自洽性                         | 內建靜態檢查; `inspect_apk_signature`                                                                                                             |
 
 靜態 JavaScript 和 .NET 檢查讀取提供的檔案，不執行應用。執行階段擷取會以你的使用者權限執行目標或與之互動；各執行階段指南說明瞭具體影響。
 
@@ -196,7 +203,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 
 大型二進位檔可透過 `REA_GHIDRA_STARTUP_TIMEOUT_MS` 或 `REA_HOPPER_STARTUP_TIMEOUT_MS` 延長提供者啟動期限。
 
-不同提供者支援的原生格式和主機系統有所不同。請參閱 [Hopper 與 Ghidra 設定](../installation.md#hopper)、[IDA 指南](../ida-provider.md)、[Kuna](../kuna-provider.md)和[實驗性 Windows Ghidra 支援](../windows-ghidra-p0.md)。Ghidra 也支援 [16 位 DOS 分析](../ghidra-dos.md)。提供者選擇見 [CLI 指南](../cli.md#choose-a-provider)。對於最新 npm 版本發佈後新增的功能，請查看[發佈可用性](../installation.md#released-package-and-main)。
+不同提供者支援的原生格式和主機系統有所不同。請參閱 [Hopper 與 Ghidra 設定](../getting-started/installation.md#hopper)、[IDA 指南](../providers/ida-provider.md)、[Kuna](../kuna-provider.md)和[實驗性 Windows Ghidra 支援](../providers/windows-ghidra-p0.md)。Ghidra 也支援 [16 位 DOS 分析](../providers/ghidra-dos.md)。提供者選擇見 [CLI 指南](../getting-started/cli.md#choose-a-provider)。對於最新 npm 版本發佈後新增的功能，請查看[發佈可用性](../getting-started/installation.md#released-package-and-main)。
 
 ## 案例
 
@@ -272,33 +279,39 @@ REA 匯出可直接執行的環境，並附帶基本測試，檢查環境能否�
 [環境參考文件](../agent-environments.md) ·
 [在 X 上觀看示範](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### 桌面應用程式環境
+
+REA 也能為 Linux 桌面應用程式建立環境，代理透過螢幕截圖、滑鼠和鍵盤使用它。只要一行請求，例如「幫我建立一個 Gnote 環境，讓代理在購物清單筆記中加入橄欖油」，你的代理就會在本機建置電腦上安裝應用程式、撰寫任務、匯出環境，並在全新的電腦上檢查任務。建立環境的機器需要 amd64 或 arm64 上的 Linux、Docker，以及指南固定的 agentenv 框架版本。
+
+[設定桌面應用程式環境](../desktop-build-computer.md)
+
 ## 常見問題
 
 <details>
 <summary><strong>哪些 AI 代理可以使用 REA？</strong></summary>
 
-任何支援本地 MCP 服務的 AI 代理都可以使用。設定流程會設定[受支援的 AI 代理](../installation.md#supported-agents)；其他客戶端可通過[手動註冊 MCP](../installation.md#mcp-registry) 使用。
+任何支援本地 MCP 服務的 AI 代理都可以使用。設定流程會設定[受支援的 AI 代理](../getting-started/installation.md#supported-agents)；其他客戶端可通過[手動註冊 MCP](../getting-started/installation.md#mcp-registry) 使用。
 
 </details>
 
 <details>
 <summary><strong>需要 Hopper、Ghidra、IDA 或 Kuna 嗎？</strong></summary>
 
-深入的原生分析需要其中一個引擎。靜態 JavaScript 和 .NET 檢查不需要原生分析引擎。設定流程可以在你核准後安裝 Hopper；Ghidra、IDA 和 Kuna 則使用已有安裝。見[提供者設定](../installation.md#hopper)。
+深入的原生分析需要其中一個引擎。靜態 JavaScript 和 .NET 檢查不需要原生分析引擎。設定流程可以在你核准後安裝 Hopper；Ghidra、IDA 和 Kuna 則使用已有安裝。見[提供者設定](../getting-started/installation.md#hopper)。
 
 </details>
 
 <details>
 <summary><strong>需要先啟動 Hopper 嗎？</strong></summary>
 
-REA 會在操作需要時啟動 Hopper。在 macOS 上，首次執行時可能會出現對話框，讓你選擇演示模式或啟用授權。見 [Hopper 啟動與故障排查](../installation.md#launcher-paths-and-troubleshooting)。
+REA 會在操作需要時啟動 Hopper。在 macOS 上，首次執行時可能會出現對話框，讓你選擇演示模式或啟用授權。見 [Hopper 啟動與故障排查](../getting-started/installation.md#launcher-paths-and-troubleshooting)。
 
 </details>
 
 <details>
 <summary><strong>從 skills.sh 安裝 skill 有什麼作用？</strong></summary>
 
-skill 為 AI 代理提供調查指引。使用 `npx rea-agents setup` 註冊 REA 的 MCP 服務並安裝對應的指引，然後重新啟動 AI 代理。見[僅安裝 skill](../installation.md#skill-only-installation)。
+skill 為 AI 代理提供調查指引。使用 `npx rea-agents setup` 註冊 REA 的 MCP 服務並安裝對應的指引，然後重新啟動 AI 代理。見[僅安裝 skill](../getting-started/installation.md#skill-only-installation)。
 
 </details>
 
@@ -341,12 +354,12 @@ npx rea-agents@latest setup
 
 可以先閱讀網站上的[實操指南](https://rea.tools/zh-TW/guides/)。具體選項、前提條件和結果契約見：
 
-- [安裝與設定](../installation.md)：AI 代理註冊、提供者組態、更新和卸載。
-- [就緒檢查與故障排查](../installation.md#check-readiness-for-your-task)：診斷特定 AI 代理或分析引擎。
-- [CLI 與 Evidence](../cli.md)：命令、提供者選擇、快照、匯入/匯出和退出狀態。
-- [MCP 契約](../mcp-contracts.md)和[AI 代理提示詞](../mcp-prompts.md)：工具結果、會話和引導式調查。
-- [工具目錄](../mcp-contracts.md#generated-catalog)：建置時生成的工具、提供者和 CLI 命令清單。
-- [路線圖](../roadmap.md)：計劃中的工作和能力跟蹤。
+- [安裝與設定](../getting-started/installation.md)：AI 代理註冊、提供者組態、更新和卸載。
+- [就緒檢查與故障排查](../getting-started/installation.md#check-readiness-for-your-task)：診斷特定 AI 代理或分析引擎。
+- [CLI 與 Evidence](../getting-started/cli.md)：命令、提供者選擇、快照、匯入/匯出和退出狀態。
+- [MCP 契約](../reference/mcp-contracts.md)和[AI 代理提示詞](../getting-started/mcp-prompts.md)：工具結果、會話和引導式調查。
+- [工具目錄](../reference/mcp-contracts.md#generated-catalog)：建置時生成的工具、提供者和 CLI 命令清單。
+- [路線圖](../development/roadmap.md)：計劃中的工作和能力跟蹤。
 
 請按照 [SECURITY.md](../../SECURITY.md) 報告漏洞。
 
@@ -377,7 +390,7 @@ REA 用於合法的研究、教育、互通性、軟體保存，以及分析你�
 
 歡迎幫助改進 REA！你可以[提交 issue](https://github.com/morluto/rea/issues) 報告錯誤或建議功能，也可以[提交 pull request](https://github.com/morluto/rea/pulls) 改進程式碼或文件。
 
-開發設定和檢查見 [CONTRIBUTING.md](../../CONTRIBUTING.md)，驗證流程見[測試指南](../testing.md)，專案結構見[架構圖](../architecture.mermaid)。
+開發設定和檢查見 [CONTRIBUTING.md](../../CONTRIBUTING.md)，驗證流程見[測試指南](../development/testing.md)，專案結構見[架構圖](../architecture/architecture.mermaid)。
 
 ## 授權條款
 

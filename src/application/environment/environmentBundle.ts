@@ -1,4 +1,8 @@
-import { normalizeHttpHostname } from "../../domain/httpHostname.js";
+import {
+  parsePortableBundleName,
+  PORTABLE_BUNDLE_NAME_PATTERN,
+  PORTABLE_BUNDLE_NAME_MAX_LENGTH,
+} from "../../domain/portableBundleName.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -26,18 +30,6 @@ export const BUNDLE_ALLOWED_HOSTS = "127.0.0.1,localhost";
 
 /** Name of the packed CLI inside the env folder when a tarball is exported. */
 export const BUNDLE_TARBALL_NAME = "rea-agents.tgz";
-
-/** Folder and env id rule: a kebab-case label the agentenv framework accepts as a local id. */
-const BUNDLE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
-// A compose service name is one DNS label, whose wire limit is 63 octets.
-const BUNDLE_NAME_MAX_LENGTH = 63;
-export const BUNDLE_NAME_CONSTRAINT = `a kebab-case label of at most ${String(BUNDLE_NAME_MAX_LENGTH)} characters, excluding Windows device names, that remains unchanged as an HTTP service hostname`;
-/** Win32 reserves these device names for files and folders, so the env folder can never take one. */
-const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/u;
-
-/** Whether a name can be the env folder and env id: the checks the export applies. */
-export const isPortableBundleName = (name: string): boolean =>
-  validateBundleName(name).ok;
 
 /** Where the Dockerfile installs the CLI from. */
 export type EnvironmentPackageSource =
@@ -95,13 +87,13 @@ const nameError = (name: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_EXPORT_OPERATION,
     {
-      userMessage: `The bundle name ${JSON.stringify(name)} is not a portable kebab-case label of at most ${String(BUNDLE_NAME_MAX_LENGTH)} characters.`,
+      userMessage: `The bundle name ${JSON.stringify(name)} is not a portable kebab-case label of at most ${String(PORTABLE_BUNDLE_NAME_MAX_LENGTH)} characters.`,
     },
     [
       {
         path: ["name"],
         reason: "invalid_format",
-        expected: BUNDLE_NAME.source,
+        expected: PORTABLE_BUNDLE_NAME_PATTERN.source,
         message:
           "The bundle name is the env folder and env id; use lowercase letters, digits and single hyphens, excluding Windows device names.",
       },
@@ -128,27 +120,26 @@ const reservedNameError = (name: string): AnalysisInputError =>
 const validateBundleName = (
   name: string,
 ): Result<string, AnalysisInputError> => {
-  if (!BUNDLE_NAME.test(name) || name.length > BUNDLE_NAME_MAX_LENGTH)
-    return err(nameError(name));
-  if (WINDOWS_RESERVED_NAME.test(name)) return err(reservedNameError(name));
-  if (normalizeHttpHostname(name) !== name)
-    return err(
-      new AnalysisInputError(
-        ENVIRONMENT_EXPORT_OPERATION,
+  const parsed = parsePortableBundleName(name);
+  if (parsed.ok) return parsed;
+  if (parsed.error === "format") return err(nameError(name));
+  if (parsed.error === "reserved") return err(reservedNameError(name));
+  return err(
+    new AnalysisInputError(
+      ENVIRONMENT_EXPORT_OPERATION,
+      {
+        userMessage: `The bundle name ${JSON.stringify(name)} cannot be used unchanged as an HTTP host name. Choose a name such as replay-1.`,
+      },
+      [
         {
-          userMessage: `The bundle name ${JSON.stringify(name)} cannot be used unchanged as an HTTP host name. Choose a name such as replay-1.`,
+          path: ["name"],
+          reason: "invalid_value",
+          message:
+            "The service name must remain a hostname rather than be rejected or interpreted as an IP address.",
         },
-        [
-          {
-            path: ["name"],
-            reason: "invalid_value",
-            message:
-              "The service name must remain a hostname rather than be rejected or interpreted as an IP address.",
-          },
-        ],
-      ),
-    );
-  return ok(name);
+      ],
+    ),
+  );
 };
 
 const installLine = (source: EnvironmentPackageSource): string =>

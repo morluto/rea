@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { isJavaScriptSourcePath } from "./javascript/javascriptArtifactFiles.js";
 
 const SOURCE_CLASSIFICATIONS = [
   "source",
@@ -315,6 +316,16 @@ const basenameParts = (filename: string): { base: string; ext: string } => {
   return { base: filename.slice(0, lastDot), ext: filename.slice(lastDot + 1) };
 };
 
+/** A JavaScript suffix may itself be the complete basename, as in `.MJS`. */
+const sourceExtension = (filename: string): string => {
+  const { ext } = basenameParts(filename);
+  return ext === "" &&
+    filename.startsWith(".") &&
+    isJavaScriptSourcePath(filename)
+    ? filename.slice(1)
+    : ext;
+};
+
 const basenameMatch = (filename: string, set: ReadonlySet<string>): boolean => {
   const lower = filename.toLowerCase();
   return set.has(lower);
@@ -344,10 +355,10 @@ export const detectReferenceSourceLanguage = (path: string): string | null => {
   if (lower.endsWith(".d.mts")) return "TypeScript";
   if (lower.endsWith(".d.cts")) return "TypeScript";
 
-  const parts = basenameParts(filename);
-  if (parts.ext === "C") return "C++";
-  if (parts.ext === "M") return "Objective-C++";
-  return LANGUAGE_BY_EXTENSION.get(parts.ext.toLowerCase()) ?? null;
+  const extension = sourceExtension(filename);
+  if (extension === "C") return "C++";
+  if (extension === "M") return "Objective-C++";
+  return LANGUAGE_BY_EXTENSION.get(extension.toLowerCase()) ?? null;
 };
 
 /** Classify a reference source path deterministically. */
@@ -412,7 +423,7 @@ const addFilenameClassifications = (
   filename: string,
   classifications: Set<ReferenceSourceClassification>,
 ): void => {
-  const extension = basenameParts(filename).ext.toLowerCase();
+  const extension = sourceExtension(filename).toLowerCase();
   if (filenameIsTest(filename)) classifications.add("test");
   if (filenameIsGenerated(filename)) classifications.add("generated");
   if (basenameMatch(filename, MANIFEST_FILENAMES))

@@ -7,6 +7,8 @@ import {
 } from "../application/javascript/JavaScriptRuntimeObservationService.js";
 import { createJavaScriptRuntimeObservationProvider } from "../composition/javascriptRuntimeObservation.js";
 import { V8InspectorAdmission } from "../inspector/V8InspectorProvider.js";
+import { cliDomainInput } from "./domainInput.js";
+import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
@@ -27,12 +29,9 @@ const observeOptionsSchema = z.object({
     .describe(
       "Declared target role; Inspector cannot authenticate the Electron role",
     ),
-  observationMs: z
-    .number()
-    .int()
-    .min(0)
-    .default(100)
-    .describe("Observation window in milliseconds"),
+  observationMs: cliDecimalField(
+    observeJavaScriptRuntimeInputSchema.shape.observation_ms,
+  ).describe("Observation window in milliseconds"),
 });
 
 /** Register CLI equivalents of passive V8 Inspector tools. */
@@ -51,7 +50,9 @@ export const registerJavaScriptRuntimeObservationCommands = (
   cli.command(CLI_COMMANDS.listJavaScriptRuntimeTargets, {
     description: "List Node/Electron V8 Inspector targets",
     args: z.object({
-      endpoint: z.string().describe("Literal-loopback Inspector endpoint"),
+      endpoint: cliDomainInput(
+        listJavaScriptRuntimeTargetsInputSchema.shape.inspector_endpoint,
+      ).describe("Literal-loopback Inspector endpoint"),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -92,10 +93,12 @@ export const registerJavaScriptRuntimeObservationCommands = (
   cli.command(CLI_COMMANDS.observeJavaScriptRuntime, {
     description: "Passively observe one exact Node/Electron Inspector target",
     args: z.object({
-      endpoint: z.string().describe("Literal-loopback Inspector endpoint"),
-      targetId: z
-        .string()
-        .describe("Target from list-javascript-runtime-targets"),
+      endpoint: cliDomainInput(
+        listJavaScriptRuntimeTargetsInputSchema.shape.inspector_endpoint,
+      ).describe("Literal-loopback Inspector endpoint"),
+      targetId: observeJavaScriptRuntimeInputSchema.shape.target_id.describe(
+        "Target from list-javascript-runtime-targets",
+      ),
     }),
     options: observeOptionsSchema,
     run: ({ args, options }) =>

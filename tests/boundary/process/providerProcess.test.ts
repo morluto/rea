@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ProcessOwnershipInspectionCancelled } from "../../../src/process/ProcessInspectionCancellation.js";
 import { PendingOperations } from "../../../src/process/PendingOperations.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../../../src/process/ProviderDeadline.js";
@@ -519,14 +520,17 @@ describe("provider startup cancellation", () => {
     const cancellation = new Error("provider launch already cancelled");
     controller.abort(cancellation);
 
-    await expect(
-      spawnOwnedProviderProcess({
-        command: `${tmpdir()}/rea-provider-must-not-spawn-after-cancel`,
-        arguments: [],
-        runId: "provider-process-pre-aborted-run",
-        signal: controller.signal,
-      }),
-    ).rejects.toBe(cancellation);
+    const failure: unknown = await spawnOwnedProviderProcess({
+      command: `${tmpdir()}/rea-provider-must-not-spawn-after-cancel`,
+      arguments: [],
+      runId: "provider-process-pre-aborted-run",
+      signal: controller.signal,
+    }).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+    if (!(failure instanceof ProcessOwnershipInspectionCancelled))
+      throw new Error("Expected tagged launch cancellation");
+    expect(failure.reason).toBe(cancellation);
+    expect(failure.cause).toBe(cancellation);
   });
 
   it.skipIf(process.platform !== "darwin")(
@@ -550,7 +554,14 @@ describe("provider startup cancellation", () => {
           signal: controller.signal,
         });
         controller.abort(cancellation);
-        await expect(starting).rejects.toBe(cancellation);
+        const failure: unknown = await starting.catch(
+          (cause: unknown) => cause,
+        );
+        expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+        if (!(failure instanceof ProcessOwnershipInspectionCancelled))
+          throw new Error("Expected tagged preparation cancellation");
+        expect(failure.reason).toBe(cancellation);
+        expect(failure.cause).toBe(cancellation);
         expect(prepare).toHaveBeenCalledOnce();
       } finally {
         prepare.mockRestore();

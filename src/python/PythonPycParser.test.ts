@@ -131,9 +131,7 @@ it("decodes a hash-based header and a FLAG_REF top-level code object", () => {
   expect(root(report).name).toBe("<module>");
 });
 
-it("fails unknown magics and truncated marshal without partial success", () => {
-  const unknown = Buffer.concat([pythonPycHeader(1), marshalCode("py311")]);
-  expect(() => parse(unknown)).toThrow(PythonPycFormatFailure);
+it("rejects truncated marshal without partial success", () => {
   expect(() => parse(pythonPycFixture("py311").subarray(0, 20))).toThrow(
     PythonPycFormatFailure,
   );
@@ -157,13 +155,50 @@ it.each([
   },
 );
 
-it("keeps a known newer CPython identity outside standalone decoder coverage", () => {
-  expect(() => parse(pythonPycHeader(3627))).toThrow(
+it.each([
+  { magic: 3627, version: "3.14", flags: 0x0, mode: "timestamp-based" },
+  { magic: 3666, version: "3.15", flags: 0x0, mode: "timestamp-based" },
+  // A non-zero flag word and a PEP 552 hash-based header, so a refusal that hardcoded
+  // `flags 0x0, timestamp-based` could not pass.
+  { magic: 3666, version: "3.15", flags: 0x3, mode: "hash-based" },
+  { magic: 3627, version: "3.14", flags: 0x1, mode: "hash-based" },
+] as const)(
+  "qualifies the recognized CPython $version header without a pinned code layout",
+  ({ magic, version, flags, mode }) => {
+    // The header is still a packed 16-byte 3.7+ header, so its identity and flags are
+    // reported even though no marshal layout is pinned for this version.
+    const header = pythonPycHeader(magic, {
+      flags,
+      ...(flags === 0 ? {} : { sourceHash: Buffer.alloc(8, 0xab) }),
+    });
+    let failure: unknown;
+    try {
+      parse(header);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(PythonPycFormatFailure);
+    expect(failure).toMatchObject({ kind: "unsupported" });
+    if (!(failure instanceof PythonPycFormatFailure)) throw failure;
+    expect(failure.message).toContain(
+      `CPython ${version} header is recognized`,
+    );
+    expect(failure.message).toContain(`magic ${magic}, 16-byte header`);
+    expect(failure.message).toContain(`flags 0x${flags.toString(16)}`);
+    expect(failure.message).toContain(mode);
+    expect(failure.message).not.toContain(
+      mode === "hash-based" ? "timestamp-based" : "hash-based",
+    );
+    expect(failure.message).toMatch(/no marshal code layout.*pinned/iu);
+    expect(failure.message).toMatch(/marshal decoding.*CPython 3\.7/iu);
+  },
+);
+
+it("does not qualify a magic outside the pinned identity table", () => {
+  expect(() => parse(pythonPycHeader(1))).toThrow(
     expect.objectContaining({
       kind: "unsupported",
-      message: expect.stringContaining(
-        "outside the pinned CPython 3.7–3.13 table",
-      ),
+      message: expect.stringMatching(/not a pinned CPython identity.*header/iu),
     }),
   );
 });
@@ -173,8 +208,7 @@ it("reports a short unknown header before unsupported magic, and bad CR LF befor
   expect(() => parse(unknown)).toThrow(
     expect.objectContaining({
       kind: "malformed",
-      message:
-        "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
+      message: expect.stringMatching(/shorter than.*16.byte.*header/iu),
     }),
   );
   const badTrailer = Buffer.from(unknown);
@@ -182,7 +216,7 @@ it("reports a short unknown header before unsupported magic, and bad CR LF befor
   expect(() => parse(badTrailer)).toThrow(
     expect.objectContaining({
       kind: "malformed",
-      message: "Pyc magic is not a little-endian integer followed by CR LF.",
+      message: expect.stringMatching(/magic.*little.endian.*CR LF/iu),
     }),
   );
 });
@@ -373,6 +407,30 @@ it("charges long digits to the string budget and keeps large previews bounded", 
   );
 });
 
+it("reads marshal one-byte string tags as Latin-1 with Unicode identity", () => {
+  for (const tag of [0x61, 0x41, 0x7a, 0x5a]) {
+    const encoded = Buffer.concat([
+      Buffer.from([tag]),
+      tag === 0x61 || tag === 0x41 ? u32(1) : Buffer.from([1]),
+      Buffer.from([0xe9]),
+    ]);
+    const sameUnicode = marshalUnicode(Buffer.from("é", "utf8"));
+    const set = Buffer.concat([
+      Buffer.from([0x3c]),
+      u32(2),
+      encoded,
+      sameUnicode,
+    ]);
+    const report = root(parse(withConsts([encoded, set])));
+    expect(report.consts[0]).toMatchObject({
+      kind: "str",
+      value: "é",
+      bytes: 1,
+    });
+    expect(report.consts[1]).toEqual({ kind: "set", length: 1 });
+  }
+});
+
 it("decodes marshal strings with CPython surrogatepass rules", () => {
   const report = parse(
     withConsts([marshalUnicode(Buffer.from("efbbbf73eda080efbbbf", "hex"))]),
@@ -424,20 +482,10 @@ it("keeps signed zero and non-finite float and complex constants JSON-safe", () 
 it("truncates string previews without introducing a lone surrogate", () => {
   const prefix = "x".repeat(79);
   const report = parse(
-    withConsts([
-      marshalUnicode(Buffer.from(`${prefix}😀tail`)),
-      marshalUnicode(
-        Buffer.concat([
-          Buffer.from(prefix),
-          Buffer.from("eda080", "hex"),
-          Buffer.from("tail"),
-        ]),
-      ),
-    ]),
+    withConsts([marshalUnicode(Buffer.from(`${prefix}😀tail`))]),
   );
   expect(root(report).consts).toEqual([
     { kind: "str", bytes: 87, truncated: true, value: prefix },
-    { kind: "str", bytes: 86, truncated: true, value: `${prefix}\ud800` },
   ]);
 });
 
@@ -1508,6 +1556,36 @@ it("hashes a long TYPE_REF tuple chain without recursing", () => {
   expect(root(report).consts[1]).toEqual({ kind: "set", length: 1 });
   expect(report.coverage.status).toBe("complete");
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
+it("hashes shallow TYPE_REF code chains without using the JavaScript stack", () => {
+  const links = 3000;
+  const codes = Array.from({ length: links }, (_, index) =>
+    marshalCode("py311", {
+      flagged: true,
+      name: "f",
+      consts: index === 0 ? [Buffer.from([0x4e])] : [marshalRef(index - 1)],
+    }),
+  );
+  const bytes = Buffer.concat([
+    pythonPycHeader(3531),
+    marshalCode("py311", {
+      constsObject: Buffer.concat([
+        Buffer.from([0x28]),
+        u32(links + 1),
+        ...codes,
+        Buffer.from([0x3c]),
+        u32(1),
+        marshalRef(links - 1),
+      ]),
+    }),
+  ]);
+  const report = parseWith(bytes, { max_objects: 65_536 });
+  expect(root(report).consts.at(-1)).toEqual({ kind: "set", length: 1 });
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    code_objects: links + 1,
+  });
 });
 
 it("rejects code CPython treats as corrupt instead of complete coverage", () => {

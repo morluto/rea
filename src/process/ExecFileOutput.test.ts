@@ -654,6 +654,85 @@ describe("execFileOutput failure metadata", () => {
       code: 7,
     });
   });
+  // Without stopSignal the command takes Node's execFile; adb always passes
+  // one and takes the owned spawn route. Both throw ENOTDIR synchronously.
+  it.skipIf(process.platform === "win32").each([
+    { route: "execFile", options: {} },
+    { route: "spawn", options: { stopSignal: "SIGTERM" as const } },
+  ])(
+    "admits a synchronously thrown spawn error through $route with its code and empty capture",
+    async ({ options }) => {
+      const root = await createTestTempDirectory("rea-exec-enotdir-");
+      const file = join(root, "regular");
+      await writeFile(file, "");
+      const failure: unknown = await execFileOutput(
+        join(file, "adb"),
+        ["version"],
+        options,
+      ).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+
+      expect(failure).toMatchObject({ code: "ENOTDIR", syscall: "spawn" });
+      expect(execFileOutputFailure(failure)).toEqual({
+        stdout: "",
+        stderr: "",
+        stdoutBytes: 0,
+        stderrBytes: 0,
+        code: "ENOTDIR",
+        signal: null,
+        killed: false,
+        outputTruncated: false,
+        spawnFailed: true,
+      });
+    },
+  );
+
+  it("marks an asynchronous spawn failure but not a started process's exit", async () => {
+    const root = await createTestTempDirectory("rea-exec-spawn-owner-");
+    const missing = join(root, "missing");
+    const spawnFailure: unknown = await execFileOutput(missing, [
+      "version",
+    ]).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(spawnFailure).toMatchObject({
+      code: "ENOENT",
+      path: missing,
+      spawnargs: ["version"],
+    });
+    expect(execFileOutputFailure(spawnFailure)).toMatchObject({
+      code: "ENOENT",
+      spawnFailed: true,
+    });
+
+    const exitFailure: unknown = await execFileOutput(process.execPath, [
+      "-e",
+      "process.exitCode = 3",
+    ]).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(execFileOutputFailure(exitFailure)).toMatchObject({ code: 3 });
+    expect(execFileOutputFailure(exitFailure)).not.toHaveProperty(
+      "spawnFailed",
+    );
+  });
+
+  it("leaves a synchronous argument validation error unadmitted", async () => {
+    const failure: unknown = await execFileOutput(process.execPath, [
+      "nul\0byte",
+    ]).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+
+    expect(failure).toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+    expect(execFileOutputFailure(failure)).toBeUndefined();
+  });
+
   it("preserves explicit truncation metadata from an owned process failure", () => {
     const failure = Object.assign(new Error("owned output was truncated"), {
       stdout: "partial stdout",

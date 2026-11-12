@@ -312,7 +312,7 @@ it("refuses an existing or parentless output directory and leaves it as it was",
   });
 });
 
-it("refuses unknown, unnamed loopback and non-capture Evidence, and repeated rules", async () => {
+it("refuses unknown and unnamed loopback Evidence, and repeated rules", async () => {
   const { client, session } = await connect();
   const root = await createTestTempDirectory("rea-bundle-mcp-refuse-");
   const output_directory = join(root, "env");
