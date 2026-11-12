@@ -24,10 +24,11 @@ const recordingResolver = () => {
 };
 
 describe("entrypoint spelling rules", () => {
+  // A share spelling is a Windows concept: on POSIX `//tmp/x` is a local absolute path.
   it.each([["\\\\server\\share\\rea.mjs"], ["//server/share/rea.mjs"]])(
-    "recognizes a network share spelling: %s",
+    "recognizes a network share spelling on Windows: %s",
     (candidate) => {
-      expect(isNetworkSharePath(candidate)).toBe(true);
+      expect(isNetworkSharePath(candidate)).toBe(process.platform === "win32");
     },
   );
 

@@ -97,16 +97,35 @@ export const selectedFile = (
  * means "not provably different", because the only consumer turns `false` into
  * `registration_path_mismatch` and an undecidable shape must not claim one.
  */
+export type EntrypointSpellingVerdict = "same" | "different" | "unknown";
+
+/**
+ * What two entrypoint spellings prove about each other.
+ *
+ * The three states exist because the callers need them apart. A boolean collapses `unknown` into
+ * `same`, and the consumer turns `same` into `aligned` — so an undecidable shape would claim an
+ * alignment it cannot support and suppress a restart that is actually required.
+ */
+export const entrypointSpellingVerdict = (
+  left: string,
+  right: string,
+  runtime: JavaScriptRuntime["id"] = javaScriptRuntime(process.versions).id,
+  readRealpath: RealpathResolver = nativeRealpath,
+): EntrypointSpellingVerdict => {
+  // `left` and `right` being equal does not settle it: a manager alias can be retargeted while
+  // the process runs, so equality only holds if neither side selects something else.
+  if (traversalSemanticsDiffer(left, runtime)) return "unknown";
+  if (traversalSemanticsDiffer(right, runtime)) return "unknown";
+  return selectedFile(left, readRealpath) === selectedFile(right, readRealpath)
+    ? "same"
+    : "different";
+};
+
+/** Whether two entrypoint spellings are not provably different. */
 export const sameEntrypointSpelling = (
   left: string,
   right: string,
   runtime: JavaScriptRuntime["id"] = javaScriptRuntime(process.versions).id,
   readRealpath: RealpathResolver = nativeRealpath,
-): boolean => {
-  // `left` and `right` being equal does not settle it: a manager alias can be retargeted while
-  // the process runs, so equality only holds if neither side selects something else. Both are
-  // resolved below, which is the same cost as the unequal case.
-  if (traversalSemanticsDiffer(left, runtime)) return true;
-  if (traversalSemanticsDiffer(right, runtime)) return true;
-  return selectedFile(left, readRealpath) === selectedFile(right, readRealpath);
-};
+): boolean =>
+  entrypointSpellingVerdict(left, right, runtime, readRealpath) !== "different";

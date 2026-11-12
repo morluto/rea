@@ -5,8 +5,9 @@ import type { createCatalogIdentity } from "./catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "./identity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
 import {
+  entrypointSpellingVerdict,
   selectedFile,
-  sameEntrypointSpelling,
+  type EntrypointSpellingVerdict,
 } from "./process/EntrypointSpelling.js";
 
 /** Optional observations supplied by a client comparing its expected server. */
@@ -48,14 +49,17 @@ const LAUNCHED_FILE: string | undefined =
  * The spelling rules live in `EntrypointSpelling`; this wrapper adds the launch snapshot, so a
  * retargeted manager alias cannot move the live side after the process started.
  */
-const sameEntrypoint = (left: string, right: string): boolean => {
+const entrypointVerdict = (
+  left: string,
+  right: string,
+): EntrypointSpellingVerdict => {
   if (right === CURRENT_ENTRYPOINT_PATH && LAUNCHED_FILE !== undefined) {
     // An unchanged registered alias is not alignment by itself: the alias may have been
     // retargeted while this process runs the release it started from. Both sides are resolved
     // against the snapshot, so equality is still decided by what each spelling selects now.
-    return sameEntrypointSpelling(left, LAUNCHED_FILE);
+    return entrypointSpellingVerdict(left, LAUNCHED_FILE);
   }
-  return sameEntrypointSpelling(left, right);
+  return entrypointSpellingVerdict(left, right);
 };
 
 /** Every observation that disagrees with this runtime, in a stable order. */
@@ -63,7 +67,7 @@ const identityReasons = (
   expected: ExpectedServerIdentity | undefined,
   serverPath: string | undefined,
   catalog: ReturnType<typeof createCatalogIdentity>,
-): string[] => {
+): { readonly reasons: string[]; readonly pathUndecided: boolean } => {
   const reasons: string[] = [];
   if (
     expected?.package_version !== undefined &&
@@ -75,13 +79,15 @@ const identityReasons = (
     expected.catalog_digest !== catalog.digests.combined_sha256
   )
     reasons.push("catalog_digest_mismatch");
-  if (
-    expected?.server_path !== undefined &&
-    serverPath !== undefined &&
-    !sameEntrypoint(expected.server_path, serverPath)
-  )
-    reasons.push("registration_path_mismatch");
-  return reasons;
+  let pathUndecided = false;
+  if (expected?.server_path !== undefined && serverPath !== undefined) {
+    const verdict = entrypointVerdict(expected.server_path, serverPath);
+    // `unknown` must not read as alignment: the comparison could not be made, so the caller
+    // reports "unknown" rather than suppressing a restart.
+    if (verdict === "different") reasons.push("registration_path_mismatch");
+    else if (verdict === "unknown") pathUndecided = true;
+  }
+  return { reasons, pathUndecided };
 };
 
 /** Build one runtime identity without claiming alignment from absent observations. */
@@ -95,12 +101,17 @@ export const createServerIdentity = (input: {
 }) => {
   const catalog = input.catalog;
   const serverPath = input.commandPath || undefined;
-  const reasons = identityReasons(input.expected, serverPath, catalog);
+  const { reasons, pathUndecided } = identityReasons(
+    input.expected,
+    serverPath,
+    catalog,
+  );
   const observedExpectation =
     input.expected !== undefined &&
     Object.values(input.expected).some((value) => value !== undefined);
   const pathComparable =
-    input.expected?.server_path === undefined || serverPath !== undefined;
+    !pathUndecided &&
+    (input.expected?.server_path === undefined || serverPath !== undefined);
   return {
     package: {
       name: PRODUCT_IDENTITY.packageName,
