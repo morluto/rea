@@ -156,3 +156,22 @@ it("selects a constructor before an argument can escape the global object", () =
   `),
   ).toEqual([]);
 });
+
+it.each(["Symbol", "BigInt"])(
+  "retains %s identity uncertainty inside an escaped callback",
+  (constructor) => {
+    const result = operations(`
+    import configure from "./configure.js";
+    import { setTimeout, clearTimeout } from "node:timers";
+    configure(globalThis, () => {
+      const handle = setTimeout(() => {}, ${constructor}("1"));
+      clearTimeout(handle);
+    });
+  `);
+    expect(result).toMatchObject([
+      { kind: "schedule", resolution: "complete" },
+      { kind: "cancel", resolution: "complete" },
+    ]);
+    expect(result[1]?.linkedTimerId).toBe(result[0]?.timerId);
+  },
+);
