@@ -24,6 +24,7 @@ import {
   byteEntropySchema,
   computeBlockEntropy,
   entropyFromCounts,
+  countByteValues,
   wholeFileByteCounts,
   inspectByteEntropyInputSchema,
   mergeEntropyRuns,
@@ -282,10 +283,7 @@ export class ByteEntropyService {
             }
             const bytes = buffer.subarray(0, filled);
             hash.update(bytes);
-            for (let index = 0; index < filled; index += 1) {
-              const key = bytes[index] as number;
-              counts[key] = counts[key]! + 1;
-            }
+            countByteValues(bytes, counts);
             if (selected)
               for (
                 let offset = 0;
