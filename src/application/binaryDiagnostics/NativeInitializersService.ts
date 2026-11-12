@@ -15,6 +15,7 @@ import { parseAnalysisInput } from "../AnalysisInput.js";
 import {
   MACHO_CPU_TYPES,
   machoSliceFamily,
+  machoSliceSubtypeSelector,
 } from "../../domain/apple/machoTargetSelection.js";
 
 const OPERATION = "inspect_native_initializers";
@@ -99,6 +100,8 @@ const validReport = (
   const { coverage } = report;
   const slice = report.slice;
   // Slice and report labels name the CPU family; arm64e selects an arm64 slice.
+  // A family name may read the family's only slice whatever its subtype, but
+  // arm64e reads only an arm64e slice.
   const family =
     input.architecture === undefined
       ? undefined
@@ -111,7 +114,10 @@ const validReport = (
         slice.cpu_type !== MACHO_CPU_TYPES[family] ||
         slice.architecture !== family ||
         report.machine !== slice.cpu_type ||
-        report.architecture !== family
+        report.architecture !== family ||
+        (input.architecture === "arm64e" &&
+          machoSliceSubtypeSelector(slice.cpu_type, slice.cpu_subtype) !==
+            "arm64e")
   )
     return false;
   const insideArtifact = (offset: number, bytes: number): boolean =>

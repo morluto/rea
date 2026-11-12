@@ -2,6 +2,11 @@ import { z } from "zod";
 
 import type { AnalysisProfileCommitment } from "../analysisProfile.js";
 import type { BinaryArchitecture } from "../binaryTargetTypes.js";
+import {
+  machoArchitectureFamily,
+  machoKnownArm64Subtype,
+  machoKnownX86_64Subtype,
+} from "./machoCpuIdentity.js";
 
 /** Provider-neutral observed identity of one Mach-O image selected from a source. */
 export const machoTargetSelectionSchema = z
@@ -67,6 +72,28 @@ export const machoSliceFamily = (
   architecture: MachoSliceArchitecture,
 ): keyof typeof MACHO_CPU_TYPES =>
   architecture === "arm64e" ? "arm64" : architecture;
+
+/**
+ * The architecture value that names a slice's subtype exactly, as
+ * `lipo -thin` does, or undefined when no accepted value names it. Capability
+ * bits are ignored; `arm64v8` reads as `arm64` and `arm64e.x1` as `arm64e`.
+ */
+export const machoSliceSubtypeSelector = (
+  cpuType: number,
+  cpuSubtype: number,
+): MachoSliceArchitecture | undefined => {
+  if (cpuType === MACHO_CPU_TYPES.arm64) {
+    const name = machoKnownArm64Subtype(cpuSubtype);
+    const family =
+      name === undefined ? undefined : machoArchitectureFamily(name);
+    return family === "arm64" || family === "arm64e" ? family : undefined;
+  }
+  if (cpuType === MACHO_CPU_TYPES.x86_64)
+    return machoKnownX86_64Subtype(cpuSubtype) === "x86_64"
+      ? "x86_64"
+      : undefined;
+  return undefined;
+};
 
 /** Confirm the selected header's CPU family agrees with the caller's request. */
 export const machoTargetSelectionMatchesArchitecture = (

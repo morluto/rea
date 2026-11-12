@@ -7,15 +7,11 @@ import {
 import {
   MACHO_CPU_TYPES,
   machoSliceFamily,
+  machoSliceSubtypeSelector,
   type MachoSliceArchitecture,
   type MachoTargetSelection,
 } from "../../domain/apple/machoTargetSelection.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import {
-  machoArchitectureFamily,
-  machoKnownArm64Subtype,
-  machoKnownX86_64Subtype,
-} from "../../domain/apple/machoCpuIdentity.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 const cpuName = (cpuType: number, cpuSubtype: number): string => {
@@ -51,25 +47,6 @@ interface FatSlice {
   readonly offset: number;
 }
 
-/**
- * The architecture value that names this slice's subtype exactly, as
- * `lipo -thin` does, or undefined when no accepted value names it. Capability
- * bits are ignored; `arm64v8` reads as `arm64` and `arm64e.x1` as `arm64e`.
- */
-const exactSelector = (slice: FatSlice): MachoSliceArchitecture | undefined => {
-  if (slice.cpuType === MACHO_CPU_TYPES.arm64) {
-    const name = machoKnownArm64Subtype(slice.cpuSubtype);
-    const family =
-      name === undefined ? undefined : machoArchitectureFamily(name);
-    return family === "arm64" || family === "arm64e" ? family : undefined;
-  }
-  if (slice.cpuType === MACHO_CPU_TYPES.x86_64)
-    return machoKnownX86_64Subtype(slice.cpuSubtype) === "x86_64"
-      ? "x86_64"
-      : undefined;
-  return undefined;
-};
-
 /** Whether a value names a subtype, not only a CPU family. */
 const namesSubtype = (architecture: MachoSliceArchitecture): boolean =>
   architecture === "arm64" ||
@@ -94,7 +71,11 @@ const addressedSlices = <Slice extends FatSlice>(
 ): readonly Slice[] =>
   architecture !== "arm64e" && family.length === 1
     ? family
-    : family.filter((slice) => exactSelector(slice) === architecture);
+    : family.filter(
+        (slice) =>
+          machoSliceSubtypeSelector(slice.cpuType, slice.cpuSubtype) ===
+          architecture,
+      );
 
 /**
  * Select the thin image to inspect without lipo. A universal Mach-O needs the
