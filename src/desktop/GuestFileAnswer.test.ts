@@ -51,10 +51,40 @@ describe("guest file encoding", () => {
   });
 });
 
+describe("guest data-object metadata", () => {
+  it.each([null, 42, { path: 42 }])(
+    "refuses malformed known-namespace facts: %j",
+    async (metadata) => {
+      await expect(
+        readHomeFiles(
+          async () => ({
+            result: {
+              parts: [
+                {
+                  file: { bytes: "aGVsbG8=" },
+                  metadata: { "urn:agentenv:data-objects/v1": metadata },
+                },
+              ],
+            },
+          }),
+          (text) => text,
+          ["selected.bin"],
+        ),
+      ).rejects.toThrow();
+    },
+  );
+});
+
 describe("guest file answers", () => {
-  it.each([true, false])(
-    "uses only the named data-object metadata for file identity (present: %s)",
-    async (present) => {
+  it.each(
+    [true, false].flatMap((present) =>
+      [{ path: "other.txt" }, "download", 42, false, null, ["trace"]].map(
+        (unrelated) => ({ present, unrelated }),
+      ),
+    ),
+  )(
+    "uses only named data-object metadata (present: $present, unrelated: $unrelated)",
+    async ({ present, unrelated }) => {
       const files = await readHomeFiles(
         async () => ({
           result: {
@@ -63,7 +93,7 @@ describe("guest file answers", () => {
                 kind: "file",
                 file: { bytes: Buffer.from("source bytes").toString("base64") },
                 metadata: {
-                  "urn:unrelated": { path: "other.txt" },
+                  "urn:unrelated": unrelated,
                   ...(present
                     ? {
                         "urn:agentenv:data-objects/v1": {

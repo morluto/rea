@@ -66,10 +66,16 @@ it.each(["http", "invalid_json", "readiness"] as const)(
     }
   },
 );
-it.each(["canonical", "missing", "rpc_error", "trailing_base64"] as const)(
+it.each([
+  "canonical",
+  "missing",
+  "rpc_error",
+  "trailing_base64",
+  "scalar_metadata",
+] as const)(
   "validates recording replies and redacts their errors (%s)",
   async (answer) => {
-    const present = answer === "canonical" || answer === "trailing_base64";
+    const present = answer !== "missing" && answer !== "rpc_error";
     const token = "fake-recording-control-token-123456789";
     const path = "rec-0123/0000.mp4";
     const homePath = `.agentenv-recordings/${path}`;
@@ -101,9 +107,10 @@ it.each(["canonical", "missing", "rpc_error", "trailing_base64"] as const)(
                           (answer === "trailing_base64" ? "!ignored" : ""),
                       },
                       metadata: {
-                        "urn:unrelated": {
-                          path: present ? "wrong-path" : homePath,
-                        },
+                        "urn:unrelated":
+                          answer === "scalar_metadata"
+                            ? "recording label"
+                            : { path: present ? "wrong-path" : homePath },
                         ...(present
                           ? {
                               "urn:agentenv:data-objects/v1": {

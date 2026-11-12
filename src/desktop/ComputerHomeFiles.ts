@@ -14,7 +14,11 @@ export const dataGetSchema = z.union([
             .looseObject({ bytes: canonicalBase64Schema.optional() })
             .optional(),
           metadata: z
-            .record(z.string(), z.looseObject({ path: z.string().optional() }))
+            .looseObject({
+              [DATA_OBJECTS]: z
+                .looseObject({ path: z.string().optional() })
+                .optional(),
+            })
             .optional(),
         }),
       ),
