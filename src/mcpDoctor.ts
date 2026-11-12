@@ -1,5 +1,4 @@
 import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Help } from "incur";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
@@ -37,6 +36,7 @@ import {
   mcpDoctorDeadlineRecovery,
 } from "./mcpStartupPolicy.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
+import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
 
 const OUTPUT_FORMATS = CLI_DOCUMENT_OUTPUT_FORMATS;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];
@@ -120,14 +120,15 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     Math.max(1, Math.ceil(deadline - performance.now())),
   );
   const stderr = captureStderr();
-  const transport = new OwnedStdioClientTransport({
-    command: options.command,
-    args: [...options.args],
-    cwd: options.cwd,
-    env: targetFreeEnvironment(options.environment),
-    stderr: "pipe",
-  });
-  transport.stderr?.on("data", stderr.append);
+  const transport = new DoctorStdioTransport(
+    {
+      command: options.command,
+      arguments: [...options.args],
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      env: targetFreeEnvironment(options.environment),
+    },
+    stderr.append,
+  );
   const client = new Client({ name: "rea-mcp-doctor", version: "1" });
   let result: ProductionMcpDoctorResult;
   let cleanupFailure: { readonly cause: unknown } | undefined;
@@ -195,6 +196,8 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
         },
       ],
     };
+  // The owned transport bounds what it retains; this reporter keeps the exact
+  // prefix semantics the report promises, including a withheld partial character.
   return { ...result, diagnostics: stderr.value() };
 };
 
@@ -213,13 +216,24 @@ type ProductionMcpDoctorResult =
       readonly checks: readonly McpDoctorCheck[];
     };
 
-/** Join SDK-triggered and caller-triggered close calls for the same child. */
-class OwnedStdioClientTransport extends StdioClientTransport {
-  #closePromise: Promise<void> | undefined;
-
-  override close(): Promise<void> {
-    this.#closePromise ??= super.close();
-    return this.#closePromise;
+/** The doctor's bounded stdio session, owning the process family it starts. */
+class DoctorStdioTransport extends OwnedMcpStdioTransport {
+  constructor(
+    options: ConstructorParameters<typeof OwnedMcpStdioTransport>[0],
+    onStderr: (chunk: unknown) => void,
+  ) {
+    super(options, {
+      provider: "mcp-doctor",
+      label: "MCP doctor",
+      maxFrameBytes: 8 * 1024 * 1024,
+      maxOperationBytes: 32 * 1024 * 1024,
+      // Retain only stderr, with the byte budget the report promises.
+      maxDiagnosticBytes: {
+        stdout: 0,
+        stderr: MCP_STARTUP_POLICY.doctorStderrBytes,
+      },
+      onStderr,
+    });
   }
 }
 
