@@ -1498,3 +1498,25 @@ it.each(["basename", "directory"])(
     ).toEqual(result.scripts);
   },
 );
+
+it("retains invalid Windows ChangeTime configuration at the capture read boundary", async () => {
+  const { input, resources } = await setup();
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const previous = process.env.REA_WINDOWS_CHANGE_TIME_DRIFT_MS;
+  try {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    process.env.REA_WINDOWS_CHANGE_TIME_DRIFT_MS = "invalid";
+    const result = await exportWebScripts(input, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected configuration refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "configuration_invalid",
+      details: { settings: [{ setting: "REA_WINDOWS_CHANGE_TIME_DRIFT_MS" }] },
+    });
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+    if (previous === undefined)
+      delete process.env.REA_WINDOWS_CHANGE_TIME_DRIFT_MS;
+    else process.env.REA_WINDOWS_CHANGE_TIME_DRIFT_MS = previous;
+  }
+});

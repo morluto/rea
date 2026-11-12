@@ -32,7 +32,10 @@ const fileCommands = [
   "inspect-il2cpp-metadata",
   "inspect-native-data-type",
   "analyze-javascript-application",
-  "inspect-electron-fuses",
+  // inspect-electron-fuses is not listed here: on current main its path is
+  // nulFreeStringSchema (#9901), so an empty path is admitted to the service
+  // instead of failing parse-time admission. Its NUL rejection is covered in
+  // tests/boundary/cli/emptyLocalTargetAdmission.test.ts.
 ] as const;
 
 cliTest(

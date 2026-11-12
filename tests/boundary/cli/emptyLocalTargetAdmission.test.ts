@@ -136,16 +136,23 @@ it.each([
 
 // Electron commands run real analysis services, so only the parse-time
 // rejections are covered here; the working-directory case is not exercised.
+// inspect-electron-fuses admits an empty path at parse time on current main
+// (nulFreeStringSchema, #9901), so the empty case covers only
+// analyze-javascript-application; the NUL case covers both.
+it("rejects an empty analyze-javascript-application target before analysis starts", async () => {
+  const { serve } = registry();
+  expect(await serve(["analyze-javascript-application", ""])).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({ path: "path", code: "too_small" }),
+    ],
+  });
+});
+
 it.each([["analyze-javascript-application"], ["inspect-electron-fuses"]])(
-  "rejects an empty or NUL %s target before analysis starts",
+  "rejects a NUL %s target before analysis starts",
   async (command) => {
     const { serve } = registry();
-    expect(await serve([command, ""])).toMatchObject({
-      code: "VALIDATION_ERROR",
-      fieldErrors: [
-        expect.objectContaining({ path: "path", code: "too_small" }),
-      ],
-    });
     expect(await serve([command, "target\x00name"])).toMatchObject({
       code: "VALIDATION_ERROR",
       fieldErrors: [
@@ -154,3 +161,22 @@ it.each([["analyze-javascript-application"], ["inspect-electron-fuses"]])(
     });
   },
 );
+
+it("rejects an empty or NUL --snapshot option before analysis", async () => {
+  const { serve, runs } = registry();
+  expect(await serve(["inspect", ".", "--snapshot", ""])).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({ path: "snapshot", code: "too_small" }),
+    ],
+  });
+  expect(
+    await serve(["inspect", ".", "--snapshot", "snap\x00shot"]),
+  ).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({ path: "snapshot", code: "invalid_format" }),
+    ],
+  });
+  for (const run of runs) expect(run).not.toHaveBeenCalled();
+});

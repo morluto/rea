@@ -1,8 +1,19 @@
+import { clientRegistrationSource } from "./ClientRegistrationSource.js";
+import type { SetupClient } from "./SupportedClients.js";
+
+import {
+  inspectAnalysisSettingSeeds,
+  launchAnalysisSetting,
+} from "../config/analysisSettings.js";
 import {
   parseEnvironment,
   parseEnvironmentValues,
   type Environment,
 } from "../config/environment.js";
+import {
+  DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
+  DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
+} from "../domain/analysisResourceLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -90,14 +101,14 @@ const expressionSettings = (
 /** Read explicit REA overrides without dropping peers when one value is invalid. */
 export const clientRegistrationEnvironment = (
   parsed: ClientConfigurationDocument | undefined,
-  clientName: string | undefined,
+  client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
   platform: NodeJS.Platform = process.platform,
 ): Result<Readonly<Record<string, string>>, ConfigurationError> => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
-    clientName,
+    client,
     overrides,
     validation,
     platform,
@@ -108,7 +119,7 @@ export const clientRegistrationEnvironment = (
 /** Retain original strings and the parser-owned timeout facts. */
 export const clientRegistrationEnvironmentDetails = (
   parsed: ClientConfigurationDocument | undefined,
-  clientName: string | undefined,
+  client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
   platform: NodeJS.Platform = process.platform,
@@ -133,16 +144,21 @@ export const clientRegistrationEnvironmentDetails = (
     parsed === undefined
       ? undefined
       : effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey);
-  const raw =
-    typeof registration === "object" && registration !== null
-      ? Reflect.get(registration, key)
-      : undefined;
+  const source = clientRegistrationSource(
+    registration,
+    client?.registrationProfile,
+  );
+  const raw = source.connection?.[key];
   const existing = environmentSchema.safeParse(raw === undefined ? {} : raw);
   if (!existing.success)
     return err(
       new ConfigurationError("Invalid REA server environment", {
         settings: existing.error.issues.map((issue) => ({
-          setting: [key, ...issue.path].join("."),
+          setting: [
+            ...(source.nested ? ["transport"] : []),
+            key,
+            ...issue.path,
+          ].join("."),
           constraint:
             "Server environment must be an object containing only string values",
         })),
@@ -159,7 +175,7 @@ export const clientRegistrationEnvironmentDetails = (
     environment,
     validation,
     platform,
-    expressionSettings(clientName, environment),
+    expressionSettings(client?.name, environment),
   );
 };
 
@@ -189,17 +205,20 @@ export type ProviderSettingObserver = (name: string, value: string) => void;
  */
 export const recordedProviderSettings = (
   parsed: ClientConfigurationDocument,
-  clientName: string | undefined,
+  client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   selected: Readonly<Record<string, string>>,
   platform: NodeJS.Platform = process.platform,
   owns?: OwnedProviderSetting,
   observe?: ProviderSettingObserver,
 ): RecordedProviderSettings | undefined => {
-  const names = Object.keys(selected).sort(compareUnicodeCodePoints);
+  const selection = mergeEnvironmentOverrides({}, selected, platform);
+  const names = Object.keys(selection).sort(compareUnicodeCodePoints);
+  const identity = (name: string): string =>
+    platform === "win32" ? name.toUpperCase() : name;
   if (names.length === 0) return undefined;
   const details = clientRegistrationEnvironmentDetails(
     parsed,
-    clientName,
+    client,
     {},
     "fragment",
     platform,
@@ -214,24 +233,28 @@ export const recordedProviderSettings = (
     platform,
   );
   for (const name of names) {
-    const value = recorded[name];
-    if (value !== undefined && expressions[name] === undefined)
+    const value = recorded[identity(name)];
+    if (value !== undefined && expressions[identity(name)] === undefined)
       observe?.(name, value);
   }
   const facts = {
     unrecorded: names.filter(
-      (name) => recorded[name] === undefined && expressions[name] === undefined,
+      (name) =>
+        recorded[identity(name)] === undefined &&
+        expressions[identity(name)] === undefined,
     ),
     differing: names.filter(
       (name) =>
-        expressions[name] === undefined &&
-        recorded[name] !== undefined &&
-        recorded[name] !== selected[name],
+        expressions[identity(name)] === undefined &&
+        recorded[identity(name)] !== undefined &&
+        recorded[identity(name)] !== selection[name],
     ),
-    unresolved: names.filter((name) => expressions[name] !== undefined),
+    unresolved: names.filter(
+      (name) => expressions[identity(name)] !== undefined,
+    ),
   };
   const owned = names.filter((name) => {
-    const value = recorded[name];
+    const value = recorded[identity(name)];
     return value !== undefined && owns?.(name, value) === true;
   });
   return facts.unrecorded.length +
@@ -246,7 +269,7 @@ export const recordedProviderSettings = (
 /** Resolve the async provider-specific budget through its retained reader owner. */
 export const clientRegistrationEnvironmentDetailsWithBudget = async (
   parsed: ClientConfigurationDocument | undefined,
-  clientName: string | undefined,
+  client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   overrides: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
   resolveProviderRequestBudget: ProviderRequestBudgetResolver | undefined,
@@ -256,7 +279,7 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
 > => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
-    clientName,
+    client,
     overrides,
     validation,
     platform,
@@ -308,7 +331,67 @@ const validatedDetails = (
       ? parseEnvironmentValues(runtimeEnvironment, unresolved)
       : parseEnvironment(runtimeEnvironment, unresolved);
   if (!validated.ok) return validated;
+  const seedIssues = inspectAnalysisSettingSeeds(
+    runtimeEnvironment,
+    unresolved,
+  );
+  if (seedIssues.length > 0)
+    return err(
+      new ConfigurationError("Invalid REA environment configuration", {
+        settings: seedIssues,
+      }),
+    );
   return ok(environmentDetails(environment, validated.value, unresolved));
+};
+
+const admittedTimeout = (
+  id: Parameters<typeof launchAnalysisSetting>[0],
+  environment: Readonly<Record<string, string | undefined>>,
+  fallback: number,
+): number => {
+  const parsed = launchAnalysisSetting(id, environment);
+  return parsed.ok && parsed.value.value !== null
+    ? parsed.value.value
+    : fallback;
+};
+
+const registrationTimeoutInputs = (
+  environment: Readonly<Record<string, string>>,
+): Pick<
+  McpToolTimeoutInputs,
+  | "ghidraStartupTimeoutMs"
+  | "hopperStartupTimeoutMs"
+  | "ghidraDecompileTimeoutMs"
+  | "jebMcpTimeoutMs"
+> => {
+  const decompile = launchAnalysisSetting(
+    "ghidra.decompile_timeout_seconds",
+    environment,
+  );
+  const jeb = launchAnalysisSetting("jeb.mcp_timeout_ms", environment);
+  return {
+    ghidraStartupTimeoutMs: admittedTimeout(
+      "ghidra.startup_timeout_ms",
+      environment,
+      DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
+    ),
+    hopperStartupTimeoutMs: admittedTimeout(
+      "hopper.startup_timeout_ms",
+      environment,
+      DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
+    ),
+    ...(decompile.ok &&
+    decompile.value.source === "setting" &&
+    decompile.value.value !== null
+      ? { ghidraDecompileTimeoutMs: decompile.value.value * 1000 }
+      : {}),
+    ...(jeb.ok &&
+    jeb.value.source === "setting" &&
+    jeb.value.value !== null &&
+    environment.REA_JEB_MCP_TIMEOUT_MS !== undefined
+      ? { jebMcpTimeoutMs: jeb.value.value }
+      : {}),
+  };
 };
 
 const environmentDetails = (
@@ -328,17 +411,7 @@ const environmentDetails = (
     ? undefined
     : {
         analysisProvider: configuration.REA_ANALYSIS_PROVIDER,
-        ghidraStartupTimeoutMs: configuration.REA_GHIDRA_STARTUP_TIMEOUT_MS,
-        ...(configuration.REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS === undefined
-          ? {}
-          : {
-              ghidraDecompileTimeoutMs:
-                configuration.REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS * 1000,
-            }),
-        hopperStartupTimeoutMs: configuration.REA_HOPPER_STARTUP_TIMEOUT_MS,
-        ...(configuration.REA_JEB_MCP_TIMEOUT_MS === undefined
-          ? {}
-          : { jebMcpTimeoutMs: configuration.REA_JEB_MCP_TIMEOUT_MS }),
+        ...registrationTimeoutInputs(environment),
       },
 });
 

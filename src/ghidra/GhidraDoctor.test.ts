@@ -250,6 +250,48 @@ describe("Windows Ghidra doctor authority", () => {
     });
   });
 
+  it("reports the verified NTFS and ReFS native authority boundary", async () => {
+    vi.mocked(nativeLoader.systemWindowsNativeAuthority).mockReturnValue({
+      available: true,
+      authority: {
+        inspection: {
+          abiVersion: 1,
+          nodeApiVersion: 8,
+          architecture: "x64",
+          filesystem: {
+            requestedPath: "D:\\probe",
+            finalPath: "D:\\probe",
+            filesystem: "ReFS",
+            volumeSerial: "0".repeat(16),
+            fileId: "0".repeat(32),
+            size: 0,
+            directory: true,
+          },
+          privateDacl: true,
+          privateBridgeDescriptorAccess: true,
+          atomicJobAssignment: true,
+          killOnOwnerClose: true,
+        },
+        call: () => {
+          throw new Error("Unexpected native call");
+        },
+      },
+    });
+    const projected = projectGhidraDoctorInspection(
+      await inspection({
+        installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+        platform: "win32",
+      }),
+    );
+    expect(projected.checks).toContainEqual(
+      expect.objectContaining({
+        name: "native_authority",
+        ok: true,
+        detail: expect.stringContaining("local NTFS/ReFS only"),
+      }),
+    );
+  });
+
   it("fails provider-scoped Windows readiness without blaming installation", async () => {
     const ghidra = await inspection({
       installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
@@ -488,4 +530,22 @@ describe("Windows Ghidra temporary directory check", () => {
       "temp_directory",
     );
   });
+});
+
+it("does not claim probe deletion failed when only descriptor cleanup remains", async () => {
+  const projected = projectGhidraDoctorInspection(
+    await inspection({ installDir: "C:\\tools\\ghidra", platform: "win32" }),
+    {
+      ok: false,
+      directory: "C:\\work",
+      stage: "cleanup",
+      code: "EIO",
+      message: "descriptor close not confirmed",
+    },
+  );
+  const check = projected.checks.find(({ name }) => name === "temp_directory");
+  expect(check).toMatchObject({ ok: false, details: { stage: "cleanup" } });
+  expect(check?.detail).toContain("could not clean up a probe file");
+  expect(check?.detail).not.toContain("could not delete");
+  expect(check?.detail).not.toContain("remains");
 });

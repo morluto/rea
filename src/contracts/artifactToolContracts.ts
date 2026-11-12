@@ -13,9 +13,15 @@ import { dylibResolutionInputSchema } from "../domain/apple/dylibResolution.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import { analysisDetailSchema } from "./analysisDetail.js";
+import { artifactReaderLimitsInputSchema } from "../domain/artifactReaderLimits.js";
 /** Exact caller boundary for deterministic artifact inventory. */
 export const artifactInventoryInputSchema = z.strictObject({
   integrity_policy: artifactIntegrityPolicySchema,
+  artifact_limits: artifactReaderLimitsInputSchema
+    .exactOptional()
+    .describe(
+      "Per-call Bun, .NET bundle, Node SEA and Godot producer admission, plus optional aggregate expanded plaintext work. Omitted fields retain existing defaults; changes apply on the next call without restart. Independent of summary/paging and MCP response limits.",
+    ),
 });
 
 /** Delivery selection belongs to the adapter, not the inventory producer. */
@@ -31,6 +37,7 @@ export const artifactInspectionInputSchema =
 
 /** Omitted selection preserves complete extraction of the active reader. */
 export const artifactExtractionInputSchema = z.strictObject({
+  artifact_limits: artifactInventoryInputSchema.shape.artifact_limits,
   integrity_policy: artifactIntegrityPolicySchema,
   output_root: absoluteLocalPathStringSchema
     .exactOptional()
@@ -102,13 +109,13 @@ const artifact = <
 export const ARTIFACT_TOOL_CONTRACTS = [
   artifact(
     "inspect_artifact",
-    "Inspect an active archive, application package, firmware container (including FIT and legacy uImage), Node.js SEA carrier, or Deno compile executable in one call. By default returns the complete content-addressed artifact graph once, as the typed nested inventory Evidence, with root and integrity observations, integrity contradictions, hypotheses, unexplored branches, limitations, and next probes inline. Bun standalone inventory describes stored module, sourcemap and opaque bytecode regions. Deno compile inventory reports the embedded virtual filesystem, remote modules, and recorded options. Environment-file values and certificate bytes are retained in local Evidence with their counts and byte lengths. The npm snapshot length is reported and not decoded, and the executable is not run. For PCK, Bun and large containers prefer detail summary: it retains the complete inspection and returns its derived summary view; read exact paths, batch occurrence/content IDs and selected fields with inspect_analysis_view using parent_evidence_id. This changes delivery, not inventory coverage. Classic iNES includes header facts, PRG/CHR file-region hashes and byte-exact reconstruction evidence; mapper execution and CPU bank mappings remain unobserved. Read-only DMG mounting is used automatically on supported macOS hosts. Integrity mismatches fail by default; record-and-continue keeps mismatches explicitly untrusted. It does not extract files; use extract_artifact to materialize regular contents of supported formats. DMG extraction is unavailable; use a caller-managed read-only mount on macOS to access its files.",
+    "Inventory the active archive, app package, firmware container or supported packaged executable without running it. Returns nested content-addressed inventory Evidence with integrity observations, unexplored branches and next probes. Default complete returns the full graph; detail summary retains it for inspect_analysis_view kind inventory using parent_evidence_id, exact paths/IDs, fields and paging. Summary changes delivery, not inventory coverage. Bun/Node SEA/Deno carriers expose stored modules/assets and recorded metadata; opaque bytecode and npm snapshots are not decoded. Local Evidence can include environment-file values and certificate bytes. Classic iNES adds file-region/reconstruction facts, not mapper execution. Integrity mismatches fail unless record-and-continue explicitly retains untrusted contradictions. Supported macOS DMGs are mounted read-only. Use extract_artifact to materialize regular contents; DMGs instead need a caller-managed read-only mount.",
     artifactInspectionInputSchema,
     { evidenceParameters: "preserve-detail" },
   ),
   artifact(
     "extract_artifact",
-    "Extract all or caller-selected regular files (including Node.js SEA scripts and assets and Deno compile virtual files) exposed by a supported active archive reader. Optionally select exact inventory occurrence_ids and an absent absolute output_root on the REA host; otherwise use a fresh temporary directory. The result records selected IDs and the actual output location; successful files persist after the call. Nested archive files are copied as files; inspect and extract them separately to unpack their contents. DMG extraction is unavailable; use a caller-managed read-only mount on macOS. Rejects traversal and symlink escapes, never overwrites, and verifies cleanup. Inventory integrity checks still cover the full input: mismatches fail by default; record-and-continue keeps extracted contradictions explicitly untrusted.",
+    "Write all or selected regular files from the active supported archive to an absent absolute output_root, or a fresh temporary directory if omitted. Use exact inventory occurrence_ids to select files. Returns IDs and actual output paths; successful files persist. Nested archives are copied, not recursively unpacked. Never overwrites; rejects traversal/symlink escapes and verifies cleanup. Full-input integrity checks still apply: mismatches fail unless record-and-continue retains explicitly untrusted contradictions. DMG extraction is unavailable; use a caller-managed read-only mount on macOS.",
     artifactExtractionInputSchema,
   ),
   artifact(

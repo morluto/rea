@@ -4,6 +4,7 @@ import {
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -97,8 +98,26 @@ export const finishAnalysisCommand = async <
     }
   }
   await dispatchQueuedInterrupts();
-  if (initialFailure !== undefined && cleanup === undefined)
-    return err(initialFailure);
+  if (!result.ok && signal.aborted)
+    analysisErrorWithCancellation(
+      result.error,
+      new AnalysisCancelledError(canonicalOperation, { cause: signal.reason }),
+    );
+  if (initialFailure !== undefined && cleanup === undefined && !result.ok) {
+    // Close may mutate cleanup state; preserve the snapshot and add later failures.
+    const secondary = projectFailure(result.error).details?.secondary_failures;
+    return err(
+      secondary === undefined
+        ? initialFailure
+        : {
+            ...initialFailure,
+            details: {
+              ...initialFailure.details,
+              secondary_failures: secondary,
+            },
+          },
+    );
+  }
   if (
     initialFailure === undefined &&
     cleanup === undefined &&

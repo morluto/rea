@@ -335,6 +335,7 @@ const conflictingRules = (): JsonValue =>
 /** Inspect a HAR as inspect-web-network-capture does and serialize the Evidence as it prints it; a refusal is the command's output. */
 const inspectBuildHar = async (
   capturePath: string,
+  callerInputPath: string,
   captureTimeoutMs: number | undefined,
   environment: Readonly<NodeJS.ProcessEnv>,
   signal: AbortSignal,
@@ -357,6 +358,7 @@ const inspectBuildHar = async (
             : { capture_timeout_ms: captureTimeoutMs }),
         },
         { signal },
+        { capture: callerInputPath },
       ),
     service,
     "web-network-capture",
@@ -418,6 +420,7 @@ const buildEnvironmentCommand = async (
     progress("inspect");
     const inspected = await inspectBuildHar(
       capturePath,
+      input.capture,
       input.captureTimeoutMs,
       environment,
       signal,
@@ -686,7 +689,11 @@ export const registerEnvironmentCommands = (
       host: mcpHttpHostSchema
         .optional()
         .describe("Listener address; default MCP_HOST, else 127.0.0.1"),
-      port: publishCliInputSchema(mcpHttpPortSchema.optional()).describe(
+      port: (
+        publishCliInputSchema(mcpHttpPortSchema.optional()) as z.ZodType<
+          number | undefined
+        >
+      ).describe(
         "Listener port; default MCP_PORT, else 0 for an ephemeral port",
       ),
     }),

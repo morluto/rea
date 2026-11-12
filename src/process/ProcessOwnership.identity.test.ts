@@ -20,6 +20,126 @@ const observedIdentity = (entry: ProcessTableEntry, identity: string) => ({
   },
 });
 
+it.each([
+  "live",
+  "absent",
+  "unavailable",
+  "reused-foreign",
+  "omitted-command",
+  "listed-command",
+  "refresh-command",
+] as const)(
+  "revalidates a retained owner with %s observations during non-sweep cleanup",
+  async (nativeState) => {
+    const row: ProcessTableEntry = {
+      pid: 101,
+      parentPid: 1,
+      processGroupId: 101,
+      state: "S",
+      command: "retained-owner",
+    };
+    const evidenceOwner = new ProcessOwnershipEvidenceOwner();
+    const identity = observedIdentity(row, "start-101");
+    evidenceOwner.reconcile(
+      [
+        {
+          process: row,
+          state: "same-generation",
+          identityBefore: identity,
+          identityAfter: identity,
+          token: { state: "readable", runId: "run-token" },
+        },
+      ],
+      {
+        runId: "run-token",
+        listedRows: 1,
+        listedPids: new Set([row.pid]),
+        leaderPid: 100,
+        processGroupIds: new Set([100]),
+      },
+    );
+    expect(evidenceOwner.candidates).toMatchObject([
+      { pid: row.pid, applicability: "token-verified" },
+    ]);
+    let signaled = false;
+    let tableReads = 0;
+    const signalGroup = vi.fn(() => {
+      signaled = true;
+    });
+    const host: ProcessOwnershipHost = {
+      listProcesses: async () => {
+        tableReads += 1;
+        return nativeState === "listed-command" ||
+          (nativeState === "refresh-command" && tableReads === 1)
+          ? [row]
+          : [];
+      },
+      environment: async () => ({
+        REA_PROCESS_RUN_ID:
+          nativeState === "reused-foreign" ? "foreign" : "run-token",
+      }),
+      processIdentities: async (entries) =>
+        new Map(
+          entries.map(({ pid }) => [
+            pid,
+            signaled || nativeState === "absent"
+              ? { state: "absent" as const, reason: "not-in-snapshot" as const }
+              : nativeState === "unavailable"
+                ? {
+                    state: "unavailable" as const,
+                    reason: "native read denied",
+                  }
+                : observedIdentity(
+                    row,
+                    nativeState === "reused-foreign"
+                      ? "replacement"
+                      : "start-101",
+                  ),
+          ]),
+        ),
+      signalGroup,
+    };
+    const result = await cleanupOwnedProcessGroup(
+      {
+        runId: "run-token",
+        leaderPid: 100,
+        processGroupId: 100,
+        evidenceOwner,
+        ...(nativeState === "omitted-command" ||
+        nativeState === "listed-command" ||
+        nativeState === "refresh-command"
+          ? {
+              leaderPid: row.pid,
+              processGroupId: row.processGroupId,
+              expectedCommand: row.command,
+            }
+          : {}),
+      },
+      host,
+    );
+    if (nativeState === "live" || nativeState === "listed-command") {
+      expect(result).toMatchObject({ cleaned: true, signaled: true });
+      expect(signalGroup).toHaveBeenCalledExactlyOnceWith(101, "SIGKILL");
+    } else {
+      expect(signalGroup).not.toHaveBeenCalled();
+      expect(result).toMatchObject(
+        nativeState === "unavailable" ||
+          nativeState === "omitted-command" ||
+          nativeState === "refresh-command"
+          ? { cleaned: false }
+          : { cleaned: true, signaled: false },
+      );
+      expect(evidenceOwner.candidates).toEqual(
+        nativeState === "unavailable" ||
+          nativeState === "omitted-command" ||
+          nativeState === "refresh-command"
+          ? [expect.objectContaining({ pid: row.pid })]
+          : [],
+      );
+    }
+  },
+);
+
 it("keeps an unresolved earlier generation unknown when a later unrelated process has a foreign marker", async () => {
   const row: ProcessTableEntry = {
     pid: 920,
@@ -39,7 +159,7 @@ it("keeps an unresolved earlier generation unknown when a later unrelated proces
         entries.map((entry) => [
           entry.pid,
           readable
-            ? observedIdentity(entry, "later-generation")
+            ? observedIdentity(row, "later-generation")
             : { state: "unavailable" as const, reason: "identity unavailable" },
         ]),
       ),
@@ -87,7 +207,7 @@ it.each([undefined, "run-token"])(
           new Map(
             entries.map((entry) => [
               entry.pid,
-              observedIdentity(entry, "current-start"),
+              observedIdentity(row, "current-start"),
             ]),
           ),
         ),
@@ -180,7 +300,7 @@ it("validates and cleans an exact-token owner without a capture baseline", async
           entries.map((entry) => [
             entry.pid,
             live
-              ? observedIdentity(entry, "owner-start")
+              ? observedIdentity(process, "owner-start")
               : {
                   state: "absent" as const,
                   reason: "not-in-snapshot" as const,
@@ -239,7 +359,7 @@ it
               entries.map((entry) => [
                 entry.pid,
                 {
-                  ...observedIdentity(entry, "reused-current-generation"),
+                  ...observedIdentity(row, "reused-current-generation"),
                   effectiveUid,
                 },
               ]),
@@ -299,7 +419,7 @@ it
               entries.map((entry) => [
                 entry.pid,
                 {
-                  ...observedIdentity(entry, "current-generation"),
+                  ...observedIdentity(row, "current-generation"),
                   effectiveUid: process.getuid!(),
                   ...(environmentRestriction === undefined
                     ? {}
@@ -365,7 +485,7 @@ it.each(["omitted", "throws"] as const)(
           new Map(
             entries.map((entry) => [
               entry.pid,
-              observedIdentity(entry, "current-generation"),
+              observedIdentity(row, "current-generation"),
             ]),
           ),
         );
@@ -415,7 +535,7 @@ it("keeps a matching-token replacement through omission and retries cleanup only
             ? { state: "absent" as const, reason: "not-in-snapshot" as const }
             : identityUnavailable
               ? { state: "unavailable" as const, reason: "native read denied" }
-              : observedIdentity(entry, replaced ? "new-owner" : "old-owner"),
+              : observedIdentity(row, replaced ? "new-owner" : "old-owner"),
         ]),
       ),
     runTokens: async (entries) => {
@@ -616,7 +736,7 @@ it("requires a scoped current relation before exempting a withheld token", async
             entries.map((entry) => [
               entry.pid,
               nativeRelation
-                ? observedIdentity(entry, "opaque-generation")
+                ? observedIdentity(row, "opaque-generation")
                 : {
                     state: "readable" as const,
                     identity: "opaque-generation",
@@ -947,7 +1067,7 @@ describe("capture-local process identity baselines", () => {
               entry.pid === 902
                 ? { state: "unavailable", reason: "fixture" }
                 : observedIdentity(
-                    entry,
+                    processes.find(({ pid }) => pid === entry.pid)!,
                     entry.pid === 899 ? "stable-start" : "reused-start",
                   ),
             ]),
@@ -1011,7 +1131,7 @@ describe("capture-local process identity baselines", () => {
           new Map(
             entries.map((entry) => [
               entry.pid,
-              observedIdentity(entry, identity),
+              observedIdentity(process, identity),
             ]),
           ),
         );
@@ -1248,7 +1368,7 @@ it("revalidates identity after the final environment token read", async () => {
         new Map(
           entries.map((entry) => [
             entry.pid,
-            observedIdentity(entry, identity),
+            observedIdentity(process, identity),
           ]),
         ),
       );
@@ -1297,7 +1417,10 @@ it("fails closed when candidate PIDs change identity during token reading", asyn
         new Map(
           entries.map((entry) => [
             entry.pid,
-            observedIdentity(entry, identity),
+            observedIdentity(
+              processes.find(({ pid }) => pid === entry.pid)!,
+              identity,
+            ),
           ]),
         ),
       );
@@ -1361,7 +1484,7 @@ it("uses the launcher's native relation instead of stale process-table fields", 
           members.map((member) => [
             member.pid,
             observedIdentity(
-              { ...member, parentPid: 1, processGroupId: 100 },
+              { ...row, parentPid: 1, processGroupId: 100 },
               "start-100",
             ),
           ]),
@@ -1451,7 +1574,7 @@ it("refuses to signal when PID identity changes after token validation", async (
         new Map(
           entries.map((entry) => [
             entry.pid,
-            observedIdentity(entry, identity),
+            observedIdentity(process, identity),
           ]),
         ),
       );
