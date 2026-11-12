@@ -127,3 +127,63 @@ describe("image hardware decode", () => {
     expect(claims.some((claim) => claim.subject === "USART2")).toBe(false);
   });
 });
+
+describe("SYSCLK product", () => {
+  it("multiplies the selected clock literal only after the PLL switch", () => {
+    const factors = {
+      kind: "sysclk-product" as const,
+      site: "0x0800c77c",
+      hsiLiteral: 0xf42400n,
+      hseLiteral: 0x7a1200n,
+      pllm: 0x8n,
+      plln: 0xa8n,
+      pllpDivider: 0x2n,
+    };
+    const switched = hardwareClaimsFromImage({
+      architecture: null,
+      platform: null,
+      pinPlacement: null,
+      vectors: [],
+      observations: [
+        { ...factors, pllSource: 0n, clockSwitch: { site: "0x0800ab7e" } },
+      ],
+    });
+    expect(
+      switched.find((claim) => claim.subject === "sysclk:0x0800c77c"),
+    ).toMatchObject({
+      settled: true,
+      basis: "instruction",
+      source: "0xf42400*0xa8/0x8/0x2=0xa037a00",
+    });
+
+    const hse = hardwareClaimsFromImage({
+      architecture: null,
+      platform: null,
+      pinPlacement: null,
+      vectors: [],
+      observations: [
+        { ...factors, pllSource: 1n, clockSwitch: { site: "0x0800ab7e" } },
+      ],
+    });
+    expect(
+      hse.find((claim) => claim.subject === "sysclk:0x0800c77c"),
+    ).toMatchObject({
+      settled: true,
+      source: "0x7a1200*0xa8/0x8/0x2=0x501bd00",
+    });
+
+    const stored = hardwareClaimsFromImage({
+      architecture: null,
+      platform: null,
+      pinPlacement: null,
+      vectors: [],
+      observations: [{ ...factors, pllSource: 0n, clockSwitch: null }],
+    });
+    expect(
+      stored.find((claim) => claim.subject === "sysclk:0x0800c77c"),
+    ).toMatchObject({
+      settled: false,
+      source: "0x0800c77c",
+    });
+  });
+});

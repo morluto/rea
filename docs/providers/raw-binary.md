@@ -119,7 +119,10 @@ image observations recorded with that board: loaded addresses, pin indexes,
 SFUD rows, a PLL immediate, and vector slots. A bus-name string such as `spi2`
 stays a driver-linkage claim and does not become a controller. Pin role and the
 installed flash part stay unsettled. A PLL field split does not state a clock
-frequency unless the image also shows the clock switch.
+frequency unless the image also shows the clock switch. When that switch is
+present, SYSCLK is the image literal selected by the PLL source, multiplied by
+PLLN, then divided by PLLM and the PLLP divider. The product stays unsettled
+when a divisor is zero or the division leaves a remainder.
 
 ## NMOS 6502
 

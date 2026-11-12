@@ -398,6 +398,14 @@ describe("captured RT-Spark image", () => {
       ),
     ).toMatchObject({ settled: false });
     expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "sysclk:0x0800c77c",
+      ),
+    ).toMatchObject({
+      settled: true,
+      source: "0xf42400*0xa8/0x8/0x2=0xa037a00",
+    });
+    expect(
       report.hardwareClaims.find((claim) => claim.subject === "Reset"),
     ).toMatchObject({ rule: "architecture-register", settled: true });
     expect(

@@ -113,6 +113,20 @@ describe("RT-Spark boot evidence", () => {
       "spi-flash-part",
       "gpio-role",
     ]);
+    expect(rtSparkBootEvidence.sysclk).toMatchObject({
+      plln: { site: "0x0800c77c", value: "0xa8" },
+      pllm: { site: "0x0800c8e6", value: "0x8" },
+      pllpDivider: { site: "0x0800c8ee", value: "0x2" },
+      pllSource: { site: "0x0800c8e2", value: "0x0" },
+      pllRegisterWrite: "0x0800aa18",
+      clockSwitch: {
+        site: "0x0800ab7e",
+        sourceSite: "0x0800c912",
+        source: "0x2",
+      },
+      hsiLiteral: { site: "0x0800adf8", value: "0xf42400" },
+      hseLiteral: { site: "0x0800adfc", value: "0x7a1200" },
+    });
   });
 
   it("keeps the observed exception handlers and the missing controller bases", () => {

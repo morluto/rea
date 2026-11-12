@@ -377,6 +377,21 @@ export const rtSparkBootEvidence = {
     { site: "0x080aee94", address: "0x40040000" },
     { site: "0x080ccfb4", address: "0x50000000" },
   ],
+  // Factors stored after SystemInit. The reset PLL word stays a separate observation.
+  sysclk: {
+    plln: { site: "0x0800c77c", value: "0xa8" },
+    pllm: { site: "0x0800c8e6", value: "0x8" },
+    pllpDivider: { site: "0x0800c8ee", value: "0x2" },
+    pllSource: { site: "0x0800c8e2", value: "0x0" },
+    pllRegisterWrite: "0x0800aa18",
+    clockSwitch: {
+      site: "0x0800ab7e",
+      sourceSite: "0x0800c912",
+      source: "0x2",
+    },
+    hsiLiteral: { site: "0x0800adf8", value: "0xf42400" },
+    hseLiteral: { site: "0x0800adfc", value: "0x7a1200" },
+  },
   unresolved: [
     {
       subject: "spi-flash-part",
@@ -589,6 +604,17 @@ export const rtSparkImageObservations: ImageHardwareDecodeInput = {
       value: 0x24003010n,
       fields: pllFields,
       clockSwitch: null,
+    },
+    {
+      kind: "sysclk-product",
+      site: rtSparkBootEvidence.sysclk.plln.site,
+      hsiLiteral: BigInt(rtSparkBootEvidence.sysclk.hsiLiteral.value),
+      hseLiteral: BigInt(rtSparkBootEvidence.sysclk.hseLiteral.value),
+      pllSource: BigInt(rtSparkBootEvidence.sysclk.pllSource.value),
+      pllm: BigInt(rtSparkBootEvidence.sysclk.pllm.value),
+      plln: BigInt(rtSparkBootEvidence.sysclk.plln.value),
+      pllpDivider: BigInt(rtSparkBootEvidence.sysclk.pllpDivider.value),
+      clockSwitch: { site: rtSparkBootEvidence.sysclk.clockSwitch.site },
     },
     ...rtSparkBootEvidence.exceptionVectors.map((entry) => ({
       kind: "vector-slot" as const,

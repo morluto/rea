@@ -14,11 +14,16 @@ import {
   type SocPlatform,
   socPlatformSchema,
 } from "./socPeripheralDatabase.js";
+import {
+  sysclkClaims,
+  sysclkProductSchema,
+  type SysclkProductObservation,
+} from "./sysclkProduct.js";
 
 /**
  * Image observations the reference edge cannot carry: immediates, pin indexes,
- * bus-name strings, SFUD rows, and vector slots. Controller names come from
- * the existing SoC catalog. This module does not add manual rows.
+ * bus-name strings, SFUD rows, vector slots, and a SYSCLK product. Controller
+ * names come from the existing SoC catalog. This module does not add manual rows.
  */
 export interface PinPlacement {
   readonly origin: bigint;
@@ -75,6 +80,7 @@ export type ImageHardwareObservation =
       /** Null when the image writes the PLL word and does not switch SYSCLK. */
       readonly clockSwitch: { readonly site: string } | null;
     }
+  | SysclkProductObservation
   | {
       readonly kind: "register-access";
       readonly site: string;
@@ -201,6 +207,7 @@ export const imageHardwareDecodeInputSchema = z.strictObject({
       sfudTableSchema,
       vectorSlotSchema,
       pllImmediateSchema,
+      sysclkProductSchema,
       registerAccessSchema,
       offsetWriteSchema,
       immediateSchema,
@@ -489,6 +496,8 @@ const claimsForObservation = (
       return [vectorClaim(observation, input.vectors)];
     case "pll-immediate":
       return pllClaims(observation);
+    case "sysclk-product":
+      return sysclkClaims(observation);
     case "register-access":
       return registerAccessClaims(observation, input);
     case "offset-write":
