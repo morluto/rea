@@ -699,7 +699,10 @@ const flattenRootObjectUnion = (
               Object.entries(schema).filter(([key]) => key !== "default"),
             )
           : schema
-        : omitNestedDefaults(schema, referencedDefaultPaths(schema));
+        : omitNestedDefaults(
+            schema,
+            isObject(schema) ? referencedDefaultPaths(schema) : new Set(),
+          );
       if (
         !withoutDefaults.some((known) =>
           isDeepStrictEqual(known, withoutDefault),

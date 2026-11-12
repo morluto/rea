@@ -901,21 +901,30 @@ describe("root union default presentation", () => {
         }),
       ]);
       const canonical = z.toJSONSchema(schema, { io: "input", target }) as {
-        anyOf: Record<string, unknown>[];
+        anyOf: {
+          properties: Record<string, Record<string, unknown>>;
+          required: string[];
+          additionalProperties: boolean;
+        }[];
       };
       // A nested resource keeps the group, so the union still flattens. Its
       // sibling reference points into the default the flattening would drop.
+      const scenario = canonical.anyOf[1] as NonNullable<
+        (typeof canonical.anyOf)[1]
+      >;
+      const normalization = scenario.properties.normalization as Record<
+        string,
+        unknown
+      >;
       canonical.anyOf[1] = {
-        ...canonical.anyOf[1],
+        ...scenario,
         properties: {
-          ...(canonical.anyOf[1].properties as Record<string, unknown>),
+          ...scenario.properties,
           normalization: {
             $id: "https://example.test/normalization",
-            ...(canonical.anyOf[1].properties as Record<string, unknown>)
-              .normalization,
+            ...normalization,
             properties: {
-              ...((canonical.anyOf[1].properties as Record<string, any>)
-                .normalization.properties as Record<string, unknown>),
+              ...(normalization.properties as Record<string, unknown>),
               alias: { $ref: "#/default/rules" },
             },
           },
