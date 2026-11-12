@@ -10,7 +10,6 @@ import {
   indexJavaScriptBindingsWithReceiversSteps,
   type JavaScriptReceiverIndex,
 } from "./javascript/javascriptSemanticAnalysis.js";
-import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSemanticState.js";
 import {
   requireResolveSearchBase,
   semanticRequireCallAt,
