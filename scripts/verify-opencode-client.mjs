@@ -98,10 +98,14 @@ await withVerifierCleanup(async () => {
     const environment = {
       // A closed environment without PATH cannot start a client on either
       // platform, so the host environment is inherited and the client's own
-      // directories are redirected into the lab.
+      // directories are redirected into the lab. Clear caller OpenCode
+      // configuration overrides so an inherited OPENCODE_CONFIG path or
+      // OPENCODE_CONFIG_CONTENT payload cannot join the lab's selected layers.
       ...process.env,
       HOME: account,
       USERPROFILE: account,
+      OPENCODE_CONFIG: undefined,
+      OPENCODE_CONFIG_CONTENT: undefined,
       OPENCODE_CONFIG_DIR: profile,
       XDG_CONFIG_HOME: join(lab, "config"),
       XDG_CACHE_HOME: join(lab, "cache"),

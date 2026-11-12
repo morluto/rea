@@ -156,7 +156,8 @@ Google API compatibility remains unverified. The lane disables
 the client's memory-based relaunch to preserve the caller's Node heap budget.
 
 `verify:opencode-client` requires an installed OpenCode (verified with
-`opencode v2.2.7` on POSIX and native Windows); select it with
+`opencode v2.2.7` on native Windows; POSIX V2 remains unverified; the prior
+`opencode-ai@1.18.35` POSIX result was for OpenCode V1); select it with
 `REA_VERIFY_OPENCODE_COMMAND`. The lane configures isolated XDG roots,
 `OPENCODE_CONFIG_DIR` and a redirected home, checks setup plans, backups,
 preserved JSONC comments and idempotence, activates the installed skill,
@@ -179,8 +180,8 @@ dialect, which keeps the legacy `mcp` table, the `skills.paths` map, the
 argument.
 The local OpenAI-compatible fixture has a caller-declared one-million-token
 context and synthetic usage. Skills use an explicit isolated directory, so
-default OS-home discovery remains unverified. Live model APIs are also
-unverified.
+default OS-home discovery remains unverified. Live model APIs and POSIX V2
+coverage are also unverified.
 
 `verify:claude-client` requires installed Claude Code (verified with
 `@anthropic-ai/claude-code@2.1.296` on POSIX and native Windows); select it
