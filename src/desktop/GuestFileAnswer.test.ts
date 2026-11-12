@@ -12,6 +12,45 @@ import {
   retainGuestFiles,
 } from "./AgentEnvComputer.js";
 
+describe("guest file encoding", () => {
+  const read = (encoded: string) =>
+    readHomeFiles(
+      async () => ({
+        result: {
+          parts: [
+            {
+              file: { bytes: encoded },
+              metadata: {
+                "urn:agentenv:data-objects/v1": { path: "selected.bin" },
+              },
+            },
+          ],
+        },
+      }),
+      (text) => text,
+      ["selected.bin"],
+    );
+
+  it.each(["!!!", "aGVsbG8=garbage", "aGVsbG8", "Zh==", "AA-_"])(
+    "rejects malformed base64 %j before retaining file bytes",
+    async (encoded) => {
+      await expect(read(encoded)).rejects.toThrow(
+        "Expected canonical padded base64",
+      );
+    },
+  );
+
+  it.each([
+    Buffer.alloc(0),
+    Buffer.from("hello"),
+    Buffer.from([0, 255, 128, 0]),
+  ])("preserves valid empty, text and binary files: %j", async (bytes) => {
+    await expect(read(bytes.toString("base64"))).resolves.toEqual([
+      { path: "selected.bin", bytes },
+    ]);
+  });
+});
+
 describe("guest file answers", () => {
   it.each([true, false])(
     "uses only the named data-object metadata for file identity (present: %s)",
