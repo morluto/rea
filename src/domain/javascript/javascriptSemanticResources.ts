@@ -4,7 +4,11 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 
-import { BUILTIN_RESOURCE_RELEASE_METHODS } from "./javascriptBuiltinResourceMethods.js";
+import {
+  BUILTIN_RESOURCE_SPECIFIERS,
+  BUILTIN_RESOURCE_METHODS,
+  BUILTIN_RESOURCE_RELEASE_METHODS,
+} from "./javascriptBuiltinResourceMethods.js";
 import type {
   JavaScriptSemanticCallable,
   JavaScriptSemanticResourceOperation,
@@ -34,8 +38,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
-  builtinResourceAcquisition,
-  type BuiltinResourceAcquisition,
+  builtinDataEffectIdentity,
   dataEffectMemberCallee,
   outerDataEffectBinding,
   traverseDataEffects,
@@ -344,9 +347,7 @@ const rejectsOpenModeLiteral = (
 };
 
 /** `fs.open`, `fs.openSync` and `fs/promises.open` take the flag in slot 1. */
-const openFlagInFirstArgument = (
-  reference: BuiltinResourceAcquisition,
-): boolean =>
+const openFlagInFirstArgument = (reference: AcquisitionReference): boolean =>
   reference.method === "open" || reference.method === "openSync"
     ? reference.specifier === "fs" || reference.specifier === "fs/promises"
     : false;
@@ -358,7 +359,7 @@ const collectAcquisitions = (
   const output: ResourceCandidate[] = [];
   traverseDataEffects(program, context, (node) => {
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
-    const reference = builtinResourceAcquisition(node.callee, context.state);
+    const reference = acquisitionMethod(node.callee, context.state);
     if (reference === null) return;
     if (openFlagInFirstArgument(reference)) {
       if (rejectsOpenFlagLiteral(node, context)) return;
@@ -459,7 +460,7 @@ const collectReleases = (
         : {}),
       resolution:
         !opaqueReceiver &&
-        !releaseMethodMayHaveChanged(binding, method, node, context.state) &&
+        !releaseMethodMayHaveChanged(binding, method, member, context.state) &&
         linked.length === 1 &&
         (binding.kind !== "parameter" ||
           semanticBindingAtRead(binding, member.object, context.state)
@@ -496,6 +497,8 @@ const releaseMethodMayHaveChanged = (
       ({ path, node }) =>
         // Passing the function itself cannot replace its native [[Call]].
         (path.length === 0 || prototype(path[0]!)) &&
+        // This invocation receives the receiver after selecting its method.
+        node !== state.parentsByNode.get(read) &&
         semanticEffectTiming(read, node, state) !== "after",
     )
   );
@@ -576,6 +579,38 @@ const immutableAcquisition = (
   resolution: "complete",
 });
 
+interface AcquisitionReference {
+  readonly builtinAuthority?: "candidate";
+  readonly specifier: string;
+  readonly method: JavaScriptSemanticResourceOperation["method"];
+}
+
+const acquisitionMethod = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): AcquisitionReference | null => {
+  for (const specifier of BUILTIN_RESOURCE_SPECIFIERS) {
+    const identity = builtinDataEffectIdentity(callee, state, [specifier]);
+    const method =
+      identity?.path.length === 1 ? (identity.path[0] ?? null) : null;
+    if (
+      method !== null &&
+      (
+        BUILTIN_RESOURCE_METHODS[
+          specifier as keyof typeof BUILTIN_RESOURCE_METHODS
+        ] as readonly string[]
+      ).includes(method)
+    )
+      return {
+        specifier,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
+        method: method as JavaScriptSemanticResourceOperation["method"],
+      };
+  }
+  return null;
+};
 const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
 
@@ -839,5 +874,5 @@ const rejectsTlsProtocolVersionLiteral = (
 
 /** Only `net`/`tls` sockets take a port in argument 0. */
 const socketPortInFirstArgument = (
-  candidate: Pick<BuiltinResourceAcquisition, "specifier">,
+  candidate: Pick<AcquisitionReference, "specifier">,
 ): boolean => candidate.specifier === "net" || candidate.specifier === "tls";

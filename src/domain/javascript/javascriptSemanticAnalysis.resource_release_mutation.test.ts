@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { analyzeCommonJsSemanticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 const releases = (source: string) =>
@@ -112,5 +113,38 @@ it("keeps releases before eval and calls to shadowed eval complete", () => {
       stream.destroy();
     }
   `),
+  ).toMatchObject([{ resolution: "complete" }]);
+});
+
+it("captures release methods before argument-side replacements", () => {
+  expect(
+    releases(`
+    import { createReadStream, createWriteStream } from "node:fs";
+    import { open } from "node:fs/promises";
+    const stream = createReadStream("fixture.txt");
+    stream.close(stream.close = () => {});
+    const output = createWriteStream("output.txt");
+    output.end("done", output.end = () => {});
+    const file = await open("fixture.txt");
+    file.close(file.close = () => {});
+  `).map(({ resolution }) => resolution),
+  ).toEqual(["complete", "complete", "complete"]);
+});
+
+it("retains shared module escapes after collecting resource receiver paths", () => {
+  const result = analyzeCommonJsSemanticFixture(`
+    const fs = require("node:fs");
+    const other = require("fs");
+    other.readFileSync("before.json");
+    const stream = other.createReadStream("before.json");
+    stream.destroy();
+    patch(fs);
+    other.readFileSync("wrong-after.json");
+  `);
+  expect(result.configurationOperations.map(({ key }) => key)).toEqual([
+    "before.json",
+  ]);
+  expect(
+    result.resourceOperations.filter(({ kind }) => kind === "release"),
   ).toMatchObject([{ resolution: "complete" }]);
 });

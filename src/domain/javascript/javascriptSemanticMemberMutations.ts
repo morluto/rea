@@ -1,4 +1,3 @@
-import { builtinResourceAcquisition } from "./javascriptSemanticDataEffectHelpers.js";
 import { BUILTIN_RESOURCE_RELEASE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
@@ -36,6 +35,7 @@ import {
   clearSemanticValueCaches,
   evaluateSemanticBinding,
   evaluateSemanticExpression,
+  evaluateSemanticExpressionProvenance,
 } from "./javascriptSemanticValues.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {
@@ -2311,15 +2311,27 @@ const observableMutationPaths = (
           t.isCallExpression(expression) ||
           t.isOptionalCallExpression(expression)
         ) {
-          const resource = builtinResourceAcquisition(expression.callee, state);
           const methods: Readonly<Record<string, readonly string[]>> =
             BUILTIN_RESOURCE_RELEASE_METHODS;
-          // Resource-returning built-ins have observable receiver slots even
-          // though there is no source-owned object allocation for their result.
+          // Retain possible resource slots from provenance alone. Final built-in
+          // admission depends on the mutations this pass is still collecting.
           if (
-            resource !== null &&
-            (methods[`${resource.specifier}:${resource.method}`]?.length ?? 0) >
-              0
+            evaluateSemanticExpressionProvenance(
+              expression.callee,
+              state,
+            ).origins.some(({ specifier, importedPath }) => {
+              const identity = semanticRequireExportsIdentity(
+                specifier,
+                importedPath[0] === "default"
+                  ? importedPath.slice(1)
+                  : importedPath,
+              );
+              return (
+                identity.path.length === 1 &&
+                (methods[`${identity.specifier}:${identity.path[0]}`]?.length ??
+                  0) > 0
+              );
+            })
           )
             (observer.origins ??= new Set()).add("opaque");
         }
