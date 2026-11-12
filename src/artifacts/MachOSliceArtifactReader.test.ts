@@ -17,14 +17,26 @@ import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { ArtifactEntry } from "./ArtifactReader.js";
 
-const sliceOwnershipFixture = async () => {
+const sliceOwnershipFixture = async (secondSlice = false) => {
   const root = await createTestTempDirectory("rea-slice-ownership-");
   const path = join(root, "fat");
   const bytes = Buffer.concat([
     Buffer.from(machoImage({ cpu: CPU.x86_64 })),
     Buffer.alloc(256 * 1024),
   ]);
-  await writeFile(path, fatImage([{ cpu: CPU.x86_64, bytes }]));
+  const slices = [
+    { name: "x86_64", cpu: CPU.x86_64, bytes },
+    ...(secondSlice
+      ? [
+          {
+            name: "arm64",
+            cpu: CPU.arm64,
+            bytes: machoImage({ cpu: CPU.arm64 }),
+          },
+        ]
+      : []),
+  ];
+  await writeFile(path, fatImage(slices));
   const runner: NativeCommandRunner = {
     run: async () =>
       ok({
@@ -34,7 +46,12 @@ const sliceOwnershipFixture = async () => {
         toolVersion: null,
         versionReason: "fixture",
         arguments: ["-detailed_info", path],
-        stdout: `architecture x86_64\n cputype 16777223\n cpusubtype 3\n offset 4096\n size ${String(bytes.length)}\n align 2^12 (4096)\n`,
+        stdout: slices
+          .map(
+            ({ name, cpu, bytes }, index) =>
+              `architecture ${name}\n cputype ${cpu.type}\n cpusubtype ${cpu.subtype}\n offset ${index === 0 ? 4096 : Math.ceil((4096 + slices[0]!.bytes.length) / 4096) * 4096}\n size ${bytes.length}\n align 2^12 (4096)\n`,
+          )
+          .join(""),
         stderr: "",
         stdoutBytes: 1,
         stderrBytes: 0,
@@ -730,3 +747,39 @@ it("joins Mach-O structural enumeration reads admitted before close", async () =
     await source.handle.close();
   }
 });
+
+it.each([
+  ["cancel", false],
+  ["cancel", true],
+  ["close", false],
+] as const)(
+  "refuses to complete a paused slice enumeration after %s (more slices: %s)",
+  async (action, moreSlices) => {
+    const fixture = await sliceOwnershipFixture(moreSlices);
+    const reader = new MachOSliceArtifactReader(
+      fixture.path,
+      {},
+      fixture.runner,
+    );
+    const caller = new AbortController();
+    const reason = { stage: "after final slice" };
+    const traversal = reader.entries(caller.signal)[Symbol.asyncIterator]();
+    try {
+      expect((await traversal.next()).done).toBe(false);
+      if (action === "cancel") caller.abort(reason);
+      else await reader.close();
+      const failure: unknown = await traversal.next().then(
+        () => {
+          throw new Error("Expected paused enumeration to fail");
+        },
+        (cause: unknown) => cause,
+      );
+      expect(failure).toMatchObject({
+        reason: action === "cancel" ? "cancelled" : "unavailable",
+      });
+      if (action === "cancel") expect((failure as Error).cause).toBe(reason);
+    } finally {
+      await reader.close();
+    }
+  },
+);

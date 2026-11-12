@@ -32,6 +32,7 @@ describe("the adaptive band", () => {
     ["3 of 3", "too_easy", [pass, pass, pass]],
     ["1 of 3", "undecided", [pass, miss, miss]],
     ["2 of 3", "undecided", [pass, pass, miss]],
+    ["0 of 5", "too_hard", [miss, miss, miss, miss, miss]],
     ["1 of 5", "in_band", [pass, miss, miss, miss, miss]],
     ["3 of 5", "in_band", [pass, pass, miss, pass, miss]],
     ["4 of 5", "too_easy", [pass, pass, miss, pass, pass]],

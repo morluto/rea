@@ -105,24 +105,40 @@ const inputBudgetRemediation = (
 const decoderAllowanceFailure = (
   cause: PeCertificateAsn1Failure,
   { allowance, limit }: PeCertificateDecodeAllowance,
-) =>
-  new AnalysisResourceConstraintError(
+) => {
+  const selected = {
+    "asn1-nodes": {
+      limits: { max_asn1_values: limit },
+      description: `The PE certificate ASN.1 allowance of ${String(limit)} values per PKCS#7 payload (this release has no runtime override)`,
+    },
+    "asn1-depth": {
+      limits: { max_asn1_depth: limit },
+      description: `The PE certificate ASN.1 allowance of ${String(limit)} nesting levels per PKCS#7 payload (this release has no runtime override)`,
+    },
+    "decoded-text": {
+      limits: { max_decoded_text_bytes: limit },
+      description: `The PE certificate decoded-text allowance of ${String(limit)} bytes per PKCS#7 payload (this release has no runtime override)`,
+    },
+    "oid-bytes": {
+      limits: { max_oid_bytes: limit },
+      description: `The PE certificate OBJECT IDENTIFIER allowance of ${String(limit)} bytes per OID (this release has no runtime override)`,
+    },
+    "oid-arc-bytes": {
+      limits: { max_oid_arc_bytes: limit },
+      description: `The PE certificate OBJECT IDENTIFIER allowance of ${String(limit)} bytes per base-128 arc (this release has no runtime override)`,
+    },
+  }[allowance];
+  return new AnalysisResourceConstraintError(
     OPERATION,
     "memory",
     `PKCS#7 signedData exceeds a fixed decoder allowance: ${cause.message}`,
-    allowance === "asn1-nodes"
-      ? { max_asn1_values: limit }
-      : { max_decoded_text_bytes: limit },
+    selected.limits,
     {
       cause,
-      ...fixedAllowanceOptions(
-        allowance === "asn1-nodes"
-          ? `The PE certificate ASN.1 allowance of ${String(limit)} values per PKCS#7 payload (this release has no runtime override)`
-          : `The PE certificate decoded-text allowance of ${String(limit)} bytes per PKCS#7 payload (this release has no runtime override)`,
-        "parser",
-      ),
+      ...fixedAllowanceOptions(selected.description, "parser"),
     },
   );
+};
 
 const peCertificatesFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,

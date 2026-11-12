@@ -21,6 +21,7 @@ import {
   CAPTURE_DECODER_OLD_GENERATION_SETTING,
   DEFAULT_CAPTURE_DECODER_HEAP,
   parseCaptureDecoderHeap,
+  resolveCaptureDecoderHeap,
 } from "./captureDecoderHeap.js";
 import { MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB } from "../domain/analysisResourceLimits.js";
 
@@ -103,11 +104,10 @@ it("uses a valid REA_CAPTURE_DECODER_OLD_GENERATION_MIB override", async () => {
     /floor 8 MiB.*maximum 16384 MiB/iu,
   );
   expect(projected.remediation.action).toContain("update_analysis_settings");
-  expect(projected.remediation.action).toMatch(/restart REA/iu);
+  expect(projected.remediation.action).toContain("launch seed");
   expect(projected.remediation.action).toContain(
     "capture.decoder_old_generation_mib",
   );
-  expect(projected.remediation.action).toMatch(/without a REA restart/iu);
   expect(projected.remediation.action).toMatch(
     /removes inherited NODE_OPTIONS/iu,
   );
@@ -125,7 +125,8 @@ it("uses a valid REA_CAPTURE_DECODER_OLD_GENERATION_MIB override", async () => {
         unit: "MiB",
         applies_at: "next_worker",
         agent_editable: true,
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
       reported_limits: {
         old_generation_heap_mib: 256,
@@ -258,20 +259,20 @@ it.each([
   const startup = parseEnvironment({
     REA_CAPTURE_DECODER_OLD_GENERATION_MIB: value,
   });
-  if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
-  expect(startup.error.settings).toContainEqual({
-    setting: CAPTURE_DECODER_OLD_GENERATION_SETTING,
-    constraint: parsed.error.message,
-  });
+  if (!startup.ok)
+    throw new Error(`Startup rejected a runtime seed ${JSON.stringify(value)}`);
   const config = parseConfig({
     REA_CAPTURE_DECODER_OLD_GENERATION_MIB: value,
   });
-  if (config.ok)
-    throw new Error(`parseConfig accepted ${JSON.stringify(value)}`);
-  expect(projectAnalysisError(config.error)).toMatchObject({
-    code: "configuration_invalid",
-    message: expect.stringContaining("REA_CAPTURE_DECODER_OLD_GENERATION_MIB"),
-  });
+  if (!config.ok)
+    throw new Error(
+      `parseConfig rejected a runtime seed ${JSON.stringify(value)}`,
+    );
+  expect(() =>
+    resolveCaptureDecoderHeap({
+      REA_CAPTURE_DECODER_OLD_GENERATION_MIB: value,
+    }),
+  ).toThrow(ConfigurationError);
   expect(
     () =>
       new NodeCaptureAdapter("har", {

@@ -104,7 +104,7 @@ cliTest.for(["pubkey", "signature"])(
 );
 
 cliTest(
-  "reports PKCS#7 signer identity through the public CLI",
+  "reports PKCS#7 signer identity and RDN indices through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pe-cert-cli-");
     const path = join(root, "signed.exe");
@@ -113,12 +113,24 @@ cliTest(
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
-      result.json,
-    );
-    expect(
-      evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.serial_hex,
-    ).toBe("11223344");
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_pe_certificates", { path });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    for (const value of [result.json, response.structuredContent]) {
+      const report = toolContract("inspect_pe_certificates").outputSchema.parse(
+        value,
+      ).normalized_result;
+      const pkcs7 = report.entries[0]?.pkcs7;
+      expect(pkcs7?.certificates[0]?.serial_hex).toBe("11223344");
+      for (const name of [
+        pkcs7?.certificates[0]?.issuer,
+        pkcs7?.certificates[0]?.subject,
+        pkcs7?.signers[0]?.issuer,
+      ])
+        expect(name?.attributes.map(({ rdn_index }) => rdn_index)).toEqual([
+          0, 1,
+        ]);
+    }
   },
 );
 
