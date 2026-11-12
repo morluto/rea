@@ -148,6 +148,13 @@ export const parseDevicetree = (
     if (cursor > structEnd - n)
       malformed("Truncated FDT structure token or property");
   };
+  const afterPadding = (end: number): number => {
+    const next = align(end);
+    if (next > structEnd) malformed("Truncated FDT structure padding");
+    for (let at = end; at < next; at++)
+      if (bytes[at] !== 0) malformed("Nonzero FDT structure padding");
+    return next;
+  };
   while (cursor < structEnd) {
     need(4);
     const offset = cursor,
@@ -159,8 +166,7 @@ export const parseDevicetree = (
       if (nodes.length >= input.max_nodes)
         throw new DevicetreeLimitFailure("max_nodes");
       const name = text(cursor, structEnd);
-      cursor = align(name.next);
-      need(0);
+      cursor = afterPadding(name.next);
       const parent = stack.at(-1);
       if (
         name.value.includes("/") ||
@@ -262,8 +268,7 @@ export const parseDevicetree = (
       };
       owner.node.properties.push(property);
       propertyMap?.set(name, property);
-      cursor = align(cursor + length);
-      need(0);
+      cursor = afterPadding(cursor + length);
     } else if (token === 9) {
       if (stack.length || nodes.length === 0) malformed("Premature FDT_END");
       if (header.size_dt_struct !== null && cursor !== structEnd)
