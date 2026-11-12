@@ -941,6 +941,81 @@ it("decodes Linux core dump notes for 32-bit big-endian", () => {
   ]);
 });
 
+it("decodes a 32-bit prpsinfo whose ABI gives pr_uid 32 bits", () => {
+  // `pr_uid`/`pr_gid` are `__kernel_uid_t`, which is 16-bit only on i386, ARM, m68k and sparc32.
+  // MIPS o32, PowerPC-32 and s390 take the asm-generic `unsigned int`, so the kernel writes
+  // `sizeof(struct elf_prpsinfo)` == 128 and every member after `pr_flag` sits four bytes later.
+  const descriptor = Buffer.alloc(128);
+  descriptor[0] = 1;
+  descriptor[1] = "R".charCodeAt(0);
+  descriptor.writeUInt32LE(0x40_0000, 4);
+  descriptor.writeUInt32LE(70_000, 8);
+  descriptor.writeUInt32LE(80_000, 12);
+  descriptor.writeInt32LE(4242, 16);
+  descriptor.writeInt32LE(1, 20);
+  descriptor.writeInt32LE(4242, 24);
+  descriptor.writeInt32LE(4242, 28);
+  Buffer.from("mips-proc\0").copy(descriptor, 32);
+  Buffer.from("./mips-proc --serve\0").copy(descriptor, 48);
+
+  const report = parse(
+    elfNoteFixture({
+      bits: 32,
+      machine: 8,
+      type: 4,
+      ownership: "program",
+      notes: elfNote("CORE", 3, descriptor),
+    }),
+  );
+  expect(report.entries[0]?.core?.prpsinfo).toEqual({
+    state: 1,
+    pid: 4242,
+    ppid: 1,
+    pgrp: 4242,
+    sid: 4242,
+    uid: 70_000,
+    gid: 80_000,
+    filename: "mips-proc",
+    psargs: "./mips-proc --serve",
+  });
+});
+
+it("still decodes the 124-byte 32-bit prpsinfo with 16-bit ids", () => {
+  // The i386/ARM form must not shift: its descriptor is four bytes shorter.
+  const descriptor = Buffer.alloc(124);
+  descriptor[0] = 1;
+  descriptor[1] = "R".charCodeAt(0);
+  descriptor.writeUInt32LE(0x40_0000, 4);
+  descriptor.writeUInt16LE(500, 8);
+  descriptor.writeUInt16LE(600, 10);
+  descriptor.writeInt32LE(4242, 12);
+  descriptor.writeInt32LE(1, 16);
+  descriptor.writeInt32LE(4242, 20);
+  descriptor.writeInt32LE(4242, 24);
+  Buffer.from("i386-proc\0").copy(descriptor, 28);
+  Buffer.from("./i386-proc --serve\0").copy(descriptor, 44);
+
+  const report = parse(
+    elfNoteFixture({
+      bits: 32,
+      machine: 3,
+      type: 4,
+      ownership: "program",
+      notes: elfNote("CORE", 3, descriptor),
+    }),
+  );
+  expect(report.entries[0]?.core?.prpsinfo).toEqual({
+    state: 1,
+    pid: 4242,
+    ppid: 1,
+    pgrp: 4242,
+    sid: 4242,
+    uid: 500,
+    gid: 600,
+    filename: "i386-proc",
+    psargs: "./i386-proc --serve",
+  });
+});
 it("tolerates malformed core notes by returning null without throwing", () => {
   const truncatedPrpsinfo = elfNote("CORE", 3, Buffer.alloc(20)); // requires 136 for 64-bit
   const truncatedFile = elfNote(

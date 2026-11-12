@@ -335,6 +335,14 @@ const decodeCorePrpsinfo = (
 ): ElfNotes["entries"][number]["core"] => {
   const minLen = wide ? 136 : 124;
   if (descriptor.length < minLen) return null;
+  // `pr_uid`/`pr_gid` are `__kernel_uid_t`/`__kernel_gid_t`, whose width is an ABI property
+  // rather than an ELF-class one: 16-bit only on i386, ARM, m68k and sparc32. The asm-generic
+  // 32-bit ABIs (MIPS o32, PowerPC-32, s390) and `compat_elf_prpsinfo` keep 32-bit ids, so
+  // `sizeof(struct elf_prpsinfo)` is 128 and every member after `pr_flag` sits four bytes later.
+  // The kernel writes `sizeof(*psinfo)` as the note descriptor
+  // (`fs/binfmt_elf.c`: `fill_note(&info->psinfo, PRPSINFO, sizeof(*psinfo), psinfo)`), so the
+  // declared length already carries the distinction.
+  const idWidth = wide || descriptor.length >= 128 ? 4 : 2;
   const u8 = (off: number) => descriptor.readUInt8(off);
   const u16 = (off: number) =>
     little ? descriptor.readUInt16LE(off) : descriptor.readUInt16BE(off);
@@ -344,14 +352,16 @@ const decodeCorePrpsinfo = (
     little ? descriptor.readInt32LE(off) : descriptor.readInt32BE(off);
 
   const state = u8(0);
-  const uid = wide ? u32(16) : u16(8);
-  const gid = wide ? u32(20) : u16(10);
-  const pid = wide ? i32(24) : i32(12);
-  const ppid = wide ? i32(28) : i32(16);
-  const pgrp = wide ? i32(32) : i32(20);
-  const sid = wide ? i32(36) : i32(24);
+  const uid = wide ? u32(16) : idWidth === 4 ? u32(8) : u16(8);
+  const gid = wide ? u32(20) : idWidth === 4 ? u32(12) : u16(10);
+  // Every 32-bit layout places the four `pid_t` members right after the two id fields.
+  const pidOff = wide ? 24 : 8 + idWidth * 2;
+  const pid = i32(pidOff);
+  const ppid = i32(pidOff + 4);
+  const pgrp = i32(pidOff + 8);
+  const sid = i32(pidOff + 12);
 
-  const fnameOff = wide ? 40 : 28;
+  const fnameOff = pidOff + 16;
   const fnameBytes = descriptor.subarray(fnameOff, fnameOff + 16);
   const fnameEnd = fnameBytes.indexOf(0);
   const fname = (
@@ -359,7 +369,7 @@ const decodeCorePrpsinfo = (
   ).toString("latin1");
   chargeText(text, fname.length);
 
-  const psargsOff = wide ? 56 : 44;
+  const psargsOff = fnameOff + 16;
   const psargsBytes = descriptor.subarray(psargsOff, psargsOff + 80);
   const psargsEnd = psargsBytes.indexOf(0);
   const psargs = (
