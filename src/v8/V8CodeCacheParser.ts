@@ -70,9 +70,13 @@ export const parseV8CodeCache = (
 ): V8CodeCache => {
   if (bytes.length !== artifact.bytes)
     malformed("Selected artifact length disagrees with the retained bytes.");
-  if (bytes.length < V8_CODE_CACHE_HEADER_BYTES)
+  // 32-bit V8 builds write a 28-byte header; 64-bit builds write 32 bytes.
+  // The payload-length word disambiguates: exactly one of size-28 and size-32
+  // can match a given file, so the minimum complete header is 28 bytes.
+  const MIN_HEADER_BYTES = 28;
+  if (bytes.length < MIN_HEADER_BYTES)
     malformed(
-      `Selected file is shorter than the ${String(V8_CODE_CACHE_HEADER_BYTES)}-byte V8 code cache header.`,
+      `Selected file is shorter than the ${String(MIN_HEADER_BYTES)}-byte V8 code cache header minimum.`,
     );
 
   const field = (index: number): number => bytes.readUInt32LE(index * 4);
@@ -84,11 +88,21 @@ export const parseV8CodeCache = (
     );
 
   const declaredPayload = field(5);
-  const payloadOffset = V8_CODE_CACHE_HEADER_BYTES;
+  // Admit the 28-byte header when the payload length reaches the end of the
+  // file from offset 28; otherwise require the 32-byte header.
+  const headerBytes =
+    declaredPayload === bytes.length - MIN_HEADER_BYTES
+      ? MIN_HEADER_BYTES
+      : V8_CODE_CACHE_HEADER_BYTES;
+  if (bytes.length < headerBytes)
+    malformed(
+      `Selected file is shorter than the ${String(headerBytes)}-byte header.`,
+    );
+  const payloadOffset = headerBytes;
   const expectedPayload = bytes.length - payloadOffset;
   if (declaredPayload !== expectedPayload)
     malformed(
-      `Header declares a ${String(declaredPayload)}-byte payload but ${String(expectedPayload)} bytes follow the ${String(V8_CODE_CACHE_HEADER_BYTES)}-byte header; the container is truncated or corrupt.`,
+      `Header declares a ${String(declaredPayload)}-byte payload but ${String(expectedPayload)} bytes follow the ${String(headerBytes)}-byte header; the container is truncated or corrupt.`,
     );
 
   const sourceWord = field(2);
@@ -111,6 +125,7 @@ export const parseV8CodeCache = (
         ? ("compile_function" as const)
         : ("unknown" as const);
 
+  const wordCount = headerBytes / 4;
   const payload = bytes.subarray(payloadOffset);
   const observations: V8CodeCache["embedded_strings"] = [];
   let runStart = -1;
@@ -160,13 +175,13 @@ export const parseV8CodeCache = (
     header: {
       magic,
       magic_build_stable: magicHigh,
-      fields: HEADER_ROLES.map((entry, index) => ({
+      fields: HEADER_ROLES.slice(0, wordCount).map((entry, index) => ({
         offset: index * 4,
         value: field(index),
         role: entry.role,
         status: entry.status,
       })),
-      header_bytes: V8_CODE_CACHE_HEADER_BYTES,
+      header_bytes: headerBytes,
       source_length: sourceLength,
       producer,
     },
