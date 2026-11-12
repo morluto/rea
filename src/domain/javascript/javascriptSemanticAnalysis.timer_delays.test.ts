@@ -101,3 +101,58 @@ it("ignores later global code and shadowed eval for constructor identity", () =>
   `),
   ).toEqual([]);
 });
+
+it.each([
+  ["Symbol", "configure(globalThis);"],
+  ["BigInt", "configure(globalThis);"],
+  ["Symbol", "const host = globalThis; configure(host);"],
+  ["BigInt", "configure({ host: globalThis });"],
+])("retains %s delays and cancellation after %s", (constructor, effect) => {
+  const result = operations(`
+    import configure from "./configure.js";
+    import { setTimeout, clearTimeout } from "node:timers";
+    ${effect}
+    const handle = setTimeout(() => {}, ${constructor}("1"));
+    clearTimeout(handle);
+  `);
+  expect(result).toMatchObject([
+    { kind: "schedule", resolution: "complete" },
+    { kind: "cancel", resolution: "complete" },
+  ]);
+  expect(result[1]?.linkedTimerId).toBe(result[0]?.timerId);
+});
+
+it("still rejects literal BigInt delays after the global object escapes", () => {
+  expect(
+    operations(`
+    import configure from "./configure.js";
+    import { setTimeout, setInterval } from "node:timers";
+    configure(globalThis);
+    setTimeout(() => {}, 1n);
+    setInterval(() => {}, -1n);
+  `),
+  ).toEqual([]);
+});
+
+it("does not let later or unrelated escapes change constructor identity", () => {
+  expect(
+    operations(`
+    import configure from "./configure.js";
+    import { setTimeout, setInterval } from "node:timers";
+    configure({});
+    setTimeout(() => {}, Symbol("1"));
+    setInterval(() => {}, BigInt("1"));
+    configure(globalThis);
+  `),
+  ).toEqual([]);
+});
+
+it("selects a constructor before an argument can escape the global object", () => {
+  expect(
+    operations(`
+    import configure from "./configure.js";
+    import { setTimeout } from "node:timers";
+    setTimeout(() => {}, Symbol(configure(globalThis)));
+  `),
+  ).toEqual([]);
+});
