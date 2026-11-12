@@ -1,4 +1,5 @@
 import { constants, inflateSync, zstdDecompressSync } from "node:zlib";
+import { nodeCodecResult } from "../../compression/NodeCodecResult.js";
 
 const SHF_COMPRESSED = 0x800n;
 const ELFCOMPRESS_ZLIB = 1;
@@ -61,14 +62,24 @@ export const decodeElfSectionNameTable = (
   try {
     const payload = bytes.subarray(headerBytes);
     const maxOutputLength = Math.max(1, expected);
-    decoded =
-      compressionType === ELFCOMPRESS_ZSTD
-        ? zstdDecompressSync(payload, {
-            maxOutputLength,
-            // Retain Zstandard's default maximum decoder window of 128 MiB.
-            params: { [constants.ZSTD_d_windowLogMax]: 27 },
-          })
-        : inflateSync(payload, { maxOutputLength });
+    if (compressionType === ELFCOMPRESS_ZSTD) {
+      decoded = zstdDecompressSync(payload, {
+        maxOutputLength,
+        // Retain Zstandard's default maximum decoder window of 128 MiB.
+        params: { [constants.ZSTD_d_windowLogMax]: 27 },
+      });
+    } else {
+      const inflated = nodeCodecResult(
+        inflateSync(payload, { maxOutputLength, info: true }),
+      );
+      if (inflated.consumedBytes !== payload.length)
+        return {
+          state: "malformed",
+          message:
+            "ELF compressed section-name table contains bytes after its zlib stream",
+        };
+      decoded = inflated.buffer;
+    }
   } catch (cause: unknown) {
     return {
       state: "malformed",
