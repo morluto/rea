@@ -46,3 +46,51 @@ it("keeps browser requests and shifted arguments", () => {
     ),
   ).toHaveLength(3);
 });
+
+it.each([
+  [
+    "named HTTP",
+    "import { globalAgent, request } from 'node:http'; globalAgent.protocol = 'https:'; request('https://example.test/');",
+  ],
+  [
+    "named HTTPS",
+    "import { globalAgent, get } from 'node:https'; globalAgent.protocol = 'http:'; get('http://example.test/');",
+  ],
+  [
+    "namespace HTTP",
+    "import * as http from 'node:http'; http.globalAgent.protocol = 'https:'; http.request('https://example.test/');",
+  ],
+  [
+    "namespace HTTPS",
+    "import * as https from 'node:https'; https.globalAgent.protocol = 'http:'; https.get('http://example.test/');",
+  ],
+])(
+  "keeps %s requests after the shared agent protocol changes",
+  (_import, source) => {
+    expect(analyzeJavaScriptSemantics(source).requestOperations).toHaveLength(
+      1,
+    );
+  },
+);
+
+it("tracks shared agent aliases and escapes through named exports", () => {
+  expect(
+    analyzeJavaScriptSemantics(`
+    import { globalAgent, request } from "node:http";
+    const alias = globalAgent;
+    configure(alias);
+    request("https://example.test/");
+  `).requestOperations,
+  ).toHaveLength(1);
+});
+
+it("ignores later agent mutations and unrelated properties", () => {
+  expect(
+    analyzeJavaScriptSemantics(`
+    import { globalAgent, request } from "node:http";
+    globalAgent.label = "metadata";
+    request("https://example.test/");
+    globalAgent.protocol = "https:";
+  `).requestOperations,
+  ).toEqual([]);
+});
