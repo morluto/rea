@@ -935,12 +935,17 @@ const rejectsSocketOptionsPort = (
         "port",
         isNullishJavaScriptSyntax,
       );
-      if (sourcePort.status !== "explicit") return false;
-      return rejectsPortMember(
-        unwrapJavaScriptExpression(sourcePort.value).node,
-        specifier,
-        context,
-      );
+      // An empty override writes nothing, so argument 0 still decides: measured on Node
+      // 24.22.1, `tls.connect({port: -1}, {})` throws `ERR_SOCKET_BAD_PORT`. A missing member is
+      // therefore not the same as an unreadable one.
+      if (sourcePort.status === "explicit")
+        return rejectsPortMember(
+          unwrapJavaScriptExpression(sourcePort.value).node,
+          specifier,
+          context,
+        );
+      // A member this reader cannot price may hold any port, so the merge stays open.
+      if (sourcePort.status !== "missing") return false;
     }
   }
   // A path that is present and not provably empty selects the Unix socket, and the port is
@@ -1044,7 +1049,12 @@ const copiesPrototypeKey = (options: t.ObjectExpression): boolean =>
   options.properties.some(
     (property) =>
       !t.isSpreadElement(property) &&
-      property.computed &&
+      // A shorthand `{__proto__}` copies a variable as an own enumerable key, so it counts like
+      // the computed spelling. Measured on Node 24.22.1,
+      // `const __proto__ = {set port(_) { this.path = "/tmp/x"; }}; tls.connect({}, {...{__proto__}, port: -1})`
+      // connects while `{...{__proto__: {...}}}` throws.
+      (property.computed ||
+        (t.isObjectProperty(property) && property.shorthand)) &&
       semanticStaticPropertyKey(property.key, property.computed) ===
         "__proto__",
   );

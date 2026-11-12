@@ -194,3 +194,25 @@ it.each([
     expect(acquisitionsFor(call)).toHaveLength(1);
   },
 );
+
+it("keeps the acquisition for a shorthand prototype key a spread copies", () => {
+  // A shorthand `{__proto__}` is an own key, so the prototype it carries installs on the target.
+  expect(
+    acquisitionsFor(
+      `const __proto__ = { set port(_) { this.path = "/tmp/x"; } }; tls.connect({}, { ...{ __proto__ }, port: -1 })`,
+    ),
+  ).toHaveLength(1);
+});
+
+it("emits no acquisition when the empty override leaves a bad port", () => {
+  expect(acquisitionsFor(`tls.connect({ port: -1 }, {})`)).toEqual([]);
+});
+
+it("emits no acquisition for a colon-form prototype key copied by a spread", () => {
+  // `{__proto__: value}` sets that source's prototype and copies no own key.
+  expect(
+    acquisitionsFor(
+      `tls.connect({}, { ...{ __proto__: { set port(_) { this.path = "/tmp/x"; } } }, port: -1 })`,
+    ),
+  ).toEqual([]);
+});
