@@ -65,7 +65,8 @@ escaping, before allocating the serialized request or sending it. The framing
 newline is excluded. An oversized request returns `resource_constraint` with
 the effective setting, its source, and the exact payload byte count.
 
-Set the value in the environment that starts REA, then restart REA to apply it.
+`bridge.max_request_bytes` can be changed at runtime with
+`update_analysis_settings`. The launch seed is `REA_BRIDGE_MAX_REQUEST_BYTES`.
 This setting is enforced by the REA client; the Java bridge has no corresponding
 request ceiling.
 
@@ -95,6 +96,40 @@ data, not independent proof of the original source encoding. Procedure searches
 and trace matches likewise retain Ghidra's external and thunk classification.
 The Ghidra analysis profile identifies this search projection, so older
 snapshots with unqualified search rows cannot replay under the new profile.
+
+## Decompiler and value-flow budgets
+
+Use `inspect_analysis_settings` or a result's named recovery to inspect
+`ghidra.value_flow_max_operations` (default 3000),
+`ghidra.value_flow_max_inputs_per_operation` (default 64), and
+`ghidra.value_flow_max_edges` (default 12000). Each accepts a positive Java
+integer count. `update_analysis_settings` applies changes to the next operation
+on the same Program without restarting REA. Launch seeds use the corresponding
+`REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS`,
+`REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION`, and
+`REA_GHIDRA_VALUE_FLOW_MAX_EDGES` environment settings.
+For a one-shot CLI retry, set the named seed in the environment that launches
+the next `rea` invocation; the completed invocation's Program is no longer
+active. Runtime MCP changes preserve the current Program. A changed launch seed
+only affects a running MCP server after that server restarts.
+
+The returned `native_value_flow.limits` and `limits_reached` distinguish accepted
+budgets from actual exhaustion. Truncation keeps omitted counts and names the
+setting to adjust. The edge budget applies independently to def-use and
+parameter-use collections. New function dossiers are reobserved rather than
+replayed from snapshots; completed Evidence remains available for historical
+inspection. Other observation caches keep their existing policy.
+
+`ghidra.decompile_max_payload_mib` controls the native decompiler's response
+payload, separately from p-code projection and decompile time. Its launch seed
+is `REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB`; explicit values are 1..2047 MiB to
+avoid overflow in Ghidra's signed integer byte conversion. Omission or runtime
+`null` preserves the installed provider's default. Changes apply before the
+next native decompile, and native option changes clear its old cached function
+state. A failed decompile preserves the original diagnostic and reports the
+effective payload allowance; payload recovery applies only when that diagnostic
+identifies payload exhaustion. Raising these controls does not raise the MCP
+client's deadline or receive buffer.
 
 ## PE debug-symbol coverage
 
@@ -140,6 +175,11 @@ also accept source-file byte offsets. Existing symbols and analysis addresses
 take precedence; a `0x`-prefixed number that resolves to no procedure falls back
 to its observed source mapping. Use `--file-offset=0x...` on the CLI or
 `procedure: "file-offset:0x..."` through MCP to select file coordinates explicitly.
+To select an analysis address without the bare-hex fallback, qualify it with its
+Ghidra address space, for example `ram:0x...`. The `inspect-native-load-image`
+CLI command or MCP `inspect_native_load_image` reports Ghidra's observed default
+address space; use the space appropriate to the address, and retain any
+load-image verification limitations.
 Multiple mapping candidates fail as ambiguous rather than selecting a bank or
 address space. A successful conversion retains the file offset, mapped address
 and procedure entry in raw Evidence and `locations`.
@@ -262,7 +302,7 @@ profile stages before retrying their retained descriptors.
 | Function identity       | Every function result carries the entry address and Ghidra FunctionManager classification for external, thunk, and resolved thunk target. These are observations, not proof that unresolved targetless calls have been recovered.                                                                                                                                                                                                                                                                                                                                                                                          |
 | Assembly and pseudocode | Assembly is complete Ghidra Listing text; pseudocode is Ghidra decompiler output. Neither is original source, and cross-provider comparison never treats Hopper and Ghidra text as equal or unequal semantic facts.                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Instruction fast path   | `read_function_instructions` returns every raw Listing instruction for the requested function without invoking the decompiler or whole-program name/string inventories.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Calls and references    | Callers/callees contain only resolved functions. Reference edges preserve exact ReferenceManager type and call/jump/data/read/write/indirect/computed/conditional/terminal/external facts. Targetless computed flow remains unknown. Synthetic entry-point references without actionable memory sources are omitted explicitly.                                                                                                                                                                                                                                                                                            |
+| Calls and references    | Callers/callees contain only resolved functions. Reference edges preserve exact ReferenceManager type and call/jump/data/read/write/indirect/computed/conditional/terminal/external facts. Targetless computed flow remains unknown. A computed call's recorded targets stay observed callees, but they are static candidates rather than an exhaustive set, so callee coverage is `partial` and names those call sites. Synthetic entry-point references without actionable memory sources are omitted explicitly.                                                                                                        |
 | CFG                     | Dossiers use `BasicBlockModel` and retain only non-call successors inside the function body. CFG topology is address-normalized for comparison; provider-specific block construction remains a declared difference.                                                                                                                                                                                                                                                                                                                                                                                                        |
 | P-code value flow       | Function dossiers include up to 3,000 high-p-code operations, at most 64 inputs per operation, and 12,000 def-use edges. Results identify memory reads/writes, branches, and calls by p-code opcode, and mark decompiler-dead operations. Large results report truncation, an omitted-operation lower bound, and known omitted-input/edge counts. The dossier is an intra-function graph; `trace_native_values` composes derived parameter/argument and return/output dependencies across resolved calls. It does not resolve memory aliasing, call side effects, runtime behavior, persistent state, or business meaning. |
 | Result extent           | Function instruction scans and native API boundary observations remain complete. P-code flow is the explicit bounded exception; its count fields distinguish exact retained counts from lower-bound or known-omitted counts. Caller cancellation and provider failures remain distinct.                                                                                                                                                                                                                                                                                                                                    |
@@ -273,6 +313,18 @@ client deadline. Transient decompile timeout failures remain uncached so the
 same function can be retried after raising the limit. See the
 [settings design](../design/limits-and-recovery.md) for snapshots, precedence,
 and provider integration.
+
+When `inspect_native_instruction` selects a byte inside a listed instruction,
+`containing_instruction` reports its separate start, length and Ghidra Listing
+text, retaining any non-default address space. The requested address remains
+unchanged, and a containing function may be absent. For defined data, the same
+tool reports its containing object's start, length and type path; use the start
+with `inspect_native_data_type` to inspect its layout. This does not select a
+field or union member. These are listing observations, not proof of execution or
+an alternate decode. Earlier Evidence can
+omit the field. The analysis-profile revision prevents older snapshots from
+replaying results without it; open the target without the old snapshot and save
+a fresh snapshot when needed.
 
 Function extents and instruction completeness refer to Ghidra's analyzed body.
 An inferred no-return call can terminate that body before subsequent bytes.
@@ -342,10 +394,17 @@ must be constrained.
 
 Optional `start` and `end` addresses are inclusive and select one address space.
 A match must end at or before `end`, so `end` set inside a match excludes it.
-Without bounds, loaded memory blocks are eligible, in Ghidra address order.
-Blocks that are not loaded (file parts such as `.symtab`) and overlay blocks are
-listed in `searched.skipped_not_loaded` and are not searched; pass `start` or
-`end` in their address space to search them.
+Without bounds, loaded non-overlay memory blocks are eligible, in Ghidra address
+order, including across adjacent initialized blocks. Blocks that are not loaded
+(file parts such as `.symtab`) are listed in `searched.skipped_not_loaded`;
+loaded overlay blocks are listed separately in `searched.skipped_overlays`.
+Neither is searched by default; pass `start` or `end` in its address space to
+search it. A block that is both unloaded and an overlay is listed once under
+`skipped_not_loaded`.
+The separate overlay field changes the byte-search result contract and the
+Ghidra analysis profile. Refresh cached MCP schemas; snapshots from the older
+profile are not replayed. Previously exported Evidence remains importable as
+historical data with its original result shape.
 Overlapping matches are included, including across adjacent eligible initialized
 blocks in the same address space. Gaps and excluded or uninitialized blocks break
 a search run. Each match reports its address, starting segment, unique source file

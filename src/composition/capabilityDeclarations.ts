@@ -30,19 +30,24 @@ import {
   BYTE_ENTROPY_PROVIDER,
   DEVICETREE_PROVIDER,
   ELF_NOTES_PROVIDER,
+  ELF_UNWIND_RANGES_PROVIDER,
   HARMONY_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
+  KERNEL_BUILD_CONFIG_PROVIDER,
   KERNEL_MODULE_PROVIDER,
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
   NATIVE_EXPORTS_PROVIDER,
+  NATIVE_INITIALIZERS_PROVIDER,
   PE_CERTIFICATES_PROVIDER,
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
   PE_RESOURCES_PROVIDER,
+  RELEASE_EXPOSURE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
+  WINDOWS_SHORTCUT_PROVIDER,
 } from "../domain/investigationProviders.js";
 import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import {
@@ -51,6 +56,7 @@ import {
 } from "../domain/webTraceProviders.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "../electron/ElectronFuseProviderIdentity.js";
 import { ERLANG_BEAM_PROVIDER_IDENTITY } from "../erlang/ErlangBeamProviderIdentity.js";
+import { V8_CODE_CACHE_PROVIDER_IDENTITY } from "../v8/V8CodeCacheProviderIdentity.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "../evm/EvmoleProviderIdentity.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
@@ -256,6 +262,20 @@ export const CAPABILITY_DECLARATIONS = {
   elfNotes: {
     providers: [providerBinding(ELF_NOTES_PROVIDER, ["inspect_elf_notes"])],
   },
+  nativeInitializers: {
+    providers: [
+      providerBinding(NATIVE_INITIALIZERS_PROVIDER, [
+        "inspect_native_initializers",
+      ]),
+    ],
+  },
+  elfUnwindRanges: {
+    providers: [
+      providerBinding(ELF_UNWIND_RANGES_PROVIDER, [
+        "inspect_elf_unwind_ranges",
+      ]),
+    ],
+  },
   erlangBeam: {
     providers: [
       providerBinding(ERLANG_BEAM_PROVIDER_IDENTITY, {
@@ -365,6 +385,13 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(JEB_PROVIDER_IDENTITY, { group: "JEB_TOOL_CONTRACTS" }),
     ],
   },
+  kernelBuildConfig: {
+    providers: [
+      providerBinding(KERNEL_BUILD_CONFIG_PROVIDER, [
+        "inspect_kernel_build_config",
+      ]),
+    ],
+  },
   kernelModule: {
     providers: [
       providerBinding(KERNEL_MODULE_PROVIDER, ["inspect_kernel_module"]),
@@ -441,10 +468,29 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(PE_RESOURCES_PROVIDER, ["inspect_pe_resources"]),
     ],
   },
+  windowsShortcut: {
+    providers: [
+      providerBinding(WINDOWS_SHORTCUT_PROVIDER, ["inspect_windows_shortcut"]),
+    ],
+  },
   pythonPyc: {
     providers: [
       providerBinding(PYTHON_PYC_PROVIDER_IDENTITY, {
         group: "PYTHON_PYC_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  releaseExposure: {
+    providers: [
+      providerBinding(RELEASE_EXPOSURE_PROVIDER, {
+        group: "RELEASE_EXPOSURE_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  v8CodeCache: {
+    providers: [
+      providerBinding(V8_CODE_CACHE_PROVIDER_IDENTITY, {
+        group: "V8_CODE_CACHE_TOOL_CONTRACTS",
       }),
     ],
   },

@@ -54,7 +54,7 @@ const fixture = () => {
       },
     },
   );
-  const error = normalizeCaptureFailure(compiler, undefined);
+  const error = normalizeCaptureFailure(compiler);
   if (!(error instanceof ProcessCaptureError))
     throw new Error("Expected normalized capture failure");
   return { cleanup, compiler, error };
@@ -74,6 +74,33 @@ it("preserves the compiler output and live cleanup owner at capture normalizatio
   cleanup.resolveCleanup();
   expect(error.cleanupIncomplete).toBe(false);
   expect(error.capturedOutput?.exit_code).toBe(7);
+});
+
+it("marks a timed-out Darwin compiler inspection as retryable", () => {
+  const compiler = new DarwinProcessOwnershipInspectionError(
+    "compiler timed out",
+    {
+      compilerOutcome: {
+        outcome: "timed_out",
+        code: "ETIMEDOUT",
+        signal: null,
+        stderr: "compiler deadline exceeded",
+        stderrTruncated: false,
+        outputTruncated: false,
+        killed: true,
+        timeoutMs: 5_000,
+      },
+    },
+  );
+
+  const normalized = normalizeCaptureFailure(compiler);
+  expect(normalized).toMatchObject({
+    retryable: true,
+    capturedOutput: undefined,
+  });
+  if (!(normalized instanceof ProcessCaptureError))
+    throw new Error("Expected normalized capture failure");
+  expect(projectAnalysisError(normalized)).toMatchObject({ retryable: true });
 });
 
 it("retains compiler facts and cleanup dependency through capture finalization", () => {
@@ -101,7 +128,7 @@ it("retains compiler facts and cleanup dependency through capture finalization",
 it("does not recreate unresolved cleanup after the exact owner already confirmed retry", () => {
   const { cleanup, compiler } = fixture();
   cleanup.resolveCleanup();
-  const normalized = normalizeCaptureFailure(compiler, undefined);
+  const normalized = normalizeCaptureFailure(compiler);
   expect(normalized).toMatchObject({
     cleanupIncomplete: false,
     capturedOutput: { exit_code: 7 },
@@ -169,7 +196,7 @@ it("does not infer captured stdout from partial compiler diagnostics", () => {
       compilerOutcome: compiler.compilerOutcome!,
     },
   );
-  expect(normalizeCaptureFailure(partial, undefined)).toMatchObject({
+  expect(normalizeCaptureFailure(partial)).toMatchObject({
     capturedOutput: undefined,
   });
 });

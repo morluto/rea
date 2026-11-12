@@ -340,11 +340,7 @@ export const inspectAndroidJniLibrary = async (
       for (const section of directory.sections) {
         if ((section.flags & 3n) !== 3n || section.size === 0n) continue;
         active();
-        if (
-          (section.flags & 0x800n) !== 0n ||
-          !section.file_backed ||
-          section.type === 8
-        ) {
+        if (section.compressed || !section.file_backed || section.type === 8) {
           tablesStatus = "partial";
           unknowns.add(
             "Allocated writable sections without ordinary file bytes were not scanned; runtime-built tables remain unknown",

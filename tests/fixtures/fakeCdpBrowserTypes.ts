@@ -18,8 +18,10 @@ export interface FakeCdpBrowser {
   /** WebSocket upgrades accepted over the fixture's lifetime. */
   openedConnectionCount(): number;
   /** Deliver actual malformed wire data without bypassing the production transport parser. */
-  emitRawMessage(message: string): void;
+  emitRawMessage(message: string | Buffer): void;
   emitEvent(event: CdpEvent): void;
+  /** Drop currently open WebSockets from the server side to exercise reconnect paths. */
+  closeActiveConnections(): void;
   readonly httpRequests: readonly {
     readonly url: string;
     readonly authorization: string | undefined;
@@ -51,6 +53,8 @@ export interface FakeOptions {
   readonly discoveryDelayMs?: number;
   /** Delay WebSocket upgrade acceptance so handshake and attach deadlines stay distinct. */
   readonly handshakeDelayMs?: number;
+  /** Delay selected wire replies so one caller's discovery deadline can expire alongside an active peer. */
+  readonly commandDelayMs?: (command: FakeCdpCommand) => number | undefined;
   readonly malformedDiscovery?: boolean;
   readonly oversizedDiscovery?: boolean;
   readonly invalidBrowserWebSocket?: boolean;

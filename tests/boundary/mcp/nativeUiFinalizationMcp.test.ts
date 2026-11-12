@@ -42,6 +42,7 @@ it.each([false, true])(
     });
     const runtime = {
       signal: deadline.signal,
+      deadlineMs: 180_000,
       cleanupLease,
       invoke: async () => ({ ok: true, result: snapshot }),
       close: () => cleanupLease.release(),

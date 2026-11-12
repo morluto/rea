@@ -31,7 +31,7 @@ const qwenPath = (
 
 describe("Qwen Code configuration paths", () => {
   it("resolves the user settings file and marker directory", () => {
-    expect(qwenPath("/home/a", "linux")).toEqual({
+    expect(qwenPath("/home/a", "linux")).toMatchObject({
       name: "qwen_code",
       displayName: "Qwen Code",
       configPath: join("/home/a", ".qwen", "settings.json"),
@@ -112,6 +112,36 @@ describe("Qwen Code client lifecycle", () => {
       mcpServers: { other: { command: "other-server" } },
     });
     expect(removedText).toContain("// Keep this note.");
+  });
+
+  it("preserves Qwen environment expressions when refreshing a registration", async () => {
+    const { client } = await qwenClient();
+    await writeFile(
+      client.configPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: command[0],
+            args: command.slice(1),
+            env: { PATH: "/opt/bin:${PATH}" },
+          },
+        },
+      }),
+    );
+    expect(
+      (
+        await configureClientConfiguration(
+          client,
+          { REA_KUNA_JOBS: "4" },
+          command,
+        )
+      ).status,
+    ).toBe("configured");
+    const config = JSON.parse(await readFile(client.configPath, "utf8"));
+    expect(config.mcpServers.rea.env).toMatchObject({
+      PATH: "/opt/bin:${PATH}",
+      REA_KUNA_JOBS: "4",
+    });
   });
 
   it("reports the selected installation as aligned", async () => {

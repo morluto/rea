@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createBeamService } from "../../../src/composition/erlang.js";
 import { MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS } from "../../../src/domain/erlang/beam.js";
 import {
-  erlangBeamDeclaredRowsFixture,
+  erlangBeamRowsFixture,
   erlangBeamFixture,
 } from "../../../src/erlang/Beam.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -66,7 +66,7 @@ describe("Erlang BEAM stable filesystem boundary", () => {
     const below = Math.floor(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS / 2);
     await writeFile(
       path,
-      erlangBeamDeclaredRowsFixture([
+      erlangBeamRowsFixture([
         ["ExpT", below],
         ["ImpT", below],
         ["FunT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS - below * 2 + 1],

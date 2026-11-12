@@ -6,10 +6,11 @@ export const resultFor = (
   port: number,
   options: FakeOptions,
   frameTreeReads: number,
+  allocateSessionId: () => string = () => "session-1",
 ): Readonly<Record<string, unknown>> | undefined => {
   switch (command.method) {
     case "Target.attachToTarget":
-      return attachToTargetResult(options);
+      return attachToTargetResult(options, allocateSessionId);
     case "Page.getLayoutMetrics":
       return {
         cssVisualViewport: {
@@ -98,8 +99,11 @@ const browserVersionResult = () => ({
   jsVersion: "13.0",
 });
 
-const attachToTargetResult = (options: FakeOptions) => ({
-  sessionId: options.invalidAttachedSession ? "" : "session-1",
+const attachToTargetResult = (
+  options: FakeOptions,
+  allocateSessionId: () => string,
+) => ({
+  sessionId: options.invalidAttachedSession ? "" : allocateSessionId(),
 });
 
 const frameTreeResult = (
