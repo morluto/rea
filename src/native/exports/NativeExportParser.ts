@@ -24,7 +24,7 @@ import {
 } from "../../domain/native/nativeExports.js";
 import {
   readElfDynamicExportTables,
-  type ElfExportTables,
+  type ElfExportTableSelection,
 } from "./ElfDynamicExportTables.js";
 
 type Artifact = NativeExports["artifact"];
@@ -298,11 +298,21 @@ const versionSectionData = (
   table: { readonly offset: number; readonly size: number };
   names: Buffer;
 } => {
+  if (section.compressed)
+    throw new BinaryFormatFailure(
+      "unsupported",
+      `${label} are SHF_COMPRESSED and were not decompressed`,
+    );
   const strings = sections[section.link];
   if (strings?.type !== SHT_STRTAB)
     throw new BinaryFormatFailure(
       "malformed",
       `${label} do not link to a string table`,
+    );
+  if (strings.compressed)
+    throw new BinaryFormatFailure(
+      "unsupported",
+      `${label} strings are SHF_COMPRESSED and were not decompressed`,
     );
   const stringRange = reader.fileRange(
     strings.offset,
@@ -411,7 +421,9 @@ function* readVersionNames(
     textBytes = nextTextBytes;
   };
   const verneed = sections.find(({ type }) => type === SHT_GNU_VERNEED);
-  if (verneed !== undefined) {
+  // sh_info is the requirement count. An empty region contributes no names,
+  // so its compressed storage is not a failed requirement read.
+  if (verneed !== undefined && verneed.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,
@@ -489,7 +501,9 @@ function* readVersionNames(
   }
   // GNU lookup installs requirement names first, then definition names.
   const verdef = sections.find(({ type }) => type === SHT_GNU_VERDEF);
-  if (verdef !== undefined) {
+  // sh_info is the definition count. Zero definitions cannot replace a
+  // requirement index, so compressed storage of that empty table is unread.
+  if (verdef !== undefined && verdef.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,
@@ -549,7 +563,13 @@ function* readVersionNames(
         }
       }
     } catch (cause) {
-      if (cause instanceof ElfVersionWorkFailure) namesByIndex.clear();
+      // An unread compressed definition table may replace any requirement
+      // index. Its absence cannot justify falling back to requirement names.
+      if (
+        cause instanceof ElfVersionWorkFailure ||
+        (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
+      )
+        namesByIndex.clear();
       issues.push({
         code: "version_unresolved",
         location: hex(verdef.offset),
@@ -567,8 +587,27 @@ const readElfSectionExportTables = (
   sections: readonly NativeSection[],
   dynsym: NativeSection,
   width: number,
-): ElfExportTables => {
+): ElfExportTableSelection => {
   const strings = sections[dynsym.link];
+  const compressed = dynsym.compressed
+    ? dynsym
+    : strings?.type === SHT_STRTAB && strings.compressed
+      ? strings
+      : null;
+  if (compressed !== null) {
+    const reason = `The ELF ${compressed === dynsym ? "dynamic symbol table" : "dynamic string table"} is SHF_COMPRESSED and was not decompressed; export identities remain unknown`;
+    return {
+      state: "unavailable",
+      reason,
+      issues: [
+        {
+          code: "table_unavailable",
+          location: hex(compressed.offset),
+          message: reason,
+        },
+      ],
+    };
+  }
   if (
     dynsym.entry_size !== BigInt(width) ||
     dynsym.size % BigInt(width) !== 0n ||
@@ -604,6 +643,11 @@ const readElfSectionExportTables = (
   let versions: number | null = null;
   if (versym !== undefined) {
     try {
+      if (versym.compressed)
+        throw new BinaryFormatFailure(
+          "unsupported",
+          "ELF symbol versions are SHF_COMPRESSED and were not decompressed",
+        );
       if (versym.size !== BigInt(count * 2))
         throw new BinaryFormatFailure(
           "malformed",
@@ -620,12 +664,15 @@ const readElfSectionExportTables = (
     }
   }
   return {
-    table,
-    count,
-    names,
-    versions,
-    versionsDeclared: versym !== undefined,
-    issues,
+    state: "tables",
+    tables: {
+      table,
+      count,
+      names,
+      versions,
+      versionsDeclared: versym !== undefined,
+      issues,
+    },
   };
 };
 
@@ -661,27 +708,27 @@ function* parseElfExports(
       ],
     };
   const width = directory.bits === 64 ? 24 : 16;
-  let tables: ElfExportTables;
+  let selection: ElfExportTableSelection;
   if (dynsym === undefined) {
-    const dynamic = yield* readElfDynamicExportTables(bytes, directory);
-    if (dynamic.state === "unavailable")
-      return {
-        ...result,
-        exports: [],
-        coverage: {
-          status: "unsupported",
-          reason: dynamic.reason,
-          examined_entries: 0,
-          exports: 0,
-        },
-        issues: [],
-        limitations: ELF_LIMITATIONS,
-      };
-    tables = dynamic.tables;
+    selection = yield* readElfDynamicExportTables(bytes, directory);
   } else {
-    tables = readElfSectionExportTables(reader, sections, dynsym, width);
+    selection = readElfSectionExportTables(reader, sections, dynsym, width);
   }
-  const { count, table, names, versions, versionsDeclared, issues } = tables;
+  if (selection.state === "unavailable")
+    return {
+      ...result,
+      exports: [],
+      coverage: {
+        status: "unsupported",
+        reason: selection.reason,
+        examined_entries: 0,
+        exports: 0,
+      },
+      issues: selection.issues,
+      limitations: ELF_LIMITATIONS,
+    };
+  const { count, table, names, versions, versionsDeclared, issues } =
+    selection.tables;
   // Entry zero is the reserved STN_UNDEF record. Both table sources must
   // establish every field as zero before the shared scan can skip it.
   if (bytes.subarray(table, table + width).some((byte) => byte !== 0))

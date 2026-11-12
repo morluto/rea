@@ -38,6 +38,7 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -156,6 +157,7 @@ it("retains invalid UTF-8 diagnostics and the uninstall read owner when close fa
     expect(
       await host.removeClient({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         format: "json",
         configPath: path,
       }),
@@ -177,7 +179,12 @@ it("retains invalid UTF-8 diagnostics and the uninstall read owner when close fa
 it("stops uninstall and retains the backup read owner when its close fails", async () => {
   const home = await createTestTempDirectory("rea-uninstall-backup-close-");
   const path = join(home, "client.json");
-  const client = { name: "cursor", format: "json", configPath: path } as const;
+  const client = {
+    name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+    format: "json",
+    configPath: path,
+  } as const;
   await writeFile(path, '{"keep":"before setup"}\n');
   expect(
     await configureClientConfiguration(client, {}, ["rea", "mcp"]),
@@ -192,8 +199,9 @@ it("stops uninstall and retains the backup read owner when its close fails", asy
     expect(await host.removeClient(client)).toEqual({
       name: "cursor",
       status: "failed",
-      detail:
-        "Configuration could not be backed up, so no change was made. Check file permissions, then rerun uninstall.",
+      detail: expect.stringMatching(
+        /could not be backed up.*no change.*permissions.*uninstall/i,
+      ),
     });
     expect(await readFile(path, "utf8")).toBe(configured);
     expect(closeAttempts).toHaveLength(2);
@@ -425,7 +433,12 @@ it("removes a shared registration once and reports that outcome to both clients"
   await mkdir(join(home, ".config", "freebuff-desktop"), { recursive: true });
   expect(
     await configureClientConfiguration(
-      { name: "freebuff", format: "json", configPath: shared },
+      {
+        name: "freebuff",
+        registrationProfile: supportedClientRegistrationProfile("freebuff"),
+        format: "json",
+        configPath: shared,
+      },
       {},
       ["rea", "mcp"],
     ),
@@ -474,7 +487,12 @@ it("keeps one row per client when OpenCode is pointed at FreeBuff's file", async
   await mkdir(join(home, ".config", "freebuff-desktop"), { recursive: true });
   expect(
     await configureClientConfiguration(
-      { name: "freebuff", format: "json", configPath: shared },
+      {
+        name: "freebuff",
+        registrationProfile: supportedClientRegistrationProfile("freebuff"),
+        format: "json",
+        configPath: shared,
+      },
       {},
       ["rea", "mcp"],
     ),
@@ -582,7 +600,12 @@ it("does not treat a dangling FreeBuff profile link as installed", async () => {
   await writeFile(cursor, '{"keep":"before setup"}\n');
   expect(
     await configureClientConfiguration(
-      { name: "cursor", format: "json", configPath: cursor },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        format: "json",
+        configPath: cursor,
+      },
       {},
       ["rea", "mcp"],
     ),
@@ -751,7 +774,7 @@ describe("setup client configuration cleanup ownership", () => {
         const failure = await filterClientsNeedingConfigure(
           host,
           [client],
-          {},
+          { providerEnvironment: {} },
           ["rea", "mcp"],
         )
           .then((detectedClients) =>

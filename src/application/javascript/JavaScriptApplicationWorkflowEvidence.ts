@@ -2,6 +2,7 @@ import {
   createEvidence,
   type Evidence,
   type EvidenceObservation,
+  type EvidenceSubjectTarget,
 } from "../../domain/evidence.js";
 import type { ApplicationVersionComparisonResult } from "../../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import type { JavaScriptExportShapeComparisonResult } from "../../domain/javascript/javascriptExportShapeComparisonSchemas.js";
@@ -12,10 +13,11 @@ import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "../../domain/investiga
 
 /** Create derived Evidence for one bounded application-graph feature trace. */
 export const createApplicationFeatureTraceEvidence = (
+  subject: EvidenceSubjectTarget | undefined,
   parameters: EvidenceObservation["parameters"],
   result: ApplicationFeatureTraceResult,
 ): Evidence =>
-  createEvidence(undefined, JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, {
+  createEvidence(subject, JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, {
     predicateType: "rea.application-feature-trace",
     operation: "trace_application_feature",
     parameters,
@@ -30,10 +32,11 @@ export const createApplicationFeatureTraceEvidence = (
 
 /** Create derived Evidence for one bounded JavaScript semantic trace. */
 export const createJavaScriptSemanticTraceEvidence = (
+  subject: EvidenceSubjectTarget | undefined,
   parameters: EvidenceObservation["parameters"],
   result: JavaScriptSemanticTraceResult,
 ): Evidence =>
-  createEvidence(undefined, JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, {
+  createEvidence(subject, JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, {
     predicateType: "rea.javascript-semantic-trace",
     operation: "trace_javascript_semantics",
     parameters,

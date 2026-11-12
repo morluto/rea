@@ -148,3 +148,114 @@ it.each(["capabilities", "providers"])(
     });
   },
 );
+
+it.each(["capabilities", "providers"])(
+  "exposes each candidate's selection source and rejections through %s",
+  async (command) => {
+    const session = createStatusSession();
+    const status = vi.spyOn(session, "status").mockResolvedValueOnce({
+      open: false,
+      capabilities: [],
+      analysis_provider_binding: null,
+      analysis_provider_candidates: [
+        {
+          provider: { id: "fixture", name: "Fixture", version: "1" },
+          availability: {
+            status: "available",
+            code: null,
+            reason: null,
+            diagnostics: {},
+          },
+          target_support: {
+            status: "unknown",
+            code: null,
+            reason: "No target is open.",
+            diagnostics: {},
+          },
+          selected: true,
+          selection_source: "auto-single-candidate",
+          rejections: [],
+          capabilities: [],
+        },
+        {
+          provider: { id: "other", name: "Other", version: null },
+          availability: {
+            status: "unavailable",
+            code: "not_configured",
+            reason: "OTHER_HOME is not set.",
+            remediation: "Set OTHER_HOME.",
+            diagnostics: { checks: [] },
+          },
+          target_support: {
+            status: "unknown",
+            code: null,
+            reason: "No target is open.",
+            diagnostics: {},
+          },
+          selected: false,
+          selection_source: null,
+          rejections: [
+            {
+              provider_id: "other",
+              origin: "availability",
+              code: "not_configured",
+              reason: "OTHER_HOME is not set.",
+              remediation: "Set OTHER_HOME.",
+              diagnostics: { checks: [] },
+            },
+          ],
+          capabilities: [],
+        },
+      ],
+    });
+    const cli = Cli.create({ name: "rea" });
+    registerUtilityCommands(
+      cli,
+      silentLogger,
+      {},
+      {
+        runSessionStatus: () =>
+          runSessionStatus({
+            readConfiguration: () => parseConfig({}),
+            createBinarySession: () => session,
+          }),
+        runProviderAnalysis: async () => ({ ok: false, error: null }),
+      },
+    );
+    let stdout = "";
+    try {
+      await cli.serve([command, "--json"], {
+        env: {},
+        stdout: (text) => {
+          stdout += text;
+        },
+        exit: () => {},
+      });
+      expect(JSON.parse(stdout)).toMatchObject({
+        analysis_provider_candidates: [
+          {
+            provider: { id: "fixture" },
+            selection_source: "auto-single-candidate",
+            rejections: [],
+          },
+          {
+            provider: { id: "other" },
+            selection_source: null,
+            rejections: [
+              {
+                provider_id: "other",
+                origin: "availability",
+                code: "not_configured",
+                reason: "OTHER_HOME is not set.",
+                remediation: "Set OTHER_HOME.",
+              },
+            ],
+          },
+        ],
+      });
+    } finally {
+      status.mockRestore();
+      await session.close();
+    }
+  },
+);

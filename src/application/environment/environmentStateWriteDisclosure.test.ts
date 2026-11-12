@@ -11,6 +11,8 @@ import {
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import { servedCatalog } from "./environmentState.js";
+import { environmentToolAnswer } from "./environmentToolAnswer.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 
 const RENAMED = renamedBook(FIRST_BOOK, "Renamed Book", 3);
 
@@ -72,6 +74,33 @@ const toolOf = (rows: readonly TimedCaptureRow[], name: string) => {
 };
 
 describe("served write queries", () => {
+  it.each([
+    "?notify=quiet&unmodeled=yes",
+    "?notify=quiet&notify=quiet",
+    "?notify=quiet&unmodeled=yes&unmodeled=no",
+  ])("refuses unsupported observed query %s before changing state", (query) => {
+    const { served } = toolOf(PINNED_ROWS, "patch_books_by_id");
+    const tool = served.source.manifest.tools.find(
+      (candidate) => candidate.name === "patch_books_by_id",
+    );
+    if (tool === undefined) throw new Error("Expected patch tool");
+    const before = served.snapshot();
+    const pending = served.store.pendingWrite();
+    const respond = environmentToolAnswer(served.source, served.store);
+    const result = respond(
+      tool,
+      { id: "2", notify: "quiet", body: { name: "Changed" } },
+      query,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected pinned-query refusal");
+    expect(projectAnalysisError(result.error).message).toMatch(
+      /query|repeated/u,
+    );
+    expect(served.snapshot()).toBe(before);
+    expect(served.store.pendingWrite()).toEqual(pending);
+  });
+
   it("advertises the recorded query as optional so omission reaches its default", () => {
     const { served, tool } = toolOf(PINNED_ROWS, "patch_books_by_id");
     expect(tool.inputSchema.properties["notify"]).toMatchObject({

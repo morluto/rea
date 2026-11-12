@@ -265,3 +265,144 @@ it.skipIf(process.platform === "win32")(
     });
   },
 );
+
+it("does not enter the active provider after caller cancellation", async () => {
+  const { readable } = await fixture();
+  const { provider, capture } = recordingProvider();
+  const controller = new AbortController();
+  const reason = { requested: "stop before capture" };
+  controller.abort(reason);
+  const result = await captureElectronScenario(
+    provider,
+    electronActiveObservationInputSchema.parse({
+      executable_path: process.execPath,
+      application_path: join(readable, "main.js"),
+    }),
+    { signal: controller.signal },
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", cause: reason },
+  });
+  expect(capture).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "validates completed active output before late cancellation (malformed: %s)",
+  async (malformed) => {
+    const { readable } = await fixture();
+    const controller = new AbortController();
+    const reason = { requested: "stop during capture finalization" };
+    const application = join(readable, "main.js");
+    const report = createElectronActiveObservationFixtureResult(application);
+    const result = await captureElectronScenario(
+      {
+        identity: () => ({ id: "test", name: "test", version: "1" }),
+        capture: async () => {
+          controller.abort(reason);
+          return ok(
+            malformed
+              ? { ...report, limitations: [undefined] as never }
+              : report,
+          );
+        },
+      },
+      electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: application,
+      }),
+      { signal: controller.signal },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: malformed
+        ? { _tag: "AnalysisOutputError", partialObservation: undefined }
+        : {
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+            partialObservation: {
+              operation: "capture_electron_scenario",
+              normalized_result: report,
+            },
+          },
+    });
+  },
+);
+
+it.each(["executable_path", "application_path"] as const)(
+  "does not attest active output for another %s",
+  async (field) => {
+    const { readable } = await fixture();
+    const application = join(readable, "main.js");
+    const report = createElectronActiveObservationFixtureResult(application);
+    const changed = {
+      ...report,
+      application: { ...report.application, [field]: join(readable, "other") },
+    };
+    const result = await captureElectronScenario(
+      {
+        identity: () => ({ id: "test", name: "test", version: "1" }),
+        capture: async () => ok(changed),
+      },
+      electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: application,
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError", partialObservation: changed },
+    });
+  },
+);
+
+it("does not invoke hidden provider getters while validating an active capture", async () => {
+  const { readable } = await fixture();
+  const application = join(readable, "main.js");
+  const report = createElectronActiveObservationFixtureResult(application);
+  let getterCalls = 0;
+  Object.defineProperty(report, "windows", {
+    enumerable: false,
+    get() {
+      getterCalls += 1;
+      throw new Error("Hidden windows getter must not run");
+    },
+  });
+  await expect(
+    captureElectronScenario(
+      {
+        identity: () => ({ id: "test", name: "test", version: "1" }),
+        capture: async () => ok(report),
+      },
+      electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: application,
+      }),
+    ),
+  ).resolves.toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+  expect(getterCalls).toBe(0);
+});
+
+it("refuses active result extensions under its strict completed contract", async () => {
+  const { readable } = await fixture();
+  const application = join(readable, "main.js");
+  const report = createElectronActiveObservationFixtureResult(application);
+  const result = await captureElectronScenario(
+    {
+      identity: () => ({ id: "test", name: "test", version: "1" }),
+      capture: async () =>
+        ok({ ...report, provider_metadata: { source_id: "unsupported" } }),
+    },
+    electronActiveObservationInputSchema.parse({
+      executable_path: process.execPath,
+      application_path: application,
+    }),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});

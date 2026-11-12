@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import {
   javaScriptStaticParseStatus,
   unexaminedJavaScriptStaticCoverage,
@@ -7,7 +8,7 @@ import {
 import { aliasSelectionBudgetSource } from "../../../tests/fixtures/javascriptAliasSelectionBudget.js";
 
 it("separates dynamic semantic uncertainty from completed syntax and examination", () => {
-  const result = analyzeJavaScriptStaticSource(
+  const result = analyzeCommonJsStaticFixture(
     "const {ipcMain}=require('electron'); ipcMain.on(channel, () => {});",
   );
   expect(result.parse_status).toBe("partial");
@@ -46,7 +47,7 @@ it("keeps framework applicability unknown without positive Electron evidence", (
   const ordinary = analyzeJavaScriptStaticSource("export const value = 1;");
   expect(ordinary.parse_status).toBe("complete");
   expect(ordinary.analysis_coverage?.applicability.electron).toBe("unknown");
-  const electron = analyzeJavaScriptStaticSource(
+  const electron = analyzeCommonJsStaticFixture(
     "const {ipcMain}=require('electron');",
   );
   expect(electron.analysis_coverage?.applicability.electron).toBe("observed");

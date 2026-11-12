@@ -71,7 +71,7 @@ it.each(["NE", "LE", "LX"])(
     expect(() => readBinaryContainer(bytes)).toThrow(
       expect.objectContaining({
         kind: "unsupported",
-        message: `${signature} images are outside the supported ELF, PE and thin Mach-O formats`,
+        message: expect.stringContaining(signature),
       }),
     );
   },

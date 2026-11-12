@@ -2,7 +2,6 @@ import { expect, it } from "vitest";
 
 import {
   createBoundedProcessTextNormalizer,
-  createProcessTextNormalizer,
   createProcessIdentifierLookup,
   normalizeProcessSamples,
   normalizeProcessText,
@@ -279,11 +278,17 @@ it("lets a later pattern shrink text when an earlier pattern does not match", ()
 
 it("reuses matchers while observing the terminal PID after launch", () => {
   let pid = -1;
-  const normalize = createProcessTextNormalizer(
+  const bounded = createBoundedProcessTextNormalizer(
     scenario({ ports: false, patterns: [] }),
     "/temporary",
     () => pid,
   );
+  const normalize = (text: string) => {
+    const result = bounded(text, 4096);
+    if (result.state !== "normalized")
+      throw new Error("unexpected budget failure");
+    return result.value;
+  };
   expect(normalize("root 41010 /workspace/item")).toBe(
     "root 41010 <working-directory>/item",
   );
@@ -302,8 +307,10 @@ it("keeps equal-path priority and replacement aliases local to each capture", ()
     filesystem_observation_paths: ["/selected", "<working-directory>"],
     normalization: { paths: true, pids: false, ports: false, patterns: [] },
   });
-  const normalize = createProcessTextNormalizer(declared, "/selected", -1);
-  const other = createProcessTextNormalizer(declared, "/other", -1);
+  const normalize = (text: string) =>
+    normalizeProcessText(text, declared, "/selected", -1);
+  const other = (text: string) =>
+    normalizeProcessText(text, declared, "/other", -1);
   const text = "/selected/item <working-directory>/source";
   expect(normalize(text)).toBe(
     "<temporary-root>/item <filesystem-root-1>/source",
@@ -605,11 +612,12 @@ it.each([
       pids: enabled,
       patterns: enabled ? [{ pattern: "marker", replacement: "selected" }] : [],
     });
-    const expected = createProcessTextNormalizer(
+    const expected = normalizeProcessText(
+      input,
       settings,
       "/temporary",
       rootPid,
-    )(input);
+    );
     expect(
       createBoundedProcessTextNormalizer(
         settings,
@@ -647,7 +655,17 @@ it("shares sampled identifiers before custom patterns in terminal and command no
       { pattern: "200", replacement: "wrong-order" },
     ],
   });
-  const normalize = createProcessTextNormalizer(declared, "/temporary", lookup);
+  const bounded = createBoundedProcessTextNormalizer(
+    declared,
+    "/temporary",
+    lookup,
+  );
+  const normalize = (text: string) => {
+    const result = bounded(text, 4096);
+    if (result.state !== "normalized")
+      throw new Error("unexpected budget failure");
+    return result.value;
+  };
   expect(normalize("root=100 child=200 other=201")).toBe(
     "root=selected child=wrong-order other=201",
   );
@@ -688,9 +706,9 @@ it("preserves literal absence text while normalizing selected paths with and wit
     "/usr/bin/node /workspace/file <no-temporary-root> /capture/file";
   for (const temporaryRoot of [undefined, "/capture"]) {
     const expected = `<executable> <working-directory>/file <no-temporary-root> ${temporaryRoot === undefined ? "/capture/file" : "<temporary-root>/file"}`;
-    expect(
-      createProcessTextNormalizer(selected, temporaryRoot, rootPid)(text),
-    ).toBe(expected);
+    expect(normalizeProcessText(text, selected, temporaryRoot, rootPid)).toBe(
+      expected,
+    );
     expect(
       createBoundedProcessTextNormalizer(
         selected,

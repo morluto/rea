@@ -64,6 +64,8 @@ export interface SemanticNodeConstructionInput {
   readonly label: string | null;
   readonly functionNodeId: string | null;
   readonly properties?: Readonly<Record<string, JsonValue>>;
+  /** Evidence for inferred semantic identities; defaults to exact syntax. */
+  readonly evidence?: ApplicationGraphEvidence;
 }
 
 /** Input for one directed static semantic relationship. */
@@ -131,7 +133,8 @@ export const constructSemanticGraphNode = (
       application_node_ids: [],
       label: input.label === null ? null : javascriptDisplayText(input.label),
       properties: input.properties ?? {},
-      evidence: observedSemanticEvidence(file, input.location),
+      evidence:
+        input.evidence ?? observedSemanticEvidence(file, input.location),
     },
     state.evidenceContexts,
   );

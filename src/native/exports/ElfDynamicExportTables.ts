@@ -52,6 +52,15 @@ export interface ElfExportTables {
   readonly issues: NativeExportIssue[];
 }
 
+/** Table admission reports unavailable facts before the shared export projection. */
+export type ElfExportTableSelection =
+  | { readonly state: "tables"; readonly tables: ElfExportTables }
+  | {
+      readonly state: "unavailable";
+      readonly reason: string;
+      readonly issues: NativeExportIssue[];
+    };
+
 const malformed = (message: string): never => {
   throw new BinaryFormatFailure("malformed", message);
 };
@@ -171,11 +180,7 @@ function* readDynamicSymbolCount(
 export function* readElfDynamicExportTables(
   bytes: Buffer,
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
-): Generator<
-  void,
-  | { readonly state: "tables"; readonly tables: ElfExportTables }
-  | { readonly state: "unavailable"; readonly reason: string }
-> {
+): Generator<void, ElfExportTableSelection> {
   const programs = directory.programs.filter(
     (program): program is Extract<ElfProgramDeclaration, { type: 2 }> =>
       program.type === 2,
@@ -188,6 +193,7 @@ export function* readElfDynamicExportTables(
       state: "unavailable",
       reason:
         "No readable dynamic segment establishes a dynamic symbol table or its symbol count",
+      issues: [],
     };
   const reader = new BinaryReader(bytes, directory.little);
   const entries = yield* readDynamicEntries(reader, directory.bits, program);
@@ -197,6 +203,7 @@ export function* readElfDynamicExportTables(
       state: "unavailable",
       reason:
         "The dynamic segment does not declare DT_SYMTAB, so its export inventory is unavailable",
+      issues: [],
     };
   const width = directory.bits === 64 ? 24 : 16;
   if (entries.get(DT_SYMENT) !== BigInt(width))
@@ -220,6 +227,7 @@ export function* readElfDynamicExportTables(
       state: "unavailable",
       reason:
         "The dynamic segment has no hash table establishing the complete symbol count; empty GNU buckets do not establish an empty inventory",
+      issues: [],
     };
   if (count === 0)
     malformed("ELF dynamic symbol table is missing its null entry");
