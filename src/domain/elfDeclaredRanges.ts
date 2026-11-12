@@ -4,6 +4,8 @@ import { readElfRawTableDeclarations } from "./elfRawTableDeclarations.js";
 import { readElfFixedHeader, type ElfFixedHeader } from "./elfFixedHeader.js";
 import { err, ok, type Result } from "./result.js";
 
+const SHN_LORESERVE = 0xff00;
+
 /** Positional source requests; the caller owns the descriptor and cancellation. */
 export interface ElfDeclarationRead {
   readonly offset: number;
@@ -89,12 +91,12 @@ const extendedCounts = (
   const counts = { ...initial };
   if (counts.sectionCount === 0n) {
     counts.sectionCount = zero.size;
-    if (counts.sectionCount < 0xff00n)
+    if (counts.sectionCount < BigInt(SHN_LORESERVE))
       return err("invalid ELF extended section count");
   }
   if (counts.namesIndex === 0xffff) {
     counts.namesIndex = zero.link;
-    if (counts.namesIndex < 0xff00)
+    if (counts.namesIndex < SHN_LORESERVE)
       return err("invalid ELF extended section-name index");
   }
   if (counts.programCount === 0xffffn) {
@@ -105,21 +107,26 @@ const extendedCounts = (
   return ok(counts);
 };
 
-/** A name index or extended count cannot refer to an absent section table. */
-export const validateElfSectionTablePresence = (tables: {
+/** Admit the raw section table fields before interpreting any rows. */
+export const validateElfSectionTableFields = (tables: {
   readonly programs: { readonly count: number };
   readonly sections: {
     readonly offset: bigint;
     readonly count: number;
     readonly namesIndex: number;
   };
-}): Result<null, string> =>
-  tables.sections.offset === 0n &&
-  (tables.sections.count !== 0 ||
-    tables.sections.namesIndex !== 0 ||
-    tables.programs.count === 0xffff)
-    ? err("ELF section table is missing")
-    : ok(null);
+}): Result<null, string> => {
+  if (tables.sections.count >= SHN_LORESERVE)
+    return err("ELF e_shnum uses a reserved direct section count");
+  if (
+    tables.sections.offset === 0n &&
+    (tables.sections.count !== 0 ||
+      tables.sections.namesIndex !== 0 ||
+      tables.programs.count === 0xffff)
+  )
+    return err("ELF section table is missing");
+  return ok(null);
+};
 
 /** Canonical table declarations, including extended counts in inactive section zero. */
 export function* readElfTableDeclarations(
@@ -139,8 +146,8 @@ export function* readElfTableDeclarations(
   let programCount = BigInt(programs.count);
   let sectionCount = BigInt(sections.count);
   let namesIndex = sections.namesIndex;
-  const presence = validateElfSectionTablePresence(raw.value);
-  if (!presence.ok) return presence;
+  const sectionTable = validateElfSectionTableFields(raw.value);
+  if (!sectionTable.ok) return sectionTable;
   if (
     sectionOffset !== 0n &&
     (sectionCount === 0n || namesIndex === 0xffff || programCount === 0xffffn)

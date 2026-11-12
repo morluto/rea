@@ -570,6 +570,24 @@ it("rejects an extended section count stored in section zero", () => {
   );
 });
 
+it.each([
+  { reader: "note parser", inspect: parse, failure: { reason: "format" } },
+  {
+    reader: "native directory",
+    inspect: readElfDirectoryFromBuffer,
+    failure: { kind: "malformed" },
+  },
+])(
+  "rejects a reserved direct ELF section count in the $reader",
+  ({ inspect, failure }) => {
+    const bytes = elfExtendedSectionCountFixture();
+    const sectionZero = Number(bytes.readBigUInt64LE(40));
+    bytes.writeUInt16LE(0xff00, 60);
+    bytes.writeBigUInt64LE(0n, sectionZero + 32);
+    expect(() => inspect(bytes)).toThrow(expect.objectContaining(failure));
+  },
+);
+
 const repeatedNotes = (count: number, notes: Buffer): Buffer => {
   const headers = Buffer.alloc(56 * count);
   const offset = 64 + headers.length;

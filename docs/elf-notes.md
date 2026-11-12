@@ -86,7 +86,7 @@ tables, declared note tables that extend past the file, and truncated
 note entries fail without partial success. ELF extended
 numbering (`PN_XNUM`, including a section count stored when `e_shnum` is 0) is
 unsupported and returns an unsupported-target outcome rather than invalid-input
-recovery.
+recovery. A direct section count in `e_shnum` at or above `0xff00` is malformed.
 
 Zstandard section-name tables also use a 128 MiB decoder window limit.
 
