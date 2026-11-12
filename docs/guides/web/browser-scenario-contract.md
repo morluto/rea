@@ -277,8 +277,11 @@ Declared non-cookie seeds are also installed with a browser-context init
 script. Playwright runs that script after a document is created and before
 the document's own scripts, including a popup opened later in the same
 context. Page-session CDP auto-attach does not pause a `window.open` target,
-so that init script is what seeds the popup before its first script. If the
-context cannot install the script, discovering a popup still retains completed
+so that init script is what seeds the popup before its first script. Each
+local-storage partition and each top-level session area is seeded once; a
+later document in that same area keeps the page's updates and deletions. The
+bookkeeping key is omitted from captured storage inventories. If the context
+cannot install the script, discovering a popup still retains completed
 observations and marks `storage` coverage missing, with equality ineligible,
 even when popup lifecycle events were not selected.
 

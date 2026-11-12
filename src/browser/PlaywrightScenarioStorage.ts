@@ -9,6 +9,11 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { BrowserContext, CDPSession, Page } from "playwright-core";
 
+import {
+  applyDeclaredBrowserStorageSeeds,
+  declaredBrowserStorageSeedMark,
+} from "./declaredBrowserStorageSeed.js";
+
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
@@ -91,45 +96,6 @@ const STORAGE_CLEANUP_TIMEOUT_MS = 1_000;
 type StorageSeed = {
   local: [string, string][];
   session: [string, string][];
-};
-
-export type DeclaredBrowserStorageSeed = {
-  readonly origin: string;
-  readonly local: readonly (readonly [string, string])[];
-  readonly session: readonly (readonly [string, string])[];
-};
-
-/**
- * Playwright serializes this function into every document in the scenario
- * context. It runs after document creation and before that document's scripts,
- * including a popup opened later. Page-session auto-attach does not pause a
- * `window.open` target, so this is the pre-script seed for that document.
- */
-export const applyDeclaredBrowserStorageSeeds = (
-  seeds: readonly DeclaredBrowserStorageSeed[],
-): void => {
-  const host = globalThis as {
-    location?: { origin?: string };
-    localStorage?: { setItem(name: string, value: string): void };
-    sessionStorage?: { setItem(name: string, value: string): void };
-  };
-  let origin = "";
-  try {
-    origin = host.location?.origin ?? "";
-  } catch {
-    return;
-  }
-  if (origin === "" || origin === "null") return;
-  const seed = seeds.find((item) => item.origin === origin);
-  if (seed === undefined) return;
-  try {
-    for (const [name, value] of seed.local)
-      host.localStorage?.setItem(name, value);
-    for (const [name, value] of seed.session)
-      host.sessionStorage?.setItem(name, value);
-  } catch {
-    return;
-  }
 };
 
 interface StorageTarget {
@@ -326,7 +292,10 @@ export class PlaywrightScenarioStorage {
     }));
     if (seeds.length === 0 || typeof context.addInitScript !== "function")
       return;
-    await context.addInitScript(applyDeclaredBrowserStorageSeeds, seeds);
+    await context.addInitScript(applyDeclaredBrowserStorageSeeds, {
+      mark: declaredBrowserStorageSeedMark,
+      seeds,
+    });
     this.#popupSeedsInstalled = true;
   }
 
