@@ -91,6 +91,38 @@ const parse = (
 const pointer = Buffer.from([0xc0, 0x0c]);
 const address = Buffer.from([192, 0, 2, 9]);
 
+it.each([0x8180, 0x8183])(
+  "does not invent unresolved address ownership for an empty response with flags %i",
+  (flags) => {
+    const bytes = packet(label("61"), []);
+    bytes.writeUInt16BE(flags, 2);
+    expect(parse(bytes, ["a"], [])).toMatchObject({
+      questions: [{ query: "a", labels_hex: ["61"] }],
+      assigned: [],
+      unattributed: [],
+      incomplete: false,
+    });
+  },
+);
+
+it.each([
+  ["format error", 0x8181],
+  ["server failure", 0x8182],
+  ["name error", 0x8183],
+  ["refused", 0x8185],
+  ["status opcode", 0x9180],
+])("does not assign response ownership for %s", (_name, flags) => {
+  const bytes = packet(label("61"), [rr(pointer, 1, address)]);
+  bytes.writeUInt16BE(flags, 2);
+  const facts = parse(bytes);
+  expect(facts).toMatchObject({
+    questions: [{ labels_hex: ["61"] }],
+    assigned: [],
+    unattributed: ["192.0.2.9"],
+    incomplete: true,
+  });
+});
+
 it("joins compressed CNAMEs using ASCII-folded bytes while retaining original labels", () => {
   const query = label("414243", "6578616d706c65");
   const alias = label("616263", "6578616d706c65");

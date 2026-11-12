@@ -272,6 +272,8 @@ const eligibleQuestion = (
   const question = decodedQuestions[0];
   if (
     (flags & 0x8000) === 0 ||
+    (flags & 0x7800) !== 0 ||
+    (flags & 0x000f) !== 0 ||
     decodedQuestions.length !== 1 ||
     question === undefined ||
     ![1, 255].includes(question.dnsClass) ||
@@ -298,7 +300,7 @@ const attributeAddresses = (
     return { questions, assigned: [], unattributed: [], incomplete: false };
   if (question === null)
     return unknown(
-      "Question count, response flag, type or class does not establish Internet address ownership",
+      "Question count, response flag, opcode, response code, type or class does not establish Internet address ownership",
     );
   const links = new Map<string, Set<string>>();
   for (const record of records) {

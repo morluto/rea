@@ -123,6 +123,26 @@ it("binds interleaved DNS answers to each response packet", async () => {
   expect(result.partial).toBe(false);
 });
 
+it.each([
+  ["name error", 0x8183],
+  ["status opcode", 0x9180],
+] as const)(
+  "preserves partial DNS coverage for a %s reply in the capture summary",
+  async (_name, flags) => {
+    const layers = dnsResponseLayers("api.example", "192.0.2.9");
+    const bytes = Buffer.from(layers.dns_raw[0] as string, "hex");
+    bytes.writeUInt16BE(flags, 2);
+    layers.dns_raw[0] = bytes.toString("hex");
+    const result = await parseTsharkJsonOutput(capture([layers]));
+    expect(result.partial).toBe(true);
+    expect(result.dnsQueries).toMatchObject([
+      { query: "api.example", response_addresses: [] },
+    ]);
+    expect(result.dnsLimitations.length).toBeGreaterThan(0);
+    expect(result.unattributedDnsAddresses).toEqual(["192.0.2.9"]);
+  },
+);
+
 it("retains unassignable DNS observations when wire identity is missing", async () => {
   const result = await parseTsharkJsonOutput(
     capture([

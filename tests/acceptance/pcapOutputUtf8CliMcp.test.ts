@@ -8,6 +8,7 @@ import { pcapResultSchemas } from "../../src/domain/pcap/pcapAnalysis.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
+  dnsResponseLayers,
   writeStubTools,
   type PcapStubToolsOptions,
 } from "../fixtures/pcap/pcapTestTools.js";
@@ -129,6 +130,80 @@ cliTest.skipIf(process.platform === "win32")(
       } finally {
         await client.close();
       }
+    }
+  },
+);
+
+cliTest.skipIf(process.platform !== "linux")(
+  "preserves unattributed error-response addresses through CLI and stdio MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pcap-dns-truncation-");
+    const path = join(root, "capture.pcap");
+    await writeFile(path, Buffer.from("pcap-fixture-bytes"));
+    const frame = {
+      "frame.number": ["1"],
+      "frame.protocols": ["eth:ethertype:ip:udp:dns"],
+    };
+    const layers = dnsResponseLayers("api.example", "192.0.2.9");
+    const bytes = Buffer.from(layers.dns_raw[0] as string, "hex");
+    bytes.writeUInt16BE(0x8183, 2);
+    layers.dns_raw[0] = bytes.toString("hex");
+    const tools = await writeStubTools(root, {
+      capinfosText: "File type: pcap\nNumber of packets: 1\n",
+      tsharkJson: JSON.stringify([
+        {
+          _source: {
+            layers: {
+              ...frame,
+              "dns.qry.name": ["api.example"],
+              "dns.a": ["192.0.2.9"],
+            },
+          },
+        },
+      ]),
+      dnsJson: JSON.stringify([
+        {
+          _source: {
+            layers: {
+              ...frame,
+              ...layers,
+            },
+          },
+        },
+      ]),
+    });
+    const environment = environmentFor(root, tools);
+    const outputSchema = toolContract("inspect_pcap_capture").outputSchema;
+    const response = await cli.run({
+      arguments: ["inspect-pcap-capture", path, "--json"],
+      environment,
+    });
+    expect(response.exitCode, response.stdout).toBe(0);
+    const cliEvidence = parseEvidence(outputSchema.parse(response.json));
+    const { client, call } = await connectLocalToolsMcp(environment);
+    try {
+      const reply = await call("inspect_pcap_capture", { path });
+      expect(reply.isError).not.toBe(true);
+      const mcpEvidence = parseEvidence(
+        outputSchema.parse(reply.structuredContent),
+      );
+      for (const evidence of [cliEvidence, mcpEvidence]) {
+        const result = pcapResultSchemas.inspect_pcap_capture.parse(
+          evidence.normalized_result,
+        );
+        expect(result).toMatchObject({
+          target: { path },
+          coverage: "partial",
+          dns_queries: [{ query: "api.example", response_addresses: [] }],
+          unattributed_dns_addresses: ["192.0.2.9"],
+        });
+        expect(evidence.limitations).toContainEqual(
+          expect.stringContaining("response code"),
+        );
+      }
+      expect(mcpEvidence.subject).toEqual(cliEvidence.subject);
+    } finally {
+      await client.close();
     }
   },
 );
