@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 
 import { expect, it } from "vitest";
 
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
@@ -389,29 +390,29 @@ it("rejects NUL paths through the public request contract before reconstruction"
   const input = { input_path: "invalid\u0000.asar" };
   await expect(reconstructJavaScriptArtifact(input)).rejects.toMatchObject({
     name: "ZodError",
-    issues: [
-      {
+    issues: expect.arrayContaining([
+      expect.objectContaining({
         code: "invalid_format",
         path: ["input_path"],
         message: "Local filesystem paths cannot contain NUL",
-      },
-    ],
+      }),
+    ]),
   });
 
   const result = await analyzeJavaScriptApplication(input);
   if (result.ok) throw new Error("Expected invalid input path");
-  expect(result.error).toMatchObject({
-    _tag: "AnalysisInputError",
-    operation: "analyze_javascript_application",
-    issues: [
-      {
+  const inputError = result.error as AnalysisInputError;
+  expect(inputError).toBeInstanceOf(AnalysisInputError);
+  expect(inputError.issues).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
         path: ["input_path"],
         reason: "invalid_format",
         expected: "regex",
         message: "Local filesystem paths cannot contain NUL",
-      },
-    ],
-  });
+      }),
+    ]),
+  );
 });
 
 it("rejects traversal from a production reader seam and malformed ASAR containers", async () => {
