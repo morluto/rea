@@ -1,4 +1,7 @@
-import { BUNDLE_SETTING_VARIABLE } from "./buildComputerSettings.js";
+import {
+  BUNDLE_SETTING_VARIABLE,
+  isBundleSettingVariable,
+} from "./buildComputerSettings.js";
 import { buildSecretHandleSchema } from "./buildSecrets.js";
 import { createHash } from "node:crypto";
 
@@ -83,8 +86,8 @@ export const buildInstallSchema = z.discriminatedUnion("kind", [
     kind: z.literal("apt_repository"),
     package: aptPackageSchema,
     uri: downloadUrlSchema,
-    suite: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u),
-    components: z.array(z.string().regex(/^[A-Za-z0-9._-]+$/u)).default([]),
+    suite: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/\x2d]*$/u),
+    components: z.array(z.string().regex(/^[A-Za-z0-9._\x2d]+$/u)).default([]),
     key_file: absoluteLocalPathStringSchema.describe(
       "The repository's signing key on this host, armored or binary.",
     ),
@@ -119,7 +122,7 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
     kind: z.literal("request"),
     desktop_entry: z
       .string()
-      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._\x2d]*$/u)
       .max(255)
       .describe(
         "The desktop entry id the package installs, such as org.xfce.mousepad; the menu opens it with gtk-launch.",
@@ -145,7 +148,13 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
     ),
     settings: z
       .record(
-        z.string().regex(BUNDLE_SETTING_VARIABLE),
+        z
+          .string()
+          .regex(BUNDLE_SETTING_VARIABLE)
+          .refine(
+            isBundleSettingVariable,
+            "Build host control names are reserved.",
+          ),
         buildSecretHandleSchema,
       )
       .optional()
