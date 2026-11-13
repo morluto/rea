@@ -214,14 +214,43 @@ export const readMachoCommandNames = async (
   chargeProjection(table.commandCount, PROJECTED_COMMAND_BYTES);
   let records = table.commandCount;
   let retainedStringBytes = 0;
-  const retain = (bytes: Uint8Array): Uint8Array => {
-    if (bytes.byteLength > maximumStringBytes - retainedStringBytes)
+  const stringAllowance = (): number =>
+    Math.min(
+      maximumStringBytes - retainedStringBytes,
+      Math.floor(
+        (maximumProjectedBytes - projectedBytes) / PROJECTED_STRING_EXPANSION,
+      ),
+    );
+  const admitStringBytes = (count: number): void => {
+    if (count > maximumStringBytes - retainedStringBytes)
       throw new MachoCommandNamesLimitError(maximumStringBytes, "bytes");
+    if (count > stringAllowance())
+      throw new MachoCommandNamesLimitError(
+        maximumProjectedBytes,
+        "projected_bytes",
+      );
+  };
+  const retain = (bytes: Uint8Array): Uint8Array => {
+    admitStringBytes(bytes.byteLength);
     chargeProjection(bytes.byteLength, PROJECTED_STRING_EXPANSION);
     retainedStringBytes += bytes.byteLength;
     // Range readers may return Buffer views into a much larger read window.
     // Charge the retained length before allocating an independently owned copy.
     return Uint8Array.from(bytes);
+  };
+  const readString = async (
+    offset: number,
+    extent: number,
+    label: string,
+  ): Promise<Uint8Array> => {
+    const length = Math.min(extent, stringAllowance() + 1);
+    const bytes = await exact(offset, length);
+    const end = bytes.indexOf(0);
+    if (end < 0) {
+      if (length < extent) admitStringBytes(length);
+      throw new MachoBinaryFormatError(`${label} is unterminated`);
+    }
+    return retain(bytes.subarray(0, end));
   };
   const commands: MachoCommandNames["commands"][number][] = [];
   while (cursor.nextOffset !== null) {
@@ -372,17 +401,11 @@ export const readMachoCommandNames = async (
         throw new MachoBinaryFormatError(
           "Mach-O command string offset is invalid",
         );
-      const limit = Math.min(frame.size - offset, maximumStringBytes + 1);
-      const bytes = await exact(at + offset, limit);
-      const end = bytes.indexOf(0);
-      if (end < 0) {
-        if (limit < frame.size - offset)
-          throw new MachoCommandNamesLimitError(maximumStringBytes, "bytes");
-        throw new MachoBinaryFormatError(
-          "Mach-O command string is unterminated",
-        );
-      }
-      commandString = retain(bytes.subarray(0, end));
+      commandString = await readString(
+        at + offset,
+        frame.size - offset,
+        "Mach-O command string",
+      );
       commandStringOffset = offset;
       if (DYLIB_COMMANDS.has(frame.command)) {
         const fixed = await exact(at + 12, 12);
@@ -434,8 +457,7 @@ export const readMachoCommandNames = async (
         throw new MachoBinaryFormatError(
           "Mach-O prebound module bitmap exceeds its command",
         );
-      if (length > maximumStringBytes - retainedStringBytes)
-        throw new MachoCommandNamesLimitError(maximumStringBytes, "bytes");
+      admitStringBytes(length);
       prebound = {
         moduleCount,
         linkedModulesOffset,
@@ -501,12 +523,8 @@ export const readMachoCommandNames = async (
             currentLength = 0;
             if (linkerOptions.length === count) break;
           } else {
-            const remaining = maximumStringBytes - retainedStringBytes;
-            if (currentLength >= remaining)
-              throw new MachoCommandNamesLimitError(
-                maximumStringBytes,
-                "bytes",
-              );
+            const remaining = stringAllowance();
+            if (currentLength >= remaining) admitStringBytes(currentLength + 1);
             if (currentLength === current.byteLength) {
               const capacity = Math.min(
                 remaining,
@@ -565,20 +583,14 @@ export const readMachoCommandNames = async (
         throw new MachoBinaryFormatError(
           "Mach-O fileset entry string offset is invalid",
         );
-      const length = Math.min(frame.size - offset, maximumStringBytes + 1);
-      const value = await exact(at + offset, length);
-      const end = value.indexOf(0);
-      if (end < 0) {
-        if (length < frame.size - offset)
-          throw new MachoCommandNamesLimitError(maximumStringBytes, "bytes");
-        throw new MachoBinaryFormatError(
-          "Mach-O fileset entry string is unterminated",
-        );
-      }
       fileset = {
         address: view.getBigUint64(0, table.littleEndian),
         fileOffset: view.getBigUint64(8, table.littleEndian),
-        entryId: retain(value.subarray(0, end)),
+        entryId: await readString(
+          at + offset,
+          frame.size - offset,
+          "Mach-O fileset entry string",
+        ),
         reserved: view.getUint32(20, table.littleEndian),
       };
     }

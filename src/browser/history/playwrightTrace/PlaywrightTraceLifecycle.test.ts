@@ -1,4 +1,5 @@
 import { createDeferred } from "../../../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { readFile, rename, copyFile } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
@@ -240,7 +241,7 @@ it("bounds active imports without an unbounded queue and releases admission afte
     );
   const first = port.inspect(fixture.path);
   try {
-    await reached.promise;
+    await awaitAcknowledgement(reached.promise, first, "trace import");
     const second = await port.inspect(fixture.path);
     if (second.ok) throw new Error("Expected capacity refusal");
     expect(second.error._tag).toBe("AnalysisResourceConstraintError");

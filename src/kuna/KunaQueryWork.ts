@@ -142,8 +142,8 @@ export class KunaQueryWork {
         ...input,
         values: input.values(),
         signal,
-        deadline: this.deadline,
-        heapRequest: this.heapRequest,
+        deadline: input.deadline ?? this.deadline,
+        heapRequest: input.heapRequest ?? this.heapRequest,
       });
     } finally {
       release();

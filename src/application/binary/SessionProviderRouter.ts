@@ -139,23 +139,27 @@ export class SessionProviderRouter {
     } = {},
   ): Promise<readonly AnalysisProviderCandidateStatus[]> {
     const { signal, target, refresh = false } = options;
-    if (refresh && route.selection !== undefined) {
-      const current = await this.registry.candidates(
-        target,
-        signal === undefined ? {} : { signal },
-      );
-      return current.map((candidate) => ({
+    const candidates =
+      refresh && route.selection !== undefined
+        ? await this.registry.candidates(
+            target,
+            signal === undefined ? {} : { signal },
+          )
+        : (route.selection?.candidates ??
+          (await this.registry.candidates(
+            undefined,
+            signal === undefined ? {} : { signal },
+          )));
+    const binding = route.binding;
+    if (binding === null) return candidates;
+    return candidates.map((candidate) => {
+      const selected = candidate.provider.id === binding.identity.id;
+      return {
         ...candidate,
-        selected: candidate.provider.id === route.binding?.identity.id,
-      }));
-    }
-    return (
-      route.selection?.candidates ??
-      this.registry.candidates(
-        undefined,
-        signal === undefined ? {} : { signal },
-      )
-    );
+        selected,
+        selectionSource: selected ? binding.selectionSource : null,
+      };
+    });
   }
 
   /** Produce exact candidate rejections for an intentionally unbound route. */

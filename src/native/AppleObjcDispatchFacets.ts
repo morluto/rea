@@ -354,11 +354,10 @@ export const decodeObjcDispatchFacets = (input: {
       undefined,
       onTruncated,
     );
-    const properties = readObjcPropertiesOf(read, read.pointer(ro + 64n), {
+    const properties = readObjcPropertiesOf(read, ro + 64n, {
       owner: name,
       admit: () => budget.admit(),
       issues: categoryIssues,
-      location: hex(read.pointer(ro + 64n)),
       onTruncated,
     });
     const adoptedProtocols = protocolReader.readList(ro + 40n, onTruncated);

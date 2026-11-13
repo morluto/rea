@@ -16,11 +16,12 @@ import {
 import type { AnalysisViewParent } from "./analysisView.js";
 
 const carrier = ARTIFACT_COMPARISON_EXAMPLE.left;
-const freshInventory = () => {
+const freshInventory = (version: "current" | "historical" = "current") => {
   const inventory = artifactInventoryResultSchema.parse(
     carrier.normalized_result,
   );
   const root = inventory.occurrences[0]!;
+  if (version === "historical") delete root.relationship_coverage;
   const rootNode = inventory.nodes[0]!;
   root.artifact_kind = "container";
   root.artifact_format = "zip";
@@ -257,6 +258,19 @@ it("does not fabricate a selected field absent from the owning report", () => {
       fields: ["logical_path"],
     }),
   ).toThrow();
+});
+
+it("reads absent historical relationship coverage as unknown without changing the retained row", () => {
+  const inventory = freezeJsonSnapshot(freshInventory("historical"));
+  expect(
+    page(parent(inventory), {
+      kind: "inventory",
+      collection: "occurrences",
+      fields: ["relationship_coverage"],
+      limit: 1,
+    }).items,
+  ).toMatchObject([{ relationship_coverage: "unknown" }]);
+  expect(inventory.occurrences[0]).not.toHaveProperty("relationship_coverage");
 });
 
 it("borrows authenticated immutable facts and validates once across retained queries", () => {

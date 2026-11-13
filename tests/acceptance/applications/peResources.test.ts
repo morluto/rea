@@ -76,9 +76,17 @@ const expectPeInputFailuresAcrossAdapters = async (input: {
   const { cli, call, root } = input;
   const malformedPath = join(root, "malformed.exe");
   await writeFile(malformedPath, Buffer.from("not a PE image"));
+  const truncatedPath = join(root, "truncated-resource-table.exe");
+  const truncated = peResourceFixture();
+  const directory = truncated.directoryOffsets[0];
+  if (directory === undefined) throw new Error("Missing resource directory");
+  truncated.bytes.writeUInt16LE(0xffff, directory + 12);
+  truncated.bytes.writeUInt16LE(2, directory + 14);
+  await writeFile(truncatedPath, truncated.bytes);
   for (const [path, reason] of [
     [join(root, "missing.exe"), "invalid_value"],
     [malformedPath, "invalid_format"],
+    [truncatedPath, "invalid_format"],
   ] as const)
     await expectPeInputFailureAcrossAdapters({
       cli,

@@ -82,14 +82,68 @@ const parse = (
   bytes: Buffer,
   queries: readonly string[] = ["source display"],
   addresses: readonly string[] = ["192.0.2.9"],
+  family: "dns" | "mdns" | "llmnr" = "dns",
 ) =>
-  parseDnsMessageRaw([bytes.toString("hex"), 42, bytes.length, 0, 1], {
-    "dns.id_raw": ["0001", 42, 2, 0, 5],
-    Queries: { "dns.qry.name": queries },
-    Answers: { "dns.a": addresses },
-  });
+  parseDnsMessageRaw(
+    [bytes.toString("hex"), 42, bytes.length, 0, 1],
+    {
+      "dns.id_raw": ["0001", 42, 2, 0, 5],
+      Queries: { "dns.qry.name": queries },
+      Answers: { "dns.a": addresses },
+    },
+    family,
+  );
 const pointer = Buffer.from([0xc0, 0x0c]);
 const address = Buffer.from([192, 0, 2, 9]);
+
+it.each([
+  { family: "dns", hasAnswers: false },
+  { family: "dns", hasAnswers: true },
+  { family: "llmnr", hasAnswers: false },
+  { family: "llmnr", hasAnswers: true },
+] as const)(
+  "retains observed records but marks conventional TC responses incomplete: %j",
+  ({ family, hasAnswers }) => {
+    const bytes = packet(
+      label("61"),
+      hasAnswers ? [rr(pointer, 1, address)] : [],
+    );
+    bytes.writeUInt16BE(0x8380, 2);
+    const facts = parse(bytes, ["a"], hasAnswers ? ["192.0.2.9"] : [], family);
+    expect(facts.questions).toEqual([{ query: "a", labels_hex: ["61"] }]);
+    expect(facts.assigned).toEqual(hasAnswers ? [[0, "192.0.2.9"]] : []);
+    expect(facts.unattributed).toEqual([]);
+    expect(facts.incomplete).toBe(true);
+    expect(facts.incomplete_reasons).toContain(
+      "DNS message declares truncation (TC); captured records are incomplete",
+    );
+  },
+);
+
+it.each([false, true])(
+  "does not infer conventional truncation from multicast DNS TC (has answers: %s)",
+  (hasAnswers) => {
+    const bytes = packet(
+      label("61"),
+      hasAnswers ? [rr(pointer, 1, address)] : [],
+    );
+    bytes.writeUInt16BE(0x8400, 2);
+    const addresses = hasAnswers ? ["192.0.2.9"] : [];
+    const complete = parse(bytes, ["a"], addresses, "mdns");
+    expect(complete.incomplete).toBe(false);
+    bytes.writeUInt16BE(0x8600, 2);
+    expect(parse(bytes, ["a"], addresses, "mdns")).toEqual(complete);
+  },
+);
+
+it("preserves ownership limitations alongside declared DNS truncation", () => {
+  const bytes = packet(label("61"), [], [rr(pointer, 1, address)]);
+  bytes.writeUInt16BE(0x8380, 2);
+  const facts = parse(bytes);
+  expect(facts.assigned).toEqual([]);
+  expect(facts.unattributed).toEqual(["192.0.2.9"]);
+  expect(facts.incomplete_reasons).toHaveLength(2);
+});
 
 it("joins compressed CNAMEs using ASCII-folded bytes while retaining original labels", () => {
   const query = label("414243", "6578616d706c65");

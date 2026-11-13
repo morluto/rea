@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { jsonValueSchema } from "../jsonValue.js";
 import { desktopApplicationCaptureSchema } from "./desktopCapture.js";
+import { desktopViewPolicyInputSchema } from "./desktopViewPolicy.js";
 
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
 const format = z.enum([
@@ -24,8 +25,10 @@ const versionSchema = z.strictObject({
   present: z.boolean(),
   /** Null when the file is absent or its bytes were not retained. */
   sha256: sha256.nullable(),
-  /** Detected for each version, since a file can change format. */
+  /** Detected for each version, since a file can change format; a gzip file's is its document's. */
   format: format.nullable(),
+  /** Present when the view is of the document inside a gzip file. */
+  compression: z.literal("gzip").optional(),
   /** The read value; JSON `null` is a valid view, so check `view_error`. */
   view: jsonValueSchema.nullable(),
   /** Why no view was read, or null when the view (possibly `null`) was read. */
@@ -103,6 +106,14 @@ export const versionAt = (
 
 /** The normalized result of `inspect_desktop_application_state`. */
 export const desktopApplicationStateSchema = z.strictObject({
+  /** Policy actually used to produce these views; older Evidence may omit it. */
+  effective_view_policy: desktopViewPolicyInputSchema
+    .required()
+    // Historical policy records predate the additive table-view byte control.
+    .extend({
+      sqlite_view_bytes: desktopViewPolicyInputSchema.shape.sqlite_view_bytes,
+    })
+    .optional(),
   capture: z.strictObject({
     evidence_id: z.string().min(1),
     home: z.string().min(1),

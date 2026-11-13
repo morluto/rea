@@ -6,11 +6,10 @@ import {
   type AndroidJniLibraryObservation,
   type AndroidJniSelection,
 } from "./androidJniBindings.js";
-import type {
-  AndroidNativeDeclaration,
-  AndroidNativeDeclarations,
-} from "./androidNativeDeclarations.js";
+import type { AndroidNativeDeclarations } from "./androidNativeDeclarations.js";
 import type { AndroidJniLibraryFacts } from "./androidJniLibraryFacts.js";
+
+type AndroidNativeDeclaration = AndroidNativeDeclarations["methods"][number];
 
 const declaration = (
   changes: Partial<AndroidNativeDeclaration> = {},

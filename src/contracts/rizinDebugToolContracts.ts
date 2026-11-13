@@ -23,7 +23,7 @@ export const RIZIN_DEBUG_TOOL_CONTRACTS = [
     ...toolContractMetadata("start_rizin_debug_session"),
     kind: "native-provider",
     description:
-      "Start a persistent Rizin debugger session using `-N` to suppress user settings and scripts while retaining plugins, `-0` for NUL framing, and `-d` with an optional caller-selected IO debugger backend. Requires a caller-selected Linux TTY for inferior stdin, stdout and stderr; the target may read from and write directly to that terminal while running and after detach. Before detaching, REA verifies both output destinations, that the target does not hold the debugger command stream, and `dbg.exitkills=false`. Backend and target capabilities depend on the installed build. The session lives in this REA MCP process. Persistent sessions require Linux `/proc` descriptor readback. In a shared MCP server, starting this session retires any active binary-analysis session; after target effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
+      "Start a persistent Rizin debugger for one selected target/backend. Linux and a caller-selected TTY for inferior stdin/stdout/stderr are required; the target may use that terminal after detach. Startup suppresses user settings/scripts while retaining plugins. Detach requires verified output sinks, no target access to the debugger command stream, and dbg.exitkills=false. Capabilities depend on the installed backend. This shared-server operation retires binary analysis: close Ghidra explicitly first, then reopen the binary after effects settle.",
     inputSchema: z.strictObject({
       path: localPathStringSchema,
       inferior_tty: localPathStringSchema,
@@ -45,7 +45,7 @@ export const RIZIN_DEBUG_TOOL_CONTRACTS = [
     ...toolContractMetadata("rizin_debug_command"),
     kind: "native-provider",
     description:
-      "Execute one unrestricted command in a persistent Rizin debugger session. Returns raw output inline with Evidence, including backend output interleaved before the completion marker. If the command exceeds the output-byte, frame-byte, or frame-count limit, `output_truncated` is true and `completion_status` is `unknown`; retained partial output is returned and the owned debugger session is stopped. Evidence names the cap that stopped capture. Unsolicited frames already queued before the command make the session unavailable because correlation is ambiguous. Commands can access local files, shell, network, plugins, and target state; effects depend on the active backend and target. In a shared MCP server, this admitted command closes any active binary-analysis session; after its effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
+      "Run one unrestricted command in a persistent Rizin debugger; it can access target state, plugins, shell, files and network. Returns raw/interleaved session output as Evidence. Output/frame limits stop the owned debugger and retain partial output with output_truncated and unknown completion. Prequeued unsolicited frames refuse the call because correlation is ambiguous. This shared-server operation retires binary analysis: close Ghidra explicitly first, then reopen the binary after effects settle.",
     inputSchema: z.strictObject({
       session_id: sessionId,
       command: z

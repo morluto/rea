@@ -5,7 +5,11 @@ import { createHash } from "node:crypto";
 
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
-import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import type {
   AnalyzedJavaScriptArtifactFile,
   JavaScriptArtifactAnalysis,
@@ -24,6 +28,13 @@ import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 const SHA256 = "a".repeat(64);
 const REASON =
   "main.js: Resource constraint during analyze_javascript_application: Owned JavaScript worker exhausted its heap while analyzing main.js during static";
+
+/** Preserve the explicit artifact filename when analyzing owned test fixtures. */
+const analyzeOwnedSource = (source: string, path: string) => {
+  const parsed = parseJavaScriptSource(source, path);
+  if (parsed === null) throw new Error(`Unable to parse ${path}`);
+  return analyzeParsedJavaScriptStaticSource(source, parsed);
+};
 
 const skippedFile = (): JavaScriptArtifactFile => ({
   path: "main.js",
@@ -245,15 +256,17 @@ it.each([false, true])(
     const analysis = analysisFor([
       {
         file: setter,
-        javascript: analyzeJavaScriptStaticSource(
+        javascript: analyzeOwnedSource(
           'const { app } = require("electron"); app.setAppPath("/changed");',
+          setter.path,
         ),
         semantic: null,
       },
       {
         file: window,
-        javascript: analyzeJavaScriptStaticSource(
+        javascript: analyzeOwnedSource(
           'const { BrowserWindow } = require("electron"); new BrowserWindow().loadFile("index.html");',
+          window.path,
         ),
         semantic: null,
       },
@@ -361,20 +374,21 @@ it.each([
     const entries: AnalyzedJavaScriptArtifactFile[] = [
       {
         file: main,
-        javascript: analyzeJavaScriptStaticSource(statement + window),
+        javascript: analyzeOwnedSource(statement + window, main.path),
         semantic: null,
       },
       {
         file: other,
-        javascript: analyzeJavaScriptStaticSource(window),
+        javascript: analyzeOwnedSource(window, other.path),
         semantic: null,
       },
       ...(gap === "transitive-unselected"
         ? [
             {
               file: makeFile("a/middle.cjs"),
-              javascript: analyzeJavaScriptStaticSource(
+              javascript: analyzeOwnedSource(
                 'require("./change.cjs");',
+                "a/middle.cjs",
               ),
               semantic: null,
             },

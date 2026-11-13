@@ -14,6 +14,7 @@ import {
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { createElectronEvidence } from "./ElectronEvidence.js";
+import { jsonObjectSchema, jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   electronPageInspectionSchema,
   electronTargetListSchema,
@@ -39,7 +40,16 @@ export const listElectronTargets = async (
     );
   const result = await ready.value.listTargets(input, options);
   if (!result.ok) return result;
-  const report = electronTargetListSchema.safeParse(result.value);
+  const json = jsonValueSchema.safeParse(result.value);
+  if (!json.success)
+    return err(
+      new AnalysisOutputError(
+        "list_electron_targets",
+        "Electron provider returned non-JSON target data.",
+        { cause: json.error },
+      ),
+    );
+  const report = electronTargetListSchema.safeParse(json.data);
   if (!report.success)
     return err(
       new AnalysisOutputError(
@@ -52,7 +62,7 @@ export const listElectronTargets = async (
     createElectronEvidence(
       "list_electron_targets",
       input,
-      report.data,
+      { source: json.data, facts: report.data },
       ready.value.identity(),
     ),
     options.signal,
@@ -75,19 +85,28 @@ export const inspectElectronPage = async (
     );
   const result = await ready.value.inspectPage(input, options);
   if (!result.ok) {
-    const partial = result.error.partialObservation;
-    if (
-      partial !== undefined &&
-      "kind" in partial &&
-      partial.kind === "electron-page-observation"
-    ) {
-      const report = electronPageInspectionSchema.safeParse(partial.inspection);
+    const partial = jsonObjectSchema.safeParse(result.error.partialObservation);
+    if (partial.success && partial.data.kind === "electron-page-observation") {
+      const report = electronPageInspectionSchema.safeParse(
+        partial.data.inspection,
+      );
       if (report.success) {
+        const mismatch = pageSelectionFailure(input, report.data);
+        if (mismatch !== undefined) {
+          result.error.retainSecondaryFailure(mismatch);
+          return err(
+            keepIncompleteObservation(
+              result.error,
+              "inspect_electron_page",
+              "Electron provider retained a non-JSON incomplete observation.",
+            ),
+          );
+        }
         const inspection = {
           ...report.data,
           limitations: [
             ...report.data.limitations,
-            partial.cleanup === "transport-closed"
+            partial.data.cleanup === "transport-closed"
               ? "REA closed its CDP transport; this does not imply target shutdown."
               : "CDP transport cleanup remains incomplete.",
           ],
@@ -95,7 +114,10 @@ export const inspectElectronPage = async (
         result.error.partialObservation = createElectronEvidence(
           "inspect_electron_page",
           input,
-          inspection,
+          {
+            source: jsonValueSchema.parse(partial.data.inspection),
+            facts: inspection,
+          },
           ready.value.identity(),
         );
         return result;
@@ -109,7 +131,16 @@ export const inspectElectronPage = async (
       ),
     );
   }
-  const report = electronPageInspectionSchema.safeParse(result.value);
+  const json = jsonValueSchema.safeParse(result.value);
+  if (!json.success)
+    return err(
+      new AnalysisOutputError(
+        "inspect_electron_page",
+        "Electron provider returned non-JSON page data.",
+        { cause: json.error },
+      ),
+    );
+  const report = electronPageInspectionSchema.safeParse(json.data);
   if (!report.success)
     return err(
       new AnalysisOutputError(
@@ -118,16 +149,32 @@ export const inspectElectronPage = async (
         { cause: report.error },
       ),
     );
+  const mismatch = pageSelectionFailure(input, report.data);
+  if (mismatch !== undefined)
+    return err(mismatch.retainPartialObservation(report.data));
   return completeProviderEvidence(
     createElectronEvidence(
       "inspect_electron_page",
       input,
-      report.data,
+      { source: json.data, facts: report.data },
       ready.value.identity(),
     ),
     options.signal,
   );
 };
+
+/** Retained facts must describe the page and window the caller selected. */
+const pageSelectionFailure = (
+  input: InspectElectronPageInput,
+  report: ElectronPageInspection,
+): AnalysisOutputError | undefined =>
+  report.target.target_id !== input.target_id ||
+  report.capture_window.observation_ms !== input.observation_ms
+    ? new AnalysisOutputError(
+        "inspect_electron_page",
+        "Electron provider changed the selected page or observation window.",
+      )
+    : undefined;
 
 const requireProvider = (
   provider: ElectronObservationPort | undefined,

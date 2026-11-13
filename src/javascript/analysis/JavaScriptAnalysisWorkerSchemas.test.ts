@@ -1,6 +1,16 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
+
+const analyzeCommonJsSource = (source: string) => {
+  const file = parseJavaScriptSource(source, "fixture.cjs");
+  if (file === null) throw new Error("Expected valid CommonJS fixture");
+  return analyzeParsedJavaScriptStaticSource(source, file);
+};
 import {
   javaScriptWorkerModuleHeaderSchema,
   javaScriptWorkerModuleRecordSchema,
@@ -54,7 +64,7 @@ it("transfers bounded alias selection coverage across the worker boundary", () =
 });
 
 it("retains application path change identity and provenance across the worker boundary", () => {
-  const facts = analyzeJavaScriptStaticSource(`
+  const facts = analyzeCommonJsSource(`
     const { app } = require("electron");
     app.setAppPath("./other");
   `);
@@ -83,6 +93,61 @@ it("transfers getter expansion limits and unknown bindings across the worker bou
     ).toEqual(record);
   }
   expect(ir.coverage.resourceLimits).toEqual(["getter-expansion"]);
+});
+
+it("retains conditional CommonJS provenance and links across the worker boundary", () => {
+  const ir = analyzeJavaScriptSemantics(
+    'const { readFile } = require("node:fs");',
+  );
+  const binding = ir.bindings.find(({ name }) => name === "readFile");
+  const link = ir.moduleLinks.find(({ specifier }) => specifier === "node:fs");
+  expect(binding?.provenance).toMatchObject({
+    status: "ambiguous",
+    origins: [{ loaderAuthority: "candidate" }],
+  });
+  expect(link).toMatchObject({ loaderAuthority: "candidate" });
+  expect(
+    javaScriptWorkerModuleRecordSchema.safeParse({
+      kind: "binding",
+      value: {
+        ...binding,
+        provenance: { ...binding?.provenance, status: "module", reason: null },
+      },
+    }).success,
+  ).toBe(false);
+  for (const record of [
+    { kind: "binding", value: binding },
+    { kind: "module-link", value: link },
+  ]) {
+    expect(
+      javaScriptWorkerModuleRecordSchema.parse(
+        JSON.parse(JSON.stringify(record)),
+      ),
+    ).toEqual(record);
+  }
+});
+
+it("transfers conditional require requests without claiming a loader", () => {
+  const facts = analyzeJavaScriptStaticSource(
+    'require("./dep.cjs"); require.resolve("./config.json");',
+  );
+  expect(facts.references).toEqual([
+    expect.objectContaining({
+      specifier: "./dep.cjs",
+      operation: "load",
+      loader_authority: "candidate",
+    }),
+    expect.objectContaining({
+      specifier: "./config.json",
+      operation: "resolve",
+      loader_authority: "candidate",
+    }),
+  ]);
+  expect(
+    javaScriptWorkerStaticAnalysisSchema.parse(
+      JSON.parse(JSON.stringify(facts)),
+    ),
+  ).toEqual(facts);
 });
 
 it("retains candidate endpoint interpretation across the worker boundary", () => {
@@ -176,7 +241,7 @@ it("preserves partial request targets through the strict worker schema", () => {
 
 it("preserves scoped IPC receiver provenance and rejects malformed scope metadata", () => {
   const facts =
-    analyzeJavaScriptStaticSource(`const {BrowserWindow} = require("electron");
+    analyzeCommonJsSource(`const {BrowserWindow} = require("electron");
     const window = new BrowserWindow(); window.webContents.mainFrame.ipc.handle("scoped", () => {});`);
   expect(facts.electron.ipc).toHaveLength(1);
   expect(facts.electron.ipc[0]?.receiver?.kind).toBe("main-frame");

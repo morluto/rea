@@ -407,6 +407,10 @@ relying on the new scope. While the variable is unset, the existing default
 setup continues scanning. Adding the configuration file alone does not change
 default setup in this user-owned repository.
 
+Pull-request scans are cancelled when superseded. Active scans on `main` finish
+so frequent pushes cannot prevent a complete baseline from being uploaded.
+Cancelled runs skip the SARIF artifact upload when no report was produced.
+
 Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
 jobs run one at a time. Complete SARIF reports are retained for seven days.
 For a scope comparison, use the same source SHA, CodeQL bundle, default query
@@ -602,6 +606,12 @@ For partial Evidence delivery, verify that same-session readback preserves
 identity and provenance without rerunning the provider. Include a no-writer
 control that keeps completed Evidence inline and preserves the original failure.
 
+For a seekable file with a known extent, distinguish a provably impossible wire
+extent from an independent representation limit. Pair the malformed declaration
+with a structurally possible over-limit control. A count-only truncated fixture
+does not establish capacity behavior. This does not require decoding an opaque
+compressed payload merely to apply its declared expansion limit.
+
 When producer order is unspecified, synchronize fixtures on the observed request
 or completion event. A filename, generated key, or fixed delay does not prove
 which item completed before cancellation. Preserve real producer ordering and
@@ -702,16 +712,16 @@ the affected owners and applicable scenarios below. Include temporary snapshots
 and one-shot commands. Use public CLI/MCP workflows where practical and a
 controlled production seam for interleavings that cannot be reproduced reliably.
 
-| Scenario                                                                                | Assertion and control                                                                                                                                                                                                                                |
-| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Target admitted; startup still pending                                                  | Status preserves the readiness distinction and observed startup activity; readiness requires the provider's documented proof.                                                                                                                        |
-| First handshake is late, absent, invalid, or recovered during close                     | Initial and recovery paths retain the same authenticated identity facts. Foreign run/token controls cannot authorize cleanup; authenticated idle/native work survives the unauthenticated listener deadline.                                         |
-| Launch returns an error with a valid process handle                                     | Cover already-exited and still-live owned processes. Verify observed exit separately from creation; failed termination or unavailable identity remains unresolved.                                                                                   |
-| Cancellation arrives after workload exit, during result reads or temporary-root removal | Return typed cancellation with available partial observations and actual cleanup status. The non-aborted control succeeds; existing primary/cleanup failures keep their precedence.                                                                  |
-| Children have mixed health or cleanup outcomes                                          | Missing peer health does not erase an observed failure or activity. Idle plus unknown stays unknown. Retry a failed child without closing a successful peer again, including after a close-option change.                                            |
-| Cleanup fails after success or primary failure                                          | Public output retains the completed observation or primary diagnostic, remaining resources, and owner recovery action. Restore the denied resource and verify the owning cleanup retry.                                                              |
-| Cleanup owners recover after an error was returned                                      | Retain the original child and aggregate errors and project them after each owner releases. A successful peer stays released; the aggregate remains incomplete until all owners release. Preserve the first cause even when rejection is `undefined`. |
-| Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported.                       |
+| Scenario                                                                                | Assertion and control                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Target admitted; startup still pending                                                  | Status preserves the readiness distinction and observed startup activity; readiness requires the provider's documented proof.                                                                                                                                                             |
+| First handshake is late, absent, invalid, or recovered during close                     | Initial and recovery paths retain the same authenticated identity facts. Foreign run/token controls cannot authorize cleanup; authenticated idle/native work survives the unauthenticated listener deadline.                                                                              |
+| Launch returns an error with a valid process handle                                     | Cover already-exited and still-live owned processes. Verify observed exit separately from creation; failed termination or unavailable identity remains unresolved.                                                                                                                        |
+| Cancellation arrives after workload exit, during result reads or temporary-root removal | Before the documented commit cutoff, return typed cancellation with available partial observations and actual cleanup status. After commit, assert the owning publication outcome and receipt. The non-aborted control succeeds; existing primary/cleanup failures keep their precedence. |
+| Children have mixed health or cleanup outcomes                                          | Missing peer health does not erase an observed failure or activity. Idle plus unknown stays unknown. Retry a failed child without closing a successful peer again, including after a close-option change.                                                                                 |
+| Cleanup fails after success or primary failure                                          | Public output retains the completed observation or primary diagnostic, remaining resources, and owner recovery action. Restore the denied resource and verify the owning cleanup retry.                                                                                                   |
+| Cleanup owners recover after an error was returned                                      | Retain the original child and aggregate errors and project them after each owner releases. A successful peer stays released; the aggregate remains incomplete until all owners release. Preserve the first cause even when rejection is `undefined`.                                      |
+| Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported.                                                            |
 
 Shared process-supervision controls separate leader exit from output closure.
 Cover output during held or failed cleanup, bounded retention and drain timeout,
@@ -732,6 +742,16 @@ materialized source. Exercise descriptor close failure and retry before output
 publication.
 Use explicit abort reasons and assert their identity at admission and after
 provider completion, alongside retained observations and cleanup state.
+Include a physical I/O failure reused as the abort reason and genuine
+cancellation whose reason is already a typed error; neither error names nor
+value equality establishes origin. Assert that cleanup capabilities carried by
+that opaque reason are neither adopted nor released. Verify an owning command's timeout or
+refusal policy when preparation records cancellation but its caller is still
+active. Parallel inspection failures must retain completed observations and
+mixed physical/cancelled request facts after all peers settle, including
+multiple failed closes and partial cleanup retry. For input copying, hold an
+admitted read or write in flight before cancelling; descriptor close and
+workspace retirement must await its settlement.
 
 Electron fuse regressions cover actual descriptor close denial and retry through
 the built CLI, same-connection MCP recovery, mixed descriptor outcomes, and

@@ -42,7 +42,7 @@ export const CUTTER_TOOL_CONTRACTS = [
     ...toolContractMetadata("list_cutter_sessions"),
     kind: "native-provider",
     description:
-      "List live REA bridge sessions hosted by upstream Cutter instances, including observed document identity and bridge-directory security status. Discovery admits at most 256 descriptor candidates (16 MiB at the descriptor byte limit). That candidate budget is separate from REA_BRIDGE_MAX_REQUEST_BYTES and has no runtime override. Discovery reads and probes at most eight concurrently, and reports bridge_directory_capacity_exceeded rather than claiming no sessions when that budget is exceeded.",
+      "Find live REA bridge sessions in Cutter and return document identity and bridge-directory security status. Examines at most 256 descriptors with up to eight concurrent probes; excess capacity returns bridge_directory_capacity_exceeded, not an empty session list. The fixed discovery budget is separate from REA_BRIDGE_MAX_REQUEST_BYTES and cannot be raised at runtime.",
     inputSchema: cutterListInputSchema,
     outputSchema: cutterDiscoverySchema,
     examples: [{ title: "List open Cutter instances", input: {} }],
@@ -52,7 +52,7 @@ export const CUTTER_TOOL_CONTRACTS = [
     ...toolContractMetadata("cutter_command"),
     kind: "native-provider",
     description:
-      "Run one arbitrary Rizin command in a selected live Cutter session. Commands may edit and persist analysis state or execute plugin-provided effects; completion uncertainty is returned as Evidence and must not be retried automatically. The authenticated request and response frame is bounded by REA_BRIDGE_MAX_REQUEST_BYTES (default 16777216 bytes, floor 7464, maximum 536870887). The payload budget excludes the terminating LF. An out-of-band Cutter process without the setting uses 16777216 bytes; a mismatch is refused before the command is sent. In a shared MCP server, this admitted command closes any active binary-analysis session; after its effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
+      "Run one arbitrary Rizin command in a selected Cutter session; it may persist edits or execute plugin effects. Reports completion uncertainty as Evidence; do not retry automatically. An admitted command retires shared binary analysis: close active Ghidra explicitly first, then reopen with open_binary after command effects settle. Supply session_id and expected_generation from discovery. REA_BRIDGE_MAX_REQUEST_BYTES bounds authenticated request/response payloads excluding LF (default 16777216, range 7464..536870887); mismatched client/Cutter budgets refuse dispatch. An out-of-band Cutter without this setting uses the default.",
     inputSchema: cutterCommandInputSchema,
     outputSchema: evidenceResultOf(cutterCommandResultSchema),
     examples: [

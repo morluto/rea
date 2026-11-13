@@ -89,6 +89,50 @@ const registerImplicitInvocationComparisonTests = (): void => {
 };
 
 describe("JavaScript export return-shape comparison", () => {
+  it("keeps independently unresolved values unknown even when their diagnostic projections match", async () => {
+    const [left, right] = await analyzeSources({
+      left: 'export default () => ({kind: "result", value: query(), options: {}, stable: 1});',
+      right:
+        'export default () => ({kind: "result", value: other(), options: {}, stable: 1});',
+    });
+    const execution = compareJavaScriptExportShapesEvidence({
+      left: left.evidence,
+      right: right.evidence,
+      left_module_path: "parser.mjs",
+      left_export_name: "default",
+      right_module_path: "parser.mjs",
+      right_export_name: "default",
+    });
+    if (!execution.ok) throw execution.error;
+    const result = execution.value.result;
+    expect(execution.value.sources[0]).toBe(left.evidence);
+    expect(execution.value.sources[1]).toBe(right.evidence);
+    expect(execution.value.evidence.normalized_result).toEqual(result);
+    expect(result.evidence_links).toEqual([
+      left.evidence.evidence_id,
+      right.evidence.evidence_id,
+    ]);
+    expect(result.changes).toEqual([
+      expect.objectContaining({
+        path: "/value",
+        status: "unknown",
+        presence: { left: "present", right: "present" },
+        left: expect.objectContaining({ availability: "unknown" }),
+        right: expect.objectContaining({ availability: "unknown" }),
+      }),
+    ]);
+    expect(result.summary).toEqual({
+      added: 0,
+      removed: 0,
+      changed: 0,
+      unknown: 1,
+    });
+    expect(result.coverage.status).toBe("partial");
+    expect(inventoryProperties(result, "left", 0)).toEqual(
+      expect.arrayContaining(["/kind", "/value", "/options", "/stable"]),
+    );
+  });
+
   it("propagates proven ancestor absence to nested additions and removals", async () => {
     const [left, right] = await analyzeSources({
       left: 'export default () => ({kind:"result"});',
@@ -132,8 +176,10 @@ describe("JavaScript export return-shape comparison", () => {
       ]),
     );
   });
+});
 
-  it("reports exactly the heading depth addition from source-owned parser fixtures", async () => {
+describe("JavaScript export source-owned parser comparison", () => {
+  it("reports the heading depth addition and unresolved text from source-owned parser fixtures", async () => {
     const root = await temporaryRoot();
     const leftRoot = join(root, "left");
     const rightRoot = join(root, "right");
@@ -176,9 +222,9 @@ describe("JavaScript export return-shape comparison", () => {
       added: 1,
       removed: 0,
       changed: 0,
-      unknown: 0,
+      unknown: 3,
     });
-    expect(first.changes).toEqual([
+    expect(first.changes.filter(({ status }) => status !== "unknown")).toEqual([
       expect.objectContaining({
         status: "added",
         path: "/depth",
@@ -188,9 +234,21 @@ describe("JavaScript export return-shape comparison", () => {
         right: { availability: "literal", value: 1 },
       }),
     ]);
-    expect(first.changes.some(({ path }) => path === "/text")).toBe(false);
+    expect(first.changes.filter(({ status }) => status === "unknown")).toEqual(
+      expect.arrayContaining(
+        ["heading", "paragraph", "strong"].map((value) =>
+          expect.objectContaining({
+            path: "/text",
+            discriminant: { path: "/type", value },
+            status: "unknown",
+            left: expect.objectContaining({ availability: "unknown" }),
+            right: expect.objectContaining({ availability: "unknown" }),
+          }),
+        ),
+      ),
+    );
     expect(first.coverage).toMatchObject({
-      status: "complete-within-inputs",
+      status: "partial",
       paired_variants: 3,
       unpaired_left_variants: 0,
       unpaired_right_variants: 0,
@@ -199,7 +257,9 @@ describe("JavaScript export return-shape comparison", () => {
       "This static comparison cannot establish runtime semantics; run behavioral probes directly against the relevant application versions when that evidence is required.",
     );
   });
+});
 
+describe("JavaScript export return-shape value uncertainty", () => {
   registerImplicitInvocationComparisonTests();
 
   it("keeps additions unknown when spread coverage is incomplete", async () => {
@@ -644,7 +704,7 @@ describe("JavaScript export matching uncertain projections", () => {
   });
 
   it.each(["delete result.count;", "result.count = query();"])(
-    "omits matching uncertain projections after %s",
+    "retains matching uncertain projections after %s",
     async (mutation) => {
       const source = `export default function make() {
         const result = { kind: "result", count: 1 };
@@ -656,12 +716,20 @@ describe("JavaScript export matching uncertain projections", () => {
       expect(
         result.property_inventories.map(({ side }) => side).sort(),
       ).toEqual(["left", "right"]);
-      expect(result.changes).toEqual([]);
+      expect(result.changes).toEqual([
+        expect.objectContaining({
+          path: "/count",
+          status: "unknown",
+          presence: { left: "unknown-coverage", right: "unknown-coverage" },
+          left: expect.objectContaining({ availability: "unknown" }),
+          right: expect.objectContaining({ availability: "unknown" }),
+        }),
+      ]);
       expect(result.summary).toEqual({
         added: 0,
         removed: 0,
         changed: 0,
-        unknown: 0,
+        unknown: 1,
       });
       expect(result.coverage.status).toBe("partial");
       expect(
@@ -1195,6 +1263,25 @@ describe("JavaScript export return-shape projection", () => {
     expect(result.coverage.status).toBe("complete-within-inputs");
     expect(result.coverage.left_omitted_fields).toBe(0);
     expect(result.coverage.right_omitted_fields).toBe(0);
+    const paths = [
+      "/a_type",
+      ...Array.from({ length: 70 }, (_, i) => `/field${String(i)}`),
+    ].sort();
+    expect(result.property_inventories.map(({ side }) => side).sort()).toEqual([
+      "left",
+      "right",
+    ]);
+    for (const inventory of result.property_inventories) {
+      expect(inventory.paired).toBe(true);
+      expect([...inventory.properties].sort()).toEqual(paths);
+    }
+    expect(result.changes).toEqual([]);
+    expect(result.summary).toEqual({
+      added: 0,
+      removed: 0,
+      changed: 0,
+      unknown: 0,
+    });
   });
 });
 

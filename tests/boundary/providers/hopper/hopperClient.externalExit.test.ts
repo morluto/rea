@@ -1,14 +1,12 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
 
 import { expect, it, onTestFinished } from "vitest";
 
 import {
   createAnalysisExecution,
   type AnalysisClient,
-  type AnalysisOperation,
   type AnalysisProviderCandidate,
   type CapabilityDescriptor,
   type ProviderIdentity,
@@ -89,8 +87,7 @@ const makeCandidate = (
 };
 
 const fixtureAnalysisClient = (identity: ProviderIdentity): AnalysisClient => ({
-  execute: (operation: AnalysisOperation) =>
-    Promise.resolve(ok(createAnalysisExecution(null, identity))),
+  execute: () => Promise.resolve(ok(createAnalysisExecution(null, identity))),
   close: () => Promise.resolve(ok(null)),
 });
 

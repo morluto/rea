@@ -136,7 +136,7 @@ describe("CDP discovery cancellation ownership", () => {
     ).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    expect(failure).toMatchObject({ cause: reason });
+    expect((failure as AnalysisCancelledError).cause).toBe(reason);
     expect(requests).toBe(0);
   });
 
@@ -164,7 +164,7 @@ describe("CDP discovery cancellation ownership", () => {
 
     expect(requestedPath).toBe("/json/version");
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    expect(failure).toMatchObject({ cause: reason });
+    expect((failure as AnalysisCancelledError).cause).toBe(reason);
   });
 
   it("does not replace a primary discovery failure when cancellation arrives later", async () => {
@@ -259,7 +259,7 @@ describe("CDP discovery cancellation ownership", () => {
     ).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    expect(failure).toMatchObject({ cause: reason });
+    expect((failure as AnalysisCancelledError).cause).toBe(reason);
   });
 
   it("keeps a deadline rejection when the caller aborts only after timeout", async () => {

@@ -6,9 +6,9 @@ import {
   semanticStaticPropertyKey,
   staticObjectProperty,
   staticObjectPropertyReader,
+  staticObjectCopyPropertyReader,
   staticObjectPropertyNames,
 } from "./javascriptAstValues.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 it("keeps string spread indices separate from named descriptor fields", () => {
   for (const text of ["", "x", "😀", "x".repeat(1_000_000)]) {
@@ -144,17 +144,17 @@ it("limits unary-plus keys to transparent numeric literals", () => {
     ).toBeNull();
 });
 
-it("bounds nested inline object spreads without losing a shallow final property", () => {
+it("reads nested inline object spreads beyond the former evaluator depth cap", () => {
   let object = t.objectExpression([
     t.objectProperty(t.identifier("stdio"), t.stringLiteral("inherit")),
   ]);
-  for (let depth = 0; depth < SEMANTIC_EXPRESSION_DEPTH_LIMIT; depth++)
+  for (let depth = 0; depth < 1_024; depth++)
     object = t.objectExpression([t.spreadElement(object)]);
   expect(staticObjectProperty(object, "stdio").status).toBe("explicit");
   expect(
     staticObjectProperty(t.objectExpression([t.spreadElement(object)]), "stdio")
       .status,
-  ).toBe("dynamic");
+  ).toBe("explicit");
 });
 
 it("collects complete own-key sets through bounded literal spreads", () => {
@@ -221,17 +221,17 @@ it("retains known keys alongside unresolved object membership", () => {
   ).toEqual({ status: "partial", names: ["direct"] });
 });
 
-it("does not claim a complete key set after exceeding spread depth", () => {
+it("keeps complete key sets across deeply nested finite inline spreads", () => {
   let object = t.objectExpression([
     t.objectProperty(t.identifier("query"), t.objectExpression([])),
   ]);
-  for (let depth = 0; depth < SEMANTIC_EXPRESSION_DEPTH_LIMIT; depth++)
+  for (let depth = 0; depth < 1_024; depth++)
     object = t.objectExpression([t.spreadElement(object)]);
   expect(staticObjectPropertyNames(object).status).toBe("complete");
   expect(
     staticObjectPropertyNames(t.objectExpression([t.spreadElement(object)]))
       .status,
-  ).toBe("partial");
+  ).toBe("complete");
 });
 
 it("enumerates a wide inline spread without a variadic call overflow", () => {
@@ -423,4 +423,45 @@ it("keeps primitive unary results propertyless and typeof results index-only", (
     value: value.value,
   });
   expect(staticObjectProperty(object, "0")).toEqual({ status: "dynamic" });
+});
+
+it("keeps enumerable-copy facts separate from inherited lookup", () => {
+  const inherited = t.objectExpression([
+    t.objectProperty(
+      t.identifier("__proto__"),
+      t.objectExpression([
+        t.objectProperty(
+          t.identifier("minVersion"),
+          t.stringLiteral("TLSv1.2"),
+        ),
+      ]),
+    ),
+  ]);
+  expect(staticObjectPropertyReader(inherited)("minVersion").status).toBe(
+    "dynamic",
+  );
+  expect(staticObjectCopyPropertyReader(inherited)("minVersion").status).toBe(
+    "missing",
+  );
+  const value = t.objectExpression([]);
+  const copied = t.objectExpression([
+    t.objectProperty(t.stringLiteral("__proto__"), value, true),
+  ]);
+  expect(staticObjectCopyPropertyReader(copied)("__proto__")).toMatchObject({
+    status: "explicit",
+    value,
+  });
+});
+it("ignores null and propertyless copy sources without erasing indexed strings", () => {
+  for (const source of [
+    t.nullLiteral(),
+    t.numericLiteral(1),
+    t.arrowFunctionExpression([], t.numericLiteral(1)),
+  ])
+    expect(staticObjectCopyPropertyReader(source)("minVersion").status).toBe(
+      "missing",
+    );
+  const read = staticObjectCopyPropertyReader(t.stringLiteral("abc"));
+  expect(read("0").status).toBe("dynamic");
+  expect(read("minVersion").status).toBe("missing");
 });

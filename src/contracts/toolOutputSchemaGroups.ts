@@ -106,7 +106,6 @@ import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMe
 import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";
 import {
   addressedEntry,
-  functionDossierOutput,
   lifecycleResultOf,
   nullableText,
   procedureInfoOutput,

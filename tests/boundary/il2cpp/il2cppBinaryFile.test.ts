@@ -699,6 +699,33 @@ it("says why no MetadataRegistration or inferred type table was accepted", () =>
   ).toContain("no single code-loaded run of Il2CppType pointers");
 });
 
+it("ignores an unrelated unaligned Mach-O bind during module-array fallback", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+  bytes.fill(0, 0x600, 0x610);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x500]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  const linked = link(bytes);
+  expect(linked.code_gen_modules_field).toBeNull();
+  expect(linked.code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
+  expect(linked.method_addresses).toEqual(expectedAddresses);
+});
+
+it("ignores an unrelated unaligned Mach-O bind during type-table fallback", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+  bytes.fill(0, 0x800, 0x880);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x900]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(linkWholeTable(bytes).types_count).toBe(4);
+});
+
 it("does not let a dyld-bound slot's placeholder decide the type-table run", () => {
   const outcome = (placeholder: bigint) => {
     // The last table slot (0x918) is bound by dyld; its stored word is only a
@@ -1116,6 +1143,11 @@ it.each([0n, FIXTURE_BINARY_BASE + 0x210n])(
   },
 );
 
+it("ignores unrelated unaligned Mach-O binds while finding module records", () => {
+  const linked = link(createIl2cppDyldBindFixture(0n, 0x704));
+  expect(linked.method_addresses).toEqual(expectedAddresses);
+});
+
 it("keeps unbound Mach-O method words classified from their values", () => {
   const linked = link(createIl2cppBinaryFixture());
   expect(linked.method_addresses[1]).toEqual(expectedAddresses[1]);
@@ -1209,6 +1241,29 @@ it.each([
     expect(link(overlapping).method_addresses[1]).toEqual(
       expectedAddress("unknown"),
     );
+  },
+);
+
+it.each([
+  ["an x86-64 TLS descriptor", 62, 36, undefined],
+  ["an AArch64 TLS descriptor", 183, 1031, undefined],
+  ["an x86-64 COPY of a pointer-sized symbol", 62, 5, 8n],
+  ["an x86-64 COPY of a 24-byte symbol", 62, 5, 24n],
+  ["an AArch64 COPY of a 24-byte symbol", 183, 1024, 24n],
+] as const)(
+  "fails closed on %s instead of reading the bytes it writes as stored words",
+  (_, machine, kind, symbolSize) => {
+    // The write starts at 0x2f8, eight bytes below the method pointer at
+    // 0x300, which a two-word write or a 24-byte copy runs through.
+    const bytes = createElfFixture(createIl2cppBinaryFixture(), {
+      machine,
+      unresolvedRelocations: [{ offset: 0x2f8, kind }],
+      ...(symbolSize === undefined ? {} : { symbolSize }),
+    });
+    expect(failure(bytes)).toEqual({
+      reason: "unsupported-pointer-encoding",
+      kind: "unsupported",
+    });
   },
 );
 
@@ -1924,3 +1979,209 @@ it.each([183, 62])(
     expect(link(bytes)).toEqual(link(createElfFixture(image, { machine })));
   },
 );
+
+it.each([0x700, 0x704])(
+  "does not claim a unique module when a bind at %s may change a competing name pointer",
+  (slot) => {
+    const bytes = createIl2cppDyldBindFixture(0n, slot);
+    const duplicate = createIl2cppBinaryFixture({ duplicateModule: true });
+    duplicate.copy(bytes, 0x700, 0x700, 0x718);
+    if (slot === 0x700) bytes.writeBigUInt64LE(0n, slot);
+    else bytes.writeUInt32LE(0, slot);
+    expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+  },
+);
+
+it("does not claim a unique type table when a bound word may complete a competing table", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x700);
+  bytes.copy(bytes, 0x700, 0x900, 0x920);
+  bytes.writeBigUInt64LE(0n, 0x700);
+  bytes.fill(0, 0x800, 0x880);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x900]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(() => linkWholeTable(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it("retains a unique module array when an isolated bound word cannot form a competing two-module array", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x700);
+  bytes.fill(0, 0x600, 0x610);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x500]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(bytes.readBigUInt64LE(0x6f8)).toBe(0n);
+  expect(bytes.readBigUInt64LE(0x708)).toBe(0n);
+  const linked = link(bytes);
+  expect(linked.code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
+});
+
+it("does not treat a repeated possible module as a competing array", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x70c);
+  bytes.fill(0, 0x600, 0x610);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x400n, 0x700);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x400n, 0x708);
+  bytes.writeUInt32LE(0, 0x70c);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x500]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(link(bytes).code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
+});
+
+it("does not claim a unique module array when an ELF unresolved relocation may form a second code-referenced array", () => {
+  const image = createIl2cppBinaryFixture({
+    codeRegistration: false,
+    codeReference: true,
+  });
+  image.writeBigUInt64LE(0n, 0x700);
+  image.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x440n, 0x708);
+  image.set([0x48, 0x8d, 0x05], 0xc20);
+  image.writeInt32LE(0x700 - (0xc20 + 7), 0xc23);
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x700, kind: 1 }],
+  });
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it("does not claim a unique module when an ELF unresolved relocation may name a second record", () => {
+  const image = createIl2cppBinaryFixture({ duplicateModule: true });
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x700, kind: 1 }],
+  });
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it("does not claim unique registration when competing ELF count has unresolved relocation", () => {
+  const image = createIl2cppBinaryFixture({ duplicateCodeRegistration: true });
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x680, kind: 10 }],
+  });
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it("does not claim unique metadata registration when competing ELF count is unresolved", () => {
+  const image = createIl2cppBinaryFixture({
+    duplicateMetadataRegistration: true,
+  });
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x8d0, kind: 10 }],
+  });
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it.each([
+  [0x708, 10],
+  [0x710, 1],
+])(
+  "does not claim unique module with unresolved competing field %s",
+  (offset, kind) => {
+    const image = createIl2cppBinaryFixture({ duplicateModule: true });
+    const bytes = createElfFixture(image, {
+      machine: 62,
+      unresolvedRelocations: [{ offset, kind }],
+    });
+    expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+  },
+);
+
+it("rejects a possible ELF module when its known count disproves the record", () => {
+  const image = createIl2cppBinaryFixture({ duplicateModule: true });
+  image.writeUInt32LE(123, 0x708);
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x700, kind: 1 }],
+  });
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it("rejects a possible ELF code registration when its known array is invalid", () => {
+  const image = createIl2cppBinaryFixture({ duplicateCodeRegistration: true });
+  image.writeBigUInt64LE(0n, 0x688);
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x680, kind: 10 }],
+  });
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it("rejects a possible ELF metadata registration when its known type pointer is invalid", () => {
+  const image = createIl2cppBinaryFixture({
+    duplicateMetadataRegistration: true,
+  });
+  image.writeBigUInt64LE(0n, 0x8b8);
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x8d0, kind: 10 }],
+  });
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it("still uses the ELF type-table fallback when an uncertain metadata candidate is disproven", () => {
+  const image = createIl2cppBinaryFixture({
+    metadataRegistration: false,
+    adrpAdd: [[0xc20, 0x900]],
+  });
+  image.writeUInt32LE(4, 0x8e0);
+  image.writeBigUInt64LE(0n, 0x8b8);
+  const bytes = createElfFixture(image, {
+    machine: 183,
+    unresolvedRelocations: [{ offset: 0x8d0, kind: 258 }],
+  });
+  expect(linkWholeTable(bytes).types_count).toBe(4);
+});
+
+it("does not treat bound data with a known invalid kind as a competing type table", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x700);
+  bytes.fill(0, 0x800, 0x880);
+  for (let offset = 0x750; offset < 0x770; offset += 8)
+    bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x700n, offset);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x900]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(linkWholeTable(bytes).types_count).toBe(4);
+});
+
+it.each([2, 3])(
+  "binds a partially known module name to its own image count %s",
+  (count) => {
+    const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+    const duplicate = createIl2cppBinaryFixture({ duplicateModule: true });
+    duplicate.copy(bytes, 0x700, 0x700, 0x718);
+    bytes.writeUInt32LE(0, 0x704);
+    bytes.writeUInt32LE(count, 0x708);
+    // BIND_TYPE_TEXT_ABSOLUTE32 owns only the upper half of the name pointer.
+    bytes[0xf00 + 2 + Buffer.byteLength("_FixtureMethod") + 1] = 0x52;
+    if (count === 2)
+      expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+    else expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+  },
+);
+
+it("does not mix masked image count and pointer extent when count is unresolved", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+  bytes.writeUInt32LE(bytes.readUInt32LE(0x400), 0x700);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0xff0n, 0x710);
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it("retains an unresolved matching image count when its method array could fit", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+  bytes.writeUInt32LE(bytes.readUInt32LE(0x400), 0x700);
+  bytes.writeBigUInt64LE(bytes.readBigUInt64LE(0x410), 0x710);
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});

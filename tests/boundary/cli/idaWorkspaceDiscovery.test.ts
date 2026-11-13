@@ -9,10 +9,12 @@ cliTest.skipIf(process.platform === "win32")(
   "reports the same headless workspace readiness through discovery and doctor",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-ida-discovery-cli-");
+    const home = join(root, "home");
     const writable = join(root, "writable");
     const file = join(root, "file");
     const marker = join(root, "launched");
     const command = join(root, "fixture-ida");
+    await mkdir(home);
     await mkdir(writable);
     await writeFile(file, "caller data");
     await writeFile(command, `#!/bin/sh\nprintf launched > '${marker}'\n`);
@@ -34,7 +36,7 @@ cliTest.skipIf(process.platform === "win32")(
         }),
       );
       const environment = {
-        HOME: root,
+        HOME: home,
         REA_IDA_MCP_CONFIG: registration,
       };
       for (const command of ["providers", "capabilities"] as const) {

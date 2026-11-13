@@ -163,10 +163,15 @@ export const parseAdbVersionOutput = (stdout: string): AdbClientIdentity => {
   const build = /^Version\s+(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\s*$/mu.exec(
     stdout,
   );
-  const installed = /^Installed as\s+(.+)$/mu.exec(stdout);
+  // The literal delimiter and line ending belong to the protocol; path
+  // whitespace belongs to the reported executable identity.
+  const installed = /^Installed as ([^\n]*)$/mu
+    .exec(stdout)?.[1]
+    ?.replace(/\r$/u, "");
   return {
     version: build === null ? null : build[1]!.trim(),
-    installedPath: installed === null ? null : installed[1]!.trim(),
+    installedPath:
+      installed === undefined || installed === "" ? null : installed,
   };
 };
 

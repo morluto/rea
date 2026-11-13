@@ -83,7 +83,7 @@ describe("Hermes configuration paths", () => {
   );
 
   it("resolves config.yaml under the platform Hermes home", () => {
-    expect(hermesPath({})).toEqual({
+    expect(hermesPath({})).toMatchObject({
       name: "hermes",
       displayName: "Hermes",
       configPath: join("/home/a", ".hermes", "config.yaml"),

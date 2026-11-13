@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 
-import type { DebuggerAdmissionLimit } from "../config/debuggerSessionLimits.js";
+import {
+  DEBUGGER_COMMAND_DEADLINE_SETTING,
+  DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
+  type DebuggerAdmissionLimit,
+} from "../config/debuggerSessionLimits.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import type { AnalysisSettingId } from "../domain/analysisSettings.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
@@ -11,34 +17,64 @@ export type OwnedDebuggerStopResult =
   | { readonly status: "stopped" | "already_exited" }
   | { readonly status: "incomplete"; readonly reason: string };
 
+const RUNTIME_DEBUGGER_SETTINGS = {
+  [DEBUGGER_COMMAND_DEADLINE_SETTING]: "debugger.command_deadline_ms",
+  [DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING]:
+    "debugger.max_command_output_bytes",
+} as const satisfies Partial<Record<string, AnalysisSettingId>>;
+
+const runtimeDebuggerSetting = (
+  admission: DebuggerAdmissionLimit,
+): AnalysisSettingId | undefined =>
+  RUNTIME_DEBUGGER_SETTINGS[
+    admission.setting as keyof typeof RUNTIME_DEBUGGER_SETTINGS
+  ];
+
+/** Structured limit for a debugger budget that update_analysis_settings can change. */
+export const debuggerAnalysisLimit = (admission: DebuggerAdmissionLimit) => {
+  const setting = runtimeDebuggerSetting(admission);
+  return setting === undefined
+    ? undefined
+    : analysisSettingLimit(setting, admission.value, admission.source);
+};
+
 /** Structured facts a limit error exposes. The sentence is display text. */
 export const debuggerAdmissionDiagnostics = (
   admission: DebuggerAdmissionLimit,
-): {
-  readonly setting: string;
-  readonly effective_value: number;
-  readonly source: DebuggerAdmissionLimit["source"];
-  readonly default_value: number;
-  readonly minimum: number;
-  readonly maximum: number;
-  readonly unit: DebuggerAdmissionLimit["unit"];
-  readonly restart_required: true;
-} => ({
-  setting: admission.setting,
-  effective_value: admission.value,
-  source: admission.source,
-  default_value: admission.defaultValue,
-  minimum: admission.minimum,
-  maximum: admission.maximum,
-  unit: admission.unit,
-  restart_required: true,
-});
+) => {
+  const analysisSetting = runtimeDebuggerSetting(admission);
+  const update_mode = analysisSetting === undefined ? "restart" : "runtime";
+  return {
+    setting: admission.setting,
+    effective_value: admission.value,
+    source: admission.source,
+    default_value: admission.defaultValue,
+    minimum: admission.minimum,
+    maximum: admission.maximum,
+    unit: admission.unit,
+    update_mode,
+    pending_restart: false as const,
+    ...(analysisSetting === undefined
+      ? {}
+      : { analysis_setting: analysisSetting }),
+  };
+};
 
-/** Name the setting, the effective value, its source, the range, and a restart. */
+/** Name the setting, the effective value, its source, and the range. */
 export const debuggerAdmissionRecovery = (
   admission: DebuggerAdmissionLimit,
-): string =>
-  `The effective ${admission.setting} value is ${String(admission.value)} ${admission.unit} (source ${admission.source}; default ${String(admission.defaultValue)} ${admission.unit}, floor ${String(admission.minimum)} ${admission.unit}, maximum ${String(admission.maximum)} ${admission.unit}). Set ${admission.setting} in the environment that starts REA to a positive decimal integer from ${String(admission.minimum)} to ${String(admission.maximum)}, then restart REA.`;
+): string => {
+  const facts = debuggerAdmissionDiagnostics(admission);
+  const identity =
+    facts.analysis_setting === undefined
+      ? admission.setting
+      : `${facts.analysis_setting} (launch seed ${admission.setting})`;
+  const change =
+    facts.update_mode === "runtime"
+      ? `It can be changed at runtime with update_analysis_settings.`
+      : `Set ${admission.setting} in the environment that starts REA to a positive decimal integer from ${String(admission.minimum)} to ${String(admission.maximum)}, then restart REA.`;
+  return `The effective ${identity} value is ${String(admission.value)} ${admission.unit} (source ${admission.source}; default ${String(admission.defaultValue)} ${admission.unit}, floor ${String(admission.minimum)} ${admission.unit}, maximum ${String(admission.maximum)} ${admission.unit}). ${change}`;
+};
 
 /** Fixed startup deadline. Distinct from the shared command deadline setting. */
 export const fixedDeadlineGuidance = (
@@ -59,10 +95,12 @@ export const configurableDeadlineGuidance = (
   readonly diagnostics: ReturnType<typeof debuggerAdmissionDiagnostics>;
 } => {
   const recovery = debuggerAdmissionRecovery(admission);
+  const limit = debuggerAnalysisLimit(admission);
   return {
     userMessage: `${what} reached its ${String(admission.value)} ms deadline (deadlineExpired). ${recovery}`,
     remediationAction: recovery,
     diagnostics: debuggerAdmissionDiagnostics(admission),
+    ...(limit === undefined ? {} : { limit }),
   };
 };
 
@@ -77,6 +115,7 @@ export const debuggerResourceConstraintError = (
 ): AnalysisResourceConstraintError => {
   const facts = debuggerAdmissionDiagnostics(admission);
   const recovery = debuggerAdmissionRecovery(admission);
+  const limit = debuggerAnalysisLimit(admission);
   return new AnalysisResourceConstraintError(
     operation,
     resource,
@@ -85,6 +124,7 @@ export const debuggerResourceConstraintError = (
     {
       remediationAction: `${remediation} ${recovery}`,
       diagnostics: facts,
+      ...(limit === undefined ? {} : { limit }),
     },
   );
 };

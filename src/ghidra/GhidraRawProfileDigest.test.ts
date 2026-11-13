@@ -8,12 +8,12 @@ import { GhidraProvider } from "./GhidraProvider.js";
 
 // Digests commit to the current shared policy, including the instruction
 // status, load-image relocation-symbol, procedure search, byte-search and
-// bit-field base-type and inventory-search revisions that prevent reuse of snapshots with earlier
+// bit-field base-type, runtime value-flow budgets and inventory-search revisions that prevent reuse of snapshots with earlier
 // results.
 const RAW_DIGESTS = {
-  "6502": "2878a9daeb48e08755a5a840044a9f1c9f19784b92d6c08c1d27eca5b27d675a",
+  "6502": "51160ff6e94cb32eaeb87ac248915afb3bc17e33b11a1a101222344dd3907c6f",
   "x86-disabled-analyzer":
-    "480aa8cac604f14abbb6e6fc909378faa27b44a06fd36f3db6a8c67248277980",
+    "94e93961a699cf9250844d53fe95802c72063c08656fc308b3fed523dd86ea1c",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
@@ -51,6 +51,7 @@ describe("raw-binary analysis profile digest", () => {
       instruction_status: "unlisted-and-containing-code-data-v3",
       inventory_search_projection: "provider-inventory-facts-v1",
       value_flow_effect_scope: "pcode-load-store-explicit-v1",
+      native_value_flow_projection: "accepted-runtime-budgets-v1",
       byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
       byte_search_coverage: "separate-loaded-overlays-v1",
       data_type_observations: "bit-field-base-and-lookup-v1",
@@ -77,6 +78,7 @@ describe("raw-binary analysis profile digest", () => {
     expect(resolved.value.profile?.parameters).toMatchObject({
       inventory_search_projection: "provider-inventory-facts-v1",
       value_flow_effect_scope: "pcode-load-store-explicit-v1",
+      native_value_flow_projection: "accepted-runtime-budgets-v1",
       byte_search_coverage: "separate-loaded-overlays-v1",
       analysis_options: {
         disabled_analyzers: ["Aggressive Instruction Finder"],

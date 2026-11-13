@@ -5,10 +5,7 @@ import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { byteEntropySchema } from "../../domain/native/byteEntropy.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import {
-  ByteEntropyService,
-  MAX_BYTE_ENTROPY_BLOCKS,
-} from "./ByteEntropyService.js";
+import { ByteEntropyService } from "./ByteEntropyService.js";
 
 it("keeps whole-file identity and entropy while selecting unaligned blocks and a partial tail", async () => {
   const root = await createTestTempDirectory("rea-entropy-");
@@ -421,7 +418,7 @@ it("reports a changed artifact when its parent directory moves during streaming"
 it("refuses a block series above the output-row limit before scanning", async () => {
   const root = await createTestTempDirectory("rea-entropy-block-limit-");
   const path = join(root, "bytes");
-  await writeFile(path, Buffer.alloc(MAX_BYTE_ENTROPY_BLOCKS * 256 + 1));
+  await writeFile(path, Buffer.alloc(32_768 * 256 + 1));
   let reads = 0;
   const service = new ByteEntropyService({
     stat,
@@ -443,8 +440,8 @@ it("refuses a block series above the output-row limit before scanning", async ()
       _tag: "AnalysisResourceConstraintError",
       resource: "capacity",
       reportedLimits: {
-        max_blocks: MAX_BYTE_ENTROPY_BLOCKS,
-        requested_blocks: MAX_BYTE_ENTROPY_BLOCKS + 1,
+        max_blocks: 32_768,
+        requested_blocks: 32_769,
       },
     },
   });
@@ -623,3 +620,31 @@ it.each([false, true])(
     expect(result.error.cleanupIncomplete).toBe(false);
   },
 );
+
+it("reads an admitted file even when Windows casing lookup is unavailable", async () => {
+  const root = await createTestTempDirectory("rea-entropy-casing-unavailable-");
+  const path = join(root, "readable.bin");
+  await writeFile(path, Buffer.from([1, 2, 3, 4]));
+  // The injected descriptor represents a readable share while the optional
+  // host spelling lookup has no path on this filesystem.
+  const selected = join(root, "share-selection.bin");
+  const platform = vi
+    .spyOn(process, "platform", "get")
+    .mockReturnValue("win32");
+  const service = new ByteEntropyService({
+    stat: ((...args: Parameters<typeof stat>) =>
+      stat(path, args[1])) as typeof stat,
+    open: async () => open(path, "r"),
+  });
+  try {
+    const result = await service.inspect({ path: selected });
+    if (!result.ok) throw result.error;
+    expect(result.value.normalized_result).toMatchObject({
+      artifact: { bytes: 4 },
+    });
+    expect(result.value.caller_input_path).toBe(selected);
+  } finally {
+    await service.close();
+    platform.mockRestore();
+  }
+});

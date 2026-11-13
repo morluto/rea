@@ -54,8 +54,9 @@ const recasedEntries = async (
 
 /**
  * Folder names under XDG and dot-directories where the application may keep
- * state, and the dotfiles in the home named after it, which an application
- * may only read during a capture.
+ * state, KDE's `<name>rc` settings file in the config folder, and the
+ * dotfiles in the home named after it, which an application may only read
+ * during a capture.
  */
 export const stateDirectories = async (
   names: readonly (string | null)[],
@@ -88,19 +89,34 @@ export const stateDirectories = async (
     ...bases.map((base) => recasedEntries(base, "", lowered)),
     recasedEntries(home, ".", lowered),
   ]);
+  const [config = join(home, ".config")] = bases;
   const paths = new Set([
     ...[...variants].flatMap((name) => [
       ...bases.map((base) => join(base, name)),
       join(home, `.${name}`),
+      // KDE's settings file, such as Tellico's `~/.config/tellicorc`, which the app may first write during the capture.
+      ...(name.length < 3 ? [] : [join(config, `${name}rc`)]),
     ]),
     ...recased.flat(),
     ...dotfiles,
     ...extra,
   ]);
   return Promise.all(
-    [...paths].map(async (path) => ({
-      path,
-      exists_at_start: (await lstat(path).catch(() => undefined)) !== undefined,
-    })),
+    [...paths].map(async (path) => {
+      try {
+        await lstat(path);
+        return { path, exists_at_start: true };
+      } catch (cause: unknown) {
+        const code = (cause as NodeJS.ErrnoException).code;
+        return code === "ENOENT" || code === "ENOTDIR"
+          ? { path, exists_at_start: false }
+          : {
+              path,
+              exists_at_start: null,
+              existence_error:
+                cause instanceof Error ? cause.message : String(cause),
+            };
+      }
+    }),
   );
 };

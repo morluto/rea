@@ -17,6 +17,10 @@ import {
 } from "./ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
 
 /** Injectable acquisition seam; production owns a POSIX group or Windows job. */
 export type OwnedMcpLauncher = (
@@ -43,7 +47,10 @@ export class OwnedMcpStdioTransport implements Transport {
   #bytes = 0;
   #started = false;
   #closed = false;
-  #closePromise: Promise<void> | undefined;
+  readonly #cleanup = new AnalysisCleanupLease(
+    () => this.#stop(),
+    [this.runId],
+  );
   #starting: Promise<void> | undefined;
   #failure: OwnedMcpTransportFailure | undefined;
 
@@ -139,11 +146,8 @@ export class OwnedMcpStdioTransport implements Transport {
 
   /** Verifies owned process exit before declaring the transport closed. */
   close(): Promise<void> {
-    this.#closePromise ??= this.#stop().catch((cause: unknown) => {
-      this.#closePromise = undefined;
-      throw cause;
-    });
-    return this.#closePromise;
+    this.#closed = true;
+    return this.#cleanup.release();
   }
 
   /** Keep the interruption reason distinct from errors produced by its teardown. */
@@ -182,7 +186,6 @@ export class OwnedMcpStdioTransport implements Transport {
   }
 
   async #stop(): Promise<void> {
-    this.#closed = true;
     this.#frameBuffer = Buffer.alloc(0);
     this.#frameLength = 0;
     // A cancellation may race acquisition. Join it before inspecting ownership.
@@ -213,11 +216,18 @@ export class OwnedMcpStdioTransport implements Transport {
     await inputClosed;
     input?.off("error", this.#error);
     this.onclose?.();
-    if (stopped?.status === "incomplete")
-      throw new ProviderCleanupError(this.settings.provider, [this.runId], {
-        reason: stopped.reason,
-        stderr: this.diagnostics()?.stderr ?? "",
-      });
+    if (stopped?.status === "incomplete") {
+      const failure = new ProviderCleanupError(
+        this.settings.provider,
+        [this.runId],
+        {
+          reason: stopped.reason,
+          stderr: this.diagnostics()?.stderr ?? "",
+        },
+      );
+      new AnalysisCleanupLeaseGroup(failure, [this.#cleanup]);
+      throw failure;
+    }
   }
 
   readonly #error = (error: Error): void => {

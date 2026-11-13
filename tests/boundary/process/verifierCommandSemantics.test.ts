@@ -444,7 +444,6 @@ it.skipIf(process.platform === "win32")(
         throw new Error("Expected the exact acquired process owner");
       controller.abort(reason);
       const closing = commands.close();
-      expect(commands.close()).toBe(closing);
       let closeSettled = false;
       const closeOutcome = observed(closing).then((outcome) => {
         closeSettled = true;

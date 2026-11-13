@@ -127,16 +127,16 @@ describe("PNG visual diff", () => {
     });
   });
 
-  it("keeps 8-bit samples opaque when a 16-bit transparency key exceeds 255", () => {
+  it("masks unused transparency-key bits before comparing 8-bit samples", () => {
     const key = Buffer.alloc(6);
     key.writeUInt16BE(266, 0);
-    key.writeUInt16BE(20, 2);
-    key.writeUInt16BE(30, 4);
+    key.writeUInt16BE(0xfe14, 2);
+    key.writeUInt16BE(0xff1e, 4);
     const rgb = transparencyArtifact(2, key, [10, 20, 30]);
     const result = comparePngScreenshots(
       compareWebScreenshotsInputSchema.parse({
         before: rgb,
-        after: artifact(1, 1, [10, 20, 30, 255]),
+        after: artifact(1, 1, [10, 20, 30, 0]),
       }),
     );
     expect(result).toMatchObject({ status: "identical", changed_pixels: 0 });

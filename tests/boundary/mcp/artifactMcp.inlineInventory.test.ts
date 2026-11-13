@@ -203,7 +203,6 @@ const createInventoryViewReader = async (
     throw new Error("Missing advertised view schemas");
   const ajv = schemaValidation.assertions;
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
   const malformed = {
     source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
     view: { kind: "inventory", collection: "nodes", logical_paths: [] },
@@ -229,16 +228,12 @@ const createInventoryViewReader = async (
       ajv.validate(inputSchema, arguments_),
       JSON.stringify(ajv.errors),
     ).toBe(true);
-    const reply = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: arguments_,
-    });
+    const reply = await client.callTool(
+      { name: "inspect_analysis_view", arguments: arguments_ },
+      { toolDefinition: advertised },
+    );
     if (reply.isError)
       throw new Error(JSON.stringify(parseMcpToolError(reply)));
-    expect(
-      ajv.validate(outputSchema, reply.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(reply.structuredContent);
     return {
       evidence,

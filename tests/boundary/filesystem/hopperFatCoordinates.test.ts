@@ -10,6 +10,11 @@ import {
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
+import type { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { mapHopperFileOffset } from "../../../src/hopper/HopperFileOffset.js";
 import { resolveHopperMachOImage } from "../../../src/hopper/HopperMachOImage.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
@@ -38,6 +43,23 @@ const resolveImage = (
   const resources = createInspectionResources();
   onTestFinished(() => resources.close());
   return resolveHopperMachOImage(target, { resourceScope: resources.owner });
+};
+
+const mapOffset = (target: BinaryTarget, observation: JsonValue) => {
+  const scope = new ArtifactResourceScope();
+  const leases = new WeakMap<OwnedFileHandle, AnalysisCleanupLease>();
+  onTestFinished(() => scope.close());
+  return mapHopperFileOffset(target, observation, {
+    retainFailedClose: (owner) => {
+      const lease = AnalysisCleanupLease.forCloseOwner(owner, target.path);
+      leases.set(owner, lease);
+      scope.retain({ kind: "lease", resource: target.path, lease });
+    },
+    onCleanupMarker: (marker) => {
+      if (marker.cause instanceof RegularFileCleanupFailure)
+        leases.get(marker.cause.owner)?.bindCleanupError(marker);
+    },
+  });
 };
 
 const loadedObservation = (header: Uint8Array) => ({
@@ -83,7 +105,7 @@ it.each([
         cpu_subtype: CPU.arm64.subtype,
       },
     });
-    const mapped = await mapHopperFileOffset(target, loadedObservation(arm64e));
+    const mapped = await mapOffset(target, loadedObservation(arm64e));
     expect(mapped).toEqual({
       ok: true,
       value: {
@@ -117,9 +139,7 @@ it.each([false, true])(
       ok: false,
       error: { _tag: "BinaryTargetError", reason },
     });
-    expect(
-      await mapHopperFileOffset(target, loadedObservation(thin)),
-    ).toMatchObject({
+    expect(await mapOffset(target, loadedObservation(thin))).toMatchObject({
       ok: false,
       error: {
         _tag: "AnalysisCapabilityUnavailableError",
@@ -165,9 +185,7 @@ it.each([
       ok: false,
       error: { _tag: "BinaryTargetError", reason: "FAT slices overlap" },
     });
-    expect(
-      await mapHopperFileOffset(target, loadedObservation(arm64e)),
-    ).toMatchObject({
+    expect(await mapOffset(target, loadedObservation(arm64e))).toMatchObject({
       ok: false,
       error: {
         _tag: "AnalysisCapabilityUnavailableError",
@@ -184,9 +202,7 @@ it("requires a unique exact raw CPU identity for loaded-image attribution", asyn
     { cpu: CPU.arm64e, bytes: arm64e },
   ]);
   const target = await sourceTarget(bytes, arm64e.byteLength);
-  expect(
-    await mapHopperFileOffset(target, loadedObservation(arm64e)),
-  ).toMatchObject({
+  expect(await mapOffset(target, loadedObservation(arm64e))).toMatchObject({
     ok: false,
     error: {
       _tag: "AnalysisCapabilityUnavailableError",
@@ -196,7 +212,7 @@ it("requires a unique exact raw CPU identity for loaded-image attribution", asyn
   const withoutCapabilities = Buffer.from(arm64e);
   withoutCapabilities.writeUInt32LE(2, 8);
   expect(
-    await mapHopperFileOffset(target, loadedObservation(withoutCapabilities)),
+    await mapOffset(target, loadedObservation(withoutCapabilities)),
   ).toMatchObject({
     ok: false,
     error: {
@@ -218,7 +234,7 @@ it("checks all 12 loaded-header bytes after matching its CPU identity", async ()
   loadedHeader.writeUInt32BE(CPU.arm64.type, 4);
   loadedHeader.writeUInt32BE(CPU.arm64.subtype, 8);
   expect(
-    await mapHopperFileOffset(target, loadedObservation(loadedHeader)),
+    await mapOffset(target, loadedObservation(loadedHeader)),
   ).toMatchObject({
     ok: false,
     error: {

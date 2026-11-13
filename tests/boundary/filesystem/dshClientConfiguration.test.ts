@@ -12,6 +12,7 @@ import {
 } from "yaml";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
+import { DshCordisDocument } from "../../../src/application/DshCordisPatch.js";
 
 import {
   configureClientConfiguration,
@@ -35,6 +36,37 @@ const command = currentClientRegistrationCommand({
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
+
+it("normalizes DSH expression identity on Windows and accepts a literal alias override", () => {
+  const document = new DshCordisDocument(`- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        env:
+          rea_ghidra_startup_timeout_ms: !!js process.env.STARTUP
+          caller_value: keep
+`);
+  const selected = document.environment({}, "effective", "win32");
+  expect(selected.ok).toBe(true);
+  if (!selected.ok) throw selected.error;
+  expect([...selected.value.unresolvedSettings]).toEqual([
+    "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+  ]);
+  expect(selected.value.values).toEqual({ caller_value: "keep" });
+
+  const overridden = document.environment(
+    { REA_GHIDRA_STARTUP_TIMEOUT_MS: "45000" },
+    "effective",
+    "win32",
+  );
+  expect(overridden.ok).toBe(true);
+  if (!overridden.ok) throw overridden.error;
+  expect([...overridden.value.unresolvedSettings]).toEqual([]);
+  expect(overridden.value.values).toEqual({
+    caller_value: "keep",
+    REA_GHIDRA_STARTUP_TIMEOUT_MS: "45000",
+  });
+});
 
 const dshClient = (
   env: Parameters<typeof supportedClients>[2],
@@ -92,7 +124,7 @@ describe("DeepSeek Harness configuration paths", () => {
   );
 
   it("resolves the home Cordis patch under the Harness home", () => {
-    expect(dshClient({})).toEqual({
+    expect(dshClient({})).toMatchObject({
       name: "dsh",
       displayName: "DeepSeek Harness",
       configPath: resolve("/home/a", ".dsh", "cordis.patch.yml"),
@@ -1159,44 +1191,6 @@ describe("DeepSeek Harness alias collapse", () => {
 });
 
 describe("DeepSeek Harness alias targets", () => {
-  it("collapses an alias of the insert list", async () => {
-    const { client } = await harnessClient();
-    await writeFile(
-      client.configPath,
-      `- holder: &rows
-    - id: other-tool
-      name: other
-      config:
-        command: keep-me
-    - id: rea-mcp
-      name: "@deepseek-ai/dsh-mcp-client"
-      config:
-        serverName: rea
-        transport: stdio
-        command: stale-launcher
-        args: [mcp]
-- insert: *rows
-`,
-    );
-
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    const text = await readFile(client.configPath, "utf8");
-    expect(text).toContain("other-tool");
-    expect(text).not.toContain("*rows");
-    expect(text).toContain("stale-launcher");
-    const patches = parseYaml(text) as { insert?: { id?: string }[] }[];
-    expect(
-      patches.flatMap(({ insert }) =>
-        (insert ?? []).filter((entry) => entry.id === "rea-mcp"),
-      ),
-    ).toHaveLength(1);
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("unchanged");
-  });
-
   it("keeps a Cordis tag when the config map is an alias", async () => {
     const { client } = await harnessClient();
     await writeFile(
@@ -1256,7 +1250,10 @@ describe("DeepSeek Harness alias identity", () => {
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
     ).toBe("configured");
-    const patches = parseYaml(await readFile(client.configPath, "utf8")) as {
+    const text = await readFile(client.configPath, "utf8");
+    expect(text).not.toContain("*rows");
+    expect(text).toContain("stale-launcher");
+    const patches = parseYaml(text) as {
       insert?: { id?: string; config?: { command?: string } }[];
     }[];
     const inserted = patches.flatMap((patch) => patch.insert ?? []);

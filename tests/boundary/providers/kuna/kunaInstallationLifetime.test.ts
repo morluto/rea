@@ -17,6 +17,7 @@ const gates = vi.hoisted(() => {
     hashClose: createGate(),
     identityRead: createGate(),
     opens: 0,
+    selectedPath: null as string | null,
     failClose: false,
     holdHashClose: false,
     holdIdentityRead: false,
@@ -33,6 +34,7 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
     openRegularFile: vi.fn(
       async (...args: Parameters<typeof original.openRegularFile>) => {
         const descriptor = await original.openRegularFile(...args);
+        if (args[0] !== gates.selectedPath) return descriptor;
         const { handle } = descriptor;
         const index = gates.opens++;
         const read = handle.read.bind(handle);
@@ -71,6 +73,7 @@ import { session } from "./kunaSessionFixture.js";
 
 beforeEach(() => {
   gates.opens = 0;
+  gates.selectedPath = null;
   gates.failClose = false;
   gates.holdHashClose = false;
   gates.holdIdentityRead = false;
@@ -91,6 +94,7 @@ it
   async (phase) => {
     const root = await createTestTempDirectory("rea-kuna-inspection-lifetime-");
     const executable = await writeFakeKuna(root);
+    gates.selectedPath = executable;
     const scope = new ArtifactResourceScope();
     const resourceScope: RetainedResourceScope = {
       retain: (owner, resource) =>
@@ -157,7 +161,7 @@ it
     gates.hashClose.release();
     gates.identityRead.release();
     const fixture = await session("rea-kuna-session-finalization-");
-    gates.opens = 0;
+    gates.selectedPath = fixture.kuna;
     gates.hashClose = gates.createGate();
     gates.identityRead = gates.createGate();
     gates.holdHashClose = phase !== "identity-read";

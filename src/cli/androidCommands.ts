@@ -17,7 +17,7 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { androidPackageDeliverySchema } from "../domain/android/androidPackageQuery.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { parseCliJsonOption } from "./cliJsonOption.js";
 import { parseAnalysisInput } from "../application/AnalysisInput.js";
 import { androidJniSelectionSchema } from "../domain/android/androidJniBindings.js";
 import { androidJniDeliverySchema } from "../domain/android/androidJniQuery.js";
@@ -105,21 +105,14 @@ export const registerAndroidCommands = (
               androidJniDeliverySchema,
             );
             if (!delivery.ok) return projectAnalysisError(delivery.error);
-            let query: unknown = {};
-            try {
-              if (options.query !== undefined)
-                query = JSON.parse(options.query);
-            } catch (cause: unknown) {
-              return projectAnalysisError(
-                new AnalysisInputError(operation, { cause }, [
-                  {
-                    path: ["query"],
-                    reason: "invalid_format",
-                    message: "query must be a JSON selection object.",
-                  },
-                ]),
-              );
-            }
+            const decoded = parseCliJsonOption(
+              operation,
+              "query",
+              options.query,
+              "query must be a JSON selection object.",
+            );
+            if (!decoded.ok) return projectAnalysisError(decoded.error);
+            const query = decoded.value === undefined ? {} : decoded.value;
             const selected = parseAnalysisInput(
               operation,
               query,

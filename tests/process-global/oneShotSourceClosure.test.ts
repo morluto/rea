@@ -199,7 +199,7 @@ it.each([
   ["cleanup-failure", "cleanup_incomplete", 1],
   ["interrupt-cleanup-failure", "cleanup_incomplete", 130],
 ] as const)(
-  "keeps captured linked sources through final close: %s",
+  "preserves captured linked sources through final close: %s",
   async (finalClose, code, exitCode) => {
     const input = await fixture();
     const { stdout, exitCode: observedExit } = await runMatching(
@@ -207,8 +207,30 @@ it.each([
       finalClose,
     );
     expect(observedExit).toBe(exitCode);
-    const { failure, closure } = closureOf(stdout);
+    const failure = analysisErrorProjectionSchema.parse(JSON.parse(stdout));
     expect(failure.code).toBe(code);
+    if (finalClose === "cleanup-failure") {
+      expect(failure.details).toMatchObject({
+        resources: ["owned-root"],
+        diagnostics: { evidence_bundle: { path: input.output } },
+      });
+      expect(failure.details).not.toHaveProperty("source_closure");
+      const saved = parseEvidenceBundle(
+        JSON.parse(await readFile(input.output, "utf8")),
+      );
+      const observation = parseEvidence(failure.details?.partial_observation);
+      expect(saved.records.map((record) => record.evidence_id).sort()).toEqual(
+        [
+          observation.evidence_id,
+          input.left.evidence_id,
+          input.right.evidence_id,
+          input.dependency.evidence_id,
+        ].sort(),
+      );
+      expect(host.listeners.size).toBe(0);
+      return;
+    }
+    const { closure } = closureOf(stdout);
     const observation = parseEvidence(failure.details?.partial_observation);
     expect(observation.evidence_links).toEqual(
       [input.left.evidence_id, input.right.evidence_id].sort(),
@@ -247,63 +269,56 @@ it("keeps the fault on the final close when another scope closes first", async (
   expect(closure.complete).toBe(true);
 });
 
-it.each([
-  ["interrupt", "cancelled"],
-  ["cleanup-failure", "cleanup_incomplete"],
-] as const)(
-  "keeps the typed failure for a captured source with a data-sized link set: %s",
-  async (finalClose, code) => {
-    // Repeated links are valid Evidence, and only one distinct record backs them.
-    const ancestor = createEvidence(undefined, nativeMatchingProvider, {
-      operation: "fixture_ancestor",
-      parameters: {},
-      result: { source: "Synthetic ancestor" },
-    });
-    const wide = createEvidence(undefined, nativeMatchingProvider, {
-      operation: "fixture_dependency",
-      parameters: {},
-      result: { source: "Synthetic wide dependency" },
-      evidenceLinks: Array.from(
-        { length: DATA_SIZED_LINKS },
-        () => ancestor.evidence_id,
-      ),
-    });
-    const input = await fixture();
-    const left = nativeMatchingInventory(
-      "1",
-      [{ address: "0x10", value: "main" }],
-      [wide.evidence_id],
-    );
-    await writeFile(
-      input.sources,
-      JSON.stringify(createEvidenceBundle([ancestor, wide])),
-    );
-    await writeFile(
-      input.request,
-      JSON.stringify({ left, right: input.right, detail: "complete" }),
-    );
-    const { stdout } = await runMatching(input, finalClose, {
-      environment: {
-        REA_NATIVE_MATCHING_REPRESENTATION_BYTES: String(1024 ** 3),
-      },
-    });
-    const { failure, closure } = closureOf(stdout);
-    expect(failure.code).toBe(code);
-    expect(parseEvidence(failure.details?.partial_observation).operation).toBe(
-      "match_native_functions",
-    );
-    // The closure is deduplicated: each record is examined and reported once.
-    expect(recordIds(closure)).toEqual(
-      [ancestor.evidence_id, left.evidence_id, input.right.evidence_id].sort(),
-    );
-    expect(closure).toMatchObject({
-      complete: false,
-      omitted_count: 1,
-      omitted: [{ evidence_id: wide.evidence_id, reason: "not_inlined" }],
-    });
-  },
-  60_000,
-);
+it("keeps cancellation typed for a captured source with a data-sized link set", async () => {
+  // Repeated links are valid Evidence, and only one distinct record backs them.
+  const ancestor = createEvidence(undefined, nativeMatchingProvider, {
+    operation: "fixture_ancestor",
+    parameters: {},
+    result: { source: "Synthetic ancestor" },
+  });
+  const wide = createEvidence(undefined, nativeMatchingProvider, {
+    operation: "fixture_dependency",
+    parameters: {},
+    result: { source: "Synthetic wide dependency" },
+    evidenceLinks: Array.from(
+      { length: DATA_SIZED_LINKS },
+      () => ancestor.evidence_id,
+    ),
+  });
+  const input = await fixture();
+  const left = nativeMatchingInventory(
+    "1",
+    [{ address: "0x10", value: "main" }],
+    [wide.evidence_id],
+  );
+  await writeFile(
+    input.sources,
+    JSON.stringify(createEvidenceBundle([ancestor, wide])),
+  );
+  await writeFile(
+    input.request,
+    JSON.stringify({ left, right: input.right, detail: "complete" }),
+  );
+  const { stdout } = await runMatching(input, "interrupt", {
+    environment: {
+      REA_NATIVE_MATCHING_REPRESENTATION_BYTES: String(1024 ** 3),
+    },
+  });
+  const { failure, closure } = closureOf(stdout);
+  expect(failure.code).toBe("cancelled");
+  expect(parseEvidence(failure.details?.partial_observation).operation).toBe(
+    "match_native_functions",
+  );
+  // The closure is deduplicated: each record is examined and reported once.
+  expect(recordIds(closure)).toEqual(
+    [ancestor.evidence_id, left.evidence_id, input.right.evidence_id].sort(),
+  );
+  expect(closure).toMatchObject({
+    complete: false,
+    omitted_count: 1,
+    omitted: [{ evidence_id: wide.evidence_id, reason: "not_inlined" }],
+  });
+}, 60_000);
 
 it("hands off the same closure for summary delivery and permits a clean retry", async () => {
   const input = await fixture();

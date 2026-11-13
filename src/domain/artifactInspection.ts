@@ -490,6 +490,15 @@ const probesForFormat = (
           "Extract the stored module regions into a fresh owned directory, then inspect compatible source separately. Bytecode and source-map regions remain stored evidence; they are not decoded or executed.",
       },
     ];
+  if (format === "deno-standalone")
+    return [
+      {
+        operation: "extract_artifact",
+        authority: "artifact-bytes",
+        rationale:
+          "Extract the stored virtual files into a fresh owned directory, then inspect compatible source separately. Environment-file values and CA certificate bytes remain in local Evidence with their counts and byte lengths, the npm snapshot stays undecoded, and the executable stays unrun.",
+      },
+    ];
   if (format === "dotnet-bundle")
     return [
       {

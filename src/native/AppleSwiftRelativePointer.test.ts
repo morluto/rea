@@ -276,3 +276,37 @@ it("retains unsafe target addresses as partial decode facts", () => {
     decode: { status: "partial", reason: "outside fixture bytes" },
   });
 });
+
+it.each([
+  new RangeError("indirect pointer cell is unreadable"),
+  new Error("reader invariant failed"),
+])(
+  "distinguishes indirect pointer read failure from a known unmapped target: %s",
+  (failure) => {
+    const bytes = Buffer.alloc(0x80);
+    bytes.writeInt32LE(0x25, 0x24);
+    const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
+    const relative = createSwiftRelativeReader({
+      bytes,
+      readers: {
+        ...readers(bytes),
+        resolvePointer: () => {
+          throw failure;
+        },
+      },
+      budget: budget(),
+      result,
+    });
+    if (failure instanceof RangeError) {
+      expect(relative(0x24n, "conformanceProtocol")).toEqual({
+        kind: "unknown",
+        reason: failure.message,
+      });
+      expect(result.relative_pointers[0]).toMatchObject({
+        target: { address: null, file_offset: null },
+        decode: { status: "partial", reason: failure.message },
+      });
+    } else
+      expect(() => relative(0x24n, "conformanceProtocol")).toThrow(failure);
+  },
+);

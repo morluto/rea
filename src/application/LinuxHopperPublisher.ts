@@ -27,13 +27,17 @@ import {
 } from "../filesystem/OwnedRegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { verifyDetachedPgpSignature } from "../process/DetachedPgpSignature.js";
-import { execFileOutput } from "../process/ExecFileOutput.js";
+import {
+  execFileOutput,
+  ExecFileOutputCancelledError,
+} from "../process/ExecFileOutput.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { waitForAbortableDelay } from "../process/ProviderDeadline.js";
 import { acquireHopperReleaseCacheLease } from "../process/HopperLease.js";
 import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   downloadHopperPackage,
+  isHopperRequestCancellation,
   HOPPER_DOWNLOAD_BYTES,
   HOPPER_METADATA_TIMEOUT_MS,
 } from "./HopperDownload.js";
@@ -232,7 +236,12 @@ export class LinuxHopperPublisher {
               ? "cancelled"
               : "publisher_verification_failed",
             verified.error.message,
-            { cause: verified.error },
+            {
+              cause:
+                verified.error.reason === "cancelled"
+                  ? verified.error.cause
+                  : verified.error,
+            },
           ),
         );
       const mainExeHash = await this.#withTemporary(
@@ -1079,6 +1088,12 @@ const releaseFailure = (
   signal: AbortSignal | undefined,
   fallback: HopperReleaseError["reason"],
 ): HopperReleaseError => {
+  if (isHopperRequestCancellation(cause, signal))
+    return new HopperReleaseError(
+      "cancelled",
+      "Hopper publisher verification was cancelled.",
+      { cause: signal?.reason },
+    );
   if (cause instanceof HopperReleaseError) return cause;
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
     return new HopperReleaseError(
@@ -1093,11 +1108,11 @@ const releaseFailure = (
       "Hopper publisher verification was cancelled.",
       { cause: cancellation.reason },
     );
-  if (!(cause instanceof StableFileHashFailure) && signal?.aborted === true)
+  if (cause instanceof ExecFileOutputCancelledError)
     return new HopperReleaseError(
       "cancelled",
       "Hopper publisher verification was cancelled.",
-      { cause },
+      { cause: cause.cause },
     );
   return new HopperReleaseError(
     fallback,

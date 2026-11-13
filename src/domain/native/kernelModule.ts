@@ -17,16 +17,9 @@ export const MAX_INSPECT_KERNEL_MODULE_FILE_BYTES = 536870912;
  * file-backed __ksymtab* sections combined.
  */
 export const MAX_INSPECT_KERNEL_MODULE_ENTRIES = 65536;
-/**
- * Retained .modinfo key length. Longer keys stay malformed per entry and are
- * not copied into the result.
- */
-export const MAX_KERNEL_MODULE_KEY_BYTES = 256;
-/**
- * Retained .modinfo value length. Longer values stay malformed per entry and
- * are not copied into the result.
- */
-export const MAX_KERNEL_MODULE_VALUE_BYTES = 4096;
+/** Default per-field retention budgets; omission does not establish malformed syntax. */
+export const DEFAULT_KERNEL_MODULE_KEY_BYTES = 256;
+export const DEFAULT_KERNEL_MODULE_VALUE_BYTES = 4096;
 /**
  * Retained __ksymtab* section-name length. Longer names stay listed with a
  * null name and are not copied into the result.
@@ -58,6 +51,7 @@ export const KERNEL_MODULE_MODINFO_ENTRY_REASONS = [
   "unterminated_modinfo_entry",
   "modinfo_missing_separator",
   "modinfo_empty_key",
+  // Accepted when decoding older Evidence; new observations separate omission from validity.
   "modinfo_field_exceeds_limit",
 ] as const;
 
@@ -111,6 +105,13 @@ const modinfoEntrySchema = z.strictObject({
   raw_hex: hex.nullable(),
   status: entryStatus,
   reason: z.enum(KERNEL_MODULE_MODINFO_ENTRY_REASONS).nullable(),
+  omitted_fields: z
+    .array(z.enum(["key", "value"]))
+    .max(2)
+    .default([])
+    .describe(
+      "Fields omitted by retention policy, independently of structural status/reason",
+    ),
 });
 
 const modinfoSchema = z.strictObject({
@@ -215,6 +216,22 @@ export const inspectKernelModuleInputSchema = z.strictObject({
     .default(8192)
     .describe(
       "Maximum .modinfo and __versions entries plus file-backed __ksymtab* sections to examine; exceeding the budget fails without partial success",
+    ),
+  max_modinfo_key_bytes: z
+    .int()
+    .min(1)
+    .max(MAX_INSPECT_KERNEL_MODULE_FILE_BYTES)
+    .default(DEFAULT_KERNEL_MODULE_KEY_BYTES)
+    .describe(
+      "Maximum bytes retained per .modinfo key (default 256). Larger keys stay valid when their syntax is valid, with key null and omitted_fields naming key. Raise on the next call to retain them; no restart. Does not raise input, entry or raw-hex budgets.",
+    ),
+  max_modinfo_value_bytes: z
+    .int()
+    .min(1)
+    .max(MAX_INSPECT_KERNEL_MODULE_FILE_BYTES)
+    .default(DEFAULT_KERNEL_MODULE_VALUE_BYTES)
+    .describe(
+      "Maximum bytes retained per .modinfo value (default 4096). Larger values stay valid when their syntax is valid, with value null and omitted_fields naming value. Raise on the next call to retain them; no restart. Does not raise input, entry or raw-hex budgets.",
     ),
 });
 

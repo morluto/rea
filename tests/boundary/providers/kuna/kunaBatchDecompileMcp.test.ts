@@ -1,3 +1,4 @@
+import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 import { batchDecompileResultSchema } from "../../../../src/domain/native/batchDecompile.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -55,7 +56,7 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
       "kuna",
     ),
   );
-  try {
+  await withVerifierCleanup(async () => {
     const client = await mcp.connect(
       createServer({ kind: "session", session }),
     );
@@ -183,8 +184,12 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
       ({ evidence_id }) => evidence_id === batch.evidence_id,
     );
     expect(retained?.normalized_result).toEqual(batch.normalized_result);
-  } finally {
-    await mcp.close();
-    expect(await session.close()).toEqual({ ok: true, value: null });
-  }
+  }, [
+    async () => {
+      await mcp.close();
+    },
+    async () => {
+      expect(await session.close()).toEqual({ ok: true, value: null });
+    },
+  ]);
 }, 60_000);

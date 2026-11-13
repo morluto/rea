@@ -157,22 +157,13 @@ export class AdbDeviceAnalysisService {
 const posix = it.skipIf(process.platform === "win32");
 
 posix(
-  "runs the production verifier successfully and closes its provider",
+  "removes exactly its own pushed probe before reporting success",
   async () => {
     const result = await runVerifier();
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain("all adb device checks passed");
     expect(result.closed).toBe("closed");
-  },
-);
-
-posix(
-  "removes exactly its own pushed probe before reporting success",
-  async () => {
-    const result = await runVerifier();
-
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.adbCalls).toHaveLength(1);
     expect(result.adbCalls[0]).toMatch(
       /^-s test shell rm -- \/data\/local\/tmp\/rea-verify-\d+\.txt$/u,

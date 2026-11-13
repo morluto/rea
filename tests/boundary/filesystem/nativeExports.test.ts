@@ -126,6 +126,38 @@ describe("native export stable filesystem boundary", () => {
 });
 
 describe("native export text capacity", () => {
+  it("retains valid exports and partial Evidence when a symbol name exceeds the read allowance", async () => {
+    const root = await createTestTempDirectory("rea-native-export-name-limit-");
+    const path = join(root, "libfixture.so");
+    const bytes = elfExportImage({
+      symbols: [{ name: "n".repeat(65_536) }, { name: "kept" }],
+    });
+    await writeFile(path, bytes);
+    const service = createNativeExportsService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      const evidence = parseEvidence(result.value);
+      const report = nativeExportsSchema.parse(evidence.normalized_result);
+      expect(evidence.subject).toMatchObject({
+        local_path: path,
+        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+      });
+      expect(report).toMatchObject({
+        exports: [expect.objectContaining({ name: "kept" })],
+        coverage: { status: "partial" },
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            code: "name_unreadable",
+            message: expect.stringContaining("65536-byte read allowance"),
+          }),
+        ]),
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
   it.each(["symbol", "version"] as const)(
     "bounds UTF-8 bytes of retained ELF %s text and its exact-byte spelling",
     async (kind) => {

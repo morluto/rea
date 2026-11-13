@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { DecodedNdjsonLineBuffer } from "../process/DecodedNdjsonLineBuffer.js";
+import { Utf8NdjsonLineBuffer } from "../process/Utf8NdjsonLineBuffer.js";
 import { PendingOperations } from "../process/PendingOperations.js";
 import { GhidraResponseRouter } from "./GhidraResponseRouter.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
@@ -34,10 +34,12 @@ it("routes later Ghidra response lines after an unknown response id", async () =
     cancelledValue: () =>
       err(new GhidraSessionError("cancelled", "request cancelled")),
   });
-  const lines = new DecodedNdjsonLineBuffer();
+  const lines = new Utf8NdjsonLineBuffer();
 
   for (const line of lines.push(
-    '{"id":2,"ok":true,"result":null}\n{"id":1,"ok":true,"result":"settled"}\n',
+    Buffer.from(
+      '{"id":2,"ok":true,"result":null}\n{"id":1,"ok":true,"result":"settled"}\n',
+    ),
   ))
     router.route(line);
 

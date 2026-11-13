@@ -338,6 +338,7 @@ export class EnvironmentStateWriteSimulation {
           record.path,
           this.#input.chronology.endMs(record),
           this.#input.chronology.startMs(record),
+          record.ordinal,
         );
     this.#input.records.forEach((record, index) => this.#step(record, index));
     const views = new Map(
@@ -409,6 +410,7 @@ export class EnvironmentStateWriteSimulation {
             },
       records: this.#input.records,
       chronology: this.#input.chronology,
+      overlapsWrite: (record, exclude) => this.#overlapsWrite(record, exclude),
       viewOf: (ordinal) => {
         const view = this.#input.views.get(
           this.#toolOf.get(ordinal)?.name ?? "",
@@ -553,8 +555,6 @@ export class EnvironmentStateWriteSimulation {
   ): void {
     const target = entityTarget(entity.type, entity.collection, entity.id);
     const writes = this.#touched.get(target) ?? new Map();
-    this.#taint.known(entity.type, entity.collection, entity.id);
-    this.#touched.delete(target);
     if (
       isAbsence(record.status) ||
       this.#input.io.withBody(record.ordinal, (body) =>
@@ -565,18 +565,22 @@ export class EnvironmentStateWriteSimulation {
         ),
       )
     ) {
+      this.#taint.known(entity.type, entity.collection, entity.id);
+      this.#touched.delete(target);
       this.#removeEntity(entity);
       return;
     }
     const object = this.#checkFields(view, record, entity, writes);
-    if (object !== undefined)
-      this.#state.put(updatedEntity(entity, { ...entity.fields, ...object }));
+    if (object === undefined) return;
+    this.#taint.known(entity.type, entity.collection, entity.id);
+    this.#touched.delete(target);
+    this.#state.put(updatedEntity(entity, { ...entity.fields, ...object }));
   }
 
   /** Whether an item read shows an entity an unmodelled write made, or one left unknown, again rather than checks it. */
   #resynced(view: StateView, record: StateRecordFacts, index: number): boolean {
     if (view.shape !== "item") return false;
-    if (this.#writeOverlapsRead(record)) return true;
+    if (this.#overlapsWrite(record)) return true;
     const adopted = this.#unseen.adopt(view, { record, index });
     if (adopted !== undefined) {
       this.#taint.known(adopted.type, adopted.collection, adopted.id);
@@ -687,7 +691,7 @@ export class EnvironmentStateWriteSimulation {
     if (original === undefined) return;
     let view = this.#sorted.comparisonView(this.omitted.view(original));
     if (projectedRead(view, record, this.#input.io)) return;
-    if (this.#writeOverlapsRead(record)) return;
+    if (this.#overlapsWrite(record)) return;
     const borrowers = this.#observations.get(record.ordinal);
     if (
       this.#viewOf(original).shape !== "recorded" &&
@@ -830,11 +834,12 @@ export class EnvironmentStateWriteSimulation {
   }
 
   /** An overlapping captured write cannot supply a stable read baseline. */
-  #writeOverlapsRead(read: StateRecordFacts): boolean {
+  #overlapsWrite(read: StateRecordFacts, exclude?: number): boolean {
     return this.#writeCompletion.runningAt(
       read.path,
       this.#input.chronology.startMs(read),
       this.#input.chronology.endMs(read),
+      exclude,
     );
   }
 

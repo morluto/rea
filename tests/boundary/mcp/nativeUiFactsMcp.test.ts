@@ -32,10 +32,11 @@ const connectNativeUi = async () => {
   const replies: unknown[] = [];
   const factory = vi
     .spyOn(runtimes, "createNativeUiHelperRuntime")
-    .mockImplementation(() => {
+    .mockImplementation((_environment, deadlineMs = 180_000) => {
       const cleanupLease = new AnalysisCleanupLease(async () => {});
       return {
         signal: new AbortController().signal,
+        deadlineMs,
         cleanupLease,
         invoke: async () => {
           if (replies.length === 0)

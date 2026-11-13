@@ -18,6 +18,7 @@ const write = (path: string, ordinal: number): StateRecordFacts => ({
       instant: offsetDateTimeInstantFromEpochMilliseconds(ordinal),
       ms: ordinal,
     },
+    end: offsetDateTimeInstantFromEpochMilliseconds(ordinal),
     endMs: ordinal,
   },
 });

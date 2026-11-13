@@ -171,32 +171,24 @@ it("keeps earlier .modinfo entries when the last span is unterminated", () => {
   });
 });
 
-it("reports a missing separator, an empty key, and an over-long field per entry", () => {
+it("reports a missing separator and an empty key as malformed entries", () => {
   const report = parse(
     kernelModuleFixture({
-      modinfo: Buffer.concat([
-        Buffer.from("license\0=GPL\0", "latin1"),
-        Buffer.from(`${"k".repeat(257)}=x\0`, "latin1"),
-        Buffer.from(`name=${"v".repeat(4097)}\0`, "latin1"),
-      ]),
+      modinfo: Buffer.from("license\0=GPL\0", "latin1"),
     }),
   );
   expect(report.modinfo?.entries.map((entry) => entry.reason)).toEqual([
     "modinfo_missing_separator",
     "modinfo_empty_key",
-    "modinfo_field_exceeds_limit",
-    "modinfo_field_exceeds_limit",
   ]);
   expect(report.coverage.status).toBe("partial");
   expect(report.modinfo?.entries[1]).toMatchObject({
     key: null,
     value: "GPL",
   });
-  expect(report.modinfo?.entries[2]).toMatchObject({ key: null, value: "x" });
-  expect(report.modinfo?.entries[3]).toMatchObject({
-    key: "name",
-    value: null,
-  });
+  expect(
+    report.modinfo?.entries.every((entry) => entry.status === "malformed"),
+  ).toBe(true);
 });
 
 it("closes __versions when the section size is not a multiple of 64", () => {

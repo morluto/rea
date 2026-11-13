@@ -21,6 +21,7 @@ import streamArray from "stream-json/streamers/stream-array.js";
 import {
   assertRegularFileActive,
   RegularFileChangedError,
+  RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { sealOwnedJsonInput } from "./OwnedJsonInput.js";
@@ -112,8 +113,61 @@ const withJsonInputPipeline = async <Value>(
   else signal.addEventListener("abort", cancel, { once: true });
   try {
     return await run(controller.signal);
+  } catch (cause: unknown) {
+    if (
+      controller.signal.aborted &&
+      controller.signal.reason instanceof JsonInputCancellationFailure &&
+      isOwnedJsonPipelineCancellation(cause, controller.signal.reason)
+    )
+      throw controller.signal.reason;
+    throw cause;
   } finally {
     signal.removeEventListener("abort", cancel);
+  }
+};
+
+/** Node may combine its owned abort with a cooperative read cancellation. */
+const isOwnedJsonPipelineCancellation = (
+  cause: unknown,
+  cancellation: JsonInputCancellationFailure,
+): boolean => {
+  const pending = [cause];
+  const seen = new Set<AggregateError>();
+  let owned = false;
+  try {
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (
+        current === cancellation ||
+        (current instanceof Error &&
+          current.name === "AbortError" &&
+          "code" in current &&
+          current.code === "ABORT_ERR" &&
+          current.cause === cancellation)
+      ) {
+        owned = true;
+        continue;
+      }
+      if (
+        current instanceof RegularFileOperationCancelled &&
+        current.reason === cancellation.reason
+      )
+        continue;
+      if (!(current instanceof AggregateError) || seen.has(current))
+        return false;
+      const failures: unknown = current.errors;
+      if (!Array.isArray(failures)) return false;
+      const count = failures.length;
+      if (!Number.isSafeInteger(count) || count <= 0) return false;
+      // Cyclic or repeatedly shared aggregate graphs leave ownership unproven.
+      seen.add(current);
+      for (let index = 0; index < count; index += 1)
+        pending.push(failures[index]);
+    }
+    return owned;
+  } catch {
+    // Unreadable aggregate contents do not authorize replacing the failure.
+    return false;
   }
 };
 

@@ -1,5 +1,10 @@
 import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { readFile } from "node:fs/promises";
+import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import {
+  readManagedSnapshot,
+  verifyManagedSourceIdentity,
+} from "../../../dist/dotnet/ManagedSnapshot.js";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 
 import { parseBinaryTarget } from "../../../dist/application/BinaryTargetResolver.js";
 import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifactInspector.js";
@@ -14,47 +19,58 @@ import {
   parseManagedAppManifest,
 } from "./manifest-parser.mjs";
 
-export const createManagedManifestVerifier = (context) => ({
-  verifyManagedAppManifest: (rawManifest, manifestPath) =>
-    verifyManagedAppManifest(context, rawManifest, manifestPath),
-});
+// Preserve fs.readFile admission: Node internal kIoMaxLength is 2 GiB minus one.
+// https://nodejs.org/api/errors.html#err_fs_file_too_large
+const READ_FILE_MAX_BYTES = 0x7fff_ffff;
 
-async function verifyManagedAppManifest(context, rawManifest, manifestPath) {
-  const { appManifestInspectionLimits } = context;
+export async function verifyManagedAppManifest(rawManifest, manifestPath) {
+  const resources = new ArtifactResourceScope();
+  return withVerifierCleanup(
+    () =>
+      resources.run(() =>
+        verifyManifestSnapshot(rawManifest, manifestPath, resources),
+      ),
+    [() => resources.close()],
+  );
+}
+
+async function verifyManifestSnapshot(rawManifest, manifestPath, resources) {
   const manifest = parseManagedAppManifest(rawManifest);
   const targetPath = isAbsolute(manifest.target.path)
     ? manifest.target.path
     : resolve(dirname(manifestPath), manifest.target.path);
-  const parsedTarget = await parseBinaryTarget(targetPath);
-  ensure(
-    parsedTarget.ok,
-    `target ${targetPath} could not be parsed as a binary target`,
-  );
+  const parsedTarget = await parseBinaryTarget(targetPath, { resources });
+  if (!parsedTarget.ok) throw parsedTarget.error;
   const target = parsedTarget.value;
   ensure(
     target.sha256 === manifest.target.sha256,
     `target sha256 mismatch: expected ${manifest.target.sha256}, observed ${target.sha256}`,
   );
-  const bytes = await readFile(targetPath);
-  const artifact = inspectManagedArtifactBytes(
-    bytes,
-    target,
-    appManifestInspectionLimits,
+  const snapshot = await readManagedSnapshot(
+    target.path,
+    "verify_managed_conformance",
+    {
+      expectedSha256: target.sha256,
+      maxBytes: READ_FILE_MAX_BYTES,
+      resources,
+    },
   );
+  const identity = verifyManagedSourceIdentity(
+    target,
+    snapshot,
+    "verify_managed_conformance",
+  );
+  if (!identity.ok) throw identity.error;
+  const bytes = snapshot.bytes;
+  const artifact = inspectManagedArtifactBytes(bytes, target);
   verifyManifestTarget(manifest, artifact);
-  const methodVerification = verifyManifestMethods(
-    context,
-    manifest,
-    bytes,
-    target,
-  );
+  const methodVerification = verifyManifestMethods(manifest, bytes, target);
   const { methods, inspectedMethods } = methodVerification;
   let assertions = 1 + methodVerification.assertions;
   const applicationGraph =
     manifest.application_graph === undefined
       ? undefined
       : verifyManagedAppManifestApplicationGraph({
-          context,
           graphManifest: manifest.application_graph,
           bytes,
           target,
@@ -109,17 +125,12 @@ function verifyManifestTarget(manifest, artifact) {
     );
 }
 
-function verifyManifestMethods(context, manifest, bytes, target) {
+function verifyManifestMethods(manifest, bytes, target) {
   const methods = [];
   let assertions = 0;
   const inspectedMethods = new Map();
   for (const expectedMethod of manifest.methods) {
-    const method = inspectManagedMethodByToken(
-      context,
-      bytes,
-      target,
-      expectedMethod,
-    );
+    const method = inspectManagedMethodByToken(bytes, target, expectedMethod);
     ensure(
       method.signature.raw_sha256 === expectedMethod.signature_sha256,
       `method ${expectedMethod.token} signature sha256 mismatch: expected ${expectedMethod.signature_sha256}, observed ${method.signature.raw_sha256}`,
@@ -154,7 +165,6 @@ function verifyManifestMethods(context, manifest, bytes, target) {
 }
 
 function verifyManagedAppManifestApplicationGraph({
-  context,
   graphManifest,
   bytes,
   target,
@@ -164,7 +174,6 @@ function verifyManagedAppManifestApplicationGraph({
 }) {
   const graphByToken = new Map();
   const projectionState = {
-    context,
     graphByToken,
     inspectedMethods,
     bytes,
@@ -238,8 +247,6 @@ function verifyManagedAppManifestApplicationGraph({
 }
 
 const projectManifestMethod = (state, token) => {
-  const { appManifestInspectionLimits, appManifestMemberLimits } =
-    state.context;
   const existing = state.graphByToken.get(token);
   if (existing !== undefined) return existing;
   const method = state.inspectedMethods.get(token);
@@ -248,7 +255,6 @@ const projectManifestMethod = (state, token) => {
     `application graph method ${token} must also be declared in manifest.methods`,
   );
   const members = inspectManagedMethodPageByToken(
-    state.context,
     state.bytes,
     state.target,
     token,
@@ -258,7 +264,7 @@ const projectManifestMethod = (state, token) => {
     MANAGED_STATIC_PROVIDER,
     {
       operation: "inspect_managed_artifact",
-      parameters: appManifestInspectionLimits,
+      parameters: {},
       result: state.artifact,
       rawResult: null,
       limitations: state.artifact.limitations,
@@ -268,7 +274,7 @@ const projectManifestMethod = (state, token) => {
   const memberEvidence = createEvidence(state.target, MANAGED_STATIC_PROVIDER, {
     operation: "inspect_managed_members",
     parameters: {
-      ...appManifestMemberLimits,
+      methodLimit: 1,
       methodOffset: methodTokenRow(token) - 1,
     },
     result: members,
@@ -298,9 +304,8 @@ const projectManifestMethod = (state, token) => {
   return projection;
 };
 
-function inspectManagedMethodByToken(context, bytes, target, expectedMethod) {
+function inspectManagedMethodByToken(bytes, target, expectedMethod) {
   const members = inspectManagedMethodPageByToken(
-    context,
     bytes,
     target,
     expectedMethod.token,
@@ -319,11 +324,10 @@ function inspectManagedMethodByToken(context, bytes, target, expectedMethod) {
   return method;
 }
 
-function inspectManagedMethodPageByToken(context, bytes, target, token) {
-  const { appManifestMemberLimits } = context;
+function inspectManagedMethodPageByToken(bytes, target, token) {
   const row = methodTokenRow(token);
   return inspectManagedMembersBytes(bytes, target, {
-    ...appManifestMemberLimits,
+    methodLimit: 1,
     methodOffset: row - 1,
   });
 }

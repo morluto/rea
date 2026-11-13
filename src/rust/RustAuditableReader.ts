@@ -2,6 +2,7 @@ import { nodeCodecResult } from "../compression/NodeCodecResult.js";
 import { inflateSync } from "node:zlib";
 import { visit } from "jsonc-parser";
 import { z } from "zod";
+import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
   cyclicDependencyIndices,
   type RustAuditableMetadata,
@@ -9,16 +10,12 @@ import {
 } from "../domain/rust/rustBinary.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 
-/** Selected-file admission limit shared with the stable artifact reader. */
-export const RUST_BINARY_INPUT_BYTES = 256 * 1024 * 1024;
 /** Compressed zlib stream limit. */
-export const RUST_SECTION_BYTES = 1024 * 1024;
+const RUST_SECTION_BYTES = 1024 * 1024;
 /** Inflated JSON may grow by at most this multiple of the compressed stream. */
 export const RUST_INFLATE_RATIO = 64;
 /** Absolute inflated JSON limit, applied together with the ratio. */
 export const RUST_UNCOMPRESSED_BYTES = 8 * 1024 * 1024;
-/** Complete normalized report limit. */
-export const RUST_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 const JSON_DEPTH = 32;
 const packageSchema = z.strictObject({
@@ -41,12 +38,15 @@ const documentSchema = documentVersionSchema
 
 /** Malformed or unsupported dependency-section bytes. */
 export class RustAuditableFormatFailure extends Error {
+  /** The image holds the metadata, in a form this reader cannot decode. */
+  readonly undecodedContent: boolean;
   constructor(
     readonly kind: "malformed" | "unsupported",
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly undecodedContent?: boolean },
   ) {
     super(message, options);
+    this.undecodedContent = options?.undecodedContent ?? false;
     this.name = "RustAuditableFormatFailure";
   }
 }
@@ -60,10 +60,6 @@ export type RustAuditableConstraint =
   | {
       readonly resource: "transport";
       readonly reported_limits: { readonly maximum_output_bytes: number };
-    }
-  | {
-      readonly resource: "capacity";
-      readonly reported_limits: { readonly maximum_rustc_hashes: number };
     };
 
 /** Admission refused before retained output or graph expansion. */
@@ -83,7 +79,10 @@ export const readAuditableSection = (
   sectionName: RustAuditableMetadata["section_name"],
   fileOffset: number,
   bytes: Buffer,
-  options: { readonly peFileAlignment?: number | undefined } = {},
+  options: {
+    readonly peFileAlignment?: number | undefined;
+    readonly maxOutputBytes?: number | undefined;
+  } = {},
 ): RustAuditableMetadata => {
   if (bytes.length === 0)
     throw new RustAuditableFormatFailure(
@@ -102,7 +101,10 @@ export const readAuditableSection = (
       "Dependency section exceeds the 1 MiB compressed limit",
     );
   const inflated = inflateSection(bytes, options.peFileAlignment);
-  const document = parseDocument(inflated.bytes);
+  const document = parseDocument(
+    inflated.bytes,
+    options.maxOutputBytes ?? RUST_PRODUCER_DEFAULTS.output_bytes,
+  );
   const packages = normalizePackages(document.packages);
   const root = rootIndex(packages);
   return {
@@ -207,7 +209,10 @@ const inflateFailure = (cause: unknown, maximum: number): Error => {
   return cause instanceof Error ? cause : new Error(String(cause));
 };
 
-const parseDocument = (bytes: Buffer): z.infer<typeof documentSchema> => {
+const parseDocument = (
+  bytes: Buffer,
+  maxOutputBytes: number,
+): z.infer<typeof documentSchema> => {
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -274,7 +279,7 @@ const parseDocument = (bytes: Buffer): z.infer<typeof documentSchema> => {
       "Dependency JSON does not match the format schema",
       { cause: version.error },
     );
-  admitGraphExpansion(value);
+  admitGraphExpansion(value, maxOutputBytes);
   // One malformed package must fail before Zod retains an issue for every field.
   rejectMalformedPackages(value);
   const parsed = documentSchema.safeParse(value);
@@ -303,7 +308,7 @@ const MIN_EDGE_OUTPUT_BYTES = JSON.stringify({
   from_index: 0,
   to_index: 0,
 }).length;
-const admitGraphExpansion = (value: unknown): void => {
+const admitGraphExpansion = (value: unknown, maxOutputBytes: number): void => {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -318,11 +323,11 @@ const admitGraphExpansion = (value: unknown): void => {
   let edges = 0;
   const admit = () => {
     const edgeBytes = edges * MIN_EDGE_OUTPUT_BYTES + Math.max(0, edges - 1);
-    if (minimumBytes + edgeBytes > RUST_OUTPUT_BYTES)
+    if (minimumBytes + edgeBytes > maxOutputBytes)
       throw new RustAuditableResourceFailure(
         {
           resource: "transport",
-          reported_limits: { maximum_output_bytes: RUST_OUTPUT_BYTES },
+          reported_limits: { maximum_output_bytes: maxOutputBytes },
         },
         "Dependency graph exceeds the complete report byte budget before expansion",
       );
@@ -340,7 +345,7 @@ const admitGraphExpansion = (value: unknown): void => {
       pkg.features.every((feature) => typeof feature === "string")
     ) {
       const featureBudget =
-        RUST_OUTPUT_BYTES - minimumBytes - currentEdgeBytes() + 4;
+        maxOutputBytes - minimumBytes - currentEdgeBytes() + 4;
       const featureBytes = jsonValueByteLength(
         pkg.features as string[],
         featureBudget,

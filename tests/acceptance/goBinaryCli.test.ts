@@ -88,6 +88,13 @@ cliTest(
     const root = await createTestTempDirectory("rea-go-inline-budget-");
     const { client, call } = await connectLocalToolsMcp();
     const maximum = 1024 * 1024;
+    const impossibleInline = createGoBinaryFixture();
+    impossibleInline.bytes.set(
+      [0x81, 0x80, 0x40],
+      impossibleInline.headerOffset + 32,
+    );
+    const impossiblePointer = createGoBinaryFixture({ encoding: "pointer" });
+    impossiblePointer.bytes.writeBigUInt64LE(BigInt(maximum + 1), 1544);
     const cases = [
       {
         name: "exact",
@@ -102,6 +109,16 @@ cliTest(
       {
         name: "truncated",
         fixture: createGoInlineAggregateFixture(512),
+        outcome: "malformed",
+      },
+      {
+        name: "impossible-inline",
+        fixture: impossibleInline,
+        outcome: "malformed",
+      },
+      {
+        name: "impossible-pointer",
+        fixture: impossiblePointer,
         outcome: "malformed",
       },
     ] as const;
