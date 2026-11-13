@@ -937,6 +937,7 @@ it("explains many copied and slugged fields of a wide body without searching it 
       value(index),
     ]),
   );
+  const started = performance.now();
   const copied = explainCreate(created({ id: 1, ...copies }, nested));
   expect(ruleFor(copied.rules, `c${String(n - 1)}`)).toEqual({
     field: `c${String(n - 1)}`,
@@ -964,14 +965,18 @@ it("explains many copied and slugged fields of a wide body without searching it 
     rule: "slug",
     from: "m7",
   });
+  // Searching the body again for each field is quadratic in its members.
+  expect(performance.now() - started).toBeLessThan(5_000);
 });
 
 it("searches a wide request body for a copied value in linear time", () => {
   // Shifting each value off the queue made one fruitless search over 500,000 zeros take about a minute.
   const wide = Array.from({ length: 500_000 }, () => 0);
+  const started = performance.now();
   const result = explainCreate(
     created({ id: 1, note: "not anywhere in the body" }, { items: wide }),
   );
+  expect(performance.now() - started).toBeLessThan(5_000);
   expect(ruleFor(result.rules, "note")).toBeUndefined();
 });
 
