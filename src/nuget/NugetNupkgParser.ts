@@ -133,7 +133,16 @@ const zipSize = (value: number | undefined): number | null =>
 const asFileEntry = (entry: Entry): entry is FileEntry =>
   !entry.directory && "getData" in entry;
 
-const wrapZipFailure = (cause: unknown): never => {
+const wrapZipFailure = (
+  cause: unknown,
+  signal: AbortSignal | undefined,
+): never => {
+  // zip.js rejects with the caller's abort reason; keep it as cancellation
+  // rather than reporting the package as damaged.
+  if (signal?.aborted === true && Object.is(cause, signal.reason))
+    throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
+      cause: signal.reason,
+    });
   if (
     cause instanceof ArtifactReaderFailure ||
     cause instanceof NugetNupkgFormatFailure ||
@@ -167,7 +176,7 @@ const readMemberBytes = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
-    return wrapZipFailure(cause);
+    return wrapZipFailure(cause, signal);
   }
 };
 
@@ -433,7 +442,7 @@ export const parseNugetNupkg = async (
         entries.push(entry);
       }
     } catch (cause: unknown) {
-      return wrapZipFailure(cause);
+      return wrapZipFailure(cause, signal);
     }
     const files: { entry: FileEntry; name: string }[] = [];
     const contents: NugetNupkg["contents"] = [];

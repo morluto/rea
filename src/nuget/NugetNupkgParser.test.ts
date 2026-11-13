@@ -13,6 +13,7 @@ import {
   nugetNupkgMissingNuspecFixture,
   ungroupedNuspec,
 } from "./NugetNupkg.fixture.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { NUPKG_LIMITATIONS, parseNugetNupkg } from "./NugetNupkgParser.js";
 import {
   NugetNupkgCapacityFailure,
@@ -188,6 +189,35 @@ it("stops ZIP enumeration as soon as the entry budget is exceeded", async () => 
       maximum: 2,
     });
     expect(yielded).toBe(3);
+  } finally {
+    enumeration.mockRestore();
+  }
+});
+
+it("reports cancellation during a member read with the caller's reason", async () => {
+  const bytes = await nugetNupkgFixture();
+  const controller = new AbortController();
+  const reason = { source: "caller-request", operation: "cancel" };
+  const original = ZipReader.prototype.getEntriesGenerator;
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+      yield* original.call(this, options);
+      controller.abort(reason);
+      return true;
+    });
+  try {
+    const failure: unknown = await parseNugetNupkg(
+      bytes,
+      artifactOf(bytes),
+      defaults,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    expect(failure).toMatchObject({ reason: "cancelled" });
+    expect((failure as ArtifactReaderFailure).cancellation?.reason).toBe(
+      reason,
+    );
   } finally {
     enumeration.mockRestore();
   }
