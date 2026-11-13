@@ -1,17 +1,29 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { createPackageVerifierCommands } from "../../lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // Optional verification tool only; the runtime inspector never starts dtc.
 const dtc = process.env.REA_DTC_PATH ?? "dtc";
-assert.match(
-  execFileSync(dtc, ["--version"], { encoding: "utf8" }),
-  /DTC 1\.8\.1\b/,
-);
 const root = mkdtempSync(join(tmpdir(), "rea-dtb-verification-"));
-try {
+const commands = await createPackageVerifierCommands({
+  workspace: {
+    path: root,
+    close: async () => rmSync(root, { recursive: true, force: true }),
+  },
+});
+const exec = async (command, args) =>
+  (
+    await commands.exec(command, args, {
+      timeout: 120_000,
+      maxBuffer: 16 * 1024 * 1024,
+    })
+  ).stdout;
+await withVerifierCleanup(async () => {
+  assert.match(await exec(dtc, ["--version"]), /DTC 1\.8\.1\b/);
+
   const source = join(root, "board.dts"),
     blob = join(root, "board.dtb");
   writeFileSync(
@@ -30,16 +42,15 @@ try {
   consumer { remote-endpoint = <&serial>; };
 };\n`,
   );
-  execFileSync(dtc, ["-I", "dts", "-O", "dtb", "-o", blob, source]);
-  const decompiled = execFileSync(dtc, ["-I", "dtb", "-O", "dts", blob], {
-    encoding: "utf8",
-  });
+  await exec(dtc, ["-I", "dts", "-O", "dtb", "-o", blob, source]);
+  const decompiled = await exec(dtc, ["-I", "dtb", "-O", "dts", blob]);
   const evidence = JSON.parse(
-    execFileSync(
-      process.execPath,
-      ["scripts/rea.mjs", "inspect-devicetree", blob, "--json"],
-      { encoding: "utf8" },
-    ),
+    await exec(process.execPath, [
+      "scripts/rea.mjs",
+      "inspect-devicetree",
+      blob,
+      "--json",
+    ]),
   );
   const report = evidence.normalized_result;
   // This controlled fixture uses one opening/closing brace per node line.
@@ -83,6 +94,4 @@ try {
       2,
     ),
   );
-} finally {
-  rmSync(root, { recursive: true, force: true });
-}
+}, [() => commands.close()]);

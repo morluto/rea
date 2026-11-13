@@ -1,3 +1,4 @@
+import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
 import { MAX_FLUTTER_BUILD_ID_BYTES } from "../domain/flutter/flutterBuildAnalysis.js";
@@ -39,7 +40,7 @@ export const readElfBuildIds = async (
   });
   let examined = 0;
   const read = async (offset: number, size: number): Promise<Buffer | null> => {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     if (
       !Number.isSafeInteger(offset) ||
       !Number.isSafeInteger(size) ||
@@ -59,7 +60,7 @@ export const readElfBuildIds = async (
         size - copied,
         offset + copied,
       );
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
       if (result.bytesRead === 0) return null;
       copied += result.bytesRead;
     }
@@ -97,7 +98,7 @@ export const readElfBuildIds = async (
     for (let index = 0; index < table.count; index += 1) {
       if (index % 4096 === 0) {
         await yieldToEventLoop();
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
       }
       const base = index * table.width;
       const parsedRecord = table.program
@@ -123,7 +124,7 @@ export const readElfBuildIds = async (
       )
         return failure("ELF note range is not file-backed");
       if ("size" in record) {
-        if ((record.flags & 0x800n) !== 0n) {
+        if (record.compressed) {
           if (!compressedNotes) {
             failures.push({
               reason: "Compressed ELF note sections are unsupported",
@@ -157,7 +158,7 @@ export const readElfBuildIds = async (
     for (let at = 0; at < notes.length;) {
       if (at - yieldedAt >= 64 * 1024) {
         await yieldToEventLoop();
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
         yieldedAt = at;
       }
       if (notes.length - at < 12) {
@@ -169,6 +170,8 @@ export const readElfBuildIds = async (
       if (!parsedHeader.ok) return failure(parsedHeader.error.message);
       const { namesz, descsz, type } = parsedHeader.value;
       const layout = elfNoteLayout(namesz, descsz, range.alignment);
+      if (layout.next > notes.length - at)
+        return failure("ELF note entry exceeds its declared note range");
       const descriptor = at + layout.descriptor;
       const end = descriptor + descsz;
       if (end > notes.length)
@@ -192,6 +195,6 @@ export const readElfBuildIds = async (
       at += layout.next;
     }
   }
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   return { candidates: [...candidates], failures };
 };

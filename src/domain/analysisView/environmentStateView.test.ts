@@ -12,7 +12,7 @@ import {
   scenarioCaptureFixture,
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import type { Evidence } from "../evidence.js";
-import type { JsonValue } from "../jsonValue.js";
+import { ownedJsonObjectSchema, type JsonValue } from "../jsonValue.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
 import {
   analysisViewResultSchema,
@@ -842,7 +842,7 @@ it("leaves every line checked rather than compare more lines than the variant pa
     path: "/api/items",
     query: `?view=${String(ordinal)}`,
     status: 200,
-    timing: { start: undefined, endMs: undefined },
+    timing: { start: undefined, end: undefined, endMs: undefined },
   }));
   const shape = {
     entities: new Map(
@@ -869,7 +869,7 @@ it("tells apart member names that hold the separator, so a line spelling them ot
     path: "/api/items/1",
     query,
     status: 200,
-    timing: { start: undefined, endMs: undefined },
+    timing: { start: undefined, end: undefined, endMs: undefined },
   });
   const observed = (ordinal: number, object: JsonObject) => ({
     position: ordinal,
@@ -909,7 +909,7 @@ it("leaves every line checked when comparing many mostly empty lines would excee
       method: "GET",
       path: "/api/items",
       status: 200,
-      timing: { start: undefined, endMs: undefined },
+      timing: { start: undefined, end: undefined, endMs: undefined },
     };
     return Object.defineProperty(record, "query", {
       enumerable: true,
@@ -950,7 +950,7 @@ const expandedItemLines = (items: number) => {
       path: `/api/items/${String(ordinal % items)}`,
       query: ordinal < items ? undefined : "?expand=shelf",
       status: 200,
-      timing: { start: undefined, endMs: undefined },
+      timing: { start: undefined, end: undefined, endMs: undefined },
     }),
   );
   const shapes = new Map(
@@ -1144,6 +1144,7 @@ it("finds each span's earliest write without scanning the writes before it", () 
             return start;
           },
         },
+        end: offsetDateTimeInstantFromEpochMilliseconds(end),
         get endMs() {
           reads += 1;
           return end;
@@ -2018,5 +2019,170 @@ it.each([
     );
     expect(capture.records).toEqual(original);
     if (missingDuration) expect(state.write_clock).toBeNull();
+  },
+);
+
+it.each(["not a URL", "", 42, undefined])(
+  "bounds initial state at a successful write whose URL is unavailable: %j",
+  (url) => {
+    const source = captureOf([
+      ["GET", "/api/items/1", { id: 1, title: "initial" }],
+      ["PUT", "/api/items/1", { id: 1 }],
+      ["GET", "/api/items/1", { id: 1, title: "after" }],
+    ]);
+    const capture = webNetworkCaptureSchema.parse(source.normalizedResult);
+    const reported = ownedJsonObjectSchema.parse(capture.records[1]!.reported);
+    const request = ownedJsonObjectSchema.parse(reported.request);
+    if (url === undefined) delete request.url;
+    else request.url = url;
+    const before = structuredClone(capture);
+    const state = stateOf(parentOf(analysisViewCaptureEvidence(capture)));
+    expect(state.types).toMatchObject([
+      { init_before_ordinal: 1, volatile_fields: [] },
+    ]);
+    expect(state.entities).toMatchObject([
+      { fields: { title: "initial" }, record_ordinals: [0] },
+    ]);
+    expect(state.limitations).toContainEqual(
+      expect.stringMatching(/1.*writes.*unusable URL.*target is unknown/iu),
+    );
+    expect(
+      state.limitations.some((text) => text.includes("redacted URL")),
+    ).toBe(false);
+    expect(capture).toEqual(before);
+  },
+);
+
+it("commits neither a manifest line nor state facts when inherited state admission fails", () => {
+  const records = webNetworkCaptureSchema.parse(
+    environmentManifestCaptureFixture([
+      {
+        startedDateTime: "2026-10-20T09:00:00Z",
+        time: 0,
+        request: { method: "GET", url: "https://manifest.test/api/health" },
+        response: {
+          status: 200,
+          content: { mimeType: "application/json", text: '{"healthy":true}' },
+        },
+      },
+      {
+        startedDateTime: "x".repeat(5000),
+        time: 0,
+        request: { method: "GET", url: "https://manifest.test/api/items" },
+        response: {
+          status: 200,
+          content: { mimeType: "application/json", text: "[]" },
+        },
+      },
+    ]),
+  ).records;
+  const accumulator = new EnvironmentStateAccumulator(32 * 1024);
+  expect(accumulator.add(records[0]!).ok).toBe(true);
+  expect(accumulator.add(records[1]!).ok).toBe(false);
+  const admitted = accumulator.finish();
+  if (!admitted.ok) throw admitted.error;
+  expect(admitted.value.records.map(({ ordinal }) => ordinal)).toEqual([0]);
+  const retry = structuredClone(records[1]!);
+  if (
+    retry.reported === null ||
+    typeof retry.reported !== "object" ||
+    Array.isArray(retry.reported)
+  )
+    throw new Error("Expected fixture object");
+  retry.reported.startedDateTime = "2026-10-20T09:00:01Z";
+  expect(accumulator.add(retry).ok).toBe(true);
+  const state = accumulator.finishState();
+  if (!state.ok) throw state.error;
+  expect(state.value.documents.map(({ path }) => path)).toEqual([
+    "/api/health",
+    "/api/items",
+  ]);
+});
+
+it.each([
+  { method: "GET", status: 200 },
+  { method: "PUT", status: 500 },
+])(
+  "does not infer a successful state write from an excluded $method/$status record",
+  ({ method, status }) => {
+    const source = captureOf([
+      ["GET", "/api/items/1", { id: 1, title: "initial" }],
+      [method, "/api/items/1", {}, status],
+      ["GET", "/api/items/1", { id: 1, title: "after" }],
+    ]);
+    const capture = webNetworkCaptureSchema.parse(source.normalizedResult);
+    const reported = ownedJsonObjectSchema.parse(capture.records[1]!.reported);
+    ownedJsonObjectSchema.parse(reported.request).url = "not a URL";
+    const state = stateOf(parentOf(analysisViewCaptureEvidence(capture)));
+    expect(state.types).toMatchObject([
+      { init_before_ordinal: null, volatile_fields: ["title"] },
+    ]);
+    expect(state.entities).toMatchObject([{ fields: { title: "after" } }]);
+    expect(
+      state.limitations.some((text) =>
+        text.includes("writes had an unusable URL"),
+      ),
+    ).toBe(false);
+  },
+);
+
+it.each([{}, { status: "unknown" }, { status: null }])(
+  "keeps a possible unlocated write when its response status is unknown: %j",
+  (response) => {
+    const source = captureOf([
+      ["GET", "/api/items/1", { id: 1, title: "initial" }],
+      ["PUT", "/api/items/1", {}],
+      ["GET", "/api/items/1", { id: 1, title: "after" }],
+    ]);
+    const capture = webNetworkCaptureSchema.parse(source.normalizedResult);
+    const reported = ownedJsonObjectSchema.parse(capture.records[1]!.reported);
+    ownedJsonObjectSchema.parse(reported.request).url = "not a URL";
+    reported.response = ownedJsonObjectSchema.parse(response);
+    const state = stateOf(parentOf(analysisViewCaptureEvidence(capture)));
+    expect(state.types).toMatchObject([
+      { init_before_ordinal: 1, volatile_fields: [] },
+    ]);
+    expect(state.entities).toMatchObject([
+      { fields: { title: "initial" }, record_ordinals: [0] },
+    ]);
+  },
+);
+
+it.each([true, false])(
+  "derives timeline limitations from the current state snapshot (timed: %s)",
+  (timed) => {
+    const accumulator = new EnvironmentStateAccumulator();
+    const empty = accumulator.finishState();
+    if (!empty.ok) throw empty.error;
+    expect(empty.value.timeline).toBe("record-order");
+    const record = webNetworkCaptureSchema.parse(
+      environmentManifestCaptureFixture([
+        {
+          ...(timed ? { startedDateTime: "2026-10-20T09:00:00Z" } : {}),
+          time: 0,
+          request: { method: "GET", url: "https://snapshot.test/api/items" },
+          response: {
+            status: 200,
+            content: { mimeType: "application/json", text: "[]" },
+          },
+        },
+      ]),
+    ).records[0]!;
+    expect(accumulator.add(record).ok).toBe(true);
+    const current = accumulator.finishState();
+    if (!current.ok) throw current.error;
+    expect(current.value.timeline).toBe(
+      timed ? "recorded-start-time" : "record-order",
+    );
+    expect(
+      current.value.limitations.some((text) =>
+        text.includes("Some records carry no start time"),
+      ),
+    ).toBe(!timed);
+    expect(
+      current.value.limitations.some((text) =>
+        text.includes("No retained record had a parseable origin"),
+      ),
+    ).toBe(false);
   },
 );

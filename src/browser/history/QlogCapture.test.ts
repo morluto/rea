@@ -441,7 +441,10 @@ it.each([
     const enclosing = depth - 4;
     const text = `{"qlog_format":"JSON","qlog_version":"0.3","traces":[{"events":[],"ext":${"[".repeat(enclosing)}${innermost}${"]".repeat(enclosing)}}]}`;
     if (accepted) expect(facts(text).decoded.total_records).toBe(0);
-    else expect(() => facts(text)).toThrow("nesting budget");
+    else
+      expect(() => facts(text)).toThrow(
+        expect.objectContaining({ reason: "input-limit" }),
+      );
   },
 );
 
@@ -454,7 +457,7 @@ it("rejects other qlog containers/versions and excessive nesting, accepts empty 
         extension: JSON.parse("[".repeat(65) + "0" + "]".repeat(65)),
       }),
     ),
-  ).toThrow("nesting budget");
+  ).toThrow(expect.objectContaining({ reason: "input-limit" }));
   expect(
     facts('{"qlog_format":"JSON","qlog_version":"0.3","traces":[]}').traces,
   ).toEqual([]);

@@ -13,6 +13,11 @@ import { cliTest, type SharedMcpCall } from "../../support/cli/cliFixture.js";
 
 const cases = [
   {
+    name: "semantic evaluator precision",
+    args: ["--semantic-precision", '{"primitive_candidates":512}'],
+    controls: { semantic_precision: { primitive_candidates: 512 } },
+  },
+  {
     name: "both limits",
     args: ["--max-heap-mb", "128", "--analysis-timeout-ms", "30000"],
     controls: { max_heap_mb: 128, analysis_timeout_ms: 30000 },

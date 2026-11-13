@@ -1,4 +1,17 @@
+import { createTestArtifactResourceScope } from "../../../tests/fixtures/artifactResourceScope.js";
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "../../process/ProcessInspectionCancellation.js";
 import { EventEmitter } from "node:events";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
+import {
+  execFileOutput,
+  ExecFileOutputCancelledError,
+} from "../../process/ExecFileOutput.js";
 import { PassThrough } from "node:stream";
 import { expect, it } from "vitest";
 import {
@@ -6,6 +19,10 @@ import {
   AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../../domain/analysisErrorBase.js";
 import {
   resolveWakaruCommand,
   runWakaruCommand,
@@ -29,28 +46,9 @@ it("names the Wakaru configuration requirement when it is not configured", async
   });
 });
 
-it("rejects an exhausted shared execution budget before launching the next command", async () => {
-  await expect(
-    runWakaruCommand({
-      command: "/selected/wakaru",
-      limiter: "/usr/bin/prlimit",
-      arguments: ["--version"],
-      cwd: "/tmp/unused",
-      environment: {},
-      deadline: performance.now() - 1,
-      launcher: async () => {
-        throw new Error("An expired budget must not launch");
-      },
-    }),
-  ).rejects.toMatchObject({
-    _tag: "AnalysisTimeoutError",
-    operation: "recover_javascript_sources",
-    timeoutMs: RECOVERY_LIMITS.timeoutMs,
-  });
-});
-
 it("projects the fixed Wakaru deadline without an editable setting", async () => {
   const refusal: unknown = await runWakaruCommand({
+    resources: createTestArtifactResourceScope(),
     command: "/selected/wakaru",
     limiter: "/usr/bin/prlimit",
     arguments: ["--version"],
@@ -63,6 +61,10 @@ it("projects the fixed Wakaru deadline without an editable setting", async () =>
   }).catch((cause: unknown) => cause);
   if (!(refusal instanceof AnalysisTimeoutError))
     throw new Error("Expected the Wakaru deadline");
+  expect(refusal).toMatchObject({
+    operation: "recover_javascript_sources",
+    timeoutMs: RECOVERY_LIMITS.timeoutMs,
+  });
   const projected = projectAnalysisError(refusal);
   expect(projected).toMatchObject({
     code: "provider_timeout",
@@ -79,6 +81,7 @@ it("projects the fixed Wakaru deadline without an editable setting", async () =>
 it("preserves caller cancellation before acquiring an expired execution budget", async () => {
   await expect(
     runWakaruCommand({
+      resources: createTestArtifactResourceScope(),
       command: "/selected/wakaru",
       limiter: "/usr/bin/prlimit",
       arguments: ["--version"],
@@ -99,6 +102,7 @@ it.each([null, false, { request: "cancel launch" }])(
     const controller = new AbortController();
     await expect(
       runWakaruCommand({
+        resources: createTestArtifactResourceScope(),
         command: "/selected/wakaru",
         limiter: "/usr/bin/prlimit",
         arguments: ["--version"],
@@ -106,9 +110,9 @@ it.each([null, false, { request: "cancel launch" }])(
         environment: {},
         deadline: performance.now() + 5_000,
         signal: controller.signal,
-        launcher: async () => {
+        launcher: async (options) => {
           controller.abort(reason);
-          throw new Error("launcher interrupted");
+          throw new ProcessOwnershipInspectionCancelled(options.signal?.reason);
         },
       }),
     ).rejects.toMatchObject({
@@ -117,6 +121,159 @@ it.each([null, false, { request: "cancel launch" }])(
     });
   },
 );
+
+it.each(["direct", "batch"] as const)(
+  "preserves %s ownership cancellation without requiring signal state",
+  async (kind) => {
+    const reason = { caller: "ownership cancellation" };
+    const cancelled = new ProcessOwnershipInspectionCancelled(reason);
+    const failure =
+      kind === "direct"
+        ? cancelled
+        : new ProcessOwnershipIdentityBatchFailure(
+            [{ pid: 42, requestIndex: 0, cause: cancelled }],
+            new Map([
+              [
+                44,
+                {
+                  state: "unavailable" as const,
+                  reason: "completed sibling observation",
+                },
+              ],
+            ]),
+          );
+    const projected = await runWakaruCommand({
+      resources: createTestArtifactResourceScope(),
+      command: "/selected/wakaru",
+      limiter: "/unused/prlimit",
+      arguments: [],
+      cwd: "/unused",
+      environment: {},
+      deadline: performance.now() + 30_000,
+      launcher: async () => {
+        throw failure;
+      },
+    }).catch((cause: unknown) => cause);
+    expect(projected).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+    });
+    if (
+      !(projected instanceof AnalysisError) ||
+      !("inspectionFailure" in projected)
+    )
+      throw new Error("Missing ownership inspection origin");
+    expect(projected.inspectionFailure).toBe(failure);
+  },
+);
+
+it.each(["identity", "name"] as const)(
+  "keeps a physical launch failure despite %s cancellation resemblance",
+  async (kind) => {
+    const controller = new AbortController();
+    const physical = new Error("physical launch refusal", { cause: null });
+    physical.name = "AbortError";
+    const failure = await runWakaruCommand({
+      resources: createTestArtifactResourceScope(),
+      command: "/selected/wakaru",
+      limiter: "/unused/prlimit",
+      arguments: [],
+      cwd: "/unused",
+      environment: {},
+      deadline: performance.now() + 30_000,
+      signal: controller.signal,
+      launcher: async () => {
+        controller.abort(kind === "identity" ? physical : null);
+        throw physical;
+      },
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      _tag: "ProviderAdapterError",
+      cause: physical,
+    });
+    if (!(failure instanceof AnalysisError)) throw failure;
+    expect(failure.cause).toBe(physical);
+  },
+);
+
+it.each(["recorded", "live"] as const)(
+  "preserves cancellation reported by the %s ownership preparation command",
+  async (mode) => {
+    const controller = new AbortController();
+    const reason = { caller: "cancel ownership preparation" };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await expect(
+        runWakaruCommand({
+          resources: createTestArtifactResourceScope(),
+          command: "/selected/wakaru",
+          limiter: "/unused/prlimit",
+          arguments: ["--version"],
+          cwd: tmpdir(),
+          environment: {},
+          deadline: performance.now() + 10_000,
+          signal: controller.signal,
+          launcher: async () => {
+            try {
+              if (mode === "recorded") {
+                controller.abort(reason);
+                throw new ExecFileOutputCancelledError(reason);
+              }
+              timer = setTimeout(() => controller.abort(reason), 100);
+              await execFileOutput(
+                process.execPath,
+                ["-e", "setInterval(() => {}, 1000)"],
+                {
+                  signal: controller.signal,
+                  stopSignal: "SIGTERM",
+                },
+              );
+              throw new Error("Expected preparation cancellation");
+            } catch (cause) {
+              // A launcher reports its owner's typed inspection cancellation;
+              // the lower command's caller reason remains opaque.
+              throw ProcessOwnershipInspectionCancelled.from(cause) ?? cause;
+            }
+          },
+        }),
+      ).rejects.toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      });
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  },
+);
+
+it("preserves a real launch failure when the caller cancels after it", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancel after launch failure" };
+  const missing = join(tmpdir(), `rea-missing-wakaru-${randomUUID()}`);
+  const failure: unknown = await runWakaruCommand({
+    resources: createTestArtifactResourceScope(),
+    command: "/selected/wakaru",
+    limiter: missing,
+    arguments: ["--version"],
+    cwd: tmpdir(),
+    environment: {},
+    deadline: performance.now() + 30_000,
+    signal: controller.signal,
+    launcher: async (options) => {
+      try {
+        return await spawnOwnedProviderProcess(options);
+      } catch (cause) {
+        controller.abort(reason);
+        throw cause;
+      }
+    },
+  }).catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    _tag: "ProviderAdapterError",
+    cause: { code: "ENOENT" },
+    secondaryFailures: [{ _tag: "AnalysisCancelledError", cause: reason }],
+  });
+});
 
 const commandFixture = (
   emit: (producer: ReturnType<typeof createProducer>) => void,
@@ -138,6 +295,7 @@ const commandFixture = (
   return {
     producer,
     context: {
+      resources: createTestArtifactResourceScope(),
       command: "/selected/wakaru",
       limiter: "/usr/bin/prlimit",
       arguments: ["--version"],
@@ -185,11 +343,66 @@ it("checks the diagnostic byte limit against output delivered after exit", async
       producer.emit("close", 0, null);
     });
   });
-  await expect(runWakaruCommand(context)).rejects.toMatchObject({
+  const failure = await runWakaruCommand(context).catch(
+    (cause: unknown) => cause,
+  );
+  expect(failure).toMatchObject({
     _tag: "AnalysisOutputError",
     operation: "recover_javascript_sources",
+    capturedOutput: {
+      truncated: true,
+      exit_code: 0,
+    },
   });
+  expect(
+    (failure as { capturedOutput: { stderr: string } }).capturedOutput.stderr
+      .length,
+  ).toBe(RECOVERY_LIMITS.reportBytes);
 });
+
+it.each([false, true])(
+  "retains output and exact cancellation during final cleanup (cleanup fails: %s)",
+  async (cleanupFails) => {
+    const reason = { caller: "cancel during final cleanup" };
+    const controller = new AbortController();
+    const { context } = commandFixture((producer) => {
+      producer.stdout.end("finished output");
+      producer.stderr.end("finished diagnostic");
+      producer.emit("exit", 0, null);
+      producer.emit("close", 0, null);
+    });
+    const launcher = context.launcher;
+    const failure = await runWakaruCommand({
+      ...context,
+      signal: controller.signal,
+      launcher: async (options) => ({
+        ...(await launcher(options)),
+        cleanup: async () => {
+          controller.abort(reason);
+          return cleanupFails
+            ? { cleaned: false as const, reason: "owned cleanup refused" }
+            : { cleaned: true as const, signaled: false };
+        },
+      }),
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      cleanupIncomplete: cleanupFails,
+      capturedOutput: {
+        stdout: "finished output",
+        stderr: "finished diagnostic",
+        exit_code: 0,
+      },
+    });
+    const primary = primaryAnalysisError(
+      failure as Parameters<typeof primaryAnalysisError>[0],
+    );
+    expect(primary).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+    });
+    expect(primary.cause).toBe(reason);
+  },
+);
 
 it("enforces the shared deadline while exited output streams remain open", async () => {
   const { context, producer } = commandFixture((process) => {
@@ -215,6 +428,7 @@ it("pins both Wakaru ceilings through the shared prlimit vector", async () => {
   const command = "/selected/wakaru";
   await expect(
     runWakaruCommand({
+      resources: createTestArtifactResourceScope(),
       command,
       limiter: "/usr/bin/prlimit",
       arguments: ["--version"],

@@ -4,6 +4,7 @@ import {
   createTestBinarySession,
   createDeferred,
 } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import type { GoBinary } from "../../../src/domain/go/goBinary.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -60,7 +61,7 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
     { name: "inspect_go_binary", arguments: { path: report.artifact.path } },
     { signal: controller.signal },
   );
-  await started.promise;
+  await awaitAcknowledgement(started.promise, call, "MCP observation");
   controller.abort();
   gate.resolve();
   await expect(call).rejects.toThrow();
@@ -127,7 +128,7 @@ it("retains late-cancelled Inspector target Evidence through MCP and keeps the s
     },
     { signal: controller.signal },
   );
-  await started.promise;
+  await awaitAcknowledgement(started.promise, call, "MCP observation");
   controller.abort();
   gate.resolve();
   await expect(call).rejects.toThrow();
@@ -214,7 +215,7 @@ it("records late-cancelled Browser target Evidence and keeps the server usable",
     },
     { signal: controller.signal },
   );
-  await started.promise;
+  await awaitAcknowledgement(started.promise, call, "MCP observation");
   controller.abort();
   gate.resolve();
   await expect(call).rejects.toThrow();

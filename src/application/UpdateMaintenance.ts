@@ -78,11 +78,7 @@ export const existingMaintenanceScope = async (
   );
   const clients: string[] = [];
   const unresolved: ClientRegistrationStatus[] = [];
-  for (const {
-    status: registration,
-    activation,
-    commandIdentity,
-  } of registrations) {
+  for (const { status: registration, activation } of registrations) {
     if (registration.state === "unknown" || registration.state === "invalid") {
       unresolved.push(registration);
       continue;
@@ -90,7 +86,7 @@ export const existingMaintenanceScope = async (
     if (
       activation !== "enabled" ||
       (registration.state !== "aligned" && registration.state !== "stale") ||
-      commandIdentity !== "owned"
+      registration.command_identity !== "owned"
     )
       continue;
     clients.push(registration.client);

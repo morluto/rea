@@ -112,15 +112,17 @@ it("preserves the caller cancellation reason when a source read is pending", asy
     signal: controller.signal,
   } as unknown as CaptureContext;
 
-  await expect(
-    captureScripts({
-      context,
-      events,
-      rawResources: [],
-      resources: [],
-      frameIds: new Set(),
-    }),
-  ).rejects.toMatchObject({ _tag: "AnalysisCancelledError", cause: reason });
+  const failure = await captureScripts({
+    context,
+    events,
+    rawResources: [],
+    resources: [],
+    frameIds: new Set(),
+  }).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(AnalysisCancelledError);
+  expect(failure instanceof AnalysisCancelledError && failure.cause).toBe(
+    reason,
+  );
 });
 
 it.each([

@@ -51,6 +51,7 @@ import {
 const ET_EXEC = 2;
 const ET_DYN = 3;
 const SHT_SYMTAB = 2;
+const SHT_STRTAB = 3;
 const SHT_NOTE = 7;
 const SHT_DYNSYM = 11;
 const DT_NULL = 0n;
@@ -71,7 +72,6 @@ const DF_1_PIE = 0x08000000n;
 const PF_X = 1;
 const GNU_PROPERTY_AARCH64_FEATURE_1_AND = 0xc0000000;
 const GNU_PROPERTY_X86_FEATURE_1_AND = 0xc0000002;
-const SHF_COMPRESSED = 0x800n;
 /** Tags hardening reads as a single value. Repeating tags such as DT_NEEDED stay. */
 const SINGULAR_DYNAMIC_TAGS = new Set<bigint>([
   DT_HASH,
@@ -175,7 +175,6 @@ export const readElfHardening = (
   assertElfDeclaredRangesFromBuffer(bytes);
   const { bits, little, machine, programs, sections } = directory;
   const headerWidth = bits === 64 ? 56 : 32;
-  const symbolWidth = bits === 64 ? 24 : 16;
   const dynamicWidth = bits === 64 ? 16 : 8;
   const propertyAlign = bits === 64 ? 8 : 4;
   const loads = programs.filter(isSpan).filter((program) => program.type === 1);
@@ -280,6 +279,7 @@ export const readElfHardening = (
       symbols,
       (name) =>
         name === "__fortify_fail" ||
+        name === "__chk_fail" ||
         (name.startsWith("__") && name.endsWith("_chk")),
       "No fortify symbol was found in the dynamic symbol table. A static or stripped image can omit those imports while still using FORTIFY.",
       "The dynamic symbol table is absent, so FORTIFY use is unknown.",
@@ -546,10 +546,14 @@ const agreeingSectionCount = (
   if (dynsym === undefined) return null;
   const strings = sections[dynsym.link];
   if (
+    dynsym.compressed ||
+    strings === undefined ||
+    strings.compressed ||
+    strings.type !== SHT_STRTAB ||
     dynsym.address !== symtab.value ||
-    strings?.address !== dynamic.entries.get(DT_STRTAB)?.value ||
-    strings?.size !== dynamic.entries.get(DT_STRSZ)?.value ||
-    strings?.offset !== BigInt(dynamic.stringFileOffset ?? -1)
+    strings.address !== dynamic.entries.get(DT_STRTAB)?.value ||
+    strings.size !== dynamic.entries.get(DT_STRSZ)?.value ||
+    strings.offset !== BigInt(dynamic.stringFileOffset ?? -1)
   )
     return null;
   const entry = dynsym.entry_size === 0n ? BigInt(width) : dynsym.entry_size;
@@ -897,11 +901,10 @@ const readFeatureNotes = (
     if (section.type !== SHT_NOTE) continue;
     // An empty note section owns no bytes, so it has nothing to walk.
     if (section.size === 0n) continue;
-    const compressed = (section.flags & SHF_COMPRESSED) !== 0n;
-    if (compressed)
+    if (section.compressed)
       incomplete ??=
         "A compressed SHT_NOTE section may hold GNU property notes, and its descriptors were not read.";
-    if (compressed) {
+    if (section.compressed) {
       if (!section.file_backed) continue;
       otherSpans.push({
         offset: exact(section.offset, "SHT_NOTE offset"),

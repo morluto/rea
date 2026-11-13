@@ -541,8 +541,15 @@ describe("CommonJS export identity and scope regressions", () => {
     expect(comparison).toMatchObject({
       left: { status: "selected" },
       right: { status: "selected" },
-      summary: { added: 0, removed: 0, changed: 0 },
-      changes: [],
+      summary: { added: 0, removed: 0, changed: 0, unknown: 1 },
+      changes: [
+        {
+          status: "unknown",
+          path: "/count",
+          left: { availability: "unknown" },
+          right: { availability: "unknown" },
+        },
+      ],
     });
   });
 });

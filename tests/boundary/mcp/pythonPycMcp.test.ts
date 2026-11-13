@@ -167,18 +167,14 @@ it("advertises inspect_python_pyc and reads nested code objects", async () => {
         }),
       ]),
     );
-    const response = await client.callTool({
-      name: "inspect_python_pyc",
-      arguments: { path },
-    });
+    const response = await client.callTool(
+      { name: "inspect_python_pyc", arguments: { path } },
+      { toolDefinition: advertised },
+    );
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
     const evidence = completePycEvidenceSchema.parse(
       response.structuredContent,
     );
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     expect(evidence.normalized_result.header.python_version).toBe("3.12");
     expect(evidence.normalized_result.code_objects[0]?.firstlineno).toBe(-1);
     expect(evidence.normalized_result.code_objects[1]?.name).toBe("inner");
@@ -218,8 +214,6 @@ it("advertised pyc output schema preserves historical signed fields", async () =
     );
     if (advertised?.outputSchema === undefined)
       throw new Error("Missing inspect_python_pyc output schema");
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
-    const ajv = schemaValidation.assertions;
     const root = await createTestTempDirectory("rea-python-pyc-mcp-flags-");
     for (const testCase of [
       {
@@ -259,18 +253,14 @@ it("advertised pyc output schema preserves historical signed fields", async () =
           marshalCode(testCase.layout, testCase.fields),
         ]),
       );
-      const response = await client.callTool({
-        name: "inspect_python_pyc",
-        arguments: { path },
-      });
+      const response = await client.callTool(
+        { name: "inspect_python_pyc", arguments: { path } },
+        { toolDefinition: advertised },
+      );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
       const evidence = completePycEvidenceSchema.parse(
         response.structuredContent,
       );
-      expect(
-        ajv.validate(outputSchema, response.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
       expect(evidence.normalized_result.code_objects[0]).toMatchObject(
         testCase.expected,
       );

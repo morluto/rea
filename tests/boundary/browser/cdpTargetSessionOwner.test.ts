@@ -9,10 +9,43 @@ import { CdpConnection } from "../../../src/browser/CdpConnection.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+} from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+
+it.each(["connect", "acquireBrowserSocket"] as const)(
+  "refuses %s after clean shutdown without inventing retained cleanup",
+  async (method) => {
+    const owner = new CdpTargetSessionOwner();
+    await owner.close();
+    const endpoint = "ws://127.0.0.1:9/devtools/browser/closed";
+    const failure = await (
+      method === "connect"
+        ? owner.connect(endpoint, "inspect_web_page", {}, "not-acquired")
+        : owner.acquireBrowserSocket(
+            endpoint,
+            "inspect_web_page",
+            {},
+            {
+              commandTimeoutMs: 100,
+              handshakeTimeoutMs: 100,
+            },
+          )
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+    expect(failure).toMatchObject({
+      providerId: "rea-cdp-browser",
+      operation: "inspect_web_page",
+      cleanupIncomplete: false,
+      cleanupResources: [],
+    });
+    await owner.close();
+  },
+);
 
 it("joins a late owned handshake and waits for its active operation", async () => {
   const http = createServer();

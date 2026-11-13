@@ -27,7 +27,7 @@ export const PCAP_TOOL_CONTRACTS = [
     name: "inspect_pcap_capture",
     ...toolContractMetadata("inspect_pcap_capture"),
     description:
-      "Request detail summary for capture identity/counts, then page retained facts with inspect_analysis_view kind pcap. Default detail complete preserves inline delivery. Inspect one saved pcap or pcapng capture through an owned snapshot: metadata, exact packet count, SHA-256, IPv4/IPv6 address counts, DNS questions and address values from the same single-question response, TLS SNI, protocol distribution and HTTP URIs. All derived inventories are retained within declared resource budgets; unknown DNS attribution and excluded credentials remain explicit. Linux requires util-linux prlimit; Windows uses owned Job Objects. Requires caller-supplied capinfos and tshark; REA never captures traffic.",
+      "Summarize a saved pcap/pcapng snapshot: exact packet count, SHA-256, IP endpoints, DNS questions/addresses, TLS SNI, protocols and HTTP URIs. Use inspect_packet_capture for caller-selected TShark fields or display filters. Default complete returns full Evidence; detail summary retains it for inspect_analysis_view kind pcap. Unknown DNS attribution and excluded credentials stay explicit. Requires caller-supplied capinfos/tshark and Linux prlimit or Windows Job Objects; never captures live traffic.",
     kind: "pcap-provider",
     inputSchema: pcapInputSchemas.inspect_pcap_capture.extend({
       detail: analysisDetailSchema,

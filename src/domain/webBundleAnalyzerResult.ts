@@ -385,7 +385,8 @@ const captureBudgetOmission = (
   const exclusions = inspection.completeness.excluded.filter(
     (exclusion) =>
       exclusion.section === section &&
-      exclusion.reason === "resource_budget_exhausted",
+      exclusion.reason === "resource_budget_exhausted" &&
+      exclusion.count !== 0,
   );
   if (exclusions.length === 0) return undefined;
   if (exclusions.some(({ count }) => count === null)) return null;

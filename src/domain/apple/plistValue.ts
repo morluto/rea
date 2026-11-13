@@ -1,7 +1,7 @@
 import { types } from "node:util";
 import { z } from "zod";
 
-import type { JsonValue } from "../jsonValue.js";
+import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
 import { copyPlistUidIdentity } from "./plistUid.js";
 import { UnknownPlistScalar } from "./unknownPlistScalar.js";
 
@@ -17,6 +17,9 @@ const jsonScalarSchema = z.union([
  * supplies its result-capacity allowance to both decode and projection.
  */
 export const MAX_PLIST_DEPTH = 128;
+
+/** Reserve typed scalar fields, the report value, and Evidence.normalized_result. */
+export const MAX_NATIVE_PLIST_NESTING_DEPTH = MAX_JSON_DEPTH - 3;
 
 /** Agent-visible refusal for nesting past the JSON projection allowance. */
 const plistNestingLimitMessage = (maximumDepth = MAX_PLIST_DEPTH): string =>

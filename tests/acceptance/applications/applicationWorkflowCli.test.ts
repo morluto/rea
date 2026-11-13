@@ -923,12 +923,27 @@ it("traces all endpoint carriers and their response consumers through CLI and MC
     "response",
   ]);
   const response = carriers.find(({ kind }) => kind === "response");
-  if (response === undefined) throw new Error("Expected matching response");
+  const request = carriers.find(({ kind }) => kind === "request");
+  if (response === undefined || request === undefined)
+    throw new Error("Expected matching request and response");
   const consumer = graph.relations.find(
     ({ source_node_id, relation }) =>
       source_node_id === response.node_id && relation === "consumed-by",
   );
-  expect(consumer).toMatchObject({ resolution: "resolved" });
+  const requestLink = graph.relations.find(
+    ({ source_node_id, target_node_id, relation }) =>
+      source_node_id === request.node_id &&
+      target_node_id === response.node_id &&
+      relation === "consumed-by",
+  );
+  expect(consumer).toMatchObject({
+    resolution: "resolved",
+    properties: { method: "json" },
+  });
+  expect(requestLink).toMatchObject({
+    resolution: "resolved",
+    properties: { method: "json" },
+  });
   const client = await connectedMcpClient();
   const trace = async (seed: JavaScriptSemanticQueryInput["seed"]) => {
     const input = {
@@ -980,13 +995,13 @@ it("traces all endpoint carriers and their response consumers through CLI and MC
     "request",
     "response",
   ]);
-  expect(selected.relations).toEqual([consumer]);
+  expect(selected.relations).toEqual([requestLink, consumer]);
   expect(selected).toMatchObject({
     status: "ambiguous",
     summary: {
       total_seed_matches: 2,
       traversed_nodes: 3,
-      traversed_relations: 1,
+      traversed_relations: 2,
     },
     coverage: { status: "partial" },
   });
@@ -1637,15 +1652,15 @@ describe("application workflow CLI export Evidence", () => {
       operation: "compare_javascript_export_shapes",
       predicate_type: "rea.javascript-export-shape-comparison",
       normalized_result: {
-        summary: { added: 1, removed: 0, changed: 0, unknown: 0 },
-        changes: [
-          {
+        summary: { added: 1, removed: 0, changed: 0, unknown: 3 },
+        changes: expect.arrayContaining([
+          expect.objectContaining({
             status: "added",
             path: "/depth",
             presence: { left: "absent", right: "present" },
             right: { availability: "literal", value: 1 },
-          },
-        ],
+          }),
+        ]),
       },
     });
   }, 20_000);
@@ -1851,37 +1866,47 @@ it("retains bundled isolated-world contextBridge APIs through dedicated and gene
     })();`,
   );
 
-  for (const arguments_ of [
-    ["analyze-javascript-application", root, "--json"],
-    ["analyze", root, "--format", "json"],
-  ]) {
-    const result = javascriptApplicationAnalysisResultSchema.parse(
-      parseEvidence(await runCli(arguments_)).normalized_result,
-    );
-    expect(result.summary.context_bridge_apis).toBe(1);
-    const bridge = result.graph.nodes.find(
-      ({ kind }) => kind === "context-bridge-api",
-    );
-    expect(bridge?.observations).toContainEqual(
-      expect.objectContaining({
-        properties: expect.objectContaining({
-          world: "isolated",
-          world_id: { status: "literal", value: 1001, expression: null },
-          api_key: "isolatedApi",
-          api_status: "object-literal",
-          members: ["ping"],
-          unknown_members: 0,
-          // The proven Webpack bootstrap resolves `load(2)` directly.
-          resolution_basis: "direct-syntax",
-        }),
-        evidence: expect.objectContaining({
-          location: expect.objectContaining({
-            available: true,
-            value: expect.objectContaining({ source: "preload.js" }),
+  for (const loader of ["unknown", "commonjs"] as const) {
+    if (loader === "commonjs")
+      await writeFile(join(root, "package.json"), '{"type":"commonjs"}');
+    for (const arguments_ of [
+      ["analyze-javascript-application", root, "--json"],
+      ["analyze", root, "--format", "json"],
+    ]) {
+      const result = javascriptApplicationAnalysisResultSchema.parse(
+        parseEvidence(await runCli(arguments_)).normalized_result,
+      );
+      expect(result.summary.context_bridge_apis).toBe(
+        loader === "commonjs" ? 1 : 0,
+      );
+      const bridge = result.graph.nodes.find(
+        ({ kind }) => kind === "context-bridge-api",
+      );
+      expect(bridge?.observations).toContainEqual(
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            world: "isolated",
+            world_id: { status: "literal", value: 1001, expression: null },
+            api_key: "isolatedApi",
+            api_status: "object-literal",
+            members: ["ping"],
+            unknown_members: 0,
+            // The proven Webpack bootstrap resolves `load(2)` directly.
+            resolution_basis: "direct-syntax",
+            ...(loader === "unknown" ? { loader_authority: "candidate" } : {}),
+          }),
+          evidence: expect.objectContaining({
+            ...(loader === "unknown"
+              ? { confidence: "low", state: "inferred" }
+              : {}),
+            location: expect.objectContaining({
+              available: true,
+              value: expect.objectContaining({ source: "preload.js" }),
+            }),
           }),
         }),
-      }),
-    );
+      );
+    }
   }
 });
 

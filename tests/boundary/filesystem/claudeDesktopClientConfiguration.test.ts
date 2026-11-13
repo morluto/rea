@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CLAUDE_DESKTOP_PACKAGE_FAMILY } from "../../../src/application/ClaudeDesktopConfigLocation.js";
+import { CLAUDE_DESKTOP_PACKAGE_FAMILY } from "../../fixtures/claudeDesktop.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 
 import {

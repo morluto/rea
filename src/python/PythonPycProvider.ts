@@ -1,23 +1,25 @@
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "./PythonPycProviderIdentity.js";
 import {
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../artifacts/readStableArtifact.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { PythonPycPort } from "../application/python/PythonPycPort.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
@@ -139,20 +141,13 @@ const failureForPrimary = (
         ],
       );
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected pyc could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "pyc",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(PYTHON_PYC_PROVIDER_IDENTITY.id, OPERATION, {
     cause,
     diagnostics: {
@@ -162,7 +157,11 @@ const failureForPrimary = (
   });
 };
 
-const failureFor = (cause: unknown, input: InspectPythonPycInput) => {
+const failureFor = (
+  cause: unknown,
+  input: InspectPythonPycInput,
+  snapshot?: StableArtifactSnapshot,
+) => {
   const primary = failureForPrimary(artifactFilePrimaryFacts(cause), input);
   return projectStableArtifactFailure(
     cause,
@@ -170,6 +169,7 @@ const failureFor = (cause: unknown, input: InspectPythonPycInput) => {
     input.path,
     PYTHON_PYC_PROVIDER_IDENTITY.id,
     OPERATION,
+    snapshot,
   );
 };
 
@@ -191,8 +191,9 @@ export class PythonPycProvider implements PythonPycPort {
   }
 
   async inspect(input: InspectPythonPycInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
-      const snapshot = await this.#resources.run(() =>
+      snapshot = await this.#resources.run(() =>
         readStableArtifact(
           input.path,
           input.max_file_bytes,
@@ -213,7 +214,7 @@ export class PythonPycProvider implements PythonPycPort {
         ),
       );
     } catch (cause) {
-      return err(failureFor(cause, input));
+      return err(failureFor(cause, input, snapshot));
     }
   }
 }

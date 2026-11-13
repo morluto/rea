@@ -39,6 +39,8 @@ import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { managedInspectionInputFailure } from "./ManagedReaderFailure.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import type { z } from "zod";
 import {
   hashManagedSource,
   managedCleanupError,
@@ -96,6 +98,26 @@ class ManagedStaticClient implements AnalysisClient {
         ),
       );
     try {
+      const input =
+        operation === "inspect_managed_members"
+          ? managedMembersInputSchema.safeParse(parameters)
+          : managedTargetInputSchema.safeParse(parameters);
+      if (!input.success)
+        return err(
+          analysisInputErrorFromIssues(
+            operation,
+            input.error.issues,
+            parameters,
+          ),
+        );
+      const snapshotOptions = {
+        expectedSha256: this.target.sha256,
+        signal: options?.signal,
+        resources: this.#resources,
+        ...(input.data.max_snapshot_bytes === undefined
+          ? {}
+          : { maxBytes: input.data.max_snapshot_bytes }),
+      };
       if (options?.signal?.aborted === true)
         return err(
           new AnalysisCancelledError(operation, {
@@ -105,16 +127,16 @@ class ManagedStaticClient implements AnalysisClient {
       const snapshot = this.#snapshotBytes;
       const observed =
         snapshot === undefined
-          ? await readManagedSnapshot(this.target.path, operation, {
-              expectedSha256: this.target.sha256,
-              signal: options?.signal,
-              resources: this.#resources,
-            })
-          : await hashManagedSource(this.target.path, operation, {
-              expectedSha256: this.target.sha256,
-              signal: options?.signal,
-              resources: this.#resources,
-            });
+          ? await readManagedSnapshot(
+              this.target.path,
+              operation,
+              snapshotOptions,
+            )
+          : await hashManagedSource(
+              this.target.path,
+              operation,
+              snapshotOptions,
+            );
       const admitted = verifyManagedSourceIdentity(
         this.target,
         observed,
@@ -127,7 +149,7 @@ class ManagedStaticClient implements AnalysisClient {
       this.#snapshotBytes = bytes;
       const result = inspectManagedOperation(
         operation,
-        parameters,
+        input.data,
         bytes,
         this.target,
       );
@@ -202,7 +224,7 @@ const isManagedOperation = (
 
 const inspectManagedOperation = (
   operation: ManagedToolName,
-  parameters: Readonly<Record<string, JsonValue>>,
+  parameters: Omit<z.output<typeof managedMembersInputSchema>, "detail">,
   bytes: Buffer,
   target: BinaryTarget,
 ):
@@ -210,19 +232,29 @@ const inspectManagedOperation = (
   | ManagedMemberInspection
   | ManagedNativeBoundaryInspection => {
   if (operation === "inspect_managed_members") {
-    const { type_names: typeNames } =
-      managedMembersInputSchema.parse(parameters);
-    return inspectManagedMembersBytes(
+    const { type_names: typeNames } = parameters;
+    return inspectManagedMembersBytes(bytes, target, {
+      ...(typeNames === undefined ? {} : { typeNames }),
+      ...(parameters.max_metadata_representation_bytes === undefined
+        ? {}
+        : {
+            maxRepresentationBytes:
+              parameters.max_metadata_representation_bytes,
+          }),
+    });
+  }
+  if (operation === "inspect_managed_artifact") {
+    return inspectManagedArtifactBytes(
       bytes,
       target,
-      typeNames === undefined ? {} : { typeNames },
+      parameters.max_metadata_representation_bytes,
     );
   }
-  managedTargetInputSchema.parse(parameters);
-  if (operation === "inspect_managed_artifact") {
-    return inspectManagedArtifactBytes(bytes, target);
-  }
-  return inspectManagedNativeBoundariesBytes(bytes, target);
+  return inspectManagedNativeBoundariesBytes(
+    bytes,
+    target,
+    parameters.max_metadata_representation_bytes,
+  );
 };
 
 const managedLocations = (

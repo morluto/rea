@@ -138,8 +138,7 @@ const candidateKeys = async (
   entry: AptSourceEntry,
   apt: AptLocations,
 ): Promise<readonly string[]> => {
-  const signedBy = entry.signedBy.filter((value) => value.startsWith("/"));
-  if (signedBy.length > 0) return signedBy;
+  if (entry.signedBy.length > 0) return entry.signedBy;
   return [
     ...(await fileNames(apt.trustedParts))
       .filter((name) => name.endsWith(".gpg") || name.endsWith(".asc"))
@@ -198,6 +197,11 @@ const keyCheck = async (
   if (entry === undefined)
     return {
       reason: `no sources entry at ${target.sourcesFile}:${String(target.position)} configures it`,
+    };
+  const selectors = entry.signedBy.filter((value) => !value.startsWith("/"));
+  if (selectors.length > 0)
+    return {
+      reason: `Signed-By selectors ${selectors.map((value) => JSON.stringify(value)).join(", ")} are not supported; REA cannot verify this repository's fingerprint restrictions, so no signing key is retained`,
     };
   const release = await signedRelease(target);
   if (release === undefined)

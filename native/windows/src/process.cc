@@ -479,7 +479,7 @@ napi_value inspect(napi_env env, std::unique_ptr<Runtime>& pending) {
   createRuntime(std::wstring(temp, length), L"rea-native-probe-", pending);
   napi_value filesystem;
   try {
-    filesystem = identity(env, pending->directory.get(), pending->path);
+    filesystem = identity(env, pending->directory.get(), pending->path, pending->filesystem);
   } catch (Failure& primary) {
     cleanupFailedRuntime(pending, primary);
     throw;

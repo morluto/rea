@@ -9,6 +9,51 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+cliTest.for(["setup", "uninstall"] as const)(
+  "DSH CLI %s refuses a multi-document patch without losing caller content",
+  async (operation, { cli }) => {
+    const home = await createTestTempDirectory("rea-dsh-multiple-documents-");
+    const profile = join(home, ".dsh");
+    const config = join(profile, "cordis.patch.yml");
+    await mkdir(profile);
+    const original = `# first document
+- insert:
+    - id: rea-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config: {serverName: rea, transport: stdio, command: stale, args: [mcp]}
+---
+# preserve the second document and its comment
+- insert:
+    - id: caller
+      name: caller-plugin
+`;
+    await writeFile(config, original);
+    const result = await cli.run({
+      arguments:
+        operation === "setup"
+          ? ["setup", "--client", "dsh", "--skill=false", "--yes", "--json"]
+          : ["uninstall", "--json"],
+      cwd: home,
+      environment: { HOME: home, USERPROFILE: home, DSH_HOME: profile },
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+    expect(result.exitCode, result.stdout).toBe(1);
+    expect(result.json).toMatchObject(
+      operation === "setup"
+        ? { status: "needs_human", plannedActions: [], appliedActions: [] }
+        : {
+            status: "failed",
+            items: expect.arrayContaining([
+              expect.objectContaining({ name: "dsh", status: "failed" }),
+            ]),
+          },
+    );
+    await expect(readFile(`${config}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
 cliTest.for([
   {
     label: "blank defaults",

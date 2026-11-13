@@ -128,8 +128,8 @@ describe("browser scenario secret redaction", () => {
   it("does not resolve inherited environment properties as secret values", () => {
     const scenario = browserScenarioSchema.parse(baseScenario());
     const environment = Object.assign(
+      Object.create({ REA_TEST_SESSION: "session" }) as Record<string, string>,
       { REA_TEST_PASSWORD: "password", REA_TEST_COOKIE: "cookie" },
-      Object.create({ REA_TEST_SESSION: "session" }) as object,
     );
     expect(BrowserScenarioSecrets.resolve(scenario, environment)).toMatchObject(
       {

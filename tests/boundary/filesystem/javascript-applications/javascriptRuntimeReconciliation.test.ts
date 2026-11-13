@@ -185,6 +185,28 @@ it("matches renderer, frame, script bytes, and worker without claiming execution
   expect(result.limitations.join(" ")).toMatch(
     /not reported as executed|not code reachability/u,
   );
+  const exportBindings = javascriptApplicationAnalysisResultSchema
+    .parse(staticEvidence.normalized_result)
+    .graph.nodes.filter((node) =>
+      node.observations.some(
+        (observation) =>
+          observation.properties.semantic_role === "export-binding",
+      ),
+    )
+    .map((node) => node.node_id);
+  expect(exportBindings.length).toBeGreaterThan(0);
+  expect(
+    result.static_load_states.filter((row) =>
+      exportBindings.includes(row.static_node_id),
+    ),
+  ).toEqual([]);
+  expect(
+    result.reconciliations.filter(
+      (row) =>
+        row.static_node_id !== null &&
+        exportBindings.includes(row.static_node_id),
+    ),
+  ).toEqual([]);
   const observedAsEdges = result.graph.edges.filter(
     ({ relation }) => relation === "observed_as",
   );

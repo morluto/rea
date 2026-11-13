@@ -32,3 +32,30 @@ export function analyzeFixtureProcedure(
   procedure: FixtureProcedure,
   normalizedResult: (value: unknown, operation: string) => unknown,
 ): Promise<unknown>;
+
+export function verifyRealHopperFixture(options: {
+  readonly client: ToolClient;
+  readonly options: unknown;
+  readonly document: string;
+  readonly oracle: {
+    readonly mainProcedure: string;
+    readonly entryProcedure: string;
+    readonly branchProcedure: string;
+    readonly leafProcedure: string;
+    readonly entryString: string;
+    readonly leafString: string;
+    readonly globalName: string;
+  };
+  readonly normalizedResult: (value: unknown, operation: string) => unknown;
+}): Promise<{
+  readonly procedures: Readonly<
+    Record<"main" | "entry" | "branch" | "leaf", FixtureProcedure>
+  >;
+  readonly entryComments: number;
+  readonly entryStrings: number;
+  readonly entryCallees: number;
+  readonly branchCallees: number;
+  readonly branchBlocks: number;
+  readonly leafStrings: number;
+  readonly leafNames: number;
+}>;

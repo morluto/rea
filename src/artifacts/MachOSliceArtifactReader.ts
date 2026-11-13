@@ -62,6 +62,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     this.#enumerations.add(enumeration);
     try {
       yield* enumeration;
+      this.#assertOpen(signal);
     } finally {
       this.#enumerations.delete(enumeration);
     }
@@ -70,14 +71,11 @@ export class MachOSliceArtifactReader implements ArtifactReader {
   async *#readEntries(
     signal?: AbortSignal,
   ): AsyncGenerator<ArtifactEntry, void> {
+    this.#assertOpen(signal);
     this.#entries.clear();
     const source = await this.#ensureSource();
     await this.#source.readSelectedPath();
-    if (this.#closed)
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "Universal Mach-O reader is closed",
-      );
+    this.#assertOpen(signal);
     const command = this.runner.run(
       "lipo",
       ["-detailed_info", this.path],
@@ -105,11 +103,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
               }),
         },
       );
-    if (this.#closed)
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "Universal Mach-O reader closed during slice discovery",
-      );
+    this.#assertOpen(signal);
     this.#command = {
       tool: captured.value.tool,
       arguments: ["-detailed_info", "$ARTIFACT"],
@@ -140,11 +134,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       signal,
     );
     await this.#source.readSelectedPath();
-    if (this.#closed)
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "Universal Mach-O reader is closed",
-      );
+    this.#assertOpen(signal);
     if (structural.status === "malformed")
       throw new ArtifactReaderFailure(
         "integrity",
@@ -229,6 +219,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       }
     }
     for (const architecture of architectures) {
+      this.#assertOpen(signal);
       const structuralSlice = matchingSlices.get(architecture);
       const offset = architecture.file_offset ?? structuralSlice?.slice_offset;
       const sliceSize = architecture.size ?? structuralSlice?.slice_size;
@@ -536,6 +527,15 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         "unavailable",
         "Universal Mach-O reader cleanup remains incomplete",
         { cleanup },
+      );
+  }
+
+  #assertOpen(signal?: AbortSignal): void {
+    assertArtifactReadActive(signal);
+    if (this.#closed)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        "Universal Mach-O reader is closed",
       );
   }
 

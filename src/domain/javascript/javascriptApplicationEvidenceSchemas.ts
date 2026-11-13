@@ -446,6 +446,7 @@ export const applicationNodeIdentitySchema = z.discriminatedUnion("strategy", [
   z.strictObject({
     strategy: z.literal("runtime-instance"),
     stability: z.literal("capture-only"),
+    capture_evidence_id: prefixedDigestSchema("ev"),
     capture_sha256: digestSchema,
     runtime_key: boundedTextSchema,
   }),

@@ -1,3 +1,4 @@
+import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
@@ -26,9 +27,14 @@ const connect = async (environment: NodeJS.ProcessEnv) => {
   );
   const client = new Client({ name: "composition-parity", version: "1" });
   onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => server.close(),
+      async () => {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

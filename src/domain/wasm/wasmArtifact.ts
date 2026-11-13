@@ -1,9 +1,24 @@
-import { wasmInterfaceSchema } from "./wasmInterface.js";
+import {
+  wasmInterfaceSchema,
+  wasmInterfaceByteBudgetSchema,
+} from "./wasmInterface.js";
 import { z } from "zod";
 import { createHash } from "node:crypto";
+import { constants as bufferConstants } from "node:buffer";
 import type { EvidenceSubjectTarget } from "../evidence.js";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+/** Exact upstream release whose tool profile REA verified. */
+export const WABT_VERSION = "1.0.42";
+const WABT_MINIMUM_PATCH = Number(WABT_VERSION.split(".")[2]);
+/** Upstream revision known for the verified release only. */
+export const WABT_SOURCE_COMMIT = "ff0ef7e0009402740c805a9744c09b05be063e48";
+const wabtReleaseBanner = z
+  .string()
+  .regex(/^1\.0\.\d+$/u)
+  .refine((release) => Number(release.split(".")[2]) >= WABT_MINIMUM_PATCH, {
+    message: `Expected one admitted WABT banner (^1.0.${String(WABT_MINIMUM_PATCH)})`,
+  });
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const artifact = z.strictObject({
@@ -14,10 +29,42 @@ const artifact = z.strictObject({
 /** Default execution budget; upper bound is the runtime's signed 32-bit timer range. */
 export const DEFAULT_WASM_COMMAND_TIMEOUT_MS = 30_000;
 export const MAX_WASM_COMMAND_TIMEOUT_MS = 2_147_483_647;
-/** Selected artifact lists share the same resource bound across path transports. */
+export const DEFAULT_WASM_ARTIFACT_PATHS = 16;
+export const MAX_WASM_ARTIFACT_PATHS = 0xffff_ffff;
+/** Defaults preserve the original WABT admission and capture envelope. */
+export const WASM_RESOURCE_DEFAULTS = {
+  inputBytes: 8 * 1024 * 1024,
+  toolBytes: 64 * 1024 * 1024,
+  outputBytes: 32 * 1024 * 1024,
+} as const;
+/** Inputs may be decoded as glue text; output is retained as single strings. */
+export const WASM_RESOURCE_MAXIMUMS = {
+  inputBytes: Math.min(
+    bufferConstants.MAX_LENGTH,
+    bufferConstants.MAX_STRING_LENGTH,
+  ),
+  toolBytes: bufferConstants.MAX_LENGTH,
+  outputBytes: bufferConstants.MAX_STRING_LENGTH,
+} as const;
+export interface WasmResourceLimits {
+  readonly inputBytes: number;
+  readonly toolBytes: number;
+  readonly outputBytes: number;
+}
+const byteBudget = (name: string, defaultValue: number, maximum: number) =>
+  z
+    .number()
+    .int()
+    .min(1)
+    .max(maximum)
+    .exactOptional()
+    .describe(
+      `${name} in bytes (default ${String(defaultValue)}; maximum ${String(maximum)}, the runtime representation limit). Applies to the next inspection; no restart. Does not raise the other byte budgets, command deadline, client receive budget or available host memory.`,
+    );
+/** Caller selections are admitted against max_artifact_paths by the shared workflow. */
 export const wasmArtifactPathsSchema = (
   pathSchema: z.ZodString = absoluteLocalPathStringSchema,
-) => z.array(pathSchema).max(16);
+) => z.array(pathSchema);
 /** All artifacts are explicitly selected local files; references never trigger acquisition. */
 export const inspectWasmArtifactInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
@@ -25,6 +72,31 @@ export const inspectWasmArtifactInputSchema = z.strictObject({
   ),
   glue_paths: wasmArtifactPathsSchema().default([]),
   candidate_paths: wasmArtifactPathsSchema().default([]),
+  max_artifact_paths: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_WASM_ARTIFACT_PATHS)
+    .exactOptional()
+    .describe(
+      `Maximum paths in each auxiliary glue/candidate selection (default ${String(DEFAULT_WASM_ARTIFACT_PATHS)}, range 1..${String(MAX_WASM_ARTIFACT_PATHS)}, the runtime Array-length ceiling). Admission occurs before reading files or starting WABT. Applies to the next inspection without restart; byte budgets remain independent.`,
+    ),
+  max_interface_bytes: wasmInterfaceByteBudgetSchema,
+  max_input_bytes: byteBudget(
+    "Maximum bytes per selected module, candidate or glue file",
+    WASM_RESOURCE_DEFAULTS.inputBytes,
+    WASM_RESOURCE_MAXIMUMS.inputBytes,
+  ),
+  max_tool_bytes: byteBudget(
+    "Maximum bytes per caller-supplied WABT executable",
+    WASM_RESOURCE_DEFAULTS.toolBytes,
+    WASM_RESOURCE_MAXIMUMS.toolBytes,
+  ),
+  max_output_bytes: byteBudget(
+    "Combined retained stdout/stderr per WABT command",
+    WASM_RESOURCE_DEFAULTS.outputBytes,
+    WASM_RESOURCE_MAXIMUMS.outputBytes,
+  ),
   command_timeout_ms: z
     .number()
     .int()
@@ -32,8 +104,19 @@ export const inspectWasmArtifactInputSchema = z.strictObject({
     .max(MAX_WASM_COMMAND_TIMEOUT_MS)
     .exactOptional()
     .describe(
-      `Deadline in milliseconds for each WABT version/analysis command (default ${String(DEFAULT_WASM_COMMAND_TIMEOUT_MS)}), not the whole inspection. Allow additional client time for all commands, file checks and cleanup. Input/output safety limits remain fixed.`,
+      `Deadline in milliseconds for each WABT version/analysis command (default ${String(DEFAULT_WASM_COMMAND_TIMEOUT_MS)}), not the whole inspection. Allow additional client time for all commands, file checks and cleanup. Does not raise max_input_bytes, max_tool_bytes or max_output_bytes.`,
     ),
+});
+/** Resolve once at the accepting owner; omission stays omitted in Evidence. */
+export const wasmResourceLimits = (
+  input: Pick<
+    z.output<typeof inspectWasmArtifactInputSchema>,
+    "max_input_bytes" | "max_tool_bytes" | "max_output_bytes"
+  >,
+): WasmResourceLimits => ({
+  inputBytes: input.max_input_bytes ?? WASM_RESOURCE_DEFAULTS.inputBytes,
+  toolBytes: input.max_tool_bytes ?? WASM_RESOURCE_DEFAULTS.toolBytes,
+  outputBytes: input.max_output_bytes ?? WASM_RESOURCE_DEFAULTS.outputBytes,
 });
 /** Upstream output stays intact; import/export names are never split on ambiguous punctuation. */
 export const wasmArtifactSchema = z
@@ -73,8 +156,13 @@ export const wasmArtifactSchema = z
     }),
     tool_profile: z.strictObject({
       source: z.literal("https://github.com/WebAssembly/wabt"),
-      release: z.literal("1.0.42"),
-      source_commit: z.literal("ff0ef7e0009402740c805a9744c09b05be063e48"),
+      release: wabtReleaseBanner,
+      /**
+       * Names the verified upstream revision only when that release is what
+       * ran; a caller-supplied newer 1.0.x build has no revision REA knows, so
+       * the field is null rather than a claim about a build that did not run.
+       */
+      source_commit: z.literal(WABT_SOURCE_COMMIT).nullable(),
       commands: z
         .array(
           z.strictObject({
@@ -139,6 +227,17 @@ export const wasmArtifactSchema = z
       value.tool_profile.commands[0]?.arguments.includes(
         "--ignore-custom-section-errors",
       );
+    const releaseVersion = value.tool_profile.release;
+    if (
+      value.tool_profile.source_commit !== null &&
+      releaseVersion !== WABT_VERSION
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["tool_profile", "source_commit"],
+        message:
+          "The known WABT source revision applies only to its verified release; other releases require an unknown source commit.",
+      });
     for (const [index, command] of value.tool_profile.commands.entries()) {
       const expected = ["wasm-validate", "wasm-objdump", "wasm2wat"][index];
       const argumentsExpected =
@@ -149,7 +248,7 @@ export const wasmArtifactSchema = z
             : ["--enable-all", "module.wasm"];
       if (
         command.tool !== expected ||
-        command.version_banner.trim() !== "1.0.42" ||
+        command.version_banner.trim() !== releaseVersion ||
         JSON.stringify(command.arguments) !== JSON.stringify(argumentsExpected)
       )
         context.addIssue({

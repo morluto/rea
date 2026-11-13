@@ -39,7 +39,7 @@ export class CudaMetadataBudget {
     this.#indexBytes += size;
   }
 }
-export interface CudaInfoRecord {
+interface CudaInfoRecord {
   readonly format: number;
   readonly attribute: number;
   readonly value: number;

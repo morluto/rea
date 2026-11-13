@@ -1,3 +1,5 @@
+import { jsonValueSchema } from "../../src/domain/jsonValue.js";
+import type { ElectronPageInspection } from "../../src/domain/javascript/electronObservation.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -57,71 +59,72 @@ export const electronRuntimeEvidence = (
     observation_ms: 100,
     include_script_sources: sourceIncluded,
   });
+  const report = {
+    browser: {
+      product: "Electron/fixture",
+      protocol_version: "1.3",
+      revision: "fixture",
+      user_agent: "Electron fixture",
+      js_version: "13",
+    },
+    target: {
+      target_id: targetId,
+      type: "page",
+      title: "Fixture",
+      file_path: join(root, "index.html"),
+      attached: false,
+    },
+    capture_window: {
+      started_at: "2026-07-15T00:00:00.000Z",
+      ended_at: "2026-07-15T00:00:00.100Z",
+      observation_ms: 100,
+    },
+    completeness: captureCompleteness(options),
+    frames: [
+      {
+        frame_id: "frame-main",
+        parent_frame_id: null,
+        file_path: join(root, "index.html"),
+      },
+    ],
+    dom: { total_nodes: 0, nodes: [] },
+    scripts: {
+      total: 1,
+      items: [
+        {
+          script_key: `electron_script_${"1".repeat(64)}`,
+          frame_id: "frame-main",
+          file_path: join(root, scriptFile),
+          cdp_hash: "fixture",
+          length: Buffer.byteLength(source),
+          is_module: true,
+          language: "JavaScript",
+          source: {
+            included: true as const,
+            artifact: createWebTextArtifact(source, "text/javascript"),
+          },
+        },
+      ],
+    },
+    resources: [],
+    workers: includeWorker
+      ? [
+          {
+            target_id: "worker-main",
+            type: "worker",
+            file_path: join(root, "worker.js"),
+            attached: false,
+            opener_target_id: targetId,
+            parent_frame_id: "frame-main",
+          },
+        ]
+      : [],
+    limitations: ["Synthetic passive capture fixture."],
+  } satisfies ElectronPageInspection;
   return createElectronEvidence(
     "inspect_electron_page",
     input,
-    {
-      browser: {
-        product: "Electron/fixture",
-        protocol_version: "1.3",
-        revision: "fixture",
-        user_agent: "Electron fixture",
-        js_version: "13",
-      },
-      target: {
-        target_id: targetId,
-        type: "page",
-        title: "Fixture",
-        file_path: join(root, "index.html"),
-        attached: false,
-      },
-      capture_window: {
-        started_at: "2026-07-15T00:00:00.000Z",
-        ended_at: "2026-07-15T00:00:00.100Z",
-        observation_ms: 100,
-      },
-      completeness: captureCompleteness(options),
-      frames: [
-        {
-          frame_id: "frame-main",
-          parent_frame_id: null,
-          file_path: join(root, "index.html"),
-        },
-      ],
-      dom: { total_nodes: 0, nodes: [] },
-      scripts: {
-        total: 1,
-        items: [
-          {
-            script_key: `electron_script_${"1".repeat(64)}`,
-            frame_id: "frame-main",
-            file_path: join(root, scriptFile),
-            cdp_hash: "fixture",
-            length: Buffer.byteLength(source),
-            is_module: true,
-            language: "JavaScript",
-            source: {
-              included: true as const,
-              artifact: createWebTextArtifact(source, "text/javascript"),
-            },
-          },
-        ],
-      },
-      resources: [],
-      workers: includeWorker
-        ? [
-            {
-              target_id: "worker-main",
-              type: "worker",
-              file_path: join(root, "worker.js"),
-              attached: false,
-              opener_target_id: targetId,
-              parent_frame_id: "frame-main",
-            },
-          ]
-        : [],
-      limitations: ["Synthetic passive capture fixture."],
-    },
+    { source: jsonValueSchema.parse(report), facts: report },
     {
       id: "rea-cdp-electron",
       name: "REA Electron file-page CDP observation provider",

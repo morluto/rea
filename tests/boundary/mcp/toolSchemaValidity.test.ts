@@ -87,7 +87,7 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
     },
     open_binary: {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },

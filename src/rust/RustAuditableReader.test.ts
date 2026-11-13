@@ -1,12 +1,15 @@
 import { deflateSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { rustAuditableMetadataSchema } from "../domain/rust/rustBinary.js";
+
 import {
-  RUST_SECTION_BYTES,
   readAuditableSection,
   RustAuditableFormatFailure,
   RustAuditableResourceFailure,
 } from "./RustAuditableReader.js";
+
+// Explicit 1 MiB input boundary, independent of the reader implementation.
+const RUST_SECTION_BYTES = 1024 * 1024;
 
 const section = (document: unknown) =>
   readAuditableSection(

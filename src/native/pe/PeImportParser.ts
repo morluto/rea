@@ -1,3 +1,8 @@
+import {
+  fitsPeRvaSpan as fitsRva,
+  appendPeConsumedSpan as consume,
+  PE_RVA_END,
+} from "./PeRvaSpans.js";
 import { createPefileReadCompatibility } from "./PefileReadCompatibility.js";
 import { setImmediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
@@ -6,6 +11,7 @@ import {
   BinaryMappingFailure,
   BinaryReader,
   BinaryResourceFailure,
+  isBinaryFormatOrStringLimitFailure,
   createFileMappingIndex,
   imageFileMappings,
 } from "../metadata/BinaryContainer.js";
@@ -35,15 +41,6 @@ const MAXIMUM_NAME_BYTES = 4096;
 const ENTRIES_PER_YIELD = 1024;
 const ORDINAL_FLAG32 = 0x80000000n;
 const ORDINAL_FLAG64 = 0x8000000000000000n;
-const PE_RVA_END = 0x100000000;
-
-/** PE32+ keeps 32-bit RVAs even though preferred virtual addresses are 64-bit. */
-const fitsRva = (rva: number, size: number): boolean =>
-  Number.isSafeInteger(rva) &&
-  rva >= 0 &&
-  Number.isSafeInteger(size) &&
-  size > 0 &&
-  rva <= PE_RVA_END - size;
 
 const requireRva = (rva: number, size: number): void => {
   if (!fitsRva(rva, size))
@@ -107,20 +104,8 @@ const createRetention = () => {
 };
 
 const failureMessage = (cause: unknown): string => {
-  if (cause instanceof BinaryFormatFailure) return cause.message;
+  if (isBinaryFormatOrStringLimitFailure(cause)) return cause.message;
   throw cause;
-};
-
-/** Append one consumed file span, merging it into the previous span when contiguous. */
-const consume = (
-  spans: { offset: number; bytes: number }[],
-  offset: number,
-  bytes: number,
-): void => {
-  const last = spans.at(-1);
-  if (last !== undefined && last.offset + last.bytes === offset)
-    last.bytes += bytes;
-  else spans.push({ offset, bytes });
 };
 
 const coverage = (
@@ -395,6 +380,18 @@ export const parsePeImports = async (
       await checkpoint();
       const descriptorRva =
         importDirectory.address + index * IMPORT_DESCRIPTOR_BYTES;
+      if (
+        index * IMPORT_DESCRIPTOR_BYTES + IMPORT_DESCRIPTOR_BYTES >
+        importDirectory.size
+      ) {
+        issues.push({
+          code: "malformed_entry",
+          location: hex(descriptorRva),
+          message:
+            "Import directory ends before a null descriptor; its declared size does not cover the complete descriptor slot",
+        });
+        break;
+      }
       const descriptor = mapDescriptor(
         descriptorRva,
         IMPORT_DESCRIPTOR_BYTES,
@@ -469,6 +466,18 @@ export const parsePeImports = async (
       await checkpoint();
       const descriptorRva =
         delayDirectory.address + index * DELAY_DESCRIPTOR_BYTES;
+      if (
+        index * DELAY_DESCRIPTOR_BYTES + DELAY_DESCRIPTOR_BYTES >
+        delayDirectory.size
+      ) {
+        issues.push({
+          code: "malformed_entry",
+          location: hex(descriptorRva),
+          message:
+            "Delay-load directory ends before a null descriptor; its declared size does not cover the complete descriptor slot",
+        });
+        break;
+      }
       const descriptor = mapDescriptor(
         descriptorRva,
         DELAY_DESCRIPTOR_BYTES,

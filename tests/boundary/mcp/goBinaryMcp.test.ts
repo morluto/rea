@@ -347,15 +347,11 @@ goMcpTest(
       moduleText: "path\texample.com/tool\nnew-record\tfuture\n",
     });
     await writeFile(path, fixture.bytes);
-    const response = await client.callTool({
-      name: "inspect_go_binary",
-      arguments: { path },
-    });
+    const response = await client.callTool(
+      { name: "inspect_go_binary", arguments: { path } },
+      { toolDefinition: advertised },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const parsed = evidenceResultOf(goBinarySchema).parse(
       response.structuredContent,
     );

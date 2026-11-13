@@ -1,3 +1,4 @@
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { resolve } from "node:path";
@@ -38,7 +39,7 @@ test("retains the selected endpoint when a direct JEB connection fails", async (
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
-  try {
+  await withVerifierCleanup(async () => {
     const address = server.address();
     if (address === null || typeof address === "string")
       throw new Error("Missing loopback listener address");
@@ -74,7 +75,7 @@ test("retains the selected endpoint when a direct JEB connection fails", async (
       name: "jeb-endpoint-acceptance",
       version: "1",
     });
-    try {
+    await withVerifierCleanup(async () => {
       await client.connect(transport);
       const definition = (await client.listTools()).tools.find(
         ({ name }) => name === "inspect_jeb_client",
@@ -90,16 +91,15 @@ test("retains the selected endpoint when a direct JEB connection fails", async (
         code: "capability_unavailable",
         details: { diagnostics: { endpoint } },
       });
-    } finally {
-      await client.close();
-      await transport.close();
-    }
-  } finally {
-    server.closeAllConnections();
-    await new Promise<void>((resolveClose, rejectClose) =>
-      server.close((error) => (error ? rejectClose(error) : resolveClose())),
-    );
-  }
+    }, [() => client.close(), () => transport.close()]);
+  }, [
+    async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolveClose, rejectClose) =>
+        server.close((error) => (error ? rejectClose(error) : resolveClose())),
+      );
+    },
+  ]);
 });
 
 test("keeps compiled CLI discovery usable while JEB rejects its malformed timeout", async ({
@@ -147,7 +147,7 @@ test("starts production stdio MCP and retains peer requests around a JEB configu
   transport.stderr?.on("data", (chunk: Buffer) => {
     stderr += chunk.toString("utf8");
   });
-  try {
+  await withVerifierCleanup(async () => {
     await client.connect(transport);
     await client.ping();
     const definition = (await client.listTools()).tools.find(
@@ -166,8 +166,5 @@ test("starts production stdio MCP and retains peer requests around a JEB configu
       details: { settings: [{ setting: "REA_JEB_MCP_TIMEOUT_MS" }] },
     });
     await client.ping();
-  } finally {
-    await client.close();
-    await transport.close();
-  }
+  }, [() => client.close(), () => transport.close()]);
 });

@@ -7,6 +7,9 @@ import {
   FirmwareFileAccess,
 } from "../../../src/firmware/FirmwareFiles.js";
 import { readFirmwareCommandReport } from "../../../src/firmware/FirmwareCommand.js";
+import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { firmwareFailure } from "../../../src/firmware/FirmwareFailures.js";
 import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
@@ -456,4 +459,127 @@ it("rejects Binwalk extraction activity under every own JSON member", async () =
   } finally {
     await files.close();
   }
+});
+
+it.each([false, true])(
+  "retains completed command output after report read failure (cleanup pending: %s)",
+  async (pending) => {
+    const lease = new AnalysisCleanupLease(async () => {});
+    const reader = pending
+      ? ArtifactReaderFailure.withCleanup(
+          new Error("report read failed"),
+          { reason: "close failed", resources: ["/work/report"] },
+          undefined,
+          [lease],
+        )
+      : new ArtifactReaderFailure("io", "report read failed");
+    const files = new FirmwareFileAccess();
+    vi.spyOn(files, "report").mockRejectedValue(reader);
+    const cause: unknown = await readFirmwareCommandReport({
+      path: "/work/report",
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+      files,
+      execution: {
+        stdout: { text: "found output", bytes: 12, observedBytes: 12 },
+        stderr: { text: "warning", bytes: 7, observedBytes: 7 },
+        exit_code: 0,
+        signal: null,
+        command: "/opt/binwalk",
+        args: [],
+        resource_limiter: "/usr/bin/prlimit",
+      },
+    }).catch((failure: unknown) => failure);
+    const failure = firmwareFailure(cause, {
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+    });
+    expect(
+      projectAnalysisError(failure).details?.captured_output,
+    ).toMatchObject({
+      stdout: "found output",
+      stderr: "warning",
+      stdout_bytes: 12,
+      stderr_bytes: 7,
+      exit_code: 0,
+    });
+    if (pending) {
+      expect(failure.cleanupIncomplete).toBe(true);
+      await lease.release();
+      expect(failure.cleanupIncomplete).toBe(false);
+    }
+    await files.close();
+  },
+);
+
+it("retains the analysis timeout and command output while report cleanup is pending and after retry", async () => {
+  const deadlineSignal = new AbortController();
+  const reason = new Error("analysis deadline");
+  deadlineSignal.abort(reason);
+  const lease = new AnalysisCleanupLease(async () => {});
+  const reader = ArtifactReaderFailure.withCleanup(
+    new ArtifactReaderFailure("cancelled", "deadline interrupted report read", {
+      cause: reason,
+    }),
+    { reason: "close failed", resources: ["/work/report"] },
+    {
+      kind: "file-snapshot-hash",
+      path: "/work/report",
+      sha256: "a".repeat(64),
+      bytes: 12,
+    },
+    [lease],
+  );
+  const files = new FirmwareFileAccess();
+  vi.spyOn(files, "report").mockRejectedValue(reader);
+  const failure: unknown = await readFirmwareCommandReport({
+    path: "/work/report",
+    engine: "binwalk",
+    operation: "inspect_firmware_regions",
+    files,
+    deadline: {
+      phase: "analysis",
+      timeoutMs: 42,
+      signal: deadlineSignal.signal,
+      expiresAtMs: 0,
+    },
+    execution: {
+      stdout: { text: "found output", bytes: 12, observedBytes: 12 },
+      stderr: { text: "warning", bytes: 7, observedBytes: 7 },
+      exit_code: 0,
+      signal: null,
+      command: "/opt/binwalk",
+      args: [],
+      resource_limiter: "/usr/bin/prlimit",
+    },
+  }).catch((cause: unknown) => cause);
+  if (!(failure instanceof AnalysisError))
+    throw new Error("Expected typed report failure");
+  expect(failure.cleanupIncomplete).toBe(true);
+  expect(failure.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path: "/work/report",
+  });
+  expect(projectAnalysisError(failure).details?.captured_output).toMatchObject({
+    stdout: "found output",
+    stderr: "warning",
+    exit_code: 0,
+  });
+  await lease.release();
+  expect(failure.cleanupIncomplete).toBe(false);
+  expect(
+    projectAnalysisError(failure).details?.partial_observation,
+  ).toMatchObject({ kind: "file-snapshot-hash", path: "/work/report" });
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "provider_timeout",
+    details: {
+      timeout_ms: 42,
+      captured_output: {
+        stdout: "found output",
+        stderr: "warning",
+        exit_code: 0,
+      },
+    },
+  });
+  await files.close();
 });

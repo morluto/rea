@@ -18,6 +18,6 @@ export const analyzeWebBundleFixture = (
   return buildCapturedWebBundleAnalysis(
     inspection,
     sourceMaps,
-    sourceScripts.map(analyzeCapturedWebScript),
+    sourceScripts.map((script) => analyzeCapturedWebScript(script)),
   );
 };

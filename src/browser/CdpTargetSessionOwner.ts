@@ -8,7 +8,10 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+} from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { CdpConnection } from "./CdpConnection.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
@@ -119,7 +122,7 @@ export class CdpTargetSessionOwner {
     options: ExecutionOptions,
     limits: BrowserSocketLimits,
   ): Promise<{ readonly connection: CdpConnection; readonly reused: boolean }> {
-    this.#assertOpen(operation, "browser-endpoint");
+    this.#assertOpen(operation);
     await this.retryPending();
     const leased = await this.#leaseExistingBrowserSocket(
       url,
@@ -140,7 +143,7 @@ export class CdpTargetSessionOwner {
     { readonly connection: CdpConnection; readonly reused: boolean } | undefined
   > {
     while (true) {
-      this.#assertOpen(operation, "browser-endpoint");
+      this.#assertOpen(operation);
       if (options.signal?.aborted === true)
         throw new AnalysisCancelledError(operation, {
           cause: options.signal.reason,
@@ -427,9 +430,9 @@ export class CdpTargetSessionOwner {
       readonly handshakeTimeoutMs?: number;
     },
   ): Promise<CdpConnection> {
-    this.#assertOpen(operation, resource);
+    this.#assertOpen(operation);
     await this.retryPending();
-    this.#assertOpen(operation, resource);
+    this.#assertOpen(operation);
     if (options.signal?.aborted === true)
       throw new AnalysisCancelledError(operation, {
         cause: options.signal.reason,
@@ -576,13 +579,12 @@ export class CdpTargetSessionOwner {
     if (failures.length > 1) throw aggregateCleanupFailures(failures);
   }
 
-  #assertOpen(operation: BrowserObservationOperation, resource: string): void {
+  #assertOpen(operation: BrowserObservationOperation): void {
     if (!this.#closing) return;
-    throw new ProviderCleanupError(
+    throw new AnalysisCapabilityUnavailableError(
       "rea-cdp-browser",
-      [resource],
-      { reason: "CDP provider is closing and cannot admit another session." },
-      { operation },
+      operation,
+      "CDP provider is closing and cannot admit another session.",
     );
   }
 

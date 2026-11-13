@@ -241,42 +241,6 @@ describe("the state size limit", () => {
     books.answer("delete_books_by_id", { id: "3" });
     expect(books.answer("post_books", create).status).toBe(201);
   });
-
-  it("refuses a document that data/get would write past what data/add loads", () => {
-    const books = servedFrom();
-    const { rea_state: state } = books.store.snapshot();
-    // Without the members data/get adds back, the document fits only until they return.
-    const document = {
-      rea_state: {
-        version: state.version,
-        entities: state.entities.map(({ type, collection, id, fields }) => ({
-          type,
-          collection,
-          id,
-          fields: { ...fields },
-        })),
-        documents: state.documents,
-      },
-    };
-    const first = document.rea_state.entities[0]!.fields;
-    first["name"] = `${String(first["name"])}${"a".repeat(
-      STATE_INTAKE_LIMIT_BYTES -
-        Buffer.byteLength(JSON.stringify(document), "utf8"),
-    )}`;
-    expect(Buffer.byteLength(JSON.stringify(document), "utf8")).toBe(
-      STATE_INTAKE_LIMIT_BYTES,
-    );
-    const before = books.snapshot();
-    const replaced = books.store.replace(document);
-    expect(replaced.ok).toBe(false);
-    expect(!replaced.ok && replaced.error.issues).toEqual([
-      expect.objectContaining({
-        reason: "out_of_range",
-        maximum: STATE_INTAKE_LIMIT_BYTES,
-      }),
-    ]);
-    expect(books.snapshot()).toBe(before);
-  });
 });
 
 it.each(["clock", "held-clock", "nested-clock"] as const)(

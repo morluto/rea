@@ -1,5 +1,6 @@
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
 import {
   importManagedReconstructionEvidenceResolved,
@@ -50,10 +51,12 @@ export const registerImportManagedReconstruction = (
               result,
               reconstructionContract,
             );
-          const recordedSource = options.recordEvidence?.(
-            resolved.value.staticEvidence,
+          const recordedSource = recordEvidenceSources(
+            options.recordEvidence,
+            [resolved.value.staticEvidence],
+            { evidence: result.value },
           );
-          if (recordedSource !== undefined && !recordedSource.ok)
+          if (!recordedSource.ok)
             return server.delivery.toCallToolResult(
               recordedSource,
               reconstructionContract,

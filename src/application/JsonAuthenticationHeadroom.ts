@@ -89,6 +89,8 @@ export const requireAuthenticationHeadroom = (
     readonly path: string;
     readonly description: string;
     readonly availableBytes?: number;
+    /** A caller's real serialization ceiling, checked before allocating JSON text. */
+    readonly serializedCodeUnitLimit?: number;
     readonly additional?: {
       readonly valueBytes: number;
       readonly serializedUtf16Bytes: number;
@@ -103,6 +105,28 @@ export const requireAuthenticationHeadroom = (
   const serializedUtf16Bytes =
     estimate.serializedUtf16Bytes +
     (options.additional?.serializedUtf16Bytes ?? 0);
+  const serializedCodeUnits = serializedUtf16Bytes / 2;
+  if (
+    options.serializedCodeUnitLimit !== undefined &&
+    serializedCodeUnits > options.serializedCodeUnitLimit
+  )
+    return err(
+      new AnalysisResourceConstraintError(
+        options.operation,
+        "memory",
+        `${options.description}: expanded JSON exceeds the single-string serialization limit.`,
+        {
+          input_path: options.path,
+          serialized_json_code_units: serializedCodeUnits,
+          maximum_serialized_json_code_units: options.serializedCodeUnitLimit,
+        },
+        {
+          retryable: false,
+          remediationAction:
+            "Reduce the selected facts before serialization. If the question requires the complete representation above this ceiling, report this unsupported size instead of repeating the unchanged request. Increasing heap or command-output admission does not raise the serialization ceiling. A delivery summary cannot repair an Evidence record that could not be assembled.",
+        },
+      ),
+    );
   // Canonical hashing and manifest normalization can still encode scalars or
   // metadata; account for their escaped representations before allocating them.
   const requiredBytes =

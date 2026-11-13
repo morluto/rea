@@ -671,16 +671,11 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       );
       const owned = attempt;
       this.#inspectionAttempt = owned;
-      void owned.promise.then(
-        () => {
-          if (this.#inspectionAttempt === owned)
-            this.#inspectionAttempt = undefined;
-        },
-        () => {
-          if (this.#inspectionAttempt === owned)
-            this.#inspectionAttempt = undefined;
-        },
-      );
+      const clearInspection = (): void => {
+        if (this.#inspectionAttempt === owned)
+          this.#inspectionAttempt = undefined;
+      };
+      void owned.promise.then(clearInspection, clearInspection);
     }
     const waited = await attempt.wait(callerSignal);
     if (waited.status === "cancelled")
