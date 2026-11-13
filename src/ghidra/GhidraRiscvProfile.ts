@@ -202,14 +202,36 @@ export const ghidraRiscvCallingConvention = (
  * decodes them; see docs/providers/ghidra-riscv.md#vendor-extensions.
  */
 const GHIDRA_RISCV_VENDOR_LANGUAGES = [
-  { extensionPrefix: "xthead", elfClass: 64, variant: "xthead" },
+  {
+    extensionPrefix: "xthead",
+    elfClass: 64,
+    variant: "xthead",
+    module: "ghidra-riscv-xthead",
+    files: [
+      "riscv.xthead.ldefs",
+      "riscv.lp64d.xthead.sla",
+      "RV64.pspec",
+      "riscv64-fp.cspec",
+    ],
+  },
 ] as const;
 
-/** The vendor language an image's declared extensions select, if any. */
-export const ghidraRiscvVendorLanguage = (
+/** The installed processor module that decodes a declared vendor extension. */
+export interface GhidraRiscvVendorModule {
+  readonly languageId: string;
+  readonly module: string;
+  readonly files: readonly string[];
+}
+
+/** The vendor module an image's declared extensions select, if any. */
+export const ghidraRiscvVendorModule = (
   target: BinaryTarget,
-): string | undefined => {
-  if (target.kind !== "executable" || target.architecture !== "riscv")
+): GhidraRiscvVendorModule | undefined => {
+  if (
+    target.kind !== "executable" ||
+    target.architecture !== "riscv" ||
+    ghidraRiscvUnsupportedReason(target) !== null
+  )
     return undefined;
   const isa = target.riscv.isa;
   const vendor = GHIDRA_RISCV_VENDOR_LANGUAGES.find(
@@ -218,7 +240,13 @@ export const ghidraRiscvVendorLanguage = (
       isa?.status === "declared" &&
       isa.extensions.some((name) => name.startsWith(extensionPrefix)),
   );
-  return vendor && `RISCV:LE:${vendor.elfClass}:${vendor.variant}`;
+  return (
+    vendor && {
+      languageId: `RISCV:LE:${vendor.elfClass}:${vendor.variant}`,
+      module: vendor.module,
+      files: vendor.files,
+    }
+  );
 };
 
 /** Pin a language only for declarations admitted by the same lane boundary. */
@@ -230,7 +258,7 @@ export const ghidraRiscvLanguageOverride = (
   ghidraRiscvUnsupportedReason(target) === null
     ? {
         languageId:
-          ghidraRiscvVendorLanguage(target) ??
+          ghidraRiscvVendorModule(target)?.languageId ??
           `RISCV:LE:${target.riscv.elfClass}:default`,
         compilerSpecId: "gcc",
       }

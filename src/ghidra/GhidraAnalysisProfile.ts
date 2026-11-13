@@ -26,7 +26,9 @@ import {
 import {
   ghidraRiscvLanguageOverride,
   ghidraRiscvProfileParameters,
+  ghidraRiscvVendorModule,
 } from "./GhidraRiscvProfile.js";
+import { resolveGhidraRiscvVendorLanguage } from "./GhidraRiscvVendorLanguage.js";
 import {
   ghidraPowerPcLanguage,
   ghidraPowerPcProfileParameters,
@@ -176,6 +178,18 @@ export const resolveGhidraAnalysisProfile = async (
     ? await resolveGhidraPspExtension(installation, resources, signal)
     : null;
   if (pspExtension !== null && !pspExtension.ok) return pspExtension;
+  const riscvVendor = ghidraRiscvVendorModule(target);
+  const riscvVendorLanguage =
+    riscvVendor === undefined
+      ? null
+      : await resolveGhidraRiscvVendorLanguage(
+          installation,
+          riscvVendor,
+          resources,
+          signal,
+        );
+  if (riscvVendorLanguage !== null && !riscvVendorLanguage.ok)
+    return riscvVendorLanguage;
   const provider = { ...identity, version: installation.providerVersion };
   const createProfile = (parameters: Readonly<Record<string, JsonValue>>) =>
     createGhidraProfile(provider, parameters, target);
@@ -380,6 +394,9 @@ export const resolveGhidraAnalysisProfile = async (
         ...analyzerParameters,
         ...ghidraMipsProfileParameters(target, languageOverride),
         ...ghidraRiscvProfileParameters(target),
+        ...(riscvVendorLanguage?.ok === true
+          ? { riscv_vendor_language: { ...riscvVendorLanguage.value } }
+          : {}),
         ...ghidraPowerPcProfileParameters(target),
         ...(pspExtension?.ok === true
           ? {

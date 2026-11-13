@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, parse, relative } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -425,8 +432,18 @@ describe("RISC-V vendor languages", () => {
     const languages = join(vendorDir, "Ghidra/Processors/RISCV/data/languages");
     await mkdir(languages, { recursive: true });
     await writeFile(join(languages, "riscv.ldefs"), RISCV_LDEFS);
+    // The caller-installed processor module, as the PSP lane's ghidra-allegrex.
+    const module = join(vendorDir, "Ghidra/Extensions/ghidra-riscv-xthead");
+    await mkdir(join(module, "data/languages"), { recursive: true });
+    await writeFile(join(module, "Module.manifest"), "");
+    for (const file of [
+      "riscv.lp64d.xthead.sla",
+      "RV64.pspec",
+      "riscv64-fp.cspec",
+    ])
+      await writeFile(join(module, "data/languages", file), file);
     await writeFile(
-      join(languages, "riscv.xthead.ldefs"),
+      join(module, "data/languages/riscv.xthead.ldefs"),
       RISCV_LDEFS.replaceAll(":64:default", ":64:xthead"),
     );
   });
@@ -448,11 +465,28 @@ describe("RISC-V vendor languages", () => {
     );
   });
 
+  it("fingerprints the installed module into the profile", async () => {
+    const resolved = await withVendor().resolveAnalysisProfile(thead);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.profile?.parameters.riscv_vendor_language).toEqual({
+      id: "ghidra-riscv-xthead",
+      language_id: "RISCV:LE:64:xthead",
+      root: join(
+        await realpath(vendorDir),
+        "Ghidra/Extensions/ghidra-riscv-xthead",
+      ),
+      ghidra_version: expect.any(String),
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+  });
+
   it("refuses the image when the installation lacks the vendor language", async () => {
     const resolved = await ghidra().resolveAnalysisProfile(thead);
     expect(resolved.ok).toBe(false);
     if (!resolved.ok)
-      expect(resolved.error.message).toContain("RISCV:LE:64:xthead");
+      expect(resolved.error.message).toContain(
+        "RISCV_VENDOR_LANGUAGE_UNAVAILABLE",
+      );
   });
 
   it("keeps images without vendor extensions on the generic language and digest", async () => {
