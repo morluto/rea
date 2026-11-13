@@ -56,6 +56,7 @@ import {
   type AnalysisCleanupRetry,
 } from "../domain/analysisErrorRecovery.js";
 import { isBundleResourceOperation } from "./binary/BundleResourceSession.js";
+import { offeredOperationAlternatives } from "./OperationAlternatives.js";
 
 const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
   FRIDA_TOOL_CONTRACTS.map(({ name }) => name),
@@ -126,6 +127,8 @@ export type AvailabilityPolicy = {
 type AvailabilityFacts = {
   readonly defaultModeAvailable?: boolean;
   readonly modes?: readonly ToolAvailabilityMode[];
+  /** Advertised operations the current provider offers for part of the question. */
+  readonly alternatives?: readonly AnalysisOperation[];
 };
 type Availability = AvailabilityFacts &
   (
@@ -162,16 +165,40 @@ type AvailabilityContext = {
   readonly targetFormat: string | undefined;
   readonly descriptors: ReadonlyMap<string, ProviderDescriptor>;
   readonly policy: AvailabilityPolicy;
+  readonly isToolAdvertised: (name: string) => boolean;
 };
 
 type EnhancedContractName = Extract<
   (typeof TOOL_CONTRACTS)[number],
   { readonly kind: "enhanced" }
 >["name"];
-type CompositionRequirements = readonly (
+type RequiredCompositionSource =
   | AnalysisOperation
-  | readonly AnalysisOperation[]
+  | readonly AnalysisOperation[];
+type CompositionSource =
+  | RequiredCompositionSource
+  | { readonly optional: AnalysisOperation };
+// Parallel stages are flat: every member dispatches before any sibling outcome is selected.
+type CompositionRequirements = readonly (
+  | CompositionSource
+  | { readonly parallel: readonly CompositionSource[] }
 )[];
+const stageSources = (
+  stage: CompositionRequirements[number],
+): readonly CompositionSource[] =>
+  typeof stage !== "string" && "parallel" in stage ? stage.parallel : [stage];
+const optionalSource = (
+  source: CompositionSource,
+): source is { readonly optional: AnalysisOperation } =>
+  typeof source !== "string" && "optional" in source;
+const sourceOperations = (
+  source: CompositionSource,
+): readonly AnalysisOperation[] =>
+  typeof source === "string"
+    ? [source]
+    : optionalSource(source)
+      ? [source.optional]
+      : source;
 type AvailabilityMode = {
   readonly name: string;
   readonly requirements: CompositionRequirements;
@@ -221,22 +248,40 @@ const ENHANCED_REQUIREMENTS: ReadonlyMap<string, ProviderComposition> = new Map(
     inspect_native_dispatch_metadata: [
       Object.values(NATIVE_DISPATCH_METADATA_SOURCES),
     ],
-    get_objc_classes: ["list_names"],
+    get_objc_classes: [
+      "list_names",
+      { optional: "inspect_native_dispatch_metadata" },
+    ],
     get_objc_protocols: ["list_names"],
-    batch_decompile: ["procedure_pseudo_code"],
+    batch_decompile: [
+      { optional: "procedure_address" },
+      { optional: "address_name" },
+      "procedure_pseudo_code",
+    ],
     decompile_all: ["list_procedures", "procedure_pseudo_code"],
     get_call_graph: CALL_RELATIONSHIP_COMPOSITION,
     trace_call_path: CALL_RELATIONSHIP_COMPOSITION,
-    analyze_swift_types: ["list_procedures"],
+    analyze_swift_types: ["list_procedures", { optional: "list_names" }],
     find_xrefs_to_name: ["list_names", "xrefs"],
     binary_overview: [
+      { optional: "read_binary_inventory_summary" },
       ["current_document", "list_documents"],
-      "list_procedures",
-      "list_strings",
+      {
+        parallel: [
+          { optional: "list_segments" },
+          "list_procedures",
+          "list_strings",
+        ],
+      },
     ],
     analyze_function: ["analyze_function"],
     inspect_native_api: ["analyze_function"],
-    trace_feature: ["search_strings", "search_procedures", "xrefs"],
+    trace_feature: [
+      "search_strings",
+      "search_procedures",
+      "xrefs",
+      { optional: "resolve_containing_procedure" },
+    ],
   } satisfies Readonly<Record<EnhancedContractName, ProviderComposition>>),
 );
 
@@ -281,10 +326,15 @@ const ADDRESS_CONTEXT_EFFECT_COMPOSITION: ModeComposition = {
   ],
 };
 
-/** Build stable per-operation availability for discovery and tool visibility. */
+/**
+ * Build stable per-operation availability for the caller's advertised tools.
+ * Each tool's availability still derives from the complete provider facts;
+ * advertisement narrows only the reported tools and the alternatives named.
+ */
 export const buildCapabilityInventory = (
   sessionStatus: JsonValue,
   policy: AvailabilityPolicy,
+  isToolAdvertised: (name: string) => boolean = () => true,
 ): readonly ToolAvailability[] => {
   const status = statusSchema.parse(sessionStatus);
   const descriptors = new Map<string, ProviderDescriptor>(
@@ -304,6 +354,7 @@ export const buildCapabilityInventory = (
       targetFormat: status.format,
       descriptors,
       policy,
+      isToolAdvertised,
     });
     const effects = composedEffects(
       contract.name,
@@ -357,8 +408,13 @@ export const buildCapabilityInventory = (
           available: false,
           reason: availability.reason,
           remediation: availability.remediation,
+          ...(availability.alternatives === undefined
+            ? {}
+            : { alternatives: [...availability.alternatives] }),
         };
-  }).sort((left, right) => compareUnicodeCodePoints(left.name, right.name));
+  })
+    .filter(({ name }) => isToolAdvertised(name))
+    .sort((left, right) => compareUnicodeCodePoints(left.name, right.name));
 };
 
 type ClientRequirements = ToolAvailability["client_requirements"];
@@ -404,6 +460,9 @@ export function compactToolAvailability(
         ? {}
         : { default_mode_available: entry.default_mode_available }),
       ...(entry.modes === undefined ? {} : { modes: [...entry.modes] }),
+      ...(entry.available || entry.alternatives === undefined
+        ? {}
+        : { alternatives: [...entry.alternatives] }),
       ...(JSON.stringify(entry.client_requirements) ===
       JSON.stringify(clientRequirements)
         ? {}
@@ -636,6 +695,7 @@ const workflowAvailabilityFor = (
     name === "inspect_kernel_module" ||
     name === "inspect_kernel_build_config" ||
     name === "inspect_pe_load_config" ||
+    name === "audit_release_exposure" ||
     name === "inspect_binary_hardening"
   )
     return { reason: "available", remediation: null };
@@ -917,6 +977,7 @@ const providerAvailability = ({
   kind,
   name,
   policy,
+  isToolAdvertised,
 }: AvailabilityContext): Availability => {
   if (kind === "enhanced") return composedAvailability(name, descriptors);
   const launchFailure =
@@ -934,12 +995,20 @@ const providerAvailability = ({
       kind === "native-provider")
   )
     return { reason: "available", remediation: null };
-  if (descriptor === undefined)
+  if (descriptor === undefined) {
+    const offered = offeredOperationAlternatives(
+      name,
+      (alternative) =>
+        descriptors.get(alternative)?.available === true &&
+        isToolAdvertised(alternative),
+    );
     return {
       reason: "provider_missing",
       remediation:
         "Install or configure a provider that declares this operation.",
+      ...(offered === undefined ? {} : { alternatives: offered.operations }),
     };
+  }
   return descriptor.available
     ? { reason: "available", remediation: null }
     : {
@@ -1015,9 +1084,12 @@ const composedAvailabilityFor = (
   readonly missingOperations: readonly AnalysisOperation[];
 } => {
   const unmet = requirements
+    .flatMap(stageSources)
+    .filter(
+      (source): source is RequiredCompositionSource => !optionalSource(source),
+    )
     .map((requirement) => {
-      const operations =
-        typeof requirement === "string" ? [requirement] : requirement;
+      const operations = sourceOperations(requirement);
       const observations = operations.map((operation) =>
         descriptors.get(operation),
       );
@@ -1170,18 +1242,21 @@ const reachableRequirements = (
   descriptors: ReadonlyMap<string, ProviderDescriptor>,
 ): readonly string[] => {
   const reached: string[] = [];
-  for (const group of requirements) {
-    const operations = typeof group === "string" ? [group] : group;
-    const available = operations.filter((operation) => {
-      const descriptor = descriptors.get(operation);
-      return (
-        descriptor?.available === true ||
-        (descriptor?.available === false &&
-          descriptor.runtime_unavailable === true)
-      );
-    });
-    reached.push(...available);
-    if (available.length === 0) break;
+  for (const stage of requirements) {
+    let blocked = false;
+    for (const source of stageSources(stage)) {
+      const available = sourceOperations(source).filter((operation) => {
+        const descriptor = descriptors.get(operation);
+        return (
+          descriptor?.available === true ||
+          (descriptor?.available === false &&
+            descriptor.runtime_unavailable === true)
+        );
+      });
+      reached.push(...available);
+      if (available.length === 0 && !optionalSource(source)) blocked = true;
+    }
+    if (blocked) break;
   }
   return reached;
 };

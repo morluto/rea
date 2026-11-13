@@ -222,7 +222,7 @@ cannot answer, such as an address without one exact file offset, omits this
 hint; follow its `remediation.action`. `recovery.kind=inspect_timeout_state` names
 the operation and the REA server/provider deadline. Inspect partial Evidence
 and reported cleanup state, then follow the returned remediation. Change a
-request field or REA_* setting only when the returned remediation explicitly
+request field or REA\_\* setting only when the returned remediation explicitly
 recommends that change. Restart REA when that text says the value is read at
 startup. A mention that a control does not raise the deadline is not a
 recommendation to change it. When it names no setting, reduce supported work;
@@ -1065,6 +1065,17 @@ from an older request does not override a newer outcome. Request deadlines and
 cancellations neither mark nor clear availability. A new provider client starts
 without these outcomes.
 
+A `provider_missing` group may also list `alternatives`: advertised tools the
+current provider makes available for part of that operation's question. When
+the provider does not declare `next_address` or `prev_address`, they list
+whichever of `inspect_native_instruction`, `read_function_instructions` and
+`procedure_assembly` qualify. These answer instruction-level questions only:
+none navigates arbitrary analyzed objects such as data or addresses outside a
+procedure, and neither listing order nor address plus length proves executed
+control flow. Calling the missing operation returns `capability_unavailable`
+with the same tools in `details.alternatives` and a remediation stating each
+one's scope. Without a qualifying alternative, both keep their generic advice.
+
 Standalone command operations (such as `inspect_with_objdump` and
 `execute_rizin_command`) similarly reflect observed executable launch failures:
 an unprobed executable is reported available; once a launch failure is observed,
@@ -1237,6 +1248,11 @@ provenance and use a null Evidence subject when executable identity is unknown.
 Binary-only operations and binary analysis snapshots do not apply in this
 session. `open_binary` can switch back to executable analysis, and
 `close_binary` retires either session kind.
+
+Both open operations can retire the previous analysis provider. That cleanup
+can discard ephemeral Ghidra edits or save a configured checkpoint, so their
+advertised effects include filesystem writes and possible data loss. The
+resource readers remain read-only within the selected bundle.
 
 `inspect_plist` requires an open binary or bundle-resource session. An explicit
 `path` selects a plist in that context and does not create a session;
@@ -1906,13 +1922,10 @@ support for omitted historical values.
 known and differ. If only one value is known, storage comparison is unknown;
 when both are omitted, storage is not compared.
 
-<!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->
-
-`compare_artifacts` also compares the declarations in the `format_metadata`
-of UnityFS members (`unityfs-entry`), PyInstaller entries
+`compare_artifacts` also compares the declarations in the `format_metadata` of <!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->UnityFS members (`unityfs-entry`), PyInstaller entries
 (`pyinstaller-entry`), Node SEA members (`node-sea-entry`),
 ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
-ESP flash partitions (`esp-flash-partition`) and FIT images (`fit-image`);
+ESP flash partitions (`esp-flash-partition`) and FIT images (`fit-image`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
 each format's guide names the compared fields. A changed declaration is a
 metadata change, including when content is unavailable. A declaration that
 only one side records, or that the other side records as another kind, is
@@ -1923,11 +1936,11 @@ container or from caller options that identify the target, or repeat
 occurrence fields, except Godot PCK source paths, which
 [Godot PCK archives](../godot-pck.md) explains.
 
-<!-- END:compare-artifacts:compared-format-metadata-kinds -->
-
 Every occurrence records `entry_kind`, `executable` and `encrypted`. A
-different entry kind, `encrypted` value or occurrence limitation text is a
-`metadata` difference, and a different `executable` value is an `executable`
+different entry kind or `encrypted` value is a `metadata` difference, and a
+different `executable` value is an `executable` difference. Occurrence and node
+limitation text describes diagnostic caveats, which remain in the source
+inventories; changing those caveats alone does not create a `metadata`
 difference. A symlink's own permission bits never mark it `executable`,
 because running a symlink runs its target. When either side's content is
 unavailable, `compare_artifacts` lists the differences that it can still

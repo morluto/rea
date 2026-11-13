@@ -1,3 +1,4 @@
+import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { PeLoadConfigPort } from "./PeLoadConfigPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -132,17 +133,16 @@ const validReport = (
     ...fileRange(report.load_config?.directory ?? null),
   ];
   const structure = report.load_config?.structure_location;
+  const inside = insideArtifact(report.artifact.bytes);
   return (
     (structure === undefined ||
       (structure.offset === report.load_config?.directory.file_offset &&
         structure.bytes === report.load_config.size &&
-        structure.offset <= report.artifact.bytes - structure.bytes)) &&
+        inside(structure))) &&
     ranges.every(
       ({ start, end }) => start <= end && end <= report.artifact.bytes,
     ) &&
-    (report.tls?.callback_array_locations ?? []).every(
-      ({ offset, bytes }) => offset <= report.artifact.bytes - bytes,
-    ) &&
+    (report.tls?.callback_array_locations ?? []).every(inside) &&
     (report.tls?.callbacks ?? []).every(
       ({ file_offset }) =>
         file_offset === null || file_offset < report.artifact.bytes,

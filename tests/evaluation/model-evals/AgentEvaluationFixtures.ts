@@ -400,12 +400,12 @@ const parserClaims = (
     {
       id: "comparison_coverage",
       expectedValue: {
-        status: "complete-within-inputs",
+        status: "partial",
         paired_variants: 3,
         added: 1,
         removed: 0,
         changed: 0,
-        unknown: 0,
+        unknown: 3,
       },
       source: { ...source, select: comparisonCoverage },
     },

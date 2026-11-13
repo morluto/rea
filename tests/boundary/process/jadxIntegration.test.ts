@@ -366,12 +366,15 @@ it("rejects a copied JAR that differs from its admitted session identity", async
         admitted,
         root.path,
         "inspect_android_package",
+        undefined,
+        (_path, owner) => hashOwners.push(owner),
       ),
     ).rejects.toMatchObject({
       _tag: "AnalysisCapabilityUnavailableError",
       reason: expect.stringContaining("bytes changed"),
     });
   } finally {
+    await Promise.all(hashOwners.map((owner) => owner.close()));
     await root.close();
   }
 });

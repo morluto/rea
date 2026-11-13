@@ -66,7 +66,10 @@ describe("Hopper launcher failure through the one-shot CLI", () => {
             );
 
           expect(result.exitCode, attempt).toBe(1);
-          expect(result.json, attempt).toMatchObject({
+          expect(
+            result.json,
+            `${attempt}: ${JSON.stringify(result.json)}`,
+          ).toMatchObject({
             code: "cleanup_incomplete",
             details: {
               cleanup: "incomplete",

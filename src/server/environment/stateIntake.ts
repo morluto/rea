@@ -1,4 +1,4 @@
-import { StateResponseCleanup } from "./StateResponseCleanup.js";
+import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import { fileURLToPath } from "node:url";
 
 import { mediaTypeEssence } from "../../domain/analysisView/recordedMediaType.js";
@@ -54,13 +54,13 @@ export const CANCELLED: RpcError = {
 };
 
 /** An https state download must finish within this time. */
-export const STATE_FETCH_TIMEOUT_MS = 30_000;
+const STATE_FETCH_TIMEOUT_MS = 30_000;
 
 /** Fetches one https state document; injectable so tests make no external requests. */
 export type StateFetcher = (url: URL, signal: AbortSignal) => Promise<Response>;
 
 /** Redirects are refused so a download never leaves the https origin the caller named. */
-export const fetchStateDocument: StateFetcher = (url, signal) =>
+const fetchStateDocument: StateFetcher = (url, signal) =>
   fetch(url, { signal, redirect: "error" });
 
 /** How `data/add` reaches documents a uri names; injectable so tests make no external requests and need not wait. */
@@ -229,7 +229,7 @@ const downloadBounds = (
 const readCapped = async (
   body: ReadableStream<Uint8Array> | null,
   bounds: DownloadBounds,
-  responses: StateResponseCleanup,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<Buffer, RpcError>> => {
   if (body === null) return ok(Buffer.alloc(0));
   const reader = body.getReader();
@@ -260,7 +260,7 @@ const downloadState = async (
   url: URL,
   intake: StateIntake,
   cancel: AbortSignal,
-  responses: StateResponseCleanup,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<Buffer, RpcError>> => {
   const bounds = downloadBounds(intake.timeoutMs, cancel);
   const fetching = Promise.resolve().then(() =>
@@ -323,7 +323,7 @@ const fileBytes = async (
   intake: StateIntake,
   cancel: AbortSignal,
   files: ArtifactResourceScope,
-  responses: StateResponseCleanup,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<Uint8Array, RpcError>> => {
   if (typeof file.bytes === "string" && file.uri === undefined) {
     if (file.bytes.length > MAX_INLINE_BASE64_CHARACTERS) return err(TOO_LARGE);
@@ -356,7 +356,7 @@ export const partDocument = async (
   intake: StateIntake,
   cancel: AbortSignal,
   files: ArtifactResourceScope,
-  responses: StateResponseCleanup,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<unknown, RpcError>> => {
   if (isRecord(part) && part.kind === "data" && isRecord(part.data))
     return ok(part.data);

@@ -1,4 +1,5 @@
-import { StateResponseCleanup } from "./StateResponseCleanup.js";
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
+import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import type { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
@@ -26,14 +27,11 @@ export type RpcMethods = (
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const pointerSegment = (segment: string | number): string =>
-  String(segment).replaceAll("~", "~0").replaceAll("/", "~1");
-
 /** The first document problem as `-32602`, located by a JSON pointer into the document. */
 const documentError = (error: AnalysisInputError): RpcError => {
   const issue = error.issues[0];
   const pointer = (issue?.path ?? [])
-    .map((segment) => `/${pointerSegment(segment)}`)
+    .map((segment) => `/${escapeJsonPointerToken(String(segment))}`)
     .join("");
   return invalidParams(
     `${pointer === "" ? "the document" : pointer} ${issue?.message ?? "is not a rea-state/v1 document"}`,
@@ -47,7 +45,7 @@ interface CallContext {
   readonly intake: StateIntake;
   readonly cancel: AbortSignal;
   readonly files: ArtifactResourceScope;
-  readonly responses: StateResponseCleanup;
+  readonly responses: ResponseBodyCleanup;
 }
 
 /** `data/add`: exactly one part, whose document replaces the whole state only when it is valid and the call was not cancelled. */
@@ -109,7 +107,9 @@ export const stateDataPlane = (
   intake: StateIntake = DEFAULT_STATE_INTAKE,
   stopped: AbortSignal = new AbortController().signal,
   files: ArtifactResourceScope = new ArtifactResourceScope(),
-  responses: StateResponseCleanup = new StateResponseCleanup(),
+  responses: ResponseBodyCleanup = new ResponseBodyCleanup(
+    "state response body",
+  ),
 ): RpcMethods => {
   let previous: Promise<unknown> = Promise.resolve();
   return (method, params, signal) => {

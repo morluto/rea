@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { currentAnalysisOperationSnapshot } from "../../domain/analysisOperationSnapshot.js";
 import { PWNTOOLS_LIMITS } from "../../domain/native/pwntoolsResourceLimits.js";
 
 // The artifact is read into one in-memory buffer and staged again as a private
@@ -20,7 +21,11 @@ const CONSTRAINT =
 
 /** Resolved input bound, or the reason the caller's override cannot be used. */
 export type PwntoolsInputBytes =
-  | { readonly configured: true; readonly bytes: number }
+  | {
+      readonly configured: true;
+      readonly bytes: number;
+      readonly source: "default" | "setting" | "runtime" | "request";
+    }
   | { readonly configured: false; readonly error: string };
 
 /**
@@ -30,11 +35,19 @@ export type PwntoolsInputBytes =
 export const pwntoolsInputBytes = (
   environment: Readonly<NodeJS.ProcessEnv>,
 ): PwntoolsInputBytes => {
+  const override =
+    currentAnalysisOperationSnapshot()?.overrides["pwntools.max_input_bytes"];
+  if (override !== undefined)
+    return { configured: true, bytes: override, source: "runtime" };
   const value = environment.REA_PWNTOOLS_MAX_INPUT_BYTES;
   if (value === undefined)
-    return { configured: true, bytes: PWNTOOLS_LIMITS.input_bytes };
+    return {
+      configured: true,
+      bytes: PWNTOOLS_LIMITS.input_bytes,
+      source: "default",
+    };
   const parsed = pwntoolsInputBytesSchema.safeParse(value);
   return parsed.success
-    ? { configured: true, bytes: parsed.data }
+    ? { configured: true, bytes: parsed.data, source: "setting" }
     : { configured: false, error: CONSTRAINT };
 };

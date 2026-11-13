@@ -12,6 +12,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import {
   createGoBinaryDiagnosticFixtures,
   createGoBinaryFixture,
+  createGoInlineAggregateFixture,
   createGoOverlappingElfFixture,
 } from "../../fixtures/go/image.js";
 import { createGoRodataStringFixture } from "../../fixtures/go/rodataStringImage.js";
@@ -55,8 +56,7 @@ it.each([32, 64] as const)(
 );
 
 it("preserves the actual build-info byte guard as a resource failure", async () => {
-  const fixture = createGoBinaryFixture();
-  fixture.bytes.set([0x81, 0x80, 0x40], fixture.headerOffset + 32);
+  const fixture = createGoInlineAggregateFixture(1024 * 1024 + 2);
   const root = await createTestTempDirectory("rea-go-resource-");
   const path = join(root, "oversized-metadata.elf");
   await writeFile(path, fixture.bytes);

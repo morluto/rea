@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import { expect, it } from "vitest";
 import { createPackageVerifierCommands } from "../../../scripts/lib/verify-package-commands.mjs";
 import { OwnedMcpStdioTransport } from "../../../src/process/OwnedMcpStdioTransport.js";
+import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
 
 it("retains the workspace until an owned protocol cleanup can be retried", async () => {
   const path = await mkdtemp(join(tmpdir(), "rea-verifier-transport-"));
@@ -64,3 +65,59 @@ it("retains the workspace until an owned protocol cleanup can be retried", async
     await rm(path, { recursive: true, force: true });
   }
 });
+
+it(
+  "joins an owned protocol process and its descendant before closing",
+  async () => {
+    const { writeFile, readFile } = await import("node:fs/promises");
+    const { createOwnedMcpStdioTransport } =
+      await import("../../../scripts/lib/owned-mcp-stdio.mjs");
+    const path = await mkdtemp(join(tmpdir(), "rea-verifier-real-transport-"));
+    const fixture = join(path, "child.cjs");
+    const marker = join(path, "pids.json");
+    await writeFile(
+      fixture,
+      `const {spawn}=require('node:child_process');
+process.on('SIGTERM',()=>{});
+const child=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],{stdio:'ignore'});
+require('node:fs').writeFileSync(process.argv[2],JSON.stringify([process.pid,child.pid]));
+setInterval(()=>{},1000);`,
+    );
+    const transport = await createOwnedMcpStdioTransport({
+      command: process.execPath,
+      arguments: [fixture, marker],
+      hostEnvironment: process.env,
+      cwd: process.cwd(),
+      expectedCommand: null,
+      sweepTokenOwnedProcesses: true,
+    });
+    try {
+      await transport.start();
+      const deadline = Date.now() + 10_000;
+      let pids: number[] | undefined;
+      while (pids === undefined) {
+        try {
+          pids = JSON.parse(await readFile(marker, "utf8")) as number[];
+        } catch (cause) {
+          if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+          if (Date.now() >= deadline) throw new Error("Child did not start");
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      expect(pids).toHaveLength(2);
+      await transport.close();
+      for (const pid of pids)
+        expect(() => process.kill(pid, 0)).toThrowError(
+          expect.objectContaining({ code: "ESRCH" }),
+        );
+    } finally {
+      await transport.close();
+      await rm(path, { recursive: true, force: true });
+    }
+  },
+  Math.min(
+    2_147_483_647,
+    30_000 +
+      (process.platform === "darwin" ? resolveSwiftcCompileTimeoutMs() : 0),
+  ),
+);

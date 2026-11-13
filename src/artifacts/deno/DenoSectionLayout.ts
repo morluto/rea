@@ -9,9 +9,9 @@ import { walkDenoVirtualFs, type DenoVfsWalk } from "./DenoVirtualFs.js";
 /** Opening and closing marker of a Deno compile data section. */
 export const DENO_SECTION_MAGIC = Buffer.from("d3n0l4nd", "latin1");
 
-export const MAX_DENO_METADATA_JSON_BYTES = 8 * 1024 * 1024;
+const MAX_DENO_METADATA_JSON_BYTES = 8 * 1024 * 1024;
 export const MAX_DENO_VFS_HEADER_JSON_BYTES = 32 * 1024 * 1024;
-export const MAX_DENO_TABLE_COUNT = 100_000;
+const MAX_DENO_TABLE_COUNT = 100_000;
 export const MAX_DENO_SPECIFIER_TEXT_BYTES = 8 * 1024 * 1024;
 export const MAX_DENO_REMOTE_BODY_BYTES = 256 * 1024 * 1024;
 
@@ -20,6 +20,11 @@ const FLAG_TRANSPILED = 1 << 0;
 const FLAG_SOURCE_MAP = 1 << 1;
 const FLAG_CJS = 1 << 2;
 const FLAG_UTF8 = 1 << 3;
+const specifierDecoder = new TextDecoder("utf-8", {
+  fatal: true,
+  ignoreBOM: true,
+});
+const jsonDecoder = new TextDecoder("utf-8", { fatal: true });
 
 const MEDIA_TYPE_NAMES = [
   "JavaScript",
@@ -228,7 +233,7 @@ export const parseDenoSection = async (
     if (specifierIds.has(id))
       throw denoFormatFailure(`duplicate specifier id ${String(id)}`);
     specifierIds.add(id);
-    const decoded = decodeStrict(bytes);
+    const decoded = decodeStrict(bytes, specifierDecoder);
     if (decoded === undefined) invalidUtf8 = true;
     else specifierText.set(id, decoded);
   }
@@ -361,18 +366,6 @@ export const parseDenoSection = async (
   };
 };
 
-/** Parse a section that is already in memory. Tests and small fixtures use this. */
-export const parseDenoSectionBytes = (
-  bytes: Buffer,
-  signal?: AbortSignal,
-): Promise<DenoParsedSection> =>
-  parseDenoSection(
-    bytes.length,
-    (offset, length) =>
-      Promise.resolve(bytes.subarray(offset, offset + length)),
-    signal,
-  );
-
 const addRemoteBody = (total: bigint, length: number): bigint => {
   const next = total + BigInt(length);
   if (next > BigInt(MAX_DENO_REMOTE_BODY_BYTES))
@@ -395,16 +388,19 @@ const assertTableCount = (count: number, scope: string): void => {
   }
 };
 
-const decodeStrict = (bytes: Buffer): string | undefined => {
+const decodeStrict = (
+  bytes: Buffer,
+  decoder: TextDecoder,
+): string | undefined => {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return decoder.decode(bytes);
   } catch {
     return undefined;
   }
 };
 
 const decodeJson = (bytes: Buffer, scope: string): unknown => {
-  const text = decodeStrict(bytes);
+  const text = decodeStrict(bytes, jsonDecoder);
   if (text === undefined) throw denoFormatFailure(`${scope} is invalid`);
   try {
     return JSON.parse(text) as unknown;

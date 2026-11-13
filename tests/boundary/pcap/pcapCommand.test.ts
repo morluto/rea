@@ -18,10 +18,9 @@ it.skipIf(process.platform !== "darwin")(
     const controller = new AbortController();
     const reason = new ProviderCleanupError("caller", ["foreign-resource"], {});
     const prepare = vi
-      .spyOn(ownership, "prepareProcessOwnershipInspection")
-      .mockImplementationOnce(async (signal) => {
+      .spyOn(ownership.systemProcessOwnershipHost, "prepare")
+      .mockImplementationOnce(async () => {
         controller.abort(reason);
-        signal?.throwIfAborted();
       });
     onTestFinished(() => prepare.mockRestore());
     const launcher = vi.fn(async () => {

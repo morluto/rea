@@ -1,4 +1,5 @@
 import { z } from "incur";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
@@ -12,7 +13,7 @@ import {
 import { evidenceSchema, type Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
-import { err, ok } from "../domain/result.js";
+import { ok } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   OBJDUMP_ARTIFACT_OPERATIONS,
@@ -151,10 +152,9 @@ export const registerReverseEngineeringCommands = (
     description:
       "Inspect a local artifact using GNU-style objdump arguments and retain the selected command output as Evidence",
     args: z.object({
-      path: z
-        .string()
-        .min(1)
-        .describe("Path to the local artifact to inspect."),
+      path: localPathStringSchema.describe(
+        "Path to the local artifact to inspect.",
+      ),
       operation: z
         .enum(OBJDUMP_ARTIFACT_OPERATIONS)
         .describe("GNU-style objdump operation to run."),
@@ -274,10 +274,9 @@ export const registerReverseEngineeringCommands = (
   cli.command(CLI_COMMANDS.executeRizinCommand, {
     description: "Execute one Rizin command against a local artifact",
     args: z.object({
-      path: z
-        .string()
-        .min(1)
-        .describe("Path to the local artifact to analyze."),
+      path: localPathStringSchema.describe(
+        "Path to the local artifact to analyze.",
+      ),
       command: z.string().min(1).describe("One caller-selected Rizin command."),
     }),
     options: z.object({
@@ -374,16 +373,14 @@ export const registerReverseEngineeringCommands = (
               const started = await manager.start(signal, {
                 inferiorTty: options.inferiorTty,
               });
-              if (!started.ok) return err(started.error);
+              if (!started.ok) return started;
               sessionId = started.value.session_id;
               const executed = await manager.execute(
                 sessionId,
                 args.command,
                 signal,
               );
-              return executed.ok
-                ? ok(executed.value.evidence)
-                : err(executed.error);
+              return executed.ok ? ok(executed.value.evidence) : executed;
             },
             service: {
               close: () =>
@@ -407,7 +404,9 @@ export const registerReverseEngineeringCommands = (
     description:
       "Run one unrestricted Rizin debugger command in an ephemeral session",
     args: z.object({
-      path: z.string().min(1).describe("Path to the local artifact to debug."),
+      path: localPathStringSchema.describe(
+        "Path to the local artifact to debug.",
+      ),
       command: z
         .string()
         .min(1)
@@ -444,16 +443,14 @@ export const registerReverseEngineeringCommands = (
                 },
                 signal,
               );
-              if (!started.ok) return err(started.error);
+              if (!started.ok) return started;
               sessionId = started.value.session_id;
               const executed = await manager.execute(
                 sessionId,
                 args.command,
                 signal,
               );
-              return executed.ok
-                ? ok(executed.value.evidence)
-                : err(executed.error);
+              return executed.ok ? ok(executed.value.evidence) : executed;
             },
             {
               close: () =>

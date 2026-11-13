@@ -22,9 +22,9 @@ import type { ArtifactEntry } from "./ArtifactReader.js";
 import { artifactFormatDescriptor } from "./artifactFormats.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
-import { NODE_SEA_MAGIC } from "./nodeSea/NodeSeaBlob.js";
 import {
   NODE_SEA_FUSE_HASH,
+  NODE_SEA_FIXTURE_MAGIC,
   buildNodeSeaBlob,
   nodeSeaElf,
   nodeSeaMachO,
@@ -206,7 +206,7 @@ it.each([
   expect(root).toMatchObject({ artifact_kind: "container" });
   expect(root?.format_metadata).toMatchObject({
     kind: "node-sea",
-    magic: NODE_SEA_MAGIC,
+    magic: NODE_SEA_FIXTURE_MAGIC,
     carrier,
     code_path: "app/main.js",
     disable_experimental_sea_warning: true,
@@ -503,7 +503,7 @@ it("fails closed when the located blob is truncated, has a bad magic, or unknown
     message: expect.stringMatching(/magic.*not.*0x143da20/iu),
   });
   const unknown = Buffer.alloc(9);
-  unknown.writeUInt32LE(NODE_SEA_MAGIC, 0);
+  unknown.writeUInt32LE(NODE_SEA_FIXTURE_MAGIC, 0);
   unknown.writeUInt32LE(1 << 5, 4);
   unknown[8] = 1;
   await expect(

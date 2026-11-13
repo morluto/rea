@@ -3,10 +3,8 @@ import {
   analysisViewCaptureFixture,
   analysisViewCaptureEvidence,
 } from "../../../tests/fixtures/analysisView.js";
-import {
-  analysisViewRequestSchema,
-  projectAnalysisView,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
 
 const project = (

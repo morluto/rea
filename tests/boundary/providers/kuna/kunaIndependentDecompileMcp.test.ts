@@ -8,7 +8,7 @@ import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
 import { KunaRunSlots } from "../../../../src/kuna/KunaRunSlots.js";
 import { elfNoteFixture } from "../../../../src/native/elf/ElfNotes.fixture.js";
 import { createApplicationMcpHarness } from "../../../fixtures/applicationMcpHarness.js";
-import { advertisedMcpToolSchemas } from "../../../fixtures/advertisedMcpTool.js";
+import { callAdvertisedMcpTool } from "../../../fixtures/advertisedMcpTool.js";
 import { createMcpSchemaValidation } from "../../../fixtures/mcpSchemaValidation.js";
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -32,7 +32,7 @@ it("runs a cold independent request without starting a project export", async ()
     {
       REA_KUNA_COMMAND: kuna,
       REA_KUNA_CACHE_DIR: join(root, "cache"),
-      REA_KUNA_TIMEOUT_MS: "300",
+      REA_KUNA_TIMEOUT_MS: "10000",
     },
     { platform: process.platform },
   );
@@ -67,6 +67,11 @@ it("runs a cold independent request without starting a project export", async ()
       functions: FUNCTIONS,
       decompile: "hang",
     });
+    await call("update_analysis_settings", {
+      changes: [
+        { setting: "kuna.function_timeout_ms", action: "set", value: 300 },
+      ],
+    });
     const timeout = await harness.client.callTool({
       name: "procedure_pseudo_code",
       arguments: { procedure: "main", analysis: "independent_fresh" },
@@ -79,17 +84,27 @@ it("runs a cold independent request without starting a project export", async ()
     };
     expect(failure.error).toMatchObject({
       code: "provider_timeout",
-      remediation: {
-        action:
-          "Raise REA_KUNA_TIMEOUT_MS in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.",
+      details: {
+        timeout_ms: 300,
+        limit: {
+          setting: "kuna.function_timeout_ms",
+          effective_value: 300,
+          source: "runtime",
+          update_mode: "runtime",
+          pending_restart: false,
+          minimum: 1,
+          maximum: 2147483647,
+        },
       },
-      details: { timeout_ms: 300 },
     });
     expect(
       (await fakeKunaCalls(kuna)).filter(
         ({ argv }) => argv[0] === "decompile-project",
       ),
     ).toHaveLength(0);
+    await call("update_analysis_settings", {
+      changes: [{ setting: "kuna.function_timeout_ms", action: "reset" }],
+    });
     await setFakeKunaBehavior(kuna, { functions: FUNCTIONS });
     await call("procedure_assembly", { procedure: "main" });
     expect(
@@ -130,23 +145,8 @@ it.each(["compact", "full"] as const)(
       },
     });
     try {
-      const call = async (name: string, args: Record<string, unknown>) => {
-        const schema = await advertisedMcpToolSchemas(
-          harness.client,
-          name,
-          schemas.assertions,
-        );
-        const result = await harness.client.callTool(
-          { name, arguments: args },
-          { toolDefinition: schema.toolDefinition },
-        );
-        expect(result.isError, JSON.stringify(result)).not.toBe(true);
-        expect(
-          schema.ajv.validate(schema.outputSchema, result.structuredContent),
-          JSON.stringify(schema.ajv.errors),
-        ).toBe(true);
-        return result.structuredContent;
-      };
+      const call = (name: string, args: Record<string, unknown>) =>
+        callAdvertisedMcpTool(harness.client, name, args, schemas.assertions);
       await call("open_binary", { path: target, provider_id: "kuna" });
       await call("procedure_assembly", { procedure: "broken" });
       const original = parseEvidence(
@@ -225,7 +225,7 @@ it("retains the independent run slot until an unproven stop is resolved", async 
     {
       REA_KUNA_COMMAND: kuna,
       REA_KUNA_CACHE_DIR: join(root, "cache"),
-      REA_KUNA_TIMEOUT_MS: "300",
+      REA_KUNA_TIMEOUT_MS: "10000",
     },
     {
       platform: process.platform,
@@ -259,6 +259,15 @@ it("retains the independent run slot until an unproven stop is resolved", async 
     ).not.toBe(true);
     expect(
       (await call("procedure_assembly", { procedure: "broken" })).isError,
+    ).not.toBe(true);
+    expect(
+      (
+        await call("update_analysis_settings", {
+          changes: [
+            { setting: "kuna.function_timeout_ms", action: "set", value: 300 },
+          ],
+        })
+      ).isError,
     ).not.toBe(true);
     const first = await call("procedure_pseudo_code", {
       procedure: "broken",
@@ -308,6 +317,13 @@ it("retains the independent run slot until an unproven stop is resolved", async 
     expect((await call("close_binary", {})).isError).toBe(true);
     unproven.release();
     expect((await call("close_binary", {})).isError).not.toBe(true);
+    expect(
+      (
+        await call("update_analysis_settings", {
+          changes: [{ setting: "kuna.function_timeout_ms", action: "reset" }],
+        })
+      ).isError,
+    ).not.toBe(true);
     await setFakeKunaBehavior(kuna, { functions: FUNCTIONS });
     expect(
       (await call("open_binary", { path: target, provider_id: "kuna" }))

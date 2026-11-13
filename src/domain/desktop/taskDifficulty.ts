@@ -54,10 +54,14 @@ const counts = (solves: readonly SolveRecord[]) => {
 };
 
 /** The band the finished solves place the task in: 0 or 3 of 3 decide it, else 1 to 3 of 5 keep it. */
-export const bandOf = (solves: readonly SolveRecord[]): Band => {
+const bandOf = (solves: readonly SolveRecord[]): Band => {
   const { done, passes } = counts(solves);
   if (done >= ALL_SOLVES)
-    return passes <= MOST_BAND_PASSES ? "in_band" : "too_easy";
+    return passes === 0
+      ? "too_hard"
+      : passes <= MOST_BAND_PASSES
+        ? "in_band"
+        : "too_easy";
   if (done >= FIRST_SOLVES && passes === 0) return "too_hard";
   if (done >= FIRST_SOLVES && passes === done) return "too_easy";
   return "undecided";

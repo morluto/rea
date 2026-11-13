@@ -1,5 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import type {
   Device,
@@ -268,11 +269,13 @@ describe("FridaInstrumentationManager", () => {
     expect(fridaCaptureLimitations({ messages_truncated: false })).toEqual([]);
     expect(
       fridaCaptureLimitations({ messages_truncated: true }).join("\n"),
-    ).toContain("16777216");
+    ).toContain("selected value is unknown");
     const field = fridaCaptureLimitations({
       messages: [{ type_truncated: true }],
     }).join("\n");
-    expect(field).toContain("4096");
+    expect(field).toContain("capture_limits.message_type_bytes");
+    expect(field).toContain("selected value is unknown");
+    expect(field).not.toContain("4096");
     expect(field).not.toContain("16777216");
     const text = fridaCaptureLimitations({
       messages: [
@@ -282,7 +285,9 @@ describe("FridaInstrumentationManager", () => {
         },
       ],
     }).join("\n");
-    expect(text).toContain("32768");
+    expect(text).toContain("capture_limits.message_text_bytes");
+    expect(text).toContain("selected value is unknown");
+    expect(text).not.toContain("32768");
     expect(text).not.toContain("16777216");
     expect(text).not.toContain("4096");
     expect(
@@ -1454,6 +1459,79 @@ it("redacts remote credentials echoed by a target script", async () => {
 });
 
 it.each([
+  {
+    label: "colliding redacted names",
+    declared: true,
+    secondName: "[redacted]",
+    truncated: true,
+  },
+  {
+    label: "distinct redacted names",
+    declared: true,
+    secondName: "other",
+    truncated: false,
+  },
+  {
+    label: "same marker spelling without a declared secret",
+    declared: false,
+    secondName: "[redacted]",
+    truncated: false,
+  },
+])(
+  "preserves captured object facts with $label",
+  async ({ declared, secondName, truncated }) => {
+    const token = "synthetic-key-token";
+    const bindings = new FakeDeviceManager();
+    bindings.device.session.nextPayload = {
+      [token]: "first observation",
+      [secondName]: "second observation",
+      ordinary: "third observation",
+    };
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    onTestFinished(() => manager.closeAll());
+    const started = await manager.startSession({
+      mode: "attach",
+      remote: { address: "127.0.0.1:27042", ...(declared ? { token } : {}) },
+      pid: 512,
+    });
+    if (!started.ok) throw started.error;
+    const loaded = await new FridaInstrumentationService(manager).loadScript(
+      started.value.sessionId,
+      { sourceKind: "inline", source: "send(payload)" },
+    );
+    if (!loaded.ok) throw loaded.error;
+    const result = jsonObjectSchema.parse(loaded.value.normalized_result);
+    if (!Array.isArray(result.messages))
+      throw new Error("Expected captured messages");
+    const message = jsonObjectSchema.parse(result.messages[0]);
+    expect(message.payload).toEqual(
+      truncated
+        ? { "[redacted]": "first observation" }
+        : {
+            [declared ? "[redacted]" : token]: "first observation",
+            [secondName]: "second observation",
+            ordinary: "third observation",
+          },
+    );
+    expect(message.type).toBe("send");
+    expect(message.script_id).toBe(result.script_id);
+    expect(message.payload_truncated ?? false).toBe(truncated);
+    if (truncated)
+      expect(message.payload_capture_limit).toBe("unrepresentable");
+    else expect(message).not.toHaveProperty("payload_capture_limit");
+    expect(
+      loaded.value.limitations.some((text) =>
+        text.includes("could not be represented as JSON"),
+      ),
+    ).toBe(truncated);
+    if (declared) expect(JSON.stringify(loaded.value)).not.toContain(token);
+    else expect(JSON.stringify(loaded.value)).toContain(token);
+  },
+);
+
+it.each([
   { captureLimits: undefined, retained: 32_768, truncated: true },
   {
     captureLimits: { message_text_bytes: 65_536 },
@@ -1697,12 +1775,18 @@ it("serializes script loading against concurrent close and unloads the loaded sc
   void closing.then(() => {
     closed = true;
   });
-  expect(manager.closeSession(started.value.sessionId)).toBe(closing);
+  const secondClose = manager.closeSession(started.value.sessionId);
+  let secondClosed = false;
+  void secondClose.then(() => {
+    secondClosed = true;
+  });
   await Promise.resolve();
   expect(closed).toBe(false);
+  expect(secondClosed).toBe(false);
   finishScriptLoad?.();
   expect((await loading).ok).toBe(true);
   expect((await closing).ok).toBe(true);
+  expect((await secondClose).ok).toBe(true);
   expect(bindings.device.session.scripts[0]?.isDestroyed).toBe(true);
   expect(bindings.device.session.isDetached()).toBe(true);
 });
@@ -1786,7 +1870,11 @@ it.each([false, true])(
       { sourceKind: "inline", source: "send('marker')" },
       controller.signal,
     );
-    await entered.promise;
+    await awaitAcknowledgement(
+      entered.promise,
+      loading,
+      "provider lifecycle boundary",
+    );
     const script = session.scripts[0];
     if (script === undefined) throw new Error("Missing admitted script");
     const unload = script.unload.bind(script);
@@ -1850,7 +1938,11 @@ it("preserves a native rejection observed before cancellation during script clea
     { sourceKind: "inline", source: "void 0" },
     controller.signal,
   );
-  await entered.promise;
+  await awaitAcknowledgement(
+    entered.promise,
+    loading,
+    "provider lifecycle boundary",
+  );
   controller.abort(new Error("late abort during cleanup"));
   held.resolve();
   const result = await loading;
@@ -1927,3 +2019,21 @@ it("retries only unresolved sessions and resolves the typed close aggregate", as
   expect(calls).toEqual([2, 1]);
   expect(failure.cleanupIncomplete).toBe(false);
 });
+
+// Malformed or partial observations do not establish the session's policy.
+it.each([{}, { session_bytes: 12345 }, { session_bytes: -1 }])(
+  "keeps observed capture policy unknown for %j",
+  (capture_limits) => {
+    const text = fridaCaptureLimitations({
+      capture_limits,
+      messages_truncated: true,
+      messages: [{ type_truncated: true, description_truncated: true }],
+    }).join("\n");
+    expect(text).toContain("selected value is unknown");
+    for (const invented of ["16777216", "4096", "32768"])
+      expect(text).not.toContain(invented);
+    expect(text).toContain(
+      "Already discarded observations cannot be recovered",
+    );
+  },
+);

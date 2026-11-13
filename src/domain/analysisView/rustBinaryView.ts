@@ -23,6 +23,7 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { selectViewRows } from "./selectViewRows.js";
@@ -324,12 +325,22 @@ export const projectRustBinaryView = (
       ),
     });
   }
+  // Inferred crates come from read-only sections, not the auditable section.
+  if (metadata === null)
+    return ok({
+      kind: "rust" as const,
+      view,
+      ...shared,
+      rust: summary,
+      page: { collection: view.collection, rows: [] },
+      coverage: unavailableViewCoverage(),
+    });
   if (view.collection === "packages") {
     const names = view.names === undefined ? undefined : new Set(view.names);
     const versions =
       view.versions === undefined ? undefined : new Set(view.versions);
     const selected = selectViewRows(
-      metadata?.packages ?? [],
+      metadata.packages,
       view,
       (row, index) =>
         (indices?.has(index) ?? true) &&
@@ -368,7 +379,7 @@ export const projectRustBinaryView = (
   const to =
     view.to_indices === undefined ? undefined : new Set(view.to_indices);
   const selected = selectViewRows(
-    metadata?.dependency_edges ?? [],
+    metadata.dependency_edges,
     view,
     (row, index) =>
       (indices?.has(index) ?? true) &&

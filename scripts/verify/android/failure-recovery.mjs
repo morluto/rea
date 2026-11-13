@@ -151,7 +151,7 @@ export async function verifyAndroidFailureRecovery({
             failure_code: "runtime_unavailable",
           },
           availabilityReason: "provider_unavailable",
-          availabilityRemediation: /selected Java runtime/u,
+          availabilityRemediation: /selected Java launcher/u,
           message: /selected Java runtime/u,
           remediation: /selected launcher/u,
         });
@@ -194,12 +194,7 @@ export async function verifyAndroidFailureRecovery({
         repository,
         available: false,
         unavailableReason: scenario.availabilityReason ?? "provider_missing",
-        remediation:
-          scenario.availabilityRemediation ??
-          new RegExp(
-            scenario.observation.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"),
-            "u",
-          ),
+        remediation: scenario.availabilityRemediation ?? scenario.remediation,
       });
       console.log(`PASS CLI applicable recovery: ${scenario.label}`);
     }

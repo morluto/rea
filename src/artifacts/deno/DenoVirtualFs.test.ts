@@ -2,14 +2,16 @@ import { expect, it } from "vitest";
 
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import {
-  MAX_DENO_LOGICAL_PATH_BYTES,
   MAX_DENO_LOGICAL_PATH_PARTS,
-  MAX_DENO_PATH_COMPONENT_BYTES,
-  MAX_DENO_VFS_DEPTH,
-  MAX_DENO_VFS_ENTRIES,
-  MAX_DENO_VFS_NAME_UNITS,
   walkDenoVirtualFs,
 } from "./DenoVirtualFs.js";
+
+// Independent format and admission examples.
+const MAX_DENO_VFS_ENTRIES = 100_000;
+const MAX_DENO_VFS_NAME_UNITS = 4_096;
+const MAX_DENO_VFS_DEPTH = 512;
+const MAX_DENO_PATH_COMPONENT_BYTES = 255;
+const MAX_DENO_LOGICAL_PATH_BYTES = 512;
 
 const file = (
   name: string,

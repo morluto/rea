@@ -87,7 +87,7 @@ const DOCUMENT_SCOPED_OPERATIONS: ReadonlySet<string> = new Set(
 );
 
 /** Maximum duplicated result bindings retained across direct and workflow queries. */
-export const SNAPSHOT_CACHE_ENTRY_CEILING = 10_000;
+const SNAPSHOT_CACHE_ENTRY_CEILING = 10_000;
 
 const replayDocumentSelected = (
   operation: AnalysisOperation,
@@ -173,7 +173,7 @@ export const requiresNativeSourceAdmissionBeforeReplay = (
 ): boolean => process.platform === "win32" && providerId === "ghidra";
 
 /** Limitation that marks every observation replayed from a snapshot. */
-export const SNAPSHOT_REPLAY_LIMITATION =
+const SNAPSHOT_REPLAY_LIMITATION =
   "Loaded from a local REA analysis snapshot; this call did not re-run the provider.";
 
 /** Bounded in-memory cache for one immutable binary identity. */

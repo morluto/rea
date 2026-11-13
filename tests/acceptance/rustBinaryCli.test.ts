@@ -6,7 +6,6 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
-import { RUST_RESOURCE_GUARD_LIMITATION } from "../../src/rust/RustBinaryProvider.js";
 import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   compressRustElfSectionNames,
@@ -470,7 +469,13 @@ cliTest(
     );
     // Padding separates the section size from the consumed stream that the
     // inflate guidance names.
-    expect(evidence.limitations).toContain(RUST_RESOURCE_GUARD_LIMITATION);
+    expect(evidence.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /inflated JSON.*64 times the consumed compressed-stream length/iu,
+        ),
+      ]),
+    );
     expect(evidence.locations).toContainEqual({
       kind: "file-offset-range",
       start: metadata?.file_offset,
@@ -975,4 +980,36 @@ cliTest(
     await client.ping();
   },
   60000,
+);
+
+cliTest(
+  "rejects malformed Rust view JSON before opening the selected path",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-view-json-");
+    const result = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        join(root, "missing"),
+        "--view",
+        "{",
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_rust_binary",
+        issues: [
+          {
+            path: ["view"],
+            reason: "invalid_format",
+            message:
+              "view must be a JSON package, edge or inferred_crates selection",
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(result.json)).not.toContain("ENOENT");
+  },
 );

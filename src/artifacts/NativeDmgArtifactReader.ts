@@ -213,9 +213,17 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       [Symbol.asyncIterator]();
     try {
       for (;;) {
-        if (this.#closed) return;
+        if (this.#closed)
+          throw new ArtifactReaderFailure(
+            "unavailable",
+            "DMG reader is closed",
+          );
         const next = await this.#trackDirectoryOperation(() => entries.next());
-        if (this.#closed) return;
+        if (this.#closed)
+          throw new ArtifactReaderFailure(
+            "unavailable",
+            "DMG reader is closed",
+          );
         if (next.done) return;
         yield { ...next.value, path: `${prefix}/${next.value.path}` };
       }
