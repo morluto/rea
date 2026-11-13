@@ -54,7 +54,7 @@ const fixture = () => {
       },
     },
   );
-  const error = normalizeCaptureFailure(compiler, undefined);
+  const error = normalizeCaptureFailure(compiler);
   if (!(error instanceof ProcessCaptureError))
     throw new Error("Expected normalized capture failure");
   return { cleanup, compiler, error };
@@ -93,7 +93,7 @@ it("marks a timed-out Darwin compiler inspection as retryable", () => {
     },
   );
 
-  const normalized = normalizeCaptureFailure(compiler, undefined);
+  const normalized = normalizeCaptureFailure(compiler);
   expect(normalized).toMatchObject({
     retryable: true,
     capturedOutput: undefined,
@@ -128,7 +128,7 @@ it("retains compiler facts and cleanup dependency through capture finalization",
 it("does not recreate unresolved cleanup after the exact owner already confirmed retry", () => {
   const { cleanup, compiler } = fixture();
   cleanup.resolveCleanup();
-  const normalized = normalizeCaptureFailure(compiler, undefined);
+  const normalized = normalizeCaptureFailure(compiler);
   expect(normalized).toMatchObject({
     cleanupIncomplete: false,
     capturedOutput: { exit_code: 7 },
@@ -196,7 +196,7 @@ it("does not infer captured stdout from partial compiler diagnostics", () => {
       compilerOutcome: compiler.compilerOutcome!,
     },
   );
-  expect(normalizeCaptureFailure(partial, undefined)).toMatchObject({
+  expect(normalizeCaptureFailure(partial)).toMatchObject({
     capturedOutput: undefined,
   });
 });

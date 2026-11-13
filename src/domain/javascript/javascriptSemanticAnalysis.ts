@@ -92,6 +92,7 @@ import {
 } from "./javascriptSemanticAmbientWrites.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
+  TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION,
   isTypeOnlyImportDeclaration,
   isTypeOnlyImportSpecifier,
   semanticImportEqualsSpecifier,
@@ -118,7 +119,6 @@ import {
 } from "./javascriptSemanticCoverage.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
-  javaScriptRuntimeContext,
   javaScriptProgramStrictness,
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
@@ -408,17 +408,6 @@ const semanticPathsOverlap = (
   return true;
 };
 
-/** Share the lexical index with bounded, demand-driven boundary analyses. */
-export function* indexJavaScriptBindingsSteps(
-  program: t.Program,
-  precision?: JavaScriptSemanticPrecisionInput,
-): Generator<void, JavaScriptSemanticAnalysisState> {
-  const state = createState(program, "import", precision);
-  yield* collectDefinitionsSteps(program, state);
-  yield* indexSemanticAmbientWritesSteps(state);
-  return state;
-}
-
 /** Recover semantics from an already parsed JavaScript artifact. */
 export const analyzeParsedJavaScriptSemantics = (
   file: ParsedJavaScriptSource,
@@ -518,9 +507,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
           ]
         : []),
       ...(hasUncertainTypeOnlyModuleSideEffect(file.program)
-        ? [
-            "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
-          ]
+        ? [TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION]
         : []),
       "Values and aliases were recovered from inert syntax only; no JavaScript was executed.",
       "Return sites include only direct callable returns; nested callable returns remain separate.",

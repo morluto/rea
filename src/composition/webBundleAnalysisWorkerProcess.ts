@@ -1,14 +1,8 @@
 import { analyzeCapturedWebScript } from "../domain/webBundleAnalyzer.js";
-import {
-  serveWebBundleAnalysisWorker,
-  type WebBundleScriptAnalyzer,
-} from "../browser/WebBundleAnalysisWorkerServer.js";
-
-const analyze: WebBundleScriptAnalyzer = (script, precision) =>
-  analyzeCapturedWebScript(script, precision);
+import { serveWebBundleAnalysisWorker } from "../browser/WebBundleAnalysisWorkerServer.js";
 
 try {
-  await serveWebBundleAnalysisWorker(analyze);
+  await serveWebBundleAnalysisWorker(analyzeCapturedWebScript);
 } catch (cause: unknown) {
   process.stderr.write(
     `${cause instanceof Error ? cause.message : String(cause)}\n`,

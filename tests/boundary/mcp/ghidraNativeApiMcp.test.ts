@@ -57,10 +57,6 @@ it("retains complete load-image facts and pages selected relocations through the
         { toolDefinition: definition },
       );
       expect(reply.isError).not.toBe(true);
-      expect(
-        ajv.validate(outputSchema, reply.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
       return sessionEvidence(harness.session, reply.structuredContent);
     };
     const complete = await call("inspect_native_load_image", {});

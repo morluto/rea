@@ -7,7 +7,6 @@ import {
 import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationEdge,
-  type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
 import { compareJavaScriptApplicationVersions } from "./javascriptApplicationVersionComparison.js";
 

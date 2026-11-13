@@ -157,6 +157,7 @@ const extractImports = (
     ReferenceSourceRequireCall
   >,
 ): void => {
+  let unresolvedRequireTarget = false;
   traverseJavaScriptAst(ast.program, {
     enter: (node) => {
       if (
@@ -197,8 +198,21 @@ const extractImports = (
       ) {
         const requireCall = requireCalls.get(node);
         if (requireCall === undefined) return;
-        const specifier = exactStringModuleName(requireCall.arguments?.[0]);
-        if (specifier === undefined) return;
+        // Undefined arguments are an opaque normalized list, such as
+        // `require.apply(null, args)`. An empty list is an explicit call
+        // with no target.
+        if (requireCall.arguments === undefined) {
+          unresolvedRequireTarget = true;
+          return;
+        }
+        const target = requireCall.arguments[0];
+        if (target === undefined) return;
+        const literal = readExactJavaScriptLiteral(target);
+        if (!literal.found) {
+          unresolvedRequireTarget = true;
+          return;
+        }
+        if (typeof literal.value !== "string") return;
         if (
           requireCall.limitation !== undefined &&
           !limitations.includes(requireCall.limitation)
@@ -207,7 +221,7 @@ const extractImports = (
         const uncertainResolution = requireCall.resolutionBase === "unknown";
         appendRelationship(relationships, limitations, {
           fromPath: from_path,
-          to: specifier,
+          to: literal.value,
           kind: "requires",
           parseState: uncertainResolution ? "partial" : "parsed",
           ...(uncertainResolution ? { resolution: "unknown" } : {}),
@@ -221,6 +235,10 @@ const extractImports = (
       }
     },
   });
+  if (unresolvedRequireTarget)
+    limitations.push(
+      `A CommonJS module target in ${from_path} could not be determined statically.`,
+    );
 };
 
 const parseWithBabel = (

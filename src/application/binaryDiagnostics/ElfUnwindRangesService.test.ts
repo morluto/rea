@@ -27,57 +27,6 @@ const undecodableHeaderPointer = (): Buffer => {
   bytes[Number(bytes.readBigUInt64LE(64 + 56 + 8)) + 1] = 0x0f;
   return bytes;
 };
-const report: ElfUnwindRanges = {
-  artifact: {
-    path: "/artifacts/app",
-    sha256: "a".repeat(64),
-    bytes: 512,
-  },
-  format: "elf64",
-  byte_order: "little",
-  machine: 62,
-  type: 3,
-  type_name: "shared",
-  eh_frame: { status: "absent", source: null, location: null },
-  eh_frame_hdr: {
-    status: "absent",
-    location: null,
-    version: null,
-    eh_frame_pointer_encoding: null,
-    fde_count_encoding: null,
-    table_encoding: null,
-    eh_frame_pointer: null,
-    fde_count: null,
-    table_entries: 0,
-  },
-  debug_frame: { status: "absent", location: null },
-  cies: [],
-  ranges: [],
-  page: {
-    offset: 0,
-    limit: 256,
-    returned: 0,
-    total: 0,
-    next_offset: null,
-  },
-  coverage: {
-    status: "complete",
-    total_ranges: 0,
-    total_cies: 0,
-    ranges_with_symbols: 0,
-    ranges_without_symbols: 0,
-    eh_frame_hdr_agreement: "unavailable",
-    examined_records: 0,
-  },
-  limitations: [
-    "No .eh_frame section or PT_GNU_EH_FRAME segment was declared.",
-    "No .eh_frame_hdr section or PT_GNU_EH_FRAME segment was declared.",
-    "CFA instructions are counted but not evaluated.",
-    ".debug_frame is absent; only .eh_frame was examined.",
-    "Symbol names, section names, and augmentation strings are target-derived and untrusted.",
-  ],
-};
-
 const parsed = (
   bytes: Buffer,
   raw: Readonly<Record<string, unknown>> = {},
@@ -96,6 +45,8 @@ const parsed = (
     input,
   );
 };
+
+const report = parsed(elfUnwindAbsentFixture());
 
 const accept = async (
   value: ElfUnwindRanges,

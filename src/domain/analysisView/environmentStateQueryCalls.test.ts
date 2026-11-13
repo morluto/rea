@@ -55,6 +55,12 @@ const readOnlyOf = (
         ),
         ms: call.start ?? index,
       },
+      end:
+        call.end === null
+          ? undefined
+          : parseOffsetDateTimeInstant(
+              new Date(call.end ?? index).toISOString(),
+            ),
       endMs: call.end === null ? undefined : (call.end ?? index),
     },
   }));
@@ -512,6 +518,7 @@ describe("read-only decisions over many calls", () => {
               ),
               ms: index,
             },
+            end: parseOffsetDateTimeInstant(new Date(index).toISOString()),
             endMs: index,
           },
         };
@@ -580,6 +587,7 @@ describe("read-only decisions over a long run of calls", () => {
               ),
               ms: index,
             },
+            end: parseOffsetDateTimeInstant(new Date(index).toISOString()),
             endMs: index,
           },
         };
@@ -648,6 +656,7 @@ describe("read-only decisions over many lines", () => {
               ),
               ms: index,
             },
+            end: parseOffsetDateTimeInstant(new Date(index).toISOString()),
             endMs: index,
           },
         };

@@ -1,10 +1,15 @@
 import { FLUTTER_PROVIDER_IDENTITY } from "./FlutterProviderIdentity.js";
+import {
+  artifactFileCancellationCause,
+  assertArtifactReadActive,
+} from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, open as openFile, rm, stat } from "node:fs/promises";
@@ -36,7 +41,7 @@ import {
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { fixedAllowanceOptions as flutterBudget } from "../domain/fixedAllowanceRemediation.js";
 import {
   AnalysisError,
   type AnalysisPartialObservation,
@@ -79,8 +84,6 @@ const APK_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 // engine labels this keeps expanded result metadata below 512 KiB for ordinary
 // ABI names, independently of the archive's compressed-byte budget.
 const MAX_FLUTTER_ABIS = 32;
-const flutterBudget = (allowance: string, kind: "parser" | "input") =>
-  fixedAllowanceOptions(allowance, kind);
 /** A complete AOT image carries exactly one VM and one isolate section. */
 const SYMBOL_PAIR_COUNT = 2;
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
@@ -94,14 +97,31 @@ const sha256File = async (
   path: string,
   signal: AbortSignal | undefined,
 ): Promise<string> => {
+  assertArtifactReadActive(signal);
   const hash = createHash("sha256");
-  const stream = createReadStream(path, signal === undefined ? {} : { signal });
-  for await (const chunk of stream) {
-    if (signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
-    hash.update(chunk as Buffer);
+  const owner = new AbortController();
+  const marker = {};
+  const abort = () => owner.abort(marker);
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const stream = createReadStream(path, { signal: owner.signal });
+    for await (const chunk of stream) {
+      if (signal?.aborted === true)
+        throw new AnalysisCancelledError(operation, { cause: signal.reason });
+      hash.update(chunk as Buffer);
+    }
+    return hash.digest("hex");
+  } catch (cause) {
+    if (
+      cause instanceof Error &&
+      cause.name === "AbortError" &&
+      cause.cause === marker
+    )
+      throw new AnalysisCancelledError(operation, { cause: signal?.reason });
+    throw cause;
+  } finally {
+    signal?.removeEventListener("abort", abort);
   }
-  return hash.digest("hex");
 };
 
 /** One owned snapshot root: a read-only copy of the admitted input. */
@@ -158,15 +178,16 @@ const emptyFacts = (): LibraryFacts => ({
   },
 });
 
-/** Translate a ZIP reader rejection into the typed analysis error algebra. */
-const isCancellation = (cause: unknown): boolean =>
-  cause instanceof AnalysisCancelledError ||
-  (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") ||
-  (cause instanceof Error && cause.name === "AbortError") ||
-  (typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    cause.code === "ABORT_ERR");
+/** Use the producing reader's cancellation facts rather than its wrapper error. */
+const observedCancellation = (
+  cause: unknown,
+): { readonly reason: unknown } | undefined => {
+  const file = regularFileCancellation(cause);
+  if (file !== undefined) return file;
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+    return { reason: artifactFileCancellationCause(cause) };
+  return undefined;
+};
 
 const mapInputFailure = (
   operation: string,
@@ -174,13 +195,11 @@ const mapInputFailure = (
   cause: unknown,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  const cancellation = regularFileCancellation(cause);
+  const cancellation = observedCancellation(cause);
   if (cancellation !== undefined)
     return new AnalysisCancelledError(operation, {
       cause: cancellation.reason,
     });
-  if (isCancellation(cause))
-    return new AnalysisCancelledError(operation, { cause });
   if (
     cause instanceof Error &&
     "code" in cause &&
@@ -234,13 +253,11 @@ const mapOwnedIoFailure = (
   workspacePath: string | null,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  const cancellation = regularFileCancellation(cause);
+  const cancellation = observedCancellation(cause);
   if (cancellation !== undefined)
     return new AnalysisCancelledError(operation, {
       cause: cancellation.reason,
     });
-  if (isCancellation(cause))
-    return new AnalysisCancelledError(operation, { cause });
   if (
     cause instanceof Error &&
     "code" in cause &&
@@ -352,11 +369,6 @@ const checkApkSize = (operation: string, bytes: number): void => {
     );
 };
 
-export interface FlutterProviderOptions {
-  /** Deterministic root removal for tests; production removes recursively. */
-  readonly removeRoot?: (path: string) => Promise<void>;
-}
-
 /**
  * Flutter build identification by pure parsing: reads `lib/<abi>/libapp.so`
  * and `libflutter.so` through the hardened ZIP reader and reports the Dart
@@ -368,16 +380,12 @@ export class FlutterBuildProvider {
     string,
     Set<{ close(): Promise<void> }>
   >();
-  private readonly removeRoot: (path: string) => Promise<void>;
   private readonly cleanupFailures = new Map<string, readonly unknown[]>();
   private readonly rootLeases = new Map<string, AnalysisCleanupLease>();
   private readonly operations = new ArtifactResourceScope();
 
-  constructor(options: FlutterProviderOptions = {}) {
+  constructor() {
     this.operations.addCloseHook(() => this.closeRoots());
-    this.removeRoot =
-      options.removeRoot ??
-      ((path) => rm(path, { recursive: true, force: true }));
   }
 
   /**
@@ -445,7 +453,7 @@ export class FlutterBuildProvider {
       const chunk = Buffer.alloc(64 * 1024);
       let copiedBytes = 0;
       while (copiedBytes <= Number(before.size)) {
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
         const { bytesRead } = await readSource(() =>
           source.handle.read(
             chunk,
@@ -454,7 +462,7 @@ export class FlutterBuildProvider {
             copiedBytes,
           ),
         );
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
         if (bytesRead === 0) break;
         copiedBytes += bytesRead;
         if (BigInt(copiedBytes) > before.size)
@@ -499,10 +507,7 @@ export class FlutterBuildProvider {
       const sha256 = await sha256File(operation, snapshotPath, signal);
       return { root, path: snapshotPath, bytes: info.size, sha256 };
     } catch (cause) {
-      const primary =
-        signal?.aborted === true
-          ? new AnalysisCancelledError(operation, { cause: signal.reason })
-          : mapOwnedIoFailure(operation, cause, root);
+      const primary = mapOwnedIoFailure(operation, cause, root);
       const released = await this.discardRoot(root);
       if (!released)
         throw this.withCleanup(
@@ -564,7 +569,7 @@ export class FlutterBuildProvider {
       return false;
     }
     try {
-      await this.removeRoot(root);
+      await rm(root, { recursive: true, force: true });
       this.ownedRoots.delete(root);
       this.cleanupFailures.delete(root);
       return true;
@@ -705,7 +710,13 @@ export class FlutterBuildProvider {
         request.operation,
       );
     } catch (cause) {
-      return err(mapOwnedIoFailure(request.operation, cause, null));
+      const failure = mapOwnedIoFailure(request.operation, cause, null);
+      const interrupted = cancellation();
+      return err(
+        interrupted === undefined
+          ? failure
+          : analysisErrorWithCancellation(failure, interrupted),
+      );
     }
     const afterCleanup = cancellation();
     if (afterCleanup !== undefined) return err(afterCleanup);
@@ -775,6 +786,15 @@ export class FlutterBuildProvider {
         }),
       );
     }
+    if (signal?.aborted === true && !result.ok)
+      result = err(
+        analysisErrorWithCancellation(
+          result.error,
+          new AnalysisCancelledError(request.operation, {
+            cause: signal.reason,
+          }),
+        ),
+      );
     if (cleanup !== undefined) {
       if (!result.ok)
         return err(this.withCleanup(result.error, cleanup, request.operation));
@@ -1145,7 +1165,11 @@ export class FlutterBuildProvider {
       let total = 0;
       for await (const chunk of stream) {
         if (signal?.aborted === true)
-          return err(new AnalysisCancelledError("inspect_dart_aot"));
+          return err(
+            new AnalysisCancelledError("inspect_dart_aot", {
+              cause: signal.reason,
+            }),
+          );
         const view = chunk as Buffer;
         total += view.byteLength;
         if (total > LIBRARY_MAX_BYTES)
@@ -1175,20 +1199,24 @@ export class FlutterBuildProvider {
       );
       while (imageLength < image.length) {
         if (signal?.aborted === true)
-          return err(new AnalysisCancelledError("inspect_dart_aot"));
+          return err(
+            new AnalysisCancelledError("inspect_dart_aot", {
+              cause: signal.reason,
+            }),
+          );
         const result = await file.handle.read(
           image,
           imageLength,
           image.length - imageLength,
           null,
         );
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
         if (result.bytesRead === 0) break;
         imageLength += result.bytesRead;
       }
       await this.releaseResource(snapshot.root, file);
     }
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     const bounded = image.subarray(0, imageLength);
     const symbolNames = [
       "_kDartVmSnapshotData",
@@ -1468,7 +1496,7 @@ const projectStringPool = async (
     let overflowed = false;
     for (let start = 0; start < section.length; start += 64 * 1024) {
       await yieldToEventLoop();
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
       for (const byte of section.subarray(start, start + 64 * 1024)) {
         if (byte >= 0x20 && byte < 0x7f) {
           // A single unbounded run (an adversarial NUL-free section) never
@@ -1490,7 +1518,7 @@ const projectStringPool = async (
     }
     if (!overflowed) consider(run);
   }
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   return {
     packageUris: [...packages].sort(),
     packageUriCount: packages.size,

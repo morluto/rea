@@ -119,8 +119,8 @@ it("compares encrypted Godot PCK members by their declared MD5", async () => {
       dimensions: ["availability"],
     },
   ]);
-  // An all-zero MD5 is no claim, and one claim alone proves no change. The
-  // reader notes the all-zero MD5, and that note is the metadata difference.
+  // An all-zero MD5 is not a declared claim. The one-sided claim is the
+  // metadata difference; the reader's note is not compared.
   const unclaimed = await inspect("unclaimed.pck", {
     path: "res://scenes/main.gd",
     data: "ciphertext D",

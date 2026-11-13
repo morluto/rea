@@ -329,7 +329,7 @@ const dependencySourcePath = (path: string): boolean =>
  * preloads, and Electron windows are examined. Offer application JavaScript
  * first and dependency JavaScript last; metadata files keep their position.
  */
-export const javaScriptAnalysisOrder = (
+const javaScriptAnalysisOrder = (
   files: readonly JavaScriptArtifactFile[],
 ): JavaScriptArtifactFile[] => {
   const application: JavaScriptArtifactFile[] = [];
@@ -486,6 +486,10 @@ export const createJavaScriptPackageTypeLookup = (
         const type = document.packageFields.type;
         return type === "module" || type === "commonjs" ? type : "unspecified";
       }
+      // An unvisited nearer manifest may override an observed ancestor's type.
+      const coverage = fileSet.unanalyzed_files?.coverage;
+      if (coverage !== undefined && coverage.status !== "complete")
+        return "unknown";
       if (directory === "." || directory === "" || directory === "/") break;
     }
     return "unknown";

@@ -1,4 +1,5 @@
 import { OwnedCommandFailure } from "../../../../src/process/OwnedCommand.js";
+import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { createHash } from "node:crypto";
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 import { EventEmitter } from "node:events";
@@ -23,13 +24,14 @@ import {
   type NativeCommandRunner,
 } from "../../../../src/native/CommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
-import { parseLipoOutput } from "../../../../src/native/parsers/lipo.js";
+import { parseLipoFixture } from "../../../fixtures/lipo.js";
 import {
   dylibCommand,
   LC,
   machoImage,
 } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { inspectionImage } from "../../../../src/native/NativeMachoInspection.fixture.js";
+import { fat } from "../../../../src/domain/binaryTarget.fixture.js";
 import {
   inspectPlistSchema,
   inspectSignatureSchema,
@@ -91,6 +93,13 @@ const inspectionFixture = async (high = false) => {
       ],
     }),
   );
+  return nativeMachoTargetForFile(path);
+};
+
+const architectureTargetFixture = async () => {
+  const root = await createTestTempDirectory("rea-native-architectures-");
+  const path = join(root, "fixture");
+  await writeFile(path, fat([0x01000007, 0x0100000c]));
   return nativeMachoTargetForFile(path);
 };
 
@@ -538,7 +547,7 @@ describe("native owned cancellation boundary", () => {
         launcher,
       );
       const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-        machoTarget("/private/fixture"),
+        await architectureTargetFixture(),
       );
       const controller = new AbortController();
       const cancellationReason = {
@@ -653,7 +662,7 @@ describe("native cancellation cleanup provenance", () => {
         launcher,
       );
       const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-        machoTarget("/private/fixture"),
+        await architectureTargetFixture(),
       );
       const controllers = [new AbortController(), new AbortController()];
       const cancellationReason = { source: "mixed native owner retry" };
@@ -790,7 +799,7 @@ describe("native returned cleanup ownership", () => {
         launcher,
       );
       const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-        machoTarget("/private/fixture"),
+        await architectureTargetFixture(),
       );
       const controller = new AbortController();
       const cancellationReason = { source: "native cleanup retry regression" };
@@ -934,7 +943,7 @@ describe("native late cancellation with cleanup", () => {
       launcher,
     );
     const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-      machoTarget("/private/fixture"),
+      await architectureTargetFixture(),
     );
     try {
       const pending = client.execute(
@@ -942,8 +951,12 @@ describe("native late cancellation with cleanup", () => {
         {},
         { signal: controller.signal },
       );
-      await started;
-      await cleanupAttempt;
+      await awaitAcknowledgement(started, pending, "native command start");
+      await awaitAcknowledgement(
+        cleanupAttempt,
+        pending,
+        "native cleanup start",
+      );
       controller.abort(cancellationReason);
       releaseFirstCleanup();
 
@@ -1130,55 +1143,63 @@ describe("native command cleanup lifecycle", () => {
       },
     };
     const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-      machoTarget("/private/fixture"),
+      await architectureTargetFixture(),
     );
 
     const execution = client.execute("list_architectures", {});
-    await started;
-    const closing = client.close();
-    await Promise.resolve();
-    expect(cleanupRetries).toBe(0);
-    finishCommand(
-      err(
-        new NativeCommandFailure("lipo", "timeout", null, undefined, {
-          stdout: "partial architecture output",
-          stderr: "partial diagnostic",
-          stdoutBytes: 27,
-          stderrBytes: 19,
-          exitCode: null,
-          signal: null,
-          truncated: false,
-        }),
-      ),
+    const commandResult = err(
+      new NativeCommandFailure("lipo", "timeout", null, undefined, {
+        stdout: "partial architecture output",
+        stderr: "partial diagnostic",
+        stdoutBytes: 27,
+        stderrBytes: 19,
+        exitCode: null,
+        signal: null,
+        truncated: false,
+      }),
     );
+    try {
+      await awaitAcknowledgement(started, execution, "native command start");
+      const closing = client.close();
+      await Promise.resolve();
+      expect(cleanupRetries).toBe(0);
+      finishCommand(commandResult);
 
-    const [observed, closed] = await Promise.all([execution, closing]);
-    expect(observed.ok).toBe(false);
-    expect(closed.ok).toBe(false);
-    expect(cleanupRetries).toBe(1);
-    if (!closed.ok) {
-      expect(closed.error.cleanupResources).toEqual([
-        "run:first",
-        "process-group:1234",
-        "run:second",
-        "process-group:5678",
-      ]);
-      expect(closed.error).toHaveProperty("diagnostics", {
-        reason: "Native command process cleanup remains incomplete",
-        failures: [
-          {
-            reason: "first process group remains live",
-            resources: ["run:first", "process-group:1234"],
-          },
-          {
-            reason: "second process group remains live",
-            resources: ["run:second", "process-group:5678"],
-          },
-        ],
-      });
+      const [observed, closed] = await Promise.all([execution, closing]);
+      expect(observed.ok).toBe(false);
+      expect(closed.ok).toBe(false);
+      expect(cleanupRetries).toBe(1);
+      if (!closed.ok) {
+        expect(closed.error.cleanupResources).toEqual([
+          "run:first",
+          "process-group:1234",
+          "run:second",
+          "process-group:5678",
+        ]);
+        expect(closed.error).toHaveProperty("diagnostics", {
+          reason: "Native command process cleanup remains incomplete",
+          failures: [
+            {
+              reason: "first process group remains live",
+              resources: ["run:first", "process-group:1234"],
+            },
+            {
+              reason: "second process group remains live",
+              resources: ["run:second", "process-group:5678"],
+            },
+          ],
+        });
+      }
+      await expect(client.close()).resolves.toMatchObject({ ok: true });
+      expect(cleanupRetries).toBe(2);
+    } finally {
+      finishCommand(commandResult);
+      try {
+        await execution;
+      } finally {
+        await client.close();
+      }
     }
-    await expect(client.close()).resolves.toMatchObject({ ok: true });
-    expect(cleanupRetries).toBe(2);
   });
 });
 
@@ -1216,7 +1237,7 @@ describe("native command failure projection", () => {
       retryCleanup: async () => failures,
     };
     const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-      machoTarget("/private/fixture"),
+      await architectureTargetFixture(),
     );
     try {
       const result = await client.execute("list_architectures", {});
@@ -1268,7 +1289,7 @@ describe("native command failure projection", () => {
       },
     };
     const result = await new NativeMacOSProvider({}, runner, "darwin")
-      .createClient(machoTarget("/private/fixture"))
+      .createClient(await architectureTargetFixture())
       .execute("list_architectures", {});
 
     expect(result.ok).toBe(false);
@@ -1309,7 +1330,7 @@ describe("native command failure projection", () => {
         },
       };
       const result = await new NativeMacOSProvider({}, runner, "darwin")
-        .createClient(machoTarget("/private/fixture"))
+        .createClient(await architectureTargetFixture())
         .execute("list_architectures", {});
 
       expect(result.ok).toBe(false);
@@ -1429,7 +1450,7 @@ describe("native macOS provider inspection", () => {
     const app = join(directory, "Fixture.app");
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
-    await writeFile(executable, "fixture");
+    await writeFile(executable, fat([0x01000007, 0x0100000c]));
     await writeFixturePlist(join(app, "Contents/Info.plist"));
     const externalPlist = join(directory, "Outside.plist");
     await writeFixturePlist(externalPlist);
@@ -1697,7 +1718,7 @@ describe("native macOS provider failures and parsing", () => {
       {},
       new FailingRunner("unavailable"),
       "darwin",
-    ).createClient(machoTarget("/fixture"));
+    ).createClient(await architectureTargetFixture());
     const unavailableResult = await unavailable.execute(
       "list_architectures",
       {},
@@ -1714,7 +1735,7 @@ describe("native macOS provider failures and parsing", () => {
       {},
       new FixtureRunner({ lipo: "malformed" }),
       "darwin",
-    ).createClient(machoTarget("/fixture"));
+    ).createClient(await architectureTargetFixture());
     const malformedResult = await malformed.execute("list_architectures", {});
     expect(!malformedResult.ok && malformedResult.error._tag).toBe(
       "AnalysisOutputError",
@@ -1728,7 +1749,7 @@ describe("native macOS provider failures and parsing", () => {
         {},
         new FailingRunner(reason),
         "darwin",
-      ).createClient(machoTarget("/fixture"));
+      ).createClient(await architectureTargetFixture());
       const result = await client.execute("list_architectures", {});
       expect(!result.ok && result.error._tag).toBe(tag);
     }
@@ -1780,11 +1801,11 @@ describe("native macOS provider failures and parsing", () => {
   });
 
   it("parses thin and universal lipo fixtures", async () => {
-    expect(parseLipoOutput(await fixture("lipo-thin.txt"))).toMatchObject({
+    expect(parseLipoFixture(await fixture("lipo-thin.txt"))).toMatchObject({
       format: "thin",
       architectures: [{ name: "arm64" }],
     });
-    expect(parseLipoOutput(await fixture("lipo-fat.txt"))).toMatchObject({
+    expect(parseLipoFixture(await fixture("lipo-fat.txt"))).toMatchObject({
       format: "fat",
       architectures: [
         { name: "x86_64", file_offset: 16384, size: 4096 },
@@ -1802,7 +1823,7 @@ describe("native macOS provider failures and parsing", () => {
       "    size 0x10",
       "    align 2^14 (16384)",
     ].join("\n");
-    expect(parseLipoOutput(output).architectures).toMatchObject([
+    expect(parseLipoFixture(output).architectures).toMatchObject([
       { name: "arm64", file_offset: null, size: null, alignment: 16384 },
     ]);
   });
@@ -1815,11 +1836,11 @@ describe("native macOS provider failures and parsing", () => {
       "    align 2^14 (16384)",
     ].join("\n");
     expect(
-      parseLipoOutput(output.replace("(16384)", "(8192)")).architectures[0]
+      parseLipoFixture(output.replace("(16384)", "(8192)")).architectures[0]
         ?.alignment,
     ).toBeNull();
     expect(
-      parseLipoOutput(output.replace("2^14 (16384)", "2^14")).architectures[0]
+      parseLipoFixture(output.replace("2^14 (16384)", "2^14")).architectures[0]
         ?.alignment,
     ).toBe(16384);
   });
@@ -1975,11 +1996,11 @@ it("retains an owned preparation cleanup marker when the command deadline expire
       symbols: ["fixture"],
     });
     if (result.ok) throw new Error("Expected preparation timeout");
-    expect(result.error).toMatchObject({
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(primaryAnalysisError(result.error)).toMatchObject({
       _tag: "AnalysisTimeoutError",
-      cleanupIncomplete: true,
+      cause: failure,
     });
-    expect(result.error.cause).toBe(reason);
     marker.resolveCleanup();
     expect(result.error.cleanupIncomplete).toBe(false);
   } finally {
@@ -2018,12 +2039,12 @@ it("reports the selected command deadline when preparation times out", async () 
       native_command_timeout_ms: 1_500,
     });
     if (result.ok) throw new Error("Expected preparation timeout");
-    expect(result.error).toMatchObject({
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(primaryAnalysisError(result.error)).toMatchObject({
       _tag: "AnalysisTimeoutError",
-      cleanupIncomplete: true,
+      cause: failure,
     });
-    expect(result.error.cause).toBe(reason);
-    const projected = projectAnalysisError(result.error);
+    const projected = projectAnalysisError(primaryAnalysisError(result.error));
     expect(projected.message).toContain("of 1500 ms");
     expect(projected.message).toContain("native_command_timeout_ms");
     expect(projected.remediation.action).toContain("above 1500");

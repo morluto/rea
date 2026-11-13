@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isNameLikeKey } from "./attributeRank.js";
 import { isXmlElement, resolvePointer } from "./viewPointer.js";
@@ -32,7 +33,7 @@ export const listSteps = (pointer: string, positional = false): ListStep[] => {
 /** Whether a step's member is named as a field is, by a name-like attribute alone, as QElectroTech's `elementInformation[@name=label]`. */
 const namedAsField = ({ member }: ListStep) => {
   const [only, ...more] = (
-    selectorOf(member.replaceAll("~1", "/").replaceAll("~0", "~")) ?? []
+    selectorOf(unescapeJsonPointerToken(member)) ?? []
   ).filter(({ prefix }) => prefix !== "");
   return (
     only !== undefined &&

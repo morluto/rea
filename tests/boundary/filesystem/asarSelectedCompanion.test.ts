@@ -4,7 +4,6 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { withArtifactClient } from "../../support/artifactClientScope.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
-import { createHash } from "node:crypto";
 import {
   mkdir,
   readFile,

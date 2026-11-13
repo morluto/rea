@@ -316,7 +316,7 @@ test("does not replace a destination created after the initial existence check",
     );
   const output = join(f.root, "captures");
   const destination = join(output, "screen.png");
-  vi.mocked(link).mockImplementationOnce(async (...args) => {
+  vi.mocked(link).mockImplementationOnce(async () => {
     await actualFs.writeFile(destination, "caller-owned");
     throw Object.assign(new Error("hard links are unsupported"), {
       code: "EPERM",

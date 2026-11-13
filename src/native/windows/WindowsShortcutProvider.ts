@@ -1,9 +1,9 @@
 import { lstat, open } from "node:fs/promises";
 import {
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   readStableArtifact,
@@ -22,7 +22,6 @@ import type { WindowsShortcutPort } from "../../application/binaryDiagnostics/Wi
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
@@ -349,20 +348,13 @@ const windowsShortcutFailurePrimary = (
         { path: ["path"], reason: "invalid_format", message: cause.message },
       ]);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected shortcut could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "shortcut",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(WINDOWS_SHORTCUT_PROVIDER.id, OPERATION, {
     cause,
     diagnostics: {
