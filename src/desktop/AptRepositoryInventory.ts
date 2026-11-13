@@ -14,6 +14,7 @@ import {
   type AptSourceStanza,
 } from "../domain/desktop/aptRepositories.js";
 import type { AptRepository } from "../domain/desktop/desktopCapture.js";
+import { DEFAULT_DPKG_STATUS_SOURCE } from "../domain/desktop/linuxPackages.js";
 import {
   withGpgvKeyCheck,
   type HeldKey,
@@ -22,17 +23,20 @@ import {
 import { isHostFile, readHostFile } from "./HostFileRead.js";
 import { succeeded, type QueryRunner } from "./HostQuery.js";
 
-/** Where apt keeps its trusted keys and downloaded lists. */
+/** Where apt keeps trusted keys, downloaded lists and installed state. */
 export interface AptLocations {
   readonly trustedParts: string;
   readonly trusted: string;
   readonly lists: string;
+  /** Omitted by injected hosts that use APT's default installed database. */
+  readonly status?: string;
 }
 
 export const APT_LOCATIONS: AptLocations = {
   trustedParts: "/etc/apt/trusted.gpg.d",
   trusted: "/etc/apt/trusted.gpg",
   lists: "/var/lib/apt/lists",
+  status: DEFAULT_DPKG_STATUS_SOURCE,
 };
 
 /**
@@ -57,6 +61,8 @@ export const resolveAptLocations = async (
         "Dir::Etc::TrustedParts/d",
         "TRUSTED",
         "Dir::Etc::Trusted/f",
+        "STATUS",
+        "Dir::State::status/f",
       ],
       signal,
     ),
@@ -70,6 +76,7 @@ export const resolveAptLocations = async (
     lists: value("LISTS") ?? fallback.lists,
     trustedParts: value("PARTS") ?? fallback.trustedParts,
     trusted: value("TRUSTED") ?? fallback.trusted,
+    status: value("STATUS") ?? fallback.status ?? DEFAULT_DPKG_STATUS_SOURCE,
   };
 };
 

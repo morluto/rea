@@ -61,7 +61,30 @@ export const parseDpkgStatus = (
 
 const POLICY_VERSION = /^ (?:\*\*\*| {3}) (?<version>\S+) -?\d+$/u;
 const POLICY_SOURCE = /^ {8}-?\d+ (?<source>.+)$/u;
-const DPKG_STATUS_SOURCE = "/var/lib/dpkg/status";
+/** Default only: apt-config can select a different installed-package database. */
+export const DEFAULT_DPKG_STATUS_SOURCE = "/var/lib/dpkg/status";
+
+/** Skip the known status row before line framing can split its filesystem path. */
+function* policyLines(output: string, statusFile: string): Generator<string> {
+  let start = 0;
+  while (start < output.length) {
+    const end = output.indexOf("\n", start);
+    const line = output.slice(start, end < 0 ? undefined : end);
+    const prefix = /^ {8}-?\d+ /u.exec(line)?.[0];
+    const sourceStart = start + (prefix?.length ?? 0);
+    const sourceEnd = sourceStart + statusFile.length;
+    if (
+      prefix !== undefined &&
+      output.startsWith(statusFile, sourceStart) &&
+      (sourceEnd === output.length || output[sourceEnd] === "\n")
+    ) {
+      start = sourceEnd + 1;
+      continue;
+    }
+    yield line;
+    start = end < 0 ? output.length : end + 1;
+  }
+}
 
 /** The source a policy line names, without any user name or password in its URI. */
 const policySource = (pattern: RegExp, line: string): string | undefined => {
@@ -73,18 +96,20 @@ const policySource = (pattern: RegExp, line: string): string | undefined => {
  * The package sources `apt-cache policy` lists for the installed version,
  * excluding the dpkg status database every installed version carries.
  */
-export const parseAptPolicySources = (output: string): readonly string[] => {
+export const parseAptPolicySources = (
+  output: string,
+  statusFile = DEFAULT_DPKG_STATUS_SOURCE,
+): readonly string[] => {
   const sources: string[] = [];
   let installed = false;
-  for (const line of output.split("\n")) {
+  for (const line of policyLines(output, statusFile)) {
     const version = POLICY_VERSION.exec(line);
     if (version !== null) {
       installed = line.startsWith(" ***");
       continue;
     }
     const source = policySource(POLICY_SOURCE, line);
-    if (installed && source !== undefined && source !== DPKG_STATUS_SOURCE)
-      sources.push(source);
+    if (installed && source !== undefined) sources.push(source);
   }
   return sources;
 };
@@ -98,10 +123,11 @@ const POLICY_PACKAGE = /^(?<name>\S+):$/u;
  */
 export const parseAptPolicyPackageSources = (
   output: string,
+  statusFile = DEFAULT_DPKG_STATUS_SOURCE,
 ): ReadonlyMap<string, readonly string[]> => {
   const packages = new Map<string, string[]>();
   let current: string[] | undefined;
-  for (const line of output.split("\n")) {
+  for (const line of policyLines(output, statusFile)) {
     const name = POLICY_PACKAGE.exec(line)?.groups?.name;
     if (name !== undefined) {
       current = [];
@@ -112,7 +138,6 @@ export const parseAptPolicyPackageSources = (
     if (
       current !== undefined &&
       source !== undefined &&
-      source !== DPKG_STATUS_SOURCE &&
       !current.includes(source)
     )
       current.push(source);
