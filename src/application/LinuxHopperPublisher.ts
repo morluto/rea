@@ -261,7 +261,7 @@ export class LinuxHopperPublisher {
       if (mainExeHash !== release.main_exe_hash)
         return err(
           new HopperReleaseError(
-            "integrity",
+            "launcher_digest_mismatch",
             `The signed ${family} package launcher SHA-256 ${mainExeHash} differs from the release main_exe_hash ${release.main_exe_hash}.`,
           ),
         );
