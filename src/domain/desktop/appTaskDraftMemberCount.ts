@@ -60,7 +60,7 @@ export const isMemberCount = (
     for (let node = pending.pop(); node !== undefined; node = pending.pop())
       if (isXmlElement(node) && node !== own) {
         tally.set(node.name, (tally.get(node.name) ?? 0) + 1);
-        if (deep) pending.push(...node.children);
+        if (deep) for (const child of node.children) pending.push(child);
       }
     return tally;
   };
