@@ -2186,6 +2186,9 @@ subset of the catalog's tool-family ids (the `tools.families` entries in the
 product catalog) restricts the registration to those families. A selection
 outside the published family ids fails server startup with the complete id
 list; the setting is read at startup, so restart the server to apply changes.
+The scope first ships in `rea-agents-6.9.0`
+([#7228](https://github.com/morluto/rea/pull/7228), merged 2026-10-26) and is
+not present in `rea-agents-6.8.0`, where the variable is ignored.
 
 Out-of-scope tools stay registered but disabled: `tools/list` omits their
 names and schemas entirely, and a direct call fails with the SDK's
