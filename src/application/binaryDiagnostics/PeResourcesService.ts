@@ -459,7 +459,7 @@ const stringMatchesType = (
   )
     return false;
   if (value.decode_truncated)
-    return value.truncated && available < value.declared_bytes;
+    return value.truncated && available <= value.declared_bytes;
   return (
     available === value.declared_bytes &&
     value.truncated === value.declared_bytes > projection.previewBytes
@@ -473,7 +473,7 @@ const binaryMatches = (
   const retained = value.bytes_hex.length / 2;
   if (available < 0 || retained !== Math.min(available, 128)) return false;
   if (value.decode_truncated)
-    return value.truncated && available < value.declared_bytes;
+    return value.truncated && available <= value.declared_bytes;
   return (
     available === value.declared_bytes &&
     value.truncated === value.declared_bytes > 128

@@ -875,6 +875,67 @@ it("rejects a complete string whose declared bytes are not retained", async () =
   });
 });
 
+it("publishes a zero-length stopped string inside a partial root", async () => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  const payload = resource.payload.location;
+  const pages = codePageFields(resource.code_page);
+  const rootLocation = { offset: payload.offset + 4, bytes: payload.bytes - 4 };
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signatureAt(payload),
+      prefix: null,
+      ...pages,
+      root: {
+        location: rootLocation,
+        flags: [],
+        child_position: null,
+        class_name: null,
+        component_name: null,
+        properties: [
+          {
+            name: {
+              text: "E",
+              bytes_hex: "45",
+              code_page: pages.code_page,
+              location: { offset: rootLocation.offset, bytes: 1 },
+            },
+            value_type: "vaString",
+            value: {
+              kind: "string",
+              text: "",
+              bytes_hex: "",
+              code_page: pages.code_page,
+              declared_bytes: 0,
+              truncated: true,
+              decode_truncated: true,
+              location: rootLocation,
+            },
+            location: rootLocation,
+          },
+        ],
+        children: [],
+        unknown: {
+          reason: "stopped",
+          bytes_hex: "",
+          truncated: false,
+          location: {
+            offset: rootLocation.offset + rootLocation.bytes,
+            bytes: payload.bytes - 4 - rootLocation.bytes,
+          },
+        },
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
 it("rejects a float projection that does not match its retained bytes", async () => {
   const report = await formWithProperty("vaSingle", {
     kind: "float",
