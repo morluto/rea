@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 
 import {
   absoluteLocalPathStringSchema,
+  localPathStringPattern,
   windowsAbsolutePathPattern,
 } from "./localPath.js";
 
@@ -62,6 +63,39 @@ it("keeps the Windows absolute-path pattern valid in every client mode", () => {
       "C:relative/path",
       "/absolute/path",
     ]),
+  );
+});
+
+it("keeps the local path pattern valid in every client mode", () => {
+  // The pattern avoids negated classes with surrogate ranges so it compiles
+  // under `u`, `v`, and no-flag modes. A client that compiles advertised
+  // patterns rejects the complete tools request if any pattern fails.
+  for (const flags of ["", "u", "v"])
+    expect(
+      () => new RegExp(localPathStringPattern.source, flags),
+      flags,
+    ).not.toThrow();
+  const checked: string[] = [];
+  for (const path of [
+    "/tmp/hello",
+    "/tmp/😀",
+    "/tmp/�",
+    "/tmp/ spaced name ",
+    "/tmp/hello😀world",
+  ]) {
+    checked.push(path);
+    expect(localPathStringPattern.test(path), path).toBe(true);
+  }
+  for (const path of [
+    "/tmp/\ud800",
+    "/tmp/\udc00",
+    "/tmp/\ud800x",
+    "/tmp/\x00",
+  ]) {
+    expect(localPathStringPattern.test(path), path).toBe(false);
+  }
+  expect(checked).toEqual(
+    expect.arrayContaining(["/tmp/hello", "/tmp/😀", "/tmp/ spaced name "]),
   );
 });
 

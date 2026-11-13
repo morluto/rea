@@ -16,11 +16,24 @@ export const nulFreeStringSchema = z
   .string()
   .regex(/^[^\x00]*$/u, "Local filesystem paths cannot contain NUL");
 
-/** A selected local filesystem path: nonempty, NUL-free, and representable without replacement. */
+/**
+ * A selected local filesystem path: nonempty, NUL-free, and representable
+ * without replacement.
+ *
+ * The pattern explicitly matches valid UTF-16 code unit sequences (BMP
+ * characters plus valid surrogate pairs) rather than using a negated class
+ * with surrogate ranges. This avoids rejection by strict schema consumers
+ * that do not support the `u` flag or interpret surrogate ranges differently
+ * in negated classes. The pattern compiles under the `u`, `v`, and no-flag
+ * regex modes.
+ */
+export const localPathStringPattern =
+  /^([\u0001-\uD7FF\uE000-\uFFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$/;
+
 export const localPathStringSchema = nulFreeStringSchema
   .min(1)
   .regex(
-    /^[^\uD800-\uDFFF]*$/u,
+    localPathStringPattern,
     "Local filesystem paths must contain well-formed Unicode",
   );
 
