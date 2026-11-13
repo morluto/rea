@@ -767,16 +767,23 @@ it("preserves observed SaveHar null post-data without broadening arbitrary HAR p
   ).toThrow("HAR schema validation failed");
 });
 
-it.each(["[2001:db8::1]", "[::1]", "[::ffff:192.0.2.1]"])(
-  "retains Playwright 1.58.2 bracketed IPv6 spelling in reported Evidence: %s",
-  (address) => {
+it.each(
+  ["1.58.2", "1.64.1"].flatMap((version) =>
+    ["[2001:db8::1]", "[::1]", "[::ffff:192.0.2.1]"].map((address) => ({
+      version,
+      address,
+    })),
+  ),
+)(
+  "retains Playwright $version bracketed IPv6 spelling in reported Evidence: $address",
+  ({ version, address }) => {
     const fixture = historicalHar();
     const first = fixture.log.entries[0];
     if (first === undefined) throw new Error("fixture missing");
     const input = {
       log: {
         ...fixture.log,
-        creator: { name: "Playwright", version: "1.58.2" },
+        creator: { name: "Playwright", version },
         entries: [
           {
             ...first,
@@ -795,7 +802,7 @@ it.each(["[2001:db8::1]", "[::1]", "[::ffff:192.0.2.1]"])(
       },
     });
     const limitation = decoded.records[0]?.limitations.find((line) =>
-      line.includes("Playwright 1.58.2"),
+      line.includes(`Playwright ${version}`),
     );
     expect(limitation).toMatch(/bracketed IPv6.*serverIPAddress/iu);
     expect(limitation).toMatch(/original spellings.*retained/iu);
