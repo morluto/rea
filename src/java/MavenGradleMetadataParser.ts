@@ -96,6 +96,24 @@ const pushUnresolved = (
   unresolved.push(entry);
 };
 
+/** List every property reference in scalar fields whose absence is not a gap. */
+const recordPropertyReferences = (
+  unresolved: MavenGradleUnresolved[],
+  fields: readonly (readonly [MavenGradleUnresolved["field"], string | null])[],
+  owner: MavenGradleUnresolved["owner"],
+  index: number | null,
+): void => {
+  for (const [field, value] of fields)
+    for (const reference of mavenPropertyReferences(value))
+      pushUnresolved(unresolved, {
+        kind: "property",
+        reference,
+        field,
+        owner,
+        index,
+      });
+};
+
 const recordCoordinateGaps = (
   unresolved: MavenGradleUnresolved[],
   coordinates: {
@@ -204,14 +222,18 @@ const parseMavenDependency = (
     false,
   );
   const optional_spelling = childText(element, "optional");
-  for (const reference of mavenPropertyReferences(optional_spelling))
-    pushUnresolved(unresolved, {
-      kind: "property",
-      reference,
-      field: "optional",
-      owner,
-      index,
-    });
+  const classifier = childText(element, "classifier");
+  recordPropertyReferences(
+    unresolved,
+    [
+      ["scope", scope],
+      ["type", type],
+      ["classifier", classifier],
+      ["optional", optional_spelling],
+    ],
+    owner,
+    index,
+  );
   return {
     group_id,
     artifact_id,
@@ -222,7 +244,7 @@ const parseMavenDependency = (
     type,
     optional: boolOf(optional_spelling),
     optional_spelling,
-    classifier: childText(element, "classifier"),
+    classifier,
     exclusions,
     origin,
     variant: null,
@@ -281,6 +303,12 @@ const parsePom = (
     "project",
     null,
     parent !== null,
+  );
+  recordPropertyReferences(
+    unresolved,
+    [["packaging", coordinates.packaging]],
+    "project",
+    null,
   );
   const propertiesElement = firstNamed(root, "properties");
   const properties =

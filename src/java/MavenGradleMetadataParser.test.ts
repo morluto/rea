@@ -316,6 +316,48 @@ it("removes credentials from Gradle available-at URLs", () => {
   expect(JSON.stringify(report)).not.toContain("password");
 });
 
+it("lists properties in packaging, scope, type and classifier", () => {
+  const report = parse(`<project>
+  <groupId>com.example</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+  <packaging>\${artifact.packaging}</packaging>
+  <dependencies>
+    <dependency>
+      <groupId>com.example</groupId>
+      <artifactId>lib</artifactId>
+      <version>1.0.0</version>
+      <scope>\${lib.scope}</scope>
+      <type>\${lib.type}</type>
+      <classifier>\${os}-\${arch}</classifier>
+    </dependency>
+  </dependencies>
+</project>`);
+  expect(report.unresolved).toEqual([
+    {
+      kind: "property",
+      reference: "\${artifact.packaging}",
+      field: "packaging",
+      owner: "project",
+      index: null,
+    },
+    ...(
+      [
+        ["scope", "\${lib.scope}"],
+        ["type", "\${lib.type}"],
+        ["classifier", "\${os}"],
+        ["classifier", "\${arch}"],
+      ] as const
+    ).map(([field, reference]) => ({
+      kind: "property",
+      reference,
+      field,
+      owner: "dependency",
+      index: 0,
+    })),
+  ]);
+});
+
 it("keeps an empty relativePath and a property-spelled optional distinct from omission", () => {
   const report = parse(`<project>
   <parent>

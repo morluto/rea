@@ -106,6 +106,9 @@ const unresolvedSchema = z.strictObject({
     "artifact_id",
     "version",
     "packaging",
+    "scope",
+    "type",
+    "classifier",
     "optional",
   ]),
   owner: z.enum([

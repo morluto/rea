@@ -59,8 +59,9 @@ userinfo credentials in `available_at.url` are removed and
 `url_credentials_redacted` is `true`; when the credential span cannot be
 located, `url` is `null`.
 
-`unresolved` names property references, missing coordinates that a parent
-would normally supply, and other missing coordinates. These are explicit
+`unresolved` names every property reference in the coordinates, packaging, and
+each dependency's scope, type, classifier, and optional, plus missing
+coordinates that a parent would normally supply and other missing coordinates. These are explicit
 unknowns, not guesses.
 
 ## Limits and failures
