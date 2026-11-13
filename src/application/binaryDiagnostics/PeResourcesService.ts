@@ -148,6 +148,10 @@ const validReport = (
   )
     return false;
   return (
+    // The parser visits each resource once, so one payload cannot produce two
+    // decoded forms.
+    new Set(report.delphi_forms.map((form) => form.resource_index)).size ===
+      report.delphi_forms.length &&
     report.icon_groups.every((group) => {
       const resource = report.resources[group.resource_index];
       if (
@@ -338,6 +342,29 @@ const propertiesFollowSource = (
     );
   });
 
+/** A stopped child ends the child loop; its cursor is the object end. */
+const childrenFollowSource = (object: DelphiFormObject): boolean => {
+  let previous: DelphiFormObject | undefined;
+  for (const [index, child] of object.children.entries()) {
+    if (
+      previous !== undefined &&
+      previous.location.offset + previous.location.bytes !==
+        child.location.offset
+    )
+      return false;
+    if (objectHasStop(child) && index !== object.children.length - 1)
+      return false;
+    previous = child;
+  }
+  const last = object.children.at(-1);
+  return (
+    last === undefined ||
+    !objectHasStop(last) ||
+    last.location.offset + last.location.bytes ===
+      object.location.offset + object.location.bytes
+  );
+};
+
 /** Every nested location of a decoded form must stay inside its owner. */
 const insideLocations = (
   object: DelphiFormObject,
@@ -390,6 +417,7 @@ const insideLocations = (
   )
     return false;
   if (!propertiesFollowSource(object.properties)) return false;
+  if (!childrenFollowSource(object)) return false;
   return (
     object.properties.every(
       (property) =>
@@ -682,6 +710,34 @@ const listEntriesFollowSource = (
   return value.terminated ? listEnd === expected + 1 : listEnd === expected;
 };
 
+/**
+ * Set names and collection items are read sequentially. A complete value also
+ * owns its one-byte closing terminator.
+ */
+const setFollowsSource = (
+  value: Extract<DelphiFormValue, { kind: "set" }>,
+): boolean => {
+  let expected = value.location.offset;
+  for (const name of value.names) {
+    if (name.location.offset !== expected) return false;
+    expected = name.location.offset + name.location.bytes;
+  }
+  const end = value.location.offset + value.location.bytes;
+  return value.terminated ? end === expected + 1 : end === expected;
+};
+
+const collectionFollowsSource = (
+  value: Extract<DelphiFormValue, { kind: "collection" }>,
+): boolean => {
+  let expected = value.location.offset;
+  for (const item of value.items) {
+    if (item.location.offset !== expected) return false;
+    expected = item.location.offset + item.location.bytes;
+  }
+  const end = value.location.offset + value.location.bytes;
+  return value.terminated ? end === expected + 1 : end === expected;
+};
+
 const insideValue = (
   value: DelphiFormValue,
   within: (range: { offset: number; bytes: number }) => boolean,
@@ -714,6 +770,7 @@ const insideValue = (
   if (value.kind === "set")
     return (
       within(value.location) &&
+      setFollowsSource(value) &&
       value.names.every(
         (item) =>
           withinRange(item.location, value.location) &&
@@ -723,6 +780,7 @@ const insideValue = (
   if (value.kind === "collection")
     return (
       within(value.location) &&
+      collectionFollowsSource(value) &&
       value.items.every(
         (item) =>
           withinRange(item.location, value.location) &&

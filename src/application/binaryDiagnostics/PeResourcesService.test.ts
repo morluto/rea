@@ -1504,6 +1504,124 @@ it("rejects list entries that reuse the same source ranges", async () => {
   });
 });
 
+it("rejects a stopped child that has a later sibling", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const childStart = root.location.offset + 13;
+  const secondStart = childStart + 2;
+  const secondClass = label("TForm1", secondStart, form.code_page);
+  const secondComponent = label(
+    "Form1",
+    secondStart + secondClass.location.bytes,
+    form.code_page,
+  );
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...root,
+        unknown: {
+          reason: "stopped",
+          bytes_hex: "",
+          truncated: false,
+          location: {
+            offset: root.location.offset + root.location.bytes,
+            bytes: 0,
+          },
+        },
+        children: [
+          {
+            location: { offset: childStart, bytes: 1 },
+            flags: [],
+            child_position: null,
+            class_name: null,
+            component_name: null,
+            properties: [],
+            children: [],
+            unknown: {
+              reason: "stopped",
+              bytes_hex: "aa",
+              truncated: false,
+              location: { offset: childStart + 1, bytes: 1 },
+            },
+          },
+          {
+            location: { offset: secondStart, bytes: 13 },
+            flags: [],
+            child_position: null,
+            class_name: secondClass,
+            component_name: secondComponent,
+            properties: [],
+            children: [],
+            unknown: null,
+          },
+        ],
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it.each(["set", "collection"] as const)(
+  "rejects an empty complete %s without a terminator range",
+  async (kind) => {
+    const report = await reportWithFormPrefix(0);
+    const form = report.delphi_forms[0];
+    if (form === undefined) throw new Error("Missing form");
+    const root = form.root;
+    const name = label("Empty", root.location.offset + 13, form.code_page);
+    const valueOffset = name.location.offset + name.location.bytes + 1;
+    const value =
+      kind === "set"
+        ? { kind, names: [], terminated: true }
+        : { kind, items: [], terminated: true };
+    report.delphi_forms = [
+      {
+        ...form,
+        root: {
+          ...root,
+          properties: [
+            {
+              name,
+              value_type: kind === "set" ? "vaSet" : "vaCollection",
+              value: {
+                ...value,
+                location: { offset: valueOffset, bytes: 0 },
+              } as never,
+              location: {
+                offset: name.location.offset,
+                bytes: valueOffset - name.location.offset,
+              },
+            },
+          ],
+        },
+      },
+    ];
+    expect(await inspectReport(report)).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
+  },
+);
+
+it("rejects duplicate decoded forms for one resource", async () => {
+  const report = await reportForPayload(
+    delphiForm(delphiComponent("TForm1", "Form1")),
+  );
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  report.delphi_forms = [form, { ...form }];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("rejects a child position whose source range is not its encoded width", async () => {
   const report = await reportWithFormPrefix(0);
   const form = report.delphi_forms[0];
