@@ -1,4 +1,5 @@
 import type { JsonValue } from "../domain/jsonValue.js";
+import { BoundedOutputExcerpt } from "../process/BoundedOutputExcerpt.js";
 import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
 import type {
   ProviderProcessOutputSince,
@@ -9,6 +10,14 @@ import type { GhidraTransportKind } from "./GhidraTransport.js";
 
 /** Aggregate in-memory retention budget for this provider's launcher output. */
 export const GHIDRA_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Bytes of redacted launcher text projected into one caller-visible
+ * diagnostics field. A failing Ghidra run drains its log into stdout/stderr,
+ * so the in-memory retention budget is roughly a hundred times larger than any
+ * client can receive in a tool result.
+ */
+export const GHIDRA_DIAGNOSTIC_TEXT_BYTES = 64 * 1024;
 
 /** JVM error class located in all launcher output, beyond the retention budget. */
 export const GHIDRA_JVM_OOME_MARKER = "java.lang.OutOfMemoryError";
@@ -159,10 +168,16 @@ export const ghidraFailureOutput = (
 export const ghidraDiagnosticStream = (
   stream: ProviderProcessSnapshot["stdout"],
   token: string | undefined,
-): JsonValue => ({
-  text: redactCapturedTransportCredential(stream, token, "[REDACTED]"),
-  // Preserve the historical total-byte counter; text is now bounded separately.
-  bytes: stream.observedBytes,
-  retained_bytes: stream.bytes,
-  ...(stream.invalidUtf8 === true ? { invalid_utf8: true } : {}),
-});
+): JsonValue => {
+  const redacted = redactCapturedTransportCredential(stream, token, "[REDACTED]");
+  const excerpt = new BoundedOutputExcerpt(GHIDRA_DIAGNOSTIC_TEXT_BYTES);
+  excerpt.append(Buffer.from(redacted, "utf8"));
+  return {
+    text: excerpt.text,
+    // Preserve the historical total-byte counter; text is now bounded separately.
+    bytes: stream.observedBytes,
+    retained_bytes: stream.bytes,
+    ...(excerpt.truncated ? { text_truncated: true } : {}),
+    ...(stream.invalidUtf8 === true ? { invalid_utf8: true } : {}),
+  };
+};
