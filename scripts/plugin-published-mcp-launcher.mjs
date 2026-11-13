@@ -14,6 +14,7 @@ import {
   renameSync,
   rmdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,6 +31,10 @@ import { npmInvocation } from "./lib/npm-invocation.mjs";
 const PACKAGE = "rea-agents";
 const READY_MARKER = ".rea-plugin-ready";
 const SIGNAL_EXIT_CODES = { SIGINT: 130, SIGTERM: 143 };
+// A lock or recovery directory with no readable owner record is only legitimate
+// for the instant between mkdir and the pid write; older than this it was
+// abandoned by a launcher that died in between.
+const ABANDONED_LOCK_GRACE_MS = 5_000;
 const [version, ...extra] = process.argv.slice(2);
 try {
   if (
@@ -171,6 +176,14 @@ const isPathExistsError = (cause) =>
   "code" in cause &&
   cause.code === "EEXIST";
 
+const isOlderThanGrace = (path) => {
+  try {
+    return Date.now() - statSync(path).mtimeMs > ABANDONED_LOCK_GRACE_MS;
+  } catch {
+    return false;
+  }
+};
+
 const claimInstallLock = (lockPath) => {
   mkdirSync(lockPath, { mode: 0o700 });
   verifyOwnedCachePath(lockPath, "lock");
@@ -200,8 +213,12 @@ const tryAcquireInstallLock = (lockPath) => {
   let holder = NaN;
   try {
     holder = readLockHolder(lockPath);
-  } catch {
-    return false;
+  } catch (cause) {
+    if (cause instanceof Error && cause.message.includes("executable cache"))
+      throw cause;
+    // No owner record yet: a claimant may be mid-write. Only an old directory
+    // is abandoned; otherwise keep waiting.
+    if (!isOlderThanGrace(lockPath)) return false;
   }
   if (processAlive(holder)) return false;
 
@@ -211,8 +228,17 @@ const tryAcquireInstallLock = (lockPath) => {
   try {
     mkdirSync(recoveryPath, { mode: 0o700 });
   } catch (cause) {
-    if (isPathExistsError(cause)) return false;
-    throw cause;
+    if (!isPathExistsError(cause)) throw cause;
+    // A recoverer that died mid-recovery leaves this directory behind and
+    // would otherwise block every later launch.
+    if (isOlderThanGrace(recoveryPath)) {
+      try {
+        rmdirSync(recoveryPath);
+      } catch {
+        // Another launcher removed or replaced it first; retry on the next poll.
+      }
+    }
+    return false;
   }
 
   try {
@@ -262,6 +288,27 @@ const publishInstalledPrefix = (staging, prefix) => {
 };
 
 /**
+ * Signal the installer's whole process group on POSIX. npm runs lifecycle
+ * scripts (for example the Frida install script) as children and signalling
+ * npm alone leaves them running after the launcher exits.
+ */
+const signalInstaller = (child, signal) => {
+  if (process.platform !== "win32" && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch (cause) {
+      if (cause?.code === "ESRCH") return;
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // The installer already exited.
+  }
+};
+
+/**
  * Own the cold-start installer until it exits. Signal handlers stay attached
  * only for this acquisition stage; the in-process runtime registers its own.
  */
@@ -273,9 +320,11 @@ const runOwnedInstaller = (invocation) => {
   const onSignal = (signal) => {
     if (shutdownSignal !== undefined) return;
     shutdownSignal = signal;
-    if (child !== undefined && child.exitCode === null) {
-      child.kill(signal);
-      forceTimer = setTimeout(() => child?.kill("SIGKILL"), 1_000);
+    if (child !== undefined) {
+      signalInstaller(child, signal);
+      forceTimer = setTimeout(() => {
+        if (child !== undefined) signalInstaller(child, "SIGKILL");
+      }, 1_000);
       forceTimer.unref?.();
     }
   };
@@ -291,6 +340,9 @@ const runOwnedInstaller = (invocation) => {
         // Route installer chatter off the MCP JSON-RPC stdout stream.
         stdio: ["ignore", process.stderr, "inherit"],
         windowsHide: true,
+        // Lead a new process group on POSIX so cancellation reaches the
+        // installer's lifecycle scripts, not just npm.
+        detached: process.platform !== "win32",
       });
     } catch (cause) {
       for (const signal of Object.keys(signalExitCodes))
@@ -310,6 +362,8 @@ const runOwnedInstaller = (invocation) => {
       for (const signal of Object.keys(signalExitCodes))
         process.off(signal, onSignal);
       if (shutdownSignal !== undefined) {
+        // npm is gone; make sure nothing it started outlives staging cleanup.
+        signalInstaller(child, "SIGKILL");
         resolve({
           cancelled: true,
           signal: shutdownSignal,
