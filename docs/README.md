@@ -188,6 +188,7 @@ the exact commit messages and references from the release they describe.
 - [Static JavaScript route inventory](javascript-route-inventory.md)
 - [Linux kernel modules](kernel-modules.md)
 - [Kuna provider](kuna-provider.md)
+- [Maven POM and Gradle module metadata](maven-gradle-metadata.md)
 - [Model file declarations](model-artifacts.md)
 - [Match native functions across builds](native-function-matching.md)
 - [Node.js single executable applications](node-sea.md)

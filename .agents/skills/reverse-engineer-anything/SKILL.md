@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture, and of Linux desktop apps with a task from a request. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "62"
+  version: "63"
 ---
 
 # REA
@@ -269,6 +269,14 @@ explicit path or endpoint and do not need it.
   delivery requires `--evidence_output`.
   See the
   [Rust binary guide](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
+- Maven POM or Gradle module metadata: `inspect_maven_gradle_metadata` with
+  the explicit local `pom.xml` or `.module` file. This built-in target-free
+  inspection requires no Maven or Gradle. Preserve coordinates as spelled,
+  dependency and dependencyManagement rows, BOM imports, Gradle variants and
+  rich versions, and unresolved property or parent references. Interpolation,
+  inheritance, tree resolution, and repository access are not performed. See
+  the
+  [Maven POM and Gradle module metadata guide](https://github.com/morluto/rea/blob/main/docs/maven-gradle-metadata.md).
 - PE Authenticode certificate table: `inspect_pe_certificates` with the explicit
   local PE32/PE32+ file. This built-in target-free inspection requires no
   Windows SDK. Preserve WIN_CERTIFICATE ranges, types, payload SHA-256, and
