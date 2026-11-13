@@ -1,6 +1,6 @@
 import { MAX_INSIDE_STEPS } from "./viewSelector.js";
 
-/** The verifier's XML elements, pointers and selectors, kept equal to `viewPointer`'s; it relies on `INDEX` and `_collapse_whitespace`. */
+/** The verifier's XML elements, pointers and selectors, kept equal to `viewPointer`'s; it relies on `INDEX`, `_trim` and `_collapse_whitespace`. */
 export const PYTHON_POINTER = String.raw`def _is_element(value) -> bool:
     return (isinstance(value, dict) and isinstance(value.get("name"), str) and isinstance(value.get("attributes"), dict)
             and isinstance(value.get("children"), list))
@@ -53,7 +53,7 @@ _ASCTIME_STAMP = re.compile(
 
 
 def _is_saved_time(text: str) -> bool:
-    stripped = text.strip()
+    stripped = _trim(text)
     return _ISO_STAMP.fullmatch(stripped) is not None or _ASCTIME_STAMP.fullmatch(stripped) is not None
 
 
