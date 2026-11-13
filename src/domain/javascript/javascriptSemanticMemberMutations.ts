@@ -1,3 +1,4 @@
+import { BUILTIN_RESOURCE_RELEASE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import {
@@ -34,6 +35,7 @@ import {
   clearSemanticValueCaches,
   evaluateSemanticBinding,
   evaluateSemanticExpression,
+  evaluateSemanticExpressionProvenance,
 } from "./javascriptSemanticValues.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {
@@ -1343,14 +1345,18 @@ export function* collectSemanticMemberMutationsSteps(
           // Stored receiver projections preserve their raw capture authority.
           // Initializer origins retain the normalized mutation traversal below.
           retainsInitializers = receiver?.retainsOrigin !== false;
+          // A direct receiver keeps its alias capture. Projected receivers
+          // select their child at the member read, after capturing the root.
+          const receiverAt =
+            current.path.length > 1
+              ? (current.memberReadAt ?? current.originAt)
+              : current.originAt;
           if (effect === "escape")
             recordBindingEffect(binding.escapedPaths, {
               path,
               node: mutation,
               receiverInitializers,
-              ...(current.originAt === undefined
-                ? {}
-                : { receiverAt: current.memberReadAt ?? current.originAt }),
+              ...(receiverAt === undefined ? {} : { receiverAt }),
             });
           else
             recordBindingEffect(binding.memberWrites, {
@@ -1358,9 +1364,7 @@ export function* collectSemanticMemberMutationsSteps(
               path,
               node: mutation,
               receiverInitializers,
-              ...(current.originAt === undefined
-                ? {}
-                : { receiverAt: current.memberReadAt ?? current.originAt }),
+              ...(receiverAt === undefined ? {} : { receiverAt }),
               ...(assignedSources === undefined ? {} : { assignedSources }),
             });
           clearSemanticValueCaches(state);
@@ -2305,6 +2309,34 @@ const observableMutationPaths = (
         const selected = pendingExpressions.pop();
         if (selected === undefined) break;
         const { expression, observer } = selected;
+        if (
+          t.isCallExpression(expression) ||
+          t.isOptionalCallExpression(expression)
+        ) {
+          const methods: Readonly<Record<string, readonly string[]>> =
+            BUILTIN_RESOURCE_RELEASE_METHODS;
+          // Retain possible resource slots from provenance alone. Final built-in
+          // admission depends on the mutations this pass is still collecting.
+          if (
+            evaluateSemanticExpressionProvenance(
+              expression.callee,
+              state,
+            ).origins.some(({ specifier, importedPath }) => {
+              const identity = semanticRequireExportsIdentity(
+                specifier,
+                importedPath[0] === "default"
+                  ? importedPath.slice(1)
+                  : importedPath,
+              );
+              return (
+                identity.path.length === 1 &&
+                (methods[`${identity.specifier}:${identity.path[0]}`]?.length ??
+                  0) > 0
+              );
+            })
+          )
+            (observer.origins ??= new Set()).add("opaque");
+        }
         if (t.isFunction(expression))
           // Keep own-member writes precise without replacing the existing
           // links to references handed to a function's eventual caller.

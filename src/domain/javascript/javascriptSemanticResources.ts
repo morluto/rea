@@ -1,4 +1,8 @@
 import * as t from "@babel/types";
+import {
+  semanticPropertyPathKeyMatches,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
 
 import {
   BUILTIN_RESOURCE_SPECIFIERS,
@@ -20,12 +24,20 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
-import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticOpaqueBindingEffects,
+  semanticOpaqueBindingReadMayHaveChanged,
+} from "./javascriptSemanticOpaqueEffects.js";
+import {
+  semanticBindingAtRead,
+  semanticBindingEffectFollowsRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
 import {
   builtinDataEffectIdentity,
@@ -447,6 +459,13 @@ const collectReleases = (
         : {}),
       resolution:
         !opaqueReceiver &&
+        !releaseMethodMayHaveChanged(
+          binding,
+          method,
+          member,
+          context.state,
+          knownAcquisitions,
+        ) &&
         linked.length === 1 &&
         (binding.kind !== "parameter" ||
           semanticBindingAtRead(binding, member.object, context.state)
@@ -457,6 +476,82 @@ const collectReleases = (
     });
   });
   return output;
+};
+
+/** Receiver identity alone cannot prove a release method survived mutation. */
+const releaseMethodMayHaveChanged = (
+  binding: JavaScriptSemanticBindingState,
+  method: string,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  acquisitions: ReadonlySet<t.Node>,
+): boolean => {
+  const prototype = (key: JavaScriptSemanticPropertyPath[number]) =>
+    semanticPropertyPathKeyMatches(key, "__proto__");
+  const initializer = binding.initializers[0];
+  const fresh =
+    binding.initializers.length === 1 &&
+    initializer !== undefined &&
+    acquisitions.has(resourceInitializer(initializer.node).value);
+  const mayPrecede = (effect: t.Node | undefined): boolean =>
+    semanticEffectTiming(read, effect, state) !== "after" &&
+    !(
+      fresh &&
+      effect !== undefined &&
+      semanticBindingEffectFollowsRead(
+        binding,
+        read,
+        effect,
+        state.parentsByNode,
+      )
+    );
+  const targetsAcquisition = (
+    effect: JavaScriptSemanticMemberEffect,
+  ): boolean => {
+    const capture = effect.receiverAt ?? effect.node;
+    if (capture === undefined) return true;
+    const selected = semanticBindingAtRead(binding, capture, state);
+    if (selected.status !== "ordered") return true;
+    // Empty incoming values cannot be the fresh acquisition selected later.
+    // Keep ambiguous aliases and projections unless the owner excludes them.
+    return [
+      ...selected.binding.initializers,
+      ...selected.binding.referenceInitializers,
+    ].some(
+      ({ node, projection }) =>
+        projection.length > 0 ||
+        !binding.initializers.some((source) => source.node === node) ||
+        acquisitions.has(resourceInitializer(node).value),
+    );
+  };
+  return (
+    // A const binding still exposes mutable receiver properties to direct eval.
+    [...semanticOpaqueBindingEffects(binding, state, "reference")].some(
+      mayPrecede,
+    ) ||
+    binding.memberWrites.some((effect) => {
+      const { path, node } = effect;
+      return (
+        targetsAcquisition(effect) &&
+        (path.length === 0 ||
+          (path.length === 1 &&
+            semanticPropertyPathKeyMatches(path[0]!, method)) ||
+          prototype(path[0]!)) &&
+        mayPrecede(node)
+      );
+    }) ||
+    binding.escapedPaths.some((effect) => {
+      const { path, node } = effect;
+      // Passing the function itself cannot replace its native [[Call]].
+      return (
+        targetsAcquisition(effect) &&
+        (path.length === 0 || prototype(path[0]!)) &&
+        // This invocation receives the receiver after selecting its method.
+        node !== state.parentsByNode.get(read) &&
+        mayPrecede(node)
+      );
+    })
+  );
 };
 
 /** Unwrap only direct awaits; a standalone await does not write its operand. */
