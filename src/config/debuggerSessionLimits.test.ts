@@ -1,0 +1,312 @@
+import { expect, it } from "vitest";
+
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+  MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+  MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+  MAXIMUM_DEBUGGER_MAX_PENDING_COMMANDS,
+  MAXIMUM_DEBUGGER_MAX_SESSIONS,
+  MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+  MINIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+  MINIMUM_DEBUGGER_MAX_PENDING_COMMANDS,
+  MINIMUM_DEBUGGER_MAX_SESSIONS,
+} from "../domain/analysisResourceLimits.js";
+import { GdbSessionManager } from "../gdb/GdbSessionManager.js";
+import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import { parseEnvironment } from "./environment.js";
+import {
+  DEBUGGER_COMMAND_DEADLINE_SETTING,
+  DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
+  DEBUGGER_MAX_PENDING_COMMANDS_SETTING,
+  DEBUGGER_MAX_SESSIONS_SETTING,
+  parseDebuggerSessionLimits,
+} from "./debuggerSessionLimits.js";
+
+it("uses the shared defaults when the settings are unset", () => {
+  const parsed = parseDebuggerSessionLimits({});
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.commandDeadline).toMatchObject({
+    setting: DEBUGGER_COMMAND_DEADLINE_SETTING,
+    value: 120_000,
+    source: "default",
+    minimum: MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+    maximum: MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+    unit: "ms",
+  });
+  expect(parsed.value.maxSessions).toMatchObject({
+    setting: DEBUGGER_MAX_SESSIONS_SETTING,
+    value: 8,
+    source: "default",
+    minimum: MINIMUM_DEBUGGER_MAX_SESSIONS,
+    maximum: MAXIMUM_DEBUGGER_MAX_SESSIONS,
+    unit: "sessions",
+  });
+  expect(parsed.value.maxPendingCommands).toMatchObject({
+    setting: DEBUGGER_MAX_PENDING_COMMANDS_SETTING,
+    value: 16,
+    source: "default",
+    minimum: MINIMUM_DEBUGGER_MAX_PENDING_COMMANDS,
+    maximum: MAXIMUM_DEBUGGER_MAX_PENDING_COMMANDS,
+    unit: "commands",
+  });
+  expect(parsed.value.maxCommandOutputBytes).toMatchObject({
+    setting: DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
+    value: 16 * 1024 * 1024,
+    source: "default",
+    minimum: MINIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+    maximum: MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+    unit: "bytes",
+  });
+});
+
+it("accepts one in-range override for each shared debugger cap", () => {
+  const parsed = parseDebuggerSessionLimits({
+    [DEBUGGER_COMMAND_DEADLINE_SETTING]: "1000",
+    [DEBUGGER_MAX_SESSIONS_SETTING]: "2",
+    [DEBUGGER_MAX_PENDING_COMMANDS_SETTING]: "3",
+    [DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING]: "4096",
+  });
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.commandDeadline).toMatchObject({
+    value: 1000,
+    source: "setting",
+  });
+  expect(parsed.value.maxSessions).toMatchObject({
+    value: 2,
+    source: "setting",
+  });
+  expect(parsed.value.maxPendingCommands).toMatchObject({
+    value: 3,
+    source: "setting",
+  });
+  expect(parsed.value.maxCommandOutputBytes).toMatchObject({
+    value: 4096,
+    source: "setting",
+  });
+});
+
+it.each([
+  [
+    DEBUGGER_COMMAND_DEADLINE_SETTING,
+    "0",
+    MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+    MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+    120_000,
+    "ms",
+  ],
+  [
+    DEBUGGER_MAX_SESSIONS_SETTING,
+    "65",
+    MINIMUM_DEBUGGER_MAX_SESSIONS,
+    MAXIMUM_DEBUGGER_MAX_SESSIONS,
+    8,
+    "sessions",
+  ],
+  [
+    DEBUGGER_MAX_PENDING_COMMANDS_SETTING,
+    "00",
+    MINIMUM_DEBUGGER_MAX_PENDING_COMMANDS,
+    MAXIMUM_DEBUGGER_MAX_PENDING_COMMANDS,
+    16,
+    "commands",
+  ],
+  [
+    DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
+    String(MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES + 1),
+    MINIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+    MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+    16 * 1024 * 1024,
+    "bytes",
+  ],
+])(
+  "rejects invalid %s at the setting boundary",
+  (setting, value, minimum, maximum, defaultValue, unit) => {
+    const parsed = parseDebuggerSessionLimits({ [setting]: value });
+    if (parsed.ok) throw new Error(`${setting} was accepted`);
+    expect(parsed.error).toBeInstanceOf(ConfigurationError);
+    expect(parsed.error.settings).toHaveLength(1);
+    const detail = parsed.error.settings[0];
+    if (!detail) throw new Error("missing setting guidance");
+    expect(detail.setting).toBe(setting);
+    expect(detail.constraint).toContain(setting);
+    expect(detail.constraint).toMatch(/positive decimal integer/i);
+    expect(detail.constraint).toContain(
+      `from ${minimum} to ${maximum} ${unit}`,
+    );
+    expect(detail.constraint).toContain(`default is ${defaultValue} ${unit}`);
+    const startup = parseEnvironment({ [setting]: value });
+    const runtimeSeed =
+      setting === DEBUGGER_COMMAND_DEADLINE_SETTING ||
+      setting === DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING;
+    if (runtimeSeed) {
+      if (!startup.ok) throw new Error(`${setting} was rejected at startup`);
+    } else {
+      if (startup.ok) throw new Error(`${setting} was accepted at startup`);
+      expect(projectAnalysisError(startup.error)).toMatchObject({
+        code: "configuration_invalid",
+        details: { settings: [detail] },
+      });
+    }
+  },
+);
+
+it("applies runtime debugger overrides before rejecting invalid launch values", () => {
+  const parsed = runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: {
+        "debugger.command_deadline_ms": 25,
+        "debugger.max_command_output_bytes": 4096,
+      },
+    },
+    () =>
+      parseDebuggerSessionLimits({
+        [DEBUGGER_COMMAND_DEADLINE_SETTING]: "nope",
+        [DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING]: "0",
+      }),
+  );
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.commandDeadline.source).toBe("default");
+  expect(parsed.value.maxCommandOutputBytes.source).toBe("default");
+  const sessions = runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: { "debugger.command_deadline_ms": 25 },
+    },
+    () =>
+      parseDebuggerSessionLimits({
+        [DEBUGGER_MAX_SESSIONS_SETTING]: "nope",
+      }),
+  );
+  expect(sessions.ok).toBe(false);
+});
+
+it("names the session setting on a Rizin capacity refusal", async () => {
+  const manager = new RizinDebugSessionManager(
+    { [DEBUGGER_MAX_SESSIONS_SETTING]: "1" },
+    { platform: "linux" },
+  );
+  const first = manager.start({
+    path: "/tmp/rea-debugger-limit",
+    inferior_tty: "/no/such/rea-debugger-tty",
+  });
+  const blocked = await manager.start({
+    path: "/tmp/rea-debugger-limit-2",
+    inferior_tty: "/no/such/rea-debugger-tty",
+  });
+  if (blocked.ok) throw new Error("expected the session cap to refuse");
+  expect(projectAnalysisError(blocked.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "memory",
+      reported_limits: {
+        setting: DEBUGGER_MAX_SESSIONS_SETTING,
+        effective_value: 1,
+        source: "setting",
+        minimum: MINIMUM_DEBUGGER_MAX_SESSIONS,
+        maximum: MAXIMUM_DEBUGGER_MAX_SESSIONS,
+        unit: "sessions",
+        update_mode: "restart",
+        pending_restart: false,
+        max_sessions: 1,
+        active_or_reserved_sessions: 1,
+      },
+    },
+  });
+  await first;
+});
+
+it("keeps the command-output maximum inside one Evidence hash string", () => {
+  const escaped = JSON.stringify("\u0001");
+  const expansion = escaped.length - 2;
+  const nodeMaxStringLength = 536_870_888;
+  const envelope = 1024 * 1024;
+  expect(expansion).toBe(6);
+  expect(MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES).toBe(
+    Math.floor((nodeMaxStringLength - envelope) / expansion),
+  );
+  expect(MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES).toBeGreaterThanOrEqual(
+    DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+  );
+  expect(
+    MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES * expansion + envelope,
+  ).toBeLessThanOrEqual(nodeMaxStringLength);
+});
+
+it("does not let one Rizin manager consume another manager's session cap", async () => {
+  const first = new RizinDebugSessionManager(
+    { [DEBUGGER_MAX_SESSIONS_SETTING]: "1" },
+    { platform: "linux" },
+  );
+  const second = new RizinDebugSessionManager(
+    { [DEBUGGER_MAX_SESSIONS_SETTING]: "1" },
+    { platform: "linux" },
+  );
+  const input = {
+    path: "/tmp/rea-debugger-limit",
+    inferior_tty: "/no/such/rea-debugger-tty",
+  };
+  const held = first.start(input);
+  const independent = second.start(input);
+  const blocked = first.start({
+    ...input,
+    path: "/tmp/rea-debugger-limit-2",
+  });
+  try {
+    const independentResult = await independent;
+    if (independentResult.ok)
+      throw new Error("expected the missing terminal to fail");
+    expect(projectAnalysisError(independentResult.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["inferior_tty"], reason: "invalid_value" }],
+      },
+    });
+    const blockedResult = await blocked;
+    if (blockedResult.ok)
+      throw new Error("expected the first manager to stay capped");
+    expect(projectAnalysisError(blockedResult.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        reported_limits: {
+          setting: DEBUGGER_MAX_SESSIONS_SETTING,
+          effective_value: 1,
+          source: "setting",
+          active_or_reserved_sessions: 1,
+        },
+      },
+    });
+  } finally {
+    await held;
+    await independent;
+    await blocked;
+  }
+});
+
+it("defers an invalid GDB deadline until a command reads it", () => {
+  expect(
+    () =>
+      new GdbSessionManager({
+        environment: { [DEBUGGER_COMMAND_DEADLINE_SETTING]: "0" },
+      }),
+  ).not.toThrow();
+  const parsed = parseDebuggerSessionLimits({
+    [DEBUGGER_COMMAND_DEADLINE_SETTING]: "0",
+  });
+  if (parsed.ok) throw new Error("invalid deadline was accepted");
+  expect(projectAnalysisError(parsed.error)).toMatchObject({
+    code: "configuration_invalid",
+    details: { settings: parsed.error.settings },
+  });
+  const valid = parseDebuggerSessionLimits({
+    [DEBUGGER_COMMAND_DEADLINE_SETTING]: "1500",
+  });
+  if (!valid.ok) throw valid.error;
+  expect(valid.value.commandDeadline).toMatchObject({
+    value: 1500,
+    source: "setting",
+  });
+});

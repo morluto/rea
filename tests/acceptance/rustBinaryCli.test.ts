@@ -9,14 +9,16 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   compressRustElfSectionNames,
+  createRustHashOverflowImage,
   createRustImage,
   createRustImageWithGoSection,
   RUSTC_HASH,
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest } from "../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 
 cliTest(
@@ -68,7 +70,7 @@ cliTest(
         auditable_metadata: null,
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     }
     await client.ping();
   },
@@ -186,7 +188,7 @@ cliTest(
           }),
         );
         if (surface === "cli") {
-          const response = await cli.run({
+          const response = await runFileCli(cli, {
             arguments: ["inspect-rust-binary", path, "--json"],
           });
           expect(response.exitCode, response.stderr).toBe(0);
@@ -211,7 +213,7 @@ cliTest(
       }
 
       if (surface === "cli") {
-        const response = await cli.run({
+        const response = await runFileCli(cli, {
           arguments: ["inspect-rust-binary", malformedPath, "--json"],
         });
         expect(response.exitCode).toBe(1);
@@ -245,7 +247,7 @@ cliTest("returns null metadata when .dep-v0 is absent", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-rust-cli-missing-");
   const path = join(root, "plain");
   await writeFile(path, createRustImage({ format: "elf", omitSection: true }));
-  const result = await cli.run({
+  const result = await runFileCli(cli, {
     arguments: ["inspect-rust-binary", path, "--json"],
   });
   expect(result.exitCode, result.stderr).toBe(0);
@@ -278,7 +280,7 @@ cliTest(
           fixture.type,
         ),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-rust-binary", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -297,8 +299,8 @@ cliTest(
         });
       } else {
         expect(report.auditable_metadata).toBeNull();
-        expect(report.limitations.join("\n")).toContain(
-          "ELF section names are unavailable because compression type 3 is unsupported",
+        expect(report.limitations.join("\n")).toMatch(
+          /section names.*unavailable.*compression type 3.*unsupported/iu,
         );
         expect(report.limitations.join("\n")).toContain(
           "The presence of .dep-v0 could not be determined",
@@ -324,7 +326,7 @@ cliTest(
     bytes.writeUInt32LE(0x0200000c, 4);
     await writeFile(path, bytes);
 
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-rust-binary", path, "--json"],
     });
 
@@ -356,7 +358,7 @@ cliTest(
       ],
     });
     await writeFile(path, createRustImage({ format: "elf", payload }));
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -374,7 +376,7 @@ cliTest(
   },
 );
 
-cliTest("reports malformed zlib as invalid input", async ({ cli }) => {
+cliTest("rejects malformed dependency JSON", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-rust-cli-zlib-");
   const path = join(root, "broken.elf");
   await writeFile(
@@ -385,7 +387,7 @@ cliTest("reports malformed zlib as invalid input", async ({ cli }) => {
       includeRustc: false,
     }),
   );
-  const result = await cli.run({
+  const result = await runFileCli(cli, {
     arguments: ["inspect-rust-binary", path, "--json"],
   });
   expect(result.exitCode).toBe(1);
@@ -410,7 +412,7 @@ cliTest(
       }),
     );
 
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
@@ -443,7 +445,7 @@ cliTest(
     bytes.writeUInt32LE(alignedSize, 264 + 16); // .dep-v0 SizeOfRawData
     await writeFile(path, bytes);
 
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -464,6 +466,15 @@ cliTest(
     expect(metadata?.uncompressed_bytes).toBeLessThanOrEqual(
       (metadata?.compressed_bytes ?? 0) * 64,
     );
+    // Padding separates the section size from the consumed stream that the
+    // inflate guidance names.
+    expect(evidence.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /inflated JSON.*64 times the consumed compressed-stream length/iu,
+        ),
+      ]),
+    );
     expect(evidence.locations).toContainEqual({
       kind: "file-offset-range",
       start: metadata?.file_offset,
@@ -471,7 +482,7 @@ cliTest(
     });
     const response = await call("inspect_rust_binary", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    expect(response.structuredContent).toEqual(evidence);
+    expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     await client.ping();
   },
   30000,
@@ -512,7 +523,7 @@ cliTest(
         reported_limits: { maximum_bytes: compressed.length * 64 },
       },
     };
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
@@ -619,7 +630,7 @@ cliTest(
       }
       const path = join(root, `mixed.${format}`);
       await writeFile(path, bytes);
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-rust-binary", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -649,8 +660,8 @@ cliTest(
       });
       const response = await call("inspect_rust_binary", { path });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(evidence);
-      const go = await cli.run({
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
+      const go = await runFileCli(cli, {
         arguments: ["inspect-go-binary", path, "--json"],
       });
       expect(go.exitCode).toBe(1);
@@ -679,4 +690,67 @@ cliTest(
     await client.ping();
   },
   30000,
+);
+
+cliTest(
+  "retrieves a larger compiler-path prefix through the CLI without losing dependencies",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-overflow-");
+    const path = join(root, "overflow.elf");
+    await writeFile(path, createRustHashOverflowImage());
+    const result = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        path,
+        "--max-rustc-hashes",
+        "65",
+        "--producer-limits",
+        '{"input_bytes":8192,"output_bytes":16384}',
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(0);
+    const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
+      result.json,
+    );
+    const report = rustBinarySchema.parse(evidence.normalized_result);
+    expect(evidence.parameters).toMatchObject({
+      max_rustc_hashes: 65,
+      producer_limits: { input_bytes: 8192, output_bytes: 16384 },
+    });
+    expect(report.rustc_commit?.hashes).toHaveLength(65);
+    expect(report.rustc_commit).not.toHaveProperty("coverage");
+    expect(report.auditable_metadata?.packages).toHaveLength(2);
+  },
+);
+
+cliTest(
+  "rejects malformed Rust view JSON before opening the selected path",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-view-json-");
+    const result = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        join(root, "missing"),
+        "--view",
+        "{",
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_rust_binary",
+        issues: [
+          {
+            path: ["view"],
+            reason: "invalid_format",
+            message: "view must be a JSON package or edge selection",
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(result.json)).not.toContain("ENOENT");
+  },
 );

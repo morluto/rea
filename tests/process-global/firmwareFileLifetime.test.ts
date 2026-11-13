@@ -1040,7 +1040,12 @@ it("shares one workspace cleanup attempt across concurrent shutdown callers", as
   try {
     await entered;
     const second = provider.close();
-    expect(second).toBe(first);
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
     expect(attempts).toBe(2);
     release();
     await Promise.all([first, second]);

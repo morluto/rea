@@ -22,7 +22,7 @@ each was repaired at its owning boundary before the gates below ran.
   domain's `safeParseJson`. The JSON-RPC error helper of the shared listener
   is exported as `jsonRpcErrorResponse` and reused rather than restated.
 - A set but blank `ENVIRONMENT_NAME` refuses with `configuration_invalid`,
-  as a blank `MCP_HOST` does in the sibling parser; `docs/cli.md` and
+  as a blank `MCP_HOST` does in the sibling parser; `docs/getting-started/cli.md` and
   `docs/agent-environments.md` now say so, and the spec records the
   divergence from the design's `||` reading as deliberate.
 - The record-coverage refusal in `loadEnvironmentSource` was unreachable for

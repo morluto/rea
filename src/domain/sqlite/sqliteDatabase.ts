@@ -2,12 +2,8 @@ import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { JsonValue } from "../jsonValue.js";
 
-/** Format identity is shared by discovery, catalog, and observed SQLite results. */
-export const SQLITE_PROVIDER_IDENTITY = {
-  id: "sqlite",
-  name: "REA SQLite database inspector",
-  version: null,
-} as const;
+/** Fixed SQLite value/record and complete-worker-reply allowance. */
+export const SQLITE_DATABASE_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 /** SQLite exposes this table as a row source but omits its own catalog entry. */
 export const SQLITE_SCHEMA_TABLE_NAME = "sqlite_schema";
@@ -30,17 +26,16 @@ const artifactSchema = z.strictObject({
   bytes: nonnegative,
 });
 
-/** Inspect one frozen database and its sibling WAL, with optional ordinary-table rows. */
-export const inspectSqliteDatabaseInputSchema = z
+/** Fields that require the caller to select one ordinary table. */
+export const SQLITE_TABLE_REQUIRED_SELECTION_FIELDS = [
+  "row_limit",
+  "columns",
+  "row_offset",
+] as const;
+
+/** Shared row/schema selection constraints, independent of path transport. */
+export const sqliteTableSelectionSchema = z
   .strictObject({
-    path: absoluteLocalPathStringSchema.describe(
-      "Absolute path to an offline SQLite database snapshot",
-    ),
-    worker_timeout_ms: workerTimeout
-      .optional()
-      .describe(
-        `Deadline in milliseconds for worker startup, queries and reply writing (default ${String(DEFAULT_SQLITE_WORKER_TIMEOUT_MS)}), not snapshot acquisition or the whole call. Allow client headroom for acquisition, reply reads, cleanup and delivery. Fixed byte/heap limits do not change.`,
-      ),
     table: z
       .string()
       .optional()
@@ -67,14 +62,26 @@ export const inspectSqliteDatabaseInputSchema = z
       .describe(
         "Selected-table sample size, default 20; subject to byte and worker resource limits",
       ),
+    row_offset: z
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "Rows to skip before the retained window; default 0; requires table",
+      ),
   })
-  .describe("When schema_scope is selected_table, also provide table.")
   .superRefine((input, context) => {
     if (input.row_limit !== undefined && input.table === undefined)
       context.addIssue({
         code: "custom",
         path: ["row_limit"],
         message: "row_limit requires an explicit table selection",
+      });
+    if (input.row_offset !== undefined && input.table === undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["row_offset"],
+        message: "row_offset requires an explicit table selection",
       });
     if (input.columns !== undefined && input.table === undefined)
       context.addIssue({
@@ -90,13 +97,30 @@ export const inspectSqliteDatabaseInputSchema = z
       });
   })
   .meta({
-    dependentRequired: { row_limit: ["table"], columns: ["table"] },
+    dependentRequired: Object.fromEntries(
+      SQLITE_TABLE_REQUIRED_SELECTION_FIELDS.map((field) => [field, ["table"]]),
+    ),
     if: {
       properties: { schema_scope: { const: "selected_table" } },
       required: ["schema_scope"],
     },
     then: { required: ["table"] },
   });
+
+/** Inspect one frozen database and its sibling WAL, with optional ordinary-table rows. */
+export const inspectSqliteDatabaseInputSchema = sqliteTableSelectionSchema
+  .safeExtend({
+    path: absoluteLocalPathStringSchema.describe(
+      "Absolute path to an offline SQLite database snapshot",
+    ),
+    worker_timeout_ms: workerTimeout
+      .optional()
+      .describe(
+        `Deadline in milliseconds for worker startup, queries and reply writing (default ${String(DEFAULT_SQLITE_WORKER_TIMEOUT_MS)}), not snapshot acquisition or the whole call. Allow client headroom for acquisition, reply reads, cleanup and delivery. Fixed byte/heap limits do not change.`,
+      ),
+  })
+  .describe("When schema_scope is selected_table, also provide table.")
+  .meta(sqliteTableSelectionSchema.meta() ?? {});
 
 /** JSON-safe SQLite cells retain integers, binary content and special REAL values. */
 export const sqliteValueSchema = z.discriminatedUnion("type", [
@@ -206,7 +230,19 @@ export const sqliteDatabaseSchema = z
         row_limit: z.int().min(1),
         returned_rows: nonnegative,
         truncated: z.boolean(),
-        order: z.literal("unspecified"),
+        order: z
+          .enum(["rowid", "primary_key", "unspecified"])
+          .describe(
+            "Unique order the retained window is read in; unspecified means the table shadows rowid, _rowid_ and oid and no primary key is declared",
+          ),
+        row_offset: nonnegative.describe(
+          "Rows skipped before this window; 0 for the sample taken without a selection",
+        ),
+        next_row_offset: nonnegative
+          .nullable()
+          .describe(
+            "Offset to request for the following page; null when the sampled window reaches the end or the table has no stated order. Pages compose only while artifact.sha256 and wal.sha256 match",
+          ),
       })
       .nullable(),
     limitations: z.array(z.string()),
@@ -217,13 +253,17 @@ export const sqliteDatabaseSchema = z
       rows !== null &&
       (rows.returned_rows !== rows.values.length ||
         rows.returned_rows > rows.row_limit ||
-        rows.values.some((row) => row.length !== rows.columns.length))
+        rows.values.some((row) => row.length !== rows.columns.length) ||
+        rows.next_row_offset !==
+          (rows.truncated && rows.order !== "unspecified"
+            ? rows.row_offset + rows.returned_rows
+            : null))
     )
       context.addIssue({
         code: "custom",
         path: ["rows"],
         message:
-          "Selected row counts and column dimensions must match the retained values",
+          "Selected row counts, column dimensions and the next window must match the retained values",
       });
   });
 
@@ -247,6 +287,7 @@ export const sqliteInspectionParameters = (
     ? {}
     : { schema_scope: input.schema_scope }),
   ...(input.row_limit === undefined ? {} : { row_limit: input.row_limit }),
+  ...(input.row_offset === undefined ? {} : { row_offset: input.row_offset }),
 });
 
 /** One contract owner interprets omitted scope for adapters and selection checks. */

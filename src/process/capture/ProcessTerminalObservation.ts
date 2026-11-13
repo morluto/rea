@@ -92,7 +92,9 @@ const observeTerminal = async (
     };
   }
   if (!retention.ok) {
-    if (!rendered.ok)
+    // A deferred private renderer can propagate this same owning failure.
+    // Keep it once rather than adding the primary as its own secondary.
+    if (!rendered.ok && rendered.error !== retention.error)
       retention.error.retainSecondaryFailure(rendered.error, {
         rendered_terminal_failure: projectAnalysisError(rendered.error),
       });

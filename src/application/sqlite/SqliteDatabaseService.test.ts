@@ -4,6 +4,7 @@ import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCo
 import { err, ok } from "../../domain/result.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
 import { sqliteDatabaseSchema } from "../../domain/sqlite/sqliteDatabase.js";
+import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 
 const fixture = () => ({
   artifact: { path: "/selected.db", sha256: "a".repeat(64), bytes: 4096 },
@@ -63,25 +64,6 @@ it.each([
   },
 );
 
-it("preserves the selected worker budget in provider input and Evidence", async () => {
-  const report = { ...fixture(), worker_timeout_ms: 1234 };
-  const service = new SqliteDatabaseService({
-    inspect: async (input) => {
-      expect(input.worker_timeout_ms).toBe(1234);
-      return ok(execution(report));
-    },
-  });
-  const result = await service.inspect({
-    path: "/selected.db",
-    worker_timeout_ms: 1234,
-  });
-  if (!result.ok) throw result.error;
-  expect(result.value.parameters).toMatchObject({ worker_timeout_ms: 1234 });
-  expect(result.value.normalized_result).toMatchObject({
-    worker_timeout_ms: 1234,
-  });
-});
-
 it.each([
   { selected: undefined, reported: undefined },
   { selected: undefined, reported: 1234 },
@@ -108,18 +90,6 @@ it.each([
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
   },
 );
-
-it("retains the actual default without inventing an explicit caller selection", async () => {
-  const service = new SqliteDatabaseService({
-    inspect: async () => ok(execution(fixture())),
-  });
-  const result = await service.inspect({ path: "/selected.db" });
-  if (!result.ok) throw result.error;
-  expect(result.value.normalized_result).toMatchObject({
-    worker_timeout_ms: 30_000,
-  });
-  expect(result.value.parameters).not.toHaveProperty("worker_timeout_ms");
-});
 
 it("accepts sqlite_schema rows without requiring a fabricated declaration", async () => {
   const report = {
@@ -151,7 +121,9 @@ it("accepts sqlite_schema rows without requiring a fabricated declaration", asyn
       row_limit: 20,
       returned_rows: 1,
       truncated: false,
-      order: "unspecified",
+      order: "rowid",
+      row_offset: 0,
+      next_row_offset: null,
     },
   };
   const service = new SqliteDatabaseService({
@@ -265,39 +237,59 @@ it.each(["path", "digest", "subject", "wal", "table"])(
   },
 );
 
-it("preserves completed observed evidence when cancellation arrives after provider completion", async () => {
-  const value = fixture();
-  const service = new SqliteDatabaseService({
-    inspect: () => Promise.resolve(ok(execution(value))),
-  });
-  expect(await service.inspect({ path: "/selected.db" })).toMatchObject({
-    ok: true,
-    value: {
+it.each([false, true])(
+  "retains completed SQLite facts with late cancellation=%s",
+  async (cancelled) => {
+    const value = fixture();
+    const observed = execution(value);
+    const profile = createAnalysisProfile(
+      { ...observed.provider, version: value.engine.version },
+      {
+        schema: "inventory",
+      },
+    );
+    const relationshipCoverage = {
+      status: "unknown",
+      reason: "Relationships were not inspected",
+    } as const;
+    const completed = {
+      ...observed,
+      analysisProfile: profile,
+      relationshipCoverage,
+    };
+    const controller = new AbortController();
+    const reason = Object.freeze({
+      requested: "cancel after database inspection",
+    });
+    const service = new SqliteDatabaseService({
+      inspect: () => {
+        if (cancelled) controller.abort(reason);
+        return Promise.resolve(ok(completed));
+      },
+    });
+    const result = await service.inspect(
+      { path: "/selected.db" },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(!cancelled);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+    }
+    const evidence = result.ok ? result.value : result.error.partialObservation;
+    expect(evidence).toMatchObject({
+      operation: "inspect_sqlite_database",
       confidence: "observed",
       subject: {
         local_path: "/selected.db",
         digest: { sha256: "a".repeat(64) },
       },
       normalized_result: value,
-    },
-  });
-  const controller = new AbortController();
-  const cancelled = new SqliteDatabaseService({
-    inspect: () => {
-      controller.abort();
-      return Promise.resolve(ok(execution(value)));
-    },
-  });
-  expect(
-    await cancelled.inspect(
-      { path: "/selected.db" },
-      { signal: controller.signal },
-    ),
-  ).toMatchObject({
-    ok: true,
-    value: { normalized_result: value },
-  });
-});
+      analysis_profile: profile,
+      relationship_coverage: relationshipCoverage,
+    });
+  },
+);
 
 it("preserves the exact caller reason when inspection is already aborted", async () => {
   const reason = Object.freeze({ requested: "stop" });

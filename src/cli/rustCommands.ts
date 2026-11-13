@@ -1,4 +1,9 @@
+import { parseCliJsonOption } from "./cliJsonOption.js";
 import { z } from "incur";
+import { producerLimitsOption } from "./producerLimitsOption.js";
+import { rustProducerLimitsSchema } from "../domain/rust/rustResourceLimits.js";
+import { inspectRustBinaryInputSchema } from "../domain/rust/rustBinary.js";
+import { cliDecimalField } from "./options.js";
 import { createRustBinaryService } from "../composition/rust.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -8,9 +13,7 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { inspectRustBinaryRequestSchema } from "../domain/rust/rustBinaryQuery.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { safeParseJson } from "../domain/safeJson.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -33,6 +36,10 @@ export const registerRustCommands = (
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
+      producerLimits: producerLimitsOption(rustProducerLimitsSchema),
+      maxRustcHashes: cliDecimalField(
+        inspectRustBinaryInputSchema.shape.max_rustc_hashes,
+      ),
       architecture: machoSliceArchitectureSchema
         .optional()
         .describe(
@@ -54,28 +61,22 @@ export const registerRustCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectRustBinary, async () => {
-          const decoded =
-            options.view === undefined
-              ? { ok: true as const, value: undefined }
-              : safeParseJson(options.view);
-          if (!decoded.ok) {
-            return projectAnalysisError(
-              new AnalysisInputError(
-                "inspect_rust_binary",
-                { cause: decoded.cause },
-                [
-                  {
-                    path: ["view"],
-                    reason: "invalid_format",
-                    message: "view must be a JSON package or edge selection",
-                  },
-                ],
-              ),
-            );
-          }
+          const decoded = parseCliJsonOption(
+            "inspect_rust_binary",
+            "view",
+            options.view,
+            "view must be a JSON package or edge selection",
+          );
+          if (!decoded.ok) return projectAnalysisError(decoded.error);
           const view = decoded.value;
           const input = inspectRustBinaryRequestSchema.safeParse({
             path: absoluteCallerPath(args.path),
+            ...(options.producerLimits === undefined
+              ? {}
+              : { producer_limits: options.producerLimits }),
+            ...(options.maxRustcHashes === undefined
+              ? {}
+              : { max_rustc_hashes: options.maxRustcHashes }),
             ...(options.architecture === undefined
               ? {}
               : { architecture: options.architecture }),
@@ -92,10 +93,17 @@ export const registerRustCommands = (
             );
           const service = createRustBinaryService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {
                   path: input.data.path,
+                  ...(input.data.producer_limits === undefined
+                    ? {}
+                    : { producer_limits: input.data.producer_limits }),
+                  ...(input.data.max_rustc_hashes === undefined
+                    ? {}
+                    : { max_rustc_hashes: input.data.max_rustc_hashes }),
                   ...(input.data.architecture === undefined
                     ? {}
                     : { architecture: input.data.architecture }),

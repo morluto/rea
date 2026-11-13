@@ -1,4 +1,7 @@
+import { EvmAdmissionError } from "./EvmAdmissionError.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import { createHash, randomUUID } from "node:crypto";
 import { access, readFile, stat, writeFile } from "node:fs/promises";
@@ -54,6 +57,7 @@ import {
 import { evmInterfaceEvidence } from "../domain/evm/evmInterfaceEvidence.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
+  selectedEvmProducerLimits,
   type InspectEvmInterfaceInput,
   evmInterfaceSchema,
 } from "../domain/evm/evmInterface.js";
@@ -74,11 +78,10 @@ import {
   projectEvmoleFunctions,
 } from "./EvmoleInterfaceAdapter.js";
 import {
-  EVMOLE_PROVIDER_IDENTITY,
-  EVM_CPU_SECONDS,
-  EVM_INTERFACE_LIMITS,
+  EVM_WORKER_HEAP_MIB,
   EVM_FILE_SIZE_FAILURE_EXIT,
 } from "./EvmoleRelease.js";
+import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
 import { decodeEvmBytecodeCarrier } from "./EvmBytecodeCarrier.js";
 import {
   selectEvmWorkerLimits,
@@ -94,14 +97,14 @@ export const evmHostSupported = (
   platform: NodeJS.Platform,
   arch: string,
 ): boolean => platform === "linux" && arch === "x64";
-export const EVM_PRLIMIT_COMMAND_DEFAULT = "/usr/bin/prlimit";
+const EVM_PRLIMIT_COMMAND_DEFAULT = "/usr/bin/prlimit";
 
-export interface EvmLimiterProbeFileSystem {
+interface EvmLimiterProbeFileSystem {
   access(path: string, mode: number): Promise<void>;
   stat(path: string): Promise<{ isFile(): boolean }>;
 }
 
-export interface EvmLimiterProbeOptions {
+interface EvmLimiterProbeOptions {
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
   readonly fs?: EvmLimiterProbeFileSystem;
@@ -110,9 +113,10 @@ export interface EvmLimiterProbeOptions {
 
 type EvmLimiterSelection = {
   readonly path: string;
-  readonly diagnostics: Readonly<Record<string, string>>;
+  readonly diagnostics: Readonly<Record<string, JsonValue>>;
 };
 type EvmLimiterUnavailable = EvmLimiterSelection & {
+  readonly code: ProviderRejectionCode;
   readonly reason: string;
   readonly cause: unknown;
 };
@@ -142,22 +146,54 @@ const selectEvmLimiter = async (
   const diagnostics = { limiter_path: path, platform, arch };
   try {
     if (!isAbsolute(path))
-      throw new Error(
-        "REA_EVM_PRLIMIT_COMMAND must be an absolute executable path.",
-      );
+      throw new EvmAdmissionError("prlimit_not_absolute", {
+        setting: "REA_EVM_PRLIMIT_COMMAND",
+      });
     const fs = probes?.fs ?? { access, stat };
     await fs.access(path, constants.X_OK);
     throwIfAborted();
     if (!(await fs.stat(path)).isFile())
-      throw new Error(
-        "Configured prlimit must be a regular executable file, not a directory.",
-      );
+      throw new EvmAdmissionError("prlimit_not_file");
     throwIfAborted();
     return ok({ path, diagnostics });
   } catch (cause: unknown) {
     throwIfAborted();
-    const reason = `Offline EVM interface inspection requires caller-supplied util-linux prlimit: ${path}; ${cause instanceof Error ? cause.message : String(cause)}`;
-    return err({ path, diagnostics, reason, cause });
+    if (cause instanceof EvmAdmissionError)
+      return err({
+        path,
+        code: "not_configured",
+        diagnostics: {
+          ...diagnostics,
+          code: cause.code,
+          ...cause.detail,
+        },
+        reason: `Set REA_EVM_PRLIMIT_COMMAND to an absolute executable regular file for caller-supplied util-linux prlimit. The selected path ${path} ${cause.code === "prlimit_not_absolute" ? "is not absolute" : "is not a regular file"}.`,
+        cause,
+      });
+    const systemCode =
+      cause instanceof Error &&
+      "code" in cause &&
+      typeof cause.code === "string"
+        ? cause.code
+        : undefined;
+    const permissionDenied = systemCode === "EACCES" || systemCode === "EPERM";
+    const missing = systemCode === "ENOENT" || systemCode === "ENOTDIR";
+    const recovery = permissionDenied
+      ? "Grant execute permission and filesystem access to the selected file, or set REA_EVM_PRLIMIT_COMMAND to an accessible absolute executable regular file for util-linux prlimit."
+      : missing
+        ? "Set REA_EVM_PRLIMIT_COMMAND to an existing absolute executable regular file for util-linux prlimit."
+        : "Check the selected file and filesystem access, or set REA_EVM_PRLIMIT_COMMAND to an accessible absolute executable regular file for util-linux prlimit.";
+    const reason = `Offline EVM interface inspection requires caller-supplied util-linux prlimit: ${path}; ${cause instanceof Error ? cause.message : String(cause)}. ${recovery}`;
+    return err({
+      path,
+      code: missing ? "executable_missing" : "runtime_unavailable",
+      diagnostics: {
+        ...diagnostics,
+        ...(systemCode === undefined ? {} : { system_code: systemCode }),
+      },
+      reason,
+      cause,
+    });
   }
 };
 
@@ -182,8 +218,10 @@ export const evmLimiterAvailability = async (
       }
     : {
         status: "unavailable",
-        code: "executable_missing",
+        code: selected.error.code,
         reason: selected.error.reason,
+        // The limiter owner does not yet author a separate repair (#8508).
+        remediation: selected.error.reason,
         diagnostics: selected.error.diagnostics,
       };
 };
@@ -216,7 +254,7 @@ type PendingEvmCleanup = {
   root:
     | { readonly owner: EvmRuntimeRoot; readonly lease: AnalysisCleanupLease }
     | undefined;
-  process: { readonly lease: AnalysisCleanupLease } | undefined;
+  process: AnalysisCleanupLease | undefined;
 };
 
 const ownerCleanupMarker = (
@@ -400,15 +438,14 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           this.#inspect(input, environment, options),
         );
       } catch (cause: unknown) {
-        const failure = evmInterfaceFailure(
-          cause,
-          "artifact-read",
-          input.path,
-          undefined,
-          environment.REA_EVM_PRLIMIT_COMMAND ?? EVM_PRLIMIT_COMMAND_DEFAULT,
-          undefined,
-          input.timeout_ms ?? DEFAULT_EVM_TIMEOUT_MS,
-        );
+        const failure = evmInterfaceFailure(cause, {
+          phase: "artifact-read",
+          path: input.path,
+          limiter:
+            environment.REA_EVM_PRLIMIT_COMMAND ?? EVM_PRLIMIT_COMMAND_DEFAULT,
+          timeoutMs: input.timeout_ms ?? DEFAULT_EVM_TIMEOUT_MS,
+          producerLimits: selectedEvmProducerLimits(input.producer_limits),
+        });
         if (cause instanceof ArtifactReaderFailure)
           bindArtifactFileCleanup(cause, failure);
         return err(failure);
@@ -452,10 +489,13 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
               stopped.status === "incomplete" ||
               stopped.status === "not-owned"
             )
-              throw new Error(
+              throw new EvmAdmissionError(
                 stopped.status === "incomplete"
-                  ? stopped.reason
-                  : "Owned EVM worker cleanup did not confirm ownership.",
+                  ? "cleanup_incomplete"
+                  : "cleanup_unconfirmed",
+                stopped.status === "incomplete"
+                  ? { reason: stopped.reason }
+                  : undefined,
                 { cause: stopped },
               );
           },
@@ -472,6 +512,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       return rootLease;
     };
     const timeoutMs = input.timeout_ms ?? DEFAULT_EVM_TIMEOUT_MS;
+    const producerLimits = selectedEvmProducerLimits(input.producer_limits);
     let retainedOutput: AnalysisCapturedOutput | undefined;
     let replyFinalization: AnalysisError | undefined;
     let phase: "configuration" | "artifact-read" | "worker" = "configuration";
@@ -511,6 +552,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           selectedLimiter.error.reason,
           {
             cause: selectedLimiter.error.cause,
+            diagnostics: selectedLimiter.error.diagnostics,
             userMessage: selectedLimiter.error.reason,
           },
         );
@@ -528,7 +570,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           { cause, userMessage: reason },
         );
       }
-      const limits = selectEvmWorkerLimits(inheritedLimits);
+      const limits = selectEvmWorkerLimits(inheritedLimits, producerLimits);
       if (!limits.ok)
         throw new AnalysisCapabilityUnavailableError(
           EVMOLE_PROVIDER_IDENTITY.id,
@@ -540,7 +582,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       phase = "artifact-read";
       const carrier = await readStableArtifact(
         input.path,
-        EVM_INTERFACE_LIMITS.inputBytes,
+        producerLimits.input_bytes,
         options?.signal,
         undefined,
         this.#resources,
@@ -563,6 +605,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           reply_path: replyPath,
           failure_marker_path: join(root.path, "resource.failure"),
           encoding: input.encoding,
+          producer_limits: producerLimits,
         }),
         { flag: "wx", mode: 0o600 },
       );
@@ -578,7 +621,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             `--cpu=${String(workerLimits.cpuSeconds)}:`,
             "--",
             process.execPath,
-            "--max-old-space-size=256",
+            `--max-old-space-size=${String(EVM_WORKER_HEAP_MIB)}`,
             "--v8-pool-size=1",
             "--disable-wasm-trap-handler",
             fileURLToPath(
@@ -593,7 +636,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         },
         {
           timeoutMs,
-          diagnosticBytes: EVM_INTERFACE_LIMITS.diagnosticBytes,
+          diagnosticBytes: producerLimits.diagnostic_bytes,
         },
         {
           ...(options?.signal === undefined ? {} : { signal: options.signal }),
@@ -619,7 +662,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         try {
           file = await readStableArtifact(
             replyPath,
-            EVM_INTERFACE_LIMITS.outputBytes,
+            producerLimits.output_bytes,
             options?.signal,
             undefined,
             this.#resources,
@@ -657,11 +700,15 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "limit" &&
           cause.boundary === "file-size"
-            ? evmReplyBudgetFailure(cause.message, {
-                cause,
-                capturedOutput,
-                ...(cleanup === undefined ? {} : { cleanup }),
-              })
+            ? evmReplyBudgetFailure(
+                cause.message,
+                {
+                  cause,
+                  capturedOutput,
+                  ...(cleanup === undefined ? {} : { cleanup }),
+                },
+                producerLimits,
+              )
             : new AnalysisOutputError(
                 OPERATION,
                 `Owned interface worker reply failed for ${input.path}: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -692,9 +739,13 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             },
           ]);
         if (reply.reason === "output-limit")
-          throw evmReplyBudgetFailure(reply.message, {
-            capturedOutput,
-          });
+          throw evmReplyBudgetFailure(
+            reply.message,
+            {
+              capturedOutput,
+            },
+            producerLimits,
+          );
         throw new ProviderAdapterError(EVMOLE_PROVIDER_IDENTITY.id, OPERATION, {
           diagnostics: {
             phase,
@@ -731,7 +782,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         "Bytecode kind, hardfork and deployed-contract authenticity are unknown. This inspection performs no target runtime execution, chain/RPC lookup or network request.",
         "Original carrier and decoded bytecode SHA-256 are distinct identities; SHA-256 is not the Ethereum Keccak code hash.",
         "Terminal CBOR metadata is an independently decoded candidate, not proof of Solidity origin, source identity or deployment. Nested or unsupported values retain explicit unavailable interpretation and original byte ranges.",
-        `The owned worker has a 256 MiB JavaScript heap. The profile maxima are ${String(EVM_INTERFACE_LIMITS.addressSpaceBytes)} address-space bytes and ${String(EVM_CPU_SECONDS)} CPU seconds; the configured soft limits above retain tighter inherited limits. The command deadline is timeout_ms at ${String(timeoutMs)} ms (default ${String(DEFAULT_EVM_TIMEOUT_MS)}). Those byte, address-space, and CPU maxima have no runtime override, and timeout_ms does not raise them. Virtual address space is distinct from resident memory; limits fail without partial success.`,
+        `The owned worker has a 256 MiB JavaScript heap. The profile maxima are ${String(producerLimits.address_space_bytes)} address-space bytes and ${String(producerLimits.cpu_seconds)} CPU seconds; the configured soft limits above retain tighter inherited limits. The command deadline is timeout_ms at ${String(timeoutMs)} ms (default ${String(DEFAULT_EVM_TIMEOUT_MS)}). producer_limits can change those requested byte, address-space and CPU allowances on the next call without restart; timeout_ms does not raise them. The 256 MiB worker heap remains independent. Virtual address space is distinct from resident memory; limits fail without partial success.`,
       ];
       const validated = evmInterfaceSchema.safeParse({
         artifact: {
@@ -813,9 +864,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             marker = completed;
           }
           if (!marker.bytes.equals(Buffer.from("F")))
-            throw new Error(
-              "Private worker failure marker does not match the observed exit status.",
-            );
+            throw new EvmAdmissionError("marker_mismatch");
           fileFailure = { verified: true, failure: null };
         } catch (markerFailure: unknown) {
           fileFailure = {
@@ -841,15 +890,15 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
                 ? { cleanup: cause.cleanup }
                 : {}),
             })
-          : evmInterfaceFailure(
-              cause,
+          : evmInterfaceFailure(cause, {
               phase,
-              input.path,
+              path: input.path,
               workerLimits,
               limiter,
               fileFailure,
               timeoutMs,
-            );
+              producerLimits,
+            });
       if (markerCleanupFailure !== undefined) {
         const cleanup = retainedCleanupFailure(markerCleanupFailure);
         failure = analysisErrorWithCleanupFailure(
@@ -919,7 +968,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           root === undefined || rootOwnerLease === undefined
             ? undefined
             : { owner: root, lease: rootOwnerLease },
-        process: { lease },
+        process: lease,
       };
       if (processCleanup === undefined) {
         const owners = [lease, rootOwnerLease].filter(
@@ -1056,12 +1105,11 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     return this.#closePromise;
   }
 
-  #closedError(): ProviderCleanupError {
-    return new ProviderCleanupError(
+  #closedError(): AnalysisCapabilityUnavailableError {
+    return new AnalysisCapabilityUnavailableError(
       EVMOLE_PROVIDER_IDENTITY.id,
-      [],
-      { reason: "Provider is closing" },
-      { operation: OPERATION },
+      OPERATION,
+      "Provider is closing; create a new EVM inspection service.",
     );
   }
 
@@ -1070,7 +1118,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     if (pending === undefined) return undefined;
     if (pending.process !== undefined) {
       try {
-        await pending.process.lease.release();
+        await pending.process.release();
       } catch (cause: unknown) {
         const failure = evmCleanupFailure(
           pending.input,
@@ -1078,7 +1126,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           [
             ...new Set([
               ...(pending.root === undefined ? [] : [pending.root.owner.path]),
-              ...(pending.process.lease.cleanupResources ?? []),
+              ...(pending.process.cleanupResources ?? []),
             ]),
           ],
           cause instanceof Error ? cause.message : String(cause),
@@ -1088,7 +1136,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         bindEvmCleanupOwners(
           failure,
           [
-            pending.process.lease,
+            pending.process,
             ...(pending.root === undefined ? [] : [pending.root.lease]),
           ],
           pending.result.ok ? undefined : pending.result.error,

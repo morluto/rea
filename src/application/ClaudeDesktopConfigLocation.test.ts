@@ -1,15 +1,14 @@
+import { CLAUDE_DESKTOP_PACKAGE_FAMILY } from "../../tests/fixtures/claudeDesktop.js";
 import { basename, dirname, join, sep } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import {
-  CLAUDE_DESKTOP_PACKAGE_FAMILY,
   resolveWindowsClaudeDesktopLocation,
   type ClaudeDesktopLocationFileSystem,
 } from "./ClaudeDesktopConfigLocation.js";
 import {
   packagePrivateLauncherBlocker,
-  packagePrivateStorageFamily,
   redirectedWriteBlocker,
   type MsixPackageView,
   windowsAppDataRoots,
@@ -21,6 +20,11 @@ const env = {
   LOCALAPPDATA: join(home, "AppData", "Local"),
 };
 const packages = join(env.LOCALAPPDATA, "Packages");
+const migratedDirectory = join(
+  env.LOCALAPPDATA,
+  "Claude-Data",
+  CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase(),
+);
 const appDataConfig = join(env.APPDATA, "Claude", "claude_desktop_config.json");
 const privateConfig = join(
   packages,
@@ -77,6 +81,33 @@ const packagedFileSystem = (
 });
 
 describe("Claude Desktop MSIX process view", () => {
+  it.each([true, false])(
+    "reports migrated storage as unresolved with legacy package storage %s",
+    (hasLegacyStorage) => {
+      const fs = packagedFileSystem((path) => path);
+      expect(
+        resolveWindowsClaudeDesktopLocation(home, env, {
+          ...fs,
+          readdir: (path) =>
+            path === packages && !hasLegacyStorage ? [] : fs.readdir(path),
+          lstat: (path) =>
+            path === migratedDirectory ? folder : fs.lstat(path),
+        }),
+      ).toEqual({
+        ok: false,
+        error: {
+          path: join(migratedDirectory, "claude_desktop_config.json"),
+          message: expect.stringContaining("migrated Claude Desktop storage"),
+          ...(hasLegacyStorage
+            ? {
+                msixPackage: expect.objectContaining({ processView: "direct" }),
+              }
+            : {}),
+        },
+      });
+    },
+  );
+
   it("recognizes a process that sees the private copy at the AppData path", () => {
     const location = resolveWindowsClaudeDesktopLocation(
       home,
@@ -535,7 +566,9 @@ describe("unresolved Claude Desktop package identity", () => {
   ])("does not treat %s as a Claude package family", (name) => {
     const location = resolveWindowsClaudeDesktopLocation(home, env, {
       readdir: () => [name],
-      lstat: () => file,
+      lstat: () => {
+        throw failure("ENOENT");
+      },
       realpath: (path) => path,
     });
     expect(location).toEqual({
@@ -564,8 +597,8 @@ describe("unresolved Claude Desktop package identity", () => {
   it("reports an uninspectable private copy instead of choosing a file", () => {
     const location = resolveWindowsClaudeDesktopLocation(home, env, {
       readdir: () => [CLAUDE_DESKTOP_PACKAGE_FAMILY],
-      lstat: () => {
-        throw failure("EPERM");
+      lstat: (path) => {
+        throw failure(path === privateConfig ? "EPERM" : "ENOENT");
       },
       realpath: (path) => path,
     });
@@ -608,15 +641,19 @@ describe("package-private REA launchers", () => {
     "rea.mjs",
   );
 
-  it("names the package that privately stores a path", () => {
-    expect(packagePrivateStorageFamily(stored, packages)).toBe(
-      CLAUDE_DESKTOP_PACKAGE_FAMILY,
-    );
-    expect(packagePrivateStorageFamily(launcher, packages)).toBeUndefined();
+  it("blocks private cache paths without treating other package paths as private", () => {
+    const identity = (path: string) => path;
     expect(
-      packagePrivateStorageFamily(
-        join(packages, CLAUDE_DESKTOP_PACKAGE_FAMILY, "LocalState", "x"),
+      packagePrivateLauncherBlocker([stored], packages, identity),
+    ).toContain(CLAUDE_DESKTOP_PACKAGE_FAMILY);
+    expect(
+      packagePrivateLauncherBlocker([launcher], packages, identity),
+    ).toBeUndefined();
+    expect(
+      packagePrivateLauncherBlocker(
+        [join(packages, CLAUDE_DESKTOP_PACKAGE_FAMILY, "LocalState", "x")],
         packages,
+        identity,
       ),
     ).toBeUndefined();
   });

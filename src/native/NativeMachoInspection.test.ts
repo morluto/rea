@@ -6,6 +6,7 @@ import {
   dylibCommand,
   fatImage,
   machoImage,
+  lazyLoadDylibInfoCommand,
 } from "../artifacts/apple/MachoImage.fixture.js";
 import {
   AnalysisCancelledError,
@@ -14,11 +15,22 @@ import {
 import { err, ok } from "../domain/result.js";
 import { parseMachoLayout, selectMachoSlice } from "./AppleMachoSelection.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";
-import { inspectNativeMacho } from "./NativeMachoInspection.js";
+import type { MachoSliceEncryption } from "../domain/apple/machoEncryption.js";
+import { inspectMachoSchema } from "../domain/native/nativeInspection.js";
+import {
+  inspectNativeMacho,
+  type MachoEncryptionRead,
+} from "./NativeMachoInspection.js";
+import {
+  inspectionFatBytesContext,
+  inspectionFatContext,
+  inspectionImage,
+  inspectionReader,
+  unreadEncryption,
+} from "./NativeMachoInspection.fixture.js";
 import {
   NativeFixtureRunner,
   nativeMachoTarget,
-  withOtoolMachHeader,
 } from "../../tests/fixtures/nativeCommands.js";
 
 const capture = (tool: string, stdout: string): NativeCommandCapture => ({
@@ -36,12 +48,20 @@ const capture = (tool: string, stdout: string): NativeCommandCapture => ({
   signal: null,
 });
 
+// Some selector tests stop on lipo admission or a cancelled command; thin
+// images also never need a FAT slice resolver.
+const unexpectedSliceResolution = (): never => {
+  throw new Error("Unexpected FAT slice resolution");
+};
+
 const inspect = async (lipo: string, architecture: "x86" | "arm64") => {
   const commands: {
     readonly tool: string;
     readonly args: readonly string[];
   }[] = [];
   const result = await inspectNativeMacho({
+    resolveSlice: unexpectedSliceResolution,
+    readCommandNames: inspectionReader(),
     target: {
       kind: "executable",
       format: "mach-o",
@@ -58,9 +78,77 @@ const inspect = async (lipo: string, architecture: "x86" | "arm64") => {
     invocation: () => {
       throw new Error("invocation is not reached");
     },
+    readEncryption: unreadEncryption,
   });
   return { result, commands };
 };
+
+describe("admitted Mach-O slice tools", () => {
+  it("binds slice tools to the admitted capability variant", async () => {
+    const lipo = [
+      "architecture arm64e.v1",
+      "cputype 16777228",
+      "cpusubtype 2164260866",
+      "offset 4096",
+      "size 4096",
+      "align 2^12",
+      "architecture arm64e",
+      "cputype 16777228",
+      "cpusubtype 2147483650",
+      "offset 8192",
+      "size 4096",
+      "align 2^12",
+    ].join("\n");
+    const commands: {
+      readonly tool: string;
+      readonly args: readonly string[];
+    }[] = [];
+    const result = await inspectNativeMacho({
+      resolveSlice: unexpectedSliceResolution,
+      readCommandNames: inspectionReader(),
+      target: {
+        kind: "executable",
+        format: "mach-o-universal",
+        path: "/fixture/app",
+        sha256: "b".repeat(64),
+        architecture: "arm64",
+        availableArchitectures: ["arm64"],
+        universalSlice: { offset: 8192, size: 4096 },
+        universalSlices: [
+          {
+            offset: 4096,
+            size: 4096,
+            cpuType: 0x0100000c,
+            cpuSubtype: 0x81000002,
+          },
+          {
+            offset: 8192,
+            size: 4096,
+            cpuType: 0x0100000c,
+            cpuSubtype: 0x80000002,
+          },
+        ],
+      },
+      run: (tool, args) => {
+        commands.push({ tool, args });
+        if (tool === "lipo") return Promise.resolve(ok(capture(tool, lipo)));
+        return Promise.resolve(
+          err(new AnalysisCancelledError("inspect_native")),
+        );
+      },
+      invocation: () => {
+        throw new Error("invocation is not reached");
+      },
+      readEncryption: unreadEncryption,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
+    expect(commands.find(({ tool }) => tool === "nm")?.args).toEqual(
+      expect.arrayContaining(["-arch", "arm64e"]),
+    );
+  });
+});
 
 describe("Mach-O tool architecture selection", () => {
   it("rejects a CPU lipo did not list instead of reading another slice", async () => {
@@ -76,14 +164,82 @@ describe("Mach-O tool architecture selection", () => {
 
   it("passes the arm64e slice lipo listed for an arm64 target", async () => {
     const { commands } = await inspect("architecture arm64e\n", "arm64");
-    const otool = commands.find(({ tool }) => tool === "otool");
-    expect(otool?.args).toEqual([
-      "-h",
-      "-l",
-      "-arch",
+    expect(commands.find(({ tool }) => tool === "dyld_info")?.args).toContain(
       "arm64e",
-      "/fixture/app",
-    ]);
+    );
+  });
+
+  it("uses the subtype-specific tool name when lipo calls ARM64 V8 arm64", async () => {
+    const lipo =
+      "architecture x86_64\n cputype CPU_TYPE_X86_64\n cpusubtype CPU_SUBTYPE_X86_64_ALL\n offset 4096\n size 4096\n align 2^12\n" +
+      "architecture arm64\n cputype CPU_TYPE_ARM64\n cpusubtype CPU_SUBTYPE_ARM64_V8\n offset 8192\n size 4096\n align 2^12\n";
+    const { commands } = await inspect(lipo, "arm64");
+    expect(commands.find(({ tool }) => tool === "dyld_info")?.args).toContain(
+      "arm64v8",
+    );
+  });
+
+  it("reads the selected FAT slice's command bytes", async () => {
+    const slices = [CPU.x86_64, CPU.arm64].map((cpu) => ({
+      cpu,
+      bytes: machoImage({
+        cpu,
+        commands: [
+          dylibCommand(
+            LC.LOAD_DYLIB,
+            cpu === CPU.arm64 ? "/selected.dylib" : "/other.dylib",
+          ),
+        ],
+      }),
+    }));
+    const fat = fatImage(slices);
+    const lipo = slices
+      .map(
+        (slice, index) =>
+          `architecture ${index === 0 ? "x86_64" : "arm64"}\n cputype ${slice.cpu.type}\n cpusubtype ${slice.cpu.subtype}\n offset ${(index + 1) * 4096}\n size ${slice.bytes.length}\n align 2^12\n`,
+      )
+      .join("");
+    const runner = new NativeFixtureRunner({ lipo });
+    const readOffsets: number[] = [];
+    const context = inspectionFatBytesContext(fat);
+    const result = await inspectNativeMacho({
+      resolveSlice: context.resolveSlice,
+      target: nativeMachoTarget("/fixture/app"),
+      run: (tool, args) => runner.run(tool, args),
+      readEncryption: unreadEncryption,
+      readCommandNames: (offset, size, selected) => {
+        readOffsets.push(offset);
+        return context.readCommandNames(offset, size, selected);
+      },
+      invocation: (capture) => ({
+        tool: capture.tool,
+        command: [capture.executable, ...capture.arguments],
+        tool_version: capture.toolVersion,
+        version_reason: capture.versionReason,
+        executable_sha256: capture.executableSha256,
+        exit: { code: capture.exitCode, signal: capture.signal },
+        stdout_bytes: capture.stdoutBytes,
+        stderr_bytes: capture.stderrBytes,
+      }),
+    });
+    if (!result.ok) throw result.error;
+    expect(readOffsets).toEqual([8192]);
+    expect(result.value.result).toMatchObject({
+      dependencies: { items: [{ path: "/selected.dylib" }] },
+    });
+  });
+
+  it("refuses an ambiguous selector instead of assigning another row's offset", async () => {
+    const row =
+      "architecture arm64\n cputype CPU_TYPE_ARM64\n cpusubtype CPU_SUBTYPE_ARM64_ALL\n offset 4096\n size 4096\n align 2^12\n";
+    const { result, commands } = await inspect(row + row, "arm64");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisOutputError",
+      reason: expect.stringContaining("multiple slices addressable as arm64"),
+    });
+    expect(commands.map(({ tool }) => tool)).toEqual(["lipo"]);
   });
 
   it.each([
@@ -123,13 +279,6 @@ describe("Mach-O tool architecture selection", () => {
         )
         .join("");
       const { commands } = await inspect(lipo, "arm64");
-      expect(commands.find(({ tool }) => tool === "otool")?.args).toEqual([
-        "-h",
-        "-l",
-        "-arch",
-        selected.split(".")[0],
-        "/fixture/app",
-      ]);
       expect(commands.find(({ tool }) => tool === "dyld_info")?.args).toContain(
         selected,
       );
@@ -144,9 +293,16 @@ describe("Mach-O tool architecture selection", () => {
 });
 
 describe("Mach-O inspection container format", () => {
-  const runInspection = async (lipo: string) => {
+  const runInspection = async (
+    lipo: string,
+    context = inspectionFatContext(),
+  ) => {
     const runner = new NativeFixtureRunner({ lipo });
     return inspectNativeMacho({
+      resolveSlice: context.resolveSlice,
+      readCommandNames: lipo.startsWith("Non-fat")
+        ? inspectionReader()
+        : context.readCommandNames,
       target: nativeMachoTarget("/fixture/app"),
       run: (tool, args) => runner.run(tool, args),
       invocation: (capture) => ({
@@ -159,13 +315,53 @@ describe("Mach-O inspection container format", () => {
         stdout_bytes: capture.stdoutBytes,
         stderr_bytes: capture.stderrBytes,
       }),
+      readEncryption: unreadEncryption,
     });
   };
+
+  it.each([false, true])(
+    "keeps the selected subtype's offset when lipo repeats an architecture name (reversed=%s)",
+    async (reversed) => {
+      const v8 =
+        "architecture arm64\n cputype CPU_TYPE_ARM64\n cpusubtype CPU_SUBTYPE_ARM64_V8\n offset 16384\n size 4096\n align 2^12\n";
+      const all =
+        "architecture arm64\n cputype CPU_TYPE_ARM64\n cpusubtype CPU_SUBTYPE_ARM64_ALL\n offset 32768\n size 4096\n align 2^12\n";
+      const result = await runInspection(
+        `Fat header in: /fixture/app\nfat_magic 0xcafebabe\nnfat_arch 2\n${reversed ? all + v8 : v8 + all}`,
+        inspectionFatContext(undefined, [
+          {
+            offset: 16384,
+            size: 4096,
+            alignment: 12,
+            cpu: { type: CPU.arm64.type, subtype: 1 },
+            image: machoImage({ cpu: { type: CPU.arm64.type, subtype: 1 } }),
+          },
+          {
+            offset: 32768,
+            size: 4096,
+            alignment: 12,
+            cpu: CPU.arm64,
+            image: inspectionImage(),
+          },
+        ]),
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.result).toMatchObject({
+        selected_architecture: { name: "arm64", container_file_offset: 32768 },
+      });
+      expect(result.value.locations).toContainEqual({
+        kind: "file-offset-range",
+        start: 32768,
+        end: 36864,
+      });
+    },
+  );
 
   it.each([
     {
       framing: "one-slice FAT",
-      lipo: `Fat header in: /fixture/app\nfat_magic 0xcafebabe\nnfat_arch 1\narchitecture arm64\n cputype CPU_TYPE_ARM64\n cpusubtype CPU_SUBTYPE_ARM64_ALL\n offset 4096\n size 128\n align 2^12\n`,
+      lipo: `Fat header in: /fixture/app\nfat_magic 0xcafebabe\nnfat_arch 1\narchitecture arm64\n cputype CPU_TYPE_ARM64\n cpusubtype CPU_SUBTYPE_ARM64_ALL\n offset 4096\n size 8192\n align 2^12\n`,
       expected: "mach-o-universal",
     },
     {
@@ -174,7 +370,18 @@ describe("Mach-O inspection container format", () => {
       expected: "mach-o",
     },
   ] as const)("reports parsed $framing framing", async ({ lipo, expected }) => {
-    const result = await runInspection(lipo);
+    const result = await runInspection(
+      lipo,
+      inspectionFatContext(undefined, [
+        {
+          offset: 4096,
+          size: 8192,
+          alignment: 12,
+          cpu: CPU.arm64,
+          image: inspectionImage(),
+        },
+      ]),
+    );
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({ format: expected });
   });
@@ -182,26 +389,20 @@ describe("Mach-O inspection container format", () => {
   it("does not call a lazy-info payload dependency exhaustive", async () => {
     const runner = new NativeFixtureRunner({
       lipo: "Non-fat file: /fixture/app is architecture: arm64\n",
-      "otool:-h": withOtoolMachHeader(
-        [
-          "Load command 0",
-          "      cmd LC_LOAD_DYLIB",
-          "  cmdsize 56",
-          "         name /usr/lib/libSystem.B.dylib (offset 24)",
-          "   time stamp 2 Thu Jan  1 00:00:02 1970",
-          "      current version 1.0.0",
-          "compatibility version 1.0.0",
-          "Load command 1",
-          "      cmd LC_LAZY_LOAD_DYLIB_INFO",
-          "  cmdsize 16",
-          "    dataoff 49304",
-          "   datasize 56",
-        ].join("\n"),
-      ),
     });
     const result = await inspectNativeMacho({
+      resolveSlice: unexpectedSliceResolution,
+      readCommandNames: inspectionReader(
+        inspectionImage({
+          commands: [
+            dylibCommand(LC.LOAD_DYLIB, "/usr/lib/libSystem.B.dylib"),
+            lazyLoadDylibInfoCommand(49304, 56),
+          ],
+        }),
+      ),
       target: nativeMachoTarget("/fixture/app"),
       run: (tool, args) => runner.run(tool, args),
+      readEncryption: unreadEncryption,
       invocation: (captured) => ({
         tool: captured.tool,
         command: [captured.executable, ...captured.arguments],
@@ -227,7 +428,7 @@ describe("Mach-O inspection container format", () => {
             kind: "LC_LOAD_DYLIB",
           },
         ],
-        limitations: [expect.stringContaining("1 LC_LAZY_LOAD_DYLIB_INFO")],
+        limitations: [expect.stringContaining("linkedit dependency payload")],
       },
     });
   });
@@ -238,23 +439,17 @@ describe("Mach-O UUID reconciliation", () => {
 
   const runInspection = async (
     dwarfdump: string,
-    otoolUuids: readonly string[] = [validUuid],
+    binaryUuids: readonly string[] = [validUuid],
     targetPath = "/fixture/app",
   ) => {
     const runner = new NativeFixtureRunner({
       dwarfdump,
-      otool: withOtoolMachHeader(
-        otoolUuids
-          .map(
-            (uuid, index) =>
-              `Load command ${index}\n      cmd LC_UUID\n  cmdsize 24\n     uuid ${uuid}`,
-          )
-          .join("\n"),
-      ),
     });
     const result = await inspectNativeMacho({
+      ...inspectionFatContext(inspectionImage({ uuids: binaryUuids })),
       target: nativeMachoTarget(targetPath),
       run: (tool, args) => runner.run(tool, args),
+      readEncryption: unreadEncryption,
       invocation: (capture) => ({
         tool: capture.tool,
         command: [capture.executable, ...capture.arguments],
@@ -269,12 +464,14 @@ describe("Mach-O UUID reconciliation", () => {
     return result;
   };
 
-  it("keeps a valid otool UUID when dwarfdump is malformed and reports the limitation", async () => {
+  it("keeps a valid binary UUID when dwarfdump is malformed and reports the limitation", async () => {
     const result = await runInspection("UUID: A (arm64) /fixture/app\n");
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({ uuid: validUuid });
-    expect(result.value.limitations).toContain(
-      'dwarfdump --uuid returned malformed UUID "A"; using the unambiguous otool LC_UUID.',
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /dwarfdump --uuid.*malformed UUID "A".*unambiguous.*LC_UUID/iu,
+      ),
     );
   });
 
@@ -284,8 +481,13 @@ describe("Mach-O UUID reconciliation", () => {
     );
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContain(
-      `dwarfdump --uuid (FEDCBA98-7654-3210-FEDC-BA9876543210) conflicts with otool LC_UUID (${validUuid}); the image UUID is unknown.`,
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        new RegExp(
+          `dwarfdump.*FEDCBA98-7654-3210-FEDC-BA9876543210.*conflict.*LC_UUID.*${validUuid}.*unknown`,
+          "iu",
+        ),
+      ),
     );
   });
 
@@ -296,7 +498,7 @@ describe("Mach-O UUID reconciliation", () => {
     expect(result.value.result).toMatchObject({ uuid: lower });
   });
 
-  it("uses a valid dwarfdump UUID when otool has no UUID observation", async () => {
+  it("uses a valid dwarfdump UUID when the binary has no UUID observation", async () => {
     const result = await runInspection(
       `UUID: ${validUuid} (arm64) /fixture/app\n`,
       [],
@@ -325,26 +527,31 @@ describe("Mach-O UUID reconciliation", () => {
     );
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContain(
-      `otool returned conflicting LC_UUID values ${JSON.stringify(validUuid)} and ${JSON.stringify("FEDCBA98-7654-3210-FEDC-BA9876543210")}`,
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        new RegExp(
+          `conflicting LC_UUID.*${validUuid}.*FEDCBA98-7654-3210-FEDC-BA9876543210`,
+          "iu",
+        ),
+      ),
     );
   });
 
-  it("keeps conflicting duplicate dwarfdump rows unknown despite otool", async () => {
+  it("keeps conflicting duplicate dwarfdump rows unknown despite binary UUID", async () => {
     const conflictingUuid = "FEDCBA98-7654-3210-FEDC-BA9876543210";
     const result = await runInspection(
       `UUID: ${validUuid} (arm64) /fixture/app\nUUID: ${conflictingUuid} (arm64) /fixture/app\n`,
     );
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContain(
-      "dwarfdump --uuid returned conflicting UUIDs for selected architecture arm64",
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(/dwarfdump --uuid.*conflicting.*arm64/iu),
     );
   });
 });
 
 describe("Mach-O slice command scheduling", () => {
-  const SLICE_TOOLS = ["otool", "nm", "dyld_info", "dyld_info", "dwarfdump"];
+  const SLICE_TOOLS = ["nm", "dyld_info", "dyld_info", "dwarfdump"];
 
   /** Finish later-launched slice commands first and record overlap. */
   const reorderingRunner = (failing: ReadonlySet<string> = new Set()) => {
@@ -369,8 +576,10 @@ describe("Mach-O slice command scheduling", () => {
 
   const inspectWith = (run: ReturnType<typeof reorderingRunner>["run"]) =>
     inspectNativeMacho({
+      ...inspectionFatContext(),
       target: nativeMachoTarget("/fixture/app"),
       run,
+      readEncryption: unreadEncryption,
       invocation: (capture) => ({
         tool: capture.tool,
         command: [capture.executable, ...capture.arguments],
@@ -404,19 +613,156 @@ describe("Mach-O slice command scheduling", () => {
   });
 });
 
+describe("Mach-O encryption reporting", () => {
+  const slice = (
+    overrides: Partial<MachoSliceEncryption> = {},
+  ): MachoSliceEncryption => ({
+    architecture: null,
+    cpu_type: 16777228,
+    cpu_subtype: 0,
+    container_file_offset: 32768,
+    size: 8192,
+    status: "absent",
+    malformed_kind: null,
+    reason: null,
+    commands: [],
+    range: null,
+    ...overrides,
+  });
+  const encrypted = (start: number, end: number) =>
+    slice({
+      status: "encrypted",
+      commands: [
+        {
+          kind: "LC_ENCRYPTION_INFO_64",
+          index: 1,
+          cmdsize: 24,
+          cryptoff: start,
+          cryptsize: end - start,
+          cryptid: 1,
+          pad: 0,
+        },
+      ],
+      range: {
+        content: "ciphertext",
+        slice_start: start,
+        slice_end: end,
+        container_start: 32768 + start,
+        container_end: 32768 + end,
+        mapping: { status: "mapped", fragments: [], sections: [] },
+      },
+    });
+  const inspectEncryption = async (encryption: MachoEncryptionRead) => {
+    const runner = new NativeFixtureRunner();
+    const result = await inspectNativeMacho({
+      ...inspectionFatContext(),
+      target: nativeMachoTarget("/fixture/app"),
+      run: (tool, args) => runner.run(tool, args),
+      readEncryption: () => Promise.resolve(encryption),
+      invocation: (capture) => ({
+        tool: capture.tool,
+        command: [capture.executable, ...capture.arguments],
+        tool_version: capture.toolVersion,
+        version_reason: capture.versionReason,
+        executable_sha256: capture.executableSha256,
+        exit: { code: capture.exitCode, signal: capture.signal },
+        stdout_bytes: capture.stdoutBytes,
+        stderr_bytes: capture.stderrBytes,
+      }),
+    });
+    if (!result.ok) throw result.error;
+    return {
+      encryption: inspectMachoSchema.parse(result.value.result).encryption,
+      limitations: result.value.limitations,
+    };
+  };
+
+  it("labels every slice with the lipo record at its offset and names ciphertext bytes", async () => {
+    const x86 = slice({
+      cpu_type: 16777223,
+      cpu_subtype: 3,
+      container_file_offset: 16384,
+      size: 4096,
+    });
+    const { encryption, limitations } = await inspectEncryption({
+      status: "parsed",
+      slices: [x86, encrypted(4096, 6144)],
+    });
+    expect(encryption).toMatchObject({ total: 2, exhaustive: true });
+    expect(encryption.items.map(({ architecture }) => architecture)).toEqual([
+      "x86_64",
+      "arm64",
+    ]);
+    expect(limitations).toContainEqual(
+      expect.stringMatching(
+        /36864-38912.*input file offsets.*end exclusive.*arm64.*ciphertext.*cryptid 1.*disassembly.*decompilation.*strings.*references.*do not describe program code/iu,
+      ),
+    );
+  });
+
+  it("leaves a slice lipo did not describe unlabeled", async () => {
+    const { encryption, limitations } = await inspectEncryption({
+      status: "parsed",
+      slices: [
+        slice({
+          container_file_offset: 49152,
+          status: "malformed",
+          malformed_kind: "structure",
+          reason: "load commands is truncated",
+        }),
+      ],
+    });
+    expect(encryption.items[0]?.architecture).toBeNull();
+    expect(limitations).toContainEqual(
+      expect.stringMatching(/49152.*malformed.*load commands is truncated/iu),
+    );
+  });
+
+  it("does not mark bytes as ciphertext for an empty encrypted range", async () => {
+    const { limitations } = await inspectEncryption({
+      status: "parsed",
+      slices: [encrypted(4096, 4096)],
+    });
+    expect(limitations).toContainEqual(
+      expect.stringMatching(
+        /arm64.*cryptid 1.*empty range.*no bytes.*ciphertext/iu,
+      ),
+    );
+    expect(limitations.some((line) => line.includes("are ciphertext"))).toBe(
+      false,
+    );
+  });
+
+  it("keeps encryption unknown when the bytes were not read", async () => {
+    const { encryption, limitations } = await inspectEncryption({
+      status: "unread",
+      reason: "the target could not be opened for reading (ENOENT)",
+    });
+    expect(encryption).toMatchObject({
+      items: [],
+      total: null,
+      exhaustive: false,
+    });
+    expect(encryption.limitations).toEqual([
+      expect.stringContaining(
+        "the target could not be opened for reading (ENOENT)",
+      ),
+    ]);
+    expect(encryption.limitations[0]).toMatch(/load commands.*not read/iu);
+    expect(limitations).toContain(encryption.limitations[0]);
+  });
+});
+
 it.each(["10", "DSYM", "2"])(
   "classifies the unbacked-text dyld refusal using observed file type %s",
   async (fileType) => {
     const diagnostic =
       "section '__TEXT/__text' has offset=0 but is not a zero-fill section type\n";
-    const runner = new NativeFixtureRunner({
-      otool: [
-        "Mach header",
-        "magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
-        `0xfeedfacf 16777228 0 0x00 ${fileType} 0 0 0x0`,
-      ].join("\n"),
-    });
+    const runner = new NativeFixtureRunner();
     const result = await inspectNativeMacho({
+      ...inspectionFatContext(
+        inspectionImage({ fileType: fileType === "2" ? 2 : 10 }),
+      ),
       target: nativeMachoTarget("/fixture/debug-companion"),
       run: async (tool, args, _signal, acceptNonZeroIf) => {
         const captured = await runner.run(tool, args);
@@ -432,6 +778,7 @@ it.each(["10", "DSYM", "2"])(
           new AnalysisOutputError("inspect_macho", "unaccepted native failure"),
         );
       },
+      readEncryption: unreadEncryption,
       invocation: () => {
         throw new Error(
           "Refused target does not produce inspection provenance",
@@ -451,3 +798,114 @@ it.each(["10", "DSYM", "2"])(
     });
   },
 );
+
+describe("dSYM diagnostic admission", () => {
+  const diagnostic =
+    "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
+
+  it.each([
+    { name: "stdout refusal", stdout: diagnostic, stderr: "", accepted: true },
+    { name: "stderr refusal", stdout: "", stderr: diagnostic, accepted: true },
+    {
+      name: "echoed path and prefixed refusal",
+      stdout: `/fixture/debug-companion:\n\ndyld_info: ${diagnostic}\n`,
+      stderr: "",
+      accepted: true,
+    },
+    {
+      name: "unrelated stdout after refusal",
+      stdout: `${diagnostic}\nmalformed load command`,
+      stderr: "",
+      accepted: false,
+    },
+    {
+      name: "unrelated stdout before refusal",
+      stdout: `malformed load command\n${diagnostic}`,
+      stderr: "",
+      accepted: false,
+    },
+    {
+      name: "unrelated stderr beside stdout refusal",
+      stdout: diagnostic,
+      stderr: "malformed load command",
+      accepted: false,
+    },
+    {
+      name: "unrelated stdout beside stderr refusal",
+      stdout: "malformed load command",
+      stderr: diagnostic,
+      accepted: false,
+    },
+    {
+      name: "unrelated stderr after refusal",
+      stdout: "",
+      stderr: `${diagnostic}\nmalformed load command`,
+      accepted: false,
+    },
+    {
+      name: "missing UUID before dSYM refusal",
+      stdout: `missing LC_UUID load command\n${diagnostic}`,
+      stderr: "",
+      accepted: false,
+    },
+    {
+      name: "missing UUID beside stderr dSYM refusal",
+      stdout: "missing LC_UUID load command",
+      stderr: diagnostic,
+      accepted: false,
+    },
+    {
+      name: "duplicate refusal across streams",
+      stdout: diagnostic,
+      stderr: diagnostic,
+      accepted: false,
+    },
+  ])("preserves $name", async ({ stdout, stderr, accepted }) => {
+    const runner = new NativeFixtureRunner();
+    const result = await inspectNativeMacho({
+      ...inspectionFatContext(inspectionImage({ fileType: 10 })),
+      target: nativeMachoTarget("/fixture/debug-companion"),
+      readEncryption: unreadEncryption,
+      run: async (tool, args, _signal, acceptNonZeroIf) => {
+        const captured = await runner.run(tool, args);
+        if (!captured.ok || tool !== "dyld_info") return captured;
+        const refused = {
+          ...captured.value,
+          stdout,
+          stderr,
+          stdoutBytes: Buffer.byteLength(stdout),
+          stderrBytes: Buffer.byteLength(stderr),
+          exitCode: 1,
+        };
+        return acceptNonZeroIf?.(refused)
+          ? ok(refused)
+          : err(
+              new AnalysisOutputError("inspect_macho", "native refusal", {
+                capturedOutput: {
+                  stdout,
+                  stderr,
+                  truncated: false,
+                  stdout_bytes: refused.stdoutBytes,
+                  stderr_bytes: refused.stderrBytes,
+                  exit_code: 1,
+                  signal: null,
+                },
+              }),
+            );
+      },
+      invocation: () => {
+        throw new Error("Refused target does not produce provenance");
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe(
+      accepted ? "AnalysisUnsupportedTargetError" : "AnalysisOutputError",
+    );
+    expect(result.error.capturedOutput).toMatchObject({
+      stdout,
+      stderr,
+      exit_code: 1,
+    });
+  });
+});

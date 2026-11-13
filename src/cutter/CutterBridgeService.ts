@@ -16,8 +16,8 @@ import {
   CutterBridgeClient,
   type CutterBridgeExecution,
   type CutterDiscoveryOptions,
-  CUTTER_PROVIDER_IDENTITY,
 } from "./CutterBridgeClient.js";
+import { CUTTER_PROVIDER_IDENTITY } from "./CutterProviderIdentity.js";
 
 interface CutterBridgePort {
   listSessions(
@@ -163,7 +163,7 @@ export class CutterBridgeService {
       );
     const input = parsed.data;
     const cleanup = await this.retryCleanup();
-    if (!cleanup.ok) return err(cleanup.error);
+    if (!cleanup.ok) return cleanup;
     try {
       const output = await this.client.execute({
         sessionId: input.session_id,

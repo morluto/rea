@@ -3,14 +3,17 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { Il2cppMetadataProvider } from "../../../src/il2cpp/Il2cppMetadataProvider.js";
+import { inspectIl2cppMetadataV108 } from "../../../src/il2cpp/Il2cppMetadataV108.js";
 import { Il2cppGhidraSeedWriter } from "../../../src/il2cpp/Il2cppGhidraSeedWriter.js";
 import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
 import { il2cppMetadataSchema } from "../../../src/domain/il2cpp/il2cppMetadata.js";
@@ -24,6 +27,7 @@ import {
   createLinkedIl2cppMetadataFixture,
 } from "../../fixtures/il2cpp/metadata.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -38,6 +42,149 @@ const inspectMetadata = async (path: string, limit?: number) => {
     await provider.close();
   }
 };
+
+/** Synthetic v108 header: checks bounded observations, not record-layout compatibility. */
+const version108Header = (stringBytes: Buffer) => {
+  const header = Buffer.alloc(500);
+  header.writeUInt32LE(0xfab11baf, 0);
+  header.writeInt32LE(108, 4);
+  let cursor = header.length;
+  for (let index = 0; index < 41; index++) {
+    const size = index === 2 ? stringBytes.length : 0;
+    header.writeInt32LE(cursor, 8 + index * 12);
+    header.writeInt32LE(size, 12 + index * 12);
+    header.writeInt32LE(size, 16 + index * 12);
+    cursor += size;
+  }
+  return Buffer.concat([header, stringBytes]);
+};
+
+it("retains a bounded v108 header and string observation without claiming decoded rows", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-");
+  const path = join(root, "global-metadata.dat");
+  await writeFile(path, version108Header(Buffer.from("Alpha\0Beta\0")));
+  const result = await inspectMetadata(path);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.partialObservation).toMatchObject({
+    normalized_result: {
+      inventory_status: "not-returned-as-complete",
+      version_108_partial_inventory: {
+        metadata_version: 108,
+        header_bytes: 500,
+        coverage: "header-and-bounded-string-sample-only",
+        sections: expect.arrayContaining([
+          { name: "stringLiterals", offset: 500, size: 0, count: 0 },
+          { name: "stringLiteralData", offset: 500, size: 0, count: 0 },
+          { name: "strings", offset: 500, size: 11, count: 11 },
+        ]),
+        strings: {
+          terminated_count: 2,
+          unterminated_tail_bytes: 0,
+          sample: [
+            { offset: 0, value: "Alpha", truncated: false },
+            { offset: 6, value: "Beta", truncated: false },
+          ],
+        },
+      },
+    },
+  });
+  expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+    '"images":[]',
+  );
+});
+
+it("accepts padding after the assumed v108 header", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-padding-");
+  const path = join(root, "global-metadata.dat");
+  const bytes = version108Header(Buffer.from("Name\0"));
+  const padded = Buffer.concat([
+    bytes.subarray(0, 500),
+    Buffer.alloc(16),
+    bytes.subarray(500),
+  ]);
+  for (let index = 0; index < 41; index++) {
+    padded.writeInt32LE(bytes.readInt32LE(8 + index * 12) + 16, 8 + index * 12);
+  }
+  await writeFile(path, padded);
+  const result = await inspectMetadata(path);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(result.error.partialObservation).toMatchObject({
+    normalized_result: {
+      version_108_partial_inventory: {
+        strings: { sample: [{ value: "Name" }] },
+      },
+    },
+  });
+});
+
+it("retains source evidence when a v108 section conflicts with the unverified layout", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-invalid-");
+  const path = join(root, "global-metadata.dat");
+  const bytes = version108Header(Buffer.from("Name\0"));
+  bytes.writeInt32LE(bytes.length + 1, 12 + 2 * 12);
+  await writeFile(path, bytes);
+  const result = await inspectMetadata(path);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(result.error.partialObservation).toMatchObject({
+    normalized_result: { artifact: { path, bytes: bytes.length } },
+  });
+  expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+    "version_108_partial_inventory",
+  );
+});
+
+it("bounds v108 string samples and preserves undecodable bytes and leading BOMs", async () => {
+  const repeated = await inspectIl2cppMetadataV108(
+    version108Header(Buffer.from("x\0".repeat(20))),
+  );
+  expect(repeated?.strings.terminated_count).toBe(20);
+  expect(repeated?.strings.sample).toHaveLength(16);
+  const invalid = await inspectIl2cppMetadataV108(
+    version108Header(Buffer.from([0xff, 0])),
+  );
+  expect(invalid?.strings.sample).toEqual([
+    { offset: 0, value: null, value_base64: "/w==", truncated: false },
+  ]);
+  const bom = await inspectIl2cppMetadataV108(
+    version108Header(Buffer.from([0xef, 0xbb, 0xbf, 0x41, 0])),
+  );
+  expect(bom?.strings.sample).toEqual([
+    { offset: 0, value: "\uFEFFA", value_base64: null, truncated: false },
+  ]);
+});
+
+it("yields during a large v108 string scan and honors cancellation before evidence", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-cancel-");
+  const path = join(root, "global-metadata.dat");
+  await writeFile(path, version108Header(Buffer.alloc(128 * 1024, 65)));
+  const controller = new AbortController();
+  let batches = 0;
+  const provider = new Il2cppMetadataProvider(undefined, async () => {
+    batches++;
+    controller.abort("cancel v108 scan");
+    await setImmediate();
+  });
+  try {
+    const result = await provider.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(batches).toBe(1);
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+      "version_108_partial_inventory",
+    );
+  } finally {
+    await provider.close();
+  }
+});
 
 /** Version 29 file whose methods all share one long name. */
 const sharedNameMetadata = (
@@ -91,7 +238,6 @@ it("bounds repeated literal output during decoding and reuses one span instead o
   await writeFile(path, sharedLiteralMetadata(Buffer.alloc(4096, 65), 20));
   const decode = vi.spyOn(TextDecoder.prototype, "decode");
   const result = await inspectMetadata(path, 12_000);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expanded literals accepted");
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(result.error.partialObservation).toMatchObject({
@@ -204,7 +350,6 @@ it("keeps observed source facts with a complete-report refusal", async () => {
   const bytes = createIl2cppMetadataFixture().bytes;
   await writeFile(path, bytes);
   const result = await inspectMetadata(path, 256);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected report allowance refusal");
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(result.error.partialObservation).toMatchObject({
@@ -273,7 +418,6 @@ it.each([
         { path },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected cancellation");
       expect(result.error).toBeInstanceOf(AnalysisCancelledError);
       expect(result.error.cause).toBe(reason);
@@ -325,12 +469,13 @@ it("bounds concurrent snapshots and retains active decoding until close complete
     return release;
   });
   const active = provider.inspect({ path });
-  await entered;
   let closed = false;
-  const closing = provider.close().then(() => {
-    closed = true;
-  });
-  try {
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered, active, "metadata decoding");
+    closing = provider.close().then(() => {
+      closed = true;
+    });
     const refused = await provider.inspect({ path });
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
@@ -346,18 +491,30 @@ it("bounds concurrent snapshots and retains active decoding until close complete
     }
     await setImmediate();
     expect(closed).toBe(false);
-  } finally {
     resume();
     await closing;
-  }
-  expect((await active).ok).toBe(true);
-  expect(closed).toBe(true);
-  const afterClose = await provider.inspect({ path });
-  expect(afterClose.ok).toBe(false);
-  if (!afterClose.ok) {
-    expect(afterClose.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
-    expect(projectAnalysisError(afterClose.error).retryable).toBe(false);
-  }
+    expect((await active).ok).toBe(true);
+    expect(closed).toBe(true);
+    const afterClose = await provider.inspect({ path });
+    expect(afterClose.ok).toBe(false);
+    if (!afterClose.ok) {
+      expect(afterClose.error).toBeInstanceOf(
+        AnalysisCapabilityUnavailableError,
+      );
+      expect(projectAnalysisError(afterClose.error).retryable).toBe(false);
+    }
+  }, [
+    resume,
+    async () => {
+      await closing;
+    },
+    async () => {
+      await active;
+    },
+    async () => {
+      await provider.close();
+    },
+  ]);
 });
 
 it("keeps occupied capacity retryable while the reader remains open", async () => {
@@ -377,8 +534,8 @@ it("keeps occupied capacity retryable while the reader remains open", async () =
     return release;
   });
   const active = provider.inspect({ path });
-  await entered;
-  try {
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered, active, "metadata decoding");
     const refused = await provider.inspect({ path });
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
@@ -394,11 +551,15 @@ it("keeps occupied capacity retryable while the reader remains open", async () =
         },
       });
     }
-  } finally {
-    resume();
-    await active;
-    await provider.close();
-  }
+  }, [
+    resume,
+    async () => {
+      await active;
+    },
+    async () => {
+      await provider.close();
+    },
+  ]);
 });
 
 it.each([false, true])(
@@ -421,7 +582,6 @@ it.each([false, true])(
         { path },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected the independent failure");
       expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
       expect(result.error.cause).toBe(failure);
@@ -436,7 +596,6 @@ it("retains the exact empty source observation without claiming a decoded invent
   const path = join(root, "empty.dat");
   await writeFile(path, Buffer.alloc(0));
   const result = await inspectMetadata(path);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected unsupported empty metadata");
   expect(result.error.message).toContain("unrecognized-magic");
   expect(result.error.partialObservation).toMatchObject({
@@ -460,7 +619,6 @@ it("retains the exact source when recognized magic has no complete version", asy
   await writeFile(path, bytes);
   const result = await inspectMetadata(path);
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected truncated metadata prefix");
   expect(result.error).toMatchObject({
     _tag: "AnalysisInputError",
@@ -497,7 +655,6 @@ it("keeps the metadata source observation when the selected binary does not link
   const provider = new Il2cppMetadataProvider();
   try {
     const result = await provider.inspect({ path, binary_path: binaryPath });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected the binary to be refused");
     expect(result.error.partialObservation).toMatchObject({
       operation: "observe_il2cpp_metadata_source",
@@ -543,7 +700,6 @@ it("accepts cancellation between binary linking batches and keeps the metadata s
       { path, binary_path: binaryPath },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(yields).toBe(decodeYields + 2);
@@ -603,7 +759,6 @@ it("refuses duplicate MethodDef tokens before publishing linked Evidence or Ghid
       { path, binary_path: binaryPath, detail: "complete" },
       { path: foldedSeeds },
     );
-    expect(accepted.ok).toBe(true);
     if (!accepted.ok) throw accepted.error;
     const result = il2cppMetadataSchema.parse(accepted.value.normalized_result);
     expect(result.method_addresses[0]?.address).toBe(
@@ -625,7 +780,6 @@ it("retains both observed file identities and the selected architecture when nat
   const provider = new Il2cppMetadataProvider();
   try {
     const result = await provider.inspect({ path, binary_path });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Unresolved registration accepted");
     expect(result.error.partialObservation).toMatchObject({
       normalized_result: {
@@ -801,7 +955,6 @@ it("names the metadata, not the binary, when linking reads a malformed metadata 
   const provider = new Il2cppMetadataProvider();
   try {
     const result = await provider.inspect({ path, binary_path: binaryPath });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected the metadata name to be refused");
     expect(result.error).toMatchObject({
       _tag: "AnalysisInputError",
@@ -860,7 +1013,6 @@ it("refuses generic rows that exceed the report budget and keeps the requested p
       binary_path,
       generic_instances: true,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected report allowance refusal");
     expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
     expect(result.error.partialObservation).toMatchObject({

@@ -5,7 +5,6 @@ import {
   snapshotRoots,
 } from "./FilesystemSnapshot.js";
 import { buildCaptureResult } from "./ProcessCaptureLifecycle.js";
-import { isInitializedPtyRoot } from "./ProcessSampling.js";
 import { readLinuxChildren } from "./LinuxProcessSampling.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
@@ -192,7 +191,9 @@ it("marks redacted scripted input as an interaction unknown", () => {
         scheduled_at_ms: 0,
         dispatched_at_ms: 0,
         type: "input",
-        data: "<redacted-input:6-bytes>",
+        data: "",
+        sensitive: true,
+        input_bytes: 6,
         outcome: "dispatched",
       },
     ],
@@ -207,8 +208,9 @@ it("marks redacted scripted input as an interaction unknown", () => {
 
   expect(result.residual_unknowns).toContainEqual({
     scope: "interaction",
-    reason:
-      "Sensitive scripted input values are redacted from process capture Evidence.",
+    reason: expect.stringMatching(
+      /sensitive scripted input.*terminal echoes.*redacted.*terminal states.*redacted stream.*private display effects.*transformed values.*unknown/iu,
+    ),
   });
 });
 
@@ -226,52 +228,6 @@ it("collects and deduplicates children from every Linux thread", async () => {
     value: [201, 202, 203],
     diagnostics: { count: 0, first: null, interrupted: false },
   });
-});
-
-it("admits PTY samples only after stable session and token setup", () => {
-  const initialized = {
-    pid: 100,
-    parent_pid: 10,
-    process_group_id: 100,
-    session_id: 100,
-    startTime: "200",
-  };
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: { ...initialized, process_group_id: 10, session_id: 10 },
-      observedRunId: undefined,
-      after: initialized,
-    }),
-  ).toBe(false);
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: initialized,
-      observedRunId: "run-token",
-      after: { ...initialized, startTime: "201" },
-    }),
-  ).toBe(false);
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: initialized,
-      observedRunId: "run-token",
-      after: initialized,
-    }),
-  ).toBe(true);
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: { ...initialized, session_id: null },
-      observedRunId: "run-token",
-      after: { ...initialized, session_id: null },
-    }),
-  ).toBe(true);
 });
 
 it("cancels filesystem snapshots before traversing declared roots", async () => {

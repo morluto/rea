@@ -168,14 +168,8 @@ const readAsciiBytes = (
 ): Result<string, PyInstallerFailure> => {
   const bytes = readBytes(cursor, length);
   if (!bytes.ok) return bytes;
-  if (bytes.value.some((byte) => byte > 0x7f))
-    return err(
-      pyInstallerFailure(
-        "format",
-        "PYZ marshal ASCII string contains a non-ASCII byte",
-      ),
-    );
-  return ok(bytes.value.toString("ascii"));
+  // These tags use CPython's one-byte Unicode constructor, not an ASCII check.
+  return ok(bytes.value.toString("latin1"));
 };
 
 const readUtf8 = (
@@ -198,9 +192,7 @@ const readByteString = (
 ): Result<Uint8Array, PyInstallerFailure> => {
   const length = readInt32(cursor);
   if (!length.ok) return length;
-  const bytes = readBytes(cursor, length.value);
-  if (!bytes.ok) return bytes;
-  return ok(bytes.value);
+  return readBytes(cursor, length.value);
 };
 
 const readLong = (

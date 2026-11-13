@@ -5,19 +5,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { skillDestinations } from "../../../src/application/SetupSkill.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
+import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
-/**
- * The registration command setup writes on the host running the tests. Windows
- * wraps it in `cmd.exe /d /c`, so the expected entry follows the host too.
- */
-const command = npxRegistrationCommand(process.platform);
+/** Registration command setup writes, bound to the running entrypoint. */
+const currentCommandPath = CURRENT_ENTRYPOINT_PATH;
+if (currentCommandPath === undefined)
+  throw new Error("expected a test entrypoint path");
+const command = [process.execPath, currentCommandPath, "mcp"];
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
@@ -39,6 +39,22 @@ describe("ggcode configuration paths", () => {
   it("resolves the standalone MCP config file and marker directory", () => {
     expect(ggcodePath("/home/a")).toEqual({
       name: "ggcode",
+      registrationProfile: {
+        nativeClient: "ggcode",
+        connection: {
+          kind: "flat",
+          fields: ["type"],
+          stdio: [
+            {
+              kind: "all",
+              conditions: [
+                { kind: "truthy", field: "type" },
+                { kind: "required-enum", field: "type", values: ["stdio"] },
+              ],
+            },
+          ],
+        },
+      },
       displayName: "ggcode",
       configPath: join("/home/a", ".ggcode", "mcp_servers.yaml"),
       fallbackConfigPath: join("/home/a", ".ggcode", "ggcode.yaml"),
@@ -181,7 +197,6 @@ describe("ggcode YAML registration", () => {
       { name: "rea", command: "other-tool", args: ["serve"] },
     ]);
   });
-
 });
 
 describe("ggcode YAML alias and empty-file handling", () => {
@@ -535,7 +550,6 @@ mcp_servers:
       { name: "other", command: "other-cmd" },
     ]);
   });
-
 });
 
 describe("ggcode standalone parsing guards", () => {

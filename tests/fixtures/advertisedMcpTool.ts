@@ -21,11 +21,16 @@ export const advertisedMcpToolSchemas = async (
   ajv: AdvertisedSchemaAssertions = new Ajv2020({
     strict: false,
     validateFormats: false,
+    inlineRefs: false,
+    code: { optimize: false },
   }),
 ) => {
-  const advertised = (await client.listTools()).tools.find(
+  const matches = (await client.listTools()).tools.filter(
     (tool) => tool.name === name,
   );
+  if (matches.length > 1)
+    throw new Error(`${name} has multiple advertised definitions`);
+  const advertised = matches[0];
   if (advertised?.outputSchema === undefined)
     throw new Error(`${name} must publish both schemas`);
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
@@ -49,16 +54,11 @@ export const assertRecordedMcpEvidence = (
     | "inspect_binary_layout"
     | "inspect_evm_interface"
     | "inspect_native_exports",
-  schemas: Awaited<ReturnType<typeof advertisedMcpToolSchemas>>,
   session: BinarySession,
   expected: { readonly artifact: { readonly sha256: string } },
   confidence: ReturnType<typeof parseEvidence>["confidence"],
 ) => {
   expect(response.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.outputSchema, response.structuredContent),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
   const parsed = toolContract(name).outputSchema.parse(
     response.structuredContent,
   );

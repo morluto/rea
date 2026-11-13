@@ -125,7 +125,6 @@ const harness = (
     selection: selected,
     limits: scenario.capture.limits,
     secrets,
-    readTimeoutMs: 50,
     ...(signal === undefined ? {} : { signal }),
     emit: (event) => {
       const sequence = events.length + 1;
@@ -257,6 +256,49 @@ it.each([
   },
 );
 
+it.each([
+  { size: 20, headers: { "content-encoding": "gzip" } },
+  { size: 0, headers: { "content-length": "24" } },
+  { size: 0, headers: { "content-length": "0024" } },
+  { size: 0, headers: { "content-length": "00000000000000000024" } },
+  {
+    size: 0,
+    headers: { "content-encoding": "gzip", "content-length": "0024" },
+  },
+])(
+  "reads and redacts marked content within its decoded bound: %j",
+  async (bounds) => {
+    const { collector, events, secrets } = harness({
+      request_body: false,
+      response_body: true,
+      header_values: false,
+    });
+    const request = new RequestFixture("marked");
+    const body = '{"token":"secret-token"}';
+    request.responseSize = bounds.size;
+    const response = new ResponseFixture(request, body);
+    vi.spyOn(response, "headers").mockReturnValue({
+      "content-type": "application/json",
+      ...bounds.headers,
+    });
+    secrets.responseProtector("login", [
+      { name: "token", json_pointer: "/token", secret: true },
+    ])?.(request);
+    collector.request(request);
+    collector.response(response);
+    collector.finished(request);
+    await collector.finish();
+    const content = events.find(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    );
+    expect(content).toBeDefined();
+    const text = bodyText(content!);
+    expect(text).not.toContain("secret-token");
+    expect(text).toContain("[REDACTED:page:login.token]");
+    expect(response.bodyReads).toBe(1);
+  },
+);
+
 it("preserves unselected source spellings while redacting escaped aliases", async () => {
   const { collector, events, secrets } = harness({
     request_body: false,
@@ -317,22 +359,28 @@ it("associates sensitive fields by request identity while keeping same-URL unmar
   );
 });
 
-it.each(["gzip", "cache"])(
-  "withholds marked response content when decoded bounds are unknown: %s",
-  async (kind) => {
+it.each([
+  { size: 64, headers: { "content-encoding": "br" } },
+  { size: 0, headers: {} },
+  { size: 0, headers: { "content-length": "0000" } },
+  { size: 0, headers: { "content-length": "24, 24" } },
+  { size: 0, headers: { "content-length": "0009007199254740993" } },
+  { size: 0, headers: { "content-length": "00012000001" } },
+])(
+  "withholds marked response content when decoded bounds are unknown or over budget: %j",
+  async (bounds) => {
     const { collector, events, secrets } = harness();
     const request = new RequestFixture("marked");
-    if (kind === "cache") request.responseSize = 0;
+    request.responseSize = bounds.size;
     const secret = "private-source-token";
     const response = new ResponseFixture(
       request,
       JSON.stringify({ token: secret }),
     );
-    if (kind === "gzip")
-      vi.spyOn(response, "headers").mockReturnValue({
-        "content-type": "application/json",
-        "content-encoding": "gzip",
-      });
+    vi.spyOn(response, "headers").mockReturnValue({
+      "content-type": "application/json",
+      ...bounds.headers,
+    });
     secrets.responseProtector("login", [
       { name: "token", json_pointer: "/token", secret: true },
     ])?.(request);
@@ -703,7 +751,7 @@ it("starts each queued body's timeout when its read begins", async () => {
     const response = new ResponseFixture(request, "unused");
     response.read = () =>
       new Promise((resolve) => {
-        setTimeout(() => resolve(Buffer.from("captured")), 40);
+        setTimeout(() => resolve(Buffer.from("captured")), 4_000);
       });
     collector.request(request);
     collector.response(response);
@@ -711,8 +759,8 @@ it("starts each queued body's timeout when its read begins", async () => {
   }
 
   const finishing = collector.finish();
-  await vi.advanceTimersByTimeAsync(40);
-  await vi.advanceTimersByTimeAsync(40);
+  await vi.advanceTimersByTimeAsync(4_000);
+  await vi.advanceTimersByTimeAsync(4_000);
   await finishing;
 
   const content = events.filter(
@@ -787,7 +835,7 @@ it("bounds hung completed-body reads and rejects late mutation after finalizatio
   collector.response(response);
   collector.finished(request);
   const finishing = collector.finish();
-  await vi.advanceTimersByTimeAsync(51);
+  await vi.advanceTimersByTimeAsync(5_001);
   await finishing;
   const frozen = JSON.stringify(events);
   expect(events).toContainEqual(
@@ -829,29 +877,37 @@ it("cancellation settles pending reads and preserves the cancelled reason", asyn
   );
 });
 
-it("records failures without attempting to read the failed body", async () => {
-  const { collector, events } = harness();
-  const request = new RequestFixture("failed");
-  const response = new ResponseFixture(request, "partial");
-  collector.request(request);
-  collector.response(response);
-  collector.failed(request);
-  await collector.finish();
-  expect(response.bodyReads).toBe(0);
-  expect(events).toContainEqual(
-    expect.objectContaining({
-      kind: "request-failed",
-      failure: "connection reset",
-    }),
-  );
-  expect(events).toContainEqual(
-    expect.objectContaining({
-      kind: "network-content",
-      phase: "response",
-      body: expect.objectContaining({ reason: "request-failed" }),
-    }),
-  );
-});
+it.each([false, true])(
+  "records failed requests without hiding header read gaps (headers fail: %s)",
+  async (headersFail) => {
+    const { collector, events } = harness();
+    const request = new RequestFixture("failed");
+    const response = new ResponseFixture(request, "partial");
+    if (headersFail)
+      vi.spyOn(response, "headersArray").mockRejectedValue(
+        new Error("Headers unavailable"),
+      );
+    collector.request(request);
+    collector.response(response);
+    collector.failed(request);
+    await collector.finish();
+    expect(response.bodyReads).toBe(0);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "request-failed",
+        failure: "connection reset",
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "network-content",
+        phase: "response",
+        body: expect.objectContaining({ reason: "request-failed" }),
+      }),
+    );
+    expect(collector.limitations()).toHaveLength(headersFail ? 1 : 0);
+  },
+);
 
 it("links observed redirect hops and leaves unseen predecessors unknown", async () => {
   const { collector, events } = harness();

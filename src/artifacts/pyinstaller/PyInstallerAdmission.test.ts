@@ -3,12 +3,16 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { withOwnedRegularFile } from "../../filesystem/OwnedRegularFile.js";
+import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { ArtifactEmbeddedFormatProbes } from "../ArtifactEmbeddedFormatProbes.js";
 import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
 import { classifyAndHashRootForInventory } from "../inventory/classify.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
-import { cArchiveExecutable } from "./CArchive.fixture.js";
+import {
+  CARCHIVE_COOKIE_MAGIC,
+  cArchiveExecutable,
+} from "./CArchive.fixture.js";
 import * as layout from "./CArchiveLayout.js";
 
 const fixture = () =>
@@ -61,6 +65,7 @@ it.each([
       }),
     );
     const resourceScope = new ArtifactResourceScope();
+    let rootOwner: OwnedFileHandle | undefined;
     try {
       const classified = await classifyAndHashRootForInventory(
         path,
@@ -68,6 +73,7 @@ it.each([
         await lstat(path),
         { resourceScope },
       );
+      rootOwner = classified.rootSource?.owner;
       const admission = classified.readerAdmission;
       if (
         admission === undefined ||
@@ -95,8 +101,23 @@ it.each([
         await reader.close();
       }
     } finally {
-      await resourceScope.close();
+      try {
+        if (rootOwner !== undefined) {
+          const cleanup = await resourceScope.release({
+            kind: "file-handle",
+            resource: `root artifact descriptor for ${path}`,
+            handle: rootOwner,
+          });
+          if (cleanup.kind === "failed")
+            throw resourceScope.cleanupFailure({ kind: "completed" }, [
+              cleanup,
+            ]);
+        }
+      } finally {
+        await resourceScope.close();
+      }
     }
+    expect(rootOwner?.handle.fd).toBe(-1);
   },
 );
 
@@ -230,7 +251,7 @@ it("retains rejected magic candidates without classifying their native carrier a
     path,
     Buffer.concat([
       fixture().subarray(0, 64),
-      layout.PYINSTALLER_COOKIE_MAGIC,
+      CARCHIVE_COOKIE_MAGIC,
       Buffer.alloc(88),
     ]),
   );
@@ -270,11 +291,7 @@ it("continues past an invalid trailing magic copy to inventory the valid cookie"
   const path = join(root, "app");
   await writeFile(
     path,
-    Buffer.concat([
-      fixture(),
-      layout.PYINSTALLER_COOKIE_MAGIC,
-      Buffer.alloc(88),
-    ]),
+    Buffer.concat([fixture(), CARCHIVE_COOKIE_MAGIC, Buffer.alloc(88)]),
   );
   const resourceScope = new ArtifactResourceScope();
   try {
@@ -314,7 +331,7 @@ it("does not cache an incomplete tail read as an absent cookie and can retry", a
     try {
       await expect(probes.pyInstaller()).rejects.toMatchObject({
         reason: "format",
-        message: "CArchive tail is truncated",
+        message: expect.stringMatching(/tail.*truncated/iu),
       });
       expect(calls).toBe(2);
       expect(Object.hasOwn(probes.completedFacts(), "pyInstaller")).toBe(false);

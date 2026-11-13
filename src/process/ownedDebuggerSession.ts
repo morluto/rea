@@ -1,11 +1,133 @@
 import { readFile } from "node:fs/promises";
 
+import {
+  DEBUGGER_COMMAND_DEADLINE_SETTING,
+  DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
+  type DebuggerAdmissionLimit,
+} from "../config/debuggerSessionLimits.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import type { AnalysisSettingId } from "../domain/analysisSettings.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
+import { OwnedDebuggerCleanupError } from "./ownedDebuggerCleanupError.js";
 
 /** Result of terminating one debugger process owned by this application. */
 export type OwnedDebuggerStopResult =
   | { readonly status: "stopped" | "already_exited" }
   | { readonly status: "incomplete"; readonly reason: string };
+
+const RUNTIME_DEBUGGER_SETTINGS = {
+  [DEBUGGER_COMMAND_DEADLINE_SETTING]: "debugger.command_deadline_ms",
+  [DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING]:
+    "debugger.max_command_output_bytes",
+} as const satisfies Partial<Record<string, AnalysisSettingId>>;
+
+const runtimeDebuggerSetting = (
+  admission: DebuggerAdmissionLimit,
+): AnalysisSettingId | undefined =>
+  RUNTIME_DEBUGGER_SETTINGS[
+    admission.setting as keyof typeof RUNTIME_DEBUGGER_SETTINGS
+  ];
+
+/** Structured limit for a debugger budget that update_analysis_settings can change. */
+export const debuggerAnalysisLimit = (admission: DebuggerAdmissionLimit) => {
+  const setting = runtimeDebuggerSetting(admission);
+  return setting === undefined
+    ? undefined
+    : analysisSettingLimit(setting, admission.value, admission.source);
+};
+
+/** Structured facts a limit error exposes. The sentence is display text. */
+export const debuggerAdmissionDiagnostics = (
+  admission: DebuggerAdmissionLimit,
+) => {
+  const analysisSetting = runtimeDebuggerSetting(admission);
+  const update_mode = analysisSetting === undefined ? "restart" : "runtime";
+  return {
+    setting: admission.setting,
+    effective_value: admission.value,
+    source: admission.source,
+    default_value: admission.defaultValue,
+    minimum: admission.minimum,
+    maximum: admission.maximum,
+    unit: admission.unit,
+    update_mode,
+    pending_restart: false as const,
+    ...(analysisSetting === undefined
+      ? {}
+      : { analysis_setting: analysisSetting }),
+  };
+};
+
+/** Name the setting, the effective value, its source, and the range. */
+export const debuggerAdmissionRecovery = (
+  admission: DebuggerAdmissionLimit,
+): string => {
+  const facts = debuggerAdmissionDiagnostics(admission);
+  const identity =
+    facts.analysis_setting === undefined
+      ? admission.setting
+      : `${facts.analysis_setting} (launch seed ${admission.setting})`;
+  const change =
+    facts.update_mode === "runtime"
+      ? `It can be changed at runtime with update_analysis_settings.`
+      : `Set ${admission.setting} in the environment that starts REA to a positive decimal integer from ${String(admission.minimum)} to ${String(admission.maximum)}, then restart REA.`;
+  return `The effective ${identity} value is ${String(admission.value)} ${admission.unit} (source ${admission.source}; default ${String(admission.defaultValue)} ${admission.unit}, floor ${String(admission.minimum)} ${admission.unit}, maximum ${String(admission.maximum)} ${admission.unit}). ${change}`;
+};
+
+/** Fixed startup deadline. Distinct from the shared command deadline setting. */
+export const fixedDeadlineGuidance = (
+  what: string,
+  timeoutMs: number,
+): { readonly userMessage: string; readonly remediationAction: string } => ({
+  userMessage: `${what} reached its ${String(timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
+  remediationAction: `This ${String(timeoutMs)} ms deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+});
+
+/** Shared command deadline. The setting, not a per-provider constant, owns the cap. */
+export const configurableDeadlineGuidance = (
+  what: string,
+  admission: DebuggerAdmissionLimit,
+): {
+  readonly userMessage: string;
+  readonly remediationAction: string;
+  readonly diagnostics: ReturnType<typeof debuggerAdmissionDiagnostics>;
+} => {
+  const recovery = debuggerAdmissionRecovery(admission);
+  const limit = debuggerAnalysisLimit(admission);
+  return {
+    userMessage: `${what} reached its ${String(admission.value)} ms deadline (deadlineExpired). ${recovery}`,
+    remediationAction: recovery,
+    diagnostics: debuggerAdmissionDiagnostics(admission),
+    ...(limit === undefined ? {} : { limit }),
+  };
+};
+
+/** Capacity refusal whose projection carries the setting, value, source, and range. */
+export const debuggerResourceConstraintError = (
+  operation: string,
+  resource: "memory" | "transport",
+  summary: string,
+  remediation: string,
+  admission: DebuggerAdmissionLimit,
+  reported: Readonly<Record<string, JsonValue>>,
+): AnalysisResourceConstraintError => {
+  const facts = debuggerAdmissionDiagnostics(admission);
+  const recovery = debuggerAdmissionRecovery(admission);
+  const limit = debuggerAnalysisLimit(admission);
+  return new AnalysisResourceConstraintError(
+    operation,
+    resource,
+    `${summary} ${recovery}`,
+    { ...facts, ...reported },
+    {
+      remediationAction: `${remediation} ${recovery}`,
+      diagnostics: facts,
+      ...(limit === undefined ? {} : { limit }),
+    },
+  );
+};
 
 const DETACH_TIMEOUT_MS = 1_000;
 const MAX_LATE_DEBUGGER_OUTPUT_BYTES = 64 * 1024;
@@ -174,7 +296,11 @@ const finishExitedDebuggerSession = async (
   return { status };
 };
 
-/** Stop only the directly owned debugger process, never its process group or target. */
+/**
+ * Stop only the directly owned debugger process, never its process group or target.
+ * The caller must permanently close command admission before the first attempt;
+ * retries retain completed detach facts while process termination is pending.
+ */
 export const stopOwnedDebuggerProcess = async (
   session: OwnedDebuggerProcess,
   debuggerName: string,
@@ -218,36 +344,42 @@ export const stopOwnedDebuggerProcess = async (
       status: "incomplete",
       reason: `Owned ${debuggerName} process cannot be stopped safely on Windows because job termination can also terminate its inferior processes.`,
     };
-  try {
-    if (session.detachInferior === undefined) {
-      detachOutcomes.set(session, "unconfirmed");
+  // Admission remains closed once cleanup starts. A verified detach is an
+  // owned completion fact, even when terminating the debugger later fails.
+  // Retrying the command transport can no longer improve that fact and may
+  // block termination if shutdown already made the transport unavailable.
+  if (detachOutcomes.get(session) !== "confirmed") {
+    try {
+      if (session.detachInferior === undefined) {
+        detachOutcomes.set(session, "unconfirmed");
+        return {
+          status: "incomplete",
+          reason: `Owned ${debuggerName} inferior detach cannot be verified because the provider has no detach capability.`,
+        };
+      }
+      const detached = await waitForInferiorDetach(
+        session,
+        session.detachInferior,
+      );
+      if (detached === undefined)
+        return {
+          status: "incomplete",
+          reason: `Owned ${debuggerName} inferior detach was not verified within ${String(DETACH_TIMEOUT_MS)} ms. This release has no runtime override.`,
+        };
+      if (!isVerifiedDetachResult(detached)) {
+        detachOutcomes.set(session, "unconfirmed");
+        return {
+          status: "incomplete",
+          reason: `Owned ${debuggerName} provider did not confirm no inferior or detachment with a durable output sink.`,
+        };
+      }
+      detachOutcomes.set(session, "confirmed");
+    } catch (cause: unknown) {
       return {
         status: "incomplete",
-        reason: `Owned ${debuggerName} inferior detach cannot be verified because the provider has no detach capability.`,
+        reason: `Owned ${debuggerName} inferior detach could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`,
       };
     }
-    const detached = await waitForInferiorDetach(
-      session,
-      session.detachInferior,
-    );
-    if (detached === undefined)
-      return {
-        status: "incomplete",
-        reason: `Owned ${debuggerName} inferior detach was not verified within ${String(DETACH_TIMEOUT_MS)} ms. This release has no runtime override.`,
-      };
-    if (!isVerifiedDetachResult(detached)) {
-      detachOutcomes.set(session, "unconfirmed");
-      return {
-        status: "incomplete",
-        reason: `Owned ${debuggerName} provider did not confirm no inferior or detachment with a durable output sink.`,
-      };
-    }
-    detachOutcomes.set(session, "confirmed");
-  } catch (cause: unknown) {
-    return {
-      status: "incomplete",
-      reason: `Owned ${debuggerName} inferior detach could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`,
-    };
   }
   session.launched.process.kill("SIGTERM");
   if (!(await session.supervisor.waitForExit(300))) {
@@ -273,42 +405,58 @@ export const stopOwnedDebuggerProcess = async (
   );
 };
 
+/** What closing all sessions needs from a session it may have to retain. */
+interface RetainableDebuggerSession {
+  readonly id: string;
+  readonly launched: {
+    readonly process: { readonly pid?: number | undefined };
+  };
+  readonly supervisor: { ref(): void; unref(): void };
+}
+
 /**
  * Stop every owned session and retain failed sessions for possible recovery.
  * Callers must block replacement admission and drain in-flight starts until
  * this settles; incomplete cleanup leaves the old owner in the map for retry.
+ *
+ * Closing all sessions means their owner is finishing, so a retained session
+ * stops holding the host's event loop, as a supervised provider does after
+ * incomplete cleanup. Ownership in this process is unchanged, and a retry
+ * restores the references.
  */
 export const closeOwnedDebuggerSessions = async <
-  Session extends { id: string },
+  Session extends RetainableDebuggerSession,
 >(
   sessions: Map<string, Session>,
   stop: (session: Session) => Promise<OwnedDebuggerStopResult>,
   debuggerName: string,
 ): Promise<void> => {
+  const entries = [...sessions.entries()];
+  for (const [, session] of entries) session.supervisor.ref();
   const results = await Promise.allSettled(
-    [...sessions.entries()].map(async ([key, session]) => ({
-      key,
-      session,
-      result: await stop(session),
-    })),
+    entries.map(async ([, session]) => stop(session)),
   );
   const failures: Error[] = [];
-  for (const settled of results) {
+  const retained: Session[] = [];
+  for (const [index, settled] of results.entries()) {
+    const [key, session] = entries[index]!;
     if (settled.status === "rejected") {
       failures.push(
         settled.reason instanceof Error
           ? settled.reason
           : new Error(String(settled.reason)),
       );
-      continue;
-    }
-    const { key, session, result } = settled.value;
-    if (result.status === "incomplete") failures.push(new Error(result.reason));
-    else if (sessions.get(key) === session) sessions.delete(key);
+      retained.push(session);
+    } else if (settled.value.status === "incomplete") {
+      failures.push(new Error(settled.value.reason));
+      retained.push(session);
+    } else if (sessions.get(key) === session) sessions.delete(key);
   }
-  if (failures.length > 0)
-    throw new AggregateError(
-      failures,
-      `One or more owned ${debuggerName} processes did not stop cleanly`,
-    );
+  if (failures.length === 0) return;
+  for (const session of retained) session.supervisor.unref();
+  throw new OwnedDebuggerCleanupError(
+    failures,
+    `One or more owned ${debuggerName} processes did not stop cleanly`,
+    retained.flatMap(({ launched }) => launched.process.pid ?? []),
+  );
 };

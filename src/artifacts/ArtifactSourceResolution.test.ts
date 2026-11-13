@@ -8,6 +8,9 @@ import { assertArtifactFileSelectedSource } from "./ArtifactFileSource.js";
 import { assertArtifactSelectedSource } from "./ArtifactSelectedSource.js";
 import { readStableArtifact } from "./readStableArtifact.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
+import { createDesktopApplicationService } from "../composition/desktop.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { desktopApplicationSchema } from "../domain/desktopApplication.js";
 
 it.skipIf(process.platform === "win32")(
   "admits a caller-selected directory symlink without changing its target identity",
@@ -42,6 +45,52 @@ it.skipIf(process.platform === "win32")(
       });
     } finally {
       await reader.close();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "rejects desktop inspection when the selected spelling traverses a regular file",
+  async () => {
+    const root = await createTestTempDirectory(
+      "rea-desktop-enotdir-intermediate-",
+    );
+    const app = join(root, "Demo.app");
+    await mkdir(app);
+    await writeFile(
+      join(app, "Info.plist"),
+      `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.example.demo</string></dict></plist>`,
+    );
+    await writeFile(join(app, "marker.txt"), "marker\n");
+    await writeFile(join(root, "regular"), "regular file\n");
+    const service = createDesktopApplicationService();
+    try {
+      const invalid = await service.inspect({
+        path: `${root}/regular/../Demo.app`,
+        max_entries: 32,
+        max_probe_bytes: 4096,
+      });
+      if (invalid.ok) throw new Error("expected ENOTDIR refusal");
+      expect(projectAnalysisError(invalid.error)).toMatchObject({
+        code: "target_unavailable",
+        category: "unavailable",
+      });
+      const valid = await service.inspect({
+        path: app,
+        max_entries: 32,
+        max_probe_bytes: 4096,
+      });
+      if (!valid.ok) throw valid.error;
+      expect(
+        desktopApplicationSchema
+          .parse(valid.value.normalized_result)
+          .files.map((file) => file.path)
+          .sort(),
+      ).toEqual(["Info.plist", "marker.txt"]);
+    } finally {
+      await service.close();
     }
   },
 );
@@ -103,5 +152,40 @@ it.each(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG", "EACCES", "EIO"])(
         reason: "integrity",
         cause: failure,
       });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps a rejected symlink without a hint when its resolved target lookup fails",
+  async () => {
+    const root = await createTestTempDirectory("rea-stable-symlink-lookup-");
+    const target = join(root, "target.bin");
+    const selected = join(root, "selected");
+    await writeFile(target, "carrier");
+    await symlink(target, selected);
+    const selectedStats = await lstat(selected, { bigint: true });
+    const failure = Object.assign(new Error("target lookup failed"), {
+      code: "EACCES",
+    });
+
+    const rejected: unknown = await readStableArtifact(
+      selected,
+      1024,
+      undefined,
+      {
+        lstat: async (path) => {
+          if (path === selected) return selectedStats;
+          throw failure;
+        },
+        realpath: async () => target,
+        open: async () => {
+          throw new Error("A rejected symlink must not be opened");
+        },
+      },
+    ).catch((cause: unknown) => cause);
+    expect(rejected).toMatchObject({ reason: "path", resolvedPath: undefined });
+    if (!(rejected instanceof Error)) throw new Error("Expected path failure");
+    expect(rejected.message).toContain(selected);
+    expect(rejected.message).toContain("symlink");
   },
 );

@@ -1,10 +1,11 @@
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { createTestProcessRegistry } from "../../support/process/processFixture.js";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, onTestFinished } from "vitest";
 
 import { electronActiveTimelineEventSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -47,6 +48,7 @@ class BrowserWindow extends EventEmitter {
     this.id = 3;
     this.webContents = new WebContents();
     this.options = options;
+    this.webContents.session = options.webPreferences.session ?? (options.webPreferences.partition ? createSession() : session);
     this.webContents.getLastWebPreferences = () => options.webPreferences;
     app.emit("browser-window-created", {}, this);
   }
@@ -69,9 +71,10 @@ const shell = {
 };
 const createSession = () => {
   const value = new EventEmitter();
-  value.setPermissionRequestHandler = () => undefined;
-  value.setPermissionCheckHandler = () => undefined;
+  value.setPermissionRequestHandler = function(handler) { this.requestHandler = handler; };
+  value.setPermissionCheckHandler = function(handler) { this.checkHandler = handler; };
   value.setCertificateVerifyProc = () => undefined;
+  app.emit("session-created", value);
   return value;
 };
 const session = createSession();
@@ -89,6 +92,7 @@ module.exports = {
   session: {
     defaultSession: session,
     fromPartition: () => customSession,
+    fromPath: () => customSession,
   },
   shell,
   utilityProcess,
@@ -108,8 +112,8 @@ window.webContents.emit(longEventName);
 const utility = electron.utilityProcess.fork("utility.js");
 utility.emit("message", { data: { value: true } });
 utility.postMessage({ value: true });
-electron.session.defaultSession.emit("will-download", window.webContents, { cancel() {} });
-electron.session.fromPartition("persist:custom").emit("will-download", window.webContents, { cancel() {} });
+electron.session.defaultSession.emit("will-download", {}, { cancel() {} }, window.webContents);
+electron.session.fromPartition("persist:custom").emit("will-download", {}, { cancel() {} }, window.webContents);
 const defaultPopupDecision = window.webContents.windowOpenHandler({ url: "https://default-popup.invalid" });
 window.webContents.setWindowOpenHandler(() => ({ action: "allow" }));
 const popupDecision = window.webContents.windowOpenHandler({ url: "https://popup.invalid" });
@@ -225,7 +229,10 @@ it("retains active hook evidence within its event-retention budget", async () =>
     snapshot.events.filter(
       (event) => event.kind === "download" && event.phase === "blocked",
     ),
-  ).toHaveLength(2);
+  ).toEqual([
+    expect.objectContaining({ target: "webContents:12" }),
+    expect.objectContaining({ target: "webContents:12" }),
+  ]);
   const ipc = snapshot.events.find(
     (event) => event.kind === "main-handler-invocation",
   );
@@ -246,6 +253,91 @@ it("retains active hook evidence within its event-retention budget", async () =>
     ]),
   );
 });
+
+it.each([
+  "ready-default",
+  "deferred-default",
+  "partition",
+  "path",
+  "window",
+  "engine",
+])(
+  "denies permissions before app registration and after replacement for %s sessions",
+  async (admission) => {
+    const root = await createTestTempDirectory("rea-electron-session-policy-");
+    temporary.push(root);
+    await writeElectronFixture(
+      root,
+      admission === "deferred-default"
+        ? electronModuleSource.replace(
+            "app.isReady = () => true",
+            "app.isReady = () => false",
+          )
+        : electronModuleSource,
+    );
+    const script = join(root, "permissions.cjs");
+    await writeFile(
+      script,
+      `const electron = require("electron");
+const admission = ${JSON.stringify(admission)};
+if (admission === "deferred-default") electron.app.emit("ready");
+const engineSession = {
+  setPermissionRequestHandler(handler) { this.requestHandler = handler; },
+  setPermissionCheckHandler(handler) { this.checkHandler = handler; },
+};
+if (admission === "engine") electron.app.emit("session-created", engineSession);
+const selected = admission === "partition" ? electron.session.fromPartition("persist:caller")
+  : admission === "path" ? electron.session.fromPath("/caller/profile")
+  : admission === "window" ? new electron.BrowserWindow({ webPreferences: { partition: "caller" } }).webContents.session
+  : admission === "engine" ? engineSession : electron.session.defaultSession;
+const webContents = { id: 45 };
+const query = () => {
+  let granted = true;
+  if (selected.requestHandler) selected.requestHandler(webContents, "notifications", value => { granted = value; });
+  return { granted, checked: selected.checkHandler ? selected.checkHandler(webContents, "notifications") : true };
+};
+const initial = query();
+let applicationCalls = 0;
+selected.setPermissionRequestHandler((_contents, _permission, callback) => { applicationCalls++; callback(true); });
+selected.setPermissionCheckHandler(() => { applicationCalls++; return true; });
+const replaced = query();
+selected.setPermissionRequestHandler(null);
+selected.setPermissionCheckHandler(null);
+const cleared = query();
+new electron.BrowserWindow({ webPreferences: { session: selected } });
+console.log(JSON.stringify({ initial, replaced, cleared, applicationCalls,
+  snapshot: globalThis.__reaElectronActiveSnapshot() }));`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const result = JSON.parse(execution.stdout.trim());
+    expect(result.initial).toEqual({ granted: false, checked: false });
+    expect(result.replaced).toEqual(result.initial);
+    expect(result.cleared).toEqual(result.initial);
+    expect(result.applicationCalls).toBe(0);
+    expect(result.snapshot.hook_error).toBe(false);
+    expect(
+      result.snapshot.events.filter(
+        (event: { kind: string }) => event.kind === "permission",
+      ),
+    ).toEqual(
+      Array.from({ length: 3 }, () => [
+        expect.objectContaining({
+          event: "permission-request",
+          phase: "blocked",
+          target: "webContents:45",
+        }),
+        expect.objectContaining({
+          event: "permission-check",
+          phase: "blocked",
+          target: "webContents:45",
+        }),
+      ]).flat(),
+    );
+    expect(JSON.stringify(result.snapshot)).not.toContain("notifications");
+    electronActiveTimelineEventSchema.array().parse(result.snapshot.events);
+  },
+);
 
 it("blocks synchronous shell effects with their native return contracts and retains argument shapes only", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-shell-");
@@ -816,6 +908,38 @@ process.stdout.write(JSON.stringify({
   expect(invocations).toEqual(["ch"]);
 });
 
+it("does not infer hook dispatch from an application's listener metadata", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-indirect-owner-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "indirect-owner.cjs");
+  await writeFile(
+    script,
+    `const {ipcMain}=require("electron");
+ipcMain.on("seed",()=>{});
+let calls=0;
+const outer=()=>{calls++;};
+outer.listener=ipcMain.rawListeners("seed")[0];
+ipcMain.on("outer",outer);
+ipcMain.emit("outer", {sender:{id:9}});
+ipcMain.removeListener("outer",outer);
+const events=globalThis.__reaElectronActiveSnapshot().events;
+process.stdout.write(JSON.stringify({calls,remaining:ipcMain.listenerCount("outer"),
+ invocations:events.filter(e=>e.kind==="main-event-invocation"&&e.channel==="outer").length,
+ gaps:events.filter(e=>e.kind==="ipc-observation-gap"&&e.channel==="outer").map(e=>e.event)}));`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(JSON.parse(execution.stdout)).toEqual({
+    calls: 1,
+    remaining: 0,
+    invocations: 0,
+    gaps: ["listener-chain"],
+  });
+});
+
 it("keeps ipcMain once self-removal through an on decorator that wraps the hook", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-wrap-");
   temporary.push(root);
@@ -1006,7 +1130,7 @@ it("matches native once dispatch and retains only established invocations", asyn
   await copyFile(
     fileURLToPath(
       new URL(
-        "../../../experiments/analysis-efficiency/electron-once-runtime.mjs",
+        "../../../tests/support/analysis-efficiency/electron-once-runtime.mjs",
         import.meta.url,
       ),
     ),
@@ -1559,7 +1683,7 @@ it.each([
     depth: 16,
     prototypeDepth: 0,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 1,
   },
   {
@@ -1599,7 +1723,7 @@ it.each([
     depth: 1,
     prototypeDepth: 1,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 0,
   },
   {
@@ -1623,7 +1747,7 @@ it.each([
     depth: 1,
     prototypeDepth: 16,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 0,
   },
   {
@@ -3305,6 +3429,188 @@ process.stdout.write(JSON.stringify({
   },
 );
 
+it("preserves warning-only rejections and records later blocked shell rejections", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-rejection-warn-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "warnings.cjs");
+  await writeFile(
+    script,
+    `const { shell } = require("electron");
+Promise.reject(new Error("controlled rejection"));
+setImmediate(() => {
+  shell.openExternal("https://example.invalid");
+  setImmediate(() => {
+    console.log(JSON.stringify({
+      listeners: process.listenerCount("unhandledRejection"),
+      events: globalThis.__reaElectronActiveSnapshot().events.filter(event =>
+        event.kind === "process-lifecycle" && event.event === "unhandled-rejection").map(event => ({
+          phase: event.phase, argument_shapes: event.argument_shapes, error: event.error,
+        })),
+    }));
+  });
+});
+`,
+  );
+  const result = await runNode(script, root, undefined, [
+    "--unhandled-rejections=warn",
+  ]);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stderr).toContain("UnhandledPromiseRejectionWarning");
+  expect(JSON.parse(result.stdout)).toEqual({
+    listeners: 0,
+    events: Array.from({ length: 2 }, () => ({
+      phase: "observed",
+      argument_shapes: ["object", "object"],
+      error: true,
+    })),
+  });
+});
+
+it("preserves application rejection listeners and borrowed process emit behavior", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-rejection-listener-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "listeners.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
+const reason = new Error("controlled listener reason");
+const promise = Promise.resolve();
+const sentinel = new Error("controlled listener throw");
+let calls = 0;
+process.on("unhandledRejection", (actualReason, actualPromise) => {
+  if (actualReason !== reason || actualPromise !== promise) throw new Error("identity changed");
+  calls++;
+  if (calls === 2) throw sentinel;
+});
+const returned = process.emit("unhandledRejection", reason, promise);
+let sameThrow = false;
+try { process.emit("unhandledRejection", reason, promise); } catch (cause) { sameThrow = cause === sentinel; }
+const borrowed = process.emit.call(new EventEmitter(), "unhandledRejection", reason, promise);
+console.log(JSON.stringify({ calls, returned, sameThrow, borrowed,
+  listeners: process.listenerCount("unhandledRejection"),
+  observed: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle" && event.event === "unhandled-rejection").length,
+}));
+`,
+  );
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    calls: 2,
+    returned: true,
+    sameThrow: true,
+    borrowed: false,
+    listeners: 1,
+    observed: 2,
+  });
+});
+
+it("delivers revoked proxy rejections to the application's original handler", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-revoked-rejection-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "revoked-rejections.cjs");
+  await writeFile(
+    script,
+    `const entries = [{}, [], () => undefined, []].map((target, index) => {
+  const { proxy, revoke } = Proxy.revocable(target, {});
+  if (index < 3) revoke();
+  return { reason: proxy, promise: undefined };
+});
+const received = [];
+process.on("unhandledRejection", (reason, promise) => {
+  received.push(entries.some(entry => entry.reason === reason && entry.promise === promise));
+});
+for (const entry of entries) entry.promise = Promise.reject(entry.reason);
+setImmediate(() => console.log(JSON.stringify({
+  received,
+  listeners: process.listenerCount("unhandledRejection"),
+  shapes: globalThis.__reaElectronActiveSnapshot().events.filter(event =>
+    event.kind === "process-lifecycle" && event.event === "unhandled-rejection").map(event => event.argument_shapes),
+})));
+`,
+  );
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    received: [true, true, true, true],
+    listeners: 1,
+    shapes: [
+      ["object", "object"],
+      ["object", "object"],
+      ["function", "object"],
+      ["array", "object"],
+    ],
+  });
+});
+
+it("preserves an Electron-style uncaught exception listener policy", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-uncaught-policy-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(
+    root,
+    electronModuleSource +
+      `
+process.on("uncaughtException", () => {
+  if (process.listenerCount("uncaughtException") > 1) return;
+  console.log(JSON.stringify({ listeners: process.listenerCount("uncaughtException"),
+    kinds: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle").map(event => event.event),
+  }));
+});
+`,
+  );
+  const script = join(root, "uncaught.cjs");
+  await writeFile(script, 'throw new Error("controlled uncaught");\n');
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    listeners: 1,
+    kinds: ["uncaught-exception"],
+  });
+});
+
+it.each(["throw", "strict"])(
+  "preserves fatal rejection policy in %s mode",
+  async (mode) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-hook-rejection-fatal-",
+    );
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "fatal-rejection.cjs");
+    await writeFile(
+      script,
+      `process.on("exit", () => console.log(JSON.stringify({
+  listeners: process.listenerCount("uncaughtException"),
+  kinds: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle").map(event => event.event),
+})));
+Promise.reject(new Error("controlled fatal rejection"));
+`,
+    );
+    const result = await runNode(script, root, undefined, [
+      "--unhandled-rejections=" + mode,
+    ]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("controlled fatal rejection");
+    expect(JSON.parse(result.stdout)).toEqual({
+      listeners: 0,
+      kinds:
+        mode === "throw"
+          ? ["unhandled-rejection", "uncaught-exception"]
+          : ["uncaught-exception"],
+    });
+  },
+);
+
 it("preserves fatal process termination after recording uncaught exceptions", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-fatal-");
   temporary.push(root);
@@ -3322,6 +3628,101 @@ it("preserves fatal process termination after recording uncaught exceptions", as
   expect(result.code).not.toBe(0);
   expect(result.stdout.trim()).toBe("true");
   expect(result.stderr).toContain("fatal-hook-secret");
+});
+
+it.each([{ sandboxPrefix: [] }, { sandboxPrefix: ["--no-sandbox"] }])(
+  "restores the exact application argv with Playwright prefix %j",
+  async ({ sandboxPrefix }) => {
+    const root = await createTestTempDirectory("rea-electron-argv-");
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const hook = join(root, "electron-active-hook.cjs");
+    const callerArguments = [
+      "--",
+      "/caller/plugin.asar",
+      "--config=/caller/app.asar/settings",
+      "-r",
+      hook,
+      `--require=${hook}`,
+      "--inspect=0",
+      "--remote-debugging-port=0",
+      "/caller/electron-active-hook.cjs",
+      "",
+      "中文",
+    ];
+    const plan = ["-r", hook, "/selected/app.asar", ...callerArguments];
+    const script = join(root, "argv.cjs");
+    await writeFile(
+      script,
+      `
+      const argv = ["/runner/electron", ...${JSON.stringify(sandboxPrefix)},
+        "--inspect=0", "--remote-debugging-port=0", ...${JSON.stringify(plan)}];
+      process.argv = argv;
+      const plan = ${JSON.stringify(plan)};
+      process.env.REA_ELECTRON_CAPTURE_ARGV = JSON.stringify({ length: plan.length,
+        sha256: require("node:crypto").createHash("sha256").update(JSON.stringify(plan)).digest("hex") });
+      require("./electron-active-hook.cjs");
+      console.log(JSON.stringify({ argv: process.argv, same: process.argv === argv,
+        handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
+        hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
+    `,
+    );
+    // The bootstrap script establishes Electron's observed argv before loading the hook.
+    const result = await runNode(script, root, undefined, [], false);
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      argv: ["/runner/electron", "/selected/app.asar", ...callerArguments],
+      same: true,
+      handoff_present: false,
+      hook_error: false,
+    });
+  },
+);
+
+it.each([
+  "absent",
+  "invalid-json",
+  "mismatch",
+  "foreign-hook",
+  "unknown-prefix",
+  "no-entry",
+])("preserves observed argv for an %s capture handoff", async (mode) => {
+  const root = await createTestTempDirectory("rea-electron-argv-guard-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const hook = join(root, "electron-active-hook.cjs");
+  const plan = ["-r", hook, "/selected/app", "caller-document"];
+  const script = join(root, "guard.cjs");
+  await writeFile(
+    script,
+    `
+      const mode = ${JSON.stringify(mode)};
+      const plan = ${JSON.stringify(plan)};
+      const argv = ["/runner/electron", "--inspect=0", "--remote-debugging-port=0", ...plan];
+      process.argv = argv;
+      if (mode === "unknown-prefix") argv[1] = "--inspect=1234";
+      if (mode === "mismatch") argv[argv.length - 1] = "another-document";
+      if (mode === "foreign-hook") plan[1] = "/other/electron-active-hook.cjs";
+      if (mode === "no-entry") plan.length = 2;
+      if (mode === "absent") delete process.env.REA_ELECTRON_CAPTURE_ARGV;
+      else process.env.REA_ELECTRON_CAPTURE_ARGV = mode === "invalid-json" ? "{" : JSON.stringify({
+        length: plan.length,
+        sha256: require("node:crypto").createHash("sha256").update(JSON.stringify(plan)).digest("hex") });
+      const before = JSON.stringify(argv);
+      require("./electron-active-hook.cjs");
+      console.log(JSON.stringify({ unchanged: JSON.stringify(process.argv) === before,
+        same: process.argv === argv, handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
+        hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
+    `,
+  );
+  const result = await runNode(script, root, undefined, [], false);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout.trim())).toEqual({
+    unchanged: true,
+    same: true,
+    handoff_present: false,
+    hook_error: mode !== "absent",
+  });
 });
 
 const writeElectronFixture = async (
@@ -3359,29 +3760,26 @@ const runNode = async (
   script: string,
   root: string,
   sourceHook?: string,
+  nodeArguments: readonly string[] = [],
+  preloadHook = true,
 ): Promise<{
   readonly code: number | null;
   readonly stdout: string;
   readonly stderr: string;
 }> => {
-  const hook = await stageHook(root, sourceHook);
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-r", hook, script], {
-      cwd: root,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.once("error", reject);
-    child.once("close", (code) =>
-      resolve({
-        code,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-      }),
+  const processes = createTestProcessRegistry();
+  onTestFinished(() => processes.shutdown());
+  return withVerifierCleanup(async () => {
+    const hook = await stageHook(root, sourceHook);
+    const result = await processes.run(
+      process.execPath,
+      [...nodeArguments, ...(preloadHook ? ["-r", hook] : []), script],
+      { cwd: root, env: process.env, timeoutMs: 10_000 },
     );
-  });
+    return {
+      code: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  }, [() => processes.shutdown()]);
 };

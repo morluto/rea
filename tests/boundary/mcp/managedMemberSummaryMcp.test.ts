@@ -7,14 +7,26 @@ import { AnalysisProviderRegistry } from "../../../src/application/binary/Analys
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { ManagedStaticProvider } from "../../../src/dotnet/ManagedStaticProvider.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
 import {
   analysisViewResultSchema,
   managedMemberSummaryViewResultSchema,
 } from "../../../src/domain/analysisView/analysisView.js";
-import { managedMemberInspectionSchema } from "../../../src/domain/managed/managedArtifact.js";
-import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import {
+  managedMemberInspectionSchema,
+  type ManagedMemberInspection,
+} from "../../../src/domain/managed/managedArtifact.js";
+import {
+  createApplicationMcpHarness,
+  type ApplicationMcpHarness,
+} from "../../fixtures/applicationMcpHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 
 const COLLECTIONS = [
   "types",
@@ -36,6 +48,129 @@ const createHarness = async () => {
   return harness;
 };
 
+type ToolDefinition = Awaited<
+  ReturnType<ApplicationMcpHarness["client"]["listTools"]>
+>["tools"][number];
+const verifyProjection = async ({
+  client,
+  parent,
+  report,
+  advertised,
+}: {
+  readonly client: ApplicationMcpHarness["client"];
+  readonly parent: Evidence;
+  readonly report: ManagedMemberInspection;
+  readonly advertised: readonly ToolDefinition[];
+}) => {
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const viewDefinition = advertised.find(
+    (tool) => tool.name === "inspect_analysis_view",
+  );
+  if (viewDefinition?.outputSchema === undefined)
+    throw new Error("View schema is absent");
+  const viewInputSchema: Record<string, unknown> = viewDefinition.inputSchema;
+  const viewOutputSchema: Record<string, unknown> = viewDefinition.outputSchema;
+  for (const collection of COLLECTIONS) {
+    const projectedReply = await client.callTool(
+      {
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: parent.evidence_id,
+          },
+          view: {
+            kind: "managed-members",
+            collection,
+            fields: [],
+            offset: 0,
+            limit: 1,
+          },
+        },
+      },
+      { toolDefinition: viewDefinition },
+    );
+    expect(projectedReply.isError).not.toBe(true);
+    const projected = analysisViewResultSchema.parse(
+      parseEvidence(projectedReply.structuredContent).normalized_result,
+    );
+    if (projected.kind !== "managed-members") throw new Error("Wrong view");
+    expect(projected.page.rows).toHaveLength(1);
+    expect(projected.page.rows[0]).toMatchObject({ source_index: 0 });
+    expect(projected.page.rows[0]).not.toHaveProperty("body");
+    expect(projected.page.rows[0]).not.toHaveProperty("signature");
+    expect(projected.page.rows[0]).not.toHaveProperty("target_identity_sha256");
+    expect(projected.page.rows[0]).not.toHaveProperty("name_sha256");
+  }
+  const selectedRequest = {
+    source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    view: {
+      kind: "managed-members",
+      collection: "methods",
+      names: ["Main", "Main"],
+      declaring_types: ["Fixture.Program"],
+      fields: ["name", "signature"],
+      offset: 1,
+      limit: 1,
+    },
+  };
+  expect(ajv.validateSchema(viewInputSchema)).toBe(true);
+  expect(ajv.validateSchema(viewOutputSchema)).toBe(true);
+  expect(
+    ajv.validate(viewInputSchema, selectedRequest),
+    JSON.stringify(ajv.errors),
+  ).toBe(true);
+  const selectedReply = await client.callTool(
+    { name: "inspect_analysis_view", arguments: selectedRequest },
+    { toolDefinition: viewDefinition },
+  );
+  expect(selectedReply.isError).not.toBe(true);
+  const selectedEvidence = parseEvidence(selectedReply.structuredContent);
+  const selectedView = analysisViewResultSchema.parse(
+    selectedEvidence.normalized_result,
+  );
+  if (selectedView.kind !== "managed-members") throw new Error("Wrong view");
+  expect(selectedEvidence.evidence_links).toEqual([parent.evidence_id]);
+  expect(selectedView).toMatchObject({
+    module: report.module,
+    source_coverage: report.coverage,
+    coverage: { total: 2, examined: 1, next_offset: null },
+    page: {
+      collection: "methods",
+      source_count: 2,
+      unresolved_filter_rows: 0,
+      rows: [{ source_index: 1, token: "0x06000002", name: "Main" }],
+    },
+  });
+  expect(selectedView.page.rows[0]).not.toHaveProperty("body");
+  expect(selectedView.page.rows[0]).toMatchObject({
+    signature: report.methods[1]?.signature,
+  });
+};
+
+// ldarg.0; ldfld field; call member ref; ldstr "ok"; pop; ret
+const SUMMARY_METHOD_BODY = Buffer.from([
+  (18 << 2) | 2,
+  0x02,
+  0x7b,
+  1,
+  0,
+  0,
+  0x04,
+  0x28,
+  1,
+  0,
+  0,
+  0x0a,
+  0x72,
+  1,
+  0,
+  0,
+  0x70,
+  0x26,
+  0x2a,
+]);
+
 it("summarizes selected members and pages every original collection after the file disappears", async () => {
   const directory = await createTestTempDirectory("rea-member-summary-");
   const path = join(directory, "fixture.dll");
@@ -43,28 +178,9 @@ it("summarizes selected members and pages every original collection after the fi
     path,
     buildManagedPeFixture({
       methodRowCount: 2,
-      // ldarg.0; ldfld field; call member ref; ldstr "ok"; pop; ret
-      ilBody: Buffer.from([
-        (18 << 2) | 2,
-        0x02,
-        0x7b,
-        1,
-        0,
-        0,
-        0x04,
-        0x28,
-        1,
-        0,
-        0,
-        0x0a,
-        0x72,
-        1,
-        0,
-        0,
-        0x70,
-        0x26,
-        0x2a,
-      ]),
+      fieldSignature: Buffer.from([0x06, 0x12, 0x04]),
+      methodSignature: Buffer.from([0x00, 0x00, 0x12, 0x04]),
+      ilBody: SUMMARY_METHOD_BODY,
       userStringHeap: Buffer.from([0, 5, 0x6f, 0, 0x6b, 0, 0]),
       exportedTypes: [
         {
@@ -77,7 +193,8 @@ it("summarizes selected members and pages every original collection after the fi
     }),
   );
   const { client, session } = await createHarness();
-  const definition = (await client.listTools()).tools.find(
+  const advertised = (await client.listTools()).tools;
+  const definition = advertised.find(
     (x) => x.name === "inspect_managed_members",
   );
   if (definition?.outputSchema === undefined)
@@ -94,15 +211,14 @@ it("summarizes selected members and pages every original collection after the fi
       detail: "summary",
     }),
   ).toBe(true);
-  const reply = await client.callTool({
-    name: "inspect_managed_members",
-    arguments: { path, type_names, detail: "summary" },
-  });
+  const reply = await client.callTool(
+    {
+      name: "inspect_managed_members",
+      arguments: { path, type_names, detail: "summary" },
+    },
+    { toolDefinition: definition },
+  );
   expect(reply.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, reply.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const receipt = parseEvidence(reply.structuredContent);
   const view = managedMemberSummaryViewResultSchema.parse(
     receipt.normalized_result,
@@ -114,13 +230,16 @@ it("summarizes selected members and pages every original collection after the fi
   expect(parent.parameters).toEqual({ path, type_names });
   expect(receipt.evidence_links).toEqual([parent.evidence_id]);
   const report = managedMemberInspectionSchema.parse(parent.normalized_result);
+  expect(report.fields[0]?.signature.field_type).toBe(
+    "class:4 (Fixture.Program)",
+  );
   expect(view.summary.selection).toEqual({
     type_names,
     unmatched_type_names: ["Missing.Type"],
   });
   expect(view.summary.coverage).toEqual(report.coverage);
   expect(view.summary.method_rows).toEqual({ offset: 0, count: 2, total: 2 });
-  expect(view.summary.signature_resolution).toBe("type-names-v1");
+  expect(view.summary.signature_resolution).toBe("type-names-v2");
   expect(view.summary.identity_scope).toEqual(report.identity_scope);
   expect(view.summary).not.toHaveProperty("methods");
   for (const detail of [undefined, "complete"]) {
@@ -165,7 +284,7 @@ it("summarizes selected members and pages every original collection after the fi
       if (page.kind !== "managed-members")
         throw new Error("Unexpected page kind");
       expect(page.page.collection).toBe(collection);
-      expect(page.signature_resolution).toBe("type-names-v1");
+      expect(page.signature_resolution).toBe("type-names-v2");
       expect(page.selection).toEqual(report.selection);
       expect(page.coverage.total).toBe(rows.length);
       expect(page.method_rows).toEqual(report.method_rows);
@@ -175,6 +294,7 @@ it("summarizes selected members and pages every original collection after the fi
     // Method rows carry body facts that a looser row schema would strip.
     expect(paged).toEqual(rows);
   }
+  await verifyProjection({ client, parent, report, advertised });
   expect(JSON.stringify(session.evidenceById(parent.evidence_id))).toBe(
     original,
   );
@@ -241,3 +361,176 @@ it("keeps collections that historical member Evidence never examined unknown", a
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
 }, 30000);
+
+it("binds managed member views to their recorded token scope", async () => {
+  const original = MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members;
+  const report = managedMemberInspectionSchema.parse(
+    original.normalized_result,
+  );
+  if (report.module?.mvid == null) throw new Error("Fixture requires an MVID");
+  const mismatchedDigest = "f".repeat(64);
+  const mismatchedMvid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const cases = [
+    {
+      name: "digest",
+      result: {
+        ...report,
+        identity_scope: {
+          ...report.identity_scope,
+          requires_artifact_sha256: mismatchedDigest,
+        },
+      },
+      error: "token scope SHA-256",
+    },
+    {
+      name: "MVID",
+      result: {
+        ...report,
+        identity_scope: {
+          ...report.identity_scope,
+          requires_mvid: mismatchedMvid,
+        },
+      },
+      error: "token scope MVID",
+    },
+    {
+      name: "missing module",
+      result: { ...report, module: null },
+      error: "token scope MVID",
+    },
+    {
+      name: "case-insensitive MVID",
+      result: {
+        ...report,
+        module: {
+          ...report.module,
+          mvid: "abcdef12-3456-4abc-8def-123456789abc",
+        },
+        identity_scope: {
+          ...report.identity_scope,
+          requires_mvid: "ABCDEF12-3456-4ABC-8DEF-123456789ABC",
+        },
+      },
+      error: undefined,
+    },
+    {
+      name: "null MVID",
+      result: {
+        ...report,
+        module: null,
+        identity_scope: { ...report.identity_scope, requires_mvid: null },
+      },
+      error: undefined,
+    },
+  ];
+  for (const test of cases) {
+    for (const subject of [true, false]) {
+      const evidence = createEvidence(
+        subject
+          ? {
+              path: report.artifact.path,
+              format: "pe",
+              sha256: report.artifact.sha256,
+            }
+          : undefined,
+        original.provider,
+        {
+          operation: original.operation,
+          parameters: original.parameters,
+          result: test.result,
+        },
+      );
+      for (const view of [
+        { kind: "summary" as const },
+        {
+          kind: "managed-members" as const,
+          collection: "methods" as const,
+          offset: 0,
+          limit: 1,
+        },
+      ]) {
+        const actual = await inspectAnalysisView({
+          source: { kind: "inline", evidence },
+          view,
+        });
+        if (test.error === undefined) {
+          expect(actual.ok, test.name).toBe(true);
+          if (!actual.ok) continue;
+          if (!subject)
+            expect(JSON.stringify(actual.value.normalized_result)).toContain(
+              "no recorded subject",
+            );
+        } else {
+          expect(actual, test.name).toMatchObject({
+            ok: false,
+            error: {
+              _tag: "EvidenceIntegrityError",
+              message: expect.stringContaining(test.error),
+            },
+          });
+        }
+      }
+    }
+  }
+
+  const incompatible = createEvidence(
+    { path: report.artifact.path, format: "pe", sha256: mismatchedDigest },
+    original.provider,
+    {
+      operation: original.operation,
+      parameters: original.parameters,
+      result: {
+        ...report,
+        identity_scope: {
+          ...report.identity_scope,
+          requires_artifact_sha256: mismatchedDigest,
+        },
+      },
+    },
+  );
+  const actual = await inspectAnalysisView({
+    source: { kind: "inline", evidence: incompatible },
+    view: { kind: "summary" },
+  });
+  expect(actual).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "EvidenceIntegrityError",
+      message: expect.stringContaining("Parent subject SHA-256"),
+    },
+  });
+});
+
+it("rejects a contradictory managed token scope through MCP for inline and retained Evidence", async () => {
+  const original = MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members;
+  const report = managedMemberInspectionSchema.parse(
+    original.normalized_result,
+  );
+  const evidence = createEvidence(undefined, original.provider, {
+    operation: original.operation,
+    parameters: original.parameters,
+    result: {
+      ...report,
+      identity_scope: {
+        ...report.identity_scope,
+        requires_artifact_sha256: "f".repeat(64),
+      },
+    },
+  });
+  const { client, session } = await createHarness();
+  expect(session.recordEvidence(evidence).ok).toBe(true);
+  for (const source of [
+    { kind: "inline" as const, evidence },
+    { kind: "retained-evidence" as const, evidence_id: evidence.evidence_id },
+  ]) {
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source, view: { kind: "summary" } },
+    });
+    expect(parseMcpToolError(response).error).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      category: "integrity_mismatch",
+      details: { reason: expect.stringContaining("token scope SHA-256") },
+    });
+  }
+});

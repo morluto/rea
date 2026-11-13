@@ -23,7 +23,7 @@
    projection of `registerProcessShutdown` without stdin that sets the signal
    exit status before the idempotent shutdown runs; stdio keeps its stdin
    end/close triggers.
-6. Document the transport in docs/mcp-contracts.md and docs/cli.md, relabel the
+6. Document the transport in docs/reference/mcp-contracts.md and docs/cli.md, relabel the
    architecture diagram, and cover each boundary with adapters, dispatcher,
    mcp-boundary and process-boundary tests plus a Python SDK client exchange.
 

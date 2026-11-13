@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { IDA_COMPATIBILITY_PROFILES } from "./IdaConfiguration.js";
 import {
-  IDA_OPERATIONS,
   idaCapabilities,
   idaOperationUnavailableReason,
 } from "./IdaProviderCapabilities.js";
+import { IDA_OPERATIONS } from "./IdaProviderMetadata.js";
 
 describe("IDA profile operation admission", () => {
   for (const [name, profile] of Object.entries(IDA_COMPATIBILITY_PROFILES)) {

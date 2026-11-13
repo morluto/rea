@@ -1,12 +1,11 @@
+import { createLoadImageChecks } from "./GhidraLoadImageChecks.js";
 import { createHash } from "node:crypto";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
-  type NativeLoadImageCheck,
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
 import type { DosMzHeader, MzHeaderEvidence } from "../domain/dosMz.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { validateDosComLength } from "../domain/dosCom.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -15,34 +14,14 @@ import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 const sha256 = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 const address = (offset: number): string => `0x${offset.toString(16)}`;
+const GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION =
+  "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Ghidra relocation symbol names are retained observations, not independently verified. Mapping ends are inclusive.";
 const limitations = [
-  "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Mapping ends are inclusive.",
+  GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION,
   "Appended overlay bytes are identified by file extent and included in FileBytes identity; they must not be mapped as initialized header/module memory. Uninitialized allocations are reported but their contents and DOS runtime behavior are not verified.",
   "The fixed load segment 0x1000 describes Ghidra's analysis image, not a running DOS process. Verified import does not establish original source ownership or recovered program behavior.",
   "A mismatching memory digest identifies the reported source range; it does not locate the first differing byte inside that range.",
 ];
-
-/** Record one attestation's checks, preserving compared values and source locations. */
-const createLoadImageChecks = () => {
-  const checks: NativeLoadImageCheck[] = [];
-  const check = (
-    name: string,
-    expected: JsonValue,
-    observed: JsonValue,
-    fileOffset: number | null = null,
-    location: string | null = null,
-  ): void => {
-    checks.push({
-      name,
-      matched: JSON.stringify(expected) === JSON.stringify(observed),
-      expected,
-      observed,
-      file_offset: fileOffset,
-      address: location,
-    });
-  };
-  return { checks, check };
-};
 
 export type GhidraDosImage = {
   readonly header: DosMzHeader;
@@ -160,8 +139,10 @@ export const attestGhidraDosLoadImage = (
   // A multiset preserves duplicate relocations and aliases; iteration order is not semantic.
   const rows = (values: NativeLoadImageObservation["relocations"]): string[] =>
     values
-      .map(({ segment: _segment, offset: _offset, ...value }) =>
-        JSON.stringify(value),
+      // The independent DOS check does not attest Ghidra's symbol name.
+      .map(
+        ({ segment: _segment, offset: _offset, symbol: _symbol, ...value }) =>
+          JSON.stringify(value),
       )
       .sort();
   check(

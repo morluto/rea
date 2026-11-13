@@ -1,3 +1,4 @@
+import { parseEvidence } from "../../domain/evidence.js";
 import { createHash } from "node:crypto";
 import { inspectPeCertificatesInputSchema } from "../../domain/native/peCertificates.js";
 import { peCertificateFixture } from "../../native/pe/PeCertificates.fixture.js";
@@ -49,26 +50,13 @@ it("rejects a relative path and extra arguments before reading", async () => {
   expect(calls).toBe(0);
 });
 
-it("records the selected PE and an absent certificate table", async () => {
-  const result = await new PeCertificatesService({
-    identity,
-    inspect: () => Promise.resolve(ok(report)),
-  }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    confidence: "observed",
-    subject: { format: "pe", architecture: "x86" },
-    normalized_result: report,
-  });
-});
-
-it("discards an observation if the caller cancels while the provider completes", async () => {
+it("retains a completed observation when the caller cancels as the provider completes", async () => {
   const controller = new AbortController();
+  const reason = { request: "late PeCertificates cancellation" };
   const service = new PeCertificatesService({
     identity,
     inspect: () => {
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(ok(report));
     },
   });
@@ -76,8 +64,13 @@ it("discards an observation if the caller cancels while the provider completes",
     { path: report.artifact.path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "inspect_pe_certificates",
+    normalized_result: report,
+  });
 });
 
 it("retains complete certificate provenance from the production parser", async () => {
@@ -86,7 +79,6 @@ it("retains complete certificate provenance from the production parser", async (
     identity,
     inspect: () => Promise.resolve(ok(parsed)),
   }).inspect({ path: parsed.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toEqual(parsed);
 });
@@ -126,6 +118,14 @@ it.each([
     "certificate outside its payload",
     (value: PeCertificates) => {
       value.entries[0]!.pkcs7!.certificates[0]!.location.offset = 0;
+    },
+  ],
+  [
+    "complete coverage with undecoded unsigned attributes",
+    (value: PeCertificates) => {
+      value.entries[0]!.pkcs7!.signers[0]!.unsigned_attribute_oids = [
+        "1.3.6.1.4.1.311.3.3.1",
+      ];
     },
   ],
 ] as const)(

@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { fat } from "../domain/binaryTarget.fixture.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   NativeFixtureRunner,
-  nativeMachoTarget,
+  nativeMachoTargetForFile,
 } from "../../tests/fixtures/nativeCommands.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -15,7 +19,6 @@ import type {
   NativeCommandRunner,
 } from "./CommandRunner.js";
 import { XcrunCommandRunner } from "./CommandRunner.js";
-import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
 
 vi.mock("../process/OwnedCommand.js", async (original) => ({
@@ -28,7 +31,7 @@ afterEach(() => {
 });
 
 class RecordingRunner implements NativeCommandRunner {
-  readonly timeouts: number[] = [];
+  readonly calls: { tool: string; timeoutMs: number | undefined }[] = [];
   readonly #inner = new NativeFixtureRunner();
 
   run(
@@ -36,7 +39,7 @@ class RecordingRunner implements NativeCommandRunner {
     arguments_: readonly string[],
     options: NativeCommandOptions,
   ) {
-    if (options.timeoutMs !== undefined) this.timeouts.push(options.timeoutMs);
+    this.calls.push({ tool, timeoutMs: options.timeoutMs });
     return this.#inner.run(tool, arguments_, options);
   }
 }
@@ -44,29 +47,59 @@ class RecordingRunner implements NativeCommandRunner {
 const execute = async (
   runner: NativeCommandRunner,
   parameters: Readonly<Record<string, JsonValue>>,
+  operation: "list_architectures" | "inspect_signature" = "list_architectures",
 ) => {
+  const root = await createTestTempDirectory("rea-native-deadline-");
+  const path = join(root, "app");
+  await writeFile(path, fat([0x01000007, 0x0100000c]));
   const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-    nativeMachoTarget("/fixture/app"),
+    await nativeMachoTargetForFile(path),
   );
-  return client.execute("list_architectures", parameters);
+  try {
+    return await client.execute(operation, parameters);
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
 };
 
-describe("native_command_timeout_ms", () => {
-  it("uses 60000 ms when the caller omits the setting", async () => {
-    const runner = new RecordingRunner();
-    const result = await execute(runner, {});
-    expect(result.ok, JSON.stringify(result)).toBe(true);
-    expect(runner.timeouts.every((timeout) => timeout === 60_000)).toBe(true);
-    expect(DEFAULT_NATIVE_COMMAND_TIMEOUT_MS).toBe(60_000);
-    expect(runner.timeouts.length).toBeGreaterThan(0);
-  });
+// Signature inspection reads display, requirements and entitlements, then both
+// architecture states in the authored universal Mach-O fixture.
+const commandCases = [
+  { operation: "list_architectures", tools: ["lipo"] },
+  {
+    operation: "inspect_signature",
+    tools: ["codesign", "codesign", "codesign", "codesign", "codesign"],
+  },
+] as const;
 
-  it("passes a selected deadline through to each native command", async () => {
-    const runner = new RecordingRunner();
-    const result = await execute(runner, { native_command_timeout_ms: 1_500 });
-    expect(result.ok, JSON.stringify(result)).toBe(true);
-    expect(runner.timeouts.every((timeout) => timeout === 1_500)).toBe(true);
-  });
+describe("native_command_timeout_ms", () => {
+  it.each(commandCases)(
+    "uses 60000 ms for every $operation command when the caller omits the setting",
+    async ({ operation, tools }) => {
+      const runner = new RecordingRunner();
+      const result = await execute(runner, {}, operation);
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      expect(runner.calls).toEqual(
+        tools.map((tool) => ({ tool, timeoutMs: 60_000 })),
+      );
+    },
+  );
+
+  it.each(commandCases)(
+    "passes a selected deadline through every $operation command",
+    async ({ operation, tools }) => {
+      const runner = new RecordingRunner();
+      const result = await execute(
+        runner,
+        { native_command_timeout_ms: 1_500 },
+        operation,
+      );
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      expect(runner.calls).toEqual(
+        tools.map((tool) => ({ tool, timeoutMs: 1_500 })),
+      );
+    },
+  );
 
   it("passes the selected deadline through production xcrun resolution", async () => {
     const calls: {
@@ -86,7 +119,6 @@ describe("native_command_timeout_ms", () => {
     const result = await runner.run("lipo", ["-info", "/fixture/app"], {
       timeoutMs: 120_000,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected resolution timeout");
     expect(result.error.reason).toBe("timeout");
     expect(calls).toEqual([
@@ -114,7 +146,7 @@ describe("native_command_timeout_ms", () => {
     const runner = new RecordingRunner();
     const result = await execute(runner, { native_command_timeout_ms: 0 });
     if (result.ok) throw new Error("expected an invalid deadline");
-    expect(runner.timeouts).toEqual([]);
+    expect(runner.calls).toEqual([]);
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "invalid_request",
       details: {

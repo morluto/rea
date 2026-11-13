@@ -33,7 +33,9 @@ it("reports a Hopper ceiling mismatch and releases the fixture", async () => {
     bridgeMaxRequestBytesRecovery(limit(1048576), "Hopper"),
   );
   const process = launcher.processes[0];
-  expect(process?.exitCode !== null || process?.signalCode !== null).toBe(true);
+  if (process === undefined)
+    throw new Error("Expected a launched fixture child");
+  expect(process.exitCode !== null || process.signalCode !== null).toBe(true);
 });
 
 it("refuses an oversized Hopper request before the fixture receives it", async () => {

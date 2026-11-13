@@ -1,8 +1,7 @@
 import { inspectGpuCodeObjectsInputSchema } from "../domain/gpu/gpuCodeObjects.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { safeParseJson } from "../domain/safeJson.js";
+import { parseCliJsonOption } from "./cliJsonOption.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -39,10 +38,10 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
         .enum(["inventory", "kernels"])
         .default("inventory")
         .describe("Inventory GPU targets or decode selected kernel metadata"),
-      expected_sha256: z
-        .string()
-        .optional()
-        .describe("Inventory SHA-256; required with --object_ids"),
+      expected_sha256:
+        inspectGpuCodeObjectsInputSchema.shape.expected_sha256.describe(
+          "Inventory SHA-256 as 64 lowercase hex digits; required with --object_ids",
+        ),
       object_ids: z
         .string()
         .optional()
@@ -61,22 +60,13 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
           for (const name of ["object_ids", "targets", "view"] as const) {
             const value = options[name];
             if (value === undefined) continue;
-            const decoded = safeParseJson(value);
-            if (!decoded.ok) {
-              return projectAnalysisError(
-                new AnalysisInputError(
-                  "inspect_gpu_code_objects",
-                  { cause: decoded.cause },
-                  [
-                    {
-                      path: [name],
-                      reason: "invalid_format",
-                      message: `${name} must be valid JSON`,
-                    },
-                  ],
-                ),
-              );
-            }
+            const decoded = parseCliJsonOption(
+              "inspect_gpu_code_objects",
+              name,
+              value,
+              `${name} must be valid JSON`,
+            );
+            if (!decoded.ok) return projectAnalysisError(decoded.error);
             selectors[name] = decoded.value;
           }
           const rawInput = {
@@ -99,6 +89,7 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
             );
           const service = createGpuCodeObjectsService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {

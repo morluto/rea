@@ -1,5 +1,5 @@
 import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { expect } from "vitest";
 import { elf, thinMach } from "../../../src/domain/binaryTarget.fixture.js";
@@ -9,6 +9,8 @@ import {
   observeOwnedProcessGroups,
   systemProcessOwnershipHost,
 } from "../../../src/process/ProcessOwnershipObservation.js";
+import { resolveProcessScenarioRuntimePaths } from "../../../src/process/capture/ProcessScenarioRuntimeValidation.js";
+import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for([
   ["missing", "missing_dependency", "runtime_missing"],
@@ -237,6 +239,23 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
     const root = await createTestTempDirectory("rea-ghidra-cwd-doctor-");
     const install = join(root, "installation");
     const marker = join(root, "launcher-execution");
+    const bin = join(root, "bin");
+    await mkdir(bin);
+    const hostPath = process.env.PATH?.split(delimiter)
+      .filter((directory) => isAbsolute(directory))
+      .join(delimiter);
+    await symlink(
+      (
+        await resolveProcessScenarioRuntimePaths(
+          processScenarioSchema.parse({
+            executable: "ps",
+            working_directory: process.cwd(),
+          }),
+          { PATH: hostPath },
+        )
+      ).executable,
+      join(bin, "ps"),
+    );
     await mkdir(join(install, "Ghidra"), { recursive: true });
     await mkdir(join(install, "support"), { recursive: true });
     await writeFile(
@@ -253,7 +272,8 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
       arguments: ["doctor", "--provider", "ghidra", "--json"],
       cwd: root,
       environment: {
-        PATH: "",
+        // Keep CWD discovery first while admitting only the ownership prerequisite.
+        PATH: ["", bin].join(delimiter),
         JAVA_HOME: join(root, "missing-jdk"),
         REA_LOG_LEVEL: "silent",
       },

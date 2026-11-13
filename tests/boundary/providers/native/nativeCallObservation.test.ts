@@ -31,6 +31,11 @@ const LOCATION = {
   module: "Fixture",
   module_path: "/tmp/Fixture",
   symbol: "-[Greeter greet:times:]",
+  source_location: {
+    file_path: "/not-acquired/é space/fixture.pas",
+    line: 23,
+    column: null,
+  },
 };
 
 const run = (
@@ -80,7 +85,7 @@ const run = (
         { name: "x0", value: "0x6000" },
         { name: "x1", value: "0x7000" },
       ],
-      backtrace: [],
+      backtrace: [{ ...LOCATION, source_location: null }],
     },
   ],
   other_stops: [],
@@ -203,7 +208,12 @@ describe("observe_native_calls projection: projects completed observations", () 
     expect(result.events[0]).toMatchObject({
       receiver_class: "Greeter",
       selector: "greet:times:",
+      source_location: LOCATION.source_location,
+      backtrace: [{ ...LOCATION, source_location: null }],
     });
+    expect(result.breakpoints[0]?.locations[0]?.source_location).toEqual(
+      LOCATION.source_location,
+    );
     expect(result.coverage).toEqual({
       status: "complete",
       event_limit_reached: false,
@@ -216,7 +226,85 @@ describe("observe_native_calls projection: projects completed observations", () 
   });
 });
 
-describe("observe_native_calls projection: reports partial observation coverage", () => {
+describe("observe_native_calls projection: keeps locations within the metadata budget", () => {
+  it("projects every breakpoint location when the aggregate metadata budget allows it", async () => {
+    const locations = Array.from({ length: 65 }, (_, index) => ({
+      ...LOCATION,
+      load_address: `0x${(0x100000928 + index * 4).toString(16)}`,
+      file_address: `0x${(0x100000928 + index * 4).toString(16)}`,
+    }));
+    const observed = await observe(
+      new FixtureTracer(
+        ok({
+          debugger: {
+            path: "/usr/bin/lldb",
+            sha256: "a".repeat(64),
+            version: null,
+          },
+          run: run({
+            breakpoints: [
+              { index: 0, location_count: locations.length, locations },
+              { index: 1, location_count: 1, locations: [LOCATION] },
+            ],
+          }),
+          stdout: { text: "", bytes: 0, truncated: false, complete: true },
+          stderr: { text: "", bytes: 0, truncated: false, complete: true },
+          terminated: true,
+        }),
+      ),
+      { breakpoints: BREAKPOINTS },
+    );
+    if (!observed.ok) throw observed.error;
+    const result = nativeCallObservationResultSchema.parse(
+      observed.value.result,
+    );
+    expect(result.breakpoints[0]?.location_count).toBe(65);
+    expect(result.breakpoints[0]?.locations).toHaveLength(65);
+    expect(result.coverage).toEqual({
+      status: "complete",
+      event_limit_reached: false,
+      resource_limit_reached: false,
+      unresolved_breakpoints: [],
+    });
+  });
+
+  it("uses a generic warning when locations are missing without a budget signal", async () => {
+    const observed = await observe(
+      new FixtureTracer(
+        ok({
+          debugger: {
+            path: "/usr/bin/lldb",
+            sha256: "a".repeat(64),
+            version: null,
+          },
+          run: run({
+            breakpoints: [
+              { index: 0, location_count: 2, locations: [LOCATION] },
+              { index: 1, location_count: 1, locations: [LOCATION] },
+            ],
+          }),
+          stdout: { text: "", bytes: 0, truncated: false, complete: true },
+          stderr: { text: "", bytes: 0, truncated: false, complete: true },
+          terminated: true,
+        }),
+      ),
+      { breakpoints: BREAKPOINTS },
+    );
+    if (!observed.ok) throw observed.error;
+    const result = nativeCallObservationResultSchema.parse(
+      observed.value.result,
+    );
+    expect(result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /breakpoint location list is incomplete.*location_count.*full matching count/iu,
+        ),
+      ]),
+    );
+  });
+});
+
+describe("observe_native_calls projection: bounded breakpoint metadata", () => {
   it("retains normal exit and location counts when breakpoint metadata is bounded", async () => {
     const observed = await observe(
       new FixtureTracer(
@@ -238,12 +326,16 @@ describe("observe_native_calls projection: reports partial observation coverage"
           terminated: true,
         }),
       ),
-      { breakpoints: BREAKPOINTS },
+      {
+        breakpoints: BREAKPOINTS,
+        capture_limits: { breakpoint_location_bytes: 1024 },
+      },
     );
     if (!observed.ok) throw observed.error;
     const result = nativeCallObservationResultSchema.parse(
       observed.value.result,
     );
+    expect(result.capture_limits?.breakpoint_location_bytes).toBe(1024);
     expect(result.process).toMatchObject({
       outcome: "exited",
       exit_status: 0,
@@ -258,12 +350,23 @@ describe("observe_native_calls projection: reports partial observation coverage"
       resource_limit_reached: false,
       unresolved_breakpoints: [],
     });
-    expect(result.limitations).toContain(
-      "Resolved breakpoint locations exceeded the aggregate 8388608-byte (8 MiB) metadata budget; omitted locations are counted in location_count. This metadata limit does not change the process outcome. This release has no runtime override.",
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining(
+        "capture_limits.breakpoint_location_bytes (1024 bytes)",
+      ),
+    );
+    expect(result.limitations).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /breakpoint location list is incomplete.*location_count.*full matching count/iu,
+        ),
+      ]),
     );
     expect(result.limitations.join(" ")).not.toContain("process was killed");
   });
+});
 
+describe("observe_native_calls projection: reports partial observation coverage", () => {
   it("marks event limits, unresolved breakpoints and unconfirmed exits", async () => {
     const tracer = new FixtureTracer(
       ok({
@@ -308,15 +411,25 @@ describe("observe_native_calls projection: reports partial observation coverage"
     });
     expect(result.process.terminated).toBe(false);
     expect(result.limitations.join(" ")).not.toContain("was killed");
-    expect(result.limitations).toContain(
-      "Target output draining did not complete; reported byte counts are observed lower bounds, not stream totals.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /output draining did not complete.*byte counts.*lower bounds.*not stream totals/iu,
+      ),
     );
     expect(result.limitations).toEqual(
       expect.arrayContaining([
-        "Observation stopped at max_events (1); later calls were not recorded and termination was requested but could not be confirmed.",
-        "Breakpoints 1 matched no code in any image loaded while observing; their calls could not be observed.",
-        "Target output beyond 1048576 bytes (1 MiB) per stream is counted but not kept. This release has no runtime override.",
-        "REA could not confirm that process 4242 exited; check for it before relying on host state.",
+        expect.stringMatching(
+          /max_events \(1\).*later calls.*not recorded.*termination.*could not be confirmed/iu,
+        ),
+        expect.stringMatching(
+          /Breakpoints 1.*matched no code.*calls could not be observed/iu,
+        ),
+        expect.stringMatching(
+          /capture_limits\.output_bytes.*1048576.*per stream.*counted but not kept.*earlier omitted output cannot be recovered/iu,
+        ),
+        expect.stringMatching(
+          /could not confirm.*process 4242 exited.*check for it/iu,
+        ),
       ]),
     );
   });
@@ -391,8 +504,10 @@ describe("observe_native_calls projection: preserves unknown launch identity", (
       module_uuid: null,
       stable: false,
     });
-    expect(result.limitations).toContain(
-      "LLDB did not provide enough module identity evidence to confirm pathname and module continuity around launch.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /not provide enough module identity evidence.*pathname and module continuity.*launch/iu,
+      ),
     );
   });
 });
@@ -483,12 +598,12 @@ it("retains completed call facts when cancellation arrives with the tracer resul
     undefined,
     controller.signal,
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected completion cancellation");
   expect(result.error).toMatchObject({
     _tag: "AnalysisCancelledError",
     cause: reason,
   });
+  expect(result.error.cause).toBe(reason);
   const partial = nativeCallPartialObservationSchema.parse(
     result.error.partialObservation,
   );

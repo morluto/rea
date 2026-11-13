@@ -27,6 +27,7 @@ import { capturePlaywrightStepArtifacts } from "./PlaywrightScenarioArtifacts.js
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
 import { PlaywrightScenarioStorage } from "./PlaywrightScenarioStorage.js";
 import { PlaywrightScenarioServiceWorkers } from "./PlaywrightScenarioServiceWorkers.js";
+import { scenarioCommandTimeoutMs } from "./ScenarioCommandDeadline.js";
 import {
   withPlaywrightExecutionBoundary,
   PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS,
@@ -270,7 +271,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
             waitUntil: "load",
             timeout: 0,
           }),
-        scenario.command_timeout_ms,
+        scenarioCommandTimeoutMs(scenario),
         options.signal,
       );
       await withPlaywrightExecutionBoundary(
@@ -328,6 +329,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
   ): Promise<PlaywrightScenarioSession> {
     let events: PlaywrightScenarioEvents | undefined;
     let storage: PlaywrightScenarioStorage | undefined;
+    let pageInitialization: Promise<void> | undefined;
     const serviceWorkers =
       scenario.browser.mode === "connect" &&
       scenario.environment.service_workers === "block"
@@ -340,10 +342,19 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         : undefined;
     try {
       await withPlaywrightExecutionBoundary(
-        async () => {
-          await serviceWorkers?.initialize();
-          await initializePage(opened.context, scenario, secrets);
-        },
+        () => serviceWorkers?.initialize() ?? Promise.resolve(),
+        undefined,
+        options.signal,
+      );
+      throwIfScenarioCancelled(options.signal);
+      const initializingPage = initializePage(
+        opened.context,
+        scenario,
+        secrets,
+      );
+      pageInitialization = initializingPage;
+      await withPlaywrightExecutionBoundary(
+        () => initializingPage,
         undefined,
         options.signal,
       );
@@ -385,6 +396,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         storage !== undefined && options.signal?.aborted === true;
       let policyStopsLoading = !storageStopsLoading;
       const cleanup = async () => {
+        // Cancelling the wait cannot revoke an already-sent cookie mutation.
+        // Join its acknowledgement before releasing the browser transport.
+        await pageInitialization?.catch(() => undefined);
         let storageFailure: { readonly cause: unknown } | undefined;
         let policyFailure: { readonly cause: unknown } | undefined;
         let browserFailure: { readonly cause: unknown } | undefined;
@@ -488,6 +502,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           secrets: this.secrets,
           startOrigin: this.startOrigin,
           signal,
+          onOpaqueRedirect: () => this.eventCapture.opaqueRequestRedirect(),
         }),
       "timeout_ms" in action ? action.timeout_ms : undefined,
       signal,

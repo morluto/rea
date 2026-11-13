@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { createPackageVerifierCommands } from "../../lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import { toolContract } from "../../../dist/contracts/toolContracts.js";
 import {
@@ -13,8 +13,6 @@ import {
   withArtifactMcp,
   withBundleResourcesMcp,
 } from "../../lib/artifact-e2e.mjs";
-
-const exec = promisify(execFile);
 
 // dyld_info abbreviates a terminal .dylib suffix; padding is part of the name.
 const INSTALL_NAME_CASES = [
@@ -134,11 +132,20 @@ export async function verifyNativeProvenance(app, executable) {
         ]);
 
       if (operation === "inspect_macho") {
+        const encryption = cli.normalized_result.encryption;
+        assert.equal(encryption.exhaustive, true);
+        assert.ok(encryption.total > 0);
+        assert.equal(encryption.items.length, encryption.total);
+        for (const slice of encryption.items) {
+          assert.equal(slice.status, "absent");
+          assert.deepEqual(slice.commands, []);
+          assert.equal(slice.range, null);
+        }
         const delayed = cli.normalized_result.load_commands.items.find(
           ({ fields }) => fields.name === "@rpath/libdelay.dylib (offset 28)",
         );
         assert.equal(delayed?.kind, "LC_LOAD_DYLIB");
-        assert.equal(delayed.fields.options, "delay-init");
+        assert.equal(delayed.fields.options, 8); // DYLIB_USE_DELAYED_INIT
         assert.equal(delayed.fields["time stamp"], undefined);
         assert.ok(
           cli.normalized_result.dependencies.items.some(
@@ -173,7 +180,18 @@ export async function verifyNativeProvenance(app, executable) {
 async function verifyInstallNames() {
   const root = await mkdtemp(join(tmpdir(), "rea-macho-install-names-"));
   const observations = [];
-  try {
+  const commands = await createPackageVerifierCommands({
+    workspace: {
+      path: root,
+      close: () => rm(root, { recursive: true, force: true }),
+    },
+  });
+  const exec = (command, args) =>
+    commands.exec(command, args, {
+      timeout: 120_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  return withVerifierCleanup(async () => {
     const librarySource = join(root, "library.c");
     const consumerSource = join(root, "consumer.c");
     await writeFile(librarySource, "int exported_value(void) { return 42; }\n");
@@ -247,7 +265,7 @@ async function verifyInstallNames() {
           ?.source,
         importSource,
       );
-      assert.ok(result.provenance.some(({ tool }) => tool === "otool"));
+      assert.ok(result.provenance.some(({ tool }) => tool === "dyld_info"));
       await withArtifactMcp(consumer, async (client) => {
         const response = await artifactMcpCall(client, {
           name: "inspect_macho",
@@ -270,7 +288,5 @@ async function verifyInstallNames() {
       });
     }
     return observations;
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  }, [() => commands.close()]);
 }

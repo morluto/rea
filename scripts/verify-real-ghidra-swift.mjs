@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import {
@@ -59,42 +63,44 @@ const source = fileURLToPath(
 const literalSource = fileURLToPath(
   new URL("../tests/conformance/swift/string-literals.swift", import.meta.url),
 );
-const unresolvedJumpSource = fileURLToPath(
-  new URL(
-    "../tests/conformance/swift/unresolved-string-jump.s",
-    import.meta.url,
-  ),
-);
 const binary = join(root, "swift-inventory");
 const literalBinary = join(root, "swift-literals");
-const literalAssembly = fileURLToPath(
-  new URL("../tests/conformance/swift/decoder-safeguards.S", import.meta.url),
+// swiftc rejects assembly inputs, so each source is assembled to an object first.
+const literalObjects = ["decoder-safeguards.S", "unresolved-string-jump.s"].map(
+  (name) => ({
+    source: fileURLToPath(
+      new URL(`../tests/conformance/swift/${name}`, import.meta.url),
+    ),
+    object: join(root, name.replace(/\.[sS]$/u, ".o")),
+  }),
 );
-const literalObject = join(root, "decoder-safeguards.o");
 const reports = [];
+let connected = false;
+let verifierRun;
 let literalReport;
 let decoderCleaned = true;
-try {
+await withVerifierCleanup(async () => {
   await execute("swiftc", ["-O", "-g", source, "-o", binary], {
     timeout: 60_000,
   });
   await mkdir(join(root, "copied"));
   const copied = join(root, "copied", "swift-inventory");
   await copyFile(binary, copied);
-  await execute(
-    "xcrun",
-    [
-      "clang",
-      "-target",
-      "arm64-apple-macosx13.0",
-      "-c",
-      literalAssembly,
-      "-o",
-      literalObject,
-    ],
-    { timeout: 60_000 },
-  );
   // Decoding covers AArch64 register pairs, so build that slice on any Mac host.
+  for (const { source: assembly, object } of literalObjects)
+    await execute(
+      "xcrun",
+      [
+        "clang",
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-c",
+        assembly,
+        "-o",
+        object,
+      ],
+      { timeout: 60_000 },
+    );
   await execute(
     "swiftc",
     [
@@ -102,8 +108,7 @@ try {
       "-target",
       "arm64-apple-macosx13.0",
       literalSource,
-      literalObject,
-      unresolvedJumpSource,
+      ...literalObjects.map(({ object }) => object),
       "-o",
       literalBinary,
     ],
@@ -111,12 +116,13 @@ try {
   );
   await verifyDecoderSafeguards();
   await client.connect(transport);
+  connected = true;
   for (const [variant, path] of [
     ["debug", binary],
     ["without-dsym", copied],
   ]) {
     await call("open_binary", { path, provider_id: "ghidra" });
-    try {
+    await withVerifierCleanup(async () => {
       const procedures = await call("list_procedures", {});
       const inventory = await call("analyze_swift_types", {});
       assert(
@@ -184,16 +190,25 @@ try {
         metadata_accessors: metadata.total,
         unclassified: inventory.unclassified.length,
       });
-    } finally {
-      await call("close_binary", {});
-    }
+    }, [() => call("close_binary", {})]);
   }
   literalReport = await verifyStringLiterals();
-} finally {
-  await client.close();
-  await transport.close();
-  if (decoderCleaned) await rm(root, { recursive: true, force: true });
-}
+}, [
+  async () => {
+    await closeVerifierResources([
+      async () => {
+        if (connected) await call("close_binary", {});
+      },
+      () => client.close(),
+      () => transport.close(),
+    ]);
+    assert.equal(decoderCleaned, true, "Owned decoder cleanup remains pending");
+    verifierRun = await completeVerifierRun(run);
+    assert.equal(verifierRun.process_lineage.status, "verified");
+    assert.deepEqual(verifierRun.process_lineage.descendants, []);
+    await rm(root, { recursive: true, force: true });
+  },
+]);
 console.log(
   JSON.stringify(
     {
@@ -201,7 +216,7 @@ console.log(
       provider: "ghidra",
       fixtures: reports,
       swift_string_literals: literalReport,
-      verifier_run: await completeVerifierRun(run),
+      verifier_run: verifierRun,
     },
     null,
     2,
@@ -221,7 +236,7 @@ async function call(name, arguments_) {
 // Literal text lives only in register constants, so it must come from the decoded pairs.
 async function verifyStringLiterals() {
   await call("open_binary", { path: literalBinary, provider_id: "ghidra" });
-  try {
+  return withVerifierCleanup(async () => {
     const procedures = await call("list_procedures", {});
     const expected = {
       smallLiteral: [["SleepDisabled", "small"]],
@@ -282,9 +297,7 @@ async function verifyStringLiterals() {
     decoded.unresolvedStringJump =
       unresolvedDossier.swift_string_literal_omissions.length;
     return decoded;
-  } finally {
-    await call("close_binary", {});
-  }
+  }, [() => call("close_binary", {})]);
 }
 
 // Exercise the Java producer inside an ephemeral Ghidra database. The explicit

@@ -39,10 +39,26 @@ sys.modules[spec.name] = bridge
 spec.loader.exec_module(bridge)
 
 
+def _encoded_response(server, value, client_nonce, server_nonce):
+    """Capture the production delivery path without its fallback response."""
+    output = bytearray()
+
+    class Capture:
+        def sendall(self, data):
+            output.extend(data)
+
+    if not server._deliver_authenticated(Capture(), value, client_nonce, server_nonce):
+        return None
+    return bytes(output)
+
+
 def _frame(connection):
     data = bytearray()
     while b"\n" not in data:
-        data.extend(connection.recv(4096))
+        chunk = connection.recv(4096)
+        if not chunk:
+            raise EOFError("connection closed before a complete test frame")
+        data.extend(chunk)
         if len(data) > bridge.MAX_FRAME_BYTES:
             raise AssertionError("oversized test frame")
     line, remainder = bytes(data).split(b"\n", 1)
@@ -140,6 +156,7 @@ class ServeDispatcher:
         elif request.get("kind") == "ack":
             if self.malformed_next_ack:
                 self.malformed_next_ack = False
+                self.hide_receipts_after_ack_failure = True
                 reply.update({"ok": True, "session_id": request["session_id"]})
                 request["_event"].set()
                 return
@@ -195,7 +212,11 @@ class ServeDispatcher:
         else:
             reply.update({
                 "ok": True,
-                "output": 'round-trip: 雪 ☃️ quote=" slash=\\\\ line=\\n tab=\\t',
+                "output": (
+                    str(len(self.completed_commands))
+                    if request.get("command") == "fixture-receipt-count"
+                    else 'round-trip: 雪 ☃️ quote=" slash=\\\\ line=\\n tab=\\t'
+                ),
                 "current_file": self.current_file,
                 "document_generation": self.generation,
                 "cutter_version": self.cutter_version,
@@ -243,23 +264,22 @@ class ResponseEncodingTest(unittest.TestCase):
             with self.subTest(suffix=suffix):
                 output = "a" * (5 * 1024 * 1024 - 1) + suffix
                 value = {"ok": True, "output": output, "execution_state": "complete"}
-                encoded = self.server._encode_authenticated_response(value, "a" * 64, "b" * 64)
+                encoded = _encoded_response(self.server, value, "a" * 64, "b" * 64)
                 self.assertIsNotNone(encoded)
                 self.assertLessEqual(len(encoded), bridge.MAX_FRAME_BYTES)
                 frame = json.loads(encoded)
                 self.assertEqual(self.assert_authenticated_response(frame), value)
-        self.assertIsNone(self.server._encode_authenticated_response({
+        self.assertIsNone(_encoded_response(self.server, {
             "ok": True, "output": "😀" * (5 * 1024 * 1024),
             "execution_state": "complete",
         }, "a" * 64, "b" * 64))
 
-    def test_streamed_frame_matches_the_encoded_frame(self):
+    def test_streamed_frame_preserves_unicode_and_authentication(self):
         value = {
             "ok": True,
             "output": 'say "hi"\\\n雪\u2028',
             "execution_state": "complete",
         }
-        encoded = self.server._encode_authenticated_response(value, "a" * 64, "b" * 64)
         sender, receiver = socket.socketpair()
         try:
             receiver.settimeout(2)
@@ -274,8 +294,8 @@ class ResponseEncodingTest(unittest.TestCase):
         finally:
             sender.close()
             receiver.close()
-        self.assertEqual(bytes(streamed), encoded)
-        self.assertEqual(json.loads(json.loads(encoded)["response"]), value)
+        frame = json.loads(bytes(streamed))
+        self.assertEqual(self.assert_authenticated_response(frame), value)
 
     def test_json_pieces_stay_within_one_chunk(self):
         output = 'say "hi"\\\n雪\u0001' * 20000
@@ -477,7 +497,7 @@ class ProtocolProducerTest(unittest.TestCase):
                 rejected.settimeout(1)
                 try:
                     observed = rejected.recv(16)
-                except OSError:
+                except (ConnectionResetError, ConnectionAbortedError):
                     observed = b""
                 self.assertEqual(observed, b"")
             finally:
@@ -514,7 +534,7 @@ class ProtocolProducerTest(unittest.TestCase):
                 rejected.settimeout(1)
                 try:
                     observed = rejected.recv(16)
-                except OSError:
+                except (ConnectionResetError, ConnectionAbortedError):
                     observed = b""
                 self.assertEqual(observed, b"")
             finally:
@@ -598,14 +618,17 @@ class ProtocolProducerTest(unittest.TestCase):
         dispatcher.completed_commands = {}
         dispatcher._receipt_lock = threading.Lock()
         dispatcher._refresh_document_identity = lambda: None
-        bridge.cutter.cmd = lambda command: f"output:{command}"
+        commands = []
+        bridge.cutter.cmd = lambda command: commands.append(command) or f"output:{command}"
 
-        def handle(value):
+        def handle(value, cancelled=False):
             request = {
                 **value,
                 "_event": threading.Event(),
                 "_cancelled": threading.Event(),
             }
+            if cancelled:
+                request["_cancelled"].set()
             reply = {}
             bridge._RequestDispatcher._handle(dispatcher, request, reply)
             self.assertTrue(request["_event"].is_set())
@@ -613,6 +636,15 @@ class ProtocolProducerTest(unittest.TestCase):
 
         request_a = "4b18ce4d-bf31-456e-ae31-e8c547b2f9db"
         request_b = "8ca93d11-107d-41ed-8b40-31dd53cd26a6"
+        request_cancelled = "9c8074cf-4906-4cc1-ac92-3fca3d305f8f"
+        cancelled = handle({
+            "kind": "command",
+            "request_id": request_cancelled,
+            "expected_generation": 4,
+            "command": "cancelled",
+        }, cancelled=True)
+        self.assertEqual(cancelled["error"], "request-cancelled-before-execution")
+        self.assertEqual(cancelled["execution_state"], "not_started")
         for request_id, command in ((request_a, "A"), (request_b, "B")):
             result = handle({
                 "kind": "command",
@@ -621,7 +653,14 @@ class ProtocolProducerTest(unittest.TestCase):
                 "command": command,
             })
             self.assertTrue(result["ok"])
+        self.assertEqual(commands, ["A", "B"])
 
+        status = handle({"kind": "status"})
+        self.assertEqual(
+            {receipt["request_id"]: receipt["execution_state"] for receipt in status["completed_commands"]},
+            {request_cancelled: "not_started", request_a: "complete", request_b: "complete"},
+        )
+        self.assertTrue(handle({"kind": "ack", "request_id": request_cancelled})["acknowledged"])
         status = handle({"kind": "status"})
         self.assertEqual(
             {receipt["request_id"] for receipt in status["completed_commands"]},
@@ -754,23 +793,12 @@ class ProtocolProducerTest(unittest.TestCase):
 
 class RequestFrameLimitTest(unittest.TestCase):
     def test_payload_limit_excludes_the_line_terminator(self):
-        class BufferedSocket:
-            def __init__(self, data):
-                self.data = data
-
-            def settimeout(self, _timeout):
-                pass
-
-            def recv(self, count):
-                part, self.data = self.data[:count], self.data[count:]
-                return part
-
         payload = b"{}" + b" " * (bridge.MAX_FRAME_BYTES - 2)
         self.assertEqual(
-            bridge._BridgeServer._receive_frame(BufferedSocket(payload + b"\n")), {}
+            bridge._BridgeServer._receive_frame(_BufferedSocket(payload + b"\n")), {}
         )
         with self.assertRaisesRegex(ValueError, "frame-limit-exceeded"):
-            bridge._BridgeServer._receive_frame(BufferedSocket(payload + b" " + b"\n"))
+            bridge._BridgeServer._receive_frame(_BufferedSocket(payload + b" " + b"\n"))
 
     def test_delimiter_in_a_later_chunk_is_accepted(self):
         class ShortReads:
@@ -875,7 +903,8 @@ class BridgeRequestCeilingTest(unittest.TestCase):
         server.session_id = "00000000-0000-4000-8000-000000000001"
 
         def encode(length):
-            return server._encode_authenticated_response(
+            return _encoded_response(
+                server,
                 {
                     "ok": True,
                     "output": "A" * length,
@@ -926,10 +955,11 @@ class BridgeRequestCeilingTest(unittest.TestCase):
             "completed_connection": "f" * 16,
         }
         self.assertIsNone(
-            server._encode_authenticated_response(status, "a" * 64, "b" * 64)
+            _encoded_response(server, status, "a" * 64, "b" * 64)
         )
         required = server._bounded_status_response(status)
-        encoded = server._encode_authenticated_response(
+        encoded = _encoded_response(
+            server,
             required, "a" * 64, "b" * 64
         )
         self.assertIsNotNone(encoded)
@@ -977,7 +1007,7 @@ class BridgeRequestCeilingTest(unittest.TestCase):
             "identity_status": "partial",
         }
         self.assertIsNone(
-            server._encode_authenticated_response(value, "a" * 64, "b" * 64)
+            _encoded_response(server, value, "a" * 64, "b" * 64)
         )
         captured = bytearray()
 
@@ -1012,7 +1042,7 @@ class BridgeRequestCeilingTest(unittest.TestCase):
         server = module._BridgeServer.__new__(module._BridgeServer)
         server.token = "token"
         server.session_id = "00000000-0000-4000-8000-000000000001"
-        encoded = server._encode_authenticated_response(value, "a" * 64, "b" * 64)
+        encoded = _encoded_response(server, value, "a" * 64, "b" * 64)
         self.assertIsNotNone(encoded)
         response = json.loads(json.loads(encoded)["response"])
         self.assertEqual(response["output"], zeros)

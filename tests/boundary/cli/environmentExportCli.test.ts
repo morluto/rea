@@ -50,9 +50,15 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      details: { operation: "environment-export" },
+      code: "cleanup_incomplete",
+      details: {
+        operation: "environment-export",
+        cleanup: "incomplete",
+        resources: [files.manifestPath],
+        diagnostics: { input_path: files.manifestPath, input_role: "manifest" },
+        cleanup_reason: "controlled persistent close failure",
+      },
     });
-    expect(JSON.stringify(result.json)).toContain("cleanup");
     await expect(readFile(join(directory, "README.md"))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -136,6 +142,8 @@ cliTest(
     expect(document.files.map((file) => file.path).sort()).toEqual(
       BUNDLE_FILES,
     );
+    for (const file of document.files)
+      expect(file.bytes).toBe((await stat(join(directory, file.path))).size);
     const written = (
       await readdir(directory, { recursive: true, withFileTypes: true })
     )

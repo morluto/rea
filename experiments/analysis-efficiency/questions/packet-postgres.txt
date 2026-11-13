@@ -1,3 +1,0 @@
-Inspect the selected saved PostgreSQL capture {{artifact_path}} with REA. Within original capture frames 1 through 2000, return the first 12 TCP packets with source or destination port 5432 in original frame order. For each return integer frame, source_port, destination_port and flags (the numeric TCP flags word, not prose). Also report the matching packet count within this 2000-frame question scope.
-
-Do not claim whole-capture or network completeness. Return a single JSON object with exactly kind ("postgres"), matching_packets, rows, evidence_ids and limitations. Use actual successful REA Evidence IDs. Include a concise limitation explaining the recorded input scope; no extra claims or tool calls are needed.

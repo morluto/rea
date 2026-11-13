@@ -1,3 +1,4 @@
+import { dnsResponseLayers } from "../../fixtures/pcap/pcapTestTools.js";
 import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -45,9 +46,17 @@ const createPcapToolFixture = async (root: string) => {
       },
     },
   }));
+  const dnsFrames = Array.from({ length: 132 }, (_, index) => ({
+    _source: {
+      layers: {
+        frame: { "frame.number": String(index + 1) },
+        ...dnsResponseLayers("many.example", `198.51.100.${index}`),
+      },
+    },
+  }));
   await writeFile(
     tshark,
-    `#!/bin/sh\nif [ "$1" = "--version" ]; then printf 'TShark (Wireshark) 4.6.6-emulated\\n'; exit 0; fi\nprintf 'read\\n' >> ${quote(marker)}\nprintf '%s' ${quote(JSON.stringify(frames))}\nprintf 'retained warning' >&2\n`,
+    `#!/bin/sh\nif [ "$1" = "--version" ]; then printf 'TShark (Wireshark) 4.6.6-emulated\\n'; exit 0; fi\nprintf 'read\\n' >> ${quote(marker)}\ncase " $* " in *" -x "*) printf '%s' ${quote(JSON.stringify(dnsFrames))}; exit 0 ;; esac\nprintf '%s' ${quote(JSON.stringify(frames))}\nprintf 'retained warning' >&2\n`,
     { mode: 0o755 },
   );
   await writeFile(

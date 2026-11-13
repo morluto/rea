@@ -2,10 +2,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { nativeInventoryRowsSchemas } from "../native/nativeInventory.js";
 import {
-  analysisViewRequestSchema,
   projectAnalysisView,
   type AnalysisViewParent,
 } from "./analysisView.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -19,6 +19,7 @@ const rows = () => [
   { address: "0x20", value: "last" },
 ];
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"a".repeat(64)}`,
   operation: "search_procedures",
   normalizedResult,

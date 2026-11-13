@@ -71,7 +71,6 @@ it.each(["__proto__", "constructor"])(
         { source, store: serving.store },
         { tool, plan, args },
       );
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       expect(Object.hasOwn(result.value.args, name)).toBe(true);
       expect(result.value.args[name]).toBe("selected");

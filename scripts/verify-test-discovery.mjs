@@ -55,7 +55,8 @@ try {
   if (
     report.missing.length ||
     report.unexpected.length ||
-    report.duplicates.length
+    report.duplicates.length ||
+    report.wrongProjects.length
   ) {
     console.error(JSON.stringify(report, null, 2));
     process.exitCode = 1;

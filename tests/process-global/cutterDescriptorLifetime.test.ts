@@ -38,7 +38,9 @@ import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { authenticatedServer } from "../fixtures/cutterBridgeProtocol.js";
 
 beforeEach(() => {
   fault.root = "";
@@ -53,7 +55,7 @@ afterEach(async () => {
   for (const handle of fault.handles) await handle.close();
 });
 
-const descriptor = async (root: string, index: number) => {
+const descriptor = async (root: string, index: number, port = 9) => {
   const session_id = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
   const path = join(root, `cutter-${process.pid}-${session_id}.json`);
   await writeFile(
@@ -62,7 +64,7 @@ const descriptor = async (root: string, index: number) => {
       session_id,
       pid: process.pid,
       host: "127.0.0.1",
-      port: 9,
+      port,
       token: "fixture-token-never-sent-to-network",
       document_generation: 0,
       current_file: null,
@@ -108,16 +110,14 @@ it("retains exact failed descriptors and keeps aggregate status until every clos
   const client = new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: root });
   try {
     const original = await client
-      .listDescriptors()
+      .listSessions()
       .catch((cause: unknown) => cause);
     if (!(original instanceof AnalysisError))
       throw new Error("Expected typed cleanup aggregate");
     expect(original.cleanupIncomplete).toBe(true);
     expect(original.cleanupResources).toHaveLength(2);
     expect(fault.handles).toHaveLength(2);
-    const retry = await client
-      .listDescriptors()
-      .catch((cause: unknown) => cause);
+    const retry = await client.listSessions().catch((cause: unknown) => cause);
     if (!(retry instanceof AnalysisError))
       throw new Error("Expected blocked retry");
     expect(fault.handles).toHaveLength(2);
@@ -149,7 +149,18 @@ it("shutdown waits for descriptor finalization before retrying retained cleanup"
   const root = await createTestTempDirectory(
     "rea-cutter-descriptor-finalization-",
   );
-  await descriptor(root, 1);
+  const sessionId = "00000000-0000-4000-8000-000000000001";
+  const server = authenticatedServer(
+    "fixture-token-never-sent-to-network",
+    sessionId,
+    (request, respond) => respond({ ok: true, session_id: request.session_id }),
+    true,
+  );
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Expected a local Cutter test port");
+  await descriptor(root, 1, address.port);
   fault.root = root;
   let entered!: () => void;
   let release!: () => void;
@@ -164,19 +175,32 @@ it("shutdown waits for descriptor finalization before retrying retained cleanup"
     await gate;
   };
   const client = new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: root });
-  const reading = client.listDescriptors().catch((cause: unknown) => cause);
-  await closing;
-  let settled = false;
-  const shutdown = client.close().then(() => {
-    settled = true;
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-  expect(settled).toBe(false);
-  fault.blocked.clear();
-  release();
-  await reading;
-  await shutdown;
-  expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
+  const reading = client.listSessions();
+  let shutdown: Promise<void> | undefined;
+  try {
+    await awaitAcknowledgement(closing, reading, "descriptor finalization");
+    let settled = false;
+    shutdown = client.close().then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    fault.blocked.clear();
+    release();
+    expect(await reading).toMatchObject({
+      discovery_status: "sessions_found",
+      sessions: [{ session_id: sessionId }],
+    });
+    await shutdown;
+    expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
+  } finally {
+    release();
+    fault.onClose = undefined;
+    fault.blocked.clear();
+    await Promise.allSettled([reading, ...(shutdown ? [shutdown] : [])]);
+    await client.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 it.each([null, "primitive abort", new Error("selected abort")])(
@@ -226,8 +250,15 @@ it("does not assign a peer's later cancellation to a descriptor that already fai
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
+  let firstClosing!: () => void;
+  const firstCloseStarted = new Promise<void>((resolve) => {
+    firstClosing = resolve;
+  });
   fault.onClose = async (handle) => {
-    if (handle === fault.handles[0]) return;
+    if (handle === fault.handles[0]) {
+      firstClosing();
+      return;
+    }
     entered();
     await gate;
   };
@@ -236,7 +267,12 @@ it("does not assign a peer's later cancellation to a descriptor that already fai
     .listSessions({ signal: controller.signal })
     .catch((cause: unknown) => cause);
   try {
-    await waiting;
+    await awaitAcknowledgement(
+      Promise.all([waiting, firstCloseStarted]).then(() => undefined),
+      reading,
+      "peer descriptor finalization",
+    );
+    // Let the first close rejection propagate while its peer remains gated.
     await new Promise((resolve) => setImmediate(resolve));
     controller.abort(reason);
     release();

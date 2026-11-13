@@ -297,7 +297,8 @@ describe("parseCapinfosOutput", () => {
   });
 });
 
-const REAL_TSHARK_JSON = JSON.stringify([
+// Synthetic producer observations without raw DNS bytes: identity remains unknown.
+const PARTIAL_TSHARK_JSON = JSON.stringify([
   {
     _source: {
       layers: {
@@ -305,9 +306,10 @@ const REAL_TSHARK_JSON = JSON.stringify([
         "frame.protocols": ["sll:ethertype:ip:udp:dns"],
         "ip.src": ["192.168.1.1"],
         "ip.dst": ["8.8.8.8"],
-        "dns.qry.name": ["example.com"],
-        "dns.flags.response": ["1"],
-        "dns.a": ["93.184.216.34"],
+        dns: {
+          "dns.qry.name": "example.com",
+          "dns.a": "93.184.216.34",
+        },
       },
     },
   },
@@ -337,7 +339,7 @@ const REAL_TSHARK_JSON = JSON.stringify([
 
 describe("parseTsharkJsonOutput", () => {
   it("projects endpoints, DNS, TLS SNI, protocols, and HTTP URIs", async () => {
-    const result = await parseTsharkJsonOutput(REAL_TSHARK_JSON);
+    const result = await parseTsharkJsonOutput(PARTIAL_TSHARK_JSON);
     expect(result.endpoints).toEqual(
       expect.arrayContaining([
         { address: "192.168.1.1", port: null, packet_count: 3 },
@@ -348,6 +350,7 @@ describe("parseTsharkJsonOutput", () => {
     expect(result.dnsQueries).toEqual([
       {
         query: "example.com",
+        query_labels_hex: null,
         response_addresses: [],
         response_address_count: 0,
       },

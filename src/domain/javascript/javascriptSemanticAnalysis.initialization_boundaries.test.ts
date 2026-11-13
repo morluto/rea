@@ -53,9 +53,9 @@ it.each([
 ])(
   "indexes the legacy block-function write on its outer owner: %s",
   (source) => {
-    expect(
-      onlyCallable(analyze(source), "read").returnSites[0]?.value.status,
-    ).not.toBe("literal");
+    const returnSite = onlyCallable(analyze(source), "read").returnSites[0];
+    expect(returnSite).toBeDefined();
+    expect(returnSite?.value.status).not.toBe("literal");
   },
 );
 
@@ -246,5 +246,23 @@ it("owns a class declaration's self reference separately from its outer variable
 
 it("does not initialize a class self name during computed-key evaluation", () => {
   const ir = analyze(`class Service { [Service()]() {} }`, "fixture.mjs");
+  expect(ir.callSites[0]).toBeDefined();
   expect(ir.callSites[0]?.resolution).not.toBe("exact");
 });
+
+it.each(["__proto__", '"__proto__"', "['__proto__']"])(
+  "distinguishes prototype setters from own data keys in loader-write scoping: %s",
+  (key) => {
+    const ir = analyze(`
+      with ({require: local, [Symbol.unscopables]: {${key}: {require: true}}}) {
+        require = replacement;
+      }
+      const selected = require("node:fs");
+    `);
+    const selected = onlyBinding(ir, "selected");
+    if (key.startsWith("[")) {
+      // A computed key is an own data property, so it supplies no inherited exclusion.
+      expect(selected.provenance.status).toBe("module");
+    } else expect(selected.provenance.status).not.toBe("module");
+  },
+);

@@ -18,17 +18,17 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { createEvidence } from "../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   inspectSqliteDatabaseInputSchema,
   sqliteDatabaseSchema,
   type InspectSqliteDatabaseInput,
-  SQLITE_PROVIDER_IDENTITY,
   DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
   sqliteInspectionParameters,
 } from "../domain/sqlite/sqliteDatabase.js";
+import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
@@ -242,7 +242,11 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
           new ProviderCleanupError(
             SQLITE_PROVIDER_IDENTITY.id,
             failures.flatMap((failure) => failure.cleanupResources),
-            { failures: failures.map(projectAnalysisError) },
+            {
+              failures: failures.map((failure) =>
+                projectAnalysisError(failure),
+              ),
+            },
             { operation },
           ).bindCleanupDependencies(failures),
         );
@@ -533,14 +537,12 @@ const completedSqliteEvidence = (
   input: InspectSqliteDatabaseInput,
   execution: AnalysisExecution,
 ) =>
-  createEvidence(execution.subject ?? undefined, execution.provider, {
+  createAnalysisExecutionEvidence(
     operation,
-    parameters: sqliteInspectionParameters(input),
-    result: execution.result,
-    confidence: "observed",
-    locations: execution.locations,
-    limitations: execution.limitations,
-  });
+    sqliteInspectionParameters(input),
+    execution,
+    "observed",
+  );
 
 const validateSqliteInput = (input: InspectSqliteDatabaseInput): void => {
   const parsed = inspectSqliteDatabaseInputSchema.safeParse(input);

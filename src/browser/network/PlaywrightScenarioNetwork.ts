@@ -10,6 +10,7 @@ import type {
   BrowserScenarioEvent,
 } from "../../domain/browserScenarioCaptureValues.js";
 import type { BrowserScenarioSecrets } from "../BrowserScenarioSecrets.js";
+import { PLAYWRIGHT_NETWORK_READ_TIMEOUT_MS } from "../PlaywrightExecutionBoundary.js";
 import {
   readBoundedResponseBody,
   MAX_SAVED_RESPONSE_BYTES,
@@ -124,8 +125,6 @@ interface NetworkCaptureOptions {
     reason: BrowserScenarioEventBudgetReason,
   ) => void;
   readonly signal?: AbortSignal;
-  /** Production uses 5s; a fixture can supply its own bounded-read clock. */
-  readonly readTimeoutMs?: number;
 }
 
 /** Captures correlated network phases and drains selected content before browser cleanup. */
@@ -155,7 +154,7 @@ export class PlaywrightScenarioNetwork {
   constructor(private readonly options: NetworkCaptureOptions) {
     this.limits = options.limits;
     this.readOptions = {
-      timeoutMs: options.readTimeoutMs ?? 5_000,
+      timeoutMs: PLAYWRIGHT_NETWORK_READ_TIMEOUT_MS,
       maxBodyBytes: this.limits.max_network_body_bytes,
       maxBodyAllocationBytes: this.limits.max_network_body_allocation_bytes,
       maxHeaderAllocationBytes: this.limits.max_network_header_allocation_bytes,
@@ -713,9 +712,12 @@ export class PlaywrightScenarioNetwork {
       const retainedBody = includeBody
         ? observedBody
         : { state: "not_requested" as const };
+      // A recorded request failure is a terminal observation, not a missed
+      // body read. Keep the unavailable body without invalidating event coverage.
       if (
         retainedHeaders.state === "unavailable" ||
-        retainedBody.state === "unavailable" ||
+        (retainedBody.state === "unavailable" &&
+          retainedBody.reason !== "request-failed") ||
         retainedBody.state === "not_exposed"
       )
         this.gaps.add(

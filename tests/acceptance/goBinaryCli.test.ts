@@ -19,10 +19,12 @@ import {
   setGoMachOSegmentFileSize,
   GO_MODULE_TEXT,
 } from "../fixtures/go/image.js";
+import { createGoRodataStringFixture } from "../fixtures/go/rodataStringImage.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 
 cliTest(
@@ -61,7 +63,7 @@ cliTest(
           },
         });
         expect(response.isError, JSON.stringify(response)).not.toBe(true);
-        expect(response.structuredContent).toEqual(evidence);
+        expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
       } else {
         const expected = {
           code: "invalid_request",
@@ -86,6 +88,13 @@ cliTest(
     const root = await createTestTempDirectory("rea-go-inline-budget-");
     const { client, call } = await connectLocalToolsMcp();
     const maximum = 1024 * 1024;
+    const impossibleInline = createGoBinaryFixture();
+    impossibleInline.bytes.set(
+      [0x81, 0x80, 0x40],
+      impossibleInline.headerOffset + 32,
+    );
+    const impossiblePointer = createGoBinaryFixture({ encoding: "pointer" });
+    impossiblePointer.bytes.writeBigUInt64LE(BigInt(maximum + 1), 1544);
     const cases = [
       {
         name: "exact",
@@ -100,6 +109,16 @@ cliTest(
       {
         name: "truncated",
         fixture: createGoInlineAggregateFixture(512),
+        outcome: "malformed",
+      },
+      {
+        name: "impossible-inline",
+        fixture: impossibleInline,
+        outcome: "malformed",
+      },
+      {
+        name: "impossible-pointer",
+        fixture: impossiblePointer,
         outcome: "malformed",
       },
     ] as const;
@@ -131,7 +150,7 @@ cliTest(
             item.fixture.headerOffset,
         ).toBeGreaterThan(maximum + 32);
         expect(response.isError, JSON.stringify(response)).not.toBe(true);
-        expect(response.structuredContent).toEqual(evidence);
+        expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
       } else {
         const code =
           item.outcome === "resource"
@@ -283,7 +302,7 @@ cliTest(
       infos.push(evidence.normalized_result.build_info);
       const response = await call("inspect_go_binary", { path });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     }
     expect(infos[1]).toEqual(infos[0]);
     await client.ping();
@@ -328,7 +347,11 @@ for (const bits of [32, 64] as const) {
 
           const response = await call("inspect_go_binary", { path });
           expect(response.isError, JSON.stringify(response)).not.toBe(true);
-          expect(response.structuredContent).toEqual(evidence);
+          expectCliMcpEvidenceParity(
+            evidence,
+            response.structuredContent,
+            path,
+          );
         }
 
         expect(buildInfos[1]).toEqual(buildInfos[0]);
@@ -386,7 +409,7 @@ cliTest(
         build_info: null,
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     }
     await client.ping();
   },
@@ -625,4 +648,74 @@ cliTest(
       "Dependency coverage is unknown",
     );
   },
+);
+
+cliTest(
+  "recovers Go (ptr, len) string literals with CLI and MCP parity and rejects standalone --max-string-literals",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-go-cli-strings-");
+    const path = join(root, "strings.pe");
+    const fixture = createGoRodataStringFixture({
+      format: "pe",
+      rodata: Buffer.from(
+        "ListResourceProvidersgenaihttps://example.invalid/v1",
+        "utf8",
+      ),
+      headers: [
+        { section: "data", offsetInSection: 0, ptr: 0x102000n, len: 21n },
+        { section: "data", offsetInSection: 16, ptr: 0x102015n, len: 5n },
+        { section: "data", offsetInSection: 32, ptr: 0x10201an, len: 26n },
+      ],
+    });
+    await writeFile(path, fixture.bytes);
+
+    const standaloneCap = await runFileCli(cli, {
+      arguments: [
+        "inspect-go-binary",
+        path,
+        "--max-string-literals",
+        "2",
+        "--json",
+      ],
+    });
+    expect(standaloneCap.exitCode).toBe(1);
+    expect(standaloneCap.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_go_binary",
+        issues: [{ path: ["max_string_literals"] }],
+      },
+    });
+
+    const cliResult = await runFileCli(cli, {
+      arguments: [
+        "inspect-go-binary",
+        path,
+        "--include-string-literals",
+        "--max-string-literals",
+        "2",
+        "--json",
+      ],
+    });
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+    const evidence = evidenceResultOf(goBinarySchema).parse(cliResult.json);
+    expect(evidence.normalized_result.string_literals).toMatchObject({
+      evidence_kind: "inferred",
+      discovered_count: 3,
+      max_items: 2,
+      truncated: true,
+      items: [{ value: "ListResourceProviders" }, { value: "genai" }],
+    });
+
+    const { client, call } = await connectLocalToolsMcp();
+    const mcpReply = await call("inspect_go_binary", {
+      path,
+      include_string_literals: true,
+      max_string_literals: 2,
+    });
+    expect(mcpReply.isError, JSON.stringify(mcpReply)).not.toBe(true);
+    expectCliMcpEvidenceParity(evidence, mcpReply.structuredContent, path);
+    await client.ping();
+  },
+  60000,
 );

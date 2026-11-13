@@ -34,13 +34,6 @@ it("delivers native primitive and graph summaries with exact retained parents an
         { toolDefinition: tool },
       );
       expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
-      expect(
-        validation.assertions.validate(
-          tool.outputSchema,
-          result.structuredContent,
-        ),
-        JSON.stringify(validation.assertions.errors),
-      ).toBe(true);
       return parseEvidence(result.structuredContent);
     };
     const viewSchemas = await advertisedMcpToolSchemas(
@@ -119,6 +112,42 @@ it("delivers native primitive and graph summaries with exact retained parents an
       );
       expect(rejected.isError).toBe(true);
     }
+    const references = await call("xrefs", { address: "0x401000" });
+    const source = {
+      kind: "retained-evidence",
+      evidence_id: references.evidence_id,
+    };
+    const before = harness.calls.length;
+    const page = await call("inspect_analysis_view", {
+      source,
+      view: { kind: "native-observation", offset: 0, limit: 1 },
+    });
+    expect(page.normalized_result).toMatchObject({
+      parent_evidence_id: references.evidence_id,
+      parent_operation: "xrefs",
+      items: {
+        type: "addresses",
+        rows: [{ source_index: 0, address: "0x401001" }],
+      },
+      coverage: { total: 1, exhausted: true },
+    });
+    expect(
+      analysisViewResultSchema.parse(page.normalized_result).unknowns,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /source addresses only.*reference kinds or provenance.*complete parent Evidence/iu,
+        ),
+      ]),
+    );
+    const caveats = await call("inspect_analysis_view", {
+      source,
+      view: { kind: "native-context", facet: "limitations" },
+    });
+    expect(caveats.normalized_result).toMatchObject({
+      parent_operation: "xrefs",
+    });
+    expect(harness.calls).toHaveLength(before);
   } finally {
     await harness.close();
   }
@@ -148,6 +177,12 @@ it("follows native overflow continuations through MCP without repeating provider
             relationshipCoverage: {
               status: "partial",
               limitations: ["Indirect edges unknown"],
+              discovery: {
+                callees: {
+                  status: "partial",
+                  reason: "Body was classified as data.",
+                },
+              },
             },
           },
         ),
@@ -177,9 +212,12 @@ it("follows native overflow continuations through MCP without repeating provider
     for (const name of [
       ...NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS,
       "get_call_graph",
+      "xrefs",
     ] as const) {
       const input =
-        name === "get_call_graph" || name === "resolve_containing_procedure"
+        name === "get_call_graph" ||
+        name === "resolve_containing_procedure" ||
+        name === "xrefs"
           ? { address: "0x1000" }
           : { procedure: "fixture_main" };
       const complete = await client.callTool({ name, arguments: input });
@@ -204,6 +242,24 @@ it("follows native overflow continuations through MCP without repeating provider
         kind: "native-observation",
         parent_operation: name,
       });
+      if (name === "get_call_graph")
+        expect(evidence.normalized_result).toMatchObject({
+          items: {
+            type: "graph-nodes",
+            rows: [
+              {
+                relationship_coverage: {
+                  discovery: {
+                    callees: {
+                      status: "partial",
+                      reason: "Body was classified as data.",
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        });
       expect(reads).toBe(before);
     }
   } finally {

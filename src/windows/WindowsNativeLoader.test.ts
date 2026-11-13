@@ -2,38 +2,28 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
+import { windowsNativeArtifactFixture } from "../../tests/fixtures/windowsNativeArtifact.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import {
   loadWindowsNativeAuthority,
+  windowsNativeFailureRemediation,
   type WindowsNativeLoadHost,
 } from "./WindowsNativeLoader.js";
 
 const fixture = (
   capabilities: {
+    filesystem?: string;
     protocolStdin?: boolean;
     jobMemoryLimit?: unknown;
     privateBridgeDescriptorAccess?: unknown;
   } = {},
 ) => {
-  const bytes = Buffer.alloc(128);
-  bytes.write("MZ");
-  bytes.writeUInt32LE(64, 0x3c);
-  bytes.write("PE\0\0", 64, "ascii");
-  bytes.writeUInt16LE(0x8664, 68);
-  bytes.writeUInt16LE(0x20b, 88);
-  const manifest = {
-    packageVersion: "1.0.0",
-    platform: "win32",
-    architecture: "x64",
-    abiVersion: 1,
-    nodeApiVersion: 8,
-    artifact: "rea-windows-x64.node",
-    artifactSha256: createHash("sha256").update(bytes).digest("hex"),
-  };
+  const { bytes, manifest } = windowsNativeArtifactFixture();
+  const { filesystem = "NTFS", ...inspectionCapabilities } = capabilities;
   const identity = {
     requestedPath: "D:\\fixture\\runtime",
     finalPath: "\\\\?\\D:\\fixture\\runtime",
-    filesystem: "NTFS",
+    filesystem,
     volumeSerial: "0123456789abcdef",
     fileId: "0123456789abcdef0123456789abcdef",
     size: 0,
@@ -59,7 +49,7 @@ const fixture = (
           privateBridgeDescriptorAccess: true,
           atomicJobAssignment: true,
           killOnOwnerClose: true,
-          ...capabilities,
+          ...inspectionCapabilities,
         }),
       };
     },
@@ -68,6 +58,20 @@ const fixture = (
 };
 
 describe("packaged Windows native compatibility", () => {
+  it.each(["NTFS", "ReFS"])("admits %s filesystem identities", (filesystem) => {
+    const result = loadWindowsNativeAuthority(fixture({ filesystem }).host);
+    expect(result).toMatchObject({
+      available: true,
+      authority: { inspection: { filesystem: { filesystem } } },
+    });
+  });
+
+  it("rejects an unsupported filesystem identity", () => {
+    expect(
+      loadWindowsNativeAuthority(fixture({ filesystem: "exFAT" }).host),
+    ).toMatchObject({ available: false, failureStage: "inspection" });
+  });
+
   it.each([true, false])(
     "preserves protocol stdin capability %s alongside existing job controls",
     (protocolStdin) => {
@@ -251,6 +255,12 @@ describe("packaged Windows native artifact validation", () => {
     expect(readiness).not.toMatchObject({
       remediation: expect.stringContaining("restore native/windows/build"),
     });
+  });
+
+  it("describes NTFS and ReFS temporary volumes in self-test remediation", () => {
+    expect(windowsNativeFailureRemediation("self-test")).toContain(
+      "writable local NTFS/ReFS temporary directory",
+    );
   });
 
   it("requires every inspected native fact", () => {

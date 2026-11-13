@@ -13,7 +13,7 @@ interface ScalarSpan {
   readonly selfClosing: boolean;
 }
 
-export class XmlPlistSourceError extends TypeError {
+class XmlPlistSourceError extends TypeError {
   readonly _tag = "XmlPlistSourceError";
   constructor() {
     super("Cannot locate XML plist scalar in its original source");

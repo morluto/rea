@@ -15,7 +15,10 @@ import {
   inspectClientConfiguration,
 } from "../../../src/application/SetupClientConfiguration.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
-import { supportedClients } from "../../../src/application/SupportedClients.js";
+import {
+  supportedClientRegistrationProfile,
+  supportedClients,
+} from "../../../src/application/SupportedClients.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -42,7 +45,9 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
         ).replaceAll("\n", "\r\n")}\r\n`;
         await mkdir(dirname(client.configPath), { recursive: true });
         await writeFile(client.configPath, original);
-        const currentCommandPath = join(home, "rea");
+        const currentCommandPath = CURRENT_ENTRYPOINT_PATH;
+        if (currentCommandPath === undefined)
+          throw new Error("test runner entrypoint is unavailable");
         const command = [process.execPath, currentCommandPath, "mcp"];
         expect(await inspectClientConfiguration(client, {}, command)).toEqual({
           status: "update",
@@ -58,9 +63,14 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
           },
         );
         const updated = await readFile(client.configPath, "utf8");
-        expect(
-          updated.startsWith(`${bom}// Keep the client preferences.\r\n`),
-        ).toBe(true);
+        if (client.format === "copilot_cli") {
+          // Copilot consumes strict JSON: source comments/BOM are grammar, not metadata.
+          expect(() => JSON.parse(updated)).not.toThrow();
+        } else {
+          expect(
+            updated.startsWith(`${bom}// Keep the client preferences.\r\n`),
+          ).toBe(true);
+        }
         expect(
           parseClientConfiguration(updated, client.format).document,
         ).toEqual({
@@ -88,6 +98,7 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
             config_path: client.configPath,
             state: "aligned",
             command,
+            command_identity: "owned",
             remediation: null,
           },
         ]);
@@ -120,7 +131,12 @@ it.each(['\uFEFF{"servers": {"rea": @}}', '\uFEFF{"setting":\uFEFFtrue}'])(
       "rea-client-config-bom-invalid-",
     );
     const configPath = join(home, "mcp.json");
-    const client = { name: "vscode", format: "vscode", configPath } as const;
+    const client = {
+      name: "vscode",
+      registrationProfile: supportedClientRegistrationProfile("vscode"),
+      format: "vscode",
+      configPath,
+    } as const;
     await writeFile(configPath, original);
     const invalidOffset = original.includes("@") ? original.indexOf("@") : 12;
     expect(() => parseClientConfiguration(original, client.format)).toThrow(
@@ -200,7 +216,7 @@ it.each(["", "\n  \n", "\uFEFF"])(
       throw new Error("missing Antigravity JSON config");
     await mkdir(dirname(client.configPath), { recursive: true });
     await writeFile(client.configPath, original);
-    const command = [join(home, "rea"), "mcp"];
+    const command = ["rea", "mcp"];
 
     expect(await inspectClientConfiguration(client, {}, command)).toEqual({
       status: "update",

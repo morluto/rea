@@ -1,4 +1,8 @@
+import { captureBudgets } from "./CaptureBudgets.js";
 import { z } from "zod";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import { CaptureRedaction, capturePointer } from "./CaptureRedaction.js";
+import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -13,10 +17,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { withCaptureReaderCleanup } from "./CaptureFailures.js";
-import {
-  WEB_NETWORK_CAPTURE_LIMITS,
-  webNetworkCapturePayloadSchema,
-} from "../../domain/webNetworkCapture.js";
+import { webNetworkCapturePayloadSchema } from "../../domain/webNetworkCapture.js";
 
 const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({
@@ -45,6 +46,7 @@ export const readHistoricalCaptureReply = async (
   capturePath: string,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
+  sensitiveValues: readonly string[] = [],
 ) => {
   let finalization: ArtifactReaderFailure | undefined;
   try {
@@ -52,7 +54,7 @@ export const readHistoricalCaptureReply = async (
     try {
       file = await readStableArtifact(
         path,
-        WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+        captureBudgets().outputBytes,
         signal,
         undefined,
         resources,
@@ -66,8 +68,14 @@ export const readHistoricalCaptureReply = async (
     }
     const decoded = safeParseUtf8Json(file.bytes);
     if (!decoded.ok) throw decoded.cause;
+    const value = replySchema.parse(decoded.value);
+    if (value.ok && sensitiveValues.length > 0) {
+      excludeNormalizedNumbers(value.value.container, sensitiveValues);
+      for (const record of value.value.records)
+        excludeNormalizedNumbers(record, sensitiveValues);
+    }
     return {
-      value: replySchema.parse(decoded.value),
+      value,
       bytes: file.bytes.length,
       finalization,
     };
@@ -114,4 +122,41 @@ const replyFailureReason = (cause: unknown): string => {
   if (cause instanceof Error && "code" in cause)
     return `Reply file could not be read (${String(cause.code)}).`;
   return "Reply could not be validated.";
+};
+
+/** The bridge excludes producer literals; this boundary owns their JavaScript spelling. */
+const excludeNormalizedNumbers = (
+  projection: Pick<
+    WebNetworkCaptureRecord,
+    "reported" | "numeric_literals" | "redactions"
+  >,
+  sensitiveValues: readonly string[],
+): void => {
+  const redaction = new CaptureRedaction(sensitiveValues);
+  const excluded = new Set<string>();
+  const visit = (value: JsonValue, pointer: string): JsonValue => {
+    if (typeof value === "number") {
+      if (redaction.text(String(value), pointer) === null) {
+        excluded.add(pointer);
+        return null;
+      }
+    } else if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index++)
+        value[index] = visit(
+          value[index]!,
+          capturePointer(pointer, String(index)),
+        );
+    } else if (value !== null && typeof value === "object") {
+      for (const key of Object.keys(value))
+        value[key] = visit(value[key]!, capturePointer(pointer, key));
+    }
+    return value;
+  };
+  // The schema-validated reply is exclusively owned here, before Evidence retention.
+  projection.reported = visit(projection.reported, "");
+  if (excluded.size === 0) return;
+  projection.numeric_literals = projection.numeric_literals.filter(
+    (number) => !excluded.has(number.pointer),
+  );
+  projection.redactions.push(...redaction.redactions);
 };

@@ -1,3 +1,4 @@
+import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { PeCertificatesPort } from "./PeCertificatesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -94,8 +95,7 @@ const validReport = (
   maxEntries: number,
   maxBytes: number,
 ): boolean => {
-  const inside = ({ offset, bytes }: { offset: number; bytes: number }) =>
-    offset <= report.artifact.bytes - bytes;
+  const inside = insideArtifact(report.artifact.bytes);
   if (
     report.artifact.bytes > maxBytes ||
     report.coverage.examined_entries > maxEntries ||
@@ -105,6 +105,15 @@ const validReport = (
         (count, entry) => count + (entry.pkcs7?.certificates.length ?? 0),
         0,
       )
+  )
+    return false;
+  if (
+    report.coverage.status === "complete" &&
+    report.entries.some((entry) =>
+      entry.pkcs7?.signers.some((signer) =>
+        Array.isArray(signer.unsigned_attribute_oids),
+      ),
+    )
   )
     return false;
   if (report.table === null) return report.entries.length === 0;

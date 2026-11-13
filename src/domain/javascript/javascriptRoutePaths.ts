@@ -55,6 +55,31 @@ export type NextAppRoutePath =
   | { readonly kind: "known"; readonly path: string }
   | { readonly kind: "unknown"; readonly reason: string };
 
+/**
+ * Test /(?:^|\/)app\/(?:[\s\S]*\/)?page(?:\.[cm]?[jt]sx?|-[^/?#]+\.js|)(?:[?#].*)?$/u
+ * in linear time; every source literal reaches this test. The first `app/`
+ * segment admits every later page segment, and `.` cannot cross a line
+ * terminator, so a query or fragment after the page filename starts on the
+ * last line. Retrying from each `app/` or `?` instead is quadratic.
+ */
+const isPageShapedPath = (value: string): boolean => {
+  const app = /(?:^|\/)app\//u.exec(value);
+  if (app === null) return false;
+  const tail = value.slice(app.index + app[0].length);
+  const lastLineStart =
+    Math.max(
+      tail.lastIndexOf("\n"),
+      tail.lastIndexOf("\r"),
+      tail.lastIndexOf("\u2028"),
+      tail.lastIndexOf("\u2029"),
+    ) + 1;
+  for (const page of tail.matchAll(
+    /(?:^|\/)page(?:\.[cm]?[jt]sx?|-[^/?#]+\.js|)(?=[?#]|$)/gu,
+  ))
+    if (page.index + page[0].length >= lastLineStart) return true;
+  return false;
+};
+
 /** Classify a page filename without treating missing routing context as absence. */
 export const classifyNextAppRoutePath = (
   raw: string,
@@ -104,11 +129,7 @@ export const classifyNextAppRoutePath = (
     }
   }
   if (relative === undefined) {
-    if (
-      /(?:^|\/)app\/(?:[\s\S]*\/)?page(?:\.[cm]?[jt]sx?|-[^/?#]+\.js|)(?:[?#].*)?$/u.test(
-        value,
-      )
-    )
+    if (isPageShapedPath(value))
       return {
         kind: "unknown",
         reason:

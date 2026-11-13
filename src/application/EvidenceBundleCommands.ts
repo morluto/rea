@@ -1,3 +1,4 @@
+import { resolveInvestigationEvidenceClosure } from "./investigation/InvestigationEvidence.js";
 import { analysisEvidenceSources } from "./AnalysisEvidenceSources.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -33,6 +34,7 @@ import {
   readImmutableEvidenceBundle,
   readComparisonEvidenceBundles,
   writeEvidenceBundle,
+  evidenceBundleExportReceipt,
 } from "./EvidenceBundleFiles.js";
 import { inspectEvidenceBundle } from "./investigation/InspectEvidenceBundle.js";
 import type { EvidenceRecordFilters } from "../domain/evidenceRecordSummary.js";
@@ -137,8 +139,14 @@ export const deliverAnalysisEvidence = async (
   // Later inspect_analysis_view requests are separate questions and do not
   // inherit the parent's selected input path.
   const selected =
-    detail === "summary" && evidence.caller_input_path !== undefined
-      ? withEvidenceCallerInputPath(delivered.value, evidence.caller_input_path)
+    detail === "summary" &&
+    (evidence.caller_input_path !== undefined ||
+      evidence.caller_input_paths !== undefined)
+      ? withEvidenceCallerInputPath(
+          delivered.value,
+          evidence.caller_input_path,
+          evidence.caller_input_paths,
+        )
       : delivered.value;
   const published = await publishEvidenceDelivery({
     bundle,
@@ -173,6 +181,17 @@ export const publishEvidenceDelivery = async (input: {
   readonly signal?: AbortSignal | undefined;
 }): Promise<Result<PublishedEvidenceDelivery, AnalysisError>> => {
   const { signal, operation } = input;
+  // Partial analysis can hold only some of its linked sources. Both delivery
+  // adapters must establish closure before committing a complete source bundle.
+  const sources = new Map(
+    input.bundle.records.map((record) => [record.evidence_id, record]),
+  );
+  const closure = resolveInvestigationEvidenceClosure(
+    { evidenceForAnalysis: (id) => sources.get(id) },
+    [input.complete.evidence_id],
+  );
+  if (!closure.ok)
+    return err(closure.error.retainPartialObservation(input.complete));
   const written = await persistEvidenceBundleCommand(
     input.bundle,
     input.outputPath,
@@ -210,6 +229,11 @@ export const publishEvidenceDelivery = async (input: {
     );
   return ok({ delivered: input.delivered, evidenceBundle: written.value });
 };
+
+/** A delivery failure can follow commit; its receipt then owns the source closure. */
+export const evidenceDeliveryCommitted = (error: AnalysisError): boolean =>
+  error.diagnostics?.evidence_bundle !== undefined ||
+  (error instanceof EvidenceFileError && error.published !== undefined);
 
 /** Publish a completed bundle and retry its exact staged-output cleanup owner. */
 const persistEvidenceBundleCommand = async (
@@ -283,20 +307,18 @@ const projectWrite = (
   bundle: EvidenceBundle,
   written: Result<PublishedEvidenceFile, AnalysisError>,
 ): Result<JsonValue, AnalysisError> =>
-  written.ok
-    ? ok({
-        path: written.value.path,
-        bytes: written.value.bytes,
-        records: bundle.records.length,
-      })
-    : err(written.error);
+  written.ok ? ok(evidenceBundleExportReceipt(bundle, written.value)) : written;
 
 /** Standalone bundle discovery shares the same read owner as import and comparison. */
 export const inspectEvidenceBundleCommand = async (
   input: {
     readonly path: string;
-    readonly detail: "complete" | "summary";
+    readonly detail: "complete" | "summary" | "records" | "links";
     readonly filters?: EvidenceRecordFilters | undefined;
+    readonly offset?: number | undefined;
+    readonly limit?: number | undefined;
+    readonly traversal?: "direct" | "retained-closure" | undefined;
+    readonly link_status?: "missing" | "retained" | "all" | undefined;
   },
   signal?: AbortSignal,
 ) => {

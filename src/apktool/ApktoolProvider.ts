@@ -1,3 +1,5 @@
+import { processInspectionCancellationError } from "../providers/OwnedCommandCleanup.js";
+import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -30,6 +32,7 @@ import { providerConfigurationRefusal } from "../domain/providerConfigurationRef
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   apktoolResultSchemas,
+  apktoolStringTablesRequested,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
   MAX_APKTOOL_DECODE_TIMEOUT_MS,
   type ApktoolRequest,
@@ -69,13 +72,6 @@ import {
   parseApktoolYml,
   parseManifestPackage,
 } from "./ApktoolDecodeOutput.js";
-
-/** Stable identity for the Apktool resource-decoding provider. */
-export const APKTOOL_PROVIDER_IDENTITY = {
-  id: "apktool",
-  name: "Apktool",
-  version: null,
-} as const;
 
 const DECODE_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MANIFEST_MAX_BYTES = 512 * 1024;
@@ -175,6 +171,12 @@ const apktoolCommandFailure = (
   limits: DecodeLimits,
 ): AnalysisError => {
   const capturedOutput = capturedApktoolFailureOutput(cause);
+  const inspectionCancellation =
+    !(cause instanceof OwnedCommandFailure) ||
+    cause.preparationFailure !== undefined
+      ? processInspectionCancellationError(cause, operation)
+      : undefined;
+  if (inspectionCancellation !== undefined) return inspectionCancellation;
   if (!(cause instanceof OwnedCommandFailure))
     return new ProviderAdapterError("apktool", operation, {
       cause,
@@ -186,9 +188,9 @@ const apktoolCommandFailure = (
     });
 
   const output = cause.snapshot;
-  if (cause.reason === "cancelled")
+  if (cause.reason === "cancelled" && cause.cancellation !== undefined)
     return new AnalysisCancelledError(operation, {
-      cause: cause.cancellation?.reason,
+      cause: cause.cancellation.reason,
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
     });
   if (cause.reason === "timeout")
@@ -672,7 +674,7 @@ export class ApktoolProvider {
           : "complete";
 
       completedDecode.strings = [...projectedStrings.strings];
-      if (input.locales !== undefined || input.string_tables_only === true)
+      if (apktoolStringTablesRequested(input))
         completedDecode.string_tables = [...projectedStrings.tables];
       completedDecode.coverage = coverage;
       if (!projection.ok) throw projection.error.cause;

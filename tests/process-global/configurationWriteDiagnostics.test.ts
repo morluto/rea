@@ -48,6 +48,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { configureClientConfiguration } from "../../src/application/SetupClientConfiguration.js";
 import { failedConfigurationMessage } from "../../src/application/SetupClients.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { supportedClientRegistrationProfile } from "../../src/application/SupportedClients.js";
 
 afterEach(() => {
   selected.operation = undefined;
@@ -67,6 +68,7 @@ it.each([
     selected.operation = operation;
     const result = await configureClientConfiguration({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: path,
       format: "json",
     });
@@ -95,7 +97,7 @@ it.each([
       });
     expect(await readFile(path, "utf8")).toBe(original);
     expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
-    expect(await readdir(root)).toEqual([
+    expect((await readdir(root)).sort()).toEqual([
       "config.json",
       "config.json.rea.backup",
     ]);

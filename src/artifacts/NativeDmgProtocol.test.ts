@@ -81,6 +81,12 @@ it.skipIf(process.platform === "win32").each([false, true])(
         paths.push(entry.path);
       expect(paths).toContain("image.dmg/Volume/readable.txt");
       expect(coverage).toEqual(unknownCoverage ? [producerCoverage] : []);
+      const paused = reader.entries()[Symbol.asyncIterator]();
+      expect((await paused.next()).done).toBe(false);
+      await reader.close();
+      await expect(paused.next()).rejects.toMatchObject({
+        reason: "unavailable",
+      });
     } finally {
       try {
         await reader.close();
@@ -116,16 +122,15 @@ it("retains malformed successful hdiutil inventory output as a typed producer pa
   expect(calls).toEqual(["verify", "info"]);
   expect(failure).toMatchObject({
     reason: "format",
-    message: "hdiutil info -plist returned malformed image inventory",
+    message: expect.stringMatching(/hdiutil.*info.*inventory/iu),
     cause: { name: "ZodError" },
   });
+  if (!(failure instanceof Error))
+    throw new Error("Expected inventory failure");
   expect(
     projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
   ).toMatchObject({
-    details: {
-      reason: "format",
-      detail: "hdiutil info -plist returned malformed image inventory",
-    },
+    details: { reason: "format", detail: failure.message },
   });
 });
 

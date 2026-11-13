@@ -43,11 +43,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
 import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import {
-  environmentCard,
-  STATE_INTAKE_EXTENSION,
-  STATE_OPERATIONS,
-} from "../../application/environment/environmentTools.js";
+import { environmentCard } from "../../application/environment/environmentTools.js";
 import { stateDataPlane } from "./environmentDataPlane.js";
 import {
   ENVIRONMENT_CARD_PATH,
@@ -401,8 +397,7 @@ describe("state data plane intake", () => {
         id: 1,
         error: {
           code: -32602,
-          message:
-            "invalid params: a file:// uri names a path on this host, not a network share",
+          message: expect.stringMatching(/this host.*not a network share/iu),
         },
       });
     }
@@ -431,9 +426,28 @@ describe("state data plane intake", () => {
     ]);
     expect(batch.json).toMatchObject([
       { id: 1, result: {} },
-      { id: 2, result: { parts: [{ kind: "data" }] } },
+      {
+        id: 2,
+        result: {
+          parts: [
+            {
+              kind: "data",
+              data: {
+                rea_state: {
+                  entities: expect.arrayContaining([
+                    expect.objectContaining({
+                      type: "/api/users",
+                      id: "2",
+                      fields: expect.objectContaining({ login: "renamed" }),
+                    }),
+                  ]),
+                },
+              },
+            },
+          ],
+        },
+      },
     ]);
-    expect(JSON.stringify(batch.json)).toContain('"login":"renamed"');
     const notified = await plane.post({ jsonrpc: "2.0", method: "data/reset" });
     expect(notified.status).toBe(202);
     expect(loginOf(plane.store)).toBe("probe");
@@ -542,10 +556,29 @@ describe("state data plane timing and order", () => {
     const replies = (await batch).json;
     expect(replies).toMatchObject([
       { id: 1, result: {} },
-      { id: 2, result: { parts: [{ kind: "data" }] } },
+      {
+        id: 2,
+        result: {
+          parts: [
+            {
+              kind: "data",
+              data: {
+                rea_state: {
+                  entities: expect.arrayContaining([
+                    expect.objectContaining({
+                      type: "/api/users",
+                      id: "2",
+                      fields: expect.objectContaining({ login: "renamed" }),
+                    }),
+                  ]),
+                },
+              },
+            },
+          ],
+        },
+      },
     ]);
     // The get arrived with the add, before the reset, so it reports the loaded state.
-    expect(JSON.stringify(replies)).toContain('"login":"renamed"');
     await expect(reset).resolves.toMatchObject({ result: {} });
     expect(loginOf(plane.store)).toBe("probe");
   });
@@ -576,7 +609,9 @@ describe("state data plane cancellation", () => {
         id: 1,
         error: {
           code: -32000,
-          message: "the state document could not be downloaded",
+          message: expect.stringMatching(
+            /state document.*could not be downloaded/iu,
+          ),
           data: { reason: "cancelled" },
         },
       },
@@ -585,7 +620,7 @@ describe("state data plane cancellation", () => {
         id: 2,
         error: {
           code: -32000,
-          message: "the call was cancelled and left the state unchanged",
+          message: expect.stringMatching(/cancelled.*state unchanged/iu),
           data: { reason: "cancelled" },
         },
       },
@@ -879,7 +914,71 @@ const withClient = async (
   }
 };
 
+it("loads a padded inline state file and keeps the RPC result compact", async () => {
+  const environment = await serveState({ source, state });
+  const document = JSON.stringify(renamedDocument()).padEnd(
+    2 * 1024 * 1024,
+    " ",
+  );
+  const added = await fetch(new URL(ENVIRONMENT_RPC_PATH, environment.url), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "data/add",
+      params: {
+        parts: [
+          {
+            kind: "file",
+            file: { bytes: Buffer.from(document).toString("base64") },
+          },
+        ],
+      },
+    }),
+  });
+  expect(added.status).toBe(200);
+  const reply = await added.text();
+  expect(JSON.parse(reply)).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
+  expect(Buffer.byteLength(reply)).toBeLessThan(128);
+  await withClient(environment, async (client) => {
+    const read = await client.callTool({
+      name: "get_users_by_id",
+      arguments: { id: "2" },
+    });
+    expect(read.isError).toBeFalsy();
+    expect(read.structuredContent).toMatchObject({
+      body: { login: "renamed" },
+    });
+  });
+  await expect(environment.close()).resolves.toBeUndefined();
+});
+
 describe("serveEnvironment with a state", () => {
+  it("replays safe non-GET methods with the recorded-view reason", async () => {
+    const environment = await serveState(
+      environmentStateServeInputs(
+        environmentStateServeFixture(
+          timedCaptureEvidence([
+            ["GET", "/api/items", [{ id: 1 }]],
+            ["HEAD", "/api/items"],
+            ["OPTIONS", "/api/items", { allow: "GET, HEAD, OPTIONS" }],
+            ["TRACE", "/api/items", { trace: true }],
+          ]),
+        ),
+      ),
+    );
+    await withClient(environment, async (client) => {
+      for (const name of ["head_items", "options_items", "trace_items"]) {
+        const response = await client.callTool({ name, arguments: {} });
+        expect(response.isError).not.toBe(true);
+        expect(response.structuredContent).toMatchObject({
+          state: { source: "recording", reason: "method-replay" },
+        });
+      }
+    });
+  });
+
   it("declares the data plane, serves read tools from the state and reflects data/add in the next answer", async () => {
     const environment = await serveState({ source, state });
     const url = new URL(environment.url);
@@ -888,8 +987,28 @@ describe("serveEnvironment with a state", () => {
     ).json();
     expect(card).toEqual(JSON.parse(JSON.stringify(environment.card)));
     const { capabilities } = environment.card;
-    expect(capabilities.extensions).toEqual([STATE_INTAKE_EXTENSION]);
-    expect(capabilities.operations).toEqual(STATE_OPERATIONS);
+    expect(capabilities.extensions).toMatchObject([
+      {
+        uri: "urn:agentenv:intake/v1",
+        params: {
+          add: [
+            { part: "data", format: "rea-state/v1", load: "replace" },
+            {
+              part: "file",
+              format: "rea-state/v1",
+              mimeTypes: ["application/json"],
+              load: "replace",
+            },
+          ],
+          get: [{ part: "data", format: "rea-state/v1" }],
+        },
+      },
+    ]);
+    expect(capabilities.operations).toEqual([
+      "data/reset",
+      "data/add",
+      "data/get",
+    ]);
     const names = capabilities.tools.map((tool) => tool.name);
     expect(names).toContain("get_users_by_id");
     for (const write of [
@@ -934,7 +1053,122 @@ describe("serveEnvironment with a state", () => {
       expect(missing.isError).toBe(true);
     });
   });
+});
 
+describe("state response cleanup", () => {
+  it("reports pending teed response cleanup and retries after its sibling closes", async () => {
+    let sourceCancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+      },
+      cancel() {
+        sourceCancelled = true;
+      },
+    });
+    const [body, sibling] = stream.tee();
+    const environment = await serveState(
+      { source, state },
+      {
+        fetchState: async () =>
+          new Response(body, {
+            headers: { "content-length": String(STATE_INTAKE_LIMIT_BYTES + 1) },
+          }),
+      },
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const response = await fetch(
+        new URL(ENVIRONMENT_RPC_PATH, environment.url),
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(addByUri(1)),
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: -32602 },
+      });
+      const closing = Promise.race([
+        environment.close(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("server close waited for tee sibling")),
+            10_000,
+          );
+        }),
+      ]);
+      await expect(closing).rejects.toMatchObject({
+        _tag: "AnalysisOutputError",
+        cleanupIncomplete: true,
+        diagnostics: { cleanup_stages: ["state-responses"] },
+      });
+      expect(sourceCancelled).toBe(false);
+      await sibling.cancel();
+      expect(sourceCancelled).toBe(true);
+      await expect(environment.close()).resolves.toBeUndefined();
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      await Promise.allSettled([body.cancel(), sibling.cancel()]);
+      await environment.close();
+    }
+  });
+
+  it("retains a late response cleanup after an earlier successful stop", async () => {
+    let giveResponse!: (response: Response) => void;
+    const gate = new Promise<Response>((resolve) => {
+      giveResponse = resolve;
+    });
+    const held = heldFetcher(() => gate);
+    let release!: () => void;
+    let acknowledge!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const environment = await serveState(
+      { source, state },
+      { fetchState: held.fetchState },
+    );
+    const answered = fetch(new URL(ENVIRONMENT_RPC_PATH, environment.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(addByUri(1)),
+      signal: AbortSignal.timeout(10_000),
+    }).catch(() => undefined);
+    try {
+      await held.fetching;
+      await environment.close();
+      giveResponse(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              acknowledge();
+              return cleanup;
+            },
+          }),
+        ),
+      );
+      await entered;
+      await expect(environment.close()).rejects.toMatchObject({
+        _tag: "AnalysisOutputError",
+        cleanupIncomplete: true,
+        diagnostics: { cleanup_stages: ["state-responses"] },
+      });
+      release();
+      await expect(environment.close()).resolves.toBeUndefined();
+    } finally {
+      release();
+      await answered;
+      await environment.close();
+    }
+  });
+});
+
+describe("serveEnvironment state file cleanup", () => {
   it("stops without waiting for a stalled download", async () => {
     const held = heldFetcher(() => new Promise<Response>(() => undefined));
     const environment = await serveState(
@@ -1063,9 +1297,7 @@ describe("serveEnvironment with a state", () => {
     expect(tools.map(({ name }) => name)).toEqual(["get_items", "post_search"]);
     expect(
       tools.find(({ name }) => name === "post_search")?.description,
-    ).toContain(
-      "answers from the served environment state where the state backs this tool",
-    );
+    ).toMatch(/answers.*served environment state.*state backs this tool/iu);
     await withClient(environment, async (client) => {
       const searched = await client.callTool({
         name: "post_search",

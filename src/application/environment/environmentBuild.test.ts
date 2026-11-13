@@ -26,14 +26,13 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
 import { writeJsonOutput } from "../../cli/jsonOutput.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { analysisViewRequestSchema } from "../../domain/analysisView/analysisView.js";
+import { analysisViewRequestSchema } from "../../domain/analysisView/analysisViewRequest.js";
 import { summarizeEnvironmentCoverage } from "../../domain/analysisView/environmentCoverageView.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
 import {
   DEFAULT_BUILD_TEMPLATE_RULES,
   buildEnvironment,
-  canonicalTemplateRules,
   classifyBuildCapture,
   type EnvironmentBuildInput,
 } from "./environmentBuild.js";
@@ -378,10 +377,15 @@ describe("buildEnvironment cancellation and input checks", () => {
     const built = await buildEnvironment(input);
     if (built.ok) throw new Error("Expected a cancellation");
     const projected = projectAnalysisError(built.error);
-    expect(projected.code).toBe("cancelled");
-    expect(JSON.stringify(projected)).toContain(
-      `"output_directory":${JSON.stringify(input.directory)}`,
-    );
+    expect(projected).toMatchObject({
+      code: "cancelled",
+      details: {
+        diagnostics: {
+          output_directory: input.directory,
+          bundle_written: true,
+        },
+      },
+    });
     expect(await listFiles(input.directory!)).toHaveLength(7);
   });
 
@@ -416,29 +420,31 @@ describe("buildEnvironment cancellation and input checks", () => {
     });
   });
 
-  it("refuses an unreadable package tarball on a dry run as a build does", async () => {
-    if (process.getuid?.() === 0) return;
-    const root = await createTestTempDirectory("rea-environment-build-tgz-");
-    const tarball = join(root, "rea-agents.tgz");
-    await writeFile(tarball, "packed");
-    await chmod(tarball, 0o000);
-    try {
-      const planned = await buildEnvironment(
-        await buildInput(root, undefined, {
-          dryRun: true,
-          packageTarball: tarball,
-        }),
-      );
-      const built = await buildEnvironment(
-        await buildInput(root, undefined, { packageTarball: tarball }),
-      );
-      if (planned.ok || built.ok) throw new Error("Expected both refusals");
-      expect(projectAnalysisError(planned.error).code).toBe("access_denied");
-      expect(projectAnalysisError(built.error).code).toBe("access_denied");
-    } finally {
-      await chmod(tarball, 0o600);
-    }
-  });
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "refuses an unreadable package tarball on a dry run as a build does",
+    async () => {
+      const root = await createTestTempDirectory("rea-environment-build-tgz-");
+      const tarball = join(root, "rea-agents.tgz");
+      await writeFile(tarball, "packed");
+      await chmod(tarball, 0o000);
+      try {
+        const planned = await buildEnvironment(
+          await buildInput(root, undefined, {
+            dryRun: true,
+            packageTarball: tarball,
+          }),
+        );
+        const built = await buildEnvironment(
+          await buildInput(root, undefined, { packageTarball: tarball }),
+        );
+        if (planned.ok || built.ok) throw new Error("Expected both refusals");
+        expect(projectAnalysisError(planned.error).code).toBe("access_denied");
+        expect(projectAnalysisError(built.error).code).toBe("access_denied");
+      } finally {
+        await chmod(tarball, 0o600);
+      }
+    },
+  );
 
   it("refuses a loopback capture whose file name is too long, and quotes the next command", async () => {
     const root = await createTestTempDirectory("rea-environment-build-long-");
@@ -490,12 +496,20 @@ describe("classifyBuildCapture", () => {
   });
 });
 
-describe("canonicalTemplateRules", () => {
-  it("orders rules as the views apply them", () => {
-    expect(
-      canonicalTemplateRules(["prefix-variance", "after-uid-literal"]),
-    ).toEqual(["after-uid-literal", "prefix-variance"]);
-  });
+it("reports template rules in the order the views apply them", async () => {
+  const root = await createTestTempDirectory("rea-environment-rule-order-");
+  const built = await buildEnvironment(
+    await buildInput(root, undefined, {
+      dryRun: true,
+      directory: undefined,
+      templateRules: ["prefix-variance", "after-uid-literal"],
+    }),
+  );
+  if (!built.ok) throw built.error;
+  expect(built.value.manifest.template_rules).toEqual([
+    "after-uid-literal",
+    "prefix-variance",
+  ]);
 });
 
 describe("buildEnvironment credential names", () => {
@@ -729,7 +743,9 @@ describe("buildEnvironment dry-run package tarball", () => {
         code: "invalid_request",
         details: { issues: [{ path: ["package_tarball"] }] },
       });
-      expect(await readdir(root)).not.toContain("bundle");
+      await expect(readdir(input.directory!)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       read.mockRestore();
     }

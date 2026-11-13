@@ -1,3 +1,4 @@
+import { closeAgentEvaluation } from "./lib/agent-evaluation-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
 import { createHash } from "node:crypto";
@@ -7,7 +8,6 @@ import {
   mkdir,
   mkdtemp,
   readFile,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -18,10 +18,7 @@ import { tsImport } from "tsx/esm/api";
 import { PRODUCT_IDENTITY } from "../dist/identity.js";
 import { createAgentEvaluationCommands } from "./lib/agent-evaluation-commands.mjs";
 import { assertAgentEvaluationReportPassed } from "./lib/agent-evaluation-report-gate.mjs";
-import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "./lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const { parseSkillManifestMetadata } = await importVerifierSource(
@@ -427,16 +424,13 @@ await withVerifierCleanup(
   },
   // Even a deliberately retained fixture directory must never retain auth.
   [
-    async () => {
-      // A failed process cleanup retains both its exact owner and its files.
-      await commands.close();
-      await closeVerifierResources([
-        () => rm(authPath, { force: true }),
-        ...(process.env.REA_AGENT_EVAL_KEEP_FIXTURES === "true"
-          ? []
-          : [() => rm(evaluationRoot, { recursive: true, force: true })]),
-      ]);
-    },
+    () =>
+      closeAgentEvaluation({
+        commands,
+        authPath,
+        evaluationRoot,
+        keepFixtures: process.env.REA_AGENT_EVAL_KEEP_FIXTURES === "true",
+      }),
   ],
 );
 

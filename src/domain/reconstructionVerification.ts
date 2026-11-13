@@ -15,7 +15,16 @@ import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
 import { readEvidencePayload } from "./evidenceValidation.js";
 import { functionDossierSchema } from "./native/functionDossier.js";
 import { assessFunctionCallCoverage } from "./functionCallCoverage.js";
-import { processCaptureSchema } from "./process/processCapture.js";
+import {
+  processCaptureSchema,
+  type UnverifiedProcessCapture,
+} from "./process/processCapture.js";
+import { processSourceTruncated } from "./process/processCaptureCoverage.js";
+import {
+  PROCESS_COMPARISON_DIMENSIONS,
+  type ProcessComparisonDimension,
+} from "./process/processComparison.js";
+import type { ProcessObservationSource } from "./process/processObservation.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   reconstructionClaimResultSchema,
@@ -45,6 +54,14 @@ interface FunctionSourceFacts {
   readonly callCoverageDiagnostics: readonly string[];
 }
 
+interface ValidatedSourceFacts {
+  readonly functions: readonly FunctionSourceFacts[];
+  readonly processes: readonly {
+    readonly evidence_id: string;
+    readonly capture: UnverifiedProcessCapture;
+  }[];
+}
+
 /** Verify only explicitly declared claims; no global equivalence is inferred. */
 export const verifyReconstruction = (
   specificationInput: unknown,
@@ -60,7 +77,10 @@ export const verifyReconstruction = (
       { cause: parsedSpecification.error },
     );
   const specification = parsedSpecification.data;
-  const bundleResult = readEvidenceBundle(bundleInput);
+  const bundleResult = readEvidenceBundle(bundleInput, {
+    operation: "verify_reconstruction",
+    path: ["evidence_bundle"],
+  });
   if (!bundleResult.ok) throw bundleResult.error;
   const bundle = bundleResult.value;
   const records = new Map(
@@ -141,17 +161,18 @@ const evaluateClaim = (
       );
     return source;
   });
-  const functionSourceFacts = readValidatedSourceFacts(claim, sources);
+  const sourceFacts = readValidatedSourceFacts(claim, sources);
   const observation = comparisonObservation(claim, comparison);
   const observed = observation.status;
   const callCoverage = sourceCallCoverage(
     claim,
-    functionSourceFacts,
+    sourceFacts.functions,
     observation.hasIndependentFunctionChange === true,
   );
   const blockers = [
     ...authorityLimitations(claim, sources, sides),
     ...callCoverage.blockers,
+    ...sourceProcessCoverage(claim, sourceFacts.processes, observed),
   ];
   const relevantUnknowns = reconstructionClaimUnknowns(
     heads,
@@ -186,7 +207,7 @@ const evaluateClaim = (
 const readValidatedSourceFacts = (
   claim: Claim,
   sources: readonly Evidence[],
-): readonly FunctionSourceFacts[] => {
+): ValidatedSourceFacts => {
   const isExpectedType = (source: Evidence): boolean => {
     if (claim.kind === "behavioral")
       return (
@@ -213,6 +234,7 @@ const readValidatedSourceFacts = (
       },
     );
   const functionSources: FunctionSourceFacts[] = [];
+  const processSources: ValidatedSourceFacts["processes"][number][] = [];
   for (const source of sources) {
     if (claim.kind === "behavioral") {
       const capture = readEvidencePayload(
@@ -220,6 +242,10 @@ const readValidatedSourceFacts = (
         source.normalized_result,
       );
       if (!capture.ok) throw capture.error;
+      processSources.push({
+        evidence_id: source.evidence_id,
+        capture: capture.value,
+      });
     } else if (claim.kind === "structural-function") {
       const parsedDossier = readEvidencePayload(
         functionDossierSchema,
@@ -233,7 +259,10 @@ const readValidatedSourceFacts = (
       );
       functionSources.push({
         evidence_id: source.evidence_id,
-        callCoverageBlockers: callCoverage.blockers,
+        callCoverageBlockers: [
+          ...callCoverage.blockers,
+          ...callCoverage.discoveryLimitations,
+        ],
         callCoverageDiagnostics: callCoverage.diagnostics,
       });
     } else {
@@ -250,7 +279,7 @@ const readValidatedSourceFacts = (
       }
     }
   }
-  return functionSources;
+  return { functions: functionSources, processes: processSources };
 };
 
 const validateComparisonIdentity = (
@@ -396,6 +425,44 @@ const authorityLimitations = (
       );
   }
   return limitations;
+};
+
+const processObservationSourceByDimension: Readonly<
+  Record<ProcessComparisonDimension, ProcessObservationSource>
+> = {
+  terminal: "terminal_rendered",
+  interaction: "interaction",
+  exit: "lifecycle",
+  filesystem: "filesystem",
+  process: "process",
+};
+
+const sourceProcessCoverage = (
+  claim: Claim,
+  sources: ValidatedSourceFacts["processes"],
+  observed: ObservedStatus,
+): string[] => {
+  if (
+    claim.kind !== "behavioral" ||
+    ["changed", "added", "removed", "contradiction"].includes(observed)
+  )
+    return [];
+  const dimensions =
+    claim.dimension === "overall"
+      ? PROCESS_COMPARISON_DIMENSIONS
+      : [claim.dimension];
+  return sources.flatMap(({ evidence_id, capture }) =>
+    dimensions.flatMap((dimension) =>
+      processSourceTruncated(
+        capture,
+        processObservationSourceByDimension[dimension],
+      )
+        ? [
+            `Source ${evidence_id}: ${dimension} observation coverage is incomplete.`,
+          ]
+        : [],
+    ),
+  );
 };
 
 const sourceCallCoverage = (

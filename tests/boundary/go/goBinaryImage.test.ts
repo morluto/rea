@@ -66,7 +66,9 @@ it("preserves exact Mach-O protection masks for Go fallback selection", () => {
 it("bounds cumulative header searches across overlapping ELF file spans", () => {
   const bytes = createGoOverlappingElfFixture();
   expect(() => readGoBinaryImage(bytes)).toThrow(BinaryResourceFailure);
-  expect(() => readGoBinaryImage(bytes)).toThrow(/256 MiB.*search/);
+  expect(() => readGoBinaryImage(bytes)).toThrow(
+    /max_header_search_bytes=268435456/,
+  );
 });
 
 it("does not charge duplicate ELF search spans repeatedly", () => {
@@ -119,6 +121,7 @@ it.each([
 it("continues past an empty file-backed ELF data load", () => {
   const fixture = createGoSplitElfFixture({ sectionless: true });
   const expected = readGoBinaryImage(fixture.bytes).build_info;
+  expect(expected).not.toBeNull();
   fixture.bytes.writeBigUInt64LE(0n, 128 + 32);
   expect(readGoBinaryImage(fixture.bytes).build_info).toEqual(expected);
 });
@@ -135,6 +138,7 @@ it.each([4, 5, 7])(
 it("prefers the named ELF section to an earlier writable-load marker", () => {
   const fixture = createGoSplitElfFixture();
   const expected = readGoBinaryImage(fixture.bytes).build_info;
+  expect(expected).not.toBeNull();
   fixture.bytes.copy(
     fixture.bytes,
     512,
@@ -154,7 +158,10 @@ it("does not skip malformed earlier metadata to report a later valid record", ()
   );
   fixture.bytes[512 + 15] = 0xff;
   expect(() => readGoBinaryImage(fixture.bytes)).toThrow(
-    /unsupported format bit/,
+    expect.objectContaining({
+      message: expect.stringMatching(/unsupported format bit/u),
+      undecodedContent: true,
+    }),
   );
 });
 
@@ -277,6 +284,48 @@ it("refuses mapped pointer lengths outside the file instead of rounding 64-bit a
   length.bytes.writeBigUInt64LE(0xffffffffffffffffn, 1544);
   expect(() => readGoBinaryImage(length.bytes)).toThrowError(/limit|length/i);
 });
+
+it.each(["inline", "pointer"] as const)(
+  "classifies impossible %s string extents before the decoding allowance",
+  (encoding) => {
+    for (const length of [1048577n, 0xffffffffffffffffn]) {
+      const fixture = createGoBinaryFixture({ encoding });
+      if (encoding === "pointer") fixture.bytes.writeBigUInt64LE(length, 1544);
+      else {
+        let value = length;
+        let at = fixture.headerOffset + 32;
+        do {
+          const byte = Number(value & 127n);
+          value >>= 7n;
+          fixture.bytes[at++] = byte | (value === 0n ? 0 : 128);
+        } while (value !== 0n);
+      }
+      expect(() => readGoBinaryImage(fixture.bytes)).toThrowError(
+        expect.objectContaining({ kind: "malformed" }),
+      );
+    }
+  },
+);
+
+it("validates pointer mapping before a smaller caller allowance", () => {
+  const fixture = createGoBinaryFixture({ encoding: "pointer" });
+  fixture.bytes.writeBigUInt64LE(0x10fffn, 1536);
+  expect(() =>
+    readGoBinaryImage(fixture.bytes, { budgets: { max_build_info_bytes: 1 } }),
+  ).toThrowError(expect.objectContaining({ kind: "malformed" }));
+});
+
+it.each(["inline", "pointer"] as const)(
+  "preserves resource refusal for physically valid %s strings",
+  (encoding) => {
+    const fixture = createGoBinaryFixture({ encoding });
+    expect(() =>
+      readGoBinaryImage(fixture.bytes, {
+        budgets: { max_build_info_bytes: 1 },
+      }),
+    ).toThrowError(BinaryResourceFailure);
+  },
+);
 
 it.each(["file bytes", "zero-fill"])(
   "refuses a header-backed PE module descriptor contradicted by %s",

@@ -14,16 +14,16 @@ import type { SanitizedBrowserUrl } from "../domain/browserObservation.js";
 import {
   browserScenarioEventSchema,
   type BrowserScenarioEvent,
+  type BrowserScenarioEventAdmission,
+  type BrowserScenarioEventBudgetReason,
+  type BrowserScenarioEventOmissions,
 } from "../domain/browserScenarioCaptureValues.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
-import type { BrowserNetworkContentSelection } from "../domain/browserNetworkEvidence.js";
-import type { BrowserNetworkHeaders } from "../domain/browserNetworkEvidence.js";
-import type { BrowserScenarioCaptureLimits } from "../domain/browserScenarioCaptureLimits.js";
 import type {
-  BrowserScenarioEventAdmission,
-  BrowserScenarioEventBudgetReason,
-  BrowserScenarioEventOmissions,
-} from "../domain/browserScenarioCaptureValues.js";
+  BrowserNetworkContentSelection,
+  BrowserNetworkHeaders,
+} from "../domain/browserNetworkEvidence.js";
+import type { BrowserScenarioCaptureLimits } from "../domain/browserScenarioCaptureLimits.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
 import { captureNetworkBody } from "./network/PlaywrightNetworkContent.js";
 import { PlaywrightScenarioNetwork } from "./network/PlaywrightScenarioNetwork.js";
@@ -126,6 +126,7 @@ export class PlaywrightScenarioEvents {
   private readonly stopListeners = new Map<object, Set<() => void>>();
   private sealed = false;
   private sourcePrivacyIncomplete = false;
+  private opaqueRedirectObserved = false;
   private eventPrivacyFinalized = false;
 
   constructor(options: EventCaptureOptions) {
@@ -202,6 +203,12 @@ export class PlaywrightScenarioEvents {
     this.stepIndex = index;
   }
 
+  /** Manual page fetch can conceal a redirect response from Playwright. */
+  opaqueRequestRedirect(): void {
+    if (!this.sealed && this.enabled.has("network"))
+      this.opaqueRedirectObserved = true;
+  }
+
   nextSequence(): number {
     return this.sequence + 1;
   }
@@ -234,6 +241,10 @@ export class PlaywrightScenarioEvents {
         `Popup ${family} events before Page discovery are unavailable; later events are retained.`,
     );
     const gaps = [...popupGaps, ...(this.network?.limitations() ?? [])];
+    if (this.opaqueRedirectObserved)
+      gaps.push(
+        "A request step received an opaque redirect; its response status and Location may be unavailable in network events.",
+      );
     if (this.sourcePrivacyIncomplete)
       gaps.push(
         "Source transaction URLs or content were withheld because marked response values were unavailable.",
@@ -895,11 +906,7 @@ export class PlaywrightScenarioEvents {
 
   private popup(page: Page): void {
     if (this.pages.has(page)) return;
-    if (
-      !this.admitOwner("popup-opened") ||
-      !this.admitText("popup-opened", page.url())
-    )
-      return;
+    if (!this.admitOwner("popup-opened")) return;
     this.pages.add(page);
     for (const family of [
       "frames",
@@ -908,12 +915,14 @@ export class PlaywrightScenarioEvents {
       "downloads",
     ] as const)
       if (this.enabled.has(family)) this.incompleteFamilies.add(family);
-    const opened = {
-      url: page.url() === "" ? null : this.safeUrl(page.url()),
-      name: null,
-    };
     if (this.enabled.has("popups")) {
-      this.push({ kind: "popup-opened", ...opened });
+      const url = page.url();
+      if (this.admitText("popup-opened", url))
+        this.push({
+          kind: "popup-opened",
+          url: url === "" ? null : this.safeUrl(url),
+          name: null,
+        });
       const onClose = () => {
         if (!this.admitText("popup-closed", page.url())) return;
         this.push({

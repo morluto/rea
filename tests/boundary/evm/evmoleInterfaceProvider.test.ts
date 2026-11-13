@@ -23,6 +23,14 @@ const requestSchema = z.strictObject({
   reply_path: z.string(),
   failure_marker_path: z.string(),
   encoding: z.enum(["raw", "hex"]),
+  producer_limits: z.object({
+    input_bytes: z.number(),
+    output_bytes: z.number(),
+    diagnostic_bytes: z.number(),
+    address_space_bytes: z.number(),
+    file_bytes: z.number(),
+    cpu_seconds: z.number(),
+  }),
 });
 const fixture = async () => {
   const workspace = await createTestWorkspace("rea-evm-interface-boundary-");
@@ -40,6 +48,7 @@ it.runIf(unsupportedHost)(
       encoding: "hex",
     });
     if (result.ok) throw new Error("Expected a host refusal");
+    expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
     const projected = projectAnalysisError(result.error);
     expect(projected).toMatchObject({ code: "capability_unavailable" });
     expect(projected.message).toContain("Linux x64");
@@ -715,21 +724,6 @@ it.runIf(!unsupportedHost)(
   },
 );
 
-it.runIf(unsupportedHost)(
-  "reports unverified host coverage before acquiring a provider",
-  async () => {
-    expect(
-      await new EvmoleInterfaceProvider({}).inspect({
-        path: "/selected.hex",
-        encoding: "hex",
-      }),
-    ).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisCapabilityUnavailableError" },
-    });
-  },
-);
-
 it.runIf(!unsupportedHost)(
   "preserves actual snapshot-write cancellation and root cleanup",
   async () => {
@@ -982,7 +976,15 @@ it.runIf(!unsupportedHost).each(["directory", "missing-interpreter"])(
       category: "unsupported_provider",
       details: { provider_id: "evmole-interface" },
     });
-    expect(result.error.message).toContain(limiter);
+    if (scenario === "directory")
+      expect(result.error).toMatchObject({
+        reason: expect.stringContaining("absolute executable regular file"),
+        diagnostics: {
+          limiter_path: limiter,
+          code: "prlimit_not_file",
+        },
+      });
+    else expect(result.error.message).toContain(limiter);
     if (ownedRoot !== undefined)
       await expect(access(ownedRoot)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(path, "utf8")).toBe("0x60006000f3\n");

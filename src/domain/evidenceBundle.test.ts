@@ -5,7 +5,6 @@ import { ANALYSIS_SNAPSHOT_TARGET } from "./analysisSnapshot.fixture.js";
 import {
   createEvidenceBundle,
   createImmutableEvidenceBundle,
-  NonCanonicalEvidenceBundleError,
   evidenceBundleForTarget,
   parseEvidenceBundle,
   safeParseEvidenceBundle,
@@ -19,6 +18,36 @@ import {
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 const targetDigest = "a".repeat(64);
 const foreignDigest = "b".repeat(64);
+
+describe("artifact manifest projection", () => {
+  it("round-trips GameCube DOL Evidence through retained bundles and target selection", () => {
+    const record = createEvidence(
+      {
+        path: "/tmp/game.dol",
+        sha256: targetDigest,
+        format: "gamecube-dol",
+        architecture: "powerpc",
+      },
+      provider,
+      {
+        operation: "inspect_artifact",
+        parameters: {},
+        result: { observed: true },
+      },
+    );
+    const bundle = createImmutableEvidenceBundle([record]);
+    expect(bundle.artifacts).toEqual([
+      {
+        digest: { sha256: targetDigest },
+        format: "gamecube-dol",
+        architecture: "powerpc",
+      },
+    ]);
+    const restored = parseEvidenceBundle(JSON.parse(JSON.stringify(bundle)));
+    expect(restored.records[0]?.evidence_id).toBe(record.evidence_id);
+    expect(evidenceBundleForTarget(restored, targetDigest)).toEqual(bundle);
+  });
+});
 
 describe("evidence bundle failure classification", () => {
   it("tags valid-shaped bundles that fail canonical ordering", () => {
@@ -37,7 +66,10 @@ describe("evidence bundle failure classification", () => {
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
     expect(parsed.error.kind).toBe("invalid-bundle");
-    expect(parsed.error.cause).toBeInstanceOf(NonCanonicalEvidenceBundleError);
+    expect(parsed.error.cause).toMatchObject({
+      name: "NonCanonicalEvidenceBundleError",
+      message: "Evidence bundle manifests are not canonical",
+    });
   });
 
   it("treats only authenticated standalone Evidence as the wrong input kind", () => {
@@ -96,6 +128,47 @@ const makeUnknown = (
     unknown: createResidualUnknown(input, mutation.evidence_id, scopeDigest),
   };
 };
+
+it("retains only linked cross-target source closure in a target snapshot", () => {
+  const leaf = createEvidence(undefined, provider, {
+    operation: "source_leaf",
+    parameters: {},
+    result: "leaf",
+  });
+  const otherTarget = { ...ANALYSIS_SNAPSHOT_TARGET, sha256: foreignDigest };
+  const source = createEvidence(otherTarget, provider, {
+    operation: "source",
+    parameters: {},
+    result: "source",
+    evidenceLinks: [leaf.evidence_id],
+  });
+  const trace = createEvidence(ANALYSIS_SNAPSHOT_TARGET, provider, {
+    operation: "trace",
+    parameters: {},
+    result: "trace",
+    evidenceLinks: [source.evidence_id, "ev_" + "c".repeat(64)],
+  });
+  const unrelated = createEvidence(otherTarget, provider, {
+    operation: "unrelated",
+    parameters: {},
+    result: "unrelated",
+  });
+  const selected = evidenceBundleForTarget(
+    createEvidenceBundle([trace, source, leaf, unrelated]),
+    targetDigest,
+  );
+  expect(selected.records).toHaveLength(3);
+  expect(selected.records).toEqual(
+    expect.arrayContaining([trace, source, leaf]),
+  );
+  expect(selected.records).not.toContainEqual(unrelated);
+  expect(selected.records.map(({ evidence_id }) => evidence_id)).toEqual(
+    [trace.evidence_id, source.evidence_id, leaf.evidence_id].sort(),
+  );
+  expect(selected.unknowns).toEqual([]);
+  expect(evidenceBundleForTarget(selected, targetDigest)).toEqual(selected);
+  expect(parseEvidenceBundle(selected)).toEqual(selected);
+});
 
 describe("evidenceBundleForTarget", () => {
   it("retains mutation evidence from other targets for complete revision histories", () => {

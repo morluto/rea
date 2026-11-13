@@ -51,6 +51,7 @@ const catalog: RecordedMcpCatalog = {
       outputSchema: z.toJSONSchema(output),
     },
   ],
+  evidenceReferenceAlternatives: [],
   prompts: [
     {
       name: "explain",
@@ -77,14 +78,31 @@ const fixture = async (
     readonly failLoad?: boolean;
     readonly invalidOutput?: boolean;
     readonly failAfterTool?: boolean;
+    readonly maximumInputElements?: number;
+    readonly evidenceReferenceAlternative?: boolean;
+    readonly progressive?: boolean;
+    readonly unionOutput?: boolean;
+    readonly mode?: "legacy" | "auto";
   } = {},
 ) => {
   const started = barrier();
   const calls = vi.fn<(n: number, context: ServerContext) => void>();
   const closed = vi.fn();
   let loads = 0;
+  const canonicalOutput = options.unionOutput
+    ? z.union([output, z.strictObject({ message: z.string() })])
+    : output;
+  const recorded = {
+    ...catalog,
+    tools: catalog.tools.map((tool) => ({
+      ...tool,
+      outputSchema: z.toJSONSchema(canonicalOutput),
+    })),
+  };
   const server = new DeferredEvidenceMcpServer(
-    catalog,
+    options.evidenceReferenceAlternative
+      ? { ...recorded, evidenceReferenceAlternatives: ["fixture"] }
+      : recorded,
     new ToolResultDelivery(1024 * 1024),
     async (target) => {
       loads++;
@@ -100,7 +118,7 @@ const fixture = async (
       target.materialize(() => {
         target.registerTool(
           "fixture",
-          { inputSchema: input, outputSchema: output },
+          { inputSchema: input, outputSchema: canonicalOutput },
           async (args, context) => {
             calls(args.n, context);
             await options.execute?.();
@@ -138,8 +156,15 @@ const fixture = async (
         );
       });
     },
+    options.maximumInputElements,
   );
-  const client = new Client({ name: "deferred-fixture-client", version: "1" });
+  const client = new Client(
+    { name: "deferred-fixture-client", version: "1" },
+    options.mode === undefined
+      ? undefined
+      : { versionNegotiation: { mode: options.mode } },
+  );
+  if (options.progressive) server.enableProgressiveCatalog();
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -158,6 +183,93 @@ const fixture = async (
     loads: () => loads,
   };
 };
+
+it("loads cold definitions without initializing analysis and preserves canonical validation and identity", async () => {
+  const f = await fixture({ progressive: true });
+  const identity = f.server.catalogIdentity;
+  expect(identity.digests.combined_sha256).not.toBe(
+    catalog.identity.digests.combined_sha256,
+  );
+  expect(identity.counts.mcp_tools).toBe(2);
+  expect((await f.client.listTools()).tools.map(({ name }) => name)).toEqual([
+    "discover_tools",
+  ]);
+  const changed = vi.fn();
+  f.client.setNotificationHandler("notifications/tools/list_changed", changed);
+  const discover = () =>
+    f.client.callTool({
+      name: "discover_tools",
+      arguments: { names: ["fixture"] },
+    });
+  expect((await discover()).isError).not.toBe(true);
+  expect(f.loads()).toBe(0);
+  expect(changed).toHaveBeenCalledTimes(1);
+  await discover();
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(
+    (await f.client.callTool({ name: "fixture", arguments: { n: 1.5 } }))
+      .isError,
+  ).toBe(true);
+  expect(f.loads()).toBe(1);
+  expect(f.calls).not.toHaveBeenCalled();
+  expect(
+    (await f.client.callTool({ name: "fixture", arguments: {} }))
+      .structuredContent,
+  ).toEqual({ n: 3 });
+  expect(f.server.catalogIdentity).toEqual(identity);
+  expect(changed).toHaveBeenCalledTimes(1);
+  const independent = await fixture({ progressive: true });
+  expect(
+    (await independent.client.listTools()).tools.map(({ name }) => name),
+  ).toEqual(["discover_tools"]);
+});
+
+it("refuses excess input before loading a deferred runtime, then admits a valid call", async () => {
+  const f = await fixture({ maximumInputElements: 2 });
+  const result = await f.client.callTool({
+    name: "fixture",
+    arguments: { n: 3, other: [0] },
+  });
+  expect(result.isError).toBe(true);
+  const text = result.content.find((part) => part.type === "text")?.text;
+  expect(JSON.parse(text ?? "null")).toMatchObject({
+    error: {
+      code: "resource_constraint",
+      details: { reported_limits: { max_input_elements: 2 } },
+    },
+  });
+  expect(f.loads()).toBe(0);
+  expect(f.calls).not.toHaveBeenCalled();
+  await f.client.ping();
+  const admitted = await f.client.callTool({
+    name: "fixture",
+    arguments: { n: 4 },
+  });
+  expect(admitted.isError).not.toBe(true);
+  expect(admitted.structuredContent).toEqual({ n: 4 });
+  expect(f.loads()).toBe(1);
+  expect(f.calls).toHaveBeenCalledOnce();
+});
+
+it("uses recorded Evidence-reference guidance without loading the deferred runtime", async () => {
+  const f = await fixture({
+    maximumInputElements: 2,
+    evidenceReferenceAlternative: true,
+  });
+  const result = await f.client.callTool({
+    name: "fixture",
+    arguments: { n: 3, other: [0] },
+  });
+  const text = result.content.find((part) => part.type === "text")?.text;
+  expect(JSON.parse(text ?? "null")).toMatchObject({
+    error: {
+      code: "resource_constraint",
+      remediation: { action: expect.stringContaining("retained-evidence") },
+    },
+  });
+  expect(f.loads()).toBe(0);
+  expect(f.calls).not.toHaveBeenCalled();
+});
 
 it("discovers without initialization, then shares one canonical runtime and preserves request metadata", async () => {
   const hold = barrier();
@@ -204,6 +316,47 @@ it("preserves output validation after deferred registration", async () => {
   const result = await f.client.callTool({ name: "fixture", arguments: {} });
   expect(result.isError).toBe(true);
 });
+
+it.each(["legacy", "auto"] as const)(
+  "canonically validates deferred object-union outputs over %s",
+  async (mode) => {
+    const valid = await fixture({ unionOutput: true, mode });
+    const before = await valid.client.listTools();
+    const schema = before.tools.find(
+      ({ name }) => name === "fixture",
+    )?.outputSchema;
+    if (schema === undefined) throw new Error("Missing union output schema");
+    expect(schema).toHaveProperty("anyOf");
+    expect(schema).not.toHaveProperty("properties.result");
+    if (mode === "legacy") expect(schema.type).toBe("object");
+    expect(valid.loads()).toBe(0);
+    const success = await valid.client.callTool({
+      name: "fixture",
+      arguments: { n: 7 },
+    });
+    expect(success.isError).not.toBe(true);
+    expect(success.structuredContent).toEqual({ n: 7 });
+    expect(valid.calls).toHaveBeenCalledOnce();
+    expect(await valid.client.listTools()).toEqual(before);
+
+    const invalid = await fixture({
+      unionOutput: true,
+      invalidOutput: true,
+      mode,
+    });
+    const rejected = await invalid.client.callTool({
+      name: "fixture",
+      arguments: {},
+    });
+    // The handler actually returned malformed data. A server-side validation
+    // error must arrive, rather than success or only a client-validator throw.
+    expect(invalid.calls).toHaveBeenCalledOnce();
+    expect(rejected.isError).toBe(true);
+    expect(rejected.structuredContent).toBeUndefined();
+    expect(invalid.loads()).toBe(1);
+    expect(await invalid.client.listTools()).toEqual(before);
+  },
+);
 
 it("initializes through prompt retrieval or completion without an internal client", async () => {
   const f = await fixture();

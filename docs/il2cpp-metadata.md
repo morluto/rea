@@ -148,7 +148,7 @@ rea inspect-analysis-view /tmp/metadata-query.json --json
 ```
 
 Use the exported Evidence with the CLI's inline Evidence source format described
-in [CLI and Evidence](cli.md#run-a-command). Compact delivery requires
+in [CLI and Evidence](getting-started/cli.md#run-a-command). Compact delivery requires
 `--evidence_output`; existing files are never overwritten. The full export
 preserves every decoded row for subsequent queries without the original file.
 
@@ -213,8 +213,8 @@ rejects it. The file is read, never loaded or executed.
 
 A position-independent `libil2cpp.so` stores zero in most pointer slots and
 keeps the value in `R_AARCH64_RELATIVE` or `R_X86_64_RELATIVE` relocations
-(`DT_RELA`). The reader writes those values into a private copy before
-searching it, so addresses are the link-time addresses and RVAs are relative to
+(`DT_RELA`). The reader indexes loader values by virtual address while keeping
+the source bytes unchanged, so addresses are the link-time addresses and RVAs are relative to
 the first loaded segment. Android packed
 relocations (`DT_ANDROID_RELA`) are refused. No target code is executed.
 
@@ -451,11 +451,11 @@ The builds checked are listed after the module search rules above.
 | `generic-method-registration-not-found` | input error | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.        |
 | `ambiguous-generic-method-registration` | input error | More than one CodeRegistration layout bounds every genericMethodTable row.                                   |
 
-Format and selection failures name `binary_path`; capacity refusals remain typed resource errors. Failed linking preserves the metadata source identity, validated counts, selected binary path/architecture and its SHA-256 when observed, plus prior producer observations. It never publishes an incomplete native table as complete. The binary input is bounded to 1 GiB.
+Format and selection failures name `binary_path`; capacity refusals remain typed resource errors. Failed linking preserves the metadata source identity, validated counts, selected binary path/architecture and its SHA-256 when observed, plus prior producer observations. It never publishes an incomplete native table as complete. The binary input is bounded to 1 GiB. The virtual-pointer index has the same 1 GiB estimated representation allowance, reserving 2 KiB per distinct virtual destination before insertion for retained Maps and finish-time lookup storage. Repeated declarations of one destination share that reservation. This conservative allocation accounting is separate from actual process RSS and the report allowance; exhaustion returns a typed `native-index-capacity` refusal before another destination is retained.
 
 Scans yield cooperatively in bounded batches. Name-address retention and reverse-trie construction are each limited to 65,536 entries/nodes and fallback module-array candidates to 64 (`native-index-capacity`); exceeding capacity does not prove absence. Rendered type text has a 64 MiB UTF-8 cache-workspace guard, separate from the 64 MiB encoded-report admission, and 64 nested rendering frames (`native-type-text-capacity` / `type-nesting-capacity`). Genuine cycles are malformed; unsupported type kinds are explicit coverage failures. Native row/text admission runs before allocation or retention. Unused generic parameter names are read on demand from the same stable metadata snapshot. There is no cross-inspection file cache; validated immutable Evidence is reused for session views.
 
-ELF RELATIVE writes into zero-fill are kept as a private virtual-pointer overlay. Unresolved supported-width symbol relocations, including RELA PLT entries, remain unknown only for the bytes their ELF ABI relocation type covers; an adjacent 32-bit relocation does not make a separate 64-bit method slot unknown. Stored zeros never establish no-body. COPY, TLS descriptor, REL, packed APS2 and other unsupported relocation encodings fail closed. Input bytes are unchanged.
+ELF RELATIVE writes use a virtual-pointer overlay for both file-backed and zero-fill locations. Distinct virtual addresses that share source file bytes retain independent values; an untouched alias keeps its stored bytes. Unresolved supported-width symbol relocations, including RELA PLT entries, remain unknown only for the bytes their ELF ABI relocation type covers; an adjacent 32-bit relocation does not make a separate 64-bit method slot unknown. Stored zeros never establish no-body. COPY, TLS descriptor, REL, packed APS2 and other unsupported relocation encodings fail closed. Input bytes are unchanged.
 
 ELF relocation tables and file-backed destinations may span adjacent load ranges when every range agrees on the file translation. Any overlapping zero-fill declaration makes those bytes ambiguous; REA refuses the table or relocation destination instead of choosing the stored file bytes. Missing file bytes remain distinct from conflicting owners: supported unresolved relocations outside file-backed memory retain their unknown overlay, while ambiguous destinations refuse linking. Registration coverage uses the same file/zero-fill ownership checks as pointer reads.
 
@@ -482,7 +482,7 @@ Native address queries batch exact 64-bit hexadecimal `addresses` and `states` (
 ## Ghidra function names
 
 The CLI can turn a linked report into a
-[`REA_GHIDRA_SEED_FILE`](installation.md) so Ghidra names every IL2CPP method
+[`REA_GHIDRA_SEED_FILE`](getting-started/installation.md) so Ghidra names every IL2CPP method
 before auto-analysis:
 
 ```bash
@@ -528,6 +528,12 @@ message names one reason:
 | `image-range-overlap`     | Two images claim the same type definitions.                                                                      |
 | `invalid-string`          | A name index is outside the strings section, its string is unterminated, or it is not valid UTF-8.               |
 
+Record extents are checked for the decoded images, types, methods, fields,
+properties, events, parameters, string literals, nested types, generic
+containers, generic parameters and interface offsets. Other header sections
+are checked for file bounds and overlap; their internal record layouts are not
+decoded or validated by this inventory.
+
 A version field that disagrees with the file's layout, for example a version
 39 file relabeled as 29, usually surfaces as `unexpected-header-size` or
 `record-size-mismatch`.
@@ -547,7 +553,7 @@ report to 64 MiB, checking row counts before allocation and JSON/UTF-8/base64 ex
 decoding, before serialization. Names and identical literal spans are decoded
 once within one stable file snapshot; no filesystem results are cached across
 inspections. Ownership assignment also yields to cancellation. MCP also applies its
-[response transport budget](mcp-contracts.md); a complete report within the
+[response transport budget](reference/mcp-contracts.md); a complete report within the
 report limit can still require the summary and paging path.
 
 ## Outside this tool
@@ -560,8 +566,8 @@ report limit can still require the summary and paging path.
 - Full method signatures beyond the rendered field, parameter and return type
   names, and type names for metadata version 27.
 - Running Ghidra or another disassembler. `--ghidra-seeds` only writes a seed
-  file for [`REA_GHIDRA_SEED_FILE`](installation.md); use the
-  [native workflow](native-investigation.md) for native code.
+  file for [`REA_GHIDRA_SEED_FILE`](getting-started/installation.md); use the
+  [native workflow](guides/native/native-investigation.md) for native code.
 - Metadata versions other than 24, 27, 29, 31 and 39.
 
 Names come from the metadata file only. They do not establish which methods
