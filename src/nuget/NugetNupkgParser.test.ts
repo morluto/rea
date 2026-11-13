@@ -378,3 +378,35 @@ it.for([true, false])(
     expect(report.dependency_groups).not.toEqual([]);
   },
 );
+
+it("keeps a Zstandard decoder window refusal as a memory limit instead of a malformed package", async () => {
+  const bytes = await nugetNupkgFixture();
+  const refusal = Object.assign(new Error("Frame requires too much memory"), {
+    code: "ZSTD_error_frameParameter_windowTooLarge",
+  });
+  const original = ZipReader.prototype.getEntriesGenerator;
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+      for await (const entry of original.call(this, options)) {
+        if (entry.filename === "Demo.Package.nuspec" && !entry.directory) {
+          entry.compressionMethod = 93;
+          entry.getData = () => Promise.reject(refusal);
+        }
+        yield entry;
+      }
+      return true;
+    });
+  try {
+    const failure: unknown = await parseNugetNupkg(
+      bytes,
+      artifactOf(bytes),
+      defaults,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    expect(failure).toMatchObject({ reason: "limit", boundary: "memory" });
+    expect((failure as ArtifactReaderFailure).cause).toBe(refusal);
+  } finally {
+    enumeration.mockRestore();
+  }
+});

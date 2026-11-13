@@ -27,6 +27,7 @@ import type { Element, Node } from "@xmldom/xmldom";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   decodeZipEntryText,
+  typedZipFailure,
   ZIP_READER_OPTIONS,
   zipEntryPath,
 } from "../artifacts/ZipArtifactReader.js";
@@ -135,6 +136,7 @@ const asFileEntry = (entry: Entry): entry is FileEntry =>
 const wrapZipFailure = (
   cause: unknown,
   signal: AbortSignal | undefined,
+  compressionMethod?: number,
 ): never => {
   // zip.js rejects with the caller's abort reason; keep it as cancellation
   // rather than reporting the package as damaged.
@@ -148,6 +150,11 @@ const wrapZipFailure = (
     cause instanceof NugetNupkgCapacityFailure
   )
     throw cause;
+  // The shared ZIP reader owns native decoder resource refusals, such as a
+  // Zstandard window above its fixed allowance; they are not corrupt input.
+  const typed = typedZipFailure(cause, compressionMethod);
+  if (typed instanceof ArtifactReaderFailure && typed.reason === "limit")
+    throw typed;
   const message = cause instanceof Error ? cause.message : String(cause);
   if (ZIP_UNSUPPORTED_MESSAGES.has(message))
     throw new NugetNupkgFormatFailure(
@@ -209,7 +216,7 @@ const readMemberBytes = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
-    return wrapZipFailure(cause, signal);
+    return wrapZipFailure(cause, signal, entry.compressionMethod);
   }
 };
 
