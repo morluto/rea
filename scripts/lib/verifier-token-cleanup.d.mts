@@ -35,6 +35,10 @@ export function prepareVerifierTokenCleanup(
   retryProviderCleanup(
     verification: VerifierTokenCleanupResult,
   ): Promise<VerifierTokenCleanupResult>;
+  /** Transfer the pending provider cleanup and inspector to a retryable owner. */
+  retainPendingProviderCleanup(verification: VerifierTokenCleanupResult): {
+    close(): Promise<void>;
+  };
   retainedProviderEvidence(): readonly {
     readonly run_id: string;
     readonly candidates: readonly (Pick<

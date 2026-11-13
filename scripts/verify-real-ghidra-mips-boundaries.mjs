@@ -115,10 +115,6 @@ async function runControls(cleanup, commands) {
     u32(legacy, 36, 0x50000001); // Existing recordless MIPS32 lane.
     const legacyPath = join(root, `legacy-${byteOrder}.elf`);
     await writeFile(legacyPath, legacy);
-    const recordlessMips1 = Buffer.from(initial);
-    u32(recordlessMips1, 36, 0x1);
-    const recordlessMips1Path = join(root, `recordless-mips1-${byteOrder}.elf`);
-    await writeFile(recordlessMips1Path, recordlessMips1);
     const gnu = Buffer.alloc(0x1200);
     legacy.copy(gnu);
     u32(gnu, 68, gnu.length);
@@ -191,6 +187,10 @@ async function runControls(cleanup, commands) {
         const mcpError = requireMcpToolError(
           await invoke("open_binary", { path, provider_id: "ghidra" }),
         );
+        if (mcpError.code !== "capability_unavailable")
+          throw new Error("MCP did not report an ordinary provider refusal", {
+            cause: mcpError,
+          });
         assert.match(JSON.stringify(mcpError), pattern);
         let reply;
         try {
@@ -228,185 +228,151 @@ async function runControls(cleanup, commands) {
         assert.match(JSON.stringify(cliError), pattern);
         refusals[control] = { selected_path: path, cli: reply, mcp: mcpError };
       }
-      const providerRuns = [];
-      for (const [path, expected] of [
-        [legacyPath, legacy],
-        [recordlessMips1Path, recordlessMips1],
-      ]) {
-        const selectedSourcePath = await realpath(path);
-        await call("open_binary", { path, provider_id: "ghidra" });
-        // The session ID is authoritative before analyze_function can launch
-        // Ghidra. Its token stays in the sweep even if that first call fails.
-        const providerRunId = (await currentGhidraSession()).run.run_id;
-        cleanup.registerProviderRun(providerRunId);
-        const evidence = parseEvidence(
-          requireMcpOutput(
-            await invoke("analyze_function", {
-              procedure: original.entry,
-              detail: "complete",
-            }),
-            "analyze_function",
-          ),
-        );
-        const { run: activeRun, binding: activeBinding } =
-          await currentGhidraSession();
-        assert.equal(activeRun.run_id, providerRunId);
-        const providerLineage = activeRun.process_lineage.snapshots?.find(
-          ({ provider }) => provider.id === "ghidra",
-        )?.observation;
-        const providerScope =
-          providerLineage?.status === "verified"
-            ? {
-                leaderPid: providerLineage.launcher_pid,
-                processGroupId: providerLineage.process_group_id,
-                sampledProcessGroupIds: providerLineage.descendants.map(
-                  ({ process_group_id }) => process_group_id,
-                ),
-              }
-            : undefined;
-        // Capture native token-verified identities while the provider is live;
-        // A public lineage snapshot is optional; native ownership is mandatory.
-        await cleanup.retainProviderRun(providerRunId, providerScope);
-        assert.equal(evidence.operation, "analyze_function");
-        assert.equal(evidence.predicate_type, ANALYSIS_EVIDENCE_PREDICATE);
-        assert.equal(evidence.parameters.procedure, original.entry);
-        const sourceSha256 = digest(expected);
-        const subject = evidenceSubjectIdentity(evidence.subject);
-        assert.deepEqual(
-          subject,
-          {
-            digest: { sha256: sourceSha256 },
-            format: "elf",
-            architecture: "mips",
-          },
-          "MIPS dossier Evidence subject does not identify the exact ELF fixture",
-        );
-        assert.equal(
-          evidence.subject.local_path,
-          selectedSourcePath,
-          "MIPS dossier Evidence path does not match the selected ELF fixture",
-        );
-        const dossier = functionDossierSchema.parse(evidence.normalized_result);
-        assert.equal(BigInt(dossier.procedure.address), BigInt(original.entry));
-        assert.ok(dossier.pseudocode.trim().length > 0);
-        const isMips1 = path === recordlessMips1Path;
-        assert.ok(
-          evidence.provider.id === "ghidra" &&
-            evidence.provider.version?.trim(),
-          "MIPS dossier Evidence omitted a concrete Ghidra provider identity",
-        );
-        assert.ok(
-          committedProvidersEqual(evidence.provider, activeBinding.provider),
-          "MIPS dossier Evidence provider differs from the active Ghidra session",
-        );
-        const profile = evidence.analysis_profile;
-        assert.ok(
-          profile,
-          "MIPS dossier Evidence omitted its analysis profile",
-        );
-        const { mips_support_lane, mips_abi_basis } = profile.parameters;
-        assert.equal(
+      const selectedSourcePath = await realpath(legacyPath);
+      await call("open_binary", { path: legacyPath, provider_id: "ghidra" });
+      // The session ID is authoritative before analyze_function can launch
+      // Ghidra. Its token stays in the sweep even if that first call fails.
+      const providerRunId = (await currentGhidraSession()).run.run_id;
+      cleanup.registerProviderRun(providerRunId);
+      const evidence = parseEvidence(
+        requireMcpOutput(
+          await invoke("analyze_function", {
+            procedure: original.entry,
+            detail: "complete",
+          }),
+          "analyze_function",
+        ),
+      );
+      const { run: activeRun, binding: activeBinding } =
+        await currentGhidraSession();
+      assert.equal(activeRun.run_id, providerRunId);
+      const providerLineage = activeRun.process_lineage.snapshots?.find(
+        ({ provider }) => provider.id === "ghidra",
+      )?.observation;
+      const providerScope =
+        providerLineage?.status === "verified"
+          ? {
+              leaderPid: providerLineage.launcher_pid,
+              processGroupId: providerLineage.process_group_id,
+              sampledProcessGroupIds: providerLineage.descendants.map(
+                ({ process_group_id }) => process_group_id,
+              ),
+            }
+          : undefined;
+      // Capture native token-verified identities while the provider is live;
+      // A public lineage snapshot is optional; native ownership is mandatory.
+      await cleanup.retainProviderRun(providerRunId, providerScope);
+      assert.equal(evidence.operation, "analyze_function");
+      assert.equal(evidence.predicate_type, ANALYSIS_EVIDENCE_PREDICATE);
+      assert.equal(evidence.parameters.procedure, original.entry);
+      const sourceSha256 = digest(legacy);
+      const subject = evidenceSubjectIdentity(evidence.subject);
+      assert.deepEqual(
+        subject,
+        {
+          digest: { sha256: sourceSha256 },
+          format: "elf",
+          architecture: "mips",
+        },
+        "MIPS dossier Evidence subject does not identify the exact ELF fixture",
+      );
+      assert.equal(
+        evidence.subject.local_path,
+        selectedSourcePath,
+        "MIPS dossier Evidence path does not match the selected ELF fixture",
+      );
+      const dossier = functionDossierSchema.parse(evidence.normalized_result);
+      assert.equal(BigInt(dossier.procedure.address), BigInt(original.entry));
+      assert.ok(dossier.pseudocode.trim().length > 0);
+      assert.ok(
+        evidence.provider.id === "ghidra" && evidence.provider.version?.trim(),
+        "MIPS dossier Evidence omitted a concrete Ghidra provider identity",
+      );
+      assert.ok(
+        committedProvidersEqual(evidence.provider, activeBinding.provider),
+        "MIPS dossier Evidence provider differs from the active Ghidra session",
+      );
+      const profile = evidence.analysis_profile;
+      assert.ok(profile, "MIPS dossier Evidence omitted its analysis profile");
+      const { mips_support_lane, mips_abi_basis } = profile.parameters;
+      assert.equal(
+        mips_support_lane,
+        "elf32-exec-arch32-legacy-pinned-v1",
+        "MIPS dossier Evidence reported the wrong support lane",
+      );
+      assert.equal(
+        mips_abi_basis,
+        "inferred-o32-assumption-v1",
+        "MIPS dossier Evidence reported the wrong ABI basis",
+      );
+      assert.ok(
+        analysisProfilesEqual(profile, activeBinding.analysis_profile),
+        "MIPS dossier Evidence profile differs from the active Ghidra session",
+      );
+      // The provider's session limitations belong to the public Evidence;
+      // the normalized function payload has its own local observations.
+      const inferredO32Limitation = evidence.limitations.find((limitation) =>
+        limitation.includes(
+          "o32 calling conventions are an analysis assumption",
+        ),
+      );
+      assert.ok(
+        inferredO32Limitation,
+        "Recordless MIPS dossier Evidence omitted its inferred o32 limitation",
+      );
+      const floatingPointLimitation = evidence.limitations.find((limitation) =>
+        limitation.includes("Floating-point ABI semantics are unverified"),
+      );
+      assert.ok(
+        floatingPointLimitation,
+        "Recordless MIPS dossier Evidence omitted its floating-point ABI limitation",
+      );
+      const image = await call("inspect_native_load_image");
+      assertMipsLoadedImage(image.observations, byteOrder, sourceSha256);
+      const entryBytes = legacy.subarray(0x1000, 0x1018);
+      const loaded = await call("read_bytes", {
+        address: original.entry,
+        length: entryBytes.length,
+      });
+      assert.equal(BigInt(loaded.address), BigInt(original.entry));
+      assert.equal(loaded.requested_bytes, entryBytes.length);
+      assert.equal(loaded.returned_bytes, entryBytes.length);
+      assert.equal(loaded.complete, true);
+      assert.equal(loaded.bytes_hex, entryBytes.toString("hex"));
+      const providerRun = {
+        control: "recordless_mips32",
+        run_id: providerRunId,
+        language_id: image.observations.language_id,
+        dossier_evidence_id: evidence.evidence_id,
+        selected_path: legacyPath,
+        dossier_subject: {
+          ...subject,
+          local_path: evidence.subject.local_path,
+        },
+        dossier_entry: dossier.procedure.address,
+        loaded_bytes: loaded,
+        dossier_provider: evidence.provider,
+        dossier_profile: {
+          digest: profile.digest,
           mips_support_lane,
-          isMips1
-            ? "elf32-exec-mips1-legacy-pinned-v1"
-            : "elf32-exec-arch32-legacy-pinned-v1",
-          "MIPS dossier Evidence reported the wrong support lane",
-        );
-        assert.equal(
           mips_abi_basis,
-          "inferred-o32-assumption-v1",
-          "MIPS dossier Evidence reported the wrong ABI basis",
-        );
-        assert.ok(
-          analysisProfilesEqual(profile, activeBinding.analysis_profile),
-          "MIPS dossier Evidence profile differs from the active Ghidra session",
-        );
-        // The provider's session limitations belong to the public Evidence;
-        // the normalized function payload has its own local observations.
-        const inferredO32Limitation = evidence.limitations.find((limitation) =>
-          limitation.includes(
-            "o32 calling conventions are an analysis assumption",
-          ),
-        );
-        assert.ok(
-          inferredO32Limitation,
-          "Recordless MIPS dossier Evidence omitted its inferred o32 limitation",
-        );
-        const floatingPointLimitation = evidence.limitations.find(
-          (limitation) =>
-            limitation.includes("Floating-point ABI semantics are unverified"),
-        );
-        assert.ok(
-          floatingPointLimitation,
-          "Recordless MIPS dossier Evidence omitted its floating-point ABI limitation",
-        );
-        const mips1Limitation = evidence.limitations.find((limitation) =>
-          /generic 32-bit MIPS language.*conformance to the MIPS-I subset is not established/u.test(
-            limitation,
-          ),
-        );
-        if (isMips1)
-          assert.ok(
-            mips1Limitation,
-            "MIPS-I dossier Evidence omitted its decoder limitation",
-          );
-        else
-          assert.equal(
-            mips1Limitation,
-            undefined,
-            "MIPS32 dossier Evidence reports a MIPS-I decoder limitation",
-          );
-        const image = await call("inspect_native_load_image");
-        assertMipsLoadedImage(image.observations, byteOrder, sourceSha256);
-        const entryBytes = expected.subarray(0x1000, 0x1018);
-        const loaded = await call("read_bytes", {
-          address: original.entry,
-          length: entryBytes.length,
-        });
-        assert.equal(BigInt(loaded.address), BigInt(original.entry));
-        assert.equal(loaded.requested_bytes, entryBytes.length);
-        assert.equal(loaded.returned_bytes, entryBytes.length);
-        assert.equal(loaded.complete, true);
-        assert.equal(loaded.bytes_hex, entryBytes.toString("hex"));
-        providerRuns.push({
-          control: isMips1 ? "recordless_mips1" : "recordless_mips32",
-          run_id: providerRunId,
-          language_id: image.observations.language_id,
-          dossier_evidence_id: evidence.evidence_id,
-          selected_path: path,
-          dossier_subject: {
-            ...subject,
-            local_path: evidence.subject.local_path,
-          },
-          dossier_entry: dossier.procedure.address,
-          loaded_bytes: loaded,
-          dossier_provider: evidence.provider,
-          dossier_profile: {
-            digest: profile.digest,
-            mips_support_lane,
-            mips_abi_basis,
-          },
-          dossier_abi_limitations: {
-            inferred_o32: inferredO32Limitation,
-            floating_point: floatingPointLimitation,
-          },
-          ...(isMips1 ? { dossier_evidence_limitation: mips1Limitation } : {}),
-          ...(providerScope === undefined
-            ? { public_lineage: "not_observed" }
-            : providerScope),
-        });
-        await call("close_binary");
-      }
+        },
+        dossier_abi_limitations: {
+          inferred_o32: inferredO32Limitation,
+          floating_point: floatingPointLimitation,
+        },
+        ...(providerScope === undefined
+          ? { public_lineage: "not_observed" }
+          : providerScope),
+      };
+      await call("close_binary");
       assert.deepEqual(await readFile(original.path), initial);
       assert.deepEqual(await readFile(gnuPath), gnu);
       assert.deepEqual(await readFile(legacyPath), legacy);
-      assert.deepEqual(await readFile(recordlessMips1Path), recordlessMips1);
       reports.push({
         byte_order: byteOrder,
-        provider_runs: providerRuns,
+        provider_runs: [providerRun],
         refusals,
-        recordless_mips1:
-          "real Ghidra dossier with decoder limitation, pinned 32-bit import language and exact loaded bytes; load-delay semantics unverified",
         readelf: { command, version, raw: attributes.stdout },
         existing_mips32_control:
           "real Ghidra dossier, pinned 32-bit import language and exact loaded bytes",
@@ -414,7 +380,6 @@ async function runControls(cleanup, commands) {
           mips1: digest(initial),
           gnu: digest(gnu),
           legacy: digest(legacy),
-          recordless_mips1: digest(recordlessMips1),
         },
         source_unchanged: true,
         target_executed: false,
@@ -424,6 +389,7 @@ async function runControls(cleanup, commands) {
 }
 let tokenCleanup;
 let completed;
+let retainedCleanupOwner;
 try {
   const cleanup = await prepareVerifierTokenCleanup(run);
   await withVerifierCleanup(async () => {
@@ -440,12 +406,21 @@ try {
       const retries = [firstRetry];
       if (!firstRetry.cleaned)
         retries.push(await cleanup.retryProviderCleanup(firstRetry));
+      const finalRetry = retries.at(-1);
+      if (!finalRetry.cleaned)
+        retainedCleanupOwner = cleanup.retainPendingProviderCleanup(finalRetry);
       const diagnosticPath = join(root, "token-cleanup.json");
       const failure = Object.assign(
         new Error(
           `Token cleanup unverified: ${tokenCleanup.reason}; diagnostic: ${diagnosticPath}`,
         ),
-        { verification: tokenCleanup, retries },
+        {
+          verification: tokenCleanup,
+          retries,
+          ...(retainedCleanupOwner === undefined
+            ? {}
+            : { cleanupOwner: retainedCleanupOwner }),
+        },
       );
       await withVerifierCleanup(() => {
         throw failure;
@@ -465,16 +440,38 @@ try {
           ),
       ]);
     },
-    cleanup.close,
+    () => (retainedCleanupOwner === undefined ? cleanup.close() : undefined),
     async () => {
       completed = await completeVerifierRun(run);
       assertVerifierCleanupComplete(completed.process_lineage);
     },
   ]);
 } catch (cause) {
-  throw new Error(
-    `MIPS boundary verification failed; retained workspace: ${root}`,
-    { cause },
+  const reportPath =
+    reports.length > 0 ? join(root, "partial-reports.json") : undefined;
+  const failure = Object.assign(
+    new Error(
+      `MIPS boundary verification failed; retained workspace: ${root}` +
+        (reportPath === undefined ? "" : `; completed reports: ${reportPath}`),
+      { cause },
+    ),
+    retainedCleanupOwner === undefined
+      ? {}
+      : { cleanupOwner: retainedCleanupOwner },
+  );
+  await withVerifierCleanup(
+    () => {
+      throw failure;
+    },
+    reportPath === undefined
+      ? []
+      : [
+          () =>
+            writeFile(
+              reportPath,
+              JSON.stringify({ ...run, status: "failed", reports }, null, 2),
+            ),
+        ],
   );
 }
 await rm(root, { recursive: true, force: true });

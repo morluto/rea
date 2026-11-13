@@ -189,21 +189,6 @@ it("checks and safely recovers registered runs", async () => {
       ]),
     },
   ]);
-  // The ambiguous member exits; a different unrelated process remains live.
-  setRows([launcher, orphan, unrelated]);
-  const retry = await cleanup.retryProviderCleanup(ambiguous);
-  expect(retry, JSON.stringify(retry)).toMatchObject({
-    cleaned: true,
-    runs: [
-      { run_id: "provider-run", result: { cleaned: true, signaled: true } },
-    ],
-  });
-  expect(signalGroup).toHaveBeenCalledExactlyOnceWith(
-    orphan.processGroupId,
-    "SIGKILL",
-  );
-  expect(rows()).toEqual([launcher, unrelated]);
-  expect(await cleanup.verify()).toMatchObject({ cleaned: true });
   cleanup.registerProviderRun("unobserved-provider-run");
   await expect(
     cleanup.retainProviderRun("unobserved-provider-run"),
@@ -212,7 +197,22 @@ it("checks and safely recovers registered runs", async () => {
     run_id: "unobserved-provider-run",
     result: { cleaned: true, signaled: false },
   });
-  await cleanup.close();
+  const owner = cleanup.retainPendingProviderCleanup(ambiguous);
+  const firstClose = owner.close();
+  expect(owner.close()).toBe(firstClose);
+  await expect(firstClose).rejects.toMatchObject({ cleanupOwner: owner });
+  expect(close).not.toHaveBeenCalled();
+  expect(signalGroup).not.toHaveBeenCalled();
+
+  // The ambiguous member exits; a different unrelated process remains live.
+  setRows([launcher, orphan, unrelated]);
+  await owner.close();
+  await owner.close();
+  expect(signalGroup).toHaveBeenCalledExactlyOnceWith(
+    orphan.processGroupId,
+    "SIGKILL",
+  );
+  expect(rows()).toEqual([launcher, unrelated]);
   expect(close).toHaveBeenCalledOnce();
 });
 

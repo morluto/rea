@@ -109,7 +109,7 @@ export async function prepareVerifierTokenCleanup(run, suppliedHost) {
         host.signalGroup(groupId, signal);
       },
     };
-    return {
+    const cleanup = {
       registerProviderRun: (runId) => {
         if (typeof runId !== "string" || runId.length === 0)
           throw new Error("Provider run ownership receipt is unavailable");
@@ -199,6 +199,33 @@ export async function prepareVerifierTokenCleanup(run, suppliedHost) {
         }
         return { cleaned: runs.every(({ result }) => result.cleaned), runs };
       },
+      retainPendingProviderCleanup: (verification) => {
+        let pending = verification;
+        let closing;
+        const owner = {
+          close: () => {
+            closing ??= (async () => {
+              if (!pending.cleaned) {
+                pending = await cleanup.retryProviderCleanup(pending);
+                if (!pending.cleaned)
+                  throw Object.assign(
+                    new Error("Verifier provider cleanup is still incomplete"),
+                    { verification: pending },
+                  );
+              }
+              await close();
+            })().catch((cause) => {
+              closing = undefined;
+              throw Object.assign(
+                new Error("Retained verifier cleanup is incomplete", { cause }),
+                { cleanupOwner: owner },
+              );
+            });
+            return closing;
+          },
+        };
+        return owner;
+      },
       retainedProviderEvidence: () =>
         [...relations].flatMap(([runId, relation]) =>
           runId === run.run_id || relation === undefined
@@ -226,6 +253,7 @@ export async function prepareVerifierTokenCleanup(run, suppliedHost) {
         ),
       close,
     };
+    return cleanup;
   } catch (cause) {
     return withVerifierCleanup(() => {
       throw cause;
