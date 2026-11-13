@@ -27,47 +27,30 @@ import type {
 const graphqlSourceBodyLiterals = (
   node: t.ObjectExpression,
 ): readonly t.StringLiteral[] | undefined => {
-  const hasLocationOffset = node.properties.some(
-    (property) =>
-      t.isObjectProperty(property) &&
-      semanticStaticPropertyKey(property.key, property.computed) ===
-        "locationOffset",
-  );
-  if (!hasLocationOffset) return undefined;
-
-  const bodyStrings = (object: t.ObjectExpression) =>
-    object.properties.flatMap((property) =>
-      t.isObjectProperty(property) &&
-      semanticStaticPropertyKey(property.key, property.computed) === "body" &&
-      t.isStringLiteral(property.value)
-        ? [property.value]
-        : [],
-    );
-  const bodies = bodyStrings(node);
-
-  // Inline object spreads can own additional body values which the surrounding
-  // Source object may select. Include only body-key string literals from those
-  // spread values; ordinary strings elsewhere in the object remain scannable.
+  const bodies: t.StringLiteral[] = [];
+  let hasLocationOffset = false;
+  // Own marker presence and body literals through the same inline-spread walk.
+  // Unknown spreads cannot remove a known own marker. Ordinary nested objects
+  // and non-body strings remain independently scannable.
   const visited = new WeakSet<t.ObjectExpression>();
-  visited.add(node);
-  const pending = node.properties.flatMap((property) => {
-    if (!t.isSpreadElement(property)) return [];
-    const spread = unwrapJavaScriptExpression(property.argument).node;
-    return t.isObjectExpression(spread) ? [spread] : [];
-  });
+  const pending = [node];
   while (pending.length > 0) {
     const current = pending.pop();
     if (current === undefined || visited.has(current)) continue;
     visited.add(current);
-    bodies.push(...bodyStrings(current));
     for (const property of current.properties) {
-      if (t.isSpreadElement(property)) {
+      if (t.isObjectProperty(property)) {
+        const key = semanticStaticPropertyKey(property.key, property.computed);
+        if (key === "locationOffset") hasLocationOffset = true;
+        else if (key === "body" && t.isStringLiteral(property.value))
+          bodies.push(property.value);
+      } else if (t.isSpreadElement(property)) {
         const spread = unwrapJavaScriptExpression(property.argument).node;
         if (t.isObjectExpression(spread)) pending.push(spread);
       }
     }
   }
-  return bodies.length === 0 ? undefined : bodies;
+  return hasLocationOffset && bodies.length > 0 ? bodies : undefined;
 };
 
 const GRAPHQL_OPERATION_TYPES: ReadonlySet<string> = new Set([
