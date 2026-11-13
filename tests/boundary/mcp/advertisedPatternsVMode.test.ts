@@ -9,6 +9,7 @@ import {
   INVALID_BASE64_PADDING_PATTERN,
   INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
 } from "../../../src/domain/stringPatterns.js";
+import { advertisedPatternFindings } from "../../fixtures/advertisedPatternPortability.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 interface AdvertisedPattern {
@@ -138,6 +139,19 @@ it("advertises portable NUL escapes and patterns that compile in all JS modes", 
     ),
   ).toEqual([]);
   expect(patterns.some(({ pattern }) => pattern.includes("\\x00"))).toBe(true);
+
+  // Compiling in every JS mode is necessary but not sufficient. A strict
+  // gateway decodes an advertised pattern into its own regex syntax and
+  // refuses the complete tools request when the result names a surrogate or
+  // depends on flags the gateway does not use. 6.9.0 shipped
+  // `^[^\uD800-\uDFFF]*$` here: it compiles in all three modes, so the check
+  // above passed, and the catalog was still unusable.
+  const unportable = patterns.flatMap((entry) =>
+    advertisedPatternFindings(entry.pattern).map(
+      (reason) => `${entry.tool} ${entry.where} /${entry.pattern}/: ${reason}`,
+    ),
+  );
+  expect(unportable).toEqual([]);
 
   expect(canonicalBase64Leaves.length).toBeGreaterThan(0);
   const sdkValidator = new AjvJsonSchemaValidator();
