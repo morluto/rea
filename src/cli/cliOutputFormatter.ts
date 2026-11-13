@@ -305,10 +305,23 @@ const escapeInlineSyntax = (
     ? match
     : match.replace(/./g, "\\$&");
 
+/**
+ * NUL, unpaired surrogates, and the C0, C1 and bidi controls that a Markdown
+ * renderer passes through to a terminal reader: a backspace or carriage return
+ * rewrites the text around it. Whitespace the renderer rounds to a space (tab,
+ * vertical tab, form feed) and U+FEFF at a cell edge keep their encoding.
+ */
+const MARKDOWN_UNSAFE_CODE_UNIT =
+  /[\u0000-\u0008\u000e-\u001f\ud800-\udfff\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+
+/** U+FEFF inside a value reads as nothing, so only its edges are recoverable. */
+const escapeEmbeddedBom = (value: string): string =>
+  value.replace(/\ufeff/gu, "\\\\ufeff");
+
 const escapeTableCell = (value: string): string =>
   value
     .replace(
-      /\u0000|[\ud800-\udfff]/gu,
+      MARKDOWN_UNSAFE_CODE_UNIT,
       (character) =>
         `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
     )
@@ -366,7 +379,7 @@ export const encodeMarkdownTableCell = (value: string): string => {
     end -= 1;
   return (
     encodeMarkdownWhitespace(escaped.slice(0, start)) +
-    escaped.slice(start, end) +
+    escapeEmbeddedBom(escaped.slice(start, end)) +
     encodeMarkdownWhitespace(escaped.slice(end))
   );
 };
