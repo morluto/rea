@@ -876,34 +876,37 @@ describe.skipIf(process.platform === "win32")("desktop entry package", () => {
     expect(installed).not.toHaveProperty("executable_package_reason");
   });
 
-  it("finds apt's package lists in the folder apt-config names, or the default when it cannot say", async () => {
-    const { root, runQuery, inspect } = await writerFixture();
-    // A user-space apt-get update under APT_CONFIG keeps its lists elsewhere.
-    const userLists = join(root, "user's lists");
-    await rename(join(root, "lists"), userLists);
-    await mkdir(join(root, "lists"));
-    const answering =
-      (outcome: QueryOutcome): QueryRunner =>
-      async (command, argv, signal) =>
-        command === "apt-config" ? outcome : runQuery(command, argv, signal);
-    const quoted = `LISTS='${userLists.replaceAll("'", "'\\''")}/'\n`;
+  it.each(["user's lists", "user's\nlists"])(
+    "finds apt's package lists in %j, or the default when it cannot say",
+    async (name) => {
+      const { root, runQuery, inspect } = await writerFixture();
+      // A user-space apt-get update under APT_CONFIG keeps its lists elsewhere.
+      const userLists = join(root, name);
+      await rename(join(root, "lists"), userLists);
+      await mkdir(join(root, "lists"));
+      const answering =
+        (outcome: QueryOutcome): QueryRunner =>
+        async (command, argv, signal) =>
+          command === "apt-config" ? outcome : runQuery(command, argv, signal);
+      const quoted = `LISTS='${userLists.replaceAll("'", "'\\''")}/'\n`;
 
-    const present = await Promise.all(
-      [
-        { stdout: quoted, exitCode: 0 },
-        { stdout: "", exitCode: 100 },
-        "missing" as const,
-      ].map(async (outcome) => {
-        const { installed } = await inspect(
-          { desktopEntry: "libreoffice-writer" },
-          { run: answering(outcome) },
-        );
-        return installed.package_lists_present;
-      }),
-    );
+      const present = await Promise.all(
+        [
+          { stdout: quoted, exitCode: 0 },
+          { stdout: "", exitCode: 100 },
+          "missing" as const,
+        ].map(async (outcome) => {
+          const { installed } = await inspect(
+            { desktopEntry: "libreoffice-writer" },
+            { run: answering(outcome) },
+          );
+          return installed.package_lists_present;
+        }),
+      );
 
-    expect(present).toEqual([true, false, false]);
-  });
+      expect(present).toEqual([true, false, false]);
+    },
+  );
 
   it("records why the computer cannot install the program's package when no source it can use offers it", async () => {
     const { runQuery, inspect } = await writerFixture();
