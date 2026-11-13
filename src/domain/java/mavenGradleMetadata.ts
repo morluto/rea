@@ -22,13 +22,22 @@ export type MavenGradleMetadataFormat =
 
 const nullableText = z.string().min(1).nullable();
 
-const PROPERTY_REFERENCE = /\$\{([^}]+)\}/gu;
-
-/** Every distinct interpolatable property a Maven/Gradle spelling still names, in order. */
-export const mavenPropertyReferences = (value: string | null): string[] =>
-  value === null
-    ? []
-    : [...new Set(Array.from(value.matchAll(PROPERTY_REFERENCE), (m) => m[0]))];
+/**
+ * Every distinct interpolatable property a Maven/Gradle spelling still names, in
+ * order. A `${` with no later `}` ends the scan, so matching stays linear.
+ */
+export const mavenPropertyReferences = (value: string | null): string[] => {
+  if (value === null) return [];
+  const references = new Set<string>();
+  let start = value.indexOf("${");
+  while (start >= 0) {
+    const close = value.indexOf("}", start + 2);
+    if (close < 0) break;
+    if (close > start + 2) references.add(value.slice(start, close + 1));
+    start = value.indexOf("${", close > start + 2 ? close + 1 : start + 2);
+  }
+  return [...references];
+};
 
 /**
  * Classify a requested version as spelled for its document format, without

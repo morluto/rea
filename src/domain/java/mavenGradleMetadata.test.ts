@@ -73,6 +73,8 @@ it("classifies requested versions without interpolating properties", () => {
     "${changelist}",
   ]);
   expect(mavenPropertyReferences("1.2.3")).toEqual([]);
+  expect(mavenPropertyReferences("${}${a${b}")).toEqual(["${a${b}"]);
+  expect(mavenPropertyReferences("${a".repeat(100_000))).toEqual([]);
   expect(requestedVersionKind("${jackson.version}", "maven-pom")).toBe(
     "property",
   );
