@@ -7,6 +7,8 @@ import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
+  activityExtraCliEntrySchema,
+  activityExtraFromCliEntry,
   adbInputSchemas,
   MAX_ADB_ACTIVITY_EXTRAS,
   type AdbOperation,
@@ -327,7 +329,7 @@ export const registerAdbCommands = (
         "Explicit component in package/activity form (-n)",
       ),
       extra: z
-        .array(z.string().min(1))
+        .array(activityExtraCliEntrySchema)
         .max(MAX_ADB_ACTIVITY_EXTRAS)
         .default([])
         .describe(
@@ -335,15 +337,10 @@ export const registerAdbCommands = (
         ),
     }),
     run: ({ args, options }) => {
-      const extras: {
-        readonly type: "string" | "boolean" | "int" | "long" | "float";
-        readonly key: string;
-        readonly value: string;
-      }[] = [];
+      const extras = [];
       for (const [index, entry] of options.extra.entries()) {
-        const first = entry.indexOf(":");
-        const second = entry.indexOf(":", first + 1);
-        if (first === -1 || second === -1)
+        const parsed = activityExtraFromCliEntry(entry);
+        if (!parsed.success)
           return logCliCommand(
             logger,
             CLI_COMMANDS.startAdbActivity,
@@ -352,22 +349,15 @@ export const registerAdbCommands = (
                 {
                   path: ["extras", index],
                   reason: "invalid_format",
-                  message: "Expected --extra in type:key:value form.",
+                  message:
+                    parsed.error.issues[0]?.message ??
+                    "Expected --extra in type:key:value form.",
                   expected: "type:key:value",
                 },
               ]);
             },
           );
-        extras.push({
-          type: entry.slice(0, first) as
-            | "string"
-            | "boolean"
-            | "int"
-            | "long"
-            | "float",
-          key: entry.slice(first + 1, second),
-          value: entry.slice(second + 1),
-        });
+        extras.push(parsed.data);
       }
       return execute(CLI_COMMANDS.startAdbActivity, "start_adb_activity", {
         serial: args.serial,

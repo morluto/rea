@@ -125,6 +125,82 @@ const activityExtraSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+const activityExtraCliKey = String.raw`[A-Za-z0-9._\x2d]+`;
+const javaFloatValueBody = javaFloatValuePattern.source.slice(1, -1);
+const activityExtraCliPattern = (
+  type: "string" | "boolean" | "int" | "long" | "float",
+  value: string,
+) => new RegExp(`^${type}:${activityExtraCliKey}:(?:${value})$`, "u");
+
+/** Split one CLI extra and admit it with the runtime activity extra contract. */
+export const activityExtraFromCliEntry = (entry: string) => {
+  const typeEnd = entry.indexOf(":");
+  const keyEnd = typeEnd < 0 ? -1 : entry.indexOf(":", typeEnd + 1);
+  if (typeEnd < 1 || keyEnd < 0)
+    return activityExtraSchema.safeParse({
+      type: "string",
+      key: "",
+      value: entry,
+    });
+  return activityExtraSchema.safeParse({
+    type: entry.slice(0, typeEnd),
+    key: entry.slice(typeEnd + 1, keyEnd),
+    value: entry.slice(keyEnd + 1),
+  });
+};
+
+/**
+ * CLI `--extra` text for one activity extra. The patterns are the advertised
+ * form; the refine applies the same key and value contract as the runtime
+ * input, including signed integer ranges.
+ */
+export const activityExtraCliEntrySchema = z
+  .union([
+    z
+      .string()
+      .regex(
+        activityExtraCliPattern("string", String.raw`[^\x00]{0,2048}`),
+        "String extra must be string:key:value",
+      ),
+    z
+      .string()
+      .regex(
+        activityExtraCliPattern("boolean", "true|false"),
+        "Boolean extra must be boolean:key:true or boolean:key:false",
+      ),
+    z
+      .string()
+      .regex(
+        activityExtraCliPattern("int", String.raw`-?\d{1,2048}`),
+        "Integer extra must be int:key:value",
+      ),
+    z
+      .string()
+      .regex(
+        activityExtraCliPattern("long", String.raw`-?\d{1,2048}`),
+        "Long extra must be long:key:value",
+      ),
+    z
+      .string()
+      .regex(
+        activityExtraCliPattern("float", javaFloatValueBody),
+        "Float extra must be float:key:value",
+      ),
+  ])
+  .superRefine((entry, context) => {
+    const parsed = activityExtraFromCliEntry(entry);
+    if (!parsed.success)
+      context.addIssue({
+        code: "custom",
+        message:
+          parsed.error.issues[0]?.message ??
+          "Extra does not match the activity extra contract",
+      });
+  })
+  .describe(
+    "Typed extra as type:key:value (string, boolean, int, long, float)",
+  );
+
 /**
  * Caller intent for ADB-backed device inspection and acquisition.
  *
