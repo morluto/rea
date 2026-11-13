@@ -951,6 +951,34 @@ describe("normalized view callee identity", () => {
     });
   });
 
+  it("reports equal text as unknown when it masks a caller that exact calls cannot identify", () => {
+    // The exact calls dimension compares callers as well as callees.
+    const make = (base: string, caller: string) =>
+      syntheticDossier({
+        base,
+        name: `FUN_${BigInt(base).toString(16)}`,
+        pseudocode: `void f(void) { register_handler(FUN_${BigInt(caller).toString(16)}); }`,
+        assembly: [`${base}: PUSH EBP`],
+        callers: [
+          { address: caller, name: `FUN_${BigInt(caller).toString(16)}` },
+        ],
+      });
+    const [before, after] = syntheticPair(
+      make("0x411700", "0x411860"),
+      make("0x511700", "0x511860"),
+    );
+    const result = compareFunctions(before, after, {
+      includeNormalizedViews: true,
+    });
+    expect(dimension(result, "calls")).toMatchObject({ status: "unknown" });
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        expect.stringContaining("dossier-listed caller, callee or thunk"),
+      ]),
+    });
+  });
+
   it("treats the procedure's own thunk target as a masked callee", () => {
     const make = (base: string, target: string, otherCallee: string) =>
       syntheticDossier({
@@ -1351,7 +1379,7 @@ describe("normalized view consumers", () => {
       bundle,
     );
     expect(result.claims.items[0]?.limitations).toContain(
-      "Masked text references a dossier-listed callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
+      "Masked text references a dossier-listed caller, callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
     );
   });
 
@@ -1487,7 +1515,7 @@ describe("normalized view static/runtime consumer", () => {
       correlate("pseudocode_normalized", uncertainComparison).correlations
         .items[0]?.limitations,
     ).toContain(
-      "Masked text references a dossier-listed callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
+      "Masked text references a dossier-listed caller, callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
     );
 
     const outsideClosure = capture("9").evidence_id;
@@ -1861,7 +1889,7 @@ describe("normalized view source citations", () => {
     const read = readComparisonResult(evidence, "compare_functions");
     expect(read.ok).toBe(false);
     expect(read.ok ? undefined : read.error.message).toMatch(
-      /cite both selected/u,
+      /cite every selected/u,
     );
   });
 

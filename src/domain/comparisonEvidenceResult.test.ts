@@ -101,92 +101,6 @@ describe("same-evidence comparison admission", () => {
     ).toBe(false);
   });
 
-  describe("with normalized views", () => {
-    const counts = {
-      address_derived_identifiers: 1,
-      unmasked_address_derived_identifiers: 0,
-      corroborated_addresses: 1,
-      visible_addresses: 0,
-    };
-    const view = (
-      dimension: (typeof NORMALIZED_VIEW_DIMENSIONS)[number],
-      links: readonly string[] = [source, source],
-    ) => ({
-      dimension,
-      status: "unchanged" as const,
-      left_digest: hash,
-      right_digest: hash,
-      left_count: 1,
-      right_count: 1,
-      text_delta: { added_lines: 0, removed_lines: 0, hunks: 0 },
-      evidence_links: links,
-      masking: {
-        policy: "rea-address-normalized-text-v1" as const,
-        provider_id: "ghidra",
-        rules: [{ rule: "entry", description: "Entry address" }],
-        left: counts,
-        right: counts,
-      },
-      limitations: [],
-      conclusion_kind: "derived_relationship" as const,
-    });
-    const withViews = (views: readonly unknown[]) => ({
-      ...baseline(),
-      normalized_views: {
-        policy: "rea-address-normalized-text-v1" as const,
-        views,
-        limitations: [],
-      },
-    });
-    const pseudocode = () => view("pseudocode_normalized");
-    const assembly = () => view("assembly_normalized");
-
-    it("accepts unchanged views of the same source", () => {
-      const candidate = withViews([pseudocode(), assembly()]);
-      expect(functionComparisonResultSchema.safeParse(candidate).success).toBe(
-        true,
-      );
-      expect(
-        readComparisonResult(evidence(candidate), "compare_functions").ok,
-      ).toBe(true);
-    });
-
-    it("rejects a changed view for one source", () => {
-      const candidate = withViews([
-        {
-          ...pseudocode(),
-          status: "changed" as const,
-          right_digest: other,
-          text_delta: { added_lines: 1, removed_lines: 1, hunks: 1 },
-        },
-        assembly(),
-      ]);
-      expect(functionComparisonResultSchema.safeParse(candidate).success).toBe(
-        true,
-      );
-      expect(
-        readComparisonResult(evidence(candidate), "compare_functions").ok,
-      ).toBe(false);
-    });
-
-    it("rejects a view that cites another closure member", () => {
-      const member = `ev_${"e".repeat(64)}`;
-      const candidate = withViews([
-        view("pseudocode_normalized", [source, source, member]),
-        assembly(),
-      ]);
-      expect(functionComparisonResultSchema.safeParse(candidate).success).toBe(
-        true,
-      );
-      expect(
-        readComparisonResult(
-          evidence(candidate, [source, member]),
-          "compare_functions",
-        ).ok,
-      ).toBe(false);
-    });
-  });
-
   it("rejects unequal unchanged digests for one source", () => {
     const result = baseline();
     const candidate = {
@@ -201,6 +115,124 @@ describe("same-evidence comparison admission", () => {
     );
     expect(
       readComparisonResult(evidence(candidate), "compare_functions").ok,
+    ).toBe(false);
+  });
+});
+
+describe("same-evidence comparison admission with normalized views", () => {
+  const counts = {
+    address_derived_identifiers: 1,
+    unmasked_address_derived_identifiers: 0,
+    corroborated_addresses: 1,
+    visible_addresses: 0,
+  };
+  const view = (
+    dimension: (typeof NORMALIZED_VIEW_DIMENSIONS)[number],
+    links: readonly string[] = [source, source],
+  ) => ({
+    dimension,
+    status: "unchanged" as const,
+    left_digest: hash,
+    right_digest: hash,
+    left_count: 1,
+    right_count: 1,
+    text_delta: { added_lines: 0, removed_lines: 0, hunks: 0 },
+    evidence_links: links,
+    masking: {
+      policy: "rea-address-normalized-text-v1" as const,
+      provider_id: "ghidra",
+      rules: [{ rule: "entry", description: "Entry address" }],
+      left: counts,
+      right: counts,
+    },
+    limitations: [],
+    conclusion_kind: "derived_relationship" as const,
+  });
+  const withViews = (views: readonly unknown[]) => ({
+    ...baseline(),
+    normalized_views: {
+      policy: "rea-address-normalized-text-v1" as const,
+      views,
+      limitations: [],
+    },
+  });
+  const pseudocode = () => view("pseudocode_normalized");
+  const assembly = () => view("assembly_normalized");
+
+  it("accepts unchanged views of the same source", () => {
+    const candidate = withViews([pseudocode(), assembly()]);
+    expect(functionComparisonResultSchema.safeParse(candidate).success).toBe(
+      true,
+    );
+    expect(
+      readComparisonResult(evidence(candidate), "compare_functions").ok,
+    ).toBe(true);
+  });
+
+  it("rejects a changed view for one source", () => {
+    const candidate = withViews([
+      {
+        ...pseudocode(),
+        status: "changed" as const,
+        right_digest: other,
+        text_delta: { added_lines: 1, removed_lines: 1, hunks: 1 },
+      },
+      assembly(),
+    ]);
+    expect(functionComparisonResultSchema.safeParse(candidate).success).toBe(
+      true,
+    );
+    expect(
+      readComparisonResult(evidence(candidate), "compare_functions").ok,
+    ).toBe(false);
+  });
+
+  it("accepts views when the sources are recorded as lists", () => {
+    const candidate = withViews([pseudocode(), assembly()]);
+    const listed = {
+      ...evidence(candidate),
+      parameters: {
+        left_evidence_ids: [source],
+        right_evidence_ids: [source],
+        include_normalized_views: true,
+      },
+    } as unknown as Evidence;
+    expect(readComparisonResult(listed, "compare_functions").ok).toBe(true);
+  });
+
+  it("rejects an unknown view whose projected facts differ for one source", () => {
+    const candidate = withViews([
+      {
+        ...pseudocode(),
+        status: "unknown" as const,
+        right_digest: other,
+        text_delta: null,
+        conclusion_kind: "unresolved_branch" as const,
+      },
+      assembly(),
+    ]);
+    expect(functionComparisonResultSchema.safeParse(candidate).success).toBe(
+      true,
+    );
+    expect(
+      readComparisonResult(evidence(candidate), "compare_functions").ok,
+    ).toBe(false);
+  });
+
+  it("rejects a view that cites another closure member", () => {
+    const member = `ev_${"e".repeat(64)}`;
+    const candidate = withViews([
+      view("pseudocode_normalized", [source, source, member]),
+      assembly(),
+    ]);
+    expect(functionComparisonResultSchema.safeParse(candidate).success).toBe(
+      true,
+    );
+    expect(
+      readComparisonResult(
+        evidence(candidate, [source, member]),
+        "compare_functions",
+      ).ok,
     ).toBe(false);
   });
 });

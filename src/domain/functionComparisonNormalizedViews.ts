@@ -85,10 +85,10 @@ const normalizeText = (
   let visibleAddresses = 0;
   let maskedComparedCallee = false;
   let maskedUncomparedCallee = false;
-  // The exact calls dimension can settle only the callees it compares.
+  // The exact calls dimension can settle only the endpoints it compares.
   const noteMaskedCallee = (address: bigint | null) => {
-    if (address === null || !projection.isCalleeAddress(address)) return;
-    if (projection.isComparedCalleeAddress(address))
+    if (address === null || !projection.isCallEndpointAddress(address)) return;
+    if (projection.isComparedCallEndpointAddress(address))
       maskedComparedCallee = true;
     else maskedUncomparedCallee = true;
   };
@@ -322,7 +322,7 @@ export const normalizedViews = (
         (leftText.maskedComparedCallee || rightText.maskedComparedCallee)
       )
         return unresolved(
-          "Masked text references a dossier-listed callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
+          "Masked text references a dossier-listed caller, callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
         );
       return {
         ...projected,

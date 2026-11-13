@@ -27,9 +27,10 @@ export interface AddressProjection {
     address: bigint,
     location: TextAddressLocation,
   ) => AddressMask | null;
-  readonly isCalleeAddress: (address: bigint) => boolean;
-  /** Whether the exact calls dimension compares this callee endpoint. */
-  readonly isComparedCalleeAddress: (address: bigint) => boolean;
+  /** Whether a masked address is a call endpoint or the target of one. */
+  readonly isCallEndpointAddress: (address: bigint) => boolean;
+  /** Whether the exact calls dimension compares this caller or callee. */
+  readonly isComparedCallEndpointAddress: (address: bigint) => boolean;
 }
 
 interface BodyExtent {
@@ -51,13 +52,11 @@ export const createFunctionAddressProjection = (
     values
       .map((value) => parseAddress((value ?? "").toLowerCase()))
       .filter((value): value is bigint => value !== null);
-  // The exact calls dimension compares only callee endpoints; it never reads
-  // a callee's classification, so its thunk target stays uncompared.
-  const comparedCallees = new Set(
-    parsed(snapshot.dossier.callees.map((callee) => callee.address)),
+  const callees = parsed(
+    snapshot.dossier.callees.map((callee) => callee.address),
   );
   const calleeAddresses = new Set([
-    ...comparedCallees,
+    ...callees,
     ...parsed([
       ...snapshot.dossier.callees.map(
         (callee) => callee.classification?.thunk_target,
@@ -65,6 +64,18 @@ export const createFunctionAddressProjection = (
       ...outgoingCallTargets(snapshot),
       snapshot.dossier.procedure.classification?.thunk_target,
     ]),
+  ]);
+  // The exact calls dimension compares caller and callee endpoints; it never
+  // reads their classifications, so their thunk targets stay uncompared.
+  const callers = snapshot.dossier.callers;
+  const comparedCallEndpoints = new Set([
+    ...callees,
+    ...parsed(callers.map((caller) => caller.address)),
+  ]);
+  const callEndpoints = new Set([
+    ...calleeAddresses,
+    ...comparedCallEndpoints,
+    ...parsed(callers.map((caller) => caller.classification?.thunk_target)),
   ]);
   const extent = relativeOffsets ? bodyExtent(snapshot) : null;
   const targetsBySite = referenceTargetsBySite(snapshot);
@@ -81,8 +92,9 @@ export const createFunctionAddressProjection = (
       : null;
   };
   return {
-    isCalleeAddress: (address) => calleeAddresses.has(address),
-    isComparedCalleeAddress: (address) => comparedCallees.has(address),
+    isCallEndpointAddress: (address) => callEndpoints.has(address),
+    isComparedCallEndpointAddress: (address) =>
+      comparedCallEndpoints.has(address),
     maskIdentifier: (address, occurrence) =>
       isNamedOccurrence(namedSymbols, occurrence)
         ? null

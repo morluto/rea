@@ -88,6 +88,9 @@ export function readComparisonResult(
               dimension.status === "changed" ||
               (dimension.status === "unchanged" &&
                 dimension.left_digest !== dimension.right_digest),
+          ) ||
+          (parsed.value.normalized_views?.views ?? []).some(
+            (view) => !sameProjectedFacts(view),
           );
         if (!sameSource || impossibleChange)
           return err(
@@ -136,26 +139,49 @@ const validateNormalizedViewOptIn = (
         ),
       );
 
-/** Each normalized view must cite both recorded source selections. */
+type NormalizedView = NonNullable<
+  FunctionComparisonResult["normalized_views"]
+>["views"][number];
+
+/** One source projects the same facts on both sides, whatever a view concludes. */
+const sameProjectedFacts = (view: NormalizedView): boolean =>
+  view.left_digest === view.right_digest &&
+  view.left_count === view.right_count &&
+  (view.masking === null ||
+    (
+      [
+        "address_derived_identifiers",
+        "unmasked_address_derived_identifiers",
+        "corroborated_addresses",
+        "visible_addresses",
+      ] as const
+    ).every(
+      (count) => view.masking?.left[count] === view.masking?.right[count],
+    ));
+
+/** Each normalized view must cite every recorded source selection, in either form. */
 const validateNormalizedViewSources = (
   evidence: Evidence,
   result: FunctionComparisonResult,
 ): Result<void, EvidenceIntegrityError> => {
-  const sources = [
-    evidence.parameters["left_evidence_id"],
-    evidence.parameters["right_evidence_id"],
-  ];
-  return (result.normalized_views?.views ?? []).every(({ evidence_links }) =>
-    sources.every(
-      (source) => typeof source === "string" && evidence_links.includes(source),
-    ),
-  )
-    ? ok(undefined)
-    : err(
-        new EvidenceIntegrityError(
-          "Function comparison normalized views must cite both selected source Evidence records",
-        ),
-      );
+  const views = result.normalized_views?.views ?? [];
+  if (views.length === 0) return ok(undefined);
+  try {
+    const { left, right } = comparisonSourceEvidenceSides(evidence);
+    const sources = [...left, ...right];
+    return views.every(({ evidence_links }) =>
+      sources.every((source) => evidence_links.includes(source)),
+    )
+      ? ok(undefined)
+      : err(
+          new EvidenceIntegrityError(
+            "Function comparison normalized views must cite every selected source Evidence record",
+          ),
+        );
+  } catch (cause) {
+    if (cause instanceof EvidenceIntegrityError) return err(cause);
+    throw cause;
+  }
 };
 
 const validateFindingLinks = (
