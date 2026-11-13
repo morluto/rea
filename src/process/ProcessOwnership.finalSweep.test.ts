@@ -426,3 +426,45 @@ it("settles transient token reads without borrowing the application timer", asyn
     applicationTimer.mockRestore();
   }
 });
+
+it("ignores kernel threads that the ownership sweep never owns", async () => {
+  const strayKernelThread: ProcessTableEntry = {
+    pid: 300,
+    parentPid: 2,
+    processGroupId: 0,
+    state: "I",
+    command: "psimon",
+  };
+  const rows = [...initialRows, strayKernelThread];
+  const fixture = makeHost(() => fixture.replaceRows([]));
+  fixture.replaceRows(rows);
+  let kernelThreadTokenReads = 0;
+  const host: ProcessOwnershipHost = {
+    ...fixture.host,
+    runTokens: async (entries) =>
+      new Map<number, ProcessRunTokenObservation>(
+        entries.map(({ pid }) => {
+          if (pid === strayKernelThread.pid) {
+            kernelThreadTokenReads += 1;
+            return [
+              pid,
+              {
+                state: "unavailable" as const,
+                reason: "environment_errno_ESRCH",
+              },
+            ] as const;
+          }
+          return [
+            pid,
+            { state: "readable" as const, runId: "sweep-run" },
+          ] as const;
+        }),
+      ),
+  };
+
+  await expect(cleanupOwnedProcessGroup(ownership(), host)).resolves.toEqual({
+    cleaned: true,
+    signaled: true,
+  });
+  expect(kernelThreadTokenReads).toBe(0);
+});

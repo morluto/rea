@@ -16,7 +16,11 @@ import {
   TOKEN_READ_RETRY_DELAY_MS,
 } from "./ProcessOwnershipObservation.js";
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
-import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
+import {
+  descendantsOf,
+  liveProcesses,
+  withoutKernelThreads,
+} from "./ProcessOwnershipProcessTree.js";
 import {
   processRunIdFromEnvironment,
   readProcessRunTokens,
@@ -535,7 +539,7 @@ export const verifyNoTokenOwnedProcesses = async (
       reason: `process table could not be inspected: ${processTable.reason}`,
     };
   const scan = await scanTokenOwnedProcesses(
-    processTable.processes,
+    withoutKernelThreads(processTable.processes),
     runId,
     host,
     captureBaseline,
@@ -1672,7 +1676,7 @@ const scanTokenOwnedProcesses = async (
 ): Promise<TokenOwnedProcessScan> => {
   if (host.processIdentities !== undefined)
     return scanWithOwnershipEvidence(
-      processes,
+      withoutKernelThreads(processes),
       runId,
       host,
       captureBaseline,
@@ -1680,7 +1684,7 @@ const scanTokenOwnedProcesses = async (
       exitSettlement,
     );
 
-  const candidates = processes;
+  const candidates = withoutKernelThreads(processes);
   const failures: ProcessOwnershipValidationFailure[] = [];
   const owned: ProcessTableEntry[] = [];
   const ownedIdentities = new Map<number, string | null>();
@@ -1738,7 +1742,9 @@ const scanTokenOwnedProcesses = async (
   let finalLive: ReadonlySet<number> | undefined;
   try {
     finalLive = new Set(
-      liveProcesses(await host.listProcesses()).map(({ pid }) => pid),
+      withoutKernelThreads(liveProcesses(await host.listProcesses())).map(
+        ({ pid }) => pid,
+      ),
     );
   } catch (cause: unknown) {
     rethrowProcessInspectionFailure(cause);

@@ -6,6 +6,16 @@ export const liveProcesses = (
 ): readonly ProcessTableEntry[] =>
   members.filter(({ state }) => !state.startsWith("Z"));
 
+/** Linux user-space owners cannot be named by a process whose ppid/pgid belongs to the kernel. */
+export const isKernelThread = (
+  process: Pick<ProcessTableEntry, "parentPid" | "processGroupId">,
+): boolean => process.parentPid === 2 || process.processGroupId === 0;
+
+export const withoutKernelThreads = (
+  members: readonly ProcessTableEntry[],
+): readonly ProcessTableEntry[] =>
+  members.filter((entry) => !isKernelThread(entry));
+
 /** Return every live-table descendant of the selected roots in breadth-first order. */
 export const descendantsOf = (
   rootPids: readonly number[],
