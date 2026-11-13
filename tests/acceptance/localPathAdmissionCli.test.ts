@@ -1,12 +1,28 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect } from "vitest";
 
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { pythonPycFixture } from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+
+cliTest(
+  "advertises the required nonempty capture record selection before reading a file",
+  async ({ cli }) => {
+    const schema = await cli.run({
+      arguments: ["inspect-web-network-capture", "--schema", "--json"],
+    });
+    expect(schema.exitCode, schema.stderr).toBe(0);
+    const output = schema.json as { options: Parameters<Ajv2020["compile"]>[0] };
+    const acceptsOptions = new Ajv2020({ strict: false }).compile(output.options);
+
+    expect(acceptsOptions({ record: [0, 2] })).toBe(true);
+    expect(acceptsOptions({ record: [] })).toBe(false);
+  },
+);
 
 const fileCommands = [
   "inspect-sqlite-database",
