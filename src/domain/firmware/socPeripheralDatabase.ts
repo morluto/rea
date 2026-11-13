@@ -1027,7 +1027,12 @@ const RP2040_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     "Pad control register block for bank 0",
   ),
   rp2040Block("PLL_USB", 0x4002c000n, "APB", "USB PLL register block"),
-  rp2040Block("BUSCTRL", 0x40030000n, "APB", "Bus fabric control register block"),
+  rp2040Block(
+    "BUSCTRL",
+    0x40030000n,
+    "APB",
+    "Bus fabric control register block",
+  ),
   rp2040Block("UART0", 0x40034000n, "APB", "UART register block"),
   rp2040Block("UART1", 0x40038000n, "APB", "UART register block"),
   rp2040Block("SPI0", 0x4003c000n, "APB", "SPI register block"),
@@ -1039,13 +1044,7 @@ const RP2040_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   ),
   rp2040Block("PIO0", 0x50200000n, "AHBL", "Programmable IO block"),
   rp2040Block("PIO1", 0x50300000n, "AHBL", "Programmable IO block"),
-  rp2040Block(
-    "SIO",
-    0xd0000000n,
-    "APB",
-    "Single-cycle IO block",
-    0x180,
-  ),
+  rp2040Block("SIO", 0xd0000000n, "APB", "Single-cycle IO block", 0x180),
 ];
 
 const GD32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [

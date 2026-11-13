@@ -373,19 +373,16 @@ describe("ESP32-C6 peripheral windows", () => {
     expect(lookupSocPeripheral("0x600c0000", "esp32c3")?.name).toBe("SYSTEM");
     expect(lookupSocPeripheral("0x600c0000", "esp32c6")?.name).toBe("TRACE");
     expect(lookupSocPeripheral("0x600c0000", "esp32h2")?.name).toBe("TRACE");
-    expect(detectSocPlatform(["0x60002000"], "riscv").map((candidate) => candidate.platform)).toEqual([
-      "esp32",
-      "esp32c2",
-      "esp32c3",
-      "esp32c6",
-      "esp32h2",
-    ]);
-    expect(detectSocPlatform(["0x60010000"], "riscv").map((candidate) => candidate.platform)).toEqual([
-      "esp32c2",
-      "esp32c3",
-      "esp32c6",
-      "esp32h2",
-    ]);
+    expect(
+      detectSocPlatform(["0x60002000"], "riscv").map(
+        (candidate) => candidate.platform,
+      ),
+    ).toEqual(["esp32", "esp32c2", "esp32c3", "esp32c6", "esp32h2"]);
+    expect(
+      detectSocPlatform(["0x60010000"], "riscv").map(
+        (candidate) => candidate.platform,
+      ),
+    ).toEqual(["esp32c2", "esp32c3", "esp32c6", "esp32h2"]);
   });
 
   it("lets a C6-only window select that family", () => {
@@ -404,10 +401,11 @@ describe("ESP32-C6 peripheral windows", () => {
     expect(lookupSocPeripheral("0x600b1400", "esp32h2")).toBeNull();
     expect(lookupSocPeripheral("0x600b1400", "esp32c6")?.name).toBe("LP_UART");
     expect(lookupSocPeripheral("0x600b1400", "esp32c6")?.sizeBytes).toBe(0x400);
-    expect(detectSocPlatform(["0x60001000"], "riscv").map((candidate) => candidate.platform)).toEqual([
-      "esp32c6",
-      "esp32h2",
-    ]);
+    expect(
+      detectSocPlatform(["0x60001000"], "riscv").map(
+        (candidate) => candidate.platform,
+      ),
+    ).toEqual(["esp32c6", "esp32h2"]);
     expect(detectSocPlatform(["0x600b1400"], "riscv")).toEqual([
       {
         platform: "esp32c6",
@@ -429,23 +427,26 @@ describe("ESP32-C2 peripheral windows", () => {
     expect(lookupSocPeripheral("0x60008800", "esp32c2")?.name).toBe("EFUSE");
     expect(lookupSocPeripheral("0x60024000", "esp32c2")?.name).toBe("SPI2");
     expect(lookupSocPeripheral("0x60024000", "esp32c3")?.name).toBe("SPI2");
-    expect(lookupSocPeripheral("0x600c1000", "esp32c2")?.name).toBe("SENSITIVE");
-    expect(lookupSocPeripheral("0x600c1000", "esp32c3")?.name).toBe("SENSITIVE");
+    expect(lookupSocPeripheral("0x600c1000", "esp32c2")?.name).toBe(
+      "SENSITIVE",
+    );
+    expect(lookupSocPeripheral("0x600c1000", "esp32c3")?.name).toBe(
+      "SENSITIVE",
+    );
     expect(lookupSocPeripheral("0x600c1000", "esp32c6")).toBeNull();
     expect(lookupSocPeripheral("0x600c1000", "esp32h2")).toBeNull();
     expect(lookupSocPeripheral("0x60008800", "esp32h2")?.name).toBe("LEDC");
     expect(lookupSocPeripheral("0x60020000", "esp32c2")).toBeNull();
-    expect(detectSocPlatform(["0x60008800"], "riscv").map((candidate) => candidate.platform)).toEqual([
-      "esp32",
-      "esp32c2",
-      "esp32c3",
-      "esp32c6",
-      "esp32h2",
-    ]);
-    expect(detectSocPlatform(["0x600c1000"], "riscv").map((candidate) => candidate.platform)).toEqual([
-      "esp32c2",
-      "esp32c3",
-    ]);
+    expect(
+      detectSocPlatform(["0x60008800"], "riscv").map(
+        (candidate) => candidate.platform,
+      ),
+    ).toEqual(["esp32", "esp32c2", "esp32c3", "esp32c6", "esp32h2"]);
+    expect(
+      detectSocPlatform(["0x600c1000"], "riscv").map(
+        (candidate) => candidate.platform,
+      ),
+    ).toEqual(["esp32c2", "esp32c3"]);
   });
 
   it("lets a C2-only window select that family", () => {

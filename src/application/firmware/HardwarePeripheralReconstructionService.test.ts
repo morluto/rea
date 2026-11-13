@@ -185,11 +185,13 @@ describe("SoC catalog selection", () => {
       "arm",
     );
 
-    expect(report.detectedPlatforms.map((candidate) => candidate.platform)).toEqual(
-      ["stm32f4", "gd32f4"],
-    );
     expect(
-      report.detectedPlatforms.every((candidate) => candidate.matchedCount === 1),
+      report.detectedPlatforms.map((candidate) => candidate.platform),
+    ).toEqual(["stm32f4", "gd32f4"]);
+    expect(
+      report.detectedPlatforms.every(
+        (candidate) => candidate.matchedCount === 1,
+      ),
     ).toBe(true);
     expect(report.peripheralBlocks[0]?.socPeripheralName).toBeNull();
     expect(report.limitations[0]).toContain("stm32f4, gd32f4");
@@ -225,9 +227,9 @@ describe("SoC catalog selection", () => {
       "riscv",
     );
 
-    expect(report.detectedPlatforms.map((candidate) => candidate.platform)).toEqual(
-      ["esp32", "esp32c2", "esp32c3", "esp32c6", "esp32h2"],
-    );
+    expect(
+      report.detectedPlatforms.map((candidate) => candidate.platform),
+    ).toEqual(["esp32", "esp32c2", "esp32c3", "esp32c6", "esp32h2"]);
     expect(
       report.detectedPlatforms.every(
         (candidate) =>
@@ -235,7 +237,9 @@ describe("SoC catalog selection", () => {
       ),
     ).toBe(true);
     expect(
-      report.peripheralBlocks.some((block) => block.socPeripheralName === "UART0"),
+      report.peripheralBlocks.some(
+        (block) => block.socPeripheralName === "UART0",
+      ),
     ).toBe(false);
     expect(report.limitations[0]).toContain(
       "esp32, esp32c2, esp32c3, esp32c6, esp32h2",
@@ -325,12 +329,13 @@ describe("ESP32-C2 catalog selection", () => {
       "riscv",
     );
 
-    expect(report.detectedPlatforms.map((candidate) => candidate.platform)).toEqual([
-      "esp32c2",
-      "esp32c3",
-    ]);
     expect(
-      report.peripheralBlocks.some((block) => block.socPeripheralName === "SENSITIVE"),
+      report.detectedPlatforms.map((candidate) => candidate.platform),
+    ).toEqual(["esp32c2", "esp32c3"]);
+    expect(
+      report.peripheralBlocks.some(
+        (block) => block.socPeripheralName === "SENSITIVE",
+      ),
     ).toBe(false);
     expect(report.limitations[0]).toContain("esp32c2, esp32c3");
   });
