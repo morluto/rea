@@ -109,7 +109,11 @@ share the application workflow, projection, retention and publication owners.
   require exact encoded identity; semantic equivalence remains unestablished.
   `certificate` is `null` when the block has more than one `SignerInfo` (with
   nothing verified there is no single signer) or names a certificate it does
-  not carry. A block that cannot be read (malformed ASN.1, an unsupported
+  not carry. It also stays `null` when several distinct raw-DER certificates
+  match one signer identifier: certificate order cannot establish which identity
+  was named. All carried certificates remain listed and a limitation explains
+  the ambiguity; exact repeated copies of one certificate remain unambiguous.
+  A block that cannot be read (malformed ASN.1, an unsupported
   compression method, Zip64 sizes, a local header that disagrees with the
   central directory on the name, data-descriptor flag, CRC-32 or a size, as
   apksig refuses it, or over a bound) keeps its names and carries

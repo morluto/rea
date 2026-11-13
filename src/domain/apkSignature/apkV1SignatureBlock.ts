@@ -45,8 +45,10 @@ export const MAX_ASN1_ELEMENTS = 65_536;
 
 export interface ApkV1SignerInfo {
   readonly identifiedBy: "issuer-and-serial" | "subject-key-identifier";
-  /** Index into `certificates` of the certificate the SignerInfo names; null when none matches. */
+  /** Index into `certificates` of the certificate the SignerInfo names; null when no unique raw certificate matches. */
   readonly certificateIndex: number | null;
+  /** Several distinct DER certificates match the same declared signer identifier. */
+  readonly certificateIssue?: "ambiguous-identifier";
   readonly digestAlgorithmOid: string;
   readonly signatureAlgorithmOid: string;
 }
@@ -183,7 +185,7 @@ const algorithmOid = (tlv: Asn1BerNode | undefined, what: string) =>
   );
 
 const equalBytes = (a: Uint8Array, b: Uint8Array): boolean =>
-  a.length === b.length && a.every((byte, i) => byte === b[i]);
+  a.length === b.length && Buffer.compare(a, b) === 0;
 
 /**
  * apksig compares serials as signed INTEGER values, tolerating redundant sign
@@ -264,6 +266,7 @@ const directoryNameKey = (name: Asn1BerNode): string | null => {
 
 /** The X.509 facts a SignerInfo can name: issuer Name DER, serial and SKI. */
 interface CertificateIdentity {
+  readonly encoded: Uint8Array;
   readonly issuer: Uint8Array;
   readonly issuerKey: string | null;
   readonly serialIdentity: Uint8Array;
@@ -311,6 +314,7 @@ const certificateIdentity = (
       }
     }
     return {
+      encoded: reader.rawEncodedSpan(certificate),
       issuer: reader.rawEncodedSpan(issuer),
       issuerKey: directoryNameKey(issuer),
       serialIdentity: integerIdentityContents(serial.content),
@@ -320,6 +324,32 @@ const certificateIdentity = (
     if (unavailableIdentityInterpretation(cause)) return null;
     throw cause;
   }
+};
+
+/** Match an identifier to raw certificate identity, independently of certificate order. */
+const matchingCertificate = (
+  identities: readonly (CertificateIdentity | null)[],
+  matches: (identity: CertificateIdentity) => boolean,
+): Pick<ApkV1SignerInfo, "certificateIndex" | "certificateIssue"> => {
+  let selected: CertificateIdentity | undefined;
+  let certificateIndex: number | null = null;
+  for (const [index, identity] of identities.entries()) {
+    if (identity === null || !matches(identity)) continue;
+    if (
+      selected !== undefined &&
+      !equalBytes(selected.encoded, identity.encoded)
+    )
+      return {
+        certificateIndex: null,
+        certificateIssue: "ambiguous-identifier",
+      };
+    if (selected === undefined) {
+      selected = identity;
+      certificateIndex = index;
+    }
+  }
+  // Repeated copies of the exact same DER still name one certificate identity.
+  return { certificateIndex };
 };
 
 const signerInfo = (
@@ -333,7 +363,10 @@ const signerInfo = (
   expectTag(fields[0], TAG.integer, `${what} version`);
   const sid = fields[1];
   let identifiedBy: ApkV1SignerInfo["identifiedBy"];
-  let certificateIndex: number;
+  let certificate: Pick<
+    ApkV1SignerInfo,
+    "certificateIndex" | "certificateIssue"
+  >;
   if (sid?.tag === TAG.sequence) {
     const parts = sid.children;
     const issuerNode = expectTag(parts[0], TAG.sequence, `${what} issuer`);
@@ -343,9 +376,9 @@ const signerInfo = (
       expectTag(parts[1], TAG.integer, `${what} serialNumber`).content,
     );
     identifiedBy = "issuer-and-serial";
-    certificateIndex = identities.findIndex(
+    certificate = matchingCertificate(
+      identities,
       (identity) =>
-        identity !== null &&
         (equalBytes(identity.issuer, issuer) ||
           (issuerKey !== null && identity.issuerKey === issuerKey)) &&
         equalBytes(identity.serialIdentity, serialIdentity),
@@ -353,9 +386,10 @@ const signerInfo = (
   } else if (sid?.tag === TAG.context0Primitive) {
     const keyId = sid.content;
     identifiedBy = "subject-key-identifier";
-    certificateIndex = identities.findIndex(
+    certificate = matchingCertificate(
+      identities,
       (identity) =>
-        identity?.subjectKeyIdentifier != null &&
+        identity.subjectKeyIdentifier !== null &&
         equalBytes(identity.subjectKeyIdentifier, keyId),
     );
   } else throw malformed(`${what} has no supported signer identifier`);
@@ -369,7 +403,7 @@ const signerInfo = (
   expectOctetString(fields[next + 1], `${what} signature`);
   return {
     identifiedBy,
-    certificateIndex: certificateIndex < 0 ? null : certificateIndex,
+    ...certificate,
     digestAlgorithmOid,
     signatureAlgorithmOid,
   };
