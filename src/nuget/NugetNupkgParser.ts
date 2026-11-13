@@ -214,6 +214,23 @@ const readMemberBytes = async (
   }
 };
 
+/**
+ * Resolve a package-level relationship Target against the package root:
+ * `.` segments drop, `..` pops, and escaping above the root is undefined.
+ */
+const resolvePackageTarget = (target: string): string | undefined => {
+  const segments: string[] = [];
+  for (const segment of target.replaceAll("\\", "/").split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (segments.pop() === undefined) return undefined;
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments.length === 0 ? undefined : segments.join("/");
+};
+
 const opcManifestTargets = (xml: string, limitations: string[]): string[] => {
   const parsed = parseXmlDocument(xml, {
     doctype: "reject",
@@ -253,8 +270,8 @@ const opcManifestTargets = (xml: string, limitations: string[]): string[] => {
       );
       continue;
     }
-    const logical = nugetNupkgLogicalPath(target.replace(/^\//u, ""));
-    if (logical.split("/").includes("..")) {
+    const logical = resolvePackageTarget(target);
+    if (logical === undefined) {
       limitations.push(
         `OPC manifest relationship Target ${JSON.stringify(target)} leaves the package and was not followed.`,
       );

@@ -314,3 +314,43 @@ it("leaves an external manifest relationship unfollowed even when it names a ZIP
     'OPC manifest relationship Target "content/Other.nuspec" is external and was not followed.',
   );
 });
+
+const manifestRels = (target: string) => `<?xml version="1.0" encoding="utf-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="${target}" Id="R1" />
+</Relationships>
+`;
+
+it.for(["manifests/./Actual.nuspec", "/manifests/extra/../Actual.nuspec"])(
+  "resolves dot segments in the manifest relationship Target %s",
+  async (target) => {
+    const bytes = await nugetNupkgFixture({
+      includeRels: false,
+      extraMembers: {
+        "_rels/.rels": manifestRels(target),
+        "manifests/Actual.nuspec": ungroupedNuspec,
+      },
+    });
+    const report = nugetNupkgSchema.parse(
+      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.nuspec).toMatchObject({
+      path: "manifests/Actual.nuspec",
+      source: "opc-relationship",
+    });
+    expect(report.identity?.id).toBe("Ungrouped.Package");
+  },
+);
+
+it("does not follow a manifest relationship Target that resolves above the package root", async () => {
+  const bytes = await nugetNupkgFixture({
+    includeRels: false,
+    extraMembers: { "_rels/.rels": manifestRels("../Actual.nuspec") },
+  });
+  const report = nugetNupkgSchema.parse(
+    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.limitations).toContain(
+    'OPC manifest relationship Target "../Actual.nuspec" leaves the package and was not followed.',
+  );
+});
