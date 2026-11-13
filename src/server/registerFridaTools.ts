@@ -1,3 +1,4 @@
+import type { FridaCapturePolicy } from "../domain/fridaCapturePolicy.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
@@ -67,6 +68,9 @@ export const registerFridaTools = (
     async (input, context: ServerContext) => {
       const remote = remoteConnection(input.remote);
       const selected = {
+        ...(input.capture_limits === undefined
+          ? {}
+          : { captureLimits: input.capture_limits }),
         ...(input.device_id === undefined ? {} : { deviceId: input.device_id }),
         ...(remote === undefined ? {} : { remote }),
       };
@@ -222,6 +226,9 @@ export const registerFridaTools = (
     async (input, context: ServerContext) => {
       const remote = remoteConnection(input.remote);
       const selected = {
+        ...(input.capture_limits === undefined
+          ? {}
+          : { captureLimits: input.capture_limits }),
         ...(input.device_id === undefined ? {} : { deviceId: input.device_id }),
         ...(remote === undefined ? {} : { remote }),
       };
@@ -310,6 +317,7 @@ const remoteConnection = (
       };
 
 const sessionOutput = (session: {
+  readonly captureLimits?: FridaCapturePolicy;
   readonly sessionId: string;
   readonly deviceId: string;
   readonly target: string;
@@ -318,6 +326,9 @@ const sessionOutput = (session: {
   readonly state: "paused" | "running" | "detached";
 }) => ({
   session_id: session.sessionId,
+  ...(session.captureLimits === undefined
+    ? {}
+    : { capture_limits: session.captureLimits }),
   device_id: session.deviceId,
   target: session.target,
   pid: session.pid,

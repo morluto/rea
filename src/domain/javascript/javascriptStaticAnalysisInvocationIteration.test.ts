@@ -1,7 +1,15 @@
 import { runInNewContext } from "node:vm";
+import * as t from "@babel/types";
+import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
+import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
+import { semanticRequireCallAt } from "./javascriptSemanticRequireOrigin.js";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 const changedIterator =
   "Array.prototype[Symbol.iterator]=function*(){yield '../shared/window.cjs'};";
@@ -116,7 +124,103 @@ it.each(cases)(
     const analysis = analyzeJavaScriptStaticSource(source);
     expect(analysis.parse_error_count).toBe(0);
     expect(analysis.references).toEqual([
-      expect.objectContaining({ kind: "require", specifier }),
+      expect.objectContaining({
+        kind: "require",
+        specifier,
+        ...(specifier === null ? {} : { loader_authority: "candidate" }),
+      }),
     ]);
+  },
+);
+
+it.each(["call", "apply"])(
+  "keeps overwritten require.%s unresolved",
+  (method) => {
+    for (const path of ["fixture.MJS", "fixture.cjs"]) {
+      const argument =
+        method === "call" ? 'null,"./a.cjs"' : 'null,["./a.cjs"]';
+      const source = `require.${method}=custom;require.${method}(${argument});`;
+      const unrelated = `require.other=custom;require.${method}(${argument});`;
+      const parse = (text: string) => {
+        const parsed = parseJavaScriptSource(text, path);
+        if (parsed === null) throw new Error("fixture did not parse");
+        return analyzeParsedJavaScriptStaticSource(text, parsed).references.at(
+          -1,
+        );
+      };
+      expect(parse(source)).toMatchObject({ kind: "require", specifier: null });
+      expect(parse(unrelated)).toMatchObject({
+        kind: "require",
+        specifier: "./a.cjs",
+        ...(path === "fixture.MJS"
+          ? { loader_authority: "candidate" }
+          : { loader: "commonjs-loader" }),
+      });
+    }
+  },
+);
+
+it("does not prove invocation members before the mutation index is complete", () => {
+  const source = 'require.call=custom;require?.call(null,"./a.cjs");';
+  const parsed = parseJavaScriptSource(source, "fixture.cjs");
+  if (parsed === null) throw new Error("fixture did not parse");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  const statement = parsed.program.body[1];
+  if (
+    !t.isExpressionStatement(statement) ||
+    !t.isOptionalCallExpression(statement.expression)
+  )
+    throw new Error("expected optional call");
+  const fact = semanticRequireCallAt(
+    statement.expression,
+    index.bindings,
+    new Set(),
+    index,
+  );
+  expect(fact).toMatchObject({ loader: "unknown", memberUnproven: true });
+});
+
+it("does not turn a mutated local callable into a loader candidate", () => {
+  const source =
+    'const f=()=>0;f.call=()=>0;const addon=f.call(null,"./x.node");';
+  const parsed = parseJavaScriptSource(source, "fixture.cjs");
+  if (parsed === null) throw new Error("fixture did not parse");
+  const result = analyzeParsedJavaScriptStaticSource(source, parsed);
+  expect(result.references).toEqual([]);
+  expect(result.electron.native_addon_bindings).toEqual([]);
+  expect(result.parse_status).toBe("complete");
+});
+
+it.each(["fixture.cjs", "fixture.MJS"])(
+  "does not invent nested loader requests after an inner invocation member is replaced: %s",
+  (path) => {
+    const parse = (source: string) => {
+      const parsed = parseJavaScriptSource(source, path);
+      if (parsed === null) throw new Error("fixture did not parse");
+      return analyzeParsedJavaScriptStaticSource(source, parsed);
+    };
+    const changed = parse(
+      'require.call=custom;const addon=require.call.call(require,"./receiver.cjs","./actual.node");',
+    );
+    expect(
+      changed.references.every(
+        (ref) =>
+          ref.specifier !== "./actual.node" &&
+          ref.specifier !== "./receiver.cjs",
+      ),
+    ).toBe(true);
+    expect(changed.electron.native_addon_bindings).toEqual([]);
+    const intact = parse('require.call.call(require,null,"./actual.node");');
+    expect(intact.references).toContainEqual(
+      expect.objectContaining({
+        kind: "require",
+        specifier: "./actual.node",
+        ...(path.endsWith(".MJS")
+          ? { loader_authority: "candidate" }
+          : { loader: "commonjs-loader" }),
+      }),
+    );
   },
 );

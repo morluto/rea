@@ -1,11 +1,16 @@
+import {
+  desktopViewPolicy,
+  desktopViewPolicyInputSchema,
+} from "./desktopViewPolicy.js";
+import { jsonValueValidationIssue } from "../jsonValue.js";
 import { describe, expect, it } from "vitest";
 
 import {
   detectStateFormat,
-  jsonView,
   keyfileView,
   textSyntaxFormat,
   textView,
+  textualView,
   xmlView,
 } from "./stateFormats.js";
 
@@ -39,6 +44,18 @@ describe("detectStateFormat", () => {
     expect(
       detectStateFormat("/h/empty.odt", Uint8Array.of(0x50, 0x4b, 5, 6, 0, 0)),
     ).toBe("binary");
+  });
+
+  it("reads Unicode XML names in unnamed formats and rejects malformed XML", () => {
+    for (const [text, format] of [
+      ['<地图 名称="甲"><节点/></地图>', "xml"],
+      ['<!DOCTYPE 地图 SYSTEM "map.dtd"><地图/>', "xml"],
+      ["<地图><节点></地图>", "text"],
+      ["<ada@example.test>\nBuy milk", "text"],
+    ] as const) {
+      expect(detectStateFormat("map.dat", bytes(text))).toBe(format);
+      expect(textSyntaxFormat("map.dat", text)).toBe(format);
+    }
   });
 
   it("tells JSON, XML, key files and plain text apart", () => {
@@ -76,17 +93,23 @@ describe("detectStateFormat", () => {
 
 describe("jsonView", () => {
   it("refuses values a JavaScript number would round, or that nest too deeply", () => {
-    expect(jsonView('{"id":9007199254740993}')).toEqual({
+    expect(textualView("json", bytes('{"id":9007199254740993}'))).toEqual({
       ok: false,
       error:
         "a number in it cannot be read exactly, such as an integer above 2^53",
     });
-    expect(jsonView(`${"[".repeat(502)}${"]".repeat(502)}`)).toEqual({
+    expect(
+      textualView("json", bytes(`${"[".repeat(502)}${"]".repeat(502)}`)),
+    ).toEqual({
       ok: false,
       error: "nested deeper than the 500 levels a JSON view keeps",
     });
-    expect(jsonView(`${"[".repeat(501)}${"]".repeat(501)}`).ok).toBe(true);
-    expect(jsonView('{"id":9007199254740991,"x":0.5}')).toEqual({
+    expect(
+      textualView("json", bytes(`${"[".repeat(501)}${"]".repeat(501)}`)).ok,
+    ).toBe(true);
+    expect(
+      textualView("json", bytes('{"id":9007199254740991,"x":0.5}')),
+    ).toEqual({
       ok: true,
       value: { id: 9007199254740991, x: 0.5 },
     });
@@ -160,6 +183,43 @@ describe("detectStateFormat with a DOCTYPE", () => {
       detectStateFormat(
         "/h/Documents/note.abw",
         abiword(' [<!ENTITY lol "lol">]'),
+      ),
+    ).toBe("text");
+  });
+
+  it("reads a file that opens with a DOCTYPE naming no internal subset and then an element as XML, as KmPlot's plot, whatever it is called", () => {
+    const plot = (doctype: string, body = '<function type="cartesian"/>') =>
+      bytes(`${doctype}\n<kmpdoc version="4">\n    ${body}\n</kmpdoc>\n`);
+
+    expect(
+      detectStateFormat(
+        "/h/Documents/lesson_plots.fkt",
+        plot("<!DOCTYPE kmpdoc>"),
+      ),
+    ).toBe("xml");
+    expect(
+      textSyntaxFormat(
+        "/h/Documents/lesson_plots.fkt",
+        '<!DOCTYPE kmpdoc>\n<kmpdoc version="4"/>\n',
+      ),
+    ).toBe("xml");
+    expect(
+      textSyntaxFormat(
+        "/h/Documents/state.txt",
+        '<!DOCTYPE state SYSTEM "state[1].dtd"><state/>',
+      ),
+    ).toBe("xml");
+    // A DOCTYPE that can declare entities, or text that is not well formed, stays text.
+    expect(
+      detectStateFormat(
+        "/h/Documents/lesson_plots.fkt",
+        plot('<!DOCTYPE kmpdoc [<!ENTITY e "x">]>', "<f>&e;</f>"),
+      ),
+    ).toBe("text");
+    expect(
+      detectStateFormat(
+        "/h/Documents/lesson_plots.fkt",
+        plot("<!DOCTYPE kmpdoc>", "<function>"),
       ),
     ).toBe("text");
   });
@@ -269,4 +329,30 @@ describe("captured data safety and fidelity", () => {
     const deep = `${"<n>".repeat(70)}${"</n>".repeat(70)}`;
     expect(xmlView(deep)).toMatchObject({ truncated: true });
   });
+});
+
+it("keeps maximum-depth views encodable inside captured ZIP-member Evidence", () => {
+  const policy = desktopViewPolicy({ xml_depth: 494, json_depth: 991 });
+  expect(desktopViewPolicyInputSchema.safeParse(policy).success).toBe(true);
+  const xml = xmlView(
+    `${'<a key="value">'.repeat(495)}${"</a>".repeat(495)}`,
+    policy,
+  );
+  const json = textualView(
+    "json",
+    bytes(`${"[".repeat(991)}0${"]".repeat(991)}`),
+    policy,
+  );
+  if (!json.ok) throw new Error(json.error);
+  expect(xml).toMatchObject({ truncated: false });
+  for (const view of [xml, json.value]) {
+    // The real enclosing shape: complete Evidence -> captured path/version -> ZIP entry -> member view.
+    const wrapped = {
+      normalized_result: {
+        paths: [{ versions: [{ view: { entries: [{ view }] } }] }],
+      },
+    };
+    expect(jsonValueValidationIssue(wrapped)).toBeUndefined();
+    expect(() => JSON.stringify(wrapped)).not.toThrow();
+  }
 });

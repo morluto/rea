@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
+import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
 import { recordedProviderSettings } from "../../../src/application/ClientRegistrationEnvironment.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
@@ -254,17 +255,56 @@ it("folds recorded environment names on Windows", () => {
     environmentKey: "env",
     legacyServers: {},
   } as const;
-  expect(recordedProviderSettings(parsed, selected, "win32")).toEqual({
+  expect(
+    recordedProviderSettings(parsed, undefined, selected, "win32"),
+  ).toEqual({
     unrecorded: ["GHIDRA_INSTALL_DIR"],
     differing: [],
     unresolved: [],
   });
-  expect(recordedProviderSettings(parsed, selected, "linux")).toEqual({
+  expect(
+    recordedProviderSettings(parsed, undefined, selected, "linux"),
+  ).toEqual({
     unrecorded: ["GHIDRA_INSTALL_DIR", "JAVA_HOME"],
     differing: [],
     unresolved: [],
   });
-  expect(recordedProviderSettings(parsed, {}, "linux")).toBeUndefined();
+  expect(
+    recordedProviderSettings(parsed, undefined, {}, "linux"),
+  ).toBeUndefined();
+});
+
+it("compares selected Windows aliases once using the winning caller spelling", () => {
+  const servers = { rea: { env: { JAVA_HOME: "/opt/jdk" } } };
+  const observed: [string, string][] = [];
+  const owned: [string, string][] = [];
+  expect(
+    recordedProviderSettings(
+      {
+        document: { mcpServers: servers },
+        servers,
+        serversPath: ["mcpServers"],
+        dialect: "json",
+        environmentKey: "env",
+        legacyServers: {},
+      },
+      undefined,
+      { JAVA_HOME: "/overridden", java_home: "/opt/jdk" },
+      "win32",
+      (name, value) => {
+        owned.push([name, value]);
+        return true;
+      },
+      (name, value) => observed.push([name, value]),
+    ),
+  ).toEqual({
+    unrecorded: [],
+    differing: [],
+    unresolved: [],
+    owned: ["java_home"],
+  });
+  expect(observed).toEqual([["java_home", "/opt/jdk"]]);
+  expect(owned).toEqual(observed);
 });
 
 it("does not treat a map it could not read as absent", () => {
@@ -279,6 +319,7 @@ it("does not treat a map it could not read as absent", () => {
         environmentKey: "env",
         legacyServers: {},
       },
+      undefined,
       selected,
       "linux",
     ),
@@ -286,5 +327,32 @@ it("does not treat a map it could not read as absent", () => {
     unrecorded: [],
     differing: [],
     unresolved: ["GHIDRA_INSTALL_DIR", "JAVA_HOME"],
+  });
+});
+
+it("does not classify an unresolved Qwen expression as a differing literal", () => {
+  const servers = { rea: { env: { REA_KUNA_COMMAND: "${KUNA}" } } };
+  const parsed = {
+    document: { mcpServers: servers },
+    servers,
+    serversPath: ["mcpServers"],
+    dialect: "json",
+    environmentKey: "env",
+    legacyServers: {},
+  } as const;
+  expect(
+    recordedProviderSettings(
+      parsed,
+      {
+        name: "qwen_code",
+        registrationProfile: supportedClientRegistrationProfile("qwen_code"),
+      },
+      { REA_KUNA_COMMAND: "/opt/kuna" },
+      "linux",
+    ),
+  ).toEqual({
+    unrecorded: [],
+    differing: [],
+    unresolved: ["REA_KUNA_COMMAND"],
   });
 });

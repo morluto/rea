@@ -5,7 +5,6 @@ import { investigationStatisticsSchema } from "../domain/investigationLifecycle.
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 import { analysisCleanupRetrySchema } from "../domain/analysisErrorRecovery.js";
 
-import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
 import {
   evidenceSchema,
@@ -345,16 +344,34 @@ const providerTargetSupport = z.discriminatedUnion("status", [
   }),
 ]);
 
+/** Where a selected provider's choice came from; never a priority or fallback. */
+const analysisProviderSelectionSource = z.enum([
+  "request",
+  "environment",
+  "auto-single-candidate",
+]);
+
+const providerSelectionRejection = z.object({
+  provider_id: z.string(),
+  origin: z.enum(["availability", "target"]),
+  code: z.string().min(1),
+  reason: z.string().min(1),
+  remediation: providerRemediation.exactOptional(),
+  diagnostics: jsonObjectSchema,
+});
+
 /** Complete candidate facts, including provider-owned diagnostics and capability sets. */
 export const analysisProviderCandidate = z.object({
   provider: providerIdentity,
   availability: providerAvailability,
   target_support: providerTargetSupport,
   selected: z.boolean(),
+  selection_source: analysisProviderSelectionSource.nullable(),
+  rejections: z.array(providerSelectionRejection),
   capabilities: z.array(providerCapabilitySet),
 });
 
-/** Summary candidate: the same status, code, and reason without remediation, diagnostics or capabilities. */
+/** Summary candidate: the same status, code, reason and rejection codes without remediation, diagnostics or capabilities. */
 export const analysisProviderCandidateSummary = z.strictObject({
   provider: providerIdentity,
   availability: z.discriminatedUnion("status", [
@@ -368,6 +385,15 @@ export const analysisProviderCandidateSummary = z.strictObject({
     providerTargetSupportStates.unsupported.strict(),
   ]),
   selected: z.boolean(),
+  selection_source: analysisProviderSelectionSource.nullable(),
+  rejections: z.array(
+    z.strictObject({
+      provider_id: z.string(),
+      origin: z.enum(["availability", "target"]),
+      code: z.string().min(1),
+      reason: z.string().min(1),
+    }),
+  ),
 });
 
 const clientFeatureNameSchema = z.enum([
@@ -440,6 +466,12 @@ const toolAvailabilityFacts = {
   }),
 };
 
+/**
+ * Advertised operations the current provider offers for part of an
+ * unavailable operation's question. They do not replace that operation.
+ */
+const toolAvailabilityAlternatives = z.array(z.string().min(1)).min(1);
+
 export const toolUnavailabilityReason = z.enum([
   "client_capability_missing",
   "target_required",
@@ -461,6 +493,7 @@ export const toolAvailability = z.discriminatedUnion("available", [
     available: z.literal(false),
     reason: toolUnavailabilityReason,
     remediation: z.string().nullable(),
+    alternatives: toolAvailabilityAlternatives.optional(),
   }),
 ]);
 export type ToolAvailability = z.output<typeof toolAvailability>;
@@ -508,6 +541,7 @@ const toolAvailabilityGroupOf = <Facts extends z.ZodRawShape>(facts: Facts) =>
       available: z.literal(false),
       reason: toolUnavailabilityReason,
       remediation: z.string().nullable(),
+      alternatives: toolAvailabilityAlternatives.optional(),
     }),
   ]);
 
@@ -748,5 +782,3 @@ export const objcClassDiscoveryOutput = evidenceResultOf(
     identity_coverage: objcClassDiscoveryCoverageSchema,
   }),
 );
-
-export const functionDossierOutput = evidenceResultOf(functionDossierSchema);

@@ -1,3 +1,7 @@
+import {
+  fitsPeRvaSpan as fitsRva,
+  appendPeConsumedSpan as consume,
+} from "./PeRvaSpans.js";
 import { setImmediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import {
@@ -29,7 +33,6 @@ import {
 
 const PE_TLS_DIRECTORY = 9;
 const PE_LOAD_CONFIG_DIRECTORY = 10;
-const PE_RVA_END = 0x100000000;
 /** Callback slots decoded between event-loop yields and cancellation checks. */
 const ENTRIES_PER_YIELD = 1024;
 
@@ -49,25 +52,6 @@ export class PeLoadConfigLimitFailure extends BinaryResourceFailure {
 }
 
 const hex = (value: bigint | number): string => `0x${value.toString(16)}`;
-
-const fitsRva = (rva: number, size: number): boolean =>
-  Number.isSafeInteger(rva) &&
-  rva >= 0 &&
-  Number.isSafeInteger(size) &&
-  size > 0 &&
-  rva <= PE_RVA_END - size;
-
-/** Append one consumed file span, merging it when the previous span abuts it. */
-const consume = (
-  spans: { offset: number; bytes: number }[],
-  offset: number,
-  bytes: number,
-): void => {
-  const last = spans.at(-1);
-  if (last !== undefined && last.offset + last.bytes === offset)
-    last.bytes += bytes;
-  else spans.push({ offset, bytes });
-};
 
 type DirectorySpan = PeLoadConfigTls["directory"];
 

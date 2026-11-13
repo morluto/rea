@@ -1,3 +1,4 @@
+import { projectWebSourceLocationView } from "./webSourceLocationView.js";
 import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectApiContractView } from "./apiContractView.js";
@@ -52,7 +53,7 @@ import {
   analysisViewInputError,
 } from "./analysisViewErrors.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import { digestSchema } from "../digests.js";
+import { prefixedDigestSchema } from "../digests.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { safeParseOwnedBinaryLayout } from "../native/binaryLayout.js";
@@ -100,14 +101,28 @@ import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { GroupingViewKind } from "./analysisViewShape.js";
 import {
-  analysisViewRequestSchema,
   inspectAnalysisViewInputSchema,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
 } from "./analysisViewRequest.js";
 import {
+  analysisViewResultSchema,
+  type AnalysisViewResult,
+  type UnsignedAnalysisView,
+} from "./analysisViewResult.js";
+export {
+  inspectAnalysisViewInputSchema,
+  type AnalysisViewRequest,
+  type InspectAnalysisViewInput,
+  type AnalysisViewParent,
+};
+export {
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
   procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
+  nativeFeatureTraceSummaryViewResultSchema,
   byteEntropySummaryViewResultSchema,
   nativeExportsSummaryViewResultSchema,
   devicetreeSummaryViewResultSchema,
@@ -154,7 +169,6 @@ import {
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
-  nativeFeatureTraceSummaryViewResultSchema,
   nativeProcedureReferencesSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
@@ -175,83 +189,6 @@ import {
   type AnalysisViewResult,
   type UnsignedAnalysisView,
 } from "./analysisViewResult.js";
-export {
-  analysisViewRequestSchema,
-  inspectAnalysisViewInputSchema,
-  type AnalysisViewRequest,
-  type InspectAnalysisViewInput,
-  type AnalysisViewParent,
-};
-export {
-  procedurePseudocodeSummaryViewResultSchema,
-  nativeObservationSummaryViewResultSchemas,
-  nativeFeatureTraceSummaryViewResultSchema,
-  byteEntropySummaryViewResultSchema,
-  nativeExportsSummaryViewResultSchema,
-  devicetreeSummaryViewResultSchema,
-  erlangBeamSummaryViewResultSchema,
-  erlangBeamTableViewResultSchema,
-  pythonPycSummaryViewResultSchema,
-  pythonPycCodeObjectsViewResultSchema,
-  gdbCommandSummaryViewResultSchema,
-  objdumpSummaryViewResultSchema,
-  fridaSessionStatusSummaryViewResultSchema,
-  goBinarySummaryViewResultSchema,
-  rustBinarySummaryViewResultSchema,
-  rustBinaryPageViewResultSchema,
-  binaryLayoutSummaryViewResultSchema,
-  javascriptApplicationSummaryViewResultSchema,
-  artifactInventorySummaryViewResultSchema,
-  desktopApplicationSummaryViewResultSchema,
-  wasmArtifactSummaryViewResultSchema,
-  machoSummaryViewResultSchema,
-  interfaceBuilderSummaryViewResultSchema,
-  evmInterfaceSummaryViewResultSchema,
-  managedArtifactSummaryViewResultSchema,
-  managedMemberSummaryViewResultSchema,
-  webNetworkCaptureSummaryViewResultSchema,
-  browserScenarioSummaryViewResultSchema,
-  androidPackageSummaryViewResultSchema,
-  androidJniSummaryViewResultSchema,
-  androidJniPageViewResultSchema,
-  androidClassSummaryViewResultSchema,
-  androidMethodSummaryViewResultSchema,
-  androidManifestViewResultSchema,
-  androidComponentsViewResultSchema,
-  androidComponentSummaryViewResultSchema,
-  pcapCaptureSummaryViewResultSchema,
-  dartAotSummaryViewResultSchema,
-  javaScriptRoutesViewResultSchema,
-  webBundleSummaryViewResultSchema,
-  webBundlePageViewResultSchema,
-  gpuCodeObjectsSummaryViewResultSchema,
-  gpuCodeObjectsPageViewResultSchema,
-  apkSignatureSummaryViewResultSchema,
-  apkSignaturePageViewResultSchema,
-  modelArtifactSummaryViewResultSchema,
-  modelArtifactPageViewResultSchema,
-  il2cppMetadataSummaryViewResultSchema,
-  nativeInventorySummaryViewResultSchema,
-  nativeProcedureReferencesSummaryViewResultSchema,
-  nativeLoadImageSummaryViewResultSchema,
-  nativeFunctionMatchingSummaryViewResultSchema,
-  nativeFunctionSummaryViewResultSchema,
-  sourceToBundleSummaryViewResultSchema,
-  sourceToBundlePageViewResultSchema,
-  endpointComparisonSummaryViewResultSchema,
-  apiContractSummaryViewResultSchema,
-  playwrightTraceSummaryViewResultSchema,
-  playwrightTracePageViewResultSchema,
-  apiContractPageViewResultSchema,
-  graphqlContractPageViewResultSchema,
-  endpointComparisonPageViewResultSchema,
-  featureTraceSummaryViewResultSchema,
-  batchDecompileSummaryViewResultSchema,
-  featureTraceViewResultSchema,
-  analysisViewResultSchema,
-  type AnalysisViewResult,
-  type UnsignedAnalysisView,
-};
 
 /** Attach the content digest that must change when projected bytes change. */
 export const sealAnalysisView = (
@@ -262,7 +199,7 @@ export const sealAnalysisView = (
     view_digest: digestCanonicalValue(projection, "Analysis view"),
   });
 
-const parentDigest = (evidenceId: string): string => evidenceId.slice(3);
+const parentEvidenceIdSchema = prefixedDigestSchema("ev");
 
 const parseJavaScriptParent = (
   input: unknown,
@@ -384,6 +321,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
+  retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 
 /** Budgets retained across source admission and the selected grouping projection. */
@@ -465,8 +403,7 @@ export const projectAnalysisView = (
   view: AnalysisViewRequest,
   accumulators: AnalysisViewAccumulators = {},
 ): Result<AnalysisViewResult, AnalysisError> => {
-  const digest = parentDigest(parent.evidenceId);
-  if (!digestSchema.safeParse(digest).success)
+  if (!parentEvidenceIdSchema.safeParse(parent.evidenceId).success)
     return err(
       analysisViewInputError([
         {

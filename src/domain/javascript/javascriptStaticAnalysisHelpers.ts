@@ -507,20 +507,6 @@ const isRequestUrlOrPathLiteral = (value: string): boolean =>
   value.startsWith("./") ||
   value.startsWith("../");
 
-/** Explicit request references, classified after receiver-specific exclusions. */
-const isRequestUrlReference = (value: string): boolean => {
-  if (
-    isRequestUrlOrPathLiteral(value) ||
-    value.startsWith("?") ||
-    value.startsWith("#")
-  )
-    return true;
-  // WHATWG accepts HTTP/WS scheme forms without authority slashes. Parse
-  // without a base so bare keys stay ambiguous, and keep the source spelling.
-  if (!/^(?:https?|wss?):/iu.test(value)) return false;
-  return URL.parse(value) !== null;
-};
-
 /**
  * Browsing-context and document `open` take a URL or type first and a target
  * name second. The name is only a spelling, since `parent` or `self` may be a
@@ -769,8 +755,11 @@ export const stringValue = (
 /** Return a string or numeric argument literal. */
 export const argumentValue = (
   node: t.Node | null | undefined,
-): string | undefined =>
-  t.isNumericLiteral(node) ? String(node.value) : stringValue(node);
+): string | undefined => {
+  if (node === null || node === undefined) return undefined;
+  const value = unwrapJavaScriptExpression(node).node;
+  return t.isNumericLiteral(value) ? String(value.value) : stringValue(value);
+};
 
 /** Prefix a static argument value when one is available. */
 export const prefixedArgument = (

@@ -5,10 +5,7 @@ import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { webSourceMapReportSchema } from "../../../src/domain/webSourceLocation.js";
 import { SourceMapDecoder } from "../../../src/javascript/sourceMaps/SourceMapDecoder.js";
-import {
-  SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
-  type SourceMapDecoderDependencies,
-} from "../../../src/javascript/sourceMaps/SourceMapCommand.js";
+import type { SourceMapDecoderDependencies } from "../../../src/javascript/sourceMaps/SourceMapCommand.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
@@ -16,6 +13,11 @@ import {
   webSourceLocationArgs,
   webSourceLocationFixture,
 } from "../../fixtures/webSourceLocation.js";
+
+const expectedProcessMemoryLimitBytes =
+  process.platform === "win32" && process.versions.bun !== undefined
+    ? 704 * 1024 * 1024
+    : null;
 
 const realDecoder = (dependencies: SourceMapDecoderDependencies = {}) =>
   new SourceMapDecoder({
@@ -73,49 +75,64 @@ it("starts the codec deadline after cold ownership preparation", async () => {
   }
 });
 
-it("runs the real pinned codec with an independent heap and removes its private request directory", async () => {
-  let path: string | undefined;
-  const environment = {
-    ...process.env,
-    NODE_OPTIONS: "--require=/rea-file-that-does-not-exist",
-  };
-  const decoder = realDecoder({
-    environment,
-    createRuntime: async () => {
-      const root = await PrivateRuntimeRoot.create();
-      path = root.path;
-      return root;
-    },
-  });
-  const response = await decoder.trace(input);
-  if (!response.ok) throw response.error;
-  expect(response.value).toMatchObject({
-    engine: { id: "jridgewell-trace-mapping", version: "0.3.31" },
-    matches: [{ content: { text: "original" } }],
-  });
-  if (process.versions.bun === undefined) {
-    expect(response.value.runtime).toMatchObject({
-      id: "node-v8",
-      version: process.version,
+it.each([
+  { heap: undefined, effectiveHeap: 192 },
+  { heap: 384, effectiveHeap: 384 },
+])(
+  "runs the real pinned codec with selected heap $heap and removes its private request directory",
+  async ({ heap, effectiveHeap }) => {
+    let path: string | undefined;
+    const environment = {
+      ...process.env,
+      NODE_OPTIONS: "--require=/rea-file-that-does-not-exist",
+    };
+    const decoder = realDecoder({
+      environment,
+      createRuntime: async () => {
+        const root = await PrivateRuntimeRoot.create();
+        path = root.path;
+        return root;
+      },
     });
-    expect(response.value.runtime.v8_heap_limit_bytes).toBeLessThanOrEqual(
-      256 * 1024 * 1024,
+    const response = await decoder.trace({
+      ...input,
+      ...(heap === undefined ? {} : { limits: { codec_heap_mib: heap } }),
+    });
+    if (!response.ok) throw response.error;
+    expect(response.value).toMatchObject({
+      engine: { id: "jridgewell-trace-mapping", version: "0.3.31" },
+      matches: [{ content: { text: "original" } }],
+    });
+    if (process.versions.bun === undefined) {
+      expect(response.value.runtime).toMatchObject({
+        id: "node-v8",
+        version: process.version,
+      });
+      expect(response.value.runtime.v8_heap_limit_bytes).toBeGreaterThan(
+        (effectiveHeap - 1) * 1024 * 1024,
+      );
+      expect(response.value.runtime.v8_heap_limit_bytes).toBeLessThanOrEqual(
+        (effectiveHeap + 64) * 1024 * 1024,
+      );
+    } else
+      expect(response.value.runtime).toEqual({
+        id: "bun",
+        version: process.versions.bun,
+        node_compatibility_version: process.versions.node,
+        v8_heap_limit_bytes: null,
+        // Windows enforces a Job Object commit limit in place of the heap flags.
+        process_memory_limit_bytes:
+          process.platform === "win32"
+            ? (effectiveHeap + 512) * 1024 * 1024
+            : null,
+      });
+    expect(environment.NODE_OPTIONS).toBe(
+      "--require=/rea-file-that-does-not-exist",
     );
-  } else
-    expect(response.value.runtime).toEqual({
-      id: "bun",
-      version: process.versions.bun,
-      node_compatibility_version: process.versions.node,
-      v8_heap_limit_bytes: null,
-      // Windows enforces a Job Object commit limit in place of the heap flags.
-      process_memory_limit_bytes: SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
-    });
-  expect(environment.NODE_OPTIONS).toBe(
-    "--require=/rea-file-that-does-not-exist",
-  );
-  if (path === undefined) throw new Error("runtime not acquired");
-  await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
-});
+    if (path === undefined) throw new Error("runtime not acquired");
+    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
 
 it.each([
   { cancel: false, denyCleanup: false },
@@ -451,7 +468,7 @@ it("rejects a codec report from a runtime other than the launching one", async (
     runtime: {
       ...actual.value.runtime,
       process_memory_limit_bytes:
-        SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES === null ? 4096 : null,
+        expectedProcessMemoryLimitBytes === null ? 4096 : null,
     },
   });
   if (limit.ok) throw new Error("expected process limit mismatch");
@@ -463,7 +480,7 @@ it.each([true, false])(
     const response = await realDecoder({
       launcher: async ({ memoryLimitBytes, ...options }) => {
         expect(memoryLimitBytes).toBe(
-          SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES ?? undefined,
+          expectedProcessMemoryLimitBytes ?? undefined,
         );
         // Without a job limit any artifact runs the child; its handle reports
         // the notification an owned Windows job records before exit.
@@ -492,8 +509,7 @@ it.each([true, false])(
             resource: "memory",
             reason: expect.stringContaining("process memory limit"),
             reportedLimits: {
-              codec_process_memory_limit_bytes:
-                SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+              codec_process_memory_limit_bytes: expectedProcessMemoryLimitBytes,
             },
             capturedOutput: { stderr: "panic: out of memory" },
           }

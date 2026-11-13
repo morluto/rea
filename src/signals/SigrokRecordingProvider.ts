@@ -1,3 +1,7 @@
+import {
+  BOUNDED_PRODUCER_LIMITS as LIMITS,
+  resolveProducerLimits,
+} from "../domain/producerResourceLimits.js";
 import { SIGROK_PROVIDER_IDENTITY } from "./SigrokProviderIdentity.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
@@ -14,7 +18,6 @@ import {
   type SigrokSelection,
 } from "./sigrokSelectorRejection.js";
 import {
-  BOUNDED_PRODUCER_LIMITS as LIMITS,
   prlimitArgumentVector,
   readLinuxResourceLimits,
   type LinuxResourceLimits,
@@ -31,6 +34,7 @@ import {
 import type { SignalRecordingPort } from "../application/signals/SignalRecordingService.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ARTIFACT_PRODUCER_LIMITATION,
   ArtifactAnalysisResources,
   artifactCommandOutput,
   type ArtifactAnalysisRuntime,
@@ -52,7 +56,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { createEvidence } from "../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { windowAnnotationText } from "../domain/signals/annotationTextWindow.js";
@@ -141,6 +145,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     input: DecodeSignalRecordingInput | InspectSignalDecodersInput,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const limits = resolveProducerLimits(LIMITS, input.producer_limits);
     const environment = snapshotEnvironment(this.environment, this.platform);
     const operation = "path" in input ? OPERATION : "inspect_signal_decoders";
     let phase: "configuration" | "workspace" | "producer" | "integrity" =
@@ -191,7 +196,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         64 * 1024 * 1024,
         options?.signal,
       );
-      effectiveLimits = await this.#resources.readLimits(LIMITS);
+      effectiveLimits = await this.#resources.readLimits(limits);
       const limitArguments = prlimitArgumentVector(
         effectiveLimits,
         selectedCommand.invocationPath,
@@ -225,8 +230,8 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             hostEnvironment: environment,
           },
           {
-            timeoutMs: LIMITS.command_timeout_ms,
-            diagnosticBytes: LIMITS.output_bytes,
+            timeoutMs: limits.command_timeout_ms,
+            diagnosticBytes: limits.output_bytes,
             acceptNonZeroExit: true,
           },
           {
@@ -327,7 +332,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           sha256: limiterIdentity.sha256,
           arguments: limitArguments,
         },
-        limits: { ...LIMITS, ...effectiveLimits },
+        limits: { ...limits, ...effectiveLimits },
         hardware_acquisition: "not-performed" as const,
       });
       if (!("path" in input)) {
@@ -355,8 +360,9 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       } else {
         const selected = await this.#resources.readSelectedArtifact({
           path: input.path,
-          maximumBytes: LIMITS.input_bytes,
-          allowanceName: "the fixed sigrok input allowance",
+          maximumBytes: limits.input_bytes,
+          allowanceName: "the sigrok input allowance",
+          budgetParameter: "producer_limits.input_bytes",
           observedOutput: capturedOutput,
           signal: options?.signal,
         });
@@ -384,7 +390,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         phase = "integrity";
         resourcePath = snapshotPath;
         if (
-          (await this.#resources.read(snapshotPath, LIMITS.input_bytes))
+          (await this.#resources.read(snapshotPath, limits.input_bytes))
             .sha256 !== selected.sha256
         )
           throw new AnalysisArtifactChangedError(
@@ -421,7 +427,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
               "Annotations are the selected decoder's interpretation of the recorded samples and caller-selected settings, not independently verified protocol semantics. Empty output does not establish absence of traffic.",
               "Sample-number ranges and display text are preserved verbatim, not converted to timestamps or parsed as a lossless byte stream. All producer stderr is retained, including warnings on exit zero.",
               "Only a private copy of the selected file is decoded. Hardware discovery/acquisition and target execution are not requested. Caller-supplied tools, plugins and decoder modules are trusted; this is not an OS sandbox.",
-              "Linux prlimit enforces soft and hard ceilings before execution, preserving stricter inherited limits: at most 1 GiB address space per process, 64 MiB per file, 30 CPU seconds and no core dumps. Effective limits are reported. Resident input is capped at 32 MiB, each command at 30 wall-clock seconds and combined output at 4 MiB. Output overflow fails. These are per-process/per-file limits, not aggregate memory or filesystem quotas; caller-supplied tools and the limiter are trusted. REA retains the tighter inherited limit. This release has no runtime override.",
+              ARTIFACT_PRODUCER_LIMITATION,
             ],
           }),
         );
@@ -442,20 +448,19 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           effectiveLimits,
           capturedOutput,
           operation,
+          limits,
         ),
       );
     }
     return this.#resources.finish(
       result,
       (execution) =>
-        createEvidence(execution.subject ?? undefined, execution.provider, {
+        createAnalysisExecutionEvidence(
           operation,
-          parameters: input,
-          result: execution.result,
-          confidence: "observed",
-          locations: execution.locations,
-          limitations: execution.limitations,
-        }),
+          input,
+          execution,
+          "observed",
+        ),
       operation,
       options?.signal,
     );
@@ -467,7 +472,11 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     workspacePath: string | null,
     effectiveLimits: LinuxResourceLimits | undefined,
     observedOutput: AnalysisCapturedOutput | undefined,
-    operation = OPERATION,
+    operation: string,
+    limits: {
+      readonly output_bytes: number;
+      readonly command_timeout_ms: number;
+    },
   ): AnalysisError {
     if (cause instanceof AnalysisError) return cause;
     if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
@@ -482,6 +491,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             effectiveLimits,
             observedOutput,
             operation,
+            limits,
           ),
         observedOutput,
         operation,
@@ -514,9 +524,10 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     if (cause instanceof OwnedCommandFailure)
       return this.#resources.commandFailure(
         cause,
-        LIMITS,
+        limits,
         effectiveLimits,
         operation,
+        "producer_limits",
       );
     if (phase === "workspace")
       return privateWorkspaceFailure(

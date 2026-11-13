@@ -1,3 +1,4 @@
+import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import { fileURLToPath } from "node:url";
 
 import { mediaTypeEssence } from "../../domain/analysisView/recordedMediaType.js";
@@ -53,13 +54,13 @@ export const CANCELLED: RpcError = {
 };
 
 /** An https state download must finish within this time. */
-export const STATE_FETCH_TIMEOUT_MS = 30_000;
+const STATE_FETCH_TIMEOUT_MS = 30_000;
 
 /** Fetches one https state document; injectable so tests make no external requests. */
 export type StateFetcher = (url: URL, signal: AbortSignal) => Promise<Response>;
 
 /** Redirects are refused so a download never leaves the https origin the caller named. */
-export const fetchStateDocument: StateFetcher = (url, signal) =>
+const fetchStateDocument: StateFetcher = (url, signal) =>
   fetch(url, { signal, redirect: "error" });
 
 /** How `data/add` reaches documents a uri names; injectable so tests make no external requests and need not wait. */
@@ -228,6 +229,7 @@ const downloadBounds = (
 const readCapped = async (
   body: ReadableStream<Uint8Array> | null,
   bounds: DownloadBounds,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<Buffer, RpcError>> => {
   if (body === null) return ok(Buffer.alloc(0));
   const reader = body.getReader();
@@ -240,13 +242,15 @@ const readCapped = async (
       if (done) return ok(Buffer.concat(chunks, total));
       total += value.byteLength;
       if (total > STATE_INTAKE_LIMIT_BYTES) {
-        await reader.cancel().catch(() => undefined);
+        // A tee's sibling can be caller-owned; cancelling this branch must not
+        // delay the refusal until that sibling finishes.
+        responses.cancel(() => reader.cancel());
         return err(TOO_LARGE);
       }
       chunks.push(value);
     }
   } catch {
-    void reader.cancel().catch(() => undefined);
+    responses.cancel(() => reader.cancel());
     return err(fetchFailed(bounds.failure()));
   }
 };
@@ -256,6 +260,7 @@ const downloadState = async (
   url: URL,
   intake: StateIntake,
   cancel: AbortSignal,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<Buffer, RpcError>> => {
   const bounds = downloadBounds(intake.timeoutMs, cancel);
   const fetching = Promise.resolve().then(() =>
@@ -268,7 +273,9 @@ const downloadState = async (
     // A response that arrives after the download ended is released unread.
     void fetching
       .then(
-        (late) => late.body?.cancel(),
+        (late) => {
+          if (late.body !== null) responses.cancel(() => late.body!.cancel());
+        },
         () => undefined,
       )
       .catch(() => undefined);
@@ -276,7 +283,8 @@ const downloadState = async (
   }
   const declared = Number(response.headers.get("content-length") ?? "0");
   if (!response.ok || declared > STATE_INTAKE_LIMIT_BYTES) {
-    await response.body?.cancel().catch(() => undefined);
+    // Cancel this branch without waiting for a potentially independent tee sibling.
+    if (response.body !== null) responses.cancel(() => response.body!.cancel());
     return err(
       response.ok
         ? TOO_LARGE
@@ -286,7 +294,7 @@ const downloadState = async (
           },
     );
   }
-  return readCapped(response.body, bounds);
+  return readCapped(response.body, bounds, responses);
 };
 
 const NETWORK_SHARE = invalidParams(
@@ -315,6 +323,7 @@ const fileBytes = async (
   intake: StateIntake,
   cancel: AbortSignal,
   files: ArtifactResourceScope,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<Uint8Array, RpcError>> => {
   if (typeof file.bytes === "string" && file.uri === undefined) {
     if (file.bytes.length > MAX_INLINE_BASE64_CHARACTERS) return err(TOO_LARGE);
@@ -333,7 +342,8 @@ const fileBytes = async (
       invalidParams("a file part carries exactly one of bytes or a uri"),
     );
   const url = new URL(file.uri);
-  if (url.protocol === "https:") return downloadState(url, intake, cancel);
+  if (url.protocol === "https:")
+    return downloadState(url, intake, cancel, responses);
   if (url.protocol !== "file:")
     return err(invalidParams("a file uri is a file:// or https:// URL"));
   const path = localFilePath(url);
@@ -346,6 +356,7 @@ export const partDocument = async (
   intake: StateIntake,
   cancel: AbortSignal,
   files: ArtifactResourceScope,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<unknown, RpcError>> => {
   if (isRecord(part) && part.kind === "data" && isRecord(part.data))
     return ok(part.data);
@@ -362,6 +373,6 @@ export const partDocument = async (
       mediaTypeEssence(mimeType) !== "application/json")
   )
     return err(invalidParams("a file part's mimeType is application/json"));
-  const bytes = await fileBytes(part.file, intake, cancel, files);
+  const bytes = await fileBytes(part.file, intake, cancel, files, responses);
   return bytes.ok ? parseDocumentBytes(bytes.value) : bytes;
 };

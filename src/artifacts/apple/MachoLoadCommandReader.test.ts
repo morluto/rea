@@ -24,8 +24,6 @@ import {
   versionMinCommand,
 } from "./MachoImage.fixture.js";
 import {
-  MAX_LAZY_INFO_DEPENDENCIES,
-  MAX_LAZY_INFO_SYMBOL_REFERENCES,
   MAX_LOAD_COMMAND_BYTES,
   readMachoImage,
 } from "./MachoLoadCommandReader.js";
@@ -34,6 +32,10 @@ import { traceDylibResolution } from "./DylibResolutionReader.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
+
+// Independently exercise the dependency and reference budgets.
+const MAX_LAZY_INFO_DEPENDENCIES = 1024;
+const MAX_LAZY_INFO_SYMBOL_REFERENCES = 64 * 1024;
 
 const read = (bytes: Uint8Array) =>
   readMachoImage(readerOf(bytes), bytes.length);
@@ -1865,12 +1867,12 @@ describe("Mach-O load command reader failures", () => {
   });
 
   it("accepts FAT tables up to 128 records that name a Mach-O CPU", async () => {
-    const slices = Array.from({ length: 24 }, () => ({
+    const slices = Array.from({ length: 128 }, () => ({
       cpu: CPU.arm64,
       bytes: machoImage({}),
     }));
     const facts = await read(fatImage(slices));
-    expect(facts.status === "parsed" && facts.slices).toHaveLength(24);
+    expect(facts.status === "parsed" && facts.slices).toHaveLength(128);
     // An empty table is not a Java class file, whose major version is nonzero.
     for (const magic of [
       [0xca, 0xfe, 0xba, 0xbe],

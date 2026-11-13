@@ -9,6 +9,7 @@ import {
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
@@ -323,6 +324,7 @@ it("preserves an opaque cancellation observed during successful prefix close", a
     cause: reason,
     cleanupIncomplete: false,
   });
+  expect(result.error.cause).toBe(reason);
   expect(result.error.cleanupResources).not.toContain("unowned-resource");
   expect((await client.close()).ok).toBe(true);
 });
@@ -387,17 +389,22 @@ it.for([
           exitCode: args[1] === "json" ? 1 : 0,
         });
       });
-    onTestFinished(() => {
+    onTestFinished(async () => {
       resume();
       resumeValidation();
-      read.mockRestore();
-      commands.mockRestore();
+      try {
+        await inspecting;
+      } finally {
+        read.mockRestore();
+        commands.mockRestore();
+        await client.close();
+      }
     });
     const inspecting = client.execute("inspect_plist", {
       path,
       native_command_timeout_ms: 1500,
     });
-    await entered;
+    await awaitAcknowledgement(entered, inspecting, "plist file read");
     let finished = false;
     const closing = client.close().then((result) => {
       finished = true;
@@ -410,7 +417,11 @@ it.for([
       error: { _tag: "AnalysisCapabilityUnavailableError" },
     });
     resume();
-    await Promise.race([validationEntered, inspecting]);
+    await awaitAcknowledgement(
+      validationEntered,
+      inspecting,
+      "plist validation",
+    );
     expect(validationStarted).toBe(true);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(finished).toBe(false);

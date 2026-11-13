@@ -53,7 +53,11 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: origin + "/app" },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: origin + "/app",
+                },
                 childFrames: [{ frame: frame(origin) }],
               },
             }
@@ -149,11 +153,16 @@ it.each([
       method === "Page.getFrameTree"
         ? {
             frameTree: {
-              frame: { id: "frame-main", url: origin + "/app" },
+              frame: {
+                id: "frame-main",
+                loaderId: "loader-frame-main",
+                url: origin + "/app",
+              },
               childFrames: [
                 {
                   frame: {
                     id: "child",
+                    loaderId: "loader-child",
                     parentId: "frame-main",
                     url:
                       rawUrl === "allowed"
@@ -279,11 +288,16 @@ it.each([
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: origin + "/app" },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: origin + "/app",
+                },
                 childFrames: [
                   {
                     frame: {
                       id: "child",
+                      loaderId: "loader-child",
                       parentId: "frame-main",
                       url: origin + "/child",
                     },
@@ -349,7 +363,11 @@ it("retains the committed loader through same-document updates before a replacem
       method === "Page.getFrameTree"
         ? {
             frameTree: {
-              frame: { id: "frame-main", url: origin + "/app" },
+              frame: {
+                id: "frame-main",
+                loaderId: "loader-frame-main",
+                url: origin + "/app",
+              },
               childFrames: [
                 {
                   frame: {

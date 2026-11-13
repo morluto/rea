@@ -1,4 +1,8 @@
-import { normalizeHttpHostname } from "../../domain/httpHostname.js";
+import {
+  parsePortableBundleName,
+  PORTABLE_BUNDLE_NAME_PATTERN,
+  PORTABLE_BUNDLE_NAME_MAX_LENGTH,
+} from "../../domain/portableBundleName.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -17,27 +21,15 @@ import type { EnvironmentToolDefinition } from "./environmentTools.js";
 export const ENVIRONMENT_EXPORT_OPERATION = "environment-export";
 
 /** The image the exported Dockerfile builds from; the agentenv runner builds it with Docker. */
-export const BUNDLE_BASE_IMAGE = `node:${PACKAGE_METADATA.pinnedNodeVersion}-bookworm-slim`;
+const BUNDLE_BASE_IMAGE = `node:${PACKAGE_METADATA.pinnedNodeVersion}-bookworm-slim`;
 
 /** The port the agentenv framework maps for an MCP server env; it sets the host but not the port. */
-export const BUNDLE_MCP_PORT = 18765;
+const BUNDLE_MCP_PORT = 18765;
 /** Host names the exported env container is addressed by: the published loopback port and the compose service name. */
-export const BUNDLE_ALLOWED_HOSTS = "127.0.0.1,localhost";
+const BUNDLE_ALLOWED_HOSTS = "127.0.0.1,localhost";
 
 /** Name of the packed CLI inside the env folder when a tarball is exported. */
-export const BUNDLE_TARBALL_NAME = "rea-agents.tgz";
-
-/** Folder and env id rule: a kebab-case label the agentenv framework accepts as a local id. */
-const BUNDLE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
-// A compose service name is one DNS label, whose wire limit is 63 octets.
-const BUNDLE_NAME_MAX_LENGTH = 63;
-export const BUNDLE_NAME_CONSTRAINT = `a kebab-case label of at most ${String(BUNDLE_NAME_MAX_LENGTH)} characters, excluding Windows device names, that remains unchanged as an HTTP service hostname`;
-/** Win32 reserves these device names for files and folders, so the env folder can never take one. */
-const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/u;
-
-/** Whether a name can be the env folder and env id: the checks the export applies. */
-export const isPortableBundleName = (name: string): boolean =>
-  validateBundleName(name).ok;
+const BUNDLE_TARBALL_NAME = "rea-agents.tgz";
 
 /** Where the Dockerfile installs the CLI from. */
 export type EnvironmentPackageSource =
@@ -95,13 +87,13 @@ const nameError = (name: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_EXPORT_OPERATION,
     {
-      userMessage: `The bundle name ${JSON.stringify(name)} is not a portable kebab-case label of at most ${String(BUNDLE_NAME_MAX_LENGTH)} characters.`,
+      userMessage: `The bundle name ${JSON.stringify(name)} is not a portable kebab-case label of at most ${String(PORTABLE_BUNDLE_NAME_MAX_LENGTH)} characters.`,
     },
     [
       {
         path: ["name"],
         reason: "invalid_format",
-        expected: BUNDLE_NAME.source,
+        expected: PORTABLE_BUNDLE_NAME_PATTERN.source,
         message:
           "The bundle name is the env folder and env id; use lowercase letters, digits and single hyphens, excluding Windows device names.",
       },
@@ -128,27 +120,26 @@ const reservedNameError = (name: string): AnalysisInputError =>
 const validateBundleName = (
   name: string,
 ): Result<string, AnalysisInputError> => {
-  if (!BUNDLE_NAME.test(name) || name.length > BUNDLE_NAME_MAX_LENGTH)
-    return err(nameError(name));
-  if (WINDOWS_RESERVED_NAME.test(name)) return err(reservedNameError(name));
-  if (normalizeHttpHostname(name) !== name)
-    return err(
-      new AnalysisInputError(
-        ENVIRONMENT_EXPORT_OPERATION,
+  const parsed = parsePortableBundleName(name);
+  if (parsed.ok) return parsed;
+  if (parsed.error === "format") return err(nameError(name));
+  if (parsed.error === "reserved") return err(reservedNameError(name));
+  return err(
+    new AnalysisInputError(
+      ENVIRONMENT_EXPORT_OPERATION,
+      {
+        userMessage: `The bundle name ${JSON.stringify(name)} cannot be used unchanged as an HTTP host name. Choose a name such as replay-1.`,
+      },
+      [
         {
-          userMessage: `The bundle name ${JSON.stringify(name)} cannot be used unchanged as an HTTP host name. Choose a name such as replay-1.`,
+          path: ["name"],
+          reason: "invalid_value",
+          message:
+            "The service name must remain a hostname rather than be rejected or interpreted as an IP address.",
         },
-        [
-          {
-            path: ["name"],
-            reason: "invalid_value",
-            message:
-              "The service name must remain a hostname rather than be rejected or interpreted as an IP address.",
-          },
-        ],
-      ),
-    );
-  return ok(name);
+      ],
+    ),
+  );
 };
 
 const installLine = (source: EnvironmentPackageSource): string =>
@@ -161,7 +152,7 @@ const READINESS_PROBE_LAYER =
   "RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*";
 
 /** The Dockerfile text: pinned base image, readiness probe interpreter, pinned CLI, listener defaults, non-root user. */
-export const bundleDockerfile = (
+const bundleDockerfile = (
   source: EnvironmentPackageSource,
   name?: string,
 ): string =>
@@ -205,7 +196,7 @@ const pythonLiteral = (value: string | number | null): string =>
   value === null ? "None" : JSON.stringify(value);
 
 /** The verifier script in the shape of the agentenv echo example's `verify(mcp_url)`. */
-export const bundleVerifier = (
+const bundleVerifier = (
   plan: Pick<EnvironmentBundlePlan, "toolCount" | "check" | "state">,
 ): string =>
   [
@@ -250,7 +241,7 @@ export const bundleVerifier = (
   ].join("\n");
 
 /** The smoke task: deploy the env locally, then run the verifier against it. */
-export const bundleSmokeTask = (name: string): string =>
+const bundleSmokeTask = (name: string): string =>
   `${JSON.stringify(
     [
       { id: "env", type: "deploy_env", env_id: name, sandbox_type: "local" },
@@ -289,10 +280,7 @@ from their recordings because the state is unavailable
 };
 
 /** The bundle README: provenance, what the environment serves and does not establish, how to run it, and the rights note. */
-export const bundleReadme = (
-  source: EnvironmentSource,
-  plan: ReadmePlan,
-): string => {
+const bundleReadme = (source: EnvironmentSource, plan: ReadmePlan): string => {
   const { manifest } = source;
   const check =
     plan.check === null

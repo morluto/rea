@@ -1,11 +1,14 @@
 import {
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -16,7 +19,6 @@ import type { KernelModulePort } from "../../application/binaryDiagnostics/Kerne
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
@@ -57,9 +59,10 @@ export class KernelModuleProvider implements KernelModulePort {
   }
 
   async inspect(input: InspectKernelModuleInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -79,7 +82,7 @@ export class KernelModuleProvider implements KernelModulePort {
         );
       });
     } catch (cause) {
-      return err(kernelModuleFailure(cause, input));
+      return err(kernelModuleFailure(cause, input, snapshot));
     }
   }
 }
@@ -200,20 +203,13 @@ const kernelModuleFailurePrimary = (
         ],
       );
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected kernel module could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "kernel module",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ArtifactOperationError(
     OPERATION,
     origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
@@ -228,6 +224,7 @@ const kernelModuleFailurePrimary = (
 const kernelModuleFailure = (
   cause: unknown,
   input: InspectKernelModuleInput,
+  snapshot?: StableArtifactSnapshot,
 ) => {
   const primary = kernelModuleFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -239,5 +236,6 @@ const kernelModuleFailure = (
     input.path,
     KERNEL_MODULE_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };

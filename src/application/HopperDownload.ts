@@ -49,16 +49,29 @@ export type HopperRequestFailure = HopperDownloadFailure & {
 export const HOPPER_DOWNLOAD_BYTES = 100_000_000;
 
 /** Longest wait for the response or its next bytes before a download stalls. */
-export const HOPPER_DOWNLOAD_STALL_MS = 30_000;
+const HOPPER_DOWNLOAD_STALL_MS = 30_000;
 
 /**
  * Overall bound for one download. A slow connection that keeps delivering
  * bytes is bounded here rather than by a deadline sized for fast networks.
  */
-export const HOPPER_DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
+const HOPPER_DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
 
 /** Small release feed and key requests must not use the package bounds. */
 export const HOPPER_METADATA_TIMEOUT_MS = 10_000;
+
+/** Attribute a raw rejection to this caller's exact cancellation. */
+export const isHopperRequestCancellation = (
+  cause: unknown,
+  signal: AbortSignal | undefined,
+): boolean =>
+  signal?.aborted === true &&
+  (cause === signal.reason ||
+    (cause instanceof Error &&
+      cause.name === "AbortError" &&
+      "code" in cause &&
+      cause.code === "ABORT_ERR" &&
+      cause.cause === signal.reason));
 
 /**
  * Bound observed response bytes before retaining them, including chunked bodies.
@@ -115,19 +128,34 @@ export const downloadHopperPackage = async (
       expire("stalled", HOPPER_DOWNLOAD_STALL_MS);
     }, HOPPER_DOWNLOAD_STALL_MS);
   };
+  const selectedSignal =
+    options.signal === undefined
+      ? deadline.signal
+      : AbortSignal.any([options.signal, deadline.signal]);
+  // Node may replace falsy abort reasons during body reads. Send a unique,
+  // truthy reason through fetch so only its own rejection can be attributed.
+  const transport = new AbortController();
+  const transportReason = {};
+  const cancelTransport = () => transport.abort(transportReason);
+  if (selectedSignal.aborted) cancelTransport();
+  else
+    selectedSignal.addEventListener("abort", cancelTransport, { once: true });
   try {
     progressed(0);
     return await readHopperResponse(url, reported, {
-      signal:
-        options.signal === undefined
-          ? deadline.signal
-          : AbortSignal.any([options.signal, deadline.signal]),
+      signal: transport.signal,
       maxBytes,
       progressed,
     });
-  } catch (cause: unknown) {
-    if (options.signal?.aborted === true) throw cause;
-    if (expired !== undefined)
+  } catch (observed: unknown) {
+    const cause = isHopperRequestCancellation(observed, transport.signal)
+      ? selectedSignal.reason
+      : observed;
+    if (isHopperRequestCancellation(cause, options.signal)) throw cause;
+    if (
+      expired !== undefined &&
+      isHopperRequestCancellation(cause, deadline.signal)
+    )
       return err({ url: reported, kind: "timeout", ...expired });
     // Fetch reports network errors (DNS, TLS, reset, truncated body) as TypeError.
     if (cause instanceof TypeError)
@@ -138,6 +166,7 @@ export const downloadHopperPackage = async (
       });
     throw cause;
   } finally {
+    selectedSignal.removeEventListener("abort", cancelTransport);
     clearTimeout(overall);
     clearTimeout(stall);
   }

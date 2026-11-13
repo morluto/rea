@@ -13,8 +13,8 @@ import {
 } from "../../../src/application/AnalysisProvider.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
-import { CLEANUP_STOPPED_VALUE_TRACE } from "../../../src/application/native/NativeValueTrace.js";
 import {
+  EXPECTED_CLEANUP_STOPPED_TRACE,
   failingValueTraceReads,
   valueTraceDiamond,
   valueTraceProvider,
@@ -25,6 +25,7 @@ import { parseConfig } from "../../../src/config/parseConfig.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { nativeValueTraceSchema } from "../../../src/domain/native/nativeValueTrace.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -164,7 +165,7 @@ it("reports the CLI last page and its observed node budget separately", async ()
   });
 });
 
-it("preserves the completed trace's source closure when final close fails", async () => {
+it("publishes the completed trace with its sources when final close fails", async () => {
   const run = await serveTraceCli(
     valueTraceDiamond({ sessionSubject: true }).port,
     async () =>
@@ -183,16 +184,16 @@ it("preserves the completed trace's source closure when final close fails", asyn
   const trace = parseEvidence(failed.details.partial_observation);
   expect(trace.evidence_links.length).toBeGreaterThan(0);
   expect(failed.details).toMatchObject({
-    source_closure: {
-      publication: "not_published",
-      complete: true,
-      omitted_count: 0,
-      records: expect.arrayContaining([
-        expect.objectContaining({ evidence_id: trace.evidence_links[0] }),
-      ]),
-    },
+    resources: ["owned session"],
+    diagnostics: { evidence_bundle: { path: destination } },
   });
-  await expect(readFile(destination)).rejects.toThrow();
+  expect(failed.details).not.toHaveProperty("source_closure");
+  const bundle = parseEvidenceBundle(
+    JSON.parse(await readFile(destination, "utf8")),
+  );
+  expect(bundle.records.map((record) => record.evidence_id)).toEqual(
+    expect.arrayContaining([trace.evidence_id, ...trace.evidence_links]),
+  );
 });
 
 it.each([
@@ -253,7 +254,7 @@ it.each([
     expect(admitted.unknowns).toContainEqual({
       procedure: "0x2000",
       address: null,
-      reason: CLEANUP_STOPPED_VALUE_TRACE,
+      reason: EXPECTED_CLEANUP_STOPPED_TRACE,
     });
   },
 );

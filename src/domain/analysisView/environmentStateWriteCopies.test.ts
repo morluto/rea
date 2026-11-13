@@ -119,6 +119,22 @@ it(
 );
 
 describe("coincidences no member derives a created field from", () => {
+  it.each([
+    ["before", (value: string) => `𐐀${value}`],
+    ["after", (value: string) => `${value}𐐀`],
+  ])(
+    "keeps a member accepted when an astral letter joins its text %s",
+    (_, label) => {
+      const value = "harbour-notes";
+      const body = create(
+        { id: 9, name: value, label: label(value) },
+        { name: value },
+      );
+      expect(body.accepted).toEqual(["name"]);
+      expect(body.fixed).toEqual([]);
+    },
+  );
+
   it("keeps a reference accepted when a constant repeats another reference of the named entity", () => {
     const channel = "1bdxw3qoyj8zjyyhdjbdobdf4r";
     const user = "c10c054bc2a4478bb78e0210549376b1";

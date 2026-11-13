@@ -16,8 +16,7 @@ export interface NativeUiHelperRuntime {
   readonly invoke: NativeUiHelper;
   readonly cleanupLease: AnalysisCleanupLease;
   readonly signal: AbortSignal;
-  /** Omitted by test doubles; production runtimes always set the selected deadline. */
-  readonly deadlineMs?: number;
+  readonly deadlineMs: number;
   close(): Promise<void>;
   resources(): readonly string[];
 }

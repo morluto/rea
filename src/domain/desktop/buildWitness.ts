@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { jsonValueSchema } from "../jsonValue.js";
+import { jsonRecordSchema } from "../jsonRecord.js";
 import { err, ok, type Result } from "../result.js";
 import type { TaskCheckOutcome, TaskFileView } from "./appTaskChecks.js";
 import type { ComputerAction } from "./computerActions.js";
@@ -43,6 +44,10 @@ export type WitnessStageRecord = {
   readonly checked_at: string;
   readonly expectation: WitnessExpectation;
   readonly held: boolean;
+  /** Whether the app's files had held for the settle window when the stage was graded, rather than at its bound. */
+  readonly settled: boolean;
+  /** Whether a read still in flight at the settle bound was cut, so the stage graded the last completed read. */
+  readonly read_cut: boolean;
   readonly results: TaskCheckOutcome[];
   /** Why a stage did not hold when its results alone do not say, and what to do. */
   readonly remediation?: string;
@@ -56,7 +61,14 @@ const EXPECTATIONS: Readonly<Record<WitnessStage, WitnessExpectation>> = {
 };
 
 /** Actions that change the app through its own interface; a reset restores the seed instead. */
-const INPUT = ["click", "drag", "scroll", "type", "key"] as const;
+const INPUT = [
+  "click",
+  "drag",
+  "scroll",
+  "type",
+  "type_secret",
+  "key",
+] as const;
 
 export const stageExpectation = (stage: WitnessStage): WitnessExpectation =>
   EXPECTATIONS[stage];
@@ -149,7 +161,7 @@ const notAnEdit = (
   },
 ): string | undefined => {
   if (latest.input < latest.from)
-    return `Before checking ${stage}, act on the app with act_on_build_computer: no click, drag, scroll, type or key was applied since ${since}, and a reset does not count.`;
+    return `Before checking ${stage}, act on the app with act_on_build_computer: no click, drag, scroll, type, type_secret or key was applied since ${since}, and a reset does not count.`;
   if (
     latest.unsettledReset > latest.reset &&
     latest.unsettledReset > latest.input
@@ -163,9 +175,9 @@ const notAnEdit = (
 /**
  * Whether `stage` may be checked now, given the stages already checked and
  * the action log; its value is where this stage's actions end. The edit and
- * the near miss each need an applied click, drag, scroll, type or key since
- * the stage before, with no reset after the last of them; the check after
- * reset needs a reset since the stage before as the last change.
+ * the near miss each need an applied click, drag, scroll, type, typed secret
+ * or key since the stage before, with no reset after the last of them; the
+ * check after reset needs a reset since the stage before as the last change.
  */
 export const admitWitnessStage = (
   stages: readonly WitnessStageRecord[],
@@ -210,14 +222,17 @@ export const admitWitnessStage = (
   return ok(log.total);
 };
 
-const fileViewSchema = z.looseObject({
+const fileViewSchema = z.object({
   format: z.string().nullable(),
   view: jsonValueSchema.nullable(),
-  error: z.string().nullish(),
+  error: z
+    .string()
+    .nullish()
+    .transform((error) => error ?? null),
 });
 const statePartSchema = z.looseObject({
   kind: z.literal("data"),
-  data: z.looseObject({ state: z.record(z.string(), fileViewSchema) }),
+  data: z.looseObject({ state: jsonRecordSchema(fileViewSchema) }),
 });
 
 /**
@@ -230,18 +245,7 @@ export const appStateViews = (
   for (const part of parts) {
     const parsed = statePartSchema.safeParse(part);
     if (parsed.success)
-      return ok(
-        new Map(
-          Object.entries(parsed.data.data.state).map(([path, entry]) => [
-            path,
-            {
-              format: entry.format,
-              view: entry.view,
-              error: entry.error ?? null,
-            },
-          ]),
-        ),
-      );
+      return ok(new Map(Object.entries(parsed.data.data.state)));
   }
   return err(
     "The app's data/get returned no state views; witness a bundle exported by REA, whose app serves them.",

@@ -5,10 +5,7 @@ import {
   ZIP_PACKAGE_FORMATS,
   type ZipPackageFormat,
 } from "../domain/zipPackageFormat.js";
-import {
-  ARTIFACT_FORMATS,
-  ZIP_FAMILY_CAPABILITIES,
-} from "./artifactFormats.js";
+import { ARTIFACT_FORMATS } from "./artifactFormats.js";
 import {
   createArtifactReader,
   type ArtifactReaderFormat,
@@ -25,6 +22,7 @@ type FormatsWithReaders =
   | ZipPackageFormat
   | "dotnet-bundle"
   | "bun-standalone"
+  | "deno-standalone"
   | "dmg"
   | "asar"
   | "ines"
@@ -42,7 +40,8 @@ type FormatsWithReaders =
   | "uf2"
   | "dfuse"
   | "esp-flash-image"
-  | "fit";
+  | "fit"
+  | "ntfs-mft";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =
   true;
@@ -74,7 +73,15 @@ describe("artifact format descriptors", () => {
 
   it("shares one capability row across zip package families", () => {
     for (const id of ZIP_PACKAGE_FORMATS)
-      expect(ARTIFACT_FORMATS[id]).toMatchObject(ZIP_FAMILY_CAPABILITIES);
+      expect(ARTIFACT_FORMATS[id]).toMatchObject({
+        zipFamily: true,
+        occurrenceContainer: true,
+        roleContainer: false,
+        retainClassifiedSource: true,
+        extractable: true,
+        requiresDarwin: false,
+        absentInventory: "unavailable",
+      });
     const zipIds = new Set<ZipPackageFormat>(ZIP_PACKAGE_FORMATS);
     for (const id of ARTIFACT_FORMAT_IDS)
       if (!zipIds.has(id as ZipPackageFormat))

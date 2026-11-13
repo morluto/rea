@@ -457,7 +457,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         expectedLinuxSha256 = inspected.value.sha256;
       }
       const display = await this.#privateDisplay(signal);
-      if (!display.ok) return err(display.error);
+      if (!display.ok) return display;
       const nativeHelperVerified =
         (this.dependencies.platform ?? process.platform) === "darwin" &&
         this.options.launchMode === "native" &&
@@ -671,7 +671,7 @@ export const bridgeBootstrapSource = (
 ): string => {
   const limit = options.bridgeMaxRequestBytes;
   const injectedLimit =
-    limit?.source === "setting" &&
+    (limit?.source === "setting" || limit?.source === "runtime") &&
     Number.isSafeInteger(limit.maximumBytes) &&
     limit.maximumBytes >= MINIMUM_BRIDGE_MAX_REQUEST_BYTES &&
     limit.maximumBytes <= MAXIMUM_BRIDGE_MAX_REQUEST_BYTES
