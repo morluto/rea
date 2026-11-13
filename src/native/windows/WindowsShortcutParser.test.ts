@@ -1001,3 +1001,32 @@ it("reads the stored spelling to decide whether Win32 would trim", async () => {
   );
   expect(await extensionFor("C:\\Tools\\app.exe.", "relative")).toBe(".exe");
 });
+it("compares a scheme-relative URL with a UNC path as two resources", async () => {
+  // `foldPath` turns `//example.test/…` into the same separators a share uses, so the compare form
+  // reads the stored spelling before folding: a leading `//` is a URL, and its terminal period is
+  // part of the resource rather than a name Win32 trims.
+  const differsFor = async (relativePath: string, iconLocation: string) => {
+    const report = await parse(
+      windowsShortcutBytes({ linkInfo: null, relativePath, iconLocation }),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    );
+    return found?.kind === "icon_location_differs_from_target"
+      ? found.value
+      : undefined;
+  };
+  expect(
+    await differsFor(
+      "//example.test/share/app.exe.",
+      "\\\\example.test\\share\\app.exe",
+    ),
+  ).toBe(true);
+  // A drive path keeps the trim whichever separator it uses, because Windows accepts both.
+  expect(await differsFor("C:\\Tools\\app.exe.", "C:\\Tools\\app.exe")).toBe(
+    false,
+  );
+  expect(await differsFor("c:/tools//app.exe", "C:\\Tools\\app.exe")).toBe(
+    false,
+  );
+});

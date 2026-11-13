@@ -274,12 +274,13 @@ const DEVICE_PATH = /^\\\\[?.]\\/u;
 /**
  * A path as the producer wrote it when Win32 opens it as a filesystem path.
  *
- * The spelling is the evidence: a drive or UNC path is written with backslashes, while a URL —
- * including a scheme-relative `//host/…` one, which folds to the same separators — keeps forward
- * slashes. A trailing period in a URL addresses a different resource, so it is not a name Win32
- * trims.
+ * Two things are evidence. A drive path is written with a letter and a colon, whether the
+ * separators after it are `\` or `/`, because Windows accepts both. A share is written with a
+ * leading `\\`. A URL keeps `/`, and its scheme-relative `//host/…` form folds to the same
+ * separators a share does — so a leading `//` is not a filesystem path, and the period a URL ends
+ * with addresses a different resource rather than naming a trimmed one.
  */
-const WRITTEN_FILESYSTEM_PATH = /^(?:[a-z]:\\|\\\\)/iu;
+const WRITTEN_FILESYSTEM_PATH = /^(?:[a-z]:[\\\\/]|\\\\)/iu;
 
 /**
  * A segment as Win32 normalization leaves it when it names a directory.
@@ -313,8 +314,12 @@ const mayExpandToDevicePath = (path: string): boolean =>
  * `C:\Tools\app.exe.` and `C:\Tools\app.exe ` name the file it names.
  */
 const normalizePath = (path: string): string => {
+  // The stored spelling is the only evidence that a leading `//` is a scheme-relative URL and
+  // not a UNC share, so it is read before folding replaces those separators.
+  const trims = WRITTEN_FILESYSTEM_PATH.test(path);
   const folded = foldPath(path);
-  if (DEVICE_PATH.test(folded) || mayExpandToDevicePath(folded)) return folded;
+  if (!trims || DEVICE_PATH.test(folded) || mayExpandToDevicePath(folded))
+    return folded;
   const unc = folded.startsWith("\\\\");
   if (!unc && !/^[a-z]:\\/u.test(folded)) return folded;
   // Empty parts drop out first, so `\\server\\share` keeps its share in the root.
