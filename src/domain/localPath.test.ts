@@ -1,9 +1,11 @@
 import { isAbsolute, win32 } from "node:path";
 
 import { expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   absoluteLocalPathStringSchema,
+  localPathStringSchema,
   windowsAbsolutePathPattern,
 } from "./localPath.js";
 
@@ -63,6 +65,25 @@ it("keeps the Windows absolute-path pattern valid in every client mode", () => {
       "/absolute/path",
     ]),
   );
+});
+
+it("emits no surrogate-range pattern in advertised JSON Schema", () => {
+  // #10348: a `pattern` containing `\uD800-\uDFFF` cannot compile in
+  // scalar-Unicode regex engines, so strict validators reject the whole
+  // tool request. The surrogate check is a `.refine(...)` now, which
+  // validates at parse time without emitting a pattern.
+  for (const schema of [localPathStringSchema, absoluteLocalPathStringSchema]) {
+    const advertised = JSON.stringify(z.toJSONSchema(schema, { io: "input" }));
+    expect(advertised).not.toContain("\\uD800");
+    expect(advertised).not.toContain("\\uDFFF");
+  }
+  expect(
+    (
+      z.toJSONSchema(localPathStringSchema, {
+        io: "input",
+      }) as { pattern?: string }
+    ).pattern,
+  ).toBe("^[^\\x00]*$");
 });
 
 it("rejects unpaired surrogates while preserving representable Unicode paths", () => {

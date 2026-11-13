@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
-import { toolContract } from "./toolContracts.js";
+import { TOOL_CONTRACTS, toolContract } from "./toolContracts.js";
 import {
   toolInputSchemaWithMetadata,
   transformAdvertisedInputJsonSchema,
@@ -105,6 +105,38 @@ it.each(["draft-2020-12", "draft-07"] as const)(
       expect(canonical.safeParse({ ...input, symbol }).success).toBe(false);
   },
 );
+
+it("emits no surrogate-range pattern in any advertised tool input schema", () => {
+  // #10348: `localPathStringSchema` used to emit `^[^\\uD800-\\uDFFF]*$`
+  // in 120 places across 95 tools, and strict validators reject the whole
+  // request when one advertised pattern cannot compile. UTF-16 checks
+  // must stay in `.refine(...)`, never in an emitted `pattern`.
+  // Lookaround patterns are a separate class and are not covered here.
+  const problems: string[] = [];
+  const walk = (node: unknown, tool: string, path: string): void => {
+    if (node === null || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach((child, index) => walk(child, tool, `${path}[${index}]`));
+      return;
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (
+        key === "pattern" &&
+        typeof value === "string" &&
+        (value.includes("\\uD800") || value.includes("\\uDFFF"))
+      )
+        problems.push(`${tool}: ${path}.pattern = ${value}`);
+      else walk(value, tool, `${path}.${key}`);
+    }
+  };
+  for (const contract of TOOL_CONTRACTS) {
+    const schema = toolInputSchemaWithMetadata(contract)[
+      "~standard"
+    ].jsonSchema.input({ target: "draft-2020-12" });
+    walk(schema, contract.name, contract.name);
+  }
+  expect(problems).toEqual([]);
+});
 
 describe("advertised object dependencies", () => {
   it.each([

@@ -19,8 +19,14 @@ export const nulFreeStringSchema = z
 /** A selected local filesystem path: nonempty, NUL-free, and representable without replacement. */
 export const localPathStringSchema = nulFreeStringSchema
   .min(1)
-  .regex(
-    /^[^\uD800-\uDFFF]*$/u,
+  // Keep UTF-16 checks out of patterns consumed by scalar Unicode engines.
+  // The surrogate range cannot be expressed in a scalar-Unicode regex, so
+  // emitting it as a JSON Schema `pattern` makes strict validators (Rust
+  // `regex`, used by DeepSeek and others) reject the whole tool request
+  // with 400. A `.refine(...)` performs the same check at parse time
+  // without emitting a `pattern`. See #10348.
+  .refine(
+    (value) => !/[\uD800-\uDFFF]/u.test(value),
     "Local filesystem paths must contain well-formed Unicode",
   );
 
