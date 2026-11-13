@@ -972,10 +972,16 @@ const inspectReport = async (
   return service.inspect({ path: "/fixtures/example.exe" });
 };
 
-const reportForPayload = async (payload: Buffer, codePage?: number) => {
-  const fixture = peResourceFixture(false, [
-    { type: 10, name: 7, language: 1033, payload },
-  ]);
+const reportForPayload = async (
+  payload: Buffer,
+  codePage?: number,
+  sectionBytes?: number,
+) => {
+  const fixture = peResourceFixture(
+    false,
+    [{ type: 10, name: 7, language: 1033, payload }],
+    sectionBytes,
+  );
   if (codePage !== undefined)
     fixture.bytes.writeUInt32LE(codePage, (fixture.dataOffsets[0] ?? 0) + 8);
   return parsePeResources(
@@ -2221,6 +2227,28 @@ it("rejects more values than the decoder budget retains", async () => {
   });
 });
 
+it("publishes the decoder value-budget stop", async () => {
+  const items = Buffer.alloc(32767 * 2);
+  for (let item = 0; item < 32767; item += 1) items[item * 2] = 1;
+  const report = await reportForPayload(
+    delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty(
+          "Items",
+          Buffer.concat([delphiBytes(14), items, delphiBytes(0)]),
+        ),
+        delphiProperty("Tail", delphiInt8(1)),
+      ]),
+    ),
+    undefined,
+    131072,
+  );
+  expect(report.delphi_forms[0]?.root.properties[1]?.value.kind).toBe(
+    "unknown",
+  );
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
 it("rejects a completed suffix root whose ffChildPos position is missing", async () => {
   const report = await reportWithFormPrefix(0);
   const form = report.delphi_forms[0];
@@ -2483,6 +2511,21 @@ it("publishes a capped UTF-8 preview that splits a multibyte sequence", async ()
     delphiForm(
       delphiComponent("TForm1", "Form1", [
         delphiProperty("Long", delphiUtf8String(`${"A".repeat(127)}€`)),
+      ]),
+    ),
+  );
+  expect(report.delphi_forms[0]?.root.properties[0]?.value).toMatchObject({
+    kind: "string",
+    truncated: true,
+  });
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
+it("publishes a capped UTF-8 string that keeps its BOM", async () => {
+  const report = await reportForPayload(
+    delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty("Long", delphiUtf8String(`\uFEFF${"A".repeat(200)}`)),
       ]),
     ),
   );

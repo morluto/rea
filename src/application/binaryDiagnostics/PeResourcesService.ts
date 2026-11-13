@@ -206,6 +206,7 @@ const formTreeWithinDepth = (report: unknown): boolean => {
     ];
     let objects = 0;
     let sentinels = 0;
+    let valueSentinels = 0;
     const counters: FormCounters = {
       properties: 0,
       values: 0,
@@ -276,6 +277,7 @@ const formTreeWithinDepth = (report: unknown): boolean => {
       }
       const value = node as Record<string, unknown>;
       counters.values += 1;
+      if (stoppedUnknownValue(node)) valueSentinels += 1;
       if (value.kind === "string") {
         addText(counters, value);
         addHex(counters, value.bytes_hex);
@@ -318,9 +320,15 @@ const formTreeWithinDepth = (report: unknown): boolean => {
       !(objects === MAX_DELPHI_FORM_OBJECTS + 1 && sentinels === 1)
     )
       return false;
+    // A value-budget stop retains one zero-length unknown without spending the
+    // budget, so that terminal sentinel may follow exactly MAX_VALUES values.
+    if (
+      counters.values > MAX_DELPHI_FORM_VALUES &&
+      !(counters.values === MAX_DELPHI_FORM_VALUES + 1 && valueSentinels === 1)
+    )
+      return false;
     if (
       counters.properties > MAX_DELPHI_FORM_PROPERTIES ||
-      counters.values > MAX_DELPHI_FORM_VALUES ||
       counters.text > MAX_DELPHI_FORM_TEXT_BYTES ||
       counters.retained > MAX_DELPHI_FORM_RETAINED_BYTES
     )
@@ -920,10 +928,13 @@ const previewMatchesText = (
   if (codePage === BYTE_PRESERVING_CODE_PAGE)
     return text.startsWith(raw.toString("latin1"));
   try {
-    // Match decodeDelphiText: only the UTF-16LE path keeps its BOM.
+    // Match decodeDelphiText: the UTF-16LE path and Buffer's UTF-8 decode
+    // keep a leading BOM; other TextDecoder paths remove it.
     const decoder = new TextDecoder(
       codePage,
-      codePage === "utf-16le" ? { ignoreBOM: true } : undefined,
+      codePage === "utf-16le" || codePage === "utf-8"
+        ? { ignoreBOM: true }
+        : undefined,
     );
     return text.startsWith(decoder.decode(raw, { stream: true }));
   } catch {
