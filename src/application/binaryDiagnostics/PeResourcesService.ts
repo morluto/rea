@@ -19,6 +19,7 @@ import {
   isDelphiFormValueType,
   MAX_DELPHI_FORM_DEPTH,
   MAX_DELPHI_FORM_HEX_BYTES,
+  MAX_DELPHI_FORM_OBJECTS,
   MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES,
   RESOURCE_CODE_PAGES,
   type DelphiFormCollectionItem,
@@ -151,83 +152,97 @@ const formTreeWithinDepth = (report: unknown): boolean => {
   if (typeof report !== "object" || report === null) return true;
   const forms = (report as Record<string, unknown>).delphi_forms;
   if (!Array.isArray(forms)) return true;
-  const ancestors = new WeakSet<object>();
-  const stack: FormTreeFrame[] = [];
   for (const form of forms) {
     if (typeof form !== "object" || form === null) continue;
-    stack.push({
-      kind: "object",
-      value: (form as Record<string, unknown>).root,
-      depth: 0,
-    });
-  }
-  while (stack.length > 0) {
-    const frame = stack.pop()!;
-    if (frame.kind === "leave") {
-      ancestors.delete(frame.value);
-      continue;
-    }
-    const node = frame.value;
-    if (typeof node !== "object" || node === null) continue;
-    if (frame.depth > MAX_DELPHI_FORM_DEPTH) {
-      // The decoder refuses to enter the next level but its caller retains a
-      // zero-length stop node there. Allow that terminal sentinel, without
-      // following it, and reject anything deeper.
-      if (
-        frame.depth > MAX_DELPHI_FORM_DEPTH + 1 ||
-        !terminalStoppedNode(frame, node)
-      )
-        return false;
-      continue;
-    }
-    if (ancestors.has(node)) return false;
-    ancestors.add(node);
-    stack.push({ kind: "leave", value: node });
-    if (frame.kind === "object") {
-      // Nested components recurse one level deeper; property values share the
-      // object's depth, exactly as readObject passes it to readValue.
-      for (const child of arrayItems(node, "children"))
-        stack.push({ kind: "object", value: child, depth: frame.depth + 1 });
-      for (const property of arrayItems(node, "properties"))
-        stack.push({ kind: "property", value: property, depth: frame.depth });
-      continue;
-    }
-    if (frame.kind === "property") {
-      stack.push({
-        kind: "value",
-        value: (node as Record<string, unknown>).value,
-        depth: frame.depth,
-      });
-      continue;
-    }
-    if (frame.kind === "collection-item") {
-      // A collection item's property values are read one level below the
-      // collection value.
-      for (const property of arrayItems(node, "properties"))
-        stack.push({
-          kind: "property",
-          value: property,
-          depth: frame.depth + 1,
-        });
-      continue;
-    }
-    const value = node as Record<string, unknown>;
-    if (value.kind === "list")
-      for (const entry of arrayItems(value, "items")) {
-        if (typeof entry !== "object" || entry === null) continue;
+    const ancestors = new WeakSet<object>();
+    const stack: FormTreeFrame[] = [
+      {
+        kind: "object",
+        value: (form as Record<string, unknown>).root,
+        depth: 0,
+      },
+    ];
+    let objects = 0;
+    let sentinels = 0;
+    while (stack.length > 0) {
+      const frame = stack.pop()!;
+      if (frame.kind === "leave") {
+        ancestors.delete(frame.value);
+        continue;
+      }
+      const node = frame.value;
+      if (typeof node !== "object" || node === null) continue;
+      if (frame.kind === "object") {
+        objects += 1;
+        if (terminalStoppedNode(frame, node)) sentinels += 1;
+      }
+      if (frame.depth > MAX_DELPHI_FORM_DEPTH) {
+        // The decoder refuses to enter the next level but its caller retains a
+        // zero-length stop node there. Allow that terminal sentinel, without
+        // following it, and reject anything deeper.
+        if (
+          frame.depth > MAX_DELPHI_FORM_DEPTH + 1 ||
+          !terminalStoppedNode(frame, node)
+        )
+          return false;
+        continue;
+      }
+      if (ancestors.has(node)) return false;
+      ancestors.add(node);
+      stack.push({ kind: "leave", value: node });
+      if (frame.kind === "object") {
+        // Nested components recurse one level deeper; property values share
+        // the object's depth, exactly as readObject passes it to readValue.
+        for (const child of arrayItems(node, "children"))
+          stack.push({ kind: "object", value: child, depth: frame.depth + 1 });
+        for (const property of arrayItems(node, "properties"))
+          stack.push({ kind: "property", value: property, depth: frame.depth });
+        continue;
+      }
+      if (frame.kind === "property") {
         stack.push({
           kind: "value",
-          value: (entry as Record<string, unknown>).value,
-          depth: frame.depth + 1,
-        });
-      }
-    if (value.kind === "collection")
-      for (const item of arrayItems(value, "items"))
-        stack.push({
-          kind: "collection-item",
-          value: item,
+          value: (node as Record<string, unknown>).value,
           depth: frame.depth,
         });
+        continue;
+      }
+      if (frame.kind === "collection-item") {
+        // A collection item's property values are read one level below the
+        // collection value.
+        for (const property of arrayItems(node, "properties"))
+          stack.push({
+            kind: "property",
+            value: property,
+            depth: frame.depth + 1,
+          });
+        continue;
+      }
+      const value = node as Record<string, unknown>;
+      if (value.kind === "list")
+        for (const entry of arrayItems(value, "items")) {
+          if (typeof entry !== "object" || entry === null) continue;
+          stack.push({
+            kind: "value",
+            value: (entry as Record<string, unknown>).value,
+            depth: frame.depth + 1,
+          });
+        }
+      if (value.kind === "collection")
+        for (const item of arrayItems(value, "items"))
+          stack.push({
+            kind: "collection-item",
+            value: item,
+            depth: frame.depth,
+          });
+    }
+    // A budget-exhausted read retains one terminal sentinel after the last
+    // retained object; anything beyond that cannot come from the decoder.
+    if (
+      objects > MAX_DELPHI_FORM_OBJECTS &&
+      !(objects === MAX_DELPHI_FORM_OBJECTS + 1 && sentinels === 1)
+    )
+      return false;
   }
   return true;
 };
@@ -528,6 +543,14 @@ const objectSectionsFollowSource = (
   // distinguish its presence from an unprefixed header.
   const optionalFlagByte =
     object.flags.length === 0 && object.child_position === null ? 1 : 0;
+  // The decoder reads the position immediately after setting ffChildPos; a
+  // missing position stops the object before either name is read.
+  if (
+    object.class_name !== null &&
+    object.flags.includes("ffChildPos") &&
+    object.child_position === null
+  )
+    return false;
   if (object.class_name !== null) {
     if (
       object.class_name.location.offset !== headerEnd &&
@@ -802,6 +825,29 @@ const STRING_PROJECTION: Readonly<
   },
 };
 
+/**
+ * A capped preview retains a byte prefix of the value. Decode it in streaming
+ * mode so an incomplete trailing sequence is not turned into a replacement
+ * character that the full text cannot match.
+ */
+const previewMatchesText = (
+  raw: Buffer,
+  codePage: string,
+  text: string,
+): boolean => {
+  if (codePage === BYTE_PRESERVING_CODE_PAGE)
+    return text.startsWith(raw.toString("latin1"));
+  try {
+    return text.startsWith(
+      new TextDecoder(codePage, { ignoreBOM: true }).decode(raw, {
+        stream: true,
+      }),
+    );
+  } catch {
+    return text.startsWith(raw.toString("latin1"));
+  }
+};
+
 const stringMatchesType = (
   valueType: string,
   value: Extract<DelphiFormValue, { kind: "string" }>,
@@ -840,12 +886,12 @@ const stringMatchesType = (
   )
     return false;
   // A complete projection retains every source byte, so its published text
-  // must be exactly what those bytes decode to under the reported page.
-  return (
-    value.truncated ||
-    decodeDelphiText(Buffer.from(value.bytes_hex, "hex"), value.code_page) ===
-      value.text
-  );
+  // must be exactly what those bytes decode to under the reported page. A
+  // capped preview still has to agree with the start of that text.
+  const raw = Buffer.from(value.bytes_hex, "hex");
+  return value.truncated
+    ? previewMatchesText(raw, value.code_page, value.text)
+    : decodeDelphiText(raw, value.code_page) === value.text;
 };
 
 const binaryMatches = (

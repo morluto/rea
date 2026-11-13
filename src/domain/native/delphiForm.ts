@@ -203,6 +203,9 @@ export const MAX_DELPHI_FORM_HEX_BYTES = 128;
 /** Nested form objects and values are bounded at this depth. */
 export const MAX_DELPHI_FORM_DEPTH = 32;
 
+/** The decoder retains at most this many objects per form. */
+export const MAX_DELPHI_FORM_OBJECTS = 1024;
+
 /**
  * `TFilerFlag` values the decoder can emit. It emits each once, in bit order,
  * and stops on the reserved bit, so no other flag is an observed value.

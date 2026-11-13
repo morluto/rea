@@ -27,6 +27,7 @@ import {
   formatDelphiCurrency,
   MAX_DELPHI_FORM_DEPTH,
   MAX_DELPHI_FORM_HEX_BYTES,
+  MAX_DELPHI_FORM_OBJECTS,
   MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES,
   type DelphiFormCollectionItem,
   type DelphiFormListEntry,
@@ -61,7 +62,6 @@ export interface DelphiFormDecode {
 const valueTypeName = (ordinal: number): string =>
   DELPHI_FORM_VALUE_TYPES[ordinal] ?? `unknown_value_type(${String(ordinal)})`;
 
-const MAX_OBJECTS = 1024;
 const MAX_PROPERTIES = 8192;
 const MAX_VALUES = 32768;
 /** Bounds decoded text before allocation; matches the 8 MiB result budget. */
@@ -1068,7 +1068,7 @@ export const decodeDelphiFormStream = (
   if (signature === null) return null;
   const codePage = options.code_page ?? DEFAULT_CODE_PAGE;
   const budget: Budget = {
-    objects: MAX_OBJECTS,
+    objects: MAX_DELPHI_FORM_OBJECTS,
     properties: MAX_PROPERTIES,
     values: MAX_VALUES,
     text: Math.min(
