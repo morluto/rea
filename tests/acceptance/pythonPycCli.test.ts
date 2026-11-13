@@ -9,7 +9,10 @@ import {
   pythonPycFixture,
   pythonPycHeader,
 } from "../../src/python/PythonPyc.fixture.js";
-import { pythonPycEqualityCases } from "../fixtures/pythonPycCodeEquality.js";
+import {
+  PYTHON_PYC_EQUALITY_MAGIC,
+  pythonPycEqualityCases,
+} from "../fixtures/pythonPycCodeEquality.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 
@@ -848,23 +851,44 @@ cliTest(
 cliTest(
   "keeps the code objects CPython 3.12 keeps in a frozenset",
   async ({ cli }) => {
+    // CPython 3.12 marshalled two code objects into one frozenset constant.
+    // Its marshal.loads result is the oracle: code equality ignores
+    // co_qualname, co_filename and co_stacksize, but not the name, first
+    // line, line and exception tables, or type-sensitive constants.
+    const outcomes = pythonPycEqualityCases.map(
+      (fixture) => fixture.cpythonEqual,
+    );
+    expect(outcomes).toContain(true);
+    expect(outcomes).toContain(false);
     const root = await createTestTempDirectory("rea-python-pyc-equality-");
     const reports = new Map<string, unknown>();
     for (const fixture of pythonPycEqualityCases) {
+      expect(fixture.frozensetLength, fixture.name).toBe(
+        fixture.cpythonEqual ? 1 : 2,
+      );
       const path = join(root, `${fixture.name}.pyc`);
       await writeFile(path, Buffer.from(fixture.hex, "hex"));
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(response.exitCode, response.stderr).toBe(0);
       const report = completePycEvidenceSchema.parse(
         response.json,
       ).normalized_result;
+      expect(report.header, fixture.name).toMatchObject({
+        magic: PYTHON_PYC_EQUALITY_MAGIC,
+        python_version: "3.12",
+        code_layout: "py311",
+      });
       const [module, ...members] = report.code_objects;
       expect(module?.consts.at(-1), fixture.name).toEqual({
         kind: "frozenset",
         length: fixture.frozensetLength,
       });
+      // Only the members CPython keeps reach the report as code objects.
+      expect(module?.nested_code, fixture.name).toHaveLength(
+        fixture.frozensetLength,
+      );
       expect(members, fixture.name).toHaveLength(fixture.frozensetLength);
       if (fixture.kept !== null)
         expect(members[0], fixture.name).toMatchObject(fixture.kept);

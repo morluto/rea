@@ -19,8 +19,11 @@ import marshal
 import sys
 import types
 
-if sys.version_info[:2] != (3, 12):
-    raise SystemExit("Run with CPython 3.12; the corpus pins the 3.12 layout.")
+if sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 12):
+    raise SystemExit(
+        "Run with CPython 3.12; the corpus records CPython's 3.12 magic, "
+        "marshal stream and equality results as its oracle."
+    )
 
 SOURCE = "def f(a):\n    try:\n        return a + 1\n    except E:\n        return 0\n"
 # Same statements, different columns: only co_linetable changes.
