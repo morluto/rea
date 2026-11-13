@@ -132,6 +132,7 @@ it("bounds V4 extent delivery while retaining full coverage counts and continuat
 
 it.each([
   [15, 1],
+  [17, 1],
   [16, 65535],
 ])(
   "refuses V4 stride %i / count %i before extent allocation",

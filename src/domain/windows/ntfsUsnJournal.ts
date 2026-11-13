@@ -147,6 +147,7 @@ const readExtentRecord = (
   // Validate the complete declared array before allocating the fixed-size sample.
   if (
     extentSize < 16 ||
+    extentSize % 8 !== 0 ||
     extentCount > Math.floor((record.length - 64) / extentSize)
   )
     return err({ kind: "malformed", fileOffset });
