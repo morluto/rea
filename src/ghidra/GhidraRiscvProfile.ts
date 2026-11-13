@@ -196,6 +196,31 @@ export const ghidraRiscvCallingConvention = (
     ? ghidraRiscvLane(target.riscv)?.callingConvention
     : undefined;
 
+/**
+ * Vendor extensions in the custom opcode spaces, which the generic language
+ * decodes only as placeholders, and the installed language variant that
+ * decodes them; see docs/providers/ghidra-riscv.md#vendor-extensions.
+ */
+const GHIDRA_RISCV_VENDOR_LANGUAGES = [
+  { extensionPrefix: "xthead", elfClass: 64, variant: "xthead" },
+] as const;
+
+/** The vendor language an image's declared extensions select, if any. */
+export const ghidraRiscvVendorLanguage = (
+  target: BinaryTarget,
+): string | undefined => {
+  if (target.kind !== "executable" || target.architecture !== "riscv")
+    return undefined;
+  const isa = target.riscv.isa;
+  const vendor = GHIDRA_RISCV_VENDOR_LANGUAGES.find(
+    ({ extensionPrefix, elfClass }) =>
+      elfClass === target.riscv.elfClass &&
+      isa?.status === "declared" &&
+      isa.extensions.some((name) => name.startsWith(extensionPrefix)),
+  );
+  return vendor && `RISCV:LE:${vendor.elfClass}:${vendor.variant}`;
+};
+
 /** Pin a language only for declarations admitted by the same lane boundary. */
 export const ghidraRiscvLanguageOverride = (
   target: BinaryTarget,
@@ -204,7 +229,9 @@ export const ghidraRiscvLanguageOverride = (
   target.architecture === "riscv" &&
   ghidraRiscvUnsupportedReason(target) === null
     ? {
-        languageId: `RISCV:LE:${target.riscv.elfClass}:default`,
+        languageId:
+          ghidraRiscvVendorLanguage(target) ??
+          `RISCV:LE:${target.riscv.elfClass}:default`,
         compilerSpecId: "gcc",
       }
     : undefined;

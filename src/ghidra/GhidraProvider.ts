@@ -68,12 +68,16 @@ import {
   type GhidraInstallationHost,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisUnsupportedTargetError,
+} from "../domain/analysisErrorCore.js";
 import { resolveGhidraAnalysisSeeds } from "./GhidraAnalysisSeeds.js";
 import {
   admitGhidraLanguageOverride,
   readGhidraLanguageCatalog,
 } from "./GhidraLanguageCatalog.js";
+import { ghidraRiscvVendorLanguage } from "./GhidraRiscvProfile.js";
 import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
 import {
   ghidraProcessorUnsupportedReason,
@@ -465,7 +469,11 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     );
     if (!resolved.ok || resolved.value.profile === null) return resolved;
     const override = this.config.ghidraLanguageOverride;
-    if (override !== undefined && installation.status === "available") {
+    const vendorLanguage = ghidraRiscvVendorLanguage(target);
+    if (
+      (override !== undefined || vendorLanguage !== undefined) &&
+      installation.status === "available"
+    ) {
       let catalog: Awaited<ReturnType<typeof readGhidraLanguageCatalog>>;
       try {
         catalog = await readGhidraLanguageCatalog(
@@ -475,17 +483,36 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         );
       } catch (cause: unknown) {
         return err(
-          ghidraFileFailure(cause, "resolve_analysis_profile", {
-            setting: "REA_GHIDRA_LANGUAGE_ID",
-          }),
+          ghidraFileFailure(
+            cause,
+            "resolve_analysis_profile",
+            override === undefined ? {} : { setting: "REA_GHIDRA_LANGUAGE_ID" },
+          ),
         );
       }
-      const refused = admitGhidraLanguageOverride(
-        override,
-        catalog,
-        installation.providerVersion,
-      );
+      const refused =
+        override === undefined
+          ? null
+          : admitGhidraLanguageOverride(
+              override,
+              catalog,
+              installation.providerVersion,
+            );
       if (refused !== null) return err(refused);
+      if (
+        vendorLanguage !== undefined &&
+        !catalog.some(
+          ({ id, compilerSpecIds }) =>
+            id === vendorLanguage && compilerSpecIds.includes("gcc"),
+        )
+      )
+        return err(
+          new AnalysisUnsupportedTargetError(
+            "resolve_analysis_profile",
+            target.path,
+            `Tag_RISCV_arch declares vendor extensions that Ghidra's generic RISC-V language decodes only as custom-opcode placeholders; install the ${vendorLanguage} language with its gcc compiler specification. See docs/providers/ghidra-riscv.md#vendor-extensions.`,
+          ),
+        );
     }
     const extensions = await resolveGhidraExtensions(
       this.config,

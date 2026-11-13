@@ -412,6 +412,63 @@ describe("bounded Ghidra RISC-V admission", () => {
   registerRiscvAdmissionAndCapabilityCases();
 });
 
+describe("RISC-V vendor languages", () => {
+  // Xuantie GCC's declaration for T-Head C906/C910 code, as NanoKVM's libkvm.so records it.
+  const thead = target({
+    isa: riscvIsaDeclaration(
+      "rv64i2p0_m2p0_a2p0_f2p0_d2p0_c2p0_v0p7_zfh1p0_zvamo0p7_zvlsseg0p7_xtheadc2p0",
+    ),
+  });
+  let vendorDir = "";
+  beforeAll(async () => {
+    vendorDir = await mkdtemp(join(tmpdir(), "rea-ghidra-riscv-vendor-"));
+    const languages = join(vendorDir, "Ghidra/Processors/RISCV/data/languages");
+    await mkdir(languages, { recursive: true });
+    await writeFile(join(languages, "riscv.ldefs"), RISCV_LDEFS);
+    await writeFile(
+      join(languages, "riscv.xthead.ldefs"),
+      RISCV_LDEFS.replaceAll(":64:default", ":64:xthead"),
+    );
+  });
+  afterAll(async () => {
+    await rm(vendorDir, { recursive: true, force: true });
+  });
+  const withVendor = () =>
+    new GhidraProvider(configOf(vendorDir), silentLogger, {}, host);
+
+  it("pins the installed T-Head language for an image that declares xthead", async () => {
+    expect(ghidraPinnedLanguage(thead)).toEqual({
+      languageId: "RISCV:LE:64:xthead",
+      compilerSpecId: "gcc",
+    });
+    const resolved = await withVendor().resolveAnalysisProfile(thead);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.profile?.parameters.language_id).toBe(
+      "RISCV:LE:64:xthead",
+    );
+  });
+
+  it("refuses the image when the installation lacks the vendor language", async () => {
+    const resolved = await ghidra().resolveAnalysisProfile(thead);
+    expect(resolved.ok).toBe(false);
+    if (!resolved.ok)
+      expect(resolved.error.message).toContain("RISCV:LE:64:xthead");
+  });
+
+  it("keeps images without vendor extensions on the generic language and digest", async () => {
+    const plain = target({
+      isa: riscvIsaDeclaration("rv64i2p1_m2p0_a2p1_f2p2_d2p2_c2p0"),
+    });
+    const vendor = await withVendor().resolveAnalysisProfile(plain);
+    const stock = await ghidra().resolveAnalysisProfile(target());
+    if (!vendor.ok || !stock.ok) throw new Error("expected generic profiles");
+    expect(vendor.value.profile?.parameters.language_id).toBe(
+      "RISCV:LE:64:default",
+    );
+    expect(vendor.value.profile?.digest).toBe(stock.value.profile?.digest);
+  });
+});
+
 describe("RISC-V ilp32 admission", () => {
   it.each([
     ["ESP32-C2/C3 base", C3_ARCH],

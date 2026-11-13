@@ -78,6 +78,15 @@ and `RV32IMC` variants in `old/riscv_deprecated.ldefs`, uses the same
 `riscv.ilp32d.sla` decoder; only the compiler specification differs. REA keeps
 the generic language and corrects the calling convention instead.
 
+## Vendor extensions
+
+Ghidra 12.1.4's generic language decodes vendor instructions in the custom
+opcode spaces only as `custom0`..`custom3` placeholders. An admitted ELF64 image
+whose `Tag_RISCV_arch` declares an `xthead*` extension (T-Head C906/C910; Xuantie
+GCC declares `xtheadc`) pins `RISCV:LE:64:xthead` + `gcc` instead, which an
+installation provides as a processor-module language; without it the image is
+refused. Other images keep the generic language and their exact profile.
+
 ## Calling conventions
 
 Ghidra's generic RV32 compiler specification, `riscv32-fp.cspec`, models the
