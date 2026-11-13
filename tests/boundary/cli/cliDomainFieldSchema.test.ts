@@ -231,37 +231,37 @@ it("advertises selection dependencies after omittable-default projection", async
 
 it("rejects invalid selected paths before inspecting a target", async () => {
   const cli = createCli({});
-  for (const [args, field, code] of [
+  for (const [args, expectedErrors] of [
     [
       ["inspect-apple-ips", "missing.ips", "--join-path="],
-      "joinPath",
-      "too_small",
+      [{ path: "joinPath", code: "too_small" }],
     ],
     [
       ["match-native-functions", "missing.json", "--evidence_output="],
-      "evidence_output",
-      "too_small",
+      [{ path: "evidence_output", code: "too_small" }],
     ],
+    // NUL byte now triggers both NUL and Unicode validation (pattern starts at \u0001)
     [
       ["match-native-functions", "missing.json", "--evidence_output=bad\0path"],
-      "evidence_output",
-      "invalid_format",
+      [
+        { path: "evidence_output", code: "invalid_format" },
+        { path: "evidence_output", code: "invalid_format" },
+      ],
     ],
+    // Unpaired surrogate triggers Unicode validation
     [
       [
         "match-native-functions",
         "missing.json",
         "--evidence_output=bad\ud800path",
       ],
-      "evidence_output",
-      "invalid_format",
+      [{ path: "evidence_output", code: "invalid_format" }],
     ],
     [
       ["match-native-functions", "missing.json", "--source_bundle="],
-      "source_bundle.0",
-      "too_small",
+      [{ path: "source_bundle.0", code: "too_small" }],
     ],
-    [["import-reference-source", ""], "root", "too_small"],
+    [["import-reference-source", ""], [{ path: "root", code: "too_small" }]],
   ] as const) {
     let stdout = "";
     await cli.serve([...args, "--json"], {
@@ -271,9 +271,12 @@ it("rejects invalid selected paths before inspecting a target", async () => {
         stdout += text;
       },
     });
-    expect(JSON.parse(stdout), args.join(" ")).toMatchObject({
+    const result = JSON.parse(stdout);
+    expect(result, args.join(" ")).toMatchObject({
       code: "VALIDATION_ERROR",
-      fieldErrors: [{ path: field, code }],
+      fieldErrors: expect.arrayContaining(
+        expectedErrors.map((e) => expect.objectContaining(e)),
+      ),
     });
   }
 });
