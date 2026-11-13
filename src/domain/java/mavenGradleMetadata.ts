@@ -86,6 +86,7 @@ const dependencySchema = z.strictObject({
   scope: nullableText,
   type: nullableText,
   optional: z.boolean().nullable(),
+  optional_spelling: nullableText,
   classifier: nullableText,
   exclusions: z.array(exclusionSchema),
   origin: z.enum([
@@ -102,7 +103,13 @@ const dependencySchema = z.strictObject({
 const unresolvedSchema = z.strictObject({
   kind: z.enum(["property", "parent-coordinate", "missing-coordinate"]),
   reference: z.string().min(1),
-  field: z.enum(["group_id", "artifact_id", "version", "packaging"]),
+  field: z.enum([
+    "group_id",
+    "artifact_id",
+    "version",
+    "packaging",
+    "optional",
+  ]),
   owner: z.enum([
     "project",
     "parent",
@@ -141,6 +148,7 @@ export const mavenGradleMetadataSchema = z.strictObject({
   parent: coordinateSchema
     .extend({
       relative_path: nullableText,
+      relative_path_declared: z.boolean(),
     })
     .nullable(),
   properties: z.array(

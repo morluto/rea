@@ -176,13 +176,25 @@ const parseMavenDependency = (
           group_id: childText(exclusion, "groupId"),
           artifact_id: childText(exclusion, "artifactId"),
         }));
+  const owner =
+    origin === "dependencies" ? "dependency" : "dependency_management";
   recordCoordinateGaps(
     unresolved,
     { group_id, artifact_id, version },
-    origin === "dependencies" ? "dependency" : "dependency_management",
+    owner,
     index,
     false,
   );
+  const optional_spelling = childText(element, "optional");
+  const optionalProperty = mavenPropertyReference(optional_spelling);
+  if (optionalProperty !== null)
+    pushUnresolved(unresolved, {
+      kind: "property",
+      reference: optionalProperty,
+      field: "optional",
+      owner,
+      index,
+    });
   return {
     group_id,
     artifact_id,
@@ -191,7 +203,8 @@ const parseMavenDependency = (
     gradle_version: null,
     scope,
     type,
-    optional: boolOf(childText(element, "optional")),
+    optional: boolOf(optional_spelling),
+    optional_spelling,
     classifier: childText(element, "classifier"),
     exclusions,
     origin,
@@ -234,6 +247,8 @@ const parsePom = (
           version: childText(parentElement, "version"),
           packaging: null,
           relative_path: childText(parentElement, "relativePath"),
+          relative_path_declared:
+            firstNamed(parentElement, "relativePath") !== undefined,
         };
   if (parent !== null)
     recordCoordinateGaps(unresolved, parent, "parent", null, false);
@@ -342,6 +357,7 @@ const parseGradleDependency = (
     scope: null,
     type: null,
     optional: null,
+    optional_spelling: null,
     classifier: null,
     exclusions: excludes.flatMap((entry) =>
       isRecord(entry)

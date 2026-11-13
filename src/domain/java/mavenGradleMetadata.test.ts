@@ -95,6 +95,7 @@ it("admits a complete POM report with unresolved parent and property references"
       version: "9.0.0",
       packaging: null,
       relative_path: "../pom.xml",
+      relative_path_declared: true,
     },
     properties: [{ name: "revision", value: "1.2.3" }],
     dependencies: [],

@@ -35,13 +35,17 @@ kept as written and listed in `unresolved`; this reader does not interpolate
 properties or inherit parent or BOM values.
 
 For a POM, `parent` records the declared parent coordinates and `relative_path`
-when present. `properties` lists each child of `<properties>` as name and value.
+when present. `relative_path_declared` distinguishes an empty `<relativePath/>`,
+which disables Maven's local parent lookup, from an omitted tag. `properties`
+lists each child of `<properties>` as name and value.
 `dependencies` comes from the project's `<dependencies>` list.
 `dependency_management` comes from `<dependencyManagement>`. A managed
 dependency with `type` `pom` and `scope` `import` is a BOM import
 (`bom_import: true`). Each row keeps scope, type, optional, classifier, and
-exclusions as present. `version_kind` is `literal`, `range`, `property`, or
-`missing`.
+exclusions as present. `optional` is the interpreted boolean and
+`optional_spelling` keeps the text as written, so a `${property}` value stays
+visible and is listed in `unresolved` with `field` `optional`. `version_kind`
+is `literal`, `range`, `property`, or `missing`.
 
 For Gradle module metadata, `gradle` records `format_version`,
 `created_by_gradle`, and each variant's name, `org.gradle.category`,

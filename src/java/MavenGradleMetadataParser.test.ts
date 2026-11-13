@@ -64,6 +64,7 @@ it("reads Maven coordinates, parent, BOM import, exclusions, ranges and unresolv
     version: "9.0.0",
     packaging: null,
     relative_path: "../pom.xml",
+    relative_path_declared: true,
   });
   expect(report.properties).toEqual([
     { name: "revision", value: "1.2.3" },
@@ -97,6 +98,7 @@ it("reads Maven coordinates, parent, BOM import, exclusions, ranges and unresolv
       version_kind: "missing",
       scope: "compile",
       optional: false,
+      optional_spelling: "false",
       origin: "dependencies",
       exclusions: [
         {
@@ -248,6 +250,67 @@ it("does not interpolate Maven properties into coordinates", () => {
   const report = parse(mavenPomFixture);
   expect(report.coordinates.version).toBe("${revision}");
   expect(report.coordinates.version).not.toBe("1.2.3");
+});
+
+it("keeps an empty relativePath and a property-spelled optional distinct from omission", () => {
+  const report = parse(`<project>
+  <parent>
+    <groupId>com.example</groupId>
+    <artifactId>demo-parent</artifactId>
+    <version>1.0.0</version>
+    <relativePath/>
+  </parent>
+  <artifactId>demo</artifactId>
+  <dependencies>
+    <dependency>
+      <groupId>com.example</groupId>
+      <artifactId>declared</artifactId>
+      <version>1.0.0</version>
+      <optional>\${dep.optional}</optional>
+    </dependency>
+    <dependency>
+      <groupId>com.example</groupId>
+      <artifactId>omitted</artifactId>
+      <version>1.0.0</version>
+    </dependency>
+  </dependencies>
+</project>`);
+  expect(report.parent).toMatchObject({
+    relative_path: null,
+    relative_path_declared: true,
+  });
+  expect(report.dependencies).toEqual([
+    expect.objectContaining({
+      artifact_id: "declared",
+      optional: null,
+      optional_spelling: "\${dep.optional}",
+    }),
+    expect.objectContaining({
+      artifact_id: "omitted",
+      optional: null,
+      optional_spelling: null,
+    }),
+  ]);
+  expect(report.unresolved).toContainEqual({
+    kind: "property",
+    reference: "\${dep.optional}",
+    field: "optional",
+    owner: "dependency",
+    index: 0,
+  });
+
+  const omitted = parse(`<project>
+  <parent>
+    <groupId>com.example</groupId>
+    <artifactId>demo-parent</artifactId>
+    <version>1.0.0</version>
+  </parent>
+  <artifactId>demo</artifactId>
+</project>`);
+  expect(omitted.parent).toMatchObject({
+    relative_path: null,
+    relative_path_declared: false,
+  });
 });
 
 it("records unread profiles without activating them", () => {
