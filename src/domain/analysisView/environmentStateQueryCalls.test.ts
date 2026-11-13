@@ -823,6 +823,43 @@ describe("GraphQL operation definition classification with fragments and keyword
   });
 });
 
+describe("declared GraphQL writes in separate operation buckets", () => {
+  it("keeps a named mutation a write even when its response repeats the latest read", () => {
+    const viewer = { data: { viewer: { id: "v1" } } };
+    const calls: Call[] = [
+      {
+        method: "GET",
+        path: "/graphql",
+        tool: "get_graphql",
+        response: viewer,
+      },
+      {
+        method: "POST",
+        path: "/graphql",
+        tool: "post_graphql_rename",
+        rpcOperation: { kind: "graphql", name: "Rename" },
+        request: {
+          operationName: "Rename",
+          query: "mutation Rename { rename { id } }",
+        },
+        response: viewer,
+      },
+      {
+        method: "POST",
+        path: "/graphql",
+        tool: "post_graphql_teams",
+        rpcOperation: { kind: "graphql", name: "Teams" },
+        request: {
+          operationName: "Teams",
+          query: "query Teams { teams { id } }",
+        },
+        response: { data: { teams: [] } },
+      },
+    ];
+    expect(readOnlyOf(calls)).toEqual(["post_graphql_teams"]);
+  });
+});
+
 describe("single-operation POST RPC read-only classification", () => {
   it("classifies single-operation GraphQL, JSON-RPC, and batchexecute calls when tool.rpc_operation is omitted", () => {
     expect(

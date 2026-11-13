@@ -225,6 +225,8 @@ export const readOnlyTools = (
       .map((ordinal) => records[position.get(ordinal) ?? -1])
       .filter((record): record is StateRecordFacts => record !== undefined);
     if (!calls.some(succeeded) || calls.some(unresolved)) continue;
+    // A declared mutation or subscription stays a write, whatever its response repeats.
+    if (declaresWriteOperation(tool, calls, io)) continue;
     const timeline = {
       position,
       chronology,
@@ -473,6 +475,21 @@ const rpcCallReadsOnly = (rpc: RpcOperationFacts): boolean => {
       return readsOnly(rpc.name);
   }
 };
+
+/** Some call's recorded GraphQL document is a mutation or subscription. */
+const declaresWriteOperation = (
+  tool: StateToolFacts,
+  calls: readonly StateRecordFacts[],
+  io: QueryCallIo,
+): boolean =>
+  calls.some((call) => {
+    const rpc = rpcFactsForCall(tool, call, io.request(call.ordinal), io);
+    return (
+      rpc?.kind === "graphql" &&
+      (rpc.graphqlDocument === "mutation" ||
+        rpc.graphqlDocument === "subscription")
+    );
+  });
 
 /** Every call names only read operations. */
 const namesReadOperations = (
