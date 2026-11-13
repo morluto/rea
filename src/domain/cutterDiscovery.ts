@@ -31,9 +31,12 @@ export const cutterDiscoverySchema = z.strictObject({
   limitations: z.array(z.string()),
 });
 
-/** Session descriptors in bridge_directory that discovery examined but could not list. */
+/** Descriptor candidates in bridge_directory that discovery examined but could not list. */
 export type CutterUnlistedDescriptors = {
-  /** Descriptor files that could not be read as a bridge session. */
+  /**
+   * Filename-matching candidates that could not be read as a descriptor. They
+   * do not establish that any session exists.
+   */
   readonly unreadable: number;
   /** Readable descriptors whose session did not return a valid status. */
   readonly unanswered: number;
@@ -42,8 +45,8 @@ export type CutterUnlistedDescriptors = {
 /**
  * When no session answers, discovery cannot tell why no live session was
  * published, so the limitation lists the possible causes and the observed
- * Cutter 2.5.0 plugin rejection. Descriptors that were published but could not
- * be listed are counted separately.
+ * Cutter 2.5.0 plugin rejection. Unreadable descriptor candidates and
+ * unanswered sessions are counted separately.
  */
 const NO_LIVE_BRIDGE_LIMITATION =
   "No REA bridge session in bridge_directory answered. Discovery cannot tell whether Cutter is not running, did not load the REA Python plugin, loaded it but could not publish a session (for example, an unwritable or full bridge directory), or uses another REA_CUTTER_BRIDGE_DIR. Cutter's startup log shows whether the plugin loaded; the bridge does not log a publication failure. Official Cutter 2.5.0 builds have been observed to reject Python plugins, including this one (rizinorg/cutter#3659).";
@@ -55,7 +58,7 @@ const unlistedLimitations = ({
   ...(unreadable === 0
     ? []
     : [
-        `${String(unreadable)} session ${unreadable === 1 ? "descriptor" : "descriptors"} in bridge_directory could not be read (not a private regular file, unreadable, oversized, malformed, or not matching its file name), so ${unreadable === 1 ? "its session is" : "their sessions are"} not listed.`,
+        `${String(unreadable)} descriptor ${unreadable === 1 ? "candidate" : "candidates"} in bridge_directory could not be read (removed, not a private regular file, unreadable, oversized, malformed, or not matching its file name). Whether ${unreadable === 1 ? "it describes a Cutter session" : "they describe Cutter sessions"} is unknown.`,
       ]),
   ...(unanswered === 0
     ? []
@@ -66,8 +69,8 @@ const unlistedLimitations = ({
 
 /**
  * Limitations owned by each discovery status. A found session does not make
- * discovery complete: descriptors that could not be read or whose status probe
- * failed stay unlisted, and their counts remain visible.
+ * discovery complete: unreadable descriptor candidates and sessions whose
+ * status probe failed stay unlisted, and their counts remain visible.
  */
 export const cutterDiscoveryLimitations = (
   status: z.infer<typeof cutterDiscoverySchema>["discovery_status"],
