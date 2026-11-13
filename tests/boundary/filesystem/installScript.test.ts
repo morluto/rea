@@ -206,6 +206,45 @@ describe("installer reported version", { timeout: 20_000 }, () => {
   });
 });
 
+describe("installer PATH report", { timeout: 20_000 }, () => {
+  // Both cases run with a fixture-only PATH: a host `rea` in /usr/bin or /bin
+  // would otherwise satisfy the installer's `command -v rea` and the fixture
+  // would stop deciding the outcome. The fixture bin carries every command
+  // install.sh resolves.
+  it("reports the unreachable installed command and its directory", async () => {
+    const fixture = await createFixture();
+    const result = await runInstaller(
+      fixture,
+      ["--version", "0.3.0", "--no-setup"],
+      { PATH: fixture.bin },
+    );
+    expect(result.stdout).toContain("REA 0.3.0 is installed");
+    expect(result.stdout).toContain(
+      `NOTE: the installed command is not on PATH: ${join(fixture.home, ".local/bin/rea")}\n`,
+    );
+    expect(result.stdout).toContain(
+      `Add ${join(fixture.home, ".local/bin")} to PATH to run rea without a path.\n`,
+    );
+    expect(result.stderr).toBe("");
+  });
+
+  it("stays quiet when the installed command already resolves on PATH", async () => {
+    const fixture = await createFixture();
+    const result = await runInstaller(
+      fixture,
+      ["--version", "0.3.0", "--no-setup"],
+      {
+        PATH: `${join(fixture.home, ".local/bin")}:${fixture.bin}`,
+      },
+    );
+    expect(result.stdout).toContain("REA 0.3.0 is installed");
+    expect(result.stdout).not.toContain(
+      "NOTE: the installed command is not on PATH:",
+    );
+    expect(result.stderr).toBe("");
+  });
+});
+
 describe("installer TTY fallback", { timeout: 20_000 }, () => {
   it("skips automatic setup when stderr is redirected", async () => {
     const fixture = await createFixture();
@@ -597,7 +636,7 @@ printf '%s\n' "$*" >> "$FAKE_REA_LOG"
 exit 0
 `,
     ),
-    ...["chmod", "cp", "mkdir", "tr"].map((command) =>
+    ...["chmod", "cp", "dirname", "mkdir", "tr"].map((command) =>
       symlink(`/usr/bin/${command}`, join(bin, command)),
     ),
   ]);
