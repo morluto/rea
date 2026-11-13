@@ -7,12 +7,13 @@ import {
   readFile,
   rm,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -284,6 +285,51 @@ writeFileSync(
   }
 });
 
+it("recovers an install lock abandoned before its owner record and an abandoned recovery directory", async () => {
+  const version = "6.8.0-published-abandoned-lock";
+  const prefix = installPrefix(version);
+  const lockPath = join(cacheRootFor(), `${version}.lock`);
+  const recoveryPath = `${lockPath}.recovery`;
+  await rm(prefix, { recursive: true, force: true });
+  await mkdir(cacheRootFor(), { recursive: true, mode: 0o700 });
+  if (uid !== undefined) await chmod(cacheRootFor(), 0o700);
+  // A launcher that died between creating the lock directory and writing its
+  // pid, and a recoverer that died mid-recovery, both leave empty directories.
+  const abandonedAt = new Date(Date.now() - 60_000);
+  for (const path of [lockPath, recoveryPath]) {
+    await rm(path, { recursive: true, force: true });
+    await mkdir(path, { mode: 0o700 });
+    await utimes(path, abandonedAt, abandonedAt);
+  }
+  onTestFinished(async () => {
+    await rm(prefix, { recursive: true, force: true });
+    await rm(lockPath, { recursive: true, force: true });
+    await rm(recoveryPath, { recursive: true, force: true });
+  });
+  const bin = await createTestTempDirectory("rea-published-npm-");
+  const npmEntry = join(bin, "npm-cli.cjs");
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+const { mkdirSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.stdout.write('recovered');", { mode: 0o600 });
+`,
+  );
+  const { child, closed } = start([version], {
+    ...process.env,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+  });
+  child.stdin.end();
+  const result = await closed;
+  expect(result.code).toBe(0);
+  expect(result.stdout).toBe("recovered");
+  expect(await readFile(join(prefix, READY_MARKER), "utf8")).toBe(version);
+});
 it("coordinates concurrent cold starts through one installer publication", async () => {
   const version = "6.8.0-published-concurrent";
   const prefix = installPrefix(version);
@@ -720,10 +766,34 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "terminates an in-flight npm install on SIGTERM and awaits its exit",
-  async () => {
-    const version = "6.8.0-published-install-sigterm";
+const waitForProcessExit = async (pid: number, label: string) => {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch (cause) {
+      if (
+        cause !== null &&
+        typeof cause === "object" &&
+        "code" in cause &&
+        cause.code === "ESRCH"
+      )
+        return;
+      throw cause;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`${label} ${String(pid)} remained running`);
+};
+
+// Production installs run lifecycle scripts (for example Frida's) as children of
+// npm, so cancellation must stop the whole installer family, including when
+// npm and its child ignore SIGTERM and only the forced stop can end them.
+describe.skipIf(process.platform === "win32")("installer cancellation", () => {
+  it.each([
+    ["terminates an in-flight npm install and its child on SIGTERM", false],
+    ["force-stops an npm install and its child that ignore SIGTERM", true],
+  ] as const)("%s", async (_name, ignoreTerm) => {
+    const version = `6.8.0-published-install-sigterm-${ignoreTerm ? "forced" : "graceful"}`;
     const prefix = installPrefix(version);
     await rm(prefix, { recursive: true, force: true });
     onTestFinished(async () => {
@@ -740,12 +810,21 @@ it.skipIf(process.platform === "win32")(
     await mkdir(bin);
     const npmEntry = join(bin, "npm-cli.cjs");
     const pidPath = join(workspace, "npm.pid");
+    const childPidPath = join(workspace, "npm-child.pid");
+    const holdOpen = `${ignoreTerm ? 'process.on("SIGTERM", () => {});' : ""}setInterval(() => {}, 1000);`;
     await writeFile(
       npmEntry,
       `#!/usr/bin/env node
 const { writeFileSync } = require("node:fs");
+const { spawn } = require("node:child_process");
+const lifecycle = spawn(
+  process.execPath,
+  ["-e", ${JSON.stringify(holdOpen)}],
+  { stdio: "ignore" },
+);
+writeFileSync(${JSON.stringify(childPidPath)}, String(lifecycle.pid));
 writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
-setInterval(() => {}, 1000);
+${holdOpen}
 `,
     );
     const { child, closed } = start([version], {
@@ -754,30 +833,17 @@ setInterval(() => {}, 1000);
       npm_execpath: npmEntry,
     });
     const npmPid = Number.parseInt((await waitForFile(pidPath)).trim(), 10);
+    const lifecyclePid = Number.parseInt(
+      (await waitForFile(childPidPath)).trim(),
+      10,
+    );
     expect(npmPid).toBeGreaterThan(0);
+    expect(lifecyclePid).toBeGreaterThan(0);
     child.kill("SIGTERM");
     const result = await closed;
     expect(result.code).toBe(143);
     expect(result.stdout).toBe("");
-    await expect(
-      (async () => {
-        for (let attempt = 0; attempt < 50; attempt += 1) {
-          try {
-            process.kill(npmPid, 0);
-          } catch (cause) {
-            if (
-              cause !== null &&
-              typeof cause === "object" &&
-              "code" in cause &&
-              cause.code === "ESRCH"
-            )
-              return;
-            throw cause;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        throw new Error(`npm installer ${String(npmPid)} remained running`);
-      })(),
-    ).resolves.toBeUndefined();
-  },
-);
+    await waitForProcessExit(npmPid, "npm installer");
+    await waitForProcessExit(lifecyclePid, "npm lifecycle child");
+  });
+});

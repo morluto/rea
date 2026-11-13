@@ -336,7 +336,7 @@ describe("plugin release pins", () => {
         rea: {
           command: "node",
           args: publishedLauncherArgs("${PLUGIN_ROOT}", nextVersion),
-          startup_timeout_sec: 30,
+          startup_timeout_sec: MCP_STARTUP_POLICY.pluginColdStartTimeoutSeconds,
         },
       },
     });
@@ -425,11 +425,11 @@ describe("plugin release pins", () => {
     );
   });
 
-  it("carries the owned Codex startup timeout in the companion server entry", async () => {
+  it("gives the Codex plugin launcher a cold-start budget that covers installing the package", async () => {
     expect(await readJson(pluginServerConfig)).toMatchObject({
       mcpServers: {
         rea: {
-          startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
+          startup_timeout_sec: MCP_STARTUP_POLICY.pluginColdStartTimeoutSeconds,
         },
       },
     });

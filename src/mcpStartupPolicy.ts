@@ -11,6 +11,8 @@ import {
  */
 export const MCP_STARTUP_POLICY = {
   codexStartupTimeoutSeconds: 30,
+  /** Plugin launchers may download the pinned package before answering the handshake. */
+  pluginColdStartTimeoutSeconds: 300,
   kimiStartupTimeoutMs: 30_000,
   toolOperationHeadroomMs: 120_000,
   doctorStderrBytes: 64 * 1024,
