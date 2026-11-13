@@ -145,12 +145,58 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
           "integrity",
           "Selected .NET bundle entry differs from its observed manifest",
         );
+      let inputStream: Readable | undefined;
+      let decodedStream: Readable | undefined;
+      const onFailure = (cause: unknown): void => {
+        stream.destroy(
+          this.#memberFailure(selected.file, decodedStream?.errored ?? cause),
+        );
+      };
+      const observeSource = (input: Readable, decoded: Readable): void => {
+        inputStream = input;
+        decodedStream = decoded;
+        input.on("error", onFailure);
+        if (decoded !== input) decoded.on("error", onFailure);
+        // The descriptor owner observes abort first and retains in-flight I/O
+        // failures, even while this iterator is suspended at a yield.
+        signal?.removeEventListener("abort", onAbort);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+      };
       const stream = Readable.from(
-        this.#readMember(source, selected.file, signal),
+        this.#readMember(
+          source,
+          selected.file,
+          { source: observeSource, failure: onFailure },
+          signal,
+        ),
         { objectMode: false },
       );
+      const onAbort = (): void => {
+        if (stream.destroyed) return;
+        if (inputStream !== undefined && !inputStream.destroyed) return;
+        onFailure(
+          inputStream?.errored ??
+            new ArtifactReaderFailure(
+              "cancelled",
+              ".NET bundle read cancelled",
+              {
+                cause: signal?.reason,
+              },
+            ),
+        );
+      };
+      stream.on("error", () => undefined);
       this.#streams.add(stream);
-      stream.once("close", () => this.#streams.delete(stream));
+      stream.once("close", () => {
+        this.#streams.delete(stream);
+        signal?.removeEventListener("abort", onAbort);
+        inputStream?.removeListener("error", onFailure);
+        if (decodedStream !== inputStream)
+          decodedStream?.removeListener("error", onFailure);
+      });
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
       return stream;
     });
   }
@@ -186,6 +232,10 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
   async *#readMember(
     source: StableRegularFileDescriptor,
     file: DotnetBundleFile,
+    lifecycle: {
+      source(input: Readable, decoded: Readable): void;
+      failure(cause: unknown): void;
+    },
     signal?: AbortSignal,
   ): AsyncGenerator<Buffer> {
     const storedBytes = file.compressedSize || file.size;
@@ -199,6 +249,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
           });
     const inflater = file.compressedSize === 0 ? undefined : createInflateRaw();
     const decoded = inflater ?? input;
+    lifecycle.source(input, decoded);
     const pumping =
       inflater === undefined ? undefined : pipeline(input, inflater);
     // Observe early pipeline rejections while the output iterator is still reading.
@@ -209,11 +260,16 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
         abortIfNeeded(signal);
         const chunk: Buffer = raw;
         bytes += chunk.length;
-        if (bytes > file.size)
-          throw new ArtifactReaderFailure(
+        if (bytes > file.size) {
+          const failure = new ArtifactReaderFailure(
             "limit",
             `.NET bundle entry expands beyond its declared size: ${file.path}`,
           );
+          // Leaving for-await closes the decoder, which can emit an AbortError.
+          // Record this validation failure before that iterator cleanup begins.
+          lifecycle.failure(failure);
+          throw failure;
+        }
         yield chunk;
       }
       await pumping;
@@ -227,21 +283,30 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
         );
       await this.#source.readSelectedPath(signal);
     } catch (cause) {
-      if (cause instanceof ArtifactReaderFailure) throw cause;
-      const malformedCompression =
-        inflater !== undefined &&
-        cause instanceof Error &&
-        "code" in cause &&
-        ["Z_DATA_ERROR", "Z_BUF_ERROR"].includes(String(cause.code));
-      throw new ArtifactReaderFailure(
-        malformedCompression ? "format" : "io",
-        `Could not read .NET bundle member: ${file.path}`,
-        { cause },
-      );
+      const failure = this.#memberFailure(file, cause);
+      lifecycle.failure(failure);
+      throw failure;
     } finally {
       input.destroy();
       decoded.destroy();
       await pumping?.catch(() => undefined);
     }
+  }
+
+  #memberFailure(
+    file: DotnetBundleFile,
+    cause: unknown,
+  ): ArtifactReaderFailure {
+    if (cause instanceof ArtifactReaderFailure) return cause;
+    const malformedCompression =
+      file.compressedSize !== 0 &&
+      cause instanceof Error &&
+      "code" in cause &&
+      ["Z_DATA_ERROR", "Z_BUF_ERROR"].includes(String(cause.code));
+    return new ArtifactReaderFailure(
+      malformedCompression ? "format" : "io",
+      `Could not read .NET bundle member: ${file.path}`,
+      { cause },
+    );
   }
 }
