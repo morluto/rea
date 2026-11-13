@@ -739,6 +739,14 @@ describe("decompile_all retained body coverage", () => {
   const directory = useOutputDirectory();
   const limitationsOf = (value: JsonValue): readonly string[] =>
     (value as { limitations: string[] }).limitations;
+  const unavailableReasons = (index: {
+    readonly functions: readonly {
+      readonly body: { readonly available: boolean; readonly reason?: string };
+    }[];
+  }): string[] =>
+    index.functions.flatMap(({ body }) =>
+      !body.available && body.reason !== undefined ? [body.reason] : [],
+    );
   const indexOf = async () =>
     decompileDirectoryIndexSchema.parse(
       JSON.parse(
@@ -757,9 +765,12 @@ describe("decompile_all retained body coverage", () => {
     expect(created.ok).toBe(true);
     if (!created.ok) return;
     const createdLimitations = limitationsOf(created.value);
-    expect(createdLimitations).toEqual([
-      "3 exported function record(s) report an unavailable body: procedure_info is unavailable, so function body ranges are unknown.",
-    ]);
+    // One caveat counts the retained records and repeats their shared reason.
+    expect(createdLimitations).toHaveLength(1);
+    const createdReason = unavailableReasons(await indexOf())[0];
+    expect(createdReason).toBeDefined();
+    expect(createdLimitations[0]).toMatch(/^3 exported function record/u);
+    expect(createdLimitations[0]).toContain(createdReason);
     const file = join(directory(), "functions/0x1000.c");
     const before = await readFile(file, "utf8");
 
@@ -795,9 +806,14 @@ describe("decompile_all retained body coverage", () => {
     expect(mixed.value).toMatchObject({
       counts: { written: 1, skipped: 2 },
     });
-    expect(limitationsOf(mixed.value)).toContain(
-      "3 exported function record(s) report an unavailable body for differing reasons; see each record's body.reason in decompile-index.json.",
+    // Differing reasons are counted together without naming either one.
+    const reasons = new Set(unavailableReasons(await indexOf()));
+    expect(reasons.size).toBe(2);
+    const mixedCaveats = limitationsOf(mixed.value).filter((limitation) =>
+      limitation.startsWith("3 exported function record"),
     );
+    expect(mixedCaveats).toHaveLength(1);
+    for (const reason of reasons) expect(mixedCaveats[0]).not.toContain(reason);
 
     for (const address of ["0x1000", "0x2000", "0x3000"])
       await rm(join(directory(), `functions/${address}.c`));

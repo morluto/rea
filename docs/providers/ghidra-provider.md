@@ -342,8 +342,8 @@ excluded code. When the callee's entry, or the function a thunk forwards to,
 carries the `Non-Returning Function Found` analysis bookmark that Ghidra's
 `Non-Returning Functions - Discovered` analyzer writes, the call's limitation
 says the flag was inferred, and the function's limitations add one statement
-that the body and pseudocode end at that call and omit the following code if
-the callee returns. That analyzer can mark returning callees, such as an
+that Ghidra excluded that call's fall-through from the body and pseudocode, so
+code reachable only through it is missing if the callee returns. That analyzer can mark returning callees, such as an
 imported `operator new` thunk, so a constructor may decompile to a few lines. To
 compare, open a fresh import with
 `REA_GHIDRA_DISABLED_ANALYZERS='Non-Returning Functions - Discovered'`; an

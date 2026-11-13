@@ -4015,14 +4015,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         private List<String> values() {
             if (!inferredNoReturnCall) return List.copyOf(limitations);
-            List<String> result = new ArrayList<>(limitations);
-            // One consequence and recovery per function; each call keeps its own fact. The text
-            // names no address, so bounded summaries deduplicate it across functions.
+            List<String> result = new ArrayList<>();
+            // One consequence and recovery per function, ahead of the call-specific facts so a
+            // bounded summary that admits limitations in order keeps it. The text names no
+            // address, so those summaries also deduplicate it across functions.
             result.add("A terminal call in this function targets a callee that " +
                 "Ghidra's Non-Returning Functions - Discovered analyzer inferred cannot return, so Ghidra " +
-                "ended the analyzed body, and the pseudocode and facts derived from it, at that call. If the " +
-                "callee returns, this result omits the code after the call. To compare, analyze a fresh import " +
-                "with REA_GHIDRA_DISABLED_ANALYZERS='Non-Returning Functions - Discovered'.");
+                "excluded that call's fall-through from the analyzed body and from the pseudocode and facts " +
+                "derived from it. If the callee returns, code reachable only through that fall-through is " +
+                "missing from this result. To compare, analyze a fresh import with " +
+                "REA_GHIDRA_DISABLED_ANALYZERS='Non-Returning Functions - Discovered'.");
+            result.addAll(limitations);
             return result;
         }
     }
