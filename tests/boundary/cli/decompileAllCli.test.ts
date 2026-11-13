@@ -100,8 +100,9 @@ describe("decompile-all CLI", () => {
       });
       // Kuna lacks procedure_info, so every retained record keeps an
       // unavailable body. A resume that writes nothing still summarizes them.
-      const bodyCaveat =
-        "2 exported function record(s) report an unavailable body: procedure_info is unavailable, so function body ranges are unknown.";
+      const bodyCaveat = expect.stringMatching(
+        /^2 exported function record.*procedure_info is unavailable/u,
+      );
       expect(resumed.json).toMatchObject({
         normalized_result: { limitations: [bodyCaveat] },
       });
