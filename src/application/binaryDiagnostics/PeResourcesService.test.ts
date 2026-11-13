@@ -8,6 +8,12 @@ import {
   DEFAULT_CODE_PAGE,
   RESOURCE_CODE_PAGES,
 } from "../../domain/native/delphiForm.js";
+import {
+  delphiBytes,
+  delphiComponent,
+  delphiForm,
+  delphiProperty,
+} from "../../native/pe/DelphiForm.fixture.js";
 import { parsePeResources } from "../../native/pe/PeResourceParser.js";
 import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
 import { ok } from "../../domain/result.js";
@@ -562,6 +568,7 @@ it("rejects an integer whose value does not fit its declared width", async () =>
   const report = await formWithProperty("vaInt8", {
     kind: "integer",
     text: "999",
+    bytes_hex: "e7",
     width: 8,
     signed: true,
   });
@@ -610,6 +617,30 @@ it("rejects a property name range outside its owning property", async () => {
     ok: false,
     error: { _tag: "AnalysisOutputError" },
   });
+});
+
+it("publishes a decoded form that stopped with an explicit unknown", async () => {
+  const payload = delphiForm(
+    delphiComponent("TForm1", "Form1", [
+      delphiProperty("Future", delphiBytes(24, 1, 2, 3)),
+    ]),
+  );
+  const { bytes } = peResourceFixture(false, [
+    { type: 10, name: 7, language: 1033, payload },
+  ]);
+  const report = await parsePeResources(
+    bytes,
+    {
+      path: "/fixtures/example.exe",
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    },
+    inspectPeResourcesInputSchema.parse({ path: "/fixtures/example.exe" }),
+  );
+  expect(report.delphi_forms[0]?.root.unknown?.reason).toContain(
+    "Unsupported value type",
+  );
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
 });
 
 it("rejects a complete root that stops before the payload end", async () => {

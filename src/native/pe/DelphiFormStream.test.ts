@@ -184,17 +184,20 @@ describe("Delphi form property values", () => {
     expect(propertyOf(root, "Tag").value).toMatchObject({
       kind: "integer",
       text: "-5",
+      bytes_hex: "fb",
       width: 8,
       signed: true,
     });
     expect(propertyOf(root, "Width").value).toMatchObject({
       kind: "integer",
       text: "-300",
+      bytes_hex: "d4fe",
       width: 16,
     });
     expect(propertyOf(root, "Height").value).toMatchObject({
       kind: "integer",
       text: "70000",
+      bytes_hex: "70110100",
       width: 32,
     });
     expect(propertyOf(root, "Big").value).toMatchObject({
@@ -206,6 +209,7 @@ describe("Delphi form property values", () => {
     expect(propertyOf(root, "Unsigned").value).toMatchObject({
       kind: "integer",
       text: "18446744073709551615",
+      bytes_hex: "ffffffffffffffff",
       width: 64,
       signed: false,
     });

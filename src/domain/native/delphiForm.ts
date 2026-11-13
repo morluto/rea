@@ -49,6 +49,7 @@ export type DelphiFormValue =
   | {
       readonly kind: "integer";
       readonly text: string;
+      readonly bytes_hex: string;
       readonly width: 8 | 16 | 32 | 64;
       readonly signed: boolean;
       readonly location: DelphiFormRange;
@@ -296,6 +297,7 @@ const valueSchemaOf = <V extends z.ZodType, C extends z.ZodType>(
     z.strictObject({
       kind: z.literal("integer"),
       text: z.string(),
+      bytes_hex: hexSchema,
       width: z.union([
         z.literal(8),
         z.literal(16),

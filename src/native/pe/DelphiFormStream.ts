@@ -345,6 +345,31 @@ function readInteger(stream: Stream, width: 8 | 16 | 32 | 64): string {
   return String(stream.take(1).readInt8(0));
 }
 
+function integerValue(
+  stream: Stream,
+  width: 8 | 16 | 32 | 64,
+  signed: boolean,
+): DelphiFormValue {
+  const at = stream.position;
+  const raw = stream.take(width / 8);
+  const text =
+    width === 64
+      ? (signed ? raw.readBigInt64LE(0) : raw.readBigUInt64LE(0)).toString()
+      : width === 32
+        ? String(signed ? raw.readInt32LE(0) : raw.readUInt32LE(0))
+        : width === 16
+          ? String(signed ? raw.readInt16LE(0) : raw.readUInt16LE(0))
+          : String(signed ? raw.readInt8(0) : raw.readUInt8(0));
+  return {
+    kind: "integer",
+    text,
+    bytes_hex: raw.toString("hex"),
+    width,
+    signed,
+    location: range(at, stream.position),
+  };
+}
+
 /** Integer and floating point value types; null when the ordinal is not one. */
 function readNumericValue(
   stream: Stream,
@@ -353,37 +378,13 @@ function readNumericValue(
   const at = stream.position;
   switch (ordinal) {
     case 2:
-      return {
-        kind: "integer",
-        text: readInteger(stream, 8),
-        width: 8,
-        signed: true,
-        location: range(at, stream.position),
-      };
+      return integerValue(stream, 8, true);
     case 3:
-      return {
-        kind: "integer",
-        text: readInteger(stream, 16),
-        width: 16,
-        signed: true,
-        location: range(at, stream.position),
-      };
+      return integerValue(stream, 16, true);
     case 4:
-      return {
-        kind: "integer",
-        text: readInteger(stream, 32),
-        width: 32,
-        signed: true,
-        location: range(at, stream.position),
-      };
+      return integerValue(stream, 32, true);
     case 19:
-      return {
-        kind: "integer",
-        text: readInteger(stream, 64),
-        width: 64,
-        signed: true,
-        location: range(at, stream.position),
-      };
+      return integerValue(stream, 64, true);
     case 15: {
       const raw = stream.take(4);
       const value = raw.readFloatLE(0);
@@ -407,13 +408,7 @@ function readNumericValue(
       };
     }
     case 23:
-      return {
-        kind: "integer",
-        text: stream.take(8).readBigUInt64LE(0).toString(),
-        width: 64,
-        signed: false,
-        location: range(at, stream.position),
-      };
+      return integerValue(stream, 64, false);
     case 5: {
       const raw = stream.take(10);
       const value = decodeExtended(raw);
@@ -792,12 +787,11 @@ function readValue(
                   : {
                       kind: "unknown",
                       reason: error.message,
-                      ...hexOf(
-                        stream.bytes.subarray(stream.position, stream.end),
-                      ),
-                      location: range(stream.position, stream.end),
+                      bytes_hex: "",
+                      truncated: stream.remaining > 0,
+                      location: range(stream.position, stream.position),
                     },
-              location: range(propertyAt, stream.end),
+              location: range(propertyAt, stream.position),
             });
             items.push({
               position,
@@ -937,10 +931,11 @@ function readObject(
               : {
                   kind: "unknown",
                   reason: error.message,
-                  ...hexOf(stream.bytes.subarray(stream.position, stream.end)),
-                  location: range(stream.position, stream.end),
+                  bytes_hex: "",
+                  truncated: stream.remaining > 0,
+                  location: range(stream.position, stream.position),
                 },
-          location: range(propertyAt, stream.end),
+          location: range(propertyAt, stream.position),
         });
         throw new StoppedForm(partial(error.message));
       }
