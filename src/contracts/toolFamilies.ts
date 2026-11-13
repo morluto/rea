@@ -24,6 +24,7 @@ import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
 import { DESKTOP_APPLICATION_TOOL_CONTRACTS } from "./desktopApplicationToolContracts.js";
 import { DESKTOP_BUILD_TOOL_CONTRACTS } from "./desktopBuildToolContracts.js";
 import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
+import { UNITY_ADDRESSABLES_TOOL_CONTRACTS } from "./unity/unityAddressablesToolContracts.js";
 import { MODEL_TOOL_CONTRACTS } from "./model/modelToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "./managed/managedToolContracts.js";
 import { FIRMWARE_TOOL_CONTRACTS } from "./firmware/firmwareToolContracts.js";
@@ -98,6 +99,7 @@ export const TOOL_CONTRACT_GROUPS = {
   SESSION_TOOL_CONTRACTS,
   SIGNAL_TOOL_CONTRACTS,
   SQLITE_TOOL_CONTRACTS,
+  UNITY_ADDRESSABLES_TOOL_CONTRACTS,
   V8_CODE_CACHE_TOOL_CONTRACTS,
   WASM_TOOL_CONTRACTS,
   WEB_NETWORK_CAPTURE_TOOL_CONTRACTS,
@@ -153,6 +155,7 @@ export const TOOL_FAMILY_DEFINITIONS = [
       ...TOOL_CONTRACT_GROUPS.GO_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.GPU_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.IL2CPP_TOOL_CONTRACTS,
+      ...TOOL_CONTRACT_GROUPS.UNITY_ADDRESSABLES_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.MODEL_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.RUST_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.PYTHON_PYC_TOOL_CONTRACTS,

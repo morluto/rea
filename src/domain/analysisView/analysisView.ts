@@ -97,6 +97,7 @@ import { projectAndroidSymbolSummary } from "./androidSymbolView.js";
 import { projectAndroidJniView } from "./androidJniView.js";
 import { projectDartAotView } from "./dartAotView.js";
 import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
+import { projectUnityAddressablesView } from "./unityAddressablesView.js";
 
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { GroupingViewKind } from "./analysisViewShape.js";
@@ -156,6 +157,7 @@ import {
   modelArtifactSummaryViewResultSchema,
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
+  unityAddressablesSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
   nativeFeatureTraceSummaryViewResultSchema,
   nativeProcedureReferencesSummaryViewResultSchema,
@@ -236,6 +238,7 @@ export {
   modelArtifactSummaryViewResultSchema,
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
+  unityAddressablesSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
   nativeProcedureReferencesSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
@@ -374,6 +377,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_dart_aot", projectDartAotView),
   retain("inspect_il2cpp_metadata", projectIl2cppMetadataView),
   retain("inspect_apk_signature", projectApkSignatureView),
+  retain("inspect_unity_addressables", projectUnityAddressablesView),
   retain("inspect_model_artifact", projectModelArtifactView),
   retain("inspect_gpu_code_objects", projectGpuCodeObjectsView),
   retain("match_native_functions", projectNativeFunctionMatchingView),

@@ -69,6 +69,7 @@ export const CLI_COMMANDS = Object.freeze({
   auditReleaseExposure: "audit-release-exposure",
   inspectGoBinary: "inspect-go-binary",
   inspectIl2cppMetadata: "inspect-il2cpp-metadata",
+  inspectUnityAddressables: "inspect-unity-addressables",
   inspectModelArtifact: "inspect-model-artifact",
   inspectApiContract: "inspect-api-contract",
   inspectNtfsJournal: "inspect-ntfs-journal",
