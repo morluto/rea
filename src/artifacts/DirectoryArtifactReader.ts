@@ -299,8 +299,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
       await this.#finishDirectory(handle, directory, traversal);
     }
     if (traversal.kind === "failed") throw traversal.cause;
-    childDirectories.reverse();
-    pending.push(...childDirectories);
+    for (const child of childDirectories.reverse()) pending.push(child);
   }
 
   async #finishDirectory(
