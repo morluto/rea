@@ -376,6 +376,45 @@ const schedulesWithNonFunctionCallback = (
   return t.isUnaryExpression(value);
 };
 
+const isGlobalSymbolReference = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  t.isIdentifier(node) &&
+  node.name === "Symbol" &&
+  isUnmodifiedGlobalReference(node, state, "Symbol") &&
+  !semanticOpaqueNameMayHaveChanged(node, state);
+
+/**
+ * A schedule imported from Node's `timers` module rejects delays that cannot
+ * be converted to a number (such as a BigInt or a Symbol), throwing TypeError
+ * synchronously before creating a handle. Only setTimeout and setInterval take
+ * a delay parameter; setImmediate passes subsequent arguments to the callback.
+ */
+const schedulesWithRejectedDelay = (
+  method: JavaScriptSemanticTimerOperation["method"],
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (method !== "setTimeout" && method !== "setInterval") return false;
+  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+    return false;
+  const argument = node.arguments[1];
+  if (argument === undefined || t.isSpreadElement(argument)) return false;
+  const value = unwrapJavaScriptExpression(argument).node;
+  if (t.isBigIntLiteral(value)) return true;
+  if (
+    t.isCallExpression(value) &&
+    (isGlobalSymbolReference(value.callee, state) ||
+      (t.isMemberExpression(value.callee) &&
+        isGlobalSymbolReference(value.callee.object, state)))
+  )
+    return true;
+  return (
+    t.isMemberExpression(value) && isGlobalSymbolReference(value.object, state)
+  );
+};
+
 const collectTimer = (input: TimerCollectionInput): void => {
   const { node, ownerCallableId, state, output, ancestors } = input;
   const identity = timerMethod(node.callee, state);
@@ -384,7 +423,8 @@ const collectTimer = (input: TimerCollectionInput): void => {
   if (
     TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method) &&
     nodeBuiltinTimerMethod(node.callee, state) !== null &&
-    schedulesWithNonFunctionCallback(node, input.state)
+    (schedulesWithNonFunctionCallback(node, input.state) ||
+      schedulesWithRejectedDelay(method, node, input.state))
   )
     return;
   const kind = TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method)
