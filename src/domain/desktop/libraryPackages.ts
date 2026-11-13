@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 
 import type { Result } from "../result.js";
+import { compositeKey } from "../unicodeCodePointOrder.js";
 import { fromUbuntuNobleArchive } from "./appExportInstall.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import type {
@@ -68,6 +69,10 @@ interface LoadedObject {
 
 const ORIGIN_TOKEN = /\$(?:ORIGIN(?![A-Za-z0-9_])|\{ORIGIN\})/gu;
 
+/** Expand only the declaration: dollars in the owner's directory are literal data. */
+const expandOrigin = (owner: string, declaration: string): string =>
+  declaration.replace(ORIGIN_TOKEN, () => posix.dirname(owner));
+
 /** Absolute directories with `$ORIGIN` expanded to the owner's folder; relative and other dynamic-token paths are left out. */
 const expanded = (
   owner: string,
@@ -76,7 +81,7 @@ const expanded = (
   directories
     // Check tokens before expansion: dollars in the owner's directory are data.
     .filter((path) => !path.replace(ORIGIN_TOKEN, "").includes("$"))
-    .map((path) => path.replace(ORIGIN_TOKEN, () => posix.dirname(owner)))
+    .map((path) => expandOrigin(owner, path))
     .filter((path) => path.startsWith("/"))
     .map((path) => posix.normalize(path));
 
@@ -98,24 +103,24 @@ const searchDirectories = (object: LoadedObject): readonly string[] => {
   ];
 };
 
-/** Search order identifies candidates; existence alone does not select a loaded object. */
+/** The closure owns request expansion/normalization; candidates still require identity admission. */
 async function* libraryCandidates(
-  soname: string,
+  request: string,
   directories: readonly string[],
   machine: number,
   cache: readonly LinkerCacheEntry[],
   host: LibraryWalkHost,
 ): AsyncGenerator<string> {
-  if (soname.startsWith("/")) {
-    yield posix.normalize(soname);
+  if (request.startsWith("/")) {
+    yield request;
     return;
   }
-  if (!soname.includes("/"))
+  if (!request.includes("/"))
     for (const directory of directories) {
-      const candidate = posix.join(directory, soname);
+      const candidate = posix.join(directory, request);
       if (await host.isFile(candidate)) yield candidate;
     }
-  yield* cachedPaths(cache, soname, machine);
+  yield* cachedPaths(cache, request, machine);
 }
 
 /** Host reads the closure walk needs. */
@@ -171,9 +176,29 @@ export const libraryClosure = async (
   for (const object of queue) {
     const directories = searchDirectories(object);
     for (const soname of object.dependencies.needed) {
-      if (seen.has(soname)) continue;
+      // DT_NEEDED tokens belong to the declaring object, before request identity
+      // is shared across the closure. Identical source spellings can name two files.
+      const expandedRequest = expandOrigin(object.path, soname);
+      const request = expandedRequest.startsWith("/")
+        ? posix.normalize(expandedRequest)
+        : expandedRequest;
+      const unsupported =
+        expandedRequest !== soname &&
+        soname.replace(ORIGIN_TOKEN, "").includes("$");
+      // An unresolved declaration cannot claim a known literal lookup's identity.
+      const key = unsupported
+        ? compositeKey(["unresolved", object.path, soname])
+        : compositeKey(["lookup", request]);
+      if (seen.has(key)) continue;
       if (seen.size >= limit) return { ...closure, truncated: true };
-      seen.add(soname);
+      seen.add(key);
+      if (unsupported) {
+        closure.unreadable.push({
+          path: object.path,
+          reason: `DT_NEEDED ${JSON.stringify(soname)} contains an unsupported dynamic token or dollar expression alongside $ORIGIN`,
+        });
+        continue;
+      }
       let selected:
         | {
             path: string;
@@ -182,7 +207,7 @@ export const libraryClosure = async (
         | undefined;
       let unresolved = false;
       for await (const path of libraryCandidates(
-        soname,
+        request,
         directories,
         object.dependencies.machine,
         cache,
@@ -200,7 +225,7 @@ export const libraryClosure = async (
           break;
         }
         if (!dependencies.ok && dependencies.error.kind === "incompatible") {
-          if (soname.startsWith("/")) {
+          if (request.startsWith("/")) {
             closure.unreadable.push({
               path,
               reason: dependencies.error.reason,

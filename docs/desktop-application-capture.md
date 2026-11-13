@@ -276,7 +276,12 @@ looks each soname up as ld.so does: in the RPATH of the needing image and of
 each image up its chain of loaders to the executable when the needing image
 has no RUNPATH, then in its RUNPATH (with `$ORIGIN` expanded and paths
 normalized), and then in the `ldconfig -p` cache entries for the executable's
-machine. Each candidate's ELF machine, class and byte order must match the
+machine. `$ORIGIN` and `${ORIGIN}` in DT_NEEDED itself are expanded relative
+to the object declaring that dependency before full-path lookup and request
+deduplication; the same spelling in two libraries can name two different files.
+A combination with another dollar expression that REA does not expand remains
+unresolved with a reason, rather than selecting a literal token-named file.
+Each candidate's ELF machine, class and byte order must match the
 needing image before it is selected or its dependencies are walked. A foreign
 search-path candidate is skipped in favor of later directories or the cache; a
 cache architecture flag alone does not establish compatibility. If a candidate's
