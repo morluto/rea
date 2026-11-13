@@ -610,6 +610,47 @@ it("reports a VolumeID that selects a Unicode label it cannot hold", async () =>
   );
 });
 
+it.each([
+  { kind: "environment", field: "ansi" },
+  { kind: "environment", field: "unicode" },
+  { kind: "icon_environment", field: "ansi" },
+  { kind: "icon_environment", field: "unicode" },
+  { kind: "tracker", field: "machine" },
+] as const)(
+  "preserves raw $kind data when its fixed $field string lacks a terminator",
+  async ({ kind, field }) => {
+    const valid = windowsShortcutBytes({
+      extraData: [{ kind }, { kind: "unknown", signature: 0xa00000fe }],
+    });
+    const control = await parse(valid);
+    const [first, next] = control.extra_data.blocks;
+    if (first === undefined || next === undefined)
+      throw new Error("Expected two blocks");
+    const bytes = Buffer.from(valid);
+    const start =
+      first.offset +
+      8 +
+      (field === "unicode" ? 260 : field === "machine" ? 8 : 0);
+    const length = field === "unicode" ? 520 : field === "machine" ? 16 : 260;
+    bytes.fill(0x41, start, start + length);
+    const report = await parse(bytes);
+    const payload = bytes.subarray(first.offset + 8, next.offset);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: start,
+    });
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({ code: "malformed_structure", offset: start }),
+    );
+    expect(report.extra_data.blocks[0]?.decoded).toEqual({
+      kind: "raw",
+      bytes: payload.length,
+      sha256: createHash("sha256").update(payload).digest("hex"),
+    });
+    expect(report.extra_data.blocks[1]).toEqual(next);
+  },
+);
+
 it("keeps readable dates for FILETIME values before 1970", async () => {
   // 1950-01-01T00:00:00Z in 100 ns intervals since 1601.
   const report = await parse(

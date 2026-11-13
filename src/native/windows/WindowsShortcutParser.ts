@@ -884,6 +884,23 @@ const decodeExtra = (
   offset: number,
 ): WindowsShortcutExtraDataBlock["decoded"] => {
   if (signature === 0xa0000001 || signature === 0xa0000007) {
+    const ansi = payload.subarray(0, 260);
+    const unicode = payload.subarray(260, 780);
+    const invalidOffset =
+      ansi.length === 260 && ansi.indexOf(0) === -1
+        ? offset + 8
+        : unicode.length === 520 && utf16TerminatorOf(unicode) === -1
+          ? offset + 268
+          : null;
+    if (invalidOffset !== null) {
+      note(
+        walk,
+        "malformed_structure",
+        invalidOffset,
+        "Environment ExtraData fixed string is not NUL-terminated",
+      );
+      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+    }
     const targets = environmentTargets(payload);
     if (targets === null) {
       note(
@@ -925,7 +942,17 @@ const decodeExtra = (
       );
       return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
     }
-    const machine = latin1Z(payload.subarray(8, 24));
+    const machineBytes = payload.subarray(8, 24);
+    if (machineBytes.indexOf(0) === -1) {
+      note(
+        walk,
+        "malformed_structure",
+        offset + 16,
+        "TrackerDataBlock machine ID is not NUL-terminated",
+      );
+      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+    }
+    const machine = latin1Z(machineBytes);
     charge(walk, machine.length);
     const droid0 = formatGuid(payload, 24);
     const droid1 = formatGuid(payload, 40);
