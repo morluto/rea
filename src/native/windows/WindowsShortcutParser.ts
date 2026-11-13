@@ -1014,6 +1014,13 @@ const parseIdList = async (
     const size = bytes.readUInt16LE(cursor);
     if (size === 0) {
       cursor += 2;
+      if (cursor < end)
+        note(
+          walk,
+          "malformed_structure",
+          cursor,
+          "LinkTargetIDList contains bytes after its TerminalID",
+        );
       terminated = true;
       break;
     }

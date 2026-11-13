@@ -635,6 +635,39 @@ it("marks an IDList without a TerminalID as partial", async () => {
   );
 });
 
+it.each([Buffer.from([3, 0, 0xab]), Buffer.from([0x7f])])(
+  "reports bytes after the target IDList TerminalID without losing StringData",
+  async (tail) => {
+    const valid = windowsShortcutBytes({
+      idList: [{ kind: "raw", data: Buffer.from([0xfe]) }],
+      arguments: "/q",
+    });
+    const end = 78 + valid.readUInt16LE(76);
+    const bytes = Buffer.concat([
+      valid.subarray(0, end),
+      tail,
+      valid.subarray(end),
+    ]);
+    bytes.writeUInt16LE(valid.readUInt16LE(76) + tail.length, 76);
+
+    const report = await parse(bytes);
+    const control = await parse(valid);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: end,
+      examined_id_list_items: 1,
+    });
+    expect(report.issues).toEqual([
+      expect.objectContaining({ code: "malformed_structure", offset: end }),
+    ]);
+    expect(report.id_list?.items).toEqual(control.id_list?.items);
+    expect(report.string_data.arguments?.value).toBe("/q");
+    expect(report.extra_data.terminal_offset).toBe(
+      control.extra_data.terminal_offset! + tail.length,
+    );
+  },
+);
+
 const iconDifference = (
   report: Awaited<ReturnType<typeof parse>>,
 ): boolean | null | undefined => {
