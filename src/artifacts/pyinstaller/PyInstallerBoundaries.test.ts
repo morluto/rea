@@ -1,10 +1,12 @@
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
 import { dirname, join } from "node:path";
+import { getEventListeners, once } from "node:events";
+import { Readable } from "node:stream";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { createHash, randomBytes } from "node:crypto";
 import { rename, unlink, writeFile, type FileHandle } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
-import { deflateSync } from "node:zlib";
+import { deflateSync, Inflate } from "node:zlib";
 import { setImmediate } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
@@ -15,6 +17,7 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
 import * as artifactPaths from "../ArtifactPaths.js";
 import { PyInstallerPyzStore } from "./PyInstallerPyzStore.js";
+import { pyInstallerMemberStream } from "./PyInstallerMemberStream.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -48,6 +51,185 @@ const deferred = () => {
   });
   return { promise, resolve };
 };
+
+it.each(
+  [false, true].flatMap((compressed) =>
+    [
+      { stop: "caller-null", reason: null },
+      { stop: "caller-object", reason: { stage: "buffered member" } },
+      { stop: "reader-close", reason: undefined },
+    ].map((test) => ({ compressed, ...test })),
+  ),
+)(
+  "retires completed buffered members ($stop, compressed: $compressed)",
+  async ({ compressed, stop, reason }) => {
+    const payload = Buffer.from("buffered");
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          { name: "data", typeCode: "x", payload, compress: compressed },
+        ],
+      }),
+      async (reader) => {
+        const controller = new AbortController();
+        const entry = (await members(reader))[0]!;
+        const stream = await reader.open(entry, controller.signal);
+        try {
+          await once(stream, "finish");
+          // The pipeline's completion callbacks have settled; no consumer has read.
+          await setImmediate();
+          expect(stream.readableLength).toBe(payload.length);
+          expect(stream.closed).toBe(false);
+          if (stop === "reader-close") await reader.close();
+          else controller.abort(reason);
+          await setImmediate();
+          expect(stream.destroyed).toBe(true);
+          expect(stream.closed).toBe(true);
+          expect(stream.errored).toBeInstanceOf(ArtifactReaderFailure);
+          expect(stream.errored).toMatchObject({ reason: "cancelled" });
+          if (stop !== "reader-close")
+            expect(stream.errored?.cause).toBe(reason);
+        } finally {
+          stream.destroy();
+        }
+      },
+    );
+  },
+);
+
+it.each(
+  [false, true].flatMap((compressed) =>
+    (["consume", "cancel"] as const).map((stop) => ({ compressed, stop })),
+  ),
+)(
+  "keeps completion owned until readable retirement ($stop, compressed: $compressed)",
+  async ({ compressed, stop }) => {
+    const payload = Buffer.from("buffered");
+    const stored = compressed ? deflateSync(payload) : payload;
+    const controller = new AbortController();
+    const member = pyInstallerMemberStream(
+      Readable.from([stored], { objectMode: false }),
+      {
+        sourceBytes: stored.length,
+        compressed,
+        header: undefined,
+        expectedBytes: payload.length,
+        maxBytes: payload.length,
+        signal: controller.signal,
+      },
+    );
+    let settled = false;
+    void member.completion.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    try {
+      await once(member.output, "finish");
+      await setImmediate();
+      expect(settled).toBe(false);
+      expect(getEventListeners(controller.signal, "abort")).toHaveLength(1);
+      if (stop === "consume") {
+        expect((await buffer(member.output)).equals(payload)).toBe(true);
+        await member.completion;
+      } else {
+        const reason = { stage: "after producer completion" };
+        controller.abort(reason);
+        await expect(member.completion).rejects.toMatchObject({
+          reason: "cancelled",
+          cause: reason,
+        });
+        expect(member.output.errored?.cause).toBe(reason);
+      }
+      expect(settled).toBe(true);
+      expect(getEventListeners(controller.signal, "abort")).toEqual([]);
+    } finally {
+      member.output.destroy();
+      await member.completion.catch(() => undefined);
+    }
+  },
+);
+
+it.each([false, true])(
+  "forwards a queued source failure before cancellation (compressed: %s)",
+  async (compressed) => {
+    const source = new Readable({ read() {} });
+    const controller = new AbortController();
+    const io = Object.assign(new Error("queued descriptor EIO"), {
+      code: "EIO",
+    });
+    const member = pyInstallerMemberStream(source, {
+      sourceBytes: 8,
+      compressed,
+      header: undefined,
+      expectedBytes: 8,
+      maxBytes: 8,
+      signal: controller.signal,
+    });
+    const consumed = buffer(member.output);
+    void consumed.catch(() => undefined);
+    source.destroy(io);
+    // destroyed/errored are already established; the error event has not fired.
+    controller.abort({ stage: "before error forwarding" });
+    try {
+      await expect(consumed).rejects.toMatchObject({ reason: "io", cause: io });
+      await expect(member.completion).rejects.toMatchObject({
+        reason: "io",
+        cause: io,
+      });
+    } finally {
+      member.output.destroy();
+      await member.completion.catch(() => undefined);
+    }
+  },
+);
+
+it("forwards an established native inflate failure before cancellation", async () => {
+  const controller = new AbortController();
+  const nativeDestroy = Inflate.prototype.destroy;
+  let compressionFailure: Error | undefined;
+  const destroy = vi
+    .spyOn(Inflate.prototype, "destroy")
+    .mockImplementation(function (this: Inflate, error) {
+      const result = nativeDestroy.call(this, error);
+      if (error !== undefined && !controller.signal.aborted) {
+        compressionFailure = error;
+        // Native zlib has failed; its error event has not forwarded the cause.
+        controller.abort({ stage: "inflate error forwarding" });
+      }
+      return result;
+    });
+  const encoded = Buffer.from("invalid zlib");
+  const member = pyInstallerMemberStream(Readable.from([encoded]), {
+    sourceBytes: encoded.length,
+    compressed: true,
+    header: undefined,
+    expectedBytes: 8,
+    maxBytes: 8,
+    signal: controller.signal,
+  });
+  try {
+    await expect(buffer(member.output)).rejects.toMatchObject({
+      reason: "format",
+      cause: { code: "Z_DATA_ERROR" },
+    });
+    expect(compressionFailure).toBeDefined();
+    expect(member.output.errored?.cause).toBe(compressionFailure);
+    await expect(member.completion).rejects.toMatchObject({
+      reason: "format",
+      cause: compressionFailure,
+    });
+  } finally {
+    destroy.mockRestore();
+    member.output.destroy();
+    await member.completion.catch(() => undefined);
+  }
+});
 
 it.each(["success", "io", "caller cancellation", "reader close"] as const)(
   "joins the pending descriptor read after a module prefix stop (%s)",

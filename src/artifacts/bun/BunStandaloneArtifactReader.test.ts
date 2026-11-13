@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import * as artifactPaths from "../ArtifactPaths.js";
 import { BunStandaloneArtifactReader } from "../BunStandaloneArtifactReader.js";
+import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
 import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
@@ -63,6 +64,40 @@ it("keeps duplicate and unsafe names distinct while extracting exact bytes", asy
   await expect(collect(reader.entries())).rejects.toMatchObject({
     reason: "unavailable",
   });
+});
+
+it("retires buffered member bytes when cancellation arrives after production", async () => {
+  const path = join(
+    await createTestTempDirectory("rea-bun-abort-buffered-"),
+    "app",
+  );
+  await writeFile(
+    path,
+    elfAppendedBunPayload(
+      bunModuleGraphPayload({
+        modules: [{ name: "main.js", contents: Buffer.from("buffered") }],
+      }),
+    ),
+  );
+  const reader = new BunStandaloneArtifactReader(path);
+  try {
+    const [entry] = await collect(reader.entries());
+    if (entry === undefined) throw new Error("Expected one Bun member");
+    const controller = new AbortController();
+    const stream = await reader.open(entry, controller.signal);
+    await vi.waitFor(() =>
+      expect(stream.readableLength).toBe(Buffer.byteLength("buffered")),
+    );
+    const reason = { stop: "discard buffered member" };
+    controller.abort(reason);
+    await vi.waitFor(() => expect(stream.destroyed).toBe(true));
+    expect(stream.errored).toBeInstanceOf(ArtifactReaderFailure);
+    expect(stream.errored).toMatchObject({ reason: "cancelled" });
+    expect(stream.errored?.cause).toBe(reason);
+    expect(stream.readableEnded).toBe(false);
+  } finally {
+    await reader.close();
+  }
 });
 
 it("keeps exhausted Bun recognition distinct from a native ELF inventory and recovers the same carrier", async () => {

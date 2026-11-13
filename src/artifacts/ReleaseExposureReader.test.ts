@@ -4791,9 +4791,19 @@ describe("ReleaseExposureReader packaged map identity", () => {
   );
 });
 
-it.for(["a.js", "z.js"])(
-  "keeps a distinct normalized linker-map occurrence when %s declares the other",
-  async (script, context) => {
+it.for(
+  ["map", "script"].flatMap((role) =>
+    ["a", "z"].flatMap((order) =>
+      [1, 2].map((declarations) => ({
+        role,
+        owner: `${order}.${role === "map" ? "js" : "html"}`,
+        declarations,
+      })),
+    ),
+  ),
+)(
+  "keeps a distinct normalized linker-map occurrence for $declarations $role declarations in $owner",
+  async ({ role, owner, declarations }, context) => {
     const root = await createTestTempDirectory("rea-map-identities-");
     const first = "café.map";
     const second = "cafe\u0301.map";
@@ -4803,25 +4813,101 @@ it.for(["a.js", "z.js"])(
       context.skip();
       return;
     }
-    await writeFile(join(root, script), `//# sourceMappingURL=${first}\n`);
+    const declaration =
+      role === "map"
+        ? `//# ${"sourceMappingURL"}=${first}\n`
+        : `<script src="${first}"></script>`;
+    await writeFile(join(root, owner), declaration.repeat(declarations));
     const scanned = await inspect(root);
     expect(scanned.debug_companions.paths).toEqual([join(root, second)]);
   },
 );
 
-it("keeps a distinct normalized linker map beside a page's script target", async (context) => {
-  const root = await createTestTempDirectory("rea-script-map-identities-");
-  const first = "café.map";
-  const second = "cafe\u0301.map";
-  await writeFile(join(root, first), "const value = 1;\n");
+it.for(
+  ["map", "script"].flatMap((firstRole) =>
+    [false, true].map((otherSpelling) => ({ firstRole, otherSpelling })),
+  ),
+)(
+  "retracts exact occurrences across callers, $firstRole first, other spelling: $otherSpelling",
+  async ({ firstRole, otherSpelling }, context) => {
+    const root = await createTestTempDirectory("rea-shared-map-identity-");
+    const first = "café.map";
+    const second = "cafe\u0301.map";
+    await writeFile(join(root, first), "linker map\n");
+    await writeFile(join(root, second), "linker map\n");
+    if ((await readdir(root)).length !== 2) {
+      context.skip();
+      return;
+    }
+    await writeFile(
+      join(root, firstRole === "map" ? "z.js" : "zz.js"),
+      `//# ${"sourceMappingURL"}=${firstRole === "map" || !otherSpelling ? first : second}\n`,
+    );
+    await writeFile(
+      join(root, firstRole === "script" ? "z.html" : "zz.html"),
+      `<script src="${firstRole === "script" || !otherSpelling ? first : second}"></script>`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.debug_companions.paths).toEqual(
+      otherSpelling ? [] : [join(root, second)],
+    );
+  },
+);
+
+it.for([false, true])(
+  "retracts an exact guess produced after an early script declaration (NFD script: %s)",
+  async (nfdScript, context) => {
+    const root = await createTestTempDirectory("rea-late-exact-map-guess-");
+    const first = "café.map";
+    const second = "cafe\u0301.map";
+    await writeFile(join(root, first), "linker map\n");
+    await writeFile(join(root, second), "linker map\n");
+    if ((await readdir(root)).length !== 2) {
+      context.skip();
+      return;
+    }
+    const scriptTarget = nfdScript ? second : first;
+    const otherTarget = nfdScript ? first : second;
+    await writeFile(
+      join(root, "a.html"),
+      `<script src="${scriptTarget}"></script>`,
+    );
+    await writeFile(
+      join(root, "b.js"),
+      `//# ${"sourceMappingURL"}=${otherTarget}\n`,
+    );
+    // The other spelling's map declaration routes both candidates through the
+    // map reader. That can create an exact guess after the HTML was admitted.
+    await writeFile(
+      join(root, "z.js"),
+      `//# ${"sourceMappingURL"}=${scriptTarget}\n`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+    expect(debugCompanionsStatus(scanned)).not.toBe("exposed");
+    expect(scanned.source_maps.skipped).toBeGreaterThan(0);
+  },
+);
+
+it("keeps a missing exact declaration unresolved when later guesses share its lookup key", async (context) => {
+  const root = await createTestTempDirectory("rea-missing-exact-map-guess-");
+  const missing = "cấ.map";
+  const first = "câ\u0301.map";
+  const second = "ca\u0302\u0301.map";
+  await writeFile(join(root, first), "linker map\n");
   await writeFile(join(root, second), "linker map\n");
   if ((await readdir(root)).length !== 2) {
     context.skip();
     return;
   }
-  await writeFile(join(root, "a.html"), `<script src="${first}"></script>`);
+  expect(first.normalize("NFC")).toBe(missing);
+  expect(second.normalize("NFC")).toBe(missing);
+  await writeFile(join(root, "a.html"), `<script src="${missing}"></script>`);
+  await writeFile(join(root, "b.js"), `//# ${"sourceMappingURL"}=${first}\n`);
+  await writeFile(join(root, "z.js"), `//# ${"sourceMappingURL"}=${missing}\n`);
   const scanned = await inspect(root);
-  expect(scanned.debug_companions.paths).toEqual([join(root, second)]);
+  expect(scanned.debug_companions).toEqual({ paths: [], skipped: 1 });
+  expect(debugCompanionsStatus(scanned)).toBe("unknown");
 });
 
 it("keeps a distinct normalized sibling linker map beside a declared one", async (context) => {
