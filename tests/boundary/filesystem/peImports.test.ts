@@ -1,6 +1,7 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { peImportsSchema } from "../../../src/domain/native/peImports.js";
 import { createPeImportsService } from "../../../src/composition/binaryDiagnostics.js";
 import { peImportImage } from "../../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -36,6 +37,30 @@ describe("PE import stable filesystem boundary", () => {
         ],
       });
     }
+  });
+
+  it("retains partial Evidence for an import name beyond the read allowance", async () => {
+    const root = await createTestTempDirectory("rea-pe-imports-name-limit-");
+    const path = join(root, "app.exe");
+    await writeFile(
+      path,
+      peImportImage({
+        sectionBytes: 8192,
+        dlls: [{ name: "n".repeat(4097), functions: [] }],
+      }),
+    );
+    const result = await createPeImportsService().inspect({ path });
+    if (!result.ok) throw result.error;
+    const report = peImportsSchema.parse(result.value.normalized_result);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.imports[0]?.name).toBeNull();
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "name_unreadable",
+        message: expect.stringContaining("4096-byte read allowance"),
+      }),
+    );
+    expect(result.value.subject?.local_path).toBe(path);
   });
 
   it("returns typed resource and cancellation failures", async () => {

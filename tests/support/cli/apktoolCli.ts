@@ -7,6 +7,7 @@ import { registerApktoolCommands } from "../../../src/cli/apktoolCommands.js";
 import { presentOmittableDefaults } from "../../../src/cli/omittableDefaults.js";
 import type { ApktoolRequest } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
 import { ok } from "../../../src/domain/result.js";
+import { serveInProcessCli } from "./serveInProcessCli.js";
 
 export const invokeApktoolCli = async (argv: readonly string[]) => {
   const requests: ApktoolRequest[] = [];
@@ -29,16 +30,5 @@ export const invokeApktoolCli = async (argv: readonly string[]) => {
   registerApktoolCommands(cli, pino({ level: "silent" }), {}, provider);
   presentOmittableDefaults(cli);
 
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv], {
-    env: {},
-    exit: (code) => {
-      exitCode = code;
-    },
-    stdout: (text) => {
-      stdout += text;
-    },
-  });
-  return { exitCode, stdout, requests };
+  return { ...(await serveInProcessCli(cli, argv)), requests };
 };

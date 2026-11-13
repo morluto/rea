@@ -1,3 +1,4 @@
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { execFile } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -106,7 +107,7 @@ const reconcileThroughCli = async (
       observation_ms: 0,
       include_script_sources: false,
     }),
-    inspection,
+    { source: jsonValueSchema.parse(inspection), facts: inspection },
     {
       id: "rea-cdp-browser",
       name: "REA Chrome DevTools Protocol observation provider",

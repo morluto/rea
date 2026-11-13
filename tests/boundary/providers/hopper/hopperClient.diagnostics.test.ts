@@ -3,11 +3,10 @@ import { access } from "node:fs/promises";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { HopperTimeoutError } from "../../../../src/domain/hopperErrors.js";
-import {
-  HopperClient,
-  HOPPER_PROCESS_DIAGNOSTIC_BYTES,
-} from "../../../../src/hopper/HopperClient.js";
+import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
+
+const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
 
 const expectStoppedLauncher = (launcher: HopperFixtureLauncher): void => {
   const child = launcher.processes[0];

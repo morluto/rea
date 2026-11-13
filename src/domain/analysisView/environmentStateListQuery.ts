@@ -206,7 +206,11 @@ const readCall = (
       call.page = { index: number, first: parameter.first };
     else return undefined;
   }
-  return call;
+  // A direction cannot identify the field being ordered. Leaving it unused
+  // would turn a recorded direction into permission to answer its opposite.
+  return call.direction !== undefined && call.sort === undefined
+    ? undefined
+    : call;
 };
 
 /** Entities in the order a sort value names, ties in state order, and those whose place state order decides: all without a sort, else those tied with a neighbour; undefined when it names no field. */

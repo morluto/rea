@@ -9,8 +9,8 @@
  * an embedded executable carrier. The safe-integer ceiling preserves exact byte
  * accounting at the JSON/number boundary.
  */
-export const ARTIFACT_EXPANSION_RATIO = 500;
-export const MINIMUM_ARTIFACT_EXPANDED_BYTES = 256 * 1024 * 1024;
+const ARTIFACT_EXPANSION_RATIO = 500;
+const MINIMUM_ARTIFACT_EXPANDED_BYTES = 256 * 1024 * 1024;
 
 /** Largest total readable plaintext bytes for this encoded archive span. */
 export const artifactExpansionBudgetBytes = (archiveBytes: number): number =>

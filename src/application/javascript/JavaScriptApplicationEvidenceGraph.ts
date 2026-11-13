@@ -3,7 +3,12 @@ import {
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
 } from "../../domain/investigationProviders.js";
-import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  isImmutableEvidence,
+  evidenceSubjectTarget,
+  type Evidence,
+  type EvidenceSubjectTarget,
+} from "../../domain/evidence.js";
 import { readEvidence } from "../../domain/evidenceValidation.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import {
@@ -34,6 +39,32 @@ export interface ApplicationGraphEvidenceSource {
   readonly rootArtifactSha256: string;
   readonly semanticGraph: JavaScriptSemanticGraph | null;
 }
+
+/** Carry a subject only when it identifies the graph's root artifact. */
+export const applicationGraphSubjectTarget = (
+  source: ApplicationGraphEvidenceSource,
+): EvidenceSubjectTarget | undefined => {
+  const subject = source.evidence.subject;
+  const staticRootObserved =
+    source.kind === "static-application" &&
+    source.graph.nodes.some(
+      (node) =>
+        node.kind === "artifact" &&
+        node.identity.strategy === "content-digest" &&
+        node.identity.sha256 === source.rootArtifactSha256 &&
+        node.observations.some(
+          ({ evidence }) => evidence.extractor.operation === "inventory-root",
+        ),
+    );
+  return evidenceSubjectTarget(
+    staticRootObserved ||
+      (source.kind === "managed-application" &&
+        subject?.format === "pe" &&
+        subject.digest.sha256 === source.rootArtifactSha256)
+      ? subject
+      : null,
+  );
+};
 
 /** Caller-owned Evidence failed validation at the application graph boundary. */
 export interface ApplicationGraphEvidenceInputFailure {

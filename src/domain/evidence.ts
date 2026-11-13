@@ -88,8 +88,12 @@ const executionEnvironmentSchema = z.strictObject({
 });
 const callerInputPathsSchema = z.record(
   nulFreeStringSchema,
-  nulFreeStringSchema,
+  z.union([nulFreeStringSchema, z.array(nulFreeStringSchema)]),
 );
+/** Caller-selected auxiliary paths, retaining ordered repeated options. */
+export type CallerInputPaths = Readonly<
+  Record<string, string | readonly string[]>
+>;
 
 const evidenceBaseSchema = z
   .object({
@@ -107,7 +111,7 @@ const evidenceBaseSchema = z
     caller_input_paths: callerInputPathsSchema
       .exactOptional()
       .describe(
-        "Verbatim auxiliary input paths keyed by argument name; caller assertions outside semantic identity.",
+        "Verbatim auxiliary input paths keyed by argument name; repeated selections retain their order. Caller assertions are outside semantic identity.",
       ),
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
@@ -184,16 +188,40 @@ export interface EvidenceSubjectTarget {
   readonly sha256: string;
   readonly format: z.infer<typeof subjectSchema>["format"];
   readonly architecture?: BinaryArchitecture;
+  /** Preserve an existing Evidence subject's display name when deriving observations. */
+  readonly name?: string;
 }
+
+/** Preserve the complete subject when deriving a new Evidence observation. */
+export const evidenceSubjectTarget = (
+  subject: Evidence["subject"],
+): EvidenceSubjectTarget | undefined =>
+  subject === null
+    ? undefined
+    : {
+        path: subject.local_path,
+        sha256: subject.digest.sha256,
+        format: subject.format,
+        name: subject.name,
+        ...(subject.architecture === null
+          ? {}
+          : { architecture: subject.architecture }),
+      };
+
+const sameEvidenceSubjectTargetIdentity = (
+  subject: EvidenceSubjectTarget,
+  target: EvidenceSubjectTarget,
+): boolean =>
+  subject.sha256 === target.sha256 &&
+  subject.format === target.format &&
+  (subject.architecture ?? null) === (target.architecture ?? null);
 
 /** Rebind a matching immutable artifact subject to the caller's selected path. */
 export const rebindEvidenceSubjectTargetPath = (
   subject: EvidenceSubjectTarget,
   target: EvidenceSubjectTarget,
 ): EvidenceSubjectTarget =>
-  subject.sha256 === target.sha256 &&
-  subject.format === target.format &&
-  (subject.architecture ?? null) === (target.architecture ?? null)
+  sameEvidenceSubjectTargetIdentity(subject, target)
     ? { ...subject, path: target.path }
     : subject;
 
@@ -324,21 +352,18 @@ export const rebindEvidenceToTargetPath = (
 ): Evidence => {
   const subject = evidence.subject;
   if (subject === null) return evidence;
-  const rebound = rebindEvidenceSubjectTargetPath(
-    {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
-      ...(subject.architecture === null
-        ? {}
-        : { architecture: subject.architecture }),
-    },
-    target,
-  );
-  if (rebound.path === subject.local_path) return evidence;
+  if (
+    !sameEvidenceSubjectTargetIdentity(evidenceSubjectTarget(subject)!, target)
+  )
+    return evidence;
+  if (
+    target.path === subject.local_path &&
+    (target.name === undefined || target.name === subject.name)
+  )
+    return evidence;
   const reboundSubject = subjectSchema.parse({
     ...subject,
-    name: basename(target.path) || "artifact",
+    name: target.name ?? (basename(target.path) || "artifact"),
     local_path: target.path,
   });
   const reboundEvidence = { ...evidence, subject: reboundSubject };
@@ -353,10 +378,11 @@ export const rebindEvidenceToTargetPath = (
 /** Bind the exact selected request path without changing semantic identity or stored history. */
 export const withEvidenceCallerInputPath = (
   evidence: Evidence,
-  rawPath: string,
-  additionalPaths?: Readonly<Record<string, string>>,
+  rawPath: string | undefined,
+  additionalPaths?: CallerInputPaths,
 ): Evidence => {
-  const callerInputPath = nulFreeStringSchema.parse(rawPath);
+  const callerInputPath =
+    rawPath === undefined ? undefined : nulFreeStringSchema.parse(rawPath);
   const owned = immutableEvidence(evidence);
   const paths =
     additionalPaths === undefined
@@ -364,12 +390,19 @@ export const withEvidenceCallerInputPath = (
       : callerInputPathsSchema.parse(additionalPaths);
   const samePaths =
     paths === undefined || isDeepStrictEqual(owned.caller_input_paths, paths);
-  if (owned.caller_input_path === callerInputPath && samePaths) return owned;
+  if (
+    (callerInputPath === undefined ||
+      owned.caller_input_path === callerInputPath) &&
+    samePaths
+  )
+    return owned;
   // The authenticated source owns its immutable payloads. Only this small
   // envelope changes, so replay does not copy a document-sized result.
   const rebound = {
     ...owned,
-    caller_input_path: callerInputPath,
+    ...(callerInputPath === undefined
+      ? {}
+      : { caller_input_path: callerInputPath }),
     ...(paths === undefined ? {} : { caller_input_paths: paths }),
   };
   return rememberReboundEvidence(owned, rebound);
@@ -466,7 +499,9 @@ export const evidenceEnvelopeForAdmission = (
     target === undefined
       ? null
       : {
-          name: basename(target.path) || "artifact",
+          name:
+            ("name" in target ? target.name : undefined) ??
+            (basename(target.path) || "artifact"),
           digest: { sha256: target.sha256 },
           format: target.format,
           architecture: target.architecture ?? null,

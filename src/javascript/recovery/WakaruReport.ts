@@ -1,12 +1,18 @@
 import { z } from "zod";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
   normalizeArtifactPath,
   ArtifactPathRegistry,
 } from "../../artifacts/ArtifactPaths.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { JavaScriptRecoveryResult } from "../../domain/javascript/javascriptRecovery.js";
 import {
@@ -54,6 +60,16 @@ const provenanceSchema = z.looseObject({
 });
 
 const OPERATION = "recover_javascript_sources";
+
+/** Keep the reader's exact cleanup owner alongside the finished command output. */
+export class WakaruReportReadFailure extends Error {
+  constructor(
+    readonly failure: ArtifactReaderFailure,
+    readonly capturedOutput: AnalysisCapturedOutput,
+  ) {
+    super(failure.message, { cause: failure });
+  }
+}
 
 type ReportContext = {
   execution: Awaited<ReturnType<typeof runWakaruCommand>>;
@@ -106,11 +122,24 @@ export const parseWakaruReports = async (context: ReportContext) => {
           : ("complete" as const),
     };
   } catch (cause: unknown) {
+    const capturedOutput = {
+      stdout: execution.stdout,
+      stderr: execution.stderr,
+      exit_code: execution.exit_code,
+      signal: execution.signal,
+      truncated: false,
+    };
+    if (
+      cause instanceof AnalysisCancelledError ||
+      cause instanceof AnalysisAccessDeniedError ||
+      cause instanceof AnalysisArtifactChangedError
+    )
+      throw cause.retainCapturedOutput(capturedOutput);
     if (
       cause instanceof ArtifactReaderFailure &&
       (cause.cleanup !== undefined || cause.reason === "cancelled")
     )
-      throw cause;
+      throw new WakaruReportReadFailure(cause, capturedOutput);
     throw new ProviderAdapterError("wakaru", OPERATION, {
       cause,
       ...wakaruReportGuidance(cause),

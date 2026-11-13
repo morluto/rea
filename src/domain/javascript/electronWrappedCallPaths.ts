@@ -63,6 +63,7 @@ const ipcEndpointKey = (value: ElectronIpcFinding): string =>
     value.side,
     value.operation,
     value.channel,
+    value.loader_authority ?? "proven",
     javascriptSourceRangeKey(value.location),
   ]);
 
@@ -205,7 +206,12 @@ interface BridgeExposure {
 }
 
 const bridgeExposureKey = (value: ElectronContextBridgeFinding): string =>
-  JSON.stringify([value.world, value.api_key, value.api_key_expression]);
+  JSON.stringify([
+    value.world,
+    value.api_key,
+    value.api_key_expression,
+    value.loader_authority ?? "proven",
+  ]);
 
 const bridgeContributionKey = (value: ElectronContextBridgeFinding): string =>
   JSON.stringify([value.world_id, value.members, value.unknown_members]);
@@ -234,6 +240,7 @@ const mergeBridgeExposures = (
 });
 
 interface PathContext {
+  readonly loader_authority?: "candidate";
   readonly entryNode: t.Node;
   /** Source ranges of the local calls this path made since its entry. */
   readonly calls: string[];
@@ -256,7 +263,7 @@ export function* collectElectronWrappedCallPathsSteps(
 ): Generator<void, readonly ElectronCallPath[]> {
   // Bounds repeated interprocedural expansion independently of bundle bytes.
   // Exhaustion is reported as unknown coverage, never as a negative finding.
-  let remainingVisits = 1_000_000;
+  let remainingVisits = state.precision.wrapper_visits;
   const prefixes = new ElectronCallPathBlockPrefixes(
     () => --remainingVisits >= 0,
     state.parentsByNode,
@@ -423,11 +430,15 @@ export function* collectElectronWrappedCallPathsSteps(
       accumulator.unknownFindings += 1;
       return null;
     }
+    const authorityContext =
+      value.kind === "external" && value.loaderAuthority === "candidate"
+        ? { ...context, loader_authority: "candidate" as const }
+        : context;
     return (
       value.conditions?.reduce(
         (current, branch) => condition(current, branch.node, branch.positive),
-        context,
-      ) ?? context
+        authorityContext,
+      ) ?? authorityContext
     );
   };
   // Duplicate checks consult only facts at the same endpoint and call site.
@@ -809,9 +820,9 @@ export function* collectElectronWrappedCallPathsSteps(
     readonly fn: SymbolicFunction;
   }> {
     if (active.has(value)) return;
-    if (active.size >= 128) {
+    if (active.size >= state.precision.wrapper_depth) {
       accumulator.unknownFindings += 1;
-      accumulator.electronCallPathLimitReached = true;
+      (accumulator.electronCallPathLimits ??= new Set()).add("wrapper_depth");
       return;
     }
     const nested = new Set(active);
@@ -873,6 +884,9 @@ export function* collectElectronWrappedCallPathsSteps(
   ): void => {
     if (context.entryKind === null) return;
     const path: ElectronCallPath = {
+      ...(context.loader_authority === "candidate"
+        ? { loader_authority: "candidate" as const }
+        : {}),
       entry_kind: context.entryKind,
       entry: context.entry,
       ...(context.entryKind !== "bridge-member" ||
@@ -958,6 +972,9 @@ export function* collectElectronWrappedCallPathsSteps(
         ? undefined
         : range(context.entryNode);
     const findingContext = {
+      ...(context.loader_authority === "candidate"
+        ? { loader_authority: "candidate" as const }
+        : {}),
       module_key: null,
       location,
       ...(invocationLocation === undefined
@@ -1223,6 +1240,9 @@ export function* collectElectronWrappedCallPathsSteps(
       // call contributes a separate API per key it is invoked with.
       const inventory = bridgeMemberInventory(object);
       const finding: ElectronContextBridgeFinding = {
+        ...(context.loader_authority === "candidate"
+          ? { loader_authority: "candidate" as const }
+          : {}),
         world: exposure.world,
         world_id: worldId,
         api_key: key.value,
@@ -1438,10 +1458,17 @@ export function* collectElectronWrappedCallPathsSteps(
         const branch = node.cases[index]!;
         if (branch.test) walk(branch.test, env, context);
         if (remainingVisits < 0) return;
-        const branchContext = switchCaseContext(node, index, context);
+        let branchContext = switchCaseContext(node, index, context);
         for (const statement of branch.consequent) {
           if (remainingVisits < 0) return;
           walk(statement, env, branchContext);
+          const fallthrough = sequentialFallthrough(
+            prefixes.statement(statement, branch) ?? null,
+            env,
+            branchContext,
+          );
+          if (!fallthrough.continues) break;
+          branchContext = fallthrough.context;
         }
       }
       return;
@@ -1512,7 +1539,11 @@ export function* collectElectronWrappedCallPathsSteps(
             parent.left,
             parent.operator === "??" ? "nullish" : parent.operator === "&&",
           );
-      } else if (t.isBlockStatement(parent)) {
+      }
+      if (
+        t.isBlockStatement(parent) ||
+        (t.isSwitchCase(parent) && child !== parent.test)
+      ) {
         const prefix = yield* prefixes.before(parent, child);
         if (remainingVisits < 0) return;
         if (prefix !== undefined) {
@@ -1560,7 +1591,9 @@ export function* collectElectronWrappedCallPathsSteps(
   recordBridgeExposures();
   if (remainingVisits < 0 || resolver.truncated) {
     accumulator.unknownFindings += 1;
-    accumulator.electronCallPathLimitReached = true;
+    const limits = (accumulator.electronCallPathLimits ??= new Set());
+    if (remainingVisits < 0) limits.add("wrapper_visits");
+    for (const limit of resolver.resourceLimits) limits.add(limit);
   } else
     // A dynamic site's channels are enumerated only when the complete trace
     // reached it with literal channels, no other invocation outcome, and no

@@ -16,23 +16,20 @@ import {
 } from "./AdbUnparsedLines.js";
 import {
   ADB_DEVICE_STATES,
-  type AdbDeviceState,
+  type AdbDeviceObservation,
 } from "../domain/adb/adbDeviceAnalysis.js";
 
-/** One device exactly as `adb devices -l` reports it. */
-export interface AdbDeviceEntry {
-  readonly serial: string;
-  readonly state: AdbDeviceState;
-  readonly transport: "usb" | "tcp" | "unknown";
-  readonly product: string | null;
-  readonly model: string | null;
-  readonly device: string | null;
-  readonly transport_id: number | null;
-  readonly kind: "emulator" | "physical" | "unknown";
-  readonly kind_basis: "emulator_serial_prefix" | "usb_transport" | "none";
-}
+import { parseAdbTransportIdentity } from "../domain/adb/adbTransportIdentity.js";
 
 const DEVICE_LINE = /^(\S+)\s+(.*)$/u;
+
+/**
+ * adb prints a wireless-debugging transport's serial as the mDNS instance
+ * `<instance>._adb._tcp` or `<instance>._adb-tls-connect._tcp`. That serial
+ * has neither a colon nor a `usb:` field.
+ */
+const isAdbMdnsTcpSerial = (serial: string): boolean =>
+  serial.endsWith("._adb._tcp") || serial.endsWith("._adb-tls-connect._tcp");
 
 const normalizeAdbOutputLine = (rawLine: string): string => rawLine.trimEnd();
 
@@ -76,11 +73,11 @@ export const parseAdbDevicesOutput = (
   stdout: string,
   stderr = "",
 ): {
-  devices: readonly AdbDeviceEntry[];
+  devices: readonly AdbDeviceObservation[];
   unparsedLines: AdbUnparsedLines;
   daemonStarted: boolean;
 } => {
-  const devices: AdbDeviceEntry[] = [];
+  const devices: AdbDeviceObservation[] = [];
   const unparsed = collectUnparsedLines();
   let daemonStarted = false;
   for (const rawLine of stdout.split(/\r?\n/u)) {
@@ -113,11 +110,14 @@ export const parseAdbDevicesOutput = (
     const serial = match[1]!;
     const remainder = match[2]!.slice(state.length);
     const usb = metadataValue(remainder, "usb");
-    const transportIdText = metadataValue(remainder, "transport_id");
-    const parsedTransportId =
-      transportIdText === null || !/^\d+$/u.test(transportIdText)
-        ? null
-        : Number(transportIdText);
+    // AOSP appends the authoritative field last; earlier metadata may contain
+    // the same spelling. Keep the exact source token before decimal admission.
+    const transportToken =
+      /(?:^|\s)transport_id:(\S*)$/u.exec(remainder)?.[1] ?? null;
+    const transportIdentity = parseAdbTransportIdentity(
+      transportToken,
+      rawLine,
+    );
     const isEmulator = /^emulator-\d+$/u.test(serial);
     const kind = isEmulator
       ? ("emulator" as const)
@@ -130,13 +130,13 @@ export const parseAdbDevicesOutput = (
       transport:
         usb !== null
           ? "usb"
-          : isEmulator || serial.includes(":")
+          : isEmulator || serial.includes(":") || isAdbMdnsTcpSerial(serial)
             ? "tcp"
             : "unknown",
       product: metadataValue(remainder, "product"),
       model: metadataValue(remainder, "model"),
       device: metadataValue(remainder, "device"),
-      transport_id: parsedTransportId,
+      transport_identity: transportIdentity,
       kind,
       kind_basis:
         kind === "emulator"

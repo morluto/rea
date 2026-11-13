@@ -57,9 +57,7 @@ export const registerRizinDebugTools = (
         () => manager.retryCleanupFailures(),
         (value) => ({ session_id: value.session_id }),
       );
-      return result.ok
-        ? delivery.toCallToolResult({ ok: true, value: result.value }, start)
-        : delivery.toCallToolResult(result, start);
+      return delivery.toCallToolResult(result, start);
     },
   );
   server.registerTool(
@@ -127,9 +125,7 @@ export const registerRizinDebugTools = (
             manager.close(input.session_id),
           ),
       );
-      return result.ok
-        ? delivery.toCallToolResult({ ok: true, value: result.value }, close)
-        : delivery.toCallToolResult(result, close);
+      return delivery.toCallToolResult(result, close);
     },
   );
 };

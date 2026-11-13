@@ -507,6 +507,8 @@ export interface ElfFixtureOptions {
   readonly relaEntry?: bigint;
   /** Move mscorlib.dll's method pointers into zero-fill past the file end. */
   readonly zeroFilledTable?: boolean;
+  /** Declare DT_SYMTAB / DT_SYMENT with dynamic symbol 1 of this `st_size`, which sizes a COPY. */
+  readonly symbolSize?: bigint;
 }
 
 /** A valid large RELA image; extra file-backed pointers do not add IL2CPP registrations. */
@@ -560,6 +562,26 @@ export const createLargeElfRelativeFixture = (
  * base: every pointer slot into the image is zeroed on disk and restored by
  * an R_AARCH64_RELATIVE entry, as a position-independent libil2cpp.so stores it.
  */
+/** The null symbol, then symbol 1 with only its size set; empty when no size is asked for. */
+const dynamicSymbols = (size: bigint | undefined): Buffer => {
+  if (size === undefined) return Buffer.alloc(0);
+  const symbols = Buffer.alloc(48);
+  symbols.writeBigUInt64LE(size, 24 + 16);
+  return symbols;
+};
+
+/** DT_SYMTAB and DT_SYMENT for a symbol table at `address`; none for an empty table. */
+const symbolTableTags = (
+  symbols: Buffer,
+  address: bigint,
+): [bigint, bigint][] =>
+  symbols.length === 0
+    ? []
+    : [
+        [6n, address],
+        [11n, 24n],
+      ];
+
 export const createElfFixture = (
   image: Buffer,
   options: ElfFixtureOptions = {},
@@ -583,11 +605,14 @@ export const createElfFixture = (
       0n,
       relocation.kind,
     ]);
+  const symbols = dynamicSymbols(options.symbolSize);
   const tagCount =
     4 +
     (options.duplicateRela === true ? 1 : 0) +
-    (options.androidPacked === true ? 1 : 0);
-  const fileSize = SIZE + relocations.length * 24 + tagCount * 16;
+    (options.androidPacked === true ? 1 : 0) +
+    symbolTableTags(symbols, 0n).length;
+  const fileSize =
+    SIZE + relocations.length * 24 + tagCount * 16 + symbols.length;
   if (options.zeroFilledTable === true) {
     // The second module record's methodPointers field (MODULES + 0x40 + 16).
     const slot = FIXTURE_BINARY_BASE + BigInt(0x400 + 0x40 + 16);
@@ -615,6 +640,10 @@ export const createElfFixture = (
     ...(options.androidPacked === true
       ? [[0x60000011n, 0n] as [bigint, bigint]]
       : []),
+    ...symbolTableTags(
+      symbols,
+      FIXTURE_BINARY_BASE + BigInt(fileSize - symbols.length),
+    ),
     [0n, 0n],
   ];
   const dynamic = Buffer.alloc(tags.length * 16);
@@ -622,7 +651,7 @@ export const createElfFixture = (
     dynamic.writeBigInt64LE(tag, index * 16);
     dynamic.writeBigUInt64LE(value, index * 16 + 8);
   });
-  const file = Buffer.concat([body, rela, dynamic]);
+  const file = Buffer.concat([body, rela, dynamic, symbols]);
   if (file.length !== fileSize) throw new Error("ELF fixture size drifted");
   const withDynamic = options.dynamic !== false;
   // ELF64 header: little-endian shared object, no section headers.

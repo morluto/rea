@@ -413,7 +413,12 @@ const assertSuccessfulTraceParity = async (
   );
   if (advertised?.outputSchema === undefined)
     throw new Error("Semantic trace SDK output schema is missing");
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const ajv = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+    inlineRefs: false,
+    code: { optimize: false },
+  });
   const outputSchema: Record<string, unknown> = advertised.outputSchema;
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(ajv.validate(outputSchema, mcpResponse.structuredContent)).toBe(true);

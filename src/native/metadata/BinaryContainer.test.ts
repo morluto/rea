@@ -1,3 +1,7 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import { readBinaryContainer } from "./readBinaryContainer.js";
 import { expect, it } from "vitest";
 import {
@@ -8,8 +12,6 @@ import {
   mappedFileOffset,
   readMappedCString,
   type BinaryContainer,
-  type FileMapping,
-  type ZeroFillMapping,
 } from "./BinaryContainer.js";
 
 it("distinguishes a mapped string read allowance from malformed bytes", () => {

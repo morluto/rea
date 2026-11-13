@@ -42,7 +42,9 @@ it("projects a complete EVM reply allowance refusal as a deterministic resource 
       reported_limits: { maximum_reply_bytes: 16777216 },
       captured_output: capturedOutput,
     },
-    remediation: { action: expect.stringContaining("fixed report allowance") },
+    remediation: {
+      action: expect.stringContaining("producer_limits.output_bytes"),
+    },
   });
   expect(projected.remediation.action).not.toContain("doctor");
 });
@@ -67,7 +69,10 @@ it.each([
         cancellation: { reason },
       },
     );
-    const result = evmInterfaceFailure(source, "worker", "/selected.hex");
+    const result = evmInterfaceFailure(source, {
+      phase: "worker",
+      path: "/selected.hex",
+    });
     expect(result).toBeInstanceOf(AnalysisCancelledError);
     expect(result.cause).toBe(reason);
     expect(result.capturedOutput).toEqual({
@@ -87,15 +92,11 @@ it("names timeout_ms, the omitted default, and the caps it does not raise", () =
     null,
   );
   const projected = projectAnalysisError(
-    evmInterfaceFailure(
-      source,
-      "worker",
-      "/selected.hex",
-      undefined,
-      undefined,
-      undefined,
-      45_000,
-    ),
+    evmInterfaceFailure(source, {
+      phase: "worker",
+      path: "/selected.hex",
+      timeoutMs: 45_000,
+    }),
   );
   expect(projected).toMatchObject({
     code: "provider_timeout",
@@ -109,7 +110,7 @@ it("names timeout_ms, the omitted default, and the caps it does not raise", () =
   expect(projected.remediation.action).toContain("no server restart");
 });
 
-it("says a CPU signal has no runtime override and timeout_ms does not raise it", () => {
+it("names the selected CPU budget separately from tighter inherited limits", () => {
   const source = new OwnedCommandFailure(
     "process",
     "signaled",
@@ -121,30 +122,35 @@ it("says a CPU signal has no runtime override and timeout_ms does not raise it",
     null,
   );
   const projected = projectAnalysisError(
-    evmInterfaceFailure(source, "worker", "/selected.hex", {
-      addressSpaceBytes: 1024,
-      cpuSeconds: 30,
-      fileSizeBytes: 1024,
+    evmInterfaceFailure(source, {
+      phase: "worker",
+      path: "/selected.hex",
+      workerLimits: {
+        addressSpaceBytes: 1024,
+        cpuSeconds: 30,
+        fileSizeBytes: 1024,
+      },
     }),
   );
   expect(projected).toMatchObject({
     code: "resource_constraint",
     details: { resource: "cpu" },
   });
-  expect(projected.remediation.action).toContain("no runtime override");
-  expect(projected.remediation.action).toContain(
-    "timeout_ms does not raise it",
-  );
+  expect(projected.remediation.action).toContain("producer_limits.cpu_seconds");
+  expect(projected.remediation.action).toContain("inherited");
 });
 
-it("reports the fixed carrier input allowance as a resource constraint", () => {
+it("reports the selected carrier input allowance as a resource constraint", () => {
   const source = new ArtifactReaderFailure(
     "limit",
     "Selected artifact exceeds 4194304 bytes: /selected.bin",
     { boundary: "file-size" },
   );
   const projected = projectAnalysisError(
-    evmInterfaceFailure(source, "artifact-read", "/selected.bin"),
+    evmInterfaceFailure(source, {
+      phase: "artifact-read",
+      path: "/selected.bin",
+    }),
   );
   expect(projected).toMatchObject({
     code: "resource_constraint",
@@ -156,15 +162,8 @@ it("reports the fixed carrier input allowance as a resource constraint", () => {
       reported_limits: { maximum_input_bytes: 4194304 },
     },
   });
-  expect(projected.message).toContain("4194304");
-  expect(projected.message).toContain("no runtime override");
-  expect(projected.message).toContain("timeout_ms does not raise it");
+  expect(projected.remediation.action).toContain("producer_limits.input_bytes");
   expect(projected.remediation.action).toContain("4194304");
-  expect(projected.remediation.action).toContain("no runtime override");
-  expect(projected.remediation.action).toContain("Do not truncate");
-  expect(projected.remediation.action).toContain(
-    "repeating the unchanged request fails the same way",
-  );
   expect(projected.recovery).toBeUndefined();
 });
 
@@ -176,11 +175,10 @@ it.each([
   { reason: "format" as const, message: "Unsupported carrier format." },
 ])("keeps reader $reason refusals as invalid input", ({ reason, message }) => {
   const projected = projectAnalysisError(
-    evmInterfaceFailure(
-      new ArtifactReaderFailure(reason, message),
-      "artifact-read",
-      "/selected.bin",
-    ),
+    evmInterfaceFailure(new ArtifactReaderFailure(reason, message), {
+      phase: "artifact-read",
+      path: "/selected.bin",
+    }),
   );
   expect(projected).toMatchObject({
     code: "invalid_request",
@@ -210,7 +208,10 @@ it.each([
     },
     ["exact-owner"],
   );
-  const result = evmInterfaceFailure(source, "worker", "/selected.hex");
+  const result = evmInterfaceFailure(source, {
+    phase: "worker",
+    path: "/selected.hex",
+  });
   expect(result._tag).toBe(tag);
   if (cleanup !== null) {
     expect(result.cleanupIncomplete).toBe(true);
@@ -234,7 +235,10 @@ it.skipIf(process.platform === "win32")(
       } catch (cause) {
         source = cause;
       }
-      const failure = evmInterfaceFailure(source, "artifact-read", path);
+      const failure = evmInterfaceFailure(source, {
+        phase: "artifact-read",
+        path: path,
+      });
       expect(failure.cause).toBe(source);
       expect(projectAnalysisError(failure)).toMatchObject({
         code: "invalid_request",
@@ -248,9 +252,9 @@ it.skipIf(process.platform === "win32")(
           ],
         },
       });
-      expect(evmInterfaceFailure(source, "worker", path)._tag).toBe(
-        "ProviderAdapterError",
-      );
+      expect(
+        evmInterfaceFailure(source, { phase: "worker", path: path })._tag,
+      ).toBe("ProviderAdapterError");
     }
   },
 );

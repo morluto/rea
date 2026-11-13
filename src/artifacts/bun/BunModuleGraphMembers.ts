@@ -1,10 +1,12 @@
+import {
+  DEFAULT_BUN_READER_LIMITS,
+  type BunReaderLimits,
+} from "../../domain/artifactReaderLimits.js";
 import { setImmediate } from "node:timers/promises";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import {
   BUN_RECORD_BYTES_1_3_3,
   BUN_RECORD_BYTES_1_3_9,
-  MAX_BUN_MODULE_COUNT,
-  MAX_BUN_RETAINED_BYTES,
   bunMetadataBytesLimit,
   bunFormatFailure,
   bunModuleCountLimit,
@@ -90,6 +92,7 @@ export interface BunDecodedGraph {
  */
 export const decodeBunModuleGraph = async (
   graph: LocatedBunGraph,
+  limits: BunReaderLimits = DEFAULT_BUN_READER_LIMITS,
 ): Promise<BunDecodedGraph> => {
   const { data } = graph;
   const table = graph.modules;
@@ -102,8 +105,8 @@ export const decodeBunModuleGraph = async (
       `record table length ${String(table.length)} matches no known revision`,
     );
   // Count admission precedes table allocation, independently of payload size.
-  if (candidates.every((size) => table.length / size > MAX_BUN_MODULE_COUNT))
-    throw bunModuleCountLimit(table.length / Math.max(...candidates));
+  if (candidates.every((size) => table.length / size > limits.module_count))
+    throw bunModuleCountLimit(table.length / Math.max(...candidates), limits);
   const records = await data.read(table.offset, table.length);
   let recordBytes = candidates[0]!;
   if (candidates.length > 1) {
@@ -111,12 +114,7 @@ export const decodeBunModuleGraph = async (
     for (const recordBytes of candidates)
       assessments.push({
         recordBytes,
-        failure: await assessLayout(
-          data,
-          records,
-          recordBytes,
-          graph.entryPointId,
-        ),
+        failure: await assessLayout(graph, records, recordBytes, limits),
       });
     const valid = assessments.filter((item) => item.failure === null);
     if (valid.length > 1)
@@ -148,7 +146,8 @@ export const decodeBunModuleGraph = async (
   // Bound repeated pointer expansion before decoding strings. JSON escaping and
   // UTF-16 strings can expand each source byte; aliased names count per record.
   let retained = graph.compileExecArgv.length * 6;
-  if (retained > MAX_BUN_RETAINED_BYTES) throw bunMetadataBytesLimit(retained);
+  if (retained > limits.representation_bytes)
+    throw bunMetadataBytesLimit(retained, limits);
   for (let index = 0; index < count; index += 1) {
     const record = records.subarray(
       index * recordBytes,
@@ -157,8 +156,8 @@ export const decodeBunModuleGraph = async (
     retained += 512 + readPointer(record, 0).length * 6;
     if (recordBytes === BUN_RECORD_BYTES_1_3_9)
       retained += readPointer(record, 40).length * 6;
-    if (retained > MAX_BUN_RETAINED_BYTES)
-      throw bunMetadataBytesLimit(retained);
+    if (retained > limits.representation_bytes)
+      throw bunMetadataBytesLimit(retained, limits);
     if (index % 256 === 0) await setImmediate();
     if (candidates.length === 1) {
       const failure = await recordPointerFailure(
@@ -191,13 +190,14 @@ const recordSizes = (length: number): readonly number[] => {
 };
 
 const assessLayout = async (
-  data: BunGraphData,
+  graph: LocatedBunGraph,
   records: Buffer,
   recordBytes: number,
-  entryPointId: number,
+  limits: BunReaderLimits,
 ): Promise<ArtifactReaderFailure | null> => {
+  const { data, entryPointId } = graph;
   const count = records.length / recordBytes;
-  if (count > MAX_BUN_MODULE_COUNT) return bunModuleCountLimit(count);
+  if (count > limits.module_count) return bunModuleCountLimit(count, limits);
   for (let index = 0; index < count; index += 1) {
     const record = records.subarray(
       index * recordBytes,

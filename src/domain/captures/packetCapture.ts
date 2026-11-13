@@ -1,16 +1,18 @@
 import { z } from "zod";
+import { processArgumentSchema } from "../process/processArgument.js";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
+import {
+  boundedProducerLimitsSchema,
+  boundedProducerLimitsResultSchema,
+} from "../producerResourceLimits.js";
 import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
 
-const argument = z
-  .string()
-  .min(1)
-  .max(8192)
-  .refine((value) => !value.includes("\0"), "NUL is not an argument character");
+const argument = processArgumentSchema.min(1).max(8192);
 const captureInputShape = z.strictObject({
+  producer_limits: boundedProducerLimitsSchema,
   path: localPathStringSchema.describe("Absolute local capture path"),
   fields: z
     .array(argument)
@@ -148,14 +150,7 @@ export const packetCaptureSchema = z
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       arguments: z.array(z.string()),
     }),
-    limits: z.strictObject({
-      input_bytes: z.number().int().positive(),
-      output_bytes: z.number().int().positive(),
-      command_timeout_ms: z.number().int().positive(),
-      address_space_bytes: z.number().int().nonnegative(),
-      file_bytes: z.number().int().nonnegative(),
-      cpu_seconds: z.number().int().nonnegative(),
-    }),
+    limits: boundedProducerLimitsResultSchema,
     hardware_acquisition: z.literal("not-performed"),
   })
   .superRefine((report, context) => {

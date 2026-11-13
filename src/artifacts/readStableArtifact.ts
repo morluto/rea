@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
-import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import {
+  resolvedRegularFile,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
@@ -47,22 +50,6 @@ const FILE_SYSTEM: StableArtifactFileSystem = {
   realpath,
 };
 
-/** Suggest a retry only when the rejected link currently resolves to a regular file. */
-const resolvedRegularFile = async (
-  path: string,
-  fileSystem: StableArtifactFileSystem,
-): Promise<string | undefined> => {
-  try {
-    const resolved = await fileSystem.realpath?.(path);
-    if (resolved === undefined) return undefined;
-    const target = await fileSystem.lstat(resolved);
-    return target.isFile() && !target.isSymbolicLink() ? resolved : undefined;
-  } catch {
-    // A missing or unreadable target changes only the recovery hint.
-    return undefined;
-  }
-};
-
 const afterValidation = async <T>(
   path: string,
   stage: string,
@@ -81,13 +68,18 @@ const afterValidation = async <T>(
   }
 };
 
-/** Read one bounded regular file and reject replacement or in-place changes. */
+/**
+ * Read one bounded regular file and reject replacement or in-place changes.
+ * The optional observer receives verified state before descriptor finalization;
+ * callers may reuse it only after this promise resolves successfully.
+ */
 export const readStableArtifact = async (
   path: string,
   maximumBytes: number,
   signal?: AbortSignal,
   fileSystem: StableArtifactFileSystem = FILE_SYSTEM,
   resourceScope?: ArtifactResourceScope,
+  onValidatedState?: (state: BigIntStats) => void,
 ): Promise<StableArtifactSnapshot> => {
   assertArtifactReadActive(signal);
   const before = await fileSystem.lstat(path);
@@ -182,10 +174,29 @@ export const readStableArtifact = async (
           `Artifact changed during read: ${path}`,
         );
       assertArtifactReadActive(signal);
+      onValidatedState?.(initial);
       return {
         bytes,
         sha256: hash.digest("hex"),
       };
     },
   );
+};
+
+/** Revalidate a completed snapshot's selected file state without reading its bytes again. */
+export const assertStableArtifactState = async (
+  path: string,
+  expected: BigIntStats,
+  signal?: AbortSignal,
+): Promise<void> => {
+  assertArtifactReadActive(signal);
+  const current = await afterValidation(path, "before cached inspection", () =>
+    lstat(path, { bigint: true }),
+  );
+  if (!sameRegularFileState(expected, current))
+    throw new ArtifactReaderFailure(
+      "integrity",
+      `Artifact changed since acquisition: ${path}`,
+    );
+  assertArtifactReadActive(signal);
 };

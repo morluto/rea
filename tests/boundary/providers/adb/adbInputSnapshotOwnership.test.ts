@@ -715,6 +715,7 @@ test("cancels after the input snapshot copy and before contacting the device", a
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(execFileOutput).toHaveBeenCalledTimes(1);
+  expect(execFileBytes).not.toHaveBeenCalled();
   expect(await readFile(f.source, "utf8")).toBe("immutable payload");
   await f.provider.close();
 });
@@ -742,5 +743,6 @@ test("reports input snapshot capacity failures before contacting the device", as
   expect(result.error._tag).toBe("AnalysisOutputError");
   expect(result.error.cause).toBe(capacityFailure);
   expect(execFileOutput).toHaveBeenCalledTimes(1);
+  expect(execFileBytes).not.toHaveBeenCalled();
   await f.provider.close();
 });

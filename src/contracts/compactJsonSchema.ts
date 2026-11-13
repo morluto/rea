@@ -7,6 +7,7 @@ import {
   schemaChildren,
   schemaMaps,
   schemaLiteralValues,
+  schemaSubschemas,
 } from "./jsonSchemaKeywords.js";
 
 // Shared compact JSON Schema projection primitives; canonical validation stays separate.
@@ -486,27 +487,19 @@ export const hasGatewayIncompatibleShape = (schema: unknown): boolean => {
     )
       return true;
   }
-  return schemaChildrenAndMaps(schema).some(hasGatewayIncompatibleShape);
+  return schemaSubschemas(schema, { includeDefinitions: true }).some(
+    hasGatewayIncompatibleShape,
+  );
 };
 
 const containsGatewayCombinator = (schema: unknown): boolean => {
   if (Array.isArray(schema)) return schema.some(containsGatewayCombinator);
   if (!isSchemaObject(schema)) return false;
   if (schema.oneOf !== undefined || schema.allOf !== undefined) return true;
-  return schemaChildrenAndMaps(schema).some(containsGatewayCombinator);
+  return schemaSubschemas(schema, { includeDefinitions: true }).some(
+    containsGatewayCombinator,
+  );
 };
-
-/** Traverse only schema-valued positions; property names remain opaque data. */
-const schemaChildrenAndMaps = (
-  schema: Readonly<Record<string, unknown>>,
-): readonly unknown[] =>
-  Object.entries(schema).flatMap(([key, value]) => {
-    if (schemaMaps.has(key) && isSchemaObject(value))
-      return Object.values(value);
-    if (schemaArrays.has(key) && Array.isArray(value)) return value;
-    if (schemaChildren.has(key)) return Array.isArray(value) ? value : [value];
-    return [];
-  });
 
 /**
  * Present a reduced property's reference-resolved types. Reduced inputs omit

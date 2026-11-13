@@ -1,3 +1,4 @@
+import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import { randomUUID } from "node:crypto";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import {
@@ -20,7 +21,12 @@ import {
 } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { retainOwnedCommandCleanup } from "../providers/OwnedCommandCleanup.js";
+import {
+  retainOwnedCommandCleanup,
+  processInspectionCancellationError,
+  processInspectionFailure,
+  bindProcessInspectionCancellations,
+} from "../providers/OwnedCommandCleanup.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 
@@ -43,6 +49,8 @@ export interface JadxJavaProbeOptions {
 }
 
 export interface JadxJavaProbeRefusal {
+  /** Actual preparation record; retained without changing timeout or fallback policy. */
+  readonly inspectionFailure?: ProcessInspectionFailure;
   readonly code:
     | "runtime_missing"
     | "runtime_unavailable"
@@ -141,15 +149,17 @@ export const inspectJadxJava = async (
       } catch (cause: unknown) {
         const command =
           cause instanceof OwnedCommandFailure ? cause : undefined;
-        const preparation =
-          command?.preparationFailure ??
-          (cause instanceof DarwinProcessOwnershipInspectionError
-            ? cause
-            : undefined);
+        const preparation = processInspectionFailure(cause);
         const output =
           command?.snapshot == null
-            ? preparation?.capturedOutput
+            ? preparation instanceof DarwinProcessOwnershipInspectionError
+              ? preparation.capturedOutput
+              : undefined
             : capturedOutput(command.snapshot);
+        const inspectionCancellation =
+          command === undefined || command.preparationFailure !== undefined
+            ? processInspectionCancellationError(cause, operation)
+            : undefined;
         const cleanups = retainOwnedCommandCleanup(
           cause,
           options.resourceOwner,
@@ -192,7 +202,10 @@ export const inspectJadxJava = async (
                     ),
                   },
                 )
-              : new AnalysisCancelledError(operation, errorOptions);
+              : (inspectionCancellation ??
+                new AnalysisCancelledError(operation, errorOptions));
+        } else if (inspectionCancellation !== undefined) {
+          primary = inspectionCancellation;
         } else if (
           observed?.ok === true &&
           command?.cleanupOwner !== undefined
@@ -208,13 +221,15 @@ export const inspectJadxJava = async (
               },
             },
           });
-        } else if (preparation !== undefined) {
+        } else if (preparation !== undefined && command?.reason !== "timeout") {
           primary = new ProviderAdapterError("jadx", operation, {
             cause,
             ...(output === undefined ? {} : { capturedOutput: output }),
             diagnostics: {
               stage: "ownership_preparation",
-              ...(preparation.compilerOutcome === undefined
+              ...(!(
+                preparation instanceof DarwinProcessOwnershipInspectionError
+              ) || preparation.compilerOutcome === undefined
                 ? {}
                 : {
                     compiler_outcome: jsonValueSchema.parse(
@@ -232,6 +247,10 @@ export const inspectJadxJava = async (
             cause,
             options.timeoutMs ?? JAVA_MODULE_LISTING_TIMEOUT_MS,
           );
+          if (preparation !== undefined)
+            Object.defineProperty(failure, "inspectionFailure", {
+              value: preparation,
+            });
           if (cleanups.length === 0) return err(failure);
           primary = projectRefusal(failure, operation, cause, output);
         }
@@ -241,7 +260,7 @@ export const inspectJadxJava = async (
             cleanup,
             operation,
           ).bindCleanupDependencies([primary, cleanup]);
-        throw primary;
+        throw bindProcessInspectionCancellations(cause, primary, operation);
       }
     });
   } catch (cause: unknown) {

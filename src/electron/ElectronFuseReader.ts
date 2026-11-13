@@ -89,7 +89,6 @@ export const readElectronFuseImage = async (
   path: string,
   options?: {
     readonly signal?: AbortSignal;
-    readonly chunkBytes?: number;
     readonly selection?: ResolvedElectronFuseFile;
     readonly resources?: ArtifactResourceScope;
   },
@@ -141,15 +140,6 @@ export const readElectronFuseImage = async (
       `Selected artifact exceeds ${ELECTRON_FUSE_LIMITS.maximumFileBytes} bytes: ${path}`,
     );
   const size = Number(before.size);
-  const chunkBytes = options?.chunkBytes ?? ELECTRON_FUSE_LIMITS.chunkBytes;
-  if (
-    !Number.isSafeInteger(chunkBytes) ||
-    chunkBytes < 1 ||
-    chunkBytes > ELECTRON_FUSE_LIMITS.chunkBytes
-  )
-    throw new TypeError(
-      `chunkBytes must be an integer between 1 and ${ELECTRON_FUSE_LIMITS.chunkBytes}.`,
-    );
   return withArtifactRegularFile(
     path,
     options?.resources ?? new ArtifactResourceScope(),
@@ -166,7 +156,6 @@ export const readElectronFuseImage = async (
         path,
         size,
         container.slices,
-        chunkBytes,
         signal,
       );
       const current = await recheckPath(path);
@@ -287,7 +276,6 @@ const scanSlices = async (
   path: string,
   size: number,
   ranges: readonly SliceRange[],
-  chunkBytes: number,
   signal: AbortSignal | undefined,
 ): Promise<{
   readonly sha256: string;
@@ -299,11 +287,11 @@ const scanSlices = async (
     hits: [] as number[],
   }));
   const hash = createHash("sha256");
-  const chunk = Buffer.allocUnsafe(chunkBytes);
+  const chunk = Buffer.allocUnsafe(ELECTRON_FUSE_LIMITS.chunkBytes);
   let position = 0;
   while (position < size) {
     assertArtifactReadActive(signal);
-    const length = Math.min(chunkBytes, size - position);
+    const length = Math.min(chunk.length, size - position);
     const read = await handle.read(chunk, 0, length, position);
     if (read.bytesRead === 0) throw new RegularFileChangedError(path);
     assertArtifactReadActive(signal);

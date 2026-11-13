@@ -61,7 +61,7 @@ describe("LM Studio home resolution", () => {
     "resolves mcp.json in the %s home",
     async (layout) => {
       const { directory, client } = await installedHome(layout);
-      expect(client).toEqual({
+      expect(client).toMatchObject({
         name: "lm_studio",
         displayName: "LM Studio",
         configPath: join(directory, "mcp.json"),

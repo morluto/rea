@@ -147,3 +147,80 @@ cliTest(
     expect(mcpTrace.nodes).toContainEqual(read);
   },
 );
+
+cliTest(
+  "retains candidate Electron loader evidence through semantic traces",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-conditional-electron-trace-",
+    );
+    await writeFile(
+      join(root, "main.MJS"),
+      'const { contextBridge, ipcRenderer } = require("electron"); contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });',
+    );
+    const analysis = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
+    });
+    expect(analysis.exitCode, analysis.stderr).toBe(0);
+    const application = parseEvidence(analysis.json);
+    const graph = javascriptApplicationAnalysisResultSchema.parse(
+      application.normalized_result,
+    ).semantic_graph;
+    const seed = graph.nodes.find(
+      (node) =>
+        node.properties.loader_authority === "candidate" &&
+        node.properties.step_kind === "exposure",
+    );
+    if (seed === undefined)
+      throw new Error("Expected candidate Electron exposure");
+    const query = {
+      seed: { kind: "semantic-node", node_id: seed.node_id },
+      direction: "forward-influence",
+      include_ambiguous_dynamic_edges: true,
+    };
+    const request = join(root, "trace.json");
+    await writeFile(request, JSON.stringify({ application, query }));
+    const response = await cli.run({
+      arguments: ["trace-javascript-semantics", request, "--format", "json"],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const mcpCall = await cli.sharedMcpCall?.();
+    if (mcpCall === undefined) throw new Error("Expected shared MCP session");
+    const mcp = await mcpCall("trace_javascript_semantics", {
+      application,
+      query,
+    });
+    expect(mcp.isError, JSON.stringify(mcp.content)).not.toBe(true);
+    for (const evidence of [
+      parseEvidence(response.json),
+      parseEvidence(mcp.structuredContent),
+    ]) {
+      const trace = javaScriptSemanticTraceResultSchema.parse(
+        evidence.normalized_result,
+      );
+      const node = trace.nodes.find(({ node_id }) => node_id === seed.node_id);
+      expect(node?.properties.loader_authority).toBe("candidate");
+      const context = trace.evidence_contexts.find(
+        ({ context_id }) => context_id === node?.evidence.context_id,
+      );
+      expect(context).toMatchObject({ state: "inferred", confidence: "low" });
+      expect(context?.limitations.join(" ")).toContain("loader is unknown");
+      const candidateRelations = trace.relations.filter(
+        ({ properties }) => properties.loader_authority === "candidate",
+      );
+      expect(candidateRelations.length).toBeGreaterThan(0);
+      for (const relation of candidateRelations) {
+        const relationContext = trace.evidence_contexts.find(
+          ({ context_id }) => context_id === relation.evidence.context_id,
+        );
+        expect(relationContext).toMatchObject({
+          state: "inferred",
+          confidence: "low",
+        });
+        expect(relationContext?.limitations.join(" ")).toContain(
+          "loader is unknown",
+        );
+      }
+    }
+  },
+);

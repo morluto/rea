@@ -16,9 +16,10 @@ import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js"
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
 const unsupportedHost = process.platform !== "linux" || process.arch !== "x64";
-const requestSchema = z.strictObject({
+const requestSchema = z.object({
   snapshot_path: z.string(),
   reply_path: z.string(),
+  producer_limits: z.object({ diagnostic_bytes: z.number() }),
 });
 
 it.runIf(!unsupportedHost).each([
@@ -87,7 +88,9 @@ it.runIf(!unsupportedHost).each([
       resource === "cpu" ? "CPU" : "file-size",
     );
     if (resource === "file-size") {
-      expect(projected.remediation.action).toContain("outputBytes");
+      expect(projected.remediation.action).toContain(
+        "producer_limits.file_bytes",
+      );
       expect(projected.remediation.action).toContain("67108864");
       expect(projected.remediation.action).toContain("file_size_bytes");
       expect(projected.remediation.action).not.toContain("address-space");
@@ -226,9 +229,14 @@ it
   },
 );
 
-it.runIf(!unsupportedHost).each([1048576, 1048577])(
-  "keeps complete diagnostics or fails explicitly when a valid reply emits %s bytes",
-  async (bytes) => {
+it.runIf(!unsupportedHost).each([
+  { bytes: 1048576, budget: undefined },
+  { bytes: 1048577, budget: undefined },
+  { bytes: 64, budget: 64 },
+  { bytes: 65, budget: 64 },
+])(
+  "enforces selected diagnostic retention for a valid reply: %j",
+  async ({ bytes, budget }) => {
     const { path } = await fixture();
     let ownedPath = "";
     const provider = new PwntoolsLayoutProvider(
@@ -239,6 +247,9 @@ it.runIf(!unsupportedHost).each([1048576, 1048577])(
         if (requestPath === undefined) throw new Error("Request path missing");
         const request = requestSchema.parse(
           JSON.parse(await readFile(requestPath, "utf8")),
+        );
+        expect(request.producer_limits.diagnostic_bytes).toBe(
+          budget ?? 1048576,
         );
         const {
           artifact: _artifact,
@@ -263,8 +274,13 @@ it.runIf(!unsupportedHost).each([1048576, 1048577])(
         });
       },
     );
-    const result = await provider.inspect({ path });
-    if (bytes === 1048576) {
+    const result = await provider.inspect({
+      path,
+      ...(budget === undefined
+        ? {}
+        : { producer_limits: { diagnostic_bytes: budget } }),
+    });
+    if (bytes <= (budget ?? 1048576)) {
       if (!result.ok) throw result.error;
       expect(result.value.diagnostics.stdout).toHaveLength(bytes);
       expect(result.value.diagnostics.truncated).toBe(false);
@@ -336,7 +352,7 @@ it.runIf(!unsupportedHost).each([
       },
     });
     expect(projected.remediation.action).toContain("memory");
-    expect(projected.remediation.action).toContain("address-space");
+    expect(projected.remediation.action).toContain("address_space_bytes");
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(path, "utf8")).toBe("source-owned-seam-bytes");
   },

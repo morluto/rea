@@ -1,10 +1,12 @@
 import { expect, it as test, vi } from "vitest";
 
+import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { ProcessOwnershipInspectionCancelled } from "../../../../src/process/ProcessInspectionCancellation.js";
 import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaResourceScope.js";
 import { KunaTargetCommands } from "../../../../src/kuna/KunaTargetCommands.js";
 import { fakeKunaCalls } from "./fakeKuna.js";
-import { session } from "./kunaSessionFixture.js";
+import { session, awaitKunaCommand } from "./kunaSessionFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -25,7 +27,11 @@ it("reports output beyond REA's fixed buffer as a deterministic memory bound", a
       installation: installed.value,
       operation: "list_procedures",
       arguments: (input) => ["functions", input, "--json"],
-      deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+      deadline: {
+        setting: "REA_KUNA_TIMEOUT_MS",
+        source: "setting",
+        ms: 10_000,
+      },
       outputBytes: 100,
       signal: controller.signal,
     });
@@ -168,7 +174,11 @@ it("preserves a caller reason when a target command is already cancelled", async
       installation: installed.value,
       operation: "list_procedures",
       arguments: (input) => ["functions", input, "--json"],
-      deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+      deadline: {
+        setting: "REA_KUNA_TIMEOUT_MS",
+        source: "setting",
+        ms: 10_000,
+      },
       outputBytes: 100,
       signal: controller.signal,
       releaseRun,
@@ -228,7 +238,7 @@ it("does not invent a caller cause when closed without cancellation", async () =
     installation: installed.value,
     operation: "list_procedures",
     arguments: (input) => ["functions", input, "--json"],
-    deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+    deadline: { setting: "REA_KUNA_TIMEOUT_MS", source: "setting", ms: 10_000 },
     outputBytes: 100,
     signal: controller.signal,
     releaseRun,
@@ -240,3 +250,77 @@ it("does not invent a caller cause when closed without cancellation", async () =
   expect(await fakeKunaCalls(kuna)).toEqual(callsBefore);
   expect(await commands.close()).toEqual({ ok: true, value: null });
 });
+
+it.each(["before-launch", "after-launch"] as const)(
+  "keeps timeout output coverage truthful when expiry is %s",
+  async (phase) => {
+    const fixture = await session("rea-kuna-timeout-output-", {
+      inventory: "hang",
+    });
+    const installed = await inspectKunaInstallation({
+      REA_KUNA_COMMAND: fixture.kuna,
+      REA_KUNA_CACHE_DIR: fixture.cacheRoot,
+    });
+    if (!installed.ok) throw new Error(installed.error.reason);
+    const controller = new AbortController();
+    const waitForDeadline: KunaProcessLauncher = async (options) =>
+      new Promise<never>((_resolve, reject) => {
+        const signal = options.signal;
+        if (signal === undefined)
+          throw new Error("Missing command deadline signal");
+        const cancelled = () =>
+          reject(new ProcessOwnershipInspectionCancelled(signal.reason));
+        if (signal.aborted) cancelled();
+        else
+          signal.addEventListener("abort", cancelled, {
+            once: true,
+          });
+      });
+    const commands = new KunaTargetCommands(fixture.target, {
+      signal: controller.signal,
+      ...(phase === "before-launch" ? { launcher: waitForDeadline } : {}),
+    });
+    let pending: ReturnType<typeof commands.run> | undefined;
+    try {
+      expect((await commands.prepare()).ok).toBe(true);
+      pending = commands.run({
+        installation: installed.value,
+        operation: "list_procedures",
+        arguments: (input) => ["functions", input, "--json"],
+        deadline: {
+          setting: "REA_KUNA_TIMEOUT_MS",
+          source: "setting",
+          ms: 1000,
+        },
+        outputBytes: 16384,
+        signal: controller.signal,
+      });
+      if (phase === "after-launch")
+        await awaitKunaCommand(fixture.kuna, "functions", pending);
+      const result = await pending;
+      if (result.ok) throw new Error("Expected a command timeout");
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "provider_timeout",
+        details: { timeout_ms: 1000 },
+      });
+      const calls = (await fakeKunaCalls(fixture.kuna)).filter(
+        ({ argv }) => argv[0] === "functions",
+      );
+      expect(calls).toHaveLength(phase === "after-launch" ? 1 : 0);
+      if (phase === "after-launch") {
+        expect(projected.details).toMatchObject({
+          captured_output: { stdout: "", stderr: "", truncated: false },
+        });
+      } else {
+        expect(result.error.capturedOutput).toBeUndefined();
+        expect(projected.details).not.toHaveProperty("captured_output");
+      }
+    } finally {
+      controller.abort();
+      await commands.close();
+      await pending;
+      expect((await commands.close()).ok).toBe(true);
+    }
+  },
+);

@@ -1,3 +1,4 @@
+import { createTestProcessCaptureResourceScope } from "../fixtures/processCaptureResourceScope.js";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { createDarwinProcessRunTokenReader } from "../../src/process/DarwinProcessRunTokenReader.js";
 import { createSystemProcessOwnershipHost } from "../../src/process/ProcessOwnershipObservation.js";
 import { startProcessSampler } from "../../src/process/capture/ProcessSampling.js";
+import { ProcessOwnershipInspectionCancelled } from "../../src/process/ProcessInspectionCancellation.js";
 
 const waitForFile = async (path: string, timeoutMs = 4_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
@@ -111,7 +113,9 @@ const expectOwnedCommandToFinishOnAbort = async (
 
   if (!(failure instanceof Error))
     throw new Error("The cancelled process command did not return an error");
-  expect(failure.cause).toBe(reason);
+  expect(ProcessOwnershipInspectionCancelled.from(failure)?.reason).toBe(
+    reason,
+  );
   await expect(readFile(command.donePath, "utf8")).resolves.toBe("done");
 };
 
@@ -199,6 +203,7 @@ it.skipIf(process.platform === "win32")(
     };
 
     stopSampler = startProcessSampler({
+      resourceScope: createTestProcessCaptureResourceScope(),
       rootPid: 100,
       runId: "fixture-run-token",
       started: 0,

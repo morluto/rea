@@ -146,9 +146,7 @@ export const registerGdbTools = (
             manager.close(input.session_id),
           ),
       );
-      return result.ok
-        ? delivery.toCallToolResult({ ok: true, value: result.value }, close)
-        : delivery.toCallToolResult(result, close);
+      return delivery.toCallToolResult(result, close);
     },
   );
 };

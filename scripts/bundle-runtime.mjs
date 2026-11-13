@@ -5,7 +5,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 /**
  * Reduce filesystem resolution during CLI and MCP startup. Keep dependencies
- * external, dynamic imports lazy, and original compiled worker entrypoints.
+ * external and original compiled worker entrypoints. Dynamic imports can split
+ * into lazy chunks unless the same module is also statically reachable.
  */
 export const bundleRuntime = async (root) => {
   const compiledRoot = resolve(root, "dist");

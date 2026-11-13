@@ -273,6 +273,85 @@ describe("managed application graph projection", () => {
   });
 });
 
+it("preserves only a managed graph's matching subject in feature traces", () => {
+  const { artifactEvidence } = createManagedInteropEvidence();
+  const selectedArtifact = parseEvidence({
+    ...artifactEvidence,
+    subject: { ...artifactEvidence.subject, name: "selected managed image" },
+  });
+  const projected = projectManagedApplicationGraphEvidence({
+    managed_artifact: selectedArtifact,
+  });
+  if (!projected.ok) throw projected.error;
+  const parsed = parseEvidence(projected.value);
+  expect(parsed.subject).toEqual(selectedArtifact.subject);
+  const query = {
+    seed: {
+      kind: "string" as const,
+      value: "MessageBoxW",
+      match: "exact" as const,
+      case_sensitive: true,
+    },
+    direction: "incoming" as const,
+  };
+  const trace = traceApplicationFeatureEvidence({
+    application: parsed,
+    ...query,
+  });
+  if (!trace.ok) throw trace.error;
+  expect(trace.value.evidence.subject).toEqual(selectedArtifact.subject);
+  const foreign = createEvidence(
+    { path: "/other.exe", sha256: "f".repeat(64), format: "pe" },
+    parsed.provider,
+    {
+      operation: parsed.operation,
+      predicateType: parsed.predicate_type,
+      parameters: parsed.parameters,
+      result: parsed.normalized_result,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      evidenceLinks: parsed.evidence_links,
+    },
+  );
+  const foreignTrace = traceApplicationFeatureEvidence({
+    application: foreign,
+    ...query,
+  });
+  if (!foreignTrace.ok) throw foreignTrace.error;
+  expect(foreignTrace.value.evidence.subject).toBeNull();
+  const contradictory = createEvidence(
+    { path: "/other.exe", sha256: "f".repeat(64), format: "pe" },
+    parsed.provider,
+    {
+      operation: parsed.operation,
+      predicateType: parsed.predicate_type,
+      parameters: parsed.parameters,
+      result: {
+        ...(parsed.normalized_result as Record<string, unknown>),
+        root_artifact_sha256: "f".repeat(64),
+      },
+      confidence: "inferred",
+      authority: "analyst-inference",
+      evidenceLinks: parsed.evidence_links,
+    },
+  );
+  const contradictoryTrace = traceApplicationFeatureEvidence({
+    application: contradictory,
+    ...query,
+  });
+  expect(contradictoryTrace).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisInputError",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          path: ["application", "normalized_result", "root_artifact_sha256"],
+        }),
+      ]),
+    },
+  });
+});
+
 describe("managed application graph request", () => {
   it("accepts any nonempty set of inline sources and rejects duplicates", () => {
     const evidence = MANAGED_APPLICATION_GRAPH_EXAMPLE.managed_members;
@@ -803,6 +882,45 @@ describe("managed application graph coverage", () => {
       omitted_count: null,
       limits: [],
     });
+    const complete = memberGraph(
+      buildManagedPeFixture({ ilBody: tinyIl([0x2a]) }),
+    );
+    for (const [graph, status, evidenceId] of [
+      [parserPartialResult.graph, "partial", parserPartialEvidence.evidence_id],
+      [complete.graph, "complete", complete.memberEvidence.evidence_id],
+    ] as const) {
+      const expected = {
+        status,
+        truncated: false,
+        omitted_count: status === "partial" ? null : 0,
+        limits: [],
+      };
+      for (const kind of [
+        "managed-type",
+        "managed-method",
+        "managed-field",
+      ] as const) {
+        const nodes = graph.nodes.filter((node) => node.kind === kind);
+        expect(nodes.length).toBeGreaterThan(0);
+        for (const node of nodes) {
+          expect(node.observations.length).toBeGreaterThan(0);
+          for (const observation of node.observations) {
+            expect(observation.evidence.coverage).toEqual(expected);
+            expect(observation.evidence.evidence_ids).toContain(evidenceId);
+          }
+        }
+        const ids = new Set(nodes.map(({ node_id }) => node_id));
+        const contains = graph.edges.filter(
+          (edge) =>
+            edge.relation === "contains" && ids.has(edge.target_node_id),
+        );
+        expect(contains).toHaveLength(nodes.length);
+        for (const edge of contains) {
+          expect(edge.evidence.coverage).toEqual(expected);
+          expect(edge.evidence.evidence_ids).toContain(evidenceId);
+        }
+      }
+    }
   });
 });
 

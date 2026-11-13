@@ -1983,8 +1983,8 @@ export const commonJsWrapperBindingDeclaration = (
   // The index owns explicit wrapper parameters, including ones with no source
   // redeclaration. Babel's module classification does not invalidate that fact.
   if (binding.hostOrigin === "commonjs-wrapper") return binding;
-  // Without an explicit host fact, preserve the legacy script-var inference.
-  return state.program.sourceType === "script" &&
+  // A program var shares the wrapper binding only when the host is known.
+  return javaScriptRuntimeContext(state.program) === "commonjs" &&
     binding.declarationKinds.size > 0
     ? binding
     : undefined;

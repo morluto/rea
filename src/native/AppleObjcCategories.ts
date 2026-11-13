@@ -134,17 +134,12 @@ export const decodeObjcCategories = (input: {
               `0x${(category + 32n).toString(16)}`,
             ),
           );
-        const properties = readObjcPropertiesOf(
-          read,
-          read.pointer(category + 40n),
-          {
-            owner: `category ${name}`,
-            admit: input.admit,
-            issues: input.issues,
-            location: `0x${read.pointer(category + 40n).toString(16)}`,
-            onTruncated,
-          },
-        );
+        const properties = readObjcPropertiesOf(read, category + 40n, {
+          owner: `category ${name}`,
+          admit: input.admit,
+          issues: input.issues,
+          onTruncated,
+        });
         const decodeReasons = [
           ...(className === null ? ["category_class_unresolved"] : []),
           ...(protocols.ok ? [] : ["protocol_list_unreadable"]),

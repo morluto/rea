@@ -93,6 +93,9 @@ export class BinaryLayoutService {
           operation: OPERATION,
           parameters: {
             path: input.value.path,
+            ...(input.value.producer_limits === undefined
+              ? {}
+              : { producer_limits: input.value.producer_limits }),
             ...(input.value.pwntools_timeout_ms === undefined
               ? {}
               : { pwntools_timeout_ms: input.value.pwntools_timeout_ms }),

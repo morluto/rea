@@ -545,7 +545,8 @@ and each upstream request and reply collected before the failure. Failed replies
 remain available even when their payload cannot be interpreted. Cancellation
 also stops target hashing before provider admission.
 
-These operations do not execute the APK or provide split APK/AAB handling,
+The JADX package, class, method and reference operations do not execute the APK
+or provide split APK/AAB handling,
 signature validation, full resource-table semantics, native-library analysis or
 Android runtime capture. An `.aab` suffix is a ZIP archive, not an APK, so
 Android tools and the application graph do not treat it as a standalone APK.

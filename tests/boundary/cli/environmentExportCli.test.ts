@@ -142,6 +142,8 @@ cliTest(
     expect(document.files.map((file) => file.path).sort()).toEqual(
       BUNDLE_FILES,
     );
+    for (const file of document.files)
+      expect(file.bytes).toBe((await stat(join(directory, file.path))).size);
     const written = (
       await readdir(directory, { recursive: true, withFileTypes: true })
     )

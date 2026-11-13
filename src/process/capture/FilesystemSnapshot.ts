@@ -1,3 +1,4 @@
+import { assertNotCancelled } from "./ProcessScenarioRuntimeValidation.js";
 import { observedSymlinkTarget } from "../../domain/symlinkTarget.js";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -75,11 +76,10 @@ const readEntryObservation = async <T>(
   read: () => Promise<T>,
   signal?: AbortSignal,
 ): Promise<Result<T, EntryOmission>> => {
-  signal?.throwIfAborted();
+  assertNotCancelled(signal);
+  let value: T;
   try {
-    const value = await read();
-    signal?.throwIfAborted();
-    return ok(value);
+    value = await read();
   } catch (cause: unknown) {
     const code = filesystemSystemCode(cause);
     // readlink reports EINVAL if the observed symlink was replaced by a file.
@@ -88,9 +88,10 @@ const readEntryObservation = async <T>(
       (!unavailableSystemCodes.has(code) && code !== "EINVAL")
     )
       throw cause;
-    signal?.throwIfAborted();
     return err({ reason: "entry_unavailable", system_code: code });
   }
+  assertNotCancelled(signal);
+  return ok(value);
 };
 
 const observeSymlink = async (
@@ -129,14 +130,14 @@ const lookupPath = async (
   path: string,
   signal?: AbortSignal,
 ): Promise<PathLookup> => {
-  signal?.throwIfAborted();
+  assertNotCancelled(signal);
   let stats: Stats;
   try {
     stats = await lstat(path);
   } catch (cause: unknown) {
     const systemCode = fileUnavailableSystemCode(cause);
     if (systemCode === undefined) throw cause;
-    signal?.throwIfAborted();
+    assertNotCancelled(signal);
     return {
       state:
         systemCode === "ENOENT" || systemCode === "ENOTDIR"
@@ -146,7 +147,7 @@ const lookupPath = async (
       cause,
     };
   }
-  signal?.throwIfAborted();
+  assertNotCancelled(signal);
   return { state: "present", stats };
 };
 
@@ -174,9 +175,7 @@ export const admitFilesystemObservationRoots = async (
     return ok(undefined);
   } catch (cause: unknown) {
     const normalized =
-      cause instanceof AnalysisError
-        ? cause
-        : normalizeCaptureFailure(cause, signal);
+      cause instanceof AnalysisError ? cause : normalizeCaptureFailure(cause);
     return err(
       normalized instanceof AnalysisError
         ? normalized
@@ -298,7 +297,7 @@ export const hashFile = async (
   signal?: AbortSignal,
   retainer?: ProcessCaptureCleanupRetainer,
 ): Promise<FileHashOutcome> => {
-  signal?.throwIfAborted();
+  assertNotCancelled(signal);
   const noFollowAvailable =
     typeof fsConstants.O_NOFOLLOW === "number" && fsConstants.O_NOFOLLOW !== 0;
   let handle: FileHandle;
@@ -312,7 +311,7 @@ export const hashFile = async (
   } catch (cause: unknown) {
     const systemCode = fileUnavailableSystemCode(cause);
     if (systemCode === undefined) throw cause;
-    signal?.throwIfAborted();
+    assertNotCancelled(signal);
     return {
       state: "omitted",
       reason: "file_unavailable",
@@ -326,12 +325,12 @@ export const hashFile = async (
     retainer,
     async (ownedHandle) => {
       try {
-        signal?.throwIfAborted();
+        assertNotCancelled(signal);
         // On hosts without O_NOFOLLOW, compare the leaf's identity with the
         // captured regular file. Ancestor aliases do not change file identity.
         if (!noFollowAvailable) {
           const named = await lstat(path);
-          signal?.throwIfAborted();
+          assertNotCancelled(signal);
           if (!expected.isFile() || !sameRegularFileState(expected, named))
             return {
               state: "omitted",
@@ -340,7 +339,7 @@ export const hashFile = async (
             };
         }
         const stats = await ownedHandle.stat();
-        signal?.throwIfAborted();
+        assertNotCancelled(signal);
         if (
           !expected.isFile() ||
           !sameRegularFileState(expected, stats) ||
@@ -355,7 +354,7 @@ export const hashFile = async (
         const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes));
         let position = 0;
         while (position < stats.size) {
-          signal?.throwIfAborted();
+          assertNotCancelled(signal);
           const { bytesRead } = await ownedHandle.read(
             buffer,
             0,
@@ -372,11 +371,11 @@ export const hashFile = async (
           position += bytesRead;
         }
         const after = await ownedHandle.stat();
-        signal?.throwIfAborted();
+        assertNotCancelled(signal);
         let unchanged = sameRegularFileState(stats, after);
         if (unchanged && !noFollowAvailable) {
           const namedAfter = await lstat(path);
-          signal?.throwIfAborted();
+          assertNotCancelled(signal);
           unchanged = sameRegularFileState(after, namedAfter);
         }
         if (!unchanged)
@@ -389,7 +388,7 @@ export const hashFile = async (
       } catch (cause: unknown) {
         const systemCode = fileUnavailableSystemCode(cause);
         if (systemCode === undefined) throw cause;
-        signal?.throwIfAborted();
+        assertNotCancelled(signal);
         return {
           state: "omitted",
           reason: "file_unavailable",
@@ -508,7 +507,7 @@ export const snapshotRoots = async (
     depth: number,
     admitted?: Stats,
   ): Promise<boolean> => {
-    signal?.throwIfAborted();
+    assertNotCancelled(signal);
     if (await omitObserverPath(root, rootAlias, path)) return true;
     if (
       entries.length + unrepresentableNames >= scenario.limits.files ||
@@ -631,7 +630,7 @@ export const snapshotRoots = async (
     } catch (cause: unknown) {
       const systemCode = fileUnavailableSystemCode(cause);
       if (systemCode === undefined) throw cause;
-      signal?.throwIfAborted();
+      assertNotCancelled(signal);
       truncated = true;
       complete = false;
       enumerationReasons.add("directory_unavailable");
@@ -650,7 +649,7 @@ export const snapshotRoots = async (
         retainer,
         async (ownedDirectory) => {
           while (true) {
-            signal?.throwIfAborted();
+            assertNotCancelled(signal);
             const child = await ownedDirectory.read();
             if (child === null) break;
             const decoded = decodeDirectoryEntryName(child.name);
@@ -757,7 +756,7 @@ export const snapshotRoots = async (
     },
   });
   try {
-    signal?.throwIfAborted();
+    assertNotCancelled(signal);
     for (const [
       index,
       root,
@@ -794,6 +793,7 @@ export const snapshotRoots = async (
       if (await visit(root, alias, root, 0, lookup.stats))
         completeRoots.push(alias);
     }
+    assertNotCancelled(signal);
     const snapshot = buildSnapshot();
     if (closeFailures.length > 0) {
       const causes = closeFailures.map(({ cleanupCause }) => cleanupCause);
@@ -819,7 +819,7 @@ export const snapshotRoots = async (
       ...(cause instanceof ProcessCaptureReadFailure ? [cause] : []),
     ];
     throw new ProcessCaptureSnapshotFailure({
-      cause: normalizeCaptureFailure(cause, signal),
+      cause: normalizeCaptureFailure(cause),
       snapshot: buildSnapshot(),
       cleanupLeases: readFailures.flatMap(({ cleanupLeases }) => cleanupLeases),
       readFailures,

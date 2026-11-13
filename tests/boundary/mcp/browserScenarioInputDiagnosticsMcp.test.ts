@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const scenarios = [
   {
@@ -127,7 +127,7 @@ cliTest.for(["full", "compact"] as const)(
           `${scenario.name}: ${JSON.stringify(validate.errors)}`,
         ).toBe(scenario.fullSchemaValid || profile === "compact");
 
-        const cliResult = await cli.run({
+        const cliResult = await runFileCli(cli, {
           arguments: [
             "capture-browser-scenario",
             JSON.stringify(input),

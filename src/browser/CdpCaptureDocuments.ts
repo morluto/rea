@@ -777,11 +777,15 @@ const domMetadata = (
       destination_scope: destination.scope,
     });
   }
-  const rel = (pairs.get("rel") ?? "")
-    .toLowerCase()
-    // HTML link type tokens are separated by ASCII whitespace only.
-    .split(/[\t\n\f\r ]+/u)
-    .filter((value) => agentRelValues.includes(value));
+  // HTML link types form a set per element, separated by ASCII whitespace.
+  const rel = [
+    ...new Set(
+      (pairs.get("rel") ?? "")
+        .toLowerCase()
+        .split(/[\t\n\f\r ]+/u)
+        .filter((value) => agentRelValues.includes(value)),
+    ),
+  ];
   const href = urls.find(({ attribute }) => attribute === "href")?.url ?? null;
   const agentHints =
     tagName === "link" && rel.length > 0

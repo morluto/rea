@@ -68,6 +68,42 @@ it("keeps historical symbol defaults scoped to their selected Mach-O facet", () 
   ).toBe(false);
 });
 
+it.each(["not-encrypted", "malformed"] as const)(
+  "projects historical encryption rows with %s status",
+  (status) => {
+    const current = inspectMachoSchema.parse(report);
+    const { malformed_kind: _unrecorded, ...recorded } =
+      current.encryption.items[0]!;
+    const historical = {
+      ...recorded,
+      status,
+      ...(status === "malformed"
+        ? { reason: "slice has 3 encryption load commands", range: null }
+        : {}),
+    };
+    const source = { ...current, encryption: coverage([historical]) };
+    expect(inspectMachoSchema.safeParse(source).success).toBe(false);
+    const projected = projectAnalysisView(parent(source), {
+      kind: "macho",
+      facet: "encryption",
+      offset: 0,
+      limit: 10,
+    });
+    if (!projected.ok || projected.value.kind !== "macho")
+      throw new Error("Expected a historical Mach-O encryption page");
+    expect(projected.value.item).toEqual([
+      {
+        ...historical,
+        malformed_kind: status === "malformed" ? "unrecorded" : null,
+      },
+    ]);
+    expect(analysisViewResultSchema.safeParse(projected.value).success).toBe(
+      true,
+    );
+    expect(historical).not.toHaveProperty("malformed_kind");
+  },
+);
+
 const symbol = (name: string) => ({
   name,
   runtime_name: name.slice(1),
@@ -148,6 +184,7 @@ const report = {
       container_file_offset: 0,
       size: 4096,
       status: "not-encrypted",
+      malformed_kind: null,
       reason: null,
       commands: [
         {

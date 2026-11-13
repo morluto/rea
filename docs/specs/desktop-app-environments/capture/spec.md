@@ -13,6 +13,10 @@ folder to build the environment; this step builds nothing.
 
 ## Requirements
 
+- The baseline records each observed non-file path and its type without
+  following symlinks, so a later state reader can distinguish an absent SQLite
+  sidecar from an observed non-file.
+
 - The command is CLI only. A capture is a long interactive session whose
   checkpoints come from stdin lines (empty, `checkpoint [name]` or other
   text) and which ends on `stop` or the end of stdin, when the launched
@@ -64,7 +68,8 @@ folder to build the environment; this step builds nothing.
   lists candidate state directories under the XDG folders and dot-folders
   named after the package, executable, desktop entry's full id and last part,
   and name, and every folder present there whose name is one of those in
-  another letter case, such as GIMP's `~/.config/GIMP`; a `flatpak run`
+  another letter case, such as GIMP's `~/.config/GIMP`, and KDE's
+  `<name>rc` in the config folder, such as `~/.config/tellicorc`; a `flatpak run`
   launch uses the application id (its first operand
   after options and their values) instead of the launcher's name and adds
   `~/.var/app/<id>`. An `--executable` runs from the caller's
@@ -74,7 +79,9 @@ folder to build the environment; this step builds nothing.
   `--state-path` values and absolute arguments other than `/` or a directory
   containing the home directory, which the limitations name instead, plus the
   `-wal` and `-journal` paths beside each of those selected paths that is not
-  a directory, so a database selected on its own is captured with its logs. The
+  a directory, so a database selected on its own is captured with its logs.
+  Each selected path is also recorded as named, beside its physical
+  spelling, so a role can follow from the name the caller gave it. The
   baseline walk runs before launch and retains every file under the content
   roots; each later checkpoint reports created, modified, deleted and retyped
   paths against the previous walk and retains every changed file. A creation

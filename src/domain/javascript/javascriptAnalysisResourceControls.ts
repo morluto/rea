@@ -1,3 +1,7 @@
+import {
+  JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
+  javaScriptSemanticPrecisionSchema,
+} from "./javascriptSemanticPrecision.js";
 import { z } from "zod";
 
 /** Complete static checkpoint / per-script result transport ceiling. */
@@ -200,6 +204,15 @@ export const javaScriptAnalysisCoverageLimits = (
 
 /** Optional operational choices; omission keeps them out of Evidence parameters. */
 export const javaScriptAnalysisResourceControlsSchema = z.strictObject({
+  semantic_precision: javaScriptSemanticPrecisionSchema.optional().describe(
+    `Per-source evaluator budgets. Omitted fields preserve defaults: ${Object.entries(
+      JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
+    )
+      .map(([name, value]) => `${name} ${String(value)}`)
+      .join(
+        ", ",
+      )}. Raising these does not raise graph retention, worker memory, transfer or parent result budgets; cyclic and unsupported values remain unknown.`,
+  ),
   max_semantic_nodes: z
     .number()
     .int()

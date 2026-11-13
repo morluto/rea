@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -46,7 +50,7 @@ transport.stderr?.on("data", (bytes) => {
 const ajv = new Ajv2020({ strict: false, validateFormats: false });
 const measurements = [];
 const contract = toolContract("inspect_web_network_capture");
-try {
+const report = await withVerifierCleanup(async () => {
   try {
     await client.connect(transport);
   } catch (cause) {
@@ -192,7 +196,7 @@ try {
     });
   }
   await client.ping();
-  const report = {
+  return {
     status: "passed",
     profile: "aioquic-1.5.0-json-0.3",
     measurements,
@@ -202,18 +206,23 @@ try {
       "No PCAP or keylog is read by this verifier; repeated STREAM coverage is not proof of retransmission or network loss.",
     ],
   };
-  await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n", {
-    flag: "wx",
-    mode: 0o600,
-  });
-  console.log(
-    JSON.stringify({
-      status: report.status,
-      cases: measurements.length,
-      report: reportPath,
-    }),
-  );
-} finally {
-  await client.close();
-  await transport.close();
-}
+}, [
+  async () => {
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
+  },
+]);
+
+await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n", {
+  flag: "wx",
+  mode: 0o600,
+});
+console.log(
+  JSON.stringify({
+    status: report.status,
+    cases: measurements.length,
+    report: reportPath,
+  }),
+);

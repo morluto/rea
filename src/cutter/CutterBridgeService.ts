@@ -163,7 +163,7 @@ export class CutterBridgeService {
       );
     const input = parsed.data;
     const cleanup = await this.retryCleanup();
-    if (!cleanup.ok) return err(cleanup.error);
+    if (!cleanup.ok) return cleanup;
     try {
       const output = await this.client.execute({
         sessionId: input.session_id,

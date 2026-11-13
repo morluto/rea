@@ -18,7 +18,11 @@ import {
 import { z } from "zod";
 import { managedMembersViewRequestSchema } from "./managedMemberViewSchemas.js";
 import { managedViewIdentityUnknowns } from "./managedArtifactView.js";
-import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import {
+  createAnalysisViewResultReader,
+  validateAnalysisViewSubject,
+} from "./analysisViewParent.js";
+import { validateManagedTokenScope } from "../managed/managedInspectionEvidence.js";
 
 import type {
   ManagedMembersViewRequest,
@@ -296,6 +300,18 @@ export const projectManagedMemberView = (
   const parsed = parseMemberReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
+  // Match the public view boundary's subject check before scope validation.
+  const identity = validateAnalysisViewSubject(
+    parent.subject,
+    report.artifact.sha256,
+  );
+  if (!identity.ok) return identity;
+  const scope = validateManagedTokenScope(
+    report,
+    parent.operation,
+    parent.evidenceId,
+  );
+  if (!scope.ok) return scope;
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_managed_members" as const,

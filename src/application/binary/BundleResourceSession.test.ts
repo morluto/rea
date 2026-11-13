@@ -18,6 +18,8 @@ const identity: ProviderIdentity = {
 
 it("retains both child close failures when a resource owner rejects", async () => {
   const attempts: string[] = [];
+  const artifactCause = new Error("artifact close rejected");
+  const nativeCause = new Error("native close rejected");
   const artifact: AnalysisClient = {
     execute: async () => ({
       ok: true,
@@ -25,7 +27,7 @@ it("retains both child close failures when a resource owner rejects", async () =
     }),
     close: async () => {
       attempts.push("artifact");
-      throw new Error("artifact close rejected");
+      throw artifactCause;
     },
   };
   const native: AnalysisClient = {
@@ -35,14 +37,20 @@ it("retains both child close failures when a resource owner rejects", async () =
     }),
     close: async () => {
       attempts.push("native");
-      throw new Error("native close rejected");
+      throw nativeCause;
     },
   };
 
   const closed = await combineBundleResourceClients(artifact, native).close();
   expect(attempts.sort()).toEqual(["artifact", "native"]);
   expect(closed.ok).toBe(false);
-  if (!closed.ok) expect(closed.error.cleanupIncomplete).toBe(true);
+  if (closed.ok) throw new Error("Expected both child close failures");
+  expect(closed.error.cleanupIncomplete).toBe(true);
+  expect(closed.error.cause).toBeInstanceOf(AggregateError);
+  const failures = (closed.error.cause as AggregateError).errors;
+  expect(failures).toHaveLength(2);
+  expect((failures[0] as Error).cause).toBe(artifactCause);
+  expect((failures[1] as Error).cause).toBe(nativeCause);
 });
 
 it("reports the first mixed child failure before awaiting the other owner and retries both", async () => {

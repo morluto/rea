@@ -54,16 +54,16 @@ type Observation = z.infer<typeof observationSchema>;
 export interface HopperFileOffsetOwnership {
   readonly signal?: AbortSignal;
   /** Adopt the handle whose close rejected; the caller owns later retries. */
-  readonly retainFailedClose?: (owner: OwnedFileHandle) => void;
+  readonly retainFailedClose: (owner: OwnedFileHandle) => void;
   /** Bind the typed cleanup marker to that same owner before it is returned. */
-  readonly onCleanupMarker?: (marker: ProviderCleanupError) => void;
+  readonly onCleanupMarker: (marker: ProviderCleanupError) => void;
 }
 
 /** Bind native image-relative offsets to coordinates in the admitted source bytes. */
 export async function mapHopperFileOffset(
   target: BinaryTarget,
   value: JsonValue,
-  ownership?: HopperFileOffsetOwnership,
+  ownership: HopperFileOffsetOwnership,
 ): Promise<Result<JsonValue, AnalysisError>> {
   const parsed = observationSchema.safeParse(value);
   if (!parsed.success)
@@ -89,10 +89,10 @@ export async function mapHopperFileOffset(
     return unavailable(
       "The selected database digest does not identify its original executable bytes. Open that executable to verify original-file coordinates; read_bytes still exposes the database's native bytes.",
     );
-  const signal = ownership?.signal;
+  const signal = ownership.signal;
   if (signal?.aborted) return err(cancelled(partial, signal.reason));
   const publish = (marker: ProviderCleanupError): ProviderCleanupError => {
-    ownership?.onCleanupMarker?.(marker);
+    ownership.onCleanupMarker(marker);
     return marker;
   };
   const verification: OffsetVerification = {
@@ -112,7 +112,7 @@ export async function mapHopperFileOffset(
     const captured = await snapshotFromPath(
       target.path,
       signal,
-      ownership?.retainFailedClose,
+      ownership.retainFailedClose,
     );
     return coordinatesForSnapshot(verification, captured).result;
   } catch (cause: unknown) {
@@ -158,7 +158,7 @@ async function snapshotFromPath(
     new OwnedFileHandle(handle),
     {
       ...(signal === undefined ? {} : { signal }),
-      ...(retainFailedClose === undefined ? {} : { retainFailedClose }),
+      retainFailedClose,
     },
     async (file) => {
       if (!(await file.stat()).isFile())

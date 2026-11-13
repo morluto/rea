@@ -837,3 +837,199 @@ it.each([
     }
   },
 );
+
+it.each([2, 3])(
+  "refuses a tree-first main frame identity replacement at read %s",
+  async (stage) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-electron-root-identity-"));
+    temporary.push(root);
+    const main = join(root, "main.html");
+    await writeFile(main, "main");
+    const mainUrl = pathToFileURL(main).href;
+    let reads = 0;
+    const connection = {
+      onEvent: () => () => {},
+      send: async (method: string) => {
+        if (method === "Page.getFrameTree") {
+          reads += 1;
+          return {
+            frameTree: {
+              frame: {
+                id: reads >= stage ? "replacement-main" : "initial-main",
+                url: mainUrl,
+                loaderId: "same-url-document",
+              },
+            },
+          };
+        }
+        if (method === "Page.getResourceTree")
+          return { frameTree: { resources: [] } };
+        if (method === "DOMSnapshot.captureSnapshot")
+          return { strings: [], documents: [] };
+        if (method === "Target.getTargets") return { targetInfos: [] };
+        return {};
+      },
+    } as unknown as CdpConnection;
+    await expect(
+      inspectRaceConnection(connection, mainUrl),
+    ).rejects.toMatchObject({
+      reason: "target_changed",
+    });
+  },
+);
+
+it.each([
+  { stage: 1, loader: undefined },
+  { stage: 1, loader: "" },
+  { stage: 2, loader: undefined },
+  { stage: 2, loader: "" },
+  { stage: 3, loader: undefined },
+  { stage: 3, loader: "" },
+  { stage: 0, loader: undefined },
+])(
+  "retains uncertainty when the main loader is missing at read $stage",
+  async ({ stage, loader }) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-electron-missing-loader-"));
+    temporary.push(root);
+    const main = join(root, "main.html");
+    const child = join(root, "child.html");
+    await Promise.all([writeFile(main, "main"), writeFile(child, "child")]);
+    const mainUrl = pathToFileURL(main).href;
+    const childUrl = pathToFileURL(child).href;
+    let reads = 0;
+    let listener: (event: CdpEvent) => void = () => {};
+    const emitScript = (hash: string, id: number, frameId: string) => {
+      listener({
+        method: "Runtime.executionContextCreated",
+        params: { context: { id, auxData: { frameId } } },
+      });
+      listener({
+        method: "Debugger.scriptParsed",
+        params: { scriptId: hash, url: mainUrl, executionContextId: id, hash },
+      });
+    };
+    const connection = {
+      onEvent: (value: typeof listener) => {
+        listener = value;
+        return () => {};
+      },
+      send: async (method: string) => {
+        if (method === "Page.getFrameTree") {
+          reads++;
+          return {
+            frameTree: {
+              childFrames: [
+                {
+                  frame: {
+                    id: "child",
+                    parentId: "main",
+                    url: childUrl,
+                    loaderId: "loader-child",
+                  },
+                },
+              ],
+              frame: {
+                id: "main",
+                url: mainUrl,
+                ...(reads === stage
+                  ? loader === undefined
+                    ? {}
+                    : { loaderId: loader }
+                  : { loaderId: "loader-main" }),
+              },
+            },
+          };
+        }
+        if (method === "Debugger.enable") {
+          emitScript("before", 7, "main");
+          emitScript("child-before", 9, "child");
+        }
+        if (method === "Page.getResourceTree") {
+          emitScript("after", 8, "main");
+          emitScript("child-after", 10, "child");
+          return { frameTree: { resources: [] } };
+        }
+        if (method === "DOMSnapshot.captureSnapshot")
+          return { strings: [], documents: [] };
+        if (method === "Target.getTargets") return { targetInfos: [] };
+        return {};
+      },
+    } as unknown as CdpConnection;
+    const result = await inspectRaceConnection(connection, mainUrl);
+    for (const section of ["frames", "scripts", "workers"] as const)
+      expect(
+        result.completeness.attach_limited_sections.includes(section),
+      ).toBe(stage !== 0);
+    expect(result.scripts.items).toContainEqual(
+      expect.objectContaining({
+        cdp_hash: "before",
+        frame_scope: stage === 1 ? "unknown" : "authorized",
+      }),
+    );
+    expect(result.scripts.items).toContainEqual(
+      expect.objectContaining({
+        cdp_hash: "after",
+        frame_scope: stage === 1 || stage === 2 ? "unknown" : "authorized",
+      }),
+    );
+    expect(result.scripts.items).toContainEqual(
+      expect.objectContaining({
+        cdp_hash: "child-before",
+        frame_scope: stage === 1 ? "unknown" : "authorized",
+      }),
+    );
+    expect(result.scripts.items).toContainEqual(
+      expect.objectContaining({
+        cdp_hash: "child-after",
+        frame_scope: stage === 1 || stage === 2 ? "unknown" : "authorized",
+      }),
+    );
+  },
+);
+
+it.each([
+  { loaders: ["loader-a", undefined, "loader-b"], changed: true },
+  { loaders: ["loader-a", undefined, "loader-a"], changed: false },
+  { loaders: [undefined, undefined, "loader-b"], changed: false },
+])(
+  "compares later root identity with the last proven loader: $loaders",
+  async ({ loaders, changed }) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-electron-loader-history-"));
+    temporary.push(root);
+    const main = join(root, "main.html");
+    await writeFile(main, "main");
+    const mainUrl = pathToFileURL(main).href;
+    let reads = 0;
+    const connection = {
+      onEvent: () => () => {},
+      send: async (method: string) => {
+        if (method === "Page.getFrameTree") {
+          const loaderId = loaders[reads++];
+          return {
+            frameTree: {
+              frame: {
+                id: "main",
+                url: mainUrl,
+                ...(loaderId === undefined ? {} : { loaderId }),
+              },
+            },
+          };
+        }
+        if (method === "Page.getResourceTree")
+          return { frameTree: { resources: [] } };
+        if (method === "DOMSnapshot.captureSnapshot")
+          return { strings: [], documents: [] };
+        if (method === "Target.getTargets") return { targetInfos: [] };
+        return {};
+      },
+    } as unknown as CdpConnection;
+    const result = inspectRaceConnection(connection, mainUrl);
+    if (changed)
+      await expect(result).rejects.toMatchObject({ reason: "target_changed" });
+    else {
+      const value = await result;
+      if (loaders[0] !== undefined)
+        expect(value.completeness.attach_limited_sections).toContain("frames");
+    }
+  },
+);

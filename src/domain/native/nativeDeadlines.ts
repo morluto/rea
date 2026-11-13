@@ -48,10 +48,10 @@ export const nativeUiDeadlineField = deadlineField(
 
 /** Per-call pwntools command deadline. Omitted means 30000 ms. */
 export const pwntoolsTimeoutField = deadlineField(
-  "Deadline in milliseconds for each owned pwntools command in this call. Omitted means 30000. Integer from 1 to 2147483647. Applies on the next call. Does not raise cpuSeconds 30 or the output (67108864 bytes), diagnostic (1048576 bytes), or address-space (3221225472 bytes) allowances. Artifact admission stays REA_PWNTOOLS_MAX_INPUT_BYTES (default 33554432 bytes).",
+  "Deadline in milliseconds for each owned pwntools command in this call. Omitted means 30000, range 1..2147483647; applies on the next call. Independent CPU, output, diagnostic, file and address-space allowances are selected in producer_limits. input_bytes overrides REA_PWNTOOLS_MAX_INPUT_BYTES; otherwise that launch default applies.",
 );
 
-export type NativeDeadlineRead =
+type NativeDeadlineRead =
   | { readonly ok: true; readonly timeoutMs: number }
   | {
       readonly ok: false;

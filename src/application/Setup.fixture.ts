@@ -23,7 +23,6 @@ import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
-import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 
 /** Recording setup host for service-level planning and recovery tests. */
 export class FakeSetupHost implements SetupHost {

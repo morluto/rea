@@ -56,9 +56,9 @@ export interface KunaProjectText {
 }
 
 /** Session scope that adopts a span descriptor before the read opens it. */
-export interface KunaSpanOwnership {
-  readonly retainFailedClose?: (path: string, owner: OwnedFileHandle) => void;
-  readonly bindSpanCleanup?: (
+interface KunaSpanOwnership {
+  readonly retainFailedClose: (path: string, owner: OwnedFileHandle) => void;
+  readonly bindSpanCleanup: (
     owner: OwnedFileHandle,
     marker: ProviderCleanupError,
   ) => void;
@@ -66,13 +66,13 @@ export interface KunaSpanOwnership {
    * Check retained cleanup and open one descriptor. The session holds this
    * together with finishSpan so a failed close is retained before the next open.
    */
-  readonly admitSpan?: <T>(
+  readonly admitSpan: <T>(
     operation: string,
     signal: AbortSignal | undefined,
     open: () => Promise<T>,
   ) => Promise<Result<T, AnalysisError>>;
   /** Close one admitted descriptor before another span may open. */
-  readonly finishSpan?: <T>(finish: () => Promise<T>) => Promise<T>;
+  readonly finishSpan: <T>(finish: () => Promise<T>) => Promise<T>;
 }
 
 const readSpan = async (
@@ -105,10 +105,9 @@ const readSpan = async (
     return err(
       new AnalysisCancelledError(operation, { cause: cancelled.reason }),
     );
-  const opened =
-    ownership.admitSpan === undefined
-      ? ok(await open(path, "r"))
-      : await ownership.admitSpan(operation, signal, () => open(path, "r"));
+  const opened = await ownership.admitSpan(operation, signal, () =>
+    open(path, "r"),
+  );
   if (!opened.ok) return opened;
   const owner = new OwnedFileHandle(opened.value);
   let read: Result<string, unknown>;
@@ -146,12 +145,8 @@ const readSpan = async (
         // A failed read keeps its own diagnostic. A completed read records
         // cancellation when the caller aborts before the queued close settles.
         ...(read.ok && signal !== undefined ? { signal } : {}),
-        ...(ownership.retainFailedClose === undefined
-          ? {}
-          : {
-              retainFailedClose: (failed) =>
-                ownership.retainFailedClose?.(path, failed),
-            }),
+        retainFailedClose: (failed) =>
+          ownership.retainFailedClose(path, failed),
       },
       async () => {
         if (
@@ -165,10 +160,7 @@ const readSpan = async (
       },
     );
   try {
-    const value =
-      ownership.finishSpan === undefined
-        ? await finish()
-        : await ownership.finishSpan(finish);
+    const value = await ownership.finishSpan(finish);
     return ok(value);
   } catch (cause: unknown) {
     if (spanCancellation !== undefined && cause === spanCancellation)
@@ -261,7 +253,7 @@ const spanCloseFailure = (
     },
     { operation, cause: failure },
   );
-  ownership.bindSpanCleanup?.(failure.owner, marker);
+  ownership.bindSpanCleanup(failure.owner, marker);
   if (failure.completionCancellation !== undefined)
     return analysisErrorWithCleanupFailure(
       new AnalysisCancelledError(operation, {

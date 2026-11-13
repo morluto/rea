@@ -64,3 +64,16 @@ it("keeps the Windows absolute-path pattern valid in every client mode", () => {
     ]),
   );
 });
+
+it("rejects unpaired surrogates while preserving representable Unicode paths", () => {
+  for (const path of ["/tmp/\ud800", "/tmp/\udc00", "/tmp/\ud800x"]) {
+    expect(absoluteLocalPathStringSchema.safeParse(path).success, path).toBe(
+      false,
+    );
+  }
+  for (const path of ["/tmp/😀", "/tmp/�", "/tmp/ spaced name "]) {
+    expect(absoluteLocalPathStringSchema.safeParse(path).success, path).toBe(
+      true,
+    );
+  }
+});

@@ -71,12 +71,11 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
             selector: "#selected",
           };
     expect(ajv.validate(inputSchema, args)).toBe(true);
-    const response = await client.callTool({ name, arguments: args });
+    const response = await client.callTool(
+      { name, arguments: args },
+      { toolDefinition: advertised },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const parsed = toolContract(name).outputSchema.parse(
       response.structuredContent,
     );
@@ -178,7 +177,7 @@ cliTest(
         ],
         environment: process.env,
       });
-      expect(cliResult.exitCode).toBe(0);
+      expect(cliResult.exitCode, cliResult.stderr).toBe(0);
       expect(cliResult.signal).toBeNull();
       expect(parseEvidence(cliResult.json).normalized_result).toMatchObject({
         target: {
@@ -219,25 +218,22 @@ cliTest(
     await client.connect(clientTransport);
     const advertised = (await client.listTools()).tools.find(
       ({ name }) => name === "inspect_web_event_listeners",
-    )?.outputSchema;
-    if (advertised === undefined)
+    );
+    if (advertised?.outputSchema === undefined)
       throw new Error("Missing advertised listener output schema");
-    const outputSchema: Record<string, unknown> = advertised;
-    const response = await client.callTool({
-      name: "inspect_web_event_listeners",
-      arguments: {
-        cdp_endpoint: browser.endpoint,
-        target_id: "allowed-page",
-        allowed_origins: [browser.allowedOrigin],
-        selector: "#selected",
+    const response = await client.callTool(
+      {
+        name: "inspect_web_event_listeners",
+        arguments: {
+          cdp_endpoint: browser.endpoint,
+          target_id: "allowed-page",
+          allowed_origins: [browser.allowedOrigin],
+          selector: "#selected",
+        },
       },
-    });
+      { toolDefinition: advertised },
+    );
     expect(response.isError).not.toBe(true);
-    const ajv = schemaValidation.assertions;
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const cliResult = await cli.run({
       arguments: [
         "inspect-web-event-listeners",
@@ -250,7 +246,7 @@ cliTest(
       ],
       environment: process.env,
     });
-    expect(cliResult.exitCode).toBe(0);
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     for (const evidence of [
       toolContract("inspect_web_event_listeners").outputSchema.parse(
         response.structuredContent,

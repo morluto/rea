@@ -16,6 +16,7 @@ import type {
   AnalysisProviderCandidate,
 } from "../AnalysisProvider.js";
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
+import { withCandidateRejections } from "./AnalysisProviderCandidateDiagnostics.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
   providerReleaseVerificationSchema,
@@ -74,7 +75,7 @@ export const evaluateAnalysisProviderCandidate = async (
       error instanceof AnalysisUnsupportedTargetError
         ? {
             candidate,
-            status: {
+            status: withCandidateRejections({
               ...status,
               targetSupport: {
                 status: "unsupported" as const,
@@ -82,7 +83,7 @@ export const evaluateAnalysisProviderCandidate = async (
                 reason: error.reason,
                 diagnostics: { path: error.path, error_tag: error._tag },
               },
-            },
+            }),
           }
         : rejectedProfile(
             candidate,
@@ -175,7 +176,7 @@ const rejectedProfile = (
   diagnostics: Readonly<Record<string, JsonValue>> = {},
 ): AnalysisProviderCandidateEvaluation => ({
   candidate,
-  status: {
+  status: withCandidateRejections({
     ...status,
     availability: {
       status: "unavailable",
@@ -186,5 +187,5 @@ const rejectedProfile = (
         ...diagnostics,
       }),
     },
-  },
+  }),
 });
