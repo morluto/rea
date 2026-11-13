@@ -43,6 +43,7 @@ import { registerIl2cppTools } from "./registerIl2cppTools.js";
 import { registerRustTools } from "./registerRustTools.js";
 import { registerPythonPycTool } from "./registerPythonPycTool.js";
 import { registerErlangTools } from "./registerErlangTools.js";
+import { registerUnrealTools } from "./registerUnrealTools.js";
 import { registerV8CodeCacheTool } from "./registerV8CodeCacheTool.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
@@ -215,6 +216,7 @@ export const createServer = (
     goBinary,
     rustBinary,
     erlangBeam,
+    unrealPak,
     v8CodeCache,
     modelArtifact,
     gpuCodeObjects,
@@ -661,6 +663,14 @@ export const createServer = (
       registerErlangTools(
         server,
         erlangBeam,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerUnrealTools(
+        server,
+        unrealPak,
         toolLogger,
         recordEvidence,
         analysisAdmission,
