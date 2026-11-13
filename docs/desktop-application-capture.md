@@ -280,8 +280,12 @@ machine. `$ORIGIN` and `${ORIGIN}` in DT_NEEDED itself are expanded relative
 to the object declaring that dependency before full-path lookup and request
 deduplication; the same spelling in two libraries can name two different files.
 Lookup paths retain directory symlinks and subsequent `..` components until the
-filesystem resolves them. Resolved paths determine identity, containment and
-package ownership; the original loaded path supplies a library's own `$ORIGIN`.
+filesystem resolves them. The selected leaf name and its physical target are
+both queried for package ownership, with the required name's owner first.
+Distinct required links are retained even when they reach one physical object;
+that object's dependencies are walked once through its first load path, which
+supplies its own `$ORIGIN`. A dependency is app-contained only when both its
+required leaf and physical target lie inside the application's own folder.
 A combination with another dollar expression that REA does not expand remains
 unresolved with a reason, rather than selecting a literal token-named file.
 Each candidate's ELF machine, class and byte order must match the

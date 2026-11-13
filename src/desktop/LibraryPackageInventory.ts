@@ -4,6 +4,7 @@ import {
   type DesktopLibraryPolicy,
 } from "../domain/desktop/libraryPolicy.js";
 import { realpath } from "node:fs/promises";
+import { posix } from "node:path";
 
 import type { DesktopPackage } from "../domain/desktop/desktopCapture.js";
 import {
@@ -173,7 +174,9 @@ export const inspectLibraryPackages = async (
     {
       resolvePath: async (path) => {
         try {
-          return await realpath(path);
+          const directory = await realpath(posix.dirname(path));
+          const selected = posix.join(directory, posix.basename(path));
+          return { path: selected, resolvedPath: await realpath(selected) };
         } catch (cause) {
           if (isRefusedRead(cause)) return undefined;
           throw hostReadFailure(cause);
@@ -185,9 +188,9 @@ export const inspectLibraryPackages = async (
     },
     policy.libraries,
   );
-  const located = closure.libraries.map(({ path }) => ({
+  const located = closure.libraries.map(({ path, resolvedPath }) => ({
     path,
-    candidates: ownershipCandidates([path]),
+    candidates: ownershipCandidates([path, resolvedPath]),
   }));
   const owners = await packageOwners(
     located.flatMap((library) => library.candidates),

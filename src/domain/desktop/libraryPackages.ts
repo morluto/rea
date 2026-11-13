@@ -122,10 +122,16 @@ async function* libraryCandidates(
   yield* cachedPaths(cache, request, machine);
 }
 
+/** A selected leaf name and the target reached through the filesystem. */
+export interface LibraryPath {
+  readonly path: string;
+  readonly resolvedPath: string;
+}
+
 /** Host reads the closure walk needs. */
 export interface LibraryWalkHost {
   /** Resolve through the filesystem, including symlinks before subsequent `..` components. */
-  readonly resolvePath: (path: string) => Promise<string | undefined>;
+  readonly resolvePath: (path: string) => Promise<LibraryPath | undefined>;
   readonly dependencies: (
     path: string,
     expected: ElfLibraryIdentity,
@@ -135,10 +141,11 @@ export interface LibraryWalkHost {
 
 /** The shared libraries an executable loads at start, as the dynamic linker would find them. */
 export interface LibraryClosure {
-  /** Libraries outside the application's own folder, by the soname that loaded them. */
+  /** Required paths or targets outside the application's own folder, by their declared soname. */
   readonly libraries: readonly {
     readonly soname: string;
     readonly path: string;
+    readonly resolvedPath: string;
   }[];
   /** Sonames without a compatible candidate in the searched directories or linker cache. */
   readonly missing: readonly string[];
@@ -167,7 +174,7 @@ export const libraryClosure = async (
 ): Promise<LibraryClosure> => {
   const seen = new Set<string>();
   const closure = {
-    libraries: [] as { soname: string; path: string }[],
+    libraries: [] as { soname: string; path: string; resolvedPath: string }[],
     missing: [] as string[],
     unreadable: [] as { path: string; reason: string }[],
     truncated: false,
@@ -180,9 +187,12 @@ export const libraryClosure = async (
     });
     return closure;
   }
-  const root = { ...executable, path: rootPath };
+  const root = { ...executable, path: rootPath.resolvedPath };
   const ownFolder = posix.dirname(root.path);
   const queue: LoadedObject[] = [{ ...root, loader: undefined }];
+  // Every required lookup can have its own package; the same resolved object
+  // supplies its dependency declarations only once, through its first load path.
+  const walkedPaths = new Set([root.path]);
   for (const object of queue) {
     const directories = searchDirectories(object);
     for (const soname of object.dependencies.needed) {
@@ -192,11 +202,11 @@ export const libraryClosure = async (
       const unsupported =
         expandedRequest !== soname &&
         soname.replace(ORIGIN_TOKEN, "").includes("$");
-      const resolvedRequest =
+      const directPath =
         !unsupported && expandedRequest.startsWith("/")
           ? await host.resolvePath(expandedRequest)
-          : expandedRequest;
-      const request = resolvedRequest ?? expandedRequest;
+          : undefined;
+      const request = directPath?.path ?? expandedRequest;
       // An unresolved declaration cannot claim a known literal lookup's identity.
       const key = unsupported
         ? compositeKey(["unresolved", object.path, soname])
@@ -211,7 +221,7 @@ export const libraryClosure = async (
         });
         continue;
       }
-      if (resolvedRequest === undefined) {
+      if (expandedRequest.startsWith("/") && directPath === undefined) {
         closure.unreadable.push({
           path: expandedRequest,
           reason: "the library's filesystem path could not be resolved",
@@ -221,6 +231,7 @@ export const libraryClosure = async (
       let selected:
         | {
             path: string;
+            resolvedPath: string;
             lookupPath: string;
             dependencies: Result<ElfDependencies, ElfDependenciesFailure>;
           }
@@ -233,10 +244,10 @@ export const libraryClosure = async (
         cache,
         host,
       )) {
-        const path = request.startsWith("/")
-          ? candidate
+        const resolved = request.startsWith("/")
+          ? directPath
           : await host.resolvePath(candidate);
-        if (path === undefined) {
+        if (resolved === undefined) {
           closure.unreadable.push({
             path: candidate,
             reason: "the library's filesystem path could not be resolved",
@@ -244,7 +255,11 @@ export const libraryClosure = async (
           unresolved = true;
           break;
         }
-        const dependencies = await host.dependencies(path, object.dependencies);
+        const { path, resolvedPath } = resolved;
+        const dependencies = await host.dependencies(
+          resolvedPath,
+          object.dependencies,
+        );
         if (!dependencies.ok && dependencies.error.identity === null) {
           // A failed identity read does not prove this candidate can be skipped,
           // or that its package belongs to the executable's loaded closure.
@@ -268,6 +283,7 @@ export const libraryClosure = async (
         }
         selected = {
           path,
+          resolvedPath,
           lookupPath: request.startsWith("/") ? expandedRequest : candidate,
           dependencies,
         };
@@ -277,16 +293,23 @@ export const libraryClosure = async (
         if (!unresolved) closure.missing.push(soname);
         continue;
       }
-      const { path, lookupPath, dependencies } = selected;
-      if (!isWithinAny(path, [ownFolder]))
-        closure.libraries.push({ soname, path });
-      if (dependencies.ok)
-        queue.push({
-          path: lookupPath,
-          dependencies: dependencies.value,
-          loader: object,
-        });
-      else closure.unreadable.push({ path, reason: dependencies.error.reason });
+      const { path, resolvedPath, lookupPath, dependencies } = selected;
+      if (
+        !isWithinAny(path, [ownFolder]) ||
+        !isWithinAny(resolvedPath, [ownFolder])
+      )
+        closure.libraries.push({ soname, path, resolvedPath });
+      if (dependencies.ok) {
+        if (!walkedPaths.has(resolvedPath)) {
+          walkedPaths.add(resolvedPath);
+          queue.push({
+            path: lookupPath,
+            dependencies: dependencies.value,
+            loader: object,
+          });
+        }
+      } else
+        closure.unreadable.push({ path, reason: dependencies.error.reason });
     }
   }
   return closure;

@@ -5,6 +5,73 @@ import { inspectLibraryPackages } from "../../../src/desktop/LibraryPackageInven
 import { elfImage } from "../../../src/domain/desktop/elfImage.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+it.skipIf(process.platform === "win32")(
+  "retains every required symlink package while walking its physical target once",
+  async () => {
+    const root = await createTestTempDirectory("rea-needed-link-owners-");
+    const bin = join(root, "bin"),
+      first = join(root, "first"),
+      second = join(root, "second");
+    await Promise.all([
+      mkdir(bin),
+      mkdir(join(first, "deep"), { recursive: true }),
+      mkdir(second),
+    ]);
+    await symlink(join("first", "deep"), join(root, "bridge"));
+    const executable = join(bin, "app");
+    const parent = join(bin, "libparent.so");
+    const firstLink = join(first, "libfirst.so");
+    const secondLink = join(second, "libsecond.so");
+    const child = join(first, "libchild.so");
+    const decoy = join(second, "libchild.so");
+    await Promise.all([
+      writeFile(
+        executable,
+        elfImage({ needed: ["$ORIGIN/../bridge/../libfirst.so", secondLink] }),
+      ),
+      writeFile(parent, elfImage({ needed: ["$ORIGIN/libchild.so"] })),
+      writeFile(child, elfImage({})),
+      writeFile(decoy, elfImage({})),
+      symlink(parent, firstLink),
+      symlink(parent, secondLink),
+    ]);
+    const owners = new Map([
+      [firstLink, "first-link-owner"],
+      [secondLink, "second-link-owner"],
+      [parent, "app"],
+      [child, "child-owner"],
+      [decoy, "decoy-owner"],
+    ]);
+    const report = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) =>
+        command === "ldconfig"
+          ? { stdout: "", exitCode: 0 }
+          : {
+              stdout: args
+                .slice(1)
+                .flatMap((path) => {
+                  const owner = owners.get(path);
+                  return owner === undefined ? [] : [`${owner}: ${path}`];
+                })
+                .join("\n"),
+              exitCode: 0,
+            },
+      undefined,
+    );
+    expect(report).toEqual({
+      library_packages: [
+        "child-owner",
+        "first-link-owner",
+        "second-link-owner",
+      ],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+    });
+  },
+);
+
 it
   .skipIf(process.platform === "win32")
   .each(["needed", "rpath", "runpath", "cache"] as const)(
