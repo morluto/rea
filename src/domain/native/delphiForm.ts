@@ -206,6 +206,16 @@ export const MAX_DELPHI_FORM_DEPTH = 32;
 /** The decoder retains at most this many objects per form. */
 export const MAX_DELPHI_FORM_OBJECTS = 1024;
 
+/** The decoder retains at most this many properties per form. */
+export const MAX_DELPHI_FORM_PROPERTIES = 8192;
+
+/** The decoder retains at most this many values per form. */
+export const MAX_DELPHI_FORM_VALUES = 32768;
+
+/** Bounds decoded text and structural bytes per form. */
+export const MAX_DELPHI_FORM_TEXT_BYTES = 8 * 1024 * 1024;
+export const MAX_DELPHI_FORM_RETAINED_BYTES = 8 * 1024 * 1024;
+
 /**
  * `TFilerFlag` values the decoder can emit. It emits each once, in bit order,
  * and stops on the reserved bit, so no other flag is an observed value.

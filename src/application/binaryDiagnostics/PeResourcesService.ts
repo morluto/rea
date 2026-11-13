@@ -20,7 +20,11 @@ import {
   MAX_DELPHI_FORM_DEPTH,
   MAX_DELPHI_FORM_HEX_BYTES,
   MAX_DELPHI_FORM_OBJECTS,
+  MAX_DELPHI_FORM_PROPERTIES,
+  MAX_DELPHI_FORM_RETAINED_BYTES,
   MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES,
+  MAX_DELPHI_FORM_TEXT_BYTES,
+  MAX_DELPHI_FORM_VALUES,
   RESOURCE_CODE_PAGES,
   type DelphiFormCollectionItem,
   type DelphiFormObject,
@@ -118,35 +122,73 @@ const arrayItems = (node: object, key: string): readonly unknown[] => {
   return Array.isArray(items) ? items : [];
 };
 
-/** A depth-overflow node is the decoder's explicit, non-recursive stop. */
+const zeroLength = (value: unknown): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as Record<string, unknown>).bytes === 0;
+
+/** The decoder's only over-budget node is a zero-length unknown sentinel. */
+const stoppedUnknownValue = (value: unknown): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as Record<string, unknown>).kind === "unknown" &&
+  zeroLength((value as Record<string, unknown>).location) &&
+  (value as Record<string, unknown>).bytes_hex === "";
+
+/** A depth- or budget-overflow node is the decoder's explicit stop. */
 const terminalStoppedNode = (
   frame: Extract<FormTreeFrame, { depth: number }>,
   node: object,
 ): boolean => {
-  if (frame.kind === "object")
+  if (frame.kind === "object") {
+    const object = node as Record<string, unknown>;
     return (
+      zeroLength(object.location) &&
       arrayItems(node, "children").length === 0 &&
       arrayItems(node, "properties").length === 0 &&
-      (node as Record<string, unknown>).unknown !== null &&
-      typeof (node as Record<string, unknown>).unknown === "object"
+      Array.isArray(object.flags) &&
+      object.flags.length === 0 &&
+      object.child_position === null &&
+      object.class_name === null &&
+      object.component_name === null &&
+      typeof object.unknown === "object" &&
+      object.unknown !== null
     );
+  }
   if (frame.kind === "property")
-    return (
-      (node as Record<string, unknown>).value !== null &&
-      typeof (node as Record<string, unknown>).value === "object" &&
-      ((node as Record<string, unknown>).value as Record<string, unknown>)
-        .kind === "unknown"
-    );
-  if (frame.kind === "value")
-    return (node as Record<string, unknown>).kind === "unknown";
+    return stoppedUnknownValue((node as Record<string, unknown>).value);
+  if (frame.kind === "value") return stoppedUnknownValue(node);
   return false;
+};
+
+type FormCounters = {
+  properties: number;
+  values: number;
+  text: number;
+  retained: number;
+};
+
+const addText = (counters: FormCounters, item: unknown): void => {
+  if (typeof item !== "object" || item === null) return;
+  const text = (item as Record<string, unknown>).text;
+  if (typeof text === "string") counters.text += text.length;
+};
+
+const addHex = (counters: FormCounters, value: unknown): void => {
+  if (typeof value === "string") counters.retained += value.length / 2;
+};
+
+const addPositionBytes = (counters: FormCounters, item: unknown): void => {
+  if (typeof item !== "object" || item === null) return;
+  addHex(counters, (item as Record<string, unknown>).bytes_hex);
 };
 
 /**
  * Zod follows the lazy form schema before the producer invariants run, so a
  * cyclic or over-deep provider tree would exhaust the call stack instead of
  * returning an output error. Walk the decoder's recursive edges first with an
- * explicit stack and the same depth limit the native decoder applies.
+ * explicit stack and the same depth and budget limits the native decoder
+ * applies.
  */
 const formTreeWithinDepth = (report: unknown): boolean => {
   if (typeof report !== "object" || report === null) return true;
@@ -164,6 +206,12 @@ const formTreeWithinDepth = (report: unknown): boolean => {
     ];
     let objects = 0;
     let sentinels = 0;
+    const counters: FormCounters = {
+      properties: 0,
+      values: 0,
+      text: 0,
+      retained: 0,
+    };
     while (stack.length > 0) {
       const frame = stack.pop()!;
       if (frame.kind === "leave") {
@@ -191,6 +239,11 @@ const formTreeWithinDepth = (report: unknown): boolean => {
       ancestors.add(node);
       stack.push({ kind: "leave", value: node });
       if (frame.kind === "object") {
+        const object = node as Record<string, unknown>;
+        counters.properties += arrayItems(node, "properties").length;
+        addText(counters, object.class_name);
+        addText(counters, object.component_name);
+        addPositionBytes(counters, object.child_position);
         // Nested components recurse one level deeper; property values share
         // the object's depth, exactly as readObject passes it to readValue.
         for (const child of arrayItems(node, "children"))
@@ -200,6 +253,7 @@ const formTreeWithinDepth = (report: unknown): boolean => {
         continue;
       }
       if (frame.kind === "property") {
+        addText(counters, (node as Record<string, unknown>).name);
         stack.push({
           kind: "value",
           value: (node as Record<string, unknown>).value,
@@ -208,6 +262,8 @@ const formTreeWithinDepth = (report: unknown): boolean => {
         continue;
       }
       if (frame.kind === "collection-item") {
+        counters.properties += arrayItems(node, "properties").length;
+        addPositionBytes(counters, (node as Record<string, unknown>).position);
         // A collection item's property values are read one level below the
         // collection value.
         for (const property of arrayItems(node, "properties"))
@@ -219,6 +275,25 @@ const formTreeWithinDepth = (report: unknown): boolean => {
         continue;
       }
       const value = node as Record<string, unknown>;
+      counters.values += 1;
+      if (value.kind === "string") {
+        addText(counters, value);
+        addHex(counters, value.bytes_hex);
+      } else if (value.kind === "identifier") {
+        addText(counters, value);
+        addHex(counters, value.bytes_hex);
+      } else if (
+        value.kind === "binary" ||
+        value.kind === "integer" ||
+        value.kind === "float"
+      )
+        addHex(counters, value.bytes_hex);
+      else if (value.kind === "set") {
+        const names = arrayItems(value, "names");
+        counters.values += names.length;
+        for (const name of names) addText(counters, name);
+      } else if (value.kind === "collection")
+        counters.values += arrayItems(value, "items").length;
       if (value.kind === "list")
         for (const entry of arrayItems(value, "items")) {
           if (typeof entry !== "object" || entry === null) continue;
@@ -241,6 +316,13 @@ const formTreeWithinDepth = (report: unknown): boolean => {
     if (
       objects > MAX_DELPHI_FORM_OBJECTS &&
       !(objects === MAX_DELPHI_FORM_OBJECTS + 1 && sentinels === 1)
+    )
+      return false;
+    if (
+      counters.properties > MAX_DELPHI_FORM_PROPERTIES ||
+      counters.values > MAX_DELPHI_FORM_VALUES ||
+      counters.text > MAX_DELPHI_FORM_TEXT_BYTES ||
+      counters.retained > MAX_DELPHI_FORM_RETAINED_BYTES
     )
       return false;
   }
@@ -838,11 +920,12 @@ const previewMatchesText = (
   if (codePage === BYTE_PRESERVING_CODE_PAGE)
     return text.startsWith(raw.toString("latin1"));
   try {
-    return text.startsWith(
-      new TextDecoder(codePage, { ignoreBOM: true }).decode(raw, {
-        stream: true,
-      }),
+    // Match decodeDelphiText: only the UTF-16LE path keeps its BOM.
+    const decoder = new TextDecoder(
+      codePage,
+      codePage === "utf-16le" ? { ignoreBOM: true } : undefined,
     );
+    return text.startsWith(decoder.decode(raw, { stream: true }));
   } catch {
     return text.startsWith(raw.toString("latin1"));
   }
@@ -864,6 +947,14 @@ const stringMatchesType = (
     retained !== Math.min(available, projection.previewBytes)
   )
     return false;
+  const raw = Buffer.from(value.bytes_hex, "hex");
+  // When the preview covers every available byte the text must be its exact
+  // decode; a capped preview must agree with the start of the text. The same
+  // rule applies to a stopped decode that retained more than the preview cap.
+  const textMatches =
+    value.bytes_hex.length / 2 === available
+      ? decodeDelphiText(raw, value.code_page) === value.text
+      : previewMatchesText(raw, value.code_page, value.text);
   if (value.decode_truncated)
     return (
       value.truncated &&
@@ -872,26 +963,14 @@ const stringMatchesType = (
       // it can produce is the valid zero-length budget stop.
       (available < value.declared_bytes ||
         (available === 0 && value.declared_bytes === 0)) &&
-      // When the preview covers every available byte, the text still has to
-      // be their decode.
-      (value.bytes_hex.length / 2 !== available ||
-        decodeDelphiText(
-          Buffer.from(value.bytes_hex, "hex"),
-          value.code_page,
-        ) === value.text)
+      textMatches
     );
   if (
     available !== value.declared_bytes ||
     value.truncated !== value.declared_bytes > projection.previewBytes
   )
     return false;
-  // A complete projection retains every source byte, so its published text
-  // must be exactly what those bytes decode to under the reported page. A
-  // capped preview still has to agree with the start of that text.
-  const raw = Buffer.from(value.bytes_hex, "hex");
-  return value.truncated
-    ? previewMatchesText(raw, value.code_page, value.text)
-    : decodeDelphiText(raw, value.code_page) === value.text;
+  return textMatches;
 };
 
 const binaryMatches = (

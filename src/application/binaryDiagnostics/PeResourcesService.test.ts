@@ -48,6 +48,12 @@ const observedReport = () => {
   );
 };
 
+const declaredBytes = (value: number): Buffer => {
+  const raw = Buffer.alloc(4);
+  raw.writeUInt32LE(value, 0);
+  return raw;
+};
+
 const label = (text: string, offset: number, codePage = DEFAULT_CODE_PAGE) => {
   const raw = Buffer.from(text, "latin1");
   return {
@@ -2108,6 +2114,113 @@ it("rejects more decoded objects than the decoder budget retains", async () => {
   });
 });
 
+it("rejects more properties than the decoder budget retains", async () => {
+  const report = await reportWithFormPrefix(0);
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  resource.code_page = 0;
+  const pages = codePageFields(0);
+  const properties = Array.from({ length: 8193 }, (_, property) => {
+    const name = label("P", 8 + property * 3, pages.code_page);
+    return {
+      name,
+      value_type: "vaNull",
+      value: {
+        kind: "null" as const,
+        location: {
+          offset: name.location.offset + name.location.bytes,
+          bytes: 1,
+        },
+      },
+      location: {
+        offset: name.location.offset,
+        bytes: name.location.bytes + 1,
+      },
+    };
+  });
+  const rootEnd = 8 + properties.length * 3 + 2;
+  resource.payload.location = { offset: 0, bytes: rootEnd };
+  report.artifact.bytes = rootEnd;
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: { offset: 0, bytes: 4 },
+      prefix: null,
+      ...pages,
+      root: {
+        location: { offset: 4, bytes: rootEnd - 4 },
+        flags: [],
+        child_position: null,
+        class_name: label("A", 4, pages.code_page),
+        component_name: label("B", 6, pages.code_page),
+        properties,
+        children: [],
+        unknown: null,
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects more values than the decoder budget retains", async () => {
+  const report = await reportForPayload(
+    delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty("Blob", delphiBinary(40000)),
+      ]),
+    ),
+  );
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("Deep", root.location.offset + 13, form.code_page);
+  const valueOffset = name.location.offset + name.location.bytes + 1;
+  const items = Array.from({ length: 32769 }, (_, item) => ({
+    value_type: "vaNull",
+    marker_location: { offset: valueOffset + item, bytes: 1 },
+    value: {
+      kind: "null",
+      location: { offset: valueOffset + item, bytes: 1 },
+    },
+  }));
+  const propertyEnd = valueOffset + items.length + 1;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: stoppedRoot(report, form, propertyEnd, {
+        properties: [
+          {
+            name,
+            value_type: "vaList",
+            value: {
+              kind: "list",
+              items,
+              terminated: true,
+              location: { offset: valueOffset, bytes: items.length + 1 },
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: propertyEnd - name.location.offset,
+            },
+          },
+        ],
+        children: [],
+      }),
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("rejects a completed suffix root whose ffChildPos position is missing", async () => {
   const report = await reportWithFormPrefix(0);
   const form = report.delphi_forms[0];
@@ -2378,6 +2491,76 @@ it("publishes a capped UTF-8 preview that splits a multibyte sequence", async ()
     truncated: true,
   });
   expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
+it("publishes a capped UTF-16BE string with a stripped BOM", async () => {
+  const raw = Buffer.alloc(202);
+  raw.writeUInt16BE(0xfeff, 0);
+  for (let index = 0; index < 100; index += 1)
+    raw.writeUInt16BE(0x41, 2 + index * 2);
+  const report = await reportForPayload(
+    delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty(
+          "Long",
+          Buffer.concat([delphiBytes(12), declaredBytes(raw.length), raw]),
+        ),
+      ]),
+    ),
+    1201,
+  );
+  expect(report.delphi_forms[0]?.root.properties[0]?.value).toMatchObject({
+    kind: "string",
+    truncated: true,
+    decode_truncated: false,
+  });
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
+it("rejects a stopped capped string whose preview disagrees with its text", async () => {
+  const report = await reportForPayload(
+    delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty(
+          "Long",
+          Buffer.concat([
+            delphiBytes(12),
+            declaredBytes(300),
+            Buffer.alloc(200, 0x41),
+          ]),
+        ),
+      ]),
+    ),
+  );
+  const form = report.delphi_forms[0];
+  const property = form?.root.properties[0];
+  if (form === undefined || property?.value.kind !== "string")
+    throw new Error("Missing stopped string");
+  expect(property.value).toMatchObject({
+    truncated: true,
+    decode_truncated: true,
+  });
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...form.root,
+        properties: [
+          {
+            ...property,
+            value: {
+              ...property.value,
+              text: `B${property.value.text.slice(1)}`,
+            },
+          },
+        ],
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
 });
 
 it("publishes a zero-length stopped string inside a partial root", async () => {
