@@ -14,6 +14,9 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const FIXTURE_UUID = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA";
 const OTHER_UUID = "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC";
 const ARM64 = { type: 0x0100000c, subtype: 0 } as const;
+const ARM64V8 = { type: 0x0100000c, subtype: 1 } as const;
+const ARM64E = { type: 0x0100000c, subtype: 0x80000002 } as const;
+const ARM64E_X1 = { type: 0x0100000c, subtype: 0x8000000c } as const;
 const X86_64 = { type: 0x01000007, subtype: 3 } as const;
 
 interface SliceSpec {
@@ -225,6 +228,89 @@ describe("Apple IPS Mach-O and dSYM join", () => {
     );
     expect(report.join.image_matches).toHaveLength(1);
     expect(report.join.frames[0]).toMatchObject({ status: "joined" });
+  });
+});
+
+describe("Apple IPS family/subtype pairs", () => {
+  it("joins a unique UUID match between an arm64 report and an arm64v8 slice", async () => {
+    const root = await createTestTempDirectory("rea-ips-arm64-family-");
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({
+        cpu: ARM64V8,
+        uuid: FIXTURE_UUID,
+        textVmaddr: 0x100000000n,
+      }),
+      { arch: "arm64" },
+    );
+    expect(report.join.image_matches).toHaveLength(1);
+    expect(report.join.frames[0]).toMatchObject({
+      status: "joined",
+      static_address: { decimal: "4294968120", hex: "0x100000338" },
+    });
+  });
+
+  it("joins a unique UUID match between an arm64e report and an arm64e.x1 slice", async () => {
+    const root = await createTestTempDirectory("rea-ips-arm64e-family-");
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({
+        cpu: ARM64E_X1,
+        uuid: FIXTURE_UUID,
+        textVmaddr: 0x100000000n,
+      }),
+      { arch: "arm64e" },
+    );
+    expect(report.join.image_matches).toHaveLength(1);
+    expect(report.join.frames[0]).toMatchObject({
+      status: "joined",
+      static_address: { decimal: "4294968120", hex: "0x100000338" },
+    });
+  });
+
+  it("refuses an arm64e report against an arm64v8 slice", async () => {
+    const root = await createTestTempDirectory("rea-ips-arm64-cross-");
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({
+        cpu: ARM64V8,
+        uuid: FIXTURE_UUID,
+        textVmaddr: 0x100000000n,
+      }),
+      { arch: "arm64e" },
+    );
+    expect(report.join.image_matches).toEqual([]);
+    expect(report.join.frames[0]).toMatchObject({ status: "unjoined" });
+  });
+
+  it("refuses an arm64 report against an arm64e.x1 slice", async () => {
+    const root = await createTestTempDirectory("rea-ips-arm64e-cross-");
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({
+        cpu: ARM64E_X1,
+        uuid: FIXTURE_UUID,
+        textVmaddr: 0x100000000n,
+      }),
+      { arch: "arm64" },
+    );
+    expect(report.join.image_matches).toEqual([]);
+    expect(report.join.frames[0]).toMatchObject({ status: "unjoined" });
+  });
+
+  it("still refuses an arm64 family report against an arm64e slice", async () => {
+    const root = await createTestTempDirectory("rea-ips-arm64-arm64e-");
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({
+        cpu: ARM64E,
+        uuid: FIXTURE_UUID,
+        textVmaddr: 0x100000000n,
+      }),
+      { arch: "arm64" },
+    );
+    expect(report.join.image_matches).toEqual([]);
+    expect(report.join.frames[0]).toMatchObject({ status: "unjoined" });
   });
 });
 
