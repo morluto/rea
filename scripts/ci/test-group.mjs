@@ -19,6 +19,11 @@ if (
 const child = spawn(
   process.execPath,
   [
+    // Reuse the development runner's POSIX process-group owner. Windows
+    // source tests must remain usable without the built native Job Object.
+    ...(process.platform === "win32"
+      ? []
+      : [resolve("scripts/run-exclusive.mjs"), "--unlocked", process.execPath]),
     resolve("node_modules/vitest/vitest.mjs"),
     "run",
     ...projects.flatMap(({ name }) => ["--project", name]),

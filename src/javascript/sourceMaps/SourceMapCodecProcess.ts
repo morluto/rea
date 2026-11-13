@@ -1,5 +1,9 @@
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../../domain/webSourceLocation.js";
+import {
+  selectedSourceMapLimits,
+  sourceMapLimitRecovery,
+  sourceMapLimitsSchema,
+} from "../../domain/sourceMapLimits.js";
 import { traceSourceMap } from "./TraceSourceMap.js";
 import { SourceMapFormatFailure } from "./SourceMapFormat.js";
 import {
@@ -17,26 +21,32 @@ const execute = async (): Promise<string> => {
         "format",
         "Codec request path is missing.",
       );
-    const data = await readStableArtifact(
-      path,
-      WEB_SOURCE_MAP_LIMITS.outputBytes,
+    const selected = sourceMapLimitsSchema.parse(
+      JSON.parse(process.argv[3] ?? "{}"),
     );
+    const limits = selectedSourceMapLimits(selected);
+    const data = await readStableArtifact(path, limits.outputBytes);
     const text = new TextDecoder("utf-8", { fatal: true }).decode(data.bytes);
     const value: unknown = JSON.parse(text);
     const input = sourceMapCodecInputSchema.parse(value);
-    if (Buffer.byteLength(input.text) > WEB_SOURCE_MAP_LIMITS.mapBytes)
+    if (Buffer.byteLength(input.text) > limits.mapBytes)
       throw new SourceMapFormatFailure(
         "limit",
-        "Source map exceeds the 4 MiB codec input budget.",
+        `Source map exceeds codec input admission. ${sourceMapLimitRecovery("map_bytes", limits.mapBytes)}`,
       );
-    const report = traceSourceMap(input.text, input.url, input.position);
+    const report = traceSourceMap(
+      input.text,
+      input.url,
+      input.position,
+      limits,
+    );
     const reply = JSON.stringify(
       sourceMapCodecReplySchema.parse({ state: "success", report }),
     );
-    if (Buffer.byteLength(reply) > WEB_SOURCE_MAP_LIMITS.outputBytes)
+    if (Buffer.byteLength(reply) > limits.outputBytes)
       throw new SourceMapFormatFailure(
         "limit",
-        "Complete source-map point evidence exceeds the 32 MiB output budget; no partial evidence was returned.",
+        `Complete source-map point evidence exceeds output admission; no partial evidence was returned. ${sourceMapLimitRecovery("output_bytes", limits.outputBytes)}`,
       );
     return reply;
   } catch (cause: unknown) {

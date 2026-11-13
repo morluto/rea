@@ -14,6 +14,7 @@ import type {
   SwiftNominalRecordFailure,
   SwiftNominalVisitor,
 } from "./AppleSwiftNominalTypes.js";
+import { expectedSwiftMetadataReadFailure } from "./AppleSwiftMetadataReadFailure.js";
 
 /** Byte readers shared with the validated Mach-O metadata boundary. */
 export interface SwiftMetadataReaders {
@@ -63,13 +64,13 @@ export const createSwiftClassVtableDecoder = (input: {
     try {
       const specific = flags >>> 16;
       if ((flags & 0x80) !== 0 || (specific & 0x2000) !== 0)
-        throw new TypeError(
+        throw new RangeError(
           "Generic class or resilient superclass metadata is unsupported",
         );
       if ((specific & 0x8000) === 0) return;
       const initialization = specific & 3;
       if (initialization === 3)
-        throw new TypeError("Unknown metadata initialization kind");
+        throw new RangeError("Unknown metadata initialization kind");
       const header =
         descriptor +
         44n +
@@ -167,7 +168,8 @@ export const createSwiftClassVtableDecoder = (input: {
         );
       }
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
+      const message = expectedSwiftMetadataReadFailure(cause);
+      if (message === null) throw cause;
       issues.push(
         issue(
           "swift_class_vtable_descriptors",

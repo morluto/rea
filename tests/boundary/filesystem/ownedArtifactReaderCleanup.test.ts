@@ -7,6 +7,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { BunStandaloneArtifactReader } from "../../../src/artifacts/BunStandaloneArtifactReader.js";
+import { DenoStandaloneArtifactReader } from "../../../src/artifacts/DenoStandaloneArtifactReader.js";
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
 import { MachOSliceArtifactReader } from "../../../src/artifacts/MachOSliceArtifactReader.js";
 import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
@@ -82,6 +83,18 @@ const scenarios = [
   {
     reader: "Bun standalone",
     createReader: (path: string) => new BunStandaloneArtifactReader(path),
+    stage: "post-admission-verification",
+    failOnStat: 2,
+  },
+  {
+    reader: "Deno compile",
+    createReader: (path: string) => new DenoStandaloneArtifactReader(path),
+    stage: "admission",
+    failOnStat: 1,
+  },
+  {
+    reader: "Deno compile",
+    createReader: (path: string) => new DenoStandaloneArtifactReader(path),
     stage: "post-admission-verification",
     failOnStat: 2,
   },

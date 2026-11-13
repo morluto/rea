@@ -50,6 +50,8 @@ interface JavaScriptStaticReferenceState {
    * when it reads like a package name.
    */
   readonly loader?: "commonjs-loader" | "factory-loader" | "create-require";
+  /** The literal is observed but the CommonJS loader is not established. */
+  readonly loader_authority?: "candidate";
   /**
    * A Node Worker filename built from intact source-directory intrinsics; the
    * specifier is then a filesystem path, not a URL. Not a bundler guarantee.
@@ -133,6 +135,7 @@ export interface JavaScriptBundlerRegistration {
 /** Static Electron role paths discovered from package or JavaScript syntax. */
 export interface JavaScriptRolePath {
   readonly role: "preload" | "renderer";
+  readonly loader_authority?: "candidate";
   readonly path: string;
   readonly resolution_context: JavaScriptStaticPathContext;
   /** Inferred from intact source-directory intrinsics; not a runtime/bundler guarantee. */

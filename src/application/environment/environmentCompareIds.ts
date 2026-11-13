@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import type { JsonObject } from "../../domain/analysisView/environmentStateRules.js";
 import type { BodyAddress } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { isUuid } from "../../domain/analysisView/environmentStateWriteValues.js";
@@ -315,7 +316,7 @@ const idPair = (
     : undefined;
 
 const childPointer = (at: string, key: string | number): string =>
-  `${at}/${String(key).replaceAll("~", "~0").replaceAll("/", "~1")}`;
+  `${at}/${escapeJsonPointerToken(String(key))}`;
 
 const learnAt = (
   live: JsonValue | undefined,

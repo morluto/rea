@@ -44,10 +44,7 @@ import {
   AnalysisResourceConstraintError,
   type AnalysisInputIssue,
 } from "../domain/analysisErrorCore.js";
-import {
-  projectAnalysisError,
-  projectAnalysisErrorWithoutPartialObservation,
-} from "../domain/analysisErrorProjection.js";
+import { projectAnalysisErrorWithoutPartialObservation } from "../domain/analysisErrorProjection.js";
 import { projectInputIssueGroupsWithinBudget } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import { createEvidence } from "../domain/evidence.js";

@@ -22,6 +22,7 @@ const record = (
       instant: parseOffsetDateTimeInstant(new Date(start).toISOString()),
       ms: start,
     },
+    end: parseOffsetDateTimeInstant(new Date(end).toISOString()),
     endMs: end,
   },
 });
@@ -68,7 +69,7 @@ describe("short-id creation limits", () => {
     const prior = record(0, "GET", "/api/projects", [0, 5]);
     const unknown = {
       ...prior,
-      timing: { ...prior.timing, endMs: undefined },
+      timing: { ...prior.timing, end: undefined, endMs: undefined },
     };
     const post = record(1, "POST", "/api/imports", [10, 11]);
     const later = record(2, "GET", "/api/projects/7", [20, 21]);

@@ -9,8 +9,65 @@ import {
   type SwiftNominalReaders,
 } from "./AppleSwiftNominalTypes.js";
 import { decodeSwiftDispatchFacets } from "./AppleSwiftDispatchFacets.js";
-import type { DispatchRecordBudget } from "./AppleSwiftDispatchFacets.js";
+import type {
+  DispatchRecordBudget,
+  SwiftDispatchReaders,
+} from "./AppleSwiftDispatchFacets.js";
 import { issue } from "./AppleDispatchDecodeFacts.js";
+
+it("propagates unexpected conformance reader failures", () => {
+  const failure = new Error("conformance reader invariant failed");
+  expect(() =>
+    decodeSwiftDispatchFacets({
+      sections: [{ name: "__swift5_proto", address: 0x100n, size: 4 }],
+      segments: [],
+      readers: {} as SwiftDispatchReaders,
+      relative: () => {
+        throw failure;
+      },
+      budget: {
+        truncated: false,
+        isFull: () => false,
+        markTruncated: () => {},
+        admit: () => true,
+      },
+      result: objcSwiftMetadataSchema.parse({ db_save_result: null }),
+    }),
+  ).toThrow(failure);
+});
+
+it("propagates unexpected vtable reader failures", () => {
+  const failure = new Error("vtable reader invariant failed");
+  const vtables = createSwiftClassVtableDecoder({
+    result: objcSwiftMetadataSchema.parse({ db_save_result: null }),
+    readers: {
+      u32: () => {
+        throw failure;
+      },
+      relative: () => ({ kind: "null" }),
+      location: () => ({ address: null, file_offset: null }),
+      evidence: () => [],
+      executable: () => false,
+      admit: () => true,
+    },
+  });
+  expect(() =>
+    vtables.visitor.descriptor({
+      record: 0x100n,
+      descriptor: 0x200n,
+      flags: 0x80000010,
+      name: "Widget",
+      context: {
+        module: "Test",
+        path: "Widget",
+        depth: 2,
+        anonymous: false,
+        reason: null,
+        walkLimited: false,
+      },
+    }),
+  ).toThrow(failure);
+});
 
 it("preserves unsupported type-metadata tag reasons instead of reporting null", () => {
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });

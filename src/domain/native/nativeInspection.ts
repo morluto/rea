@@ -2,7 +2,10 @@ import { z } from "zod";
 import { bundleResourceRootSchema } from "../apple/bundleResourceRoot.js";
 import { jsonRecordSchema } from "../jsonRecord.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { machoSliceEncryptionSchema } from "../apple/machoEncryption.js";
+import {
+  machoSliceEncryptionSchema,
+  retainedMachoSliceEncryptionSchema,
+} from "../apple/machoEncryption.js";
 
 const hexAddress = z.string().regex(/^0x[a-fA-F0-9]+$/u);
 const bytesHex = z.string().regex(/^(?:[0-9a-f]{2})*$/u);
@@ -223,7 +226,9 @@ export const inspectMachoSchema = z.object({
  * slice is encrypted.
  */
 export const retainedInspectMachoSchema = inspectMachoSchema
-  .extend({ encryption: inspectMachoSchema.shape.encryption.optional() })
+  .extend({
+    encryption: coverage(retainedMachoSliceEncryptionSchema).optional(),
+  })
   .transform(({ encryption, ...report }) => ({
     ...report,
     encryption: encryption ?? {

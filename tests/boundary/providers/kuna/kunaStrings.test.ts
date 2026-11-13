@@ -432,13 +432,15 @@ it.each([
           expect(result.error).toMatchObject({ timeoutMs: 500 });
           // Each waiter keeps the producer's setting and recovery.
           expect(projectAnalysisError(result.error)).toMatchObject({
-            message: expect.stringMatching(
-              /kuna strings.*REA_KUNA_PROJECT_TIMEOUT_MS.*500 ms/i,
-            ),
-            remediation: {
-              action: expect.stringMatching(
-                /raise.*REA_KUNA_PROJECT_TIMEOUT_MS.*restart REA/i,
-              ),
+            code: "provider_timeout",
+            details: {
+              timeout_ms: 500,
+              limit: {
+                setting: "kuna.project_timeout_ms",
+                effective_value: 500,
+                update_mode: "runtime",
+                pending_restart: false,
+              },
             },
           });
         }

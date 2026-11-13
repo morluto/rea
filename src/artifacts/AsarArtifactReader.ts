@@ -57,6 +57,7 @@ export class AsarArtifactReader implements ArtifactReader {
   #snapshot: { readonly path: string; readonly sha256: string } | undefined;
   #snapshotRoot: string | undefined;
   #snapshotOperation: Promise<void> = Promise.resolve();
+  #snapshotGeneration = 0;
 
   constructor(
     private readonly path: string,
@@ -64,6 +65,7 @@ export class AsarArtifactReader implements ArtifactReader {
   ) {}
 
   async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+    const generation = this.#snapshotGeneration;
     let paths: readonly AsarListedEntry[];
     try {
       await this.prepareContainer(undefined, signal);
@@ -79,7 +81,11 @@ export class AsarArtifactReader implements ArtifactReader {
         };
         assertAsarReadActive(signal);
         try {
-          return await readAsarListing(admitted.header, signal);
+          return await readAsarListing(
+            admitted.header,
+            signal,
+            this.options.headerAdmission?.listing,
+          );
         } catch (cause: unknown) {
           // Listing names members relative to this archive; keep which archive.
           if (
@@ -98,7 +104,7 @@ export class AsarArtifactReader implements ArtifactReader {
       throw asarFailure(this.path, "inventory", cause);
     }
     for (const facts of paths) {
-      assertAsarReadActive(signal);
+      this.#assertInventoryActive(generation, signal);
       const { path, kind } = facts;
       const providerPath = path.split("/").join(sep);
       const entry: ArtifactEntry = {
@@ -126,6 +132,16 @@ export class AsarArtifactReader implements ArtifactReader {
         });
       yield entry;
     }
+    this.#assertInventoryActive(generation, signal);
+  }
+
+  #assertInventoryActive(generation: number, signal?: AbortSignal): void {
+    assertAsarReadActive(signal);
+    if (generation !== this.#snapshotGeneration)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        "ASAR inventory snapshot was closed",
+      );
   }
 
   async #admitHeader(snapshotPath: string, signal?: AbortSignal) {
@@ -337,6 +353,7 @@ export class AsarArtifactReader implements ArtifactReader {
   }
 
   async close(): Promise<void> {
+    this.#snapshotGeneration += 1;
     await this.#withSnapshotOperation(() => this.#closeSnapshot());
   }
 

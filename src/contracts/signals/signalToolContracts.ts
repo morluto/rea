@@ -16,7 +16,7 @@ export const SIGNAL_TOOL_CONTRACTS = [
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:
-      "Discover installed sigrok protocol decoders or inspect one decoder's channel/option help on Linux. Omit decoder to list ID/name pairs; supply its exact ID for literal help lines with source line numbers. query is a case-insensitive literal substring using Unicode simple case folding; catalog queries match the ID or name independently. Page matches with offset/limit (default 50; null returns all remaining). Reports tool identity, version, diagnostics and examined/matching coverage. Uses configured REA_SIGROK_COMMAND and prlimit; no recording, binary target, hardware scan or acquisition. Each call probes again; decoder modules are trusted, not fully fingerprinted. Use returned IDs/options with decode_signal_recording.",
+      "List installed sigrok decoder IDs/names, or supply an exact decoder ID to inspect its channel/option help. Use returned IDs/options with decode_signal_recording. query matches a case-insensitive literal substring; offset/limit pages matches (default 50; null means all remaining). Returns original help lines, coverage and current tool identity. Requires Linux, REA_SIGROK_COMMAND and prlimit. Each call probes again; decoder modules are trusted but not fully fingerprinted. No recording, target, hardware scan or acquisition.",
     inputSchema: inspectSignalDecodersInputSchema,
     outputSchema: evidenceResultOf(signalDecodersSchema),
     examples: [
@@ -33,7 +33,7 @@ export const SIGNAL_TOOL_CONTRACTS = [
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:
-      "Decode an existing local logic/signal recording on Linux with sigrok-cli 0.7.2 and util-linux prlimit. Supply decoder stack, channels and options explicitly; optionally select input format and annotation classes. Return 50 literal output lines by default, with line_offset/line_limit paging; line_limit:null requests all remaining lines. Output windows count display lines, not annotations or samples, and do not shorten decoding. Preserve selected text, sample ranges, stderr, source/tool identity and coverage inline. Configure absolute REA_SIGROK_COMMAND. File-only analysis; no hardware acquisition or device communication. Empty output does not prove absence of traffic.",
+      "Decode a saved logic/signal recording with an explicitly selected sigrok decoder stack, channels and options. Returns literal text, sample ranges, diagnostics, source/tool identity and coverage. line_offset/line_limit page display lines (default 50; null means all remaining), not annotations or samples; paging does not shorten decoding. Requires Linux, sigrok-cli 0.7.2 through absolute REA_SIGROK_COMMAND, and prlimit. No acquisition or device communication. Empty output does not prove absent traffic.",
     inputSchema: decodeSignalRecordingInputSchema,
     outputSchema: evidenceResultOf(signalRecordingSchema),
     examples: [

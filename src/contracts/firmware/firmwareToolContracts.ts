@@ -32,7 +32,7 @@ export const FIRMWARE_TOOL_CONTRACTS = [
     name: "extract_firmware",
     ...toolContractMetadata("extract_firmware"),
     kind: "firmware-provider",
-    description: `Extract caller-selected firmware bytes with ${FIRMWARE_TOOL_REQUIREMENTS[FIRMWARE_OPERATION_ENGINES.extract_firmware].requirement} into an absent output directory. Returns verified child paths/digests, task derivations, unknown chunks and uncovered selected input ranges, extraction diagnostics and explicit extraction_gaps rows naming unextracted regions, missing extractor dependencies and a continuation_id referencing shared extraction_continuations recovery instructions. Preserves the default sandbox; publishes regular files only. Linux, caller-supplied tool, format-specific extractors, util-linux prlimit and procps ps required. No mounts or extracted-code execution. Select a returned native file with open_binary for Ghidra analysis; decompressed offsets are not original-file addresses.`,
+    description: `Extract selected local firmware bytes with ${FIRMWARE_TOOL_REQUIREMENTS[FIRMWARE_OPERATION_ENGINES.extract_firmware].requirement} into an absent output directory. Returns verified child paths/digests, derivations, uncovered ranges, unknown chunks and extraction_gaps with continuation_id recovery instructions. Linux, format-specific extractors, prlimit and procps ps are required. Preserves the sandbox and publishes only regular files; no mounts or extracted-code execution. Select a returned native file with open_binary for analysis. Decompressed offsets are not original-file addresses.`,
     inputSchema: firmwareInputSchemas.extract_firmware,
     outputSchema: evidenceResultOf(firmwareResultSchemas.extract_firmware),
     examples: [

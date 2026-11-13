@@ -249,3 +249,31 @@ it("times out when a real descendant holds the exited leader's output open", asy
     }
   }
 }, 17_000);
+
+it("terminates a stalled real child at its deadline while retaining captured output", async () => {
+  const processes = createTestProcessRegistry();
+  try {
+    const result = await processes
+      .run(
+        process.execPath,
+        [
+          "-e",
+          'process.stdout.write("ready\\n"); setInterval(() => {}, 1000);',
+        ],
+        { timeoutMs: 1000 },
+      )
+      .catch((cause: unknown) => cause);
+    expect(result).toMatchObject({
+      message: "Test process exceeded its 1000ms deadline",
+      cause: {
+        exitCode: null,
+        signal: expect.stringMatching(/^SIG(?:TERM|KILL)$/u),
+        stdout: "ready\n",
+        stderr: "",
+      },
+    });
+    await expect(processes.shutdown()).resolves.toBeUndefined();
+  } finally {
+    await processes.shutdown();
+  }
+});

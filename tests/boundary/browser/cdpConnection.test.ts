@@ -359,6 +359,46 @@ describe("CDP transport failure precedence", () => {
 });
 
 describe("CDP connection command responses", () => {
+  it("rejects invalid UTF-8 replies without aliasing a literal replacement character", async () => {
+    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
+    browsers.push(browser);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "inspect_web_page",
+    );
+    try {
+      const control = connection.send("Page.enable");
+      await vi.waitFor(() => expect(browser.commands).toHaveLength(1));
+      browser.emitRawMessage(
+        Buffer.from(
+          JSON.stringify({
+            id: browser.commands[0]?.id,
+            result: { value: "�" },
+          }),
+        ),
+      );
+      await expect(control).resolves.toEqual({ value: "�" });
+      const pending = connection.send("Page.enable");
+      const rejected = expect(pending).rejects.toMatchObject({
+        reason: "protocol_error",
+      });
+      await vi.waitFor(() => expect(browser.commands).toHaveLength(2));
+      browser.emitRawMessage(
+        Buffer.concat([
+          Buffer.from(
+            `{"id":${String(browser.commands[1]?.id)},"result":{"value":"`,
+          ),
+          Buffer.from([0xff]),
+          Buffer.from('"}}'),
+        ]),
+      );
+      await rejected;
+      expect(connection.isReusable()).toBe(false);
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("surfaces an unmodeled fake command as a CDP method rejection", async () => {
     const browser = await startFakeCdpBrowser();
     browsers.push(browser);

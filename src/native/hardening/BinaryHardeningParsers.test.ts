@@ -1108,6 +1108,19 @@ it("cites a non-ASCII import name by its source bytes", () => {
   expect(bytes.subarray(at, at + 7).toString("latin1")).toBe(name);
 });
 
+it("treats the __chk_fail handler import as a FORTIFY sign", () => {
+  const bytes = elfHardeningFixture({
+    fortify: true,
+    fortifyName: "__chk_fail",
+  });
+  const image = readElfHardening(bytes);
+  const row = findRow(image.rows, "fortify");
+  expect(row).toMatchObject({ state: "enabled", location: { bytes: 10 } });
+  expect(row.basis).toContain("__chk_fail");
+  const at = row.location?.offset ?? 0;
+  expect(bytes.subarray(at, at + 10).toString("latin1")).toBe("__chk_fail");
+});
+
 it("keeps malformed name offsets malformed in both formats", async () => {
   await expect(
     readMachoHardening(machoHardeningFixture({ brokenStrx: true })),
@@ -1183,6 +1196,20 @@ it("keeps header rows when a slice has conflicting encryption commands", async (
   expect(findRow(image?.rows ?? [], "encrypted")).toMatchObject({
     state: "unknown",
     note: expect.stringContaining("encryption load commands"),
+  });
+});
+
+it("keeps a later malformed encryption command distinct from duplicate ambiguity", async () => {
+  const bytes = machoHardeningFixture({
+    extraCommands: [
+      machoCommand(LC_ENCRYPTION_INFO_64, 24),
+      machoCommand(LC_ENCRYPTION_INFO_64, 24),
+      machoCommand(LC_ENCRYPTION_INFO_64, 8),
+    ],
+  });
+  await expect(readMachoHardening(bytes)).rejects.toMatchObject({
+    kind: "malformed",
+    message: expect.stringContaining("cmdsize 8"),
   });
 });
 
@@ -1405,14 +1432,67 @@ it("sizes an empty DT_GNU_HASH table only from an agreeing SHT_DYNSYM", () => {
     strings.readBigUInt64LE(elfSectionAt(strings, SHT_STRTAB) + 32) - 1n,
     elfSectionAt(strings, SHT_STRTAB) + 32,
   );
-  for (const bytes of [moved, offset, strings])
+  const compressedSymbols = Buffer.from(agreeing);
+  compressedSymbols.writeBigUInt64LE(0x800n, section + 8);
+  const compressedStrings = Buffer.from(agreeing);
+  compressedStrings.writeBigUInt64LE(
+    0x800n,
+    elfSectionAt(compressedStrings, SHT_STRTAB) + 8,
+  );
+  const wrongStringType = Buffer.from(agreeing);
+  wrongStringType.writeUInt32LE(
+    1,
+    elfSectionAt(wrongStringType, SHT_STRTAB) + 4,
+  );
+  for (const bytes of [
+    moved,
+    offset,
+    strings,
+    compressedSymbols,
+    compressedStrings,
+    wrongStringType,
+  ])
     expect(
       findRow(readElfHardening(bytes).rows, "stack_protector"),
     ).toMatchObject({
       state: "unknown",
       note: expect.stringContaining("DT_GNU_HASH"),
     });
+  // A loader-owned hash count needs no section fallback, so compressed section
+  // declarations cannot hide imports named by DT_SYMTAB and DT_STRTAB.
+  const hashed = elfHardeningFixture({ stackChk: true });
+  for (const type of [SHT_DYNSYM, SHT_STRTAB])
+    hashed.writeBigUInt64LE(0x800n, elfSectionAt(hashed, type) + 8);
+  expect(findRow(readElfHardening(hashed).rows, "stack_protector").state).toBe(
+    "enabled",
+  );
 });
+
+it.each([32, 64] as const)(
+  "does not interpret %i-bit Mach-O debug symbol type bits as an import",
+  async (bits) => {
+    const bytes = machoHardeningFixture({ bits, stackChk: true });
+    let commandAt = bits === 64 ? 32 : 28;
+    let symbolAt: number | undefined;
+    for (let index = 0; index < bytes.readUInt32LE(16); index += 1) {
+      if (bytes.readUInt32LE(commandAt) === 2)
+        symbolAt = bytes.readUInt32LE(commandAt + 8);
+      commandAt += bytes.readUInt32LE(commandAt + 4);
+    }
+    if (symbolAt === undefined) throw new Error("Missing LC_SYMTAB");
+    expect(
+      findRow(
+        (await readMachoHardening(bytes))[0]?.rows ?? [],
+        "stack_protector",
+      ).state,
+    ).toBe("enabled");
+    // N_STAB takes precedence over ordinary N_TYPE and N_EXT interpretation.
+    bytes.writeUInt8(0x21, symbolAt + 4);
+    const image = (await readMachoHardening(bytes))[0];
+    expect(findRow(image?.rows ?? [], "stack_protector").state).toBe("unknown");
+    expect(findRow(image?.rows ?? [], "pie").state).toBe("enabled");
+  },
+);
 
 it("keeps an unresolved symbol count distinct from an absent table", () => {
   const image = readElfHardening(

@@ -23,10 +23,7 @@ export interface ElfHeaderFacts {
   readonly abiVersion: number;
 }
 
-export interface ElfFixedHeader extends Omit<
-  ElfHeaderFacts,
-  "version" | "abiVersion"
-> {
+export interface ElfFixedHeader extends Omit<ElfHeaderFacts, "version"> {
   readonly architecture: ElfArchitecture | null;
 }
 
@@ -88,8 +85,16 @@ export const readElfFixedHeader = (
   totalBytes = bytes.length,
 ): Result<ElfFixedHeader, string> => {
   const parsed = readElfHeaderFacts(bytes, totalBytes);
-  if (!parsed.ok) return parsed;
-  const facts = parsed.value;
+  return parsed.ok
+    ? admitElfFixedHeaderFacts(parsed.value, totalBytes)
+    : parsed;
+};
+
+/** Admit decoded facts without rereading or discarding their identity on failure. */
+export const admitElfFixedHeaderFacts = (
+  facts: ElfHeaderFacts,
+  totalBytes: number,
+): Result<ElfFixedHeader, string> => {
   // NVIDIA CUBIN uses ELFOSABI_CUDA and a vendor ABI version in e_version.
   if (facts.version !== 1 && !(facts.machine === 190 && facts.osAbi === 0x33))
     return err("unsupported ELF header version");
@@ -104,6 +109,7 @@ export const readElfFixedHeader = (
     type: facts.type,
     flags: facts.flags,
     osAbi: facts.osAbi,
+    abiVersion: facts.abiVersion,
     architecture: elfArchitecture(facts.machine) ?? null,
   });
 };

@@ -113,8 +113,8 @@ existing analysis families directly, for example
 | `push_adb_file`         | **mutates device** | One local file to a device path (e.g. pushing tools into `/data/local/tmp`); checks for existing targets and refuses them without explicit overwrite (the check is not atomic); compares digests when device `sha256sum` is available |
 | `install_adb_package`   | **mutates device** | Local APK via `adb install [-r]`; preserves its Success/Failure verdict, records `replace_requested`, and leaves actual replacement `null` because prior package state is not observed                                                |
 | `uninstall_adb_package` | **mutates device** | Requests package removal for user 0 via `adb shell pm uninstall --user 0`, without data retention                                                                                                                                     |
-| `start_adb_app`         | **mutates device** | Resolves the package's launcher activity (`cmd package resolve-activity --brief`) and starts it (`am start -n`)                                                                                                                       |
-| `start_adb_activity`    | **mutates device** | Starts an intent (`am start -a` with optional URI, component, and up to 16 typed extras); preserves the activity manager's verdict                                                                                                    |
+| `start_adb_app`         | **mutates device** | Resolves the package's launcher activity (`cmd package resolve-activity --brief`) and starts it (`am start -W -n`)                                                                                                                    |
+| `start_adb_activity`    | **mutates device** | Starts an intent (`am start -W -a` with optional URI, component, and up to 16 typed extras); preserves the activity manager's verdict                                                                                                 |
 | `stop_adb_app`          | **mutates device** | Force-stops every process of a package, ending a dynamic-analysis run                                                                                                                                                                 |
 
 Screen capture validates the PNG signature, IHDR framing, dimensions, and IHDR
@@ -188,7 +188,7 @@ and during shutdown.
   property value remains available in `properties`.
 - **Device paths are not host paths.** `base_apk_device_path` values live on
   the device filesystem. Only pulls and captures produce host-local paths,
-  each paired with byte size and SHA-256 digest. A pulled file's host name is
+  with byte size and SHA-256 digest on success. A pulled file's host name is
   the device path's final POSIX segment. REA preserves the original device
   path and filename; a missing final segment or `.`/`..` is refused before
   output creation. Windows hosts follow [Windows filename rules](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file),
@@ -249,6 +249,10 @@ and during shutdown.
 - Pull and capture outputs are additive: the destination must not already
   exist. Re-running a completed pull refuses the existing directory instead
   of overwriting evidence.
+- If a single-file pull fails and REA observes a regular file at the destination,
+  the error includes its `local_path` with `transfer_status: "unconfirmed"`
+  and `digest_status: "unknown"`. The file remains in place; the receipt does
+  not establish that the transfer completed.
 - Cancellation during a package pull preserves caller-selected output. The
   error includes partial observations identifying completed artifacts and the
   interrupted local path; remaining APKs were not attempted.

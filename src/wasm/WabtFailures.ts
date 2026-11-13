@@ -3,6 +3,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
   artifactFileCancellationCause,
+  artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
@@ -31,15 +32,22 @@ import {
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
-  MAX_WASM_COMMAND_TIMEOUT_MS,
-} from "../domain/wasm/wasmArtifact.js";
-import {
-  WABT_LIMITS,
-  WABT_PROVIDER_IDENTITY,
   WABT_VERSION,
-} from "./WabtRelease.js";
+  MAX_WASM_COMMAND_TIMEOUT_MS,
+  WASM_RESOURCE_DEFAULTS,
+  WASM_RESOURCE_MAXIMUMS,
+  type WasmResourceLimits,
+} from "../domain/wasm/wasmArtifact.js";
+import { WABT_ACCEPTED_RANGE, WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
 const OUTPUT_LIMIT_EXCERPT_BYTES = 4096;
-const OUTPUT_LIMIT_REASON = `WABT output exceeded the ${String(WABT_LIMITS.outputBytes)}-byte output budget`;
+
+/** Recovery names the exhausted per-call byte owner, independently of deadlines. */
+const byteBudgetRecovery = (
+  parameter: "max_input_bytes" | "max_output_bytes" | "max_tool_bytes",
+  value: number,
+  maximum: number,
+): string =>
+  `${parameter} is ${String(value)} bytes. ${value < maximum ? `Raise ${parameter} above ${String(value)} bytes (positive integer, maximum ${String(maximum)}), or use --${parameter.replaceAll("_", "-")} on the CLI, then retry the same complete input after cleanup settles.` : `This is already the runtime representation maximum of ${String(maximum)} bytes; use a suitable smaller complete input or report this blocker.`} The new value applies to the next inspection without restarting REA. command_timeout_ms, other byte budgets and client delivery settings do not raise this allowance. Do not truncate required bytes. Repeating the unchanged request fails the same way.`;
 
 /** Facts owned before dispatch, even when a version command does not return successfully. */
 export type WabtVersionProbe = {
@@ -47,10 +55,18 @@ export type WabtVersionProbe = {
   readonly executable_path: string;
   readonly tool: string;
   readonly expected_version: typeof WABT_VERSION;
+  readonly accepted_releases: string;
 };
 
 type WabtFailureContext = {
   readonly commandTimeoutMs: number;
+  readonly commandTimeoutSource?:
+    | "default"
+    | "setting"
+    | "runtime"
+    | "request"
+    | undefined;
+  readonly limits?: WasmResourceLimits;
   readonly versionProbe?: WabtVersionProbe;
   readonly inputField?: readonly (string | number)[];
   readonly observedOutput?: AnalysisCapturedOutput | undefined;
@@ -68,7 +84,7 @@ export const wabtConfigurationRecoveryAction = (cause?: unknown): string => {
         : code === "ENOENT"
           ? "The reported configured tool is missing. "
           : "";
-  return `${action}Set absolute REA_WABT_BIN_DIRECTORY to a directory that contains wasm-validate, wasm-objdump and wasm2wat from WABT ${WABT_VERSION}; each --version must report ${WABT_VERSION} on stdout with empty stderr. Correct the reported tool path, access or release before retrying, not the WASM input. Set this in the shell for the next CLI call, or in the MCP server launch environment and restart that server; a shell export does not update a running MCP server. Do not repeat the unchanged call or install tools implicitly.`;
+  return `${action}Set absolute REA_WABT_BIN_DIRECTORY to a directory that contains wasm-validate, wasm-objdump and wasm2wat from one WABT installation; each --version must report ${WABT_ACCEPTED_RANGE} on stdout with empty stderr. Releases in that range other than ${WABT_VERSION} are admitted and reported as the observed banner. Correct the reported tool path, access or release before retrying, not the WASM input. Set this in the shell for the next CLI call, or in the MCP server launch environment and restart that server; a shell export does not update a running MCP server. Do not repeat the unchanged call or install tools implicitly.`;
 };
 /** Past the output budget, retained text is a prefix of an oversized stream; keep a bounded excerpt of each. */
 const outputLimitExcerpt = (snapshot: ProviderProcessSnapshot) => ({
@@ -102,6 +118,8 @@ const classifyWabtFailure = (
   execution: WabtFailureContext | undefined,
 ): AnalysisError => {
   const versionProbe = execution?.versionProbe;
+  const limits = execution?.limits ?? WASM_RESOURCE_DEFAULTS;
+  const outputLimitReason = `WABT output exceeded the ${String(limits.outputBytes)}-byte output budget`;
   if (cause instanceof AnalysisError) return cause;
   const artifactCleanup =
     cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
@@ -112,6 +130,31 @@ const classifyWabtFailure = (
       : { capturedOutput: execution.observedOutput }),
   };
   const reason = cause instanceof Error ? cause.message : String(cause);
+  const physical = artifactFilePrimaryFacts(cause).cause;
+  if (
+    physical instanceof Error &&
+    (("code" in physical &&
+      [
+        "ENOMEM",
+        "ERR_MEMORY_ALLOCATION_FAILED",
+        "ERR_BUFFER_TOO_LARGE",
+      ].includes(String(physical.code))) ||
+      (physical instanceof RangeError &&
+        physical.message === "Array buffer allocation failed"))
+  )
+    return new AnalysisResourceConstraintError(
+      "inspect_wasm_artifact",
+      "memory",
+      "The host could not allocate the admitted WABT acquisition buffer",
+      { max_input_bytes: limits.inputBytes, max_tool_bytes: limits.toolBytes },
+      {
+        cause,
+        ...artifactOptions,
+        retryable: false,
+        remediationAction:
+          "Byte admission does not reserve host memory. Free host memory or select a suitable process with sufficient capacity, then retry after cleanup settles. Increasing byte budgets or command_timeout_ms does not repair this allocation failure; do not replace a correctly configured WABT installation for this reason.",
+      },
+    );
   if (
     (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") ||
     (cause instanceof Error && cause.name === "AbortError")
@@ -142,13 +185,17 @@ const classifyWabtFailure = (
     // Classify once before cleanup takes precedence, so the primary remains actionable.
     const timeoutMs =
       execution?.commandTimeoutMs ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS;
+    const timeoutSource =
+      execution?.commandTimeoutMs === undefined
+        ? "default"
+        : execution.commandTimeoutSource;
     const timeout =
       cause.reason === "timeout"
         ? new AnalysisTimeoutError("inspect_wasm_artifact", timeoutMs, {
             limit: analysisSettingLimit(
               "wasm.command_timeout_ms",
               timeoutMs,
-              undefined,
+              timeoutSource,
             ),
             ...options,
             // The cleanup wrapper retains output once; its nested primary needs only recovery facts.
@@ -159,7 +206,7 @@ const classifyWabtFailure = (
               timeoutMs < MAX_WASM_COMMAND_TIMEOUT_MS
                 ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds, maximum ${String(MAX_WASM_COMMAND_TIMEOUT_MS)}), or use rea inspect-wasm-artifact <path> --command-timeout-ms <milliseconds> on the CLI.`
                 : `command_timeout_ms is already at the maximum supported ${String(MAX_WASM_COMMAND_TIMEOUT_MS)} ms; no higher command deadline is supported. Report this blocker or select another suitable complete artifact with caller approval.`
-            } This is a per-call setting; no server restart is needed. Allow the MCP client deadline to cover all version/analysis commands, file checks, cleanup and delivery; increasing only that client deadline does not change this budget. Input/output safety limits stay fixed, and detail: summary reduces delivery size, not analysis work. Resolve any incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
+            } This is a per-call setting; no server restart is needed. Allow the MCP client deadline to cover all version/analysis commands, file checks, cleanup and delivery; increasing only that client deadline does not change this budget. max_input_bytes, max_tool_bytes and max_output_bytes are independent per-call controls; detail: summary reduces delivery size, not analysis work. Resolve any incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
           })
         : undefined;
     if (cause.cleanupFailure !== null)
@@ -175,8 +222,13 @@ const classifyWabtFailure = (
               : cause.reason === "output-limit"
                 ? {
                     failure_kind: "output-limit",
-                    message: OUTPUT_LIMIT_REASON,
-                    max_output_bytes: WABT_LIMITS.outputBytes,
+                    message: outputLimitReason,
+                    max_output_bytes: limits.outputBytes,
+                    remediation_action: byteBudgetRecovery(
+                      "max_output_bytes",
+                      limits.outputBytes,
+                      WASM_RESOURCE_MAXIMUMS.outputBytes,
+                    ),
                   }
                 : reason,
           ...(capturedOutput === undefined
@@ -192,15 +244,20 @@ const classifyWabtFailure = (
           cause.cancellation === undefined ? cause : cause.cancellation.reason,
       });
     if (timeout !== undefined) return timeout;
-    if (phase !== "configuration" && cause.reason === "output-limit")
+    if (cause.reason === "output-limit")
       return new AnalysisResourceConstraintError(
         "inspect_wasm_artifact",
         "memory",
-        OUTPUT_LIMIT_REASON,
-        { max_output_bytes: WABT_LIMITS.outputBytes },
+        outputLimitReason,
+        { max_output_bytes: limits.outputBytes },
         {
           ...options,
-          remediationAction: `The WABT output allowance is ${String(WABT_LIMITS.outputBytes)} bytes. This release has no runtime override. command_timeout_ms does not raise it. The WABT output budget is fixed, so retrying with the same input will fail the same way.`,
+          retryable: false,
+          remediationAction: byteBudgetRecovery(
+            "max_output_bytes",
+            limits.outputBytes,
+            WASM_RESOURCE_MAXIMUMS.outputBytes,
+          ),
         },
       );
     if (phase === "configuration" && cause.reason === "process")
@@ -235,8 +292,12 @@ const classifyWabtFailure = (
       {
         cause,
         ...artifactOptions,
-        userMessage: `Configured WABT tools exceed the ${String(WABT_LIMITS.toolBytes)}-byte tool allowance. This release has no runtime override.`,
-        remediationAction: `The WABT tool allowance is ${String(WABT_LIMITS.toolBytes)} bytes. This release has no runtime override. command_timeout_ms and REA_WABT_BIN_DIRECTORY do not raise it. Select tools within the allowance. Do not repeat the unchanged call.`,
+        userMessage: `Configured WABT tools exceed the ${String(limits.toolBytes)}-byte tool allowance (max_tool_bytes).`,
+        remediationAction: byteBudgetRecovery(
+          "max_tool_bytes",
+          limits.toolBytes,
+          WASM_RESOURCE_MAXIMUMS.toolBytes,
+        ),
       },
     );
   if (phase === "configuration") {
@@ -274,12 +335,16 @@ const classifyWabtFailure = (
       "inspect_wasm_artifact",
       "file-size",
       reason,
-      { maximum_input_bytes: WABT_LIMITS.inputBytes },
+      { maximum_input_bytes: limits.inputBytes },
       {
         cause,
         ...artifactOptions,
         retryable: false,
-        remediationAction: `Select a suitable stable artifact within the reported ${String(WABT_LIMITS.inputBytes)}-byte input byte allowance. This release has no runtime override. command_timeout_ms does not raise it. Do not truncate required bytes; retrying the unchanged oversized input will fail again.`,
+        remediationAction: byteBudgetRecovery(
+          "max_input_bytes",
+          limits.inputBytes,
+          WASM_RESOURCE_MAXIMUMS.inputBytes,
+        ),
       },
     );
   if (

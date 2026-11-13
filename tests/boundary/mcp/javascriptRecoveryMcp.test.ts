@@ -57,15 +57,11 @@ it
       ...(multiple ? { additional_paths: [additional] } : {}),
     };
     expect(ajv.validate(inputSchema, args)).toBe(true);
-    const response = await client.callTool({
-      name: "recover_javascript_sources",
-      arguments: args,
-    });
+    const response = await client.callTool(
+      { name: "recover_javascript_sources", arguments: args },
+      { toolDefinition: advertised },
+    );
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const parsed = toolContract(
       "recover_javascript_sources",
     ).outputSchema.parse(response.structuredContent);

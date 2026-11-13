@@ -2,15 +2,20 @@ import { expect, it } from "vitest";
 import { redactExplicitText } from "./explicitSensitiveValues.js";
 
 it.each([
-  ["secret context", ["secret"]],
-  ["secret context", ["secret", "REDACTED"]],
-  ["secret context", ["secret", "[", "…"]],
-  ["secretable context", ["secret", "able", "table"]],
-  ["secretsecret context", ["secret", "…", "REDACTED"]],
+  ["secret context", ["secret"], "[REDACTED] context"],
+  ["secret context", ["secret", "REDACTED"], "… context"],
+  ["secret context", ["secret", "[", "…"], " context"],
+  [
+    "secretable context",
+    ["secret", "able", "table"],
+    "[REDACTED][REDACTED] context",
+  ],
+  ["secretsecret context", ["secret", "…", "REDACTED"], " context"],
 ] as const)(
   "keeps declared literals out of replacement text: %s",
-  (input, values) => {
+  (input, values, expected) => {
     const result = redactExplicitText(input, values);
+    expect(result).toBe(expected);
     for (const value of values) expect(result).not.toContain(value);
   },
 );

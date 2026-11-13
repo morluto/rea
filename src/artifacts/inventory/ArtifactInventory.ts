@@ -23,8 +23,22 @@ export const inventoryArtifact = async (
   const snapshot = await options.resourceScope.run(() =>
     scanArtifactInventoryInScope(inputPath, options),
   );
-  return artifactInventoryResultSchema.parse(snapshot);
+  return artifactInventoryResultSchema.parse({
+    ...snapshot,
+    ...(options.readerLimits === undefined
+      ? {}
+      : { effective_limits: options.readerLimits }),
+  });
 };
+
+/** Inventory under an admission the caller already holds on its scope. */
+export const inventoryArtifactInScope = async (
+  inputPath: string,
+  options: ArtifactInventoryOptions,
+): Promise<ArtifactInventoryResult> =>
+  artifactInventoryResultSchema.parse(
+    await scanArtifactInventoryInScope(inputPath, options),
+  );
 
 export const scanArtifactInventoryInScope = async (
   inputPath: string,

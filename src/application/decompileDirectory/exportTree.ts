@@ -707,7 +707,16 @@ const parseJournal = (
   // an interrupted append and are not part of the journal. Offsets are bytes,
   // so damaged UTF-8 cannot move the truncation point.
   const committedBytes = bytes.lastIndexOf(0x0a) + 1;
-  const lines = bytes.subarray(0, committedBytes).toString("utf8").split("\n");
+  let committed: string;
+  try {
+    committed = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(bytes.subarray(0, committedBytes));
+  } catch {
+    return err(incompatibleJournal());
+  }
+  const lines = committed.split("\n");
   lines.pop();
   const header = decompileJournalHeaderSchema.safeParse(parseJson(lines[0]));
   if (!header.success) return err(incompatibleJournal());

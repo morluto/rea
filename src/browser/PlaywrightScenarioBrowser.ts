@@ -855,6 +855,7 @@ export const openPlaywrightScenarioBrowser = async (
     readonly retainCleanup?: (lease: AnalysisCleanupLease) => void;
   } = {},
 ): Promise<OpenedScenarioBrowser> => {
+  throwIfScenarioCancelled(options.signal);
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
     options.launcher ?? (await import("playwright-core")).chromium;
@@ -869,6 +870,7 @@ export const openPlaywrightScenarioBrowser = async (
       commandTimeoutMs,
     );
 
+  throwIfScenarioCancelled(options.signal);
   const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
   let context: BrowserContext;
   const executablePath = scenario.browser.executable_path;
@@ -877,6 +879,7 @@ export const openPlaywrightScenarioBrowser = async (
   let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
+    throwIfScenarioCancelled(options.signal);
     launchStarted = true;
     context = await withScenarioCommandDeadline(
       () =>
@@ -950,10 +953,12 @@ export const openPlaywrightScenarioBrowser = async (
       rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
   });
   try {
+    throwIfScenarioCancelled(options.signal);
     const browser = context.browser();
     if (browser === null)
       throw new BrowserObservationError(OPERATION, "protocol_error");
     const page = context.pages()[0] ?? (await context.newPage());
+    throwIfScenarioCancelled(options.signal);
     return {
       context,
       page,

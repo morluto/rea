@@ -26,7 +26,11 @@ describe.skipIf(process.env.REA_BUILD_COMPUTER_REAL !== "1")(
             kind: "request",
             desktop_entry: "org.xfce.mousepad",
             window_class: "Mousepad",
-            install: { kind: "archive", package: "mousepad" },
+            install: {
+              kind: "archive",
+              package: "mousepad",
+              extra_packages: [],
+            },
           },
         },
         signal,

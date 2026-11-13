@@ -47,7 +47,6 @@ import {
   verifyKunaStrings,
 } from "./lib/kuna-string-verifier.mjs";
 import { nativeKunaIncomingSites } from "./lib/kuna-native-reference-verifier.mjs";
-import { MULTI_MODE_REMEDIATION } from "../dist/application/CapabilityInventory.js";
 import {
   assertVerifierCleanupComplete,
   completeVerifierRun,
@@ -419,6 +418,8 @@ const verifyKuna = async (
         false,
       );
       if (process.platform === "darwin") {
+        const { MULTI_MODE_REMEDIATION } =
+          await import("../dist/application/CapabilityInventory.js");
         const authored = trace?.modes?.find(
           ({ name }) => name === "authored_ui_dispatch",
         );

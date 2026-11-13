@@ -23,6 +23,7 @@ vi.mock("../../src/process/ExecFileOutput.js", async (importOriginal) => {
   };
 });
 
+import { execFileOutput } from "../../src/process/ExecFileOutput.js";
 import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
 import { DirectoryArtifactReader } from "../../src/artifacts/DirectoryArtifactReader.js";
 import { analyzeAppleAssetCatalogs } from "../../src/artifacts/apple/AppleAssetCatalogAnalysis.js";
@@ -74,6 +75,7 @@ const analyze = (bundle: string, signal: AbortSignal) =>
 it.skipIf(!canSimulateDarwin)(
   "retains the caller reason when assetutil observes cancellation",
   async () => {
+    vi.mocked(execFileOutput).mockClear();
     const bundle = await createBundle();
     const reason = { requested: "stop asset catalog" };
     const controller = new AbortController();
@@ -86,6 +88,7 @@ it.skipIf(!canSimulateDarwin)(
       expect(failure).toBeInstanceOf(ArtifactReaderFailure);
       if (!(failure instanceof ArtifactReaderFailure))
         throw new Error("Expected asset catalog cancellation");
+      expect(execFileOutput).toHaveBeenCalledTimes(1);
       expect(failure.reason).toBe("cancelled");
       expect(failure.cancellation?.reason).toBe(reason);
     } finally {
@@ -97,17 +100,20 @@ it.skipIf(!canSimulateDarwin)(
 it.skipIf(!canSimulateDarwin)(
   "retains the caller reason when the catalog digest is cancelled",
   async () => {
+    vi.mocked(execFileOutput).mockClear();
     const bundle = await createBundle();
     const reason = { requested: "stop during catalog digest" };
     const controller = new AbortController();
     state.controller = controller;
     state.reason = reason;
+    let readEntered = false;
     const open = vi
       .spyOn(DirectoryArtifactReader.prototype, "open")
       .mockImplementationOnce(
         async () =>
           new Readable({
             read() {
+              readEntered = true;
               this.push(Buffer.from("inert catalog fixture"));
               controller.abort(reason);
               this.push(null);
@@ -118,6 +124,10 @@ it.skipIf(!canSimulateDarwin)(
       const failure: unknown = await withDarwinPlatform(() =>
         analyze(bundle, controller.signal),
       ).catch((cause: unknown) => cause);
+      expect(readEntered).toBe(true);
+      expect(controller.signal.aborted).toBe(true);
+      expect(controller.signal.reason).toBe(reason);
+      expect(execFileOutput).not.toHaveBeenCalled();
       expect(open).toHaveBeenCalledTimes(1);
       expect(failure).toBeInstanceOf(ArtifactReaderFailure);
       if (!(failure instanceof ArtifactReaderFailure))

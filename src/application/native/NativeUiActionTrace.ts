@@ -77,8 +77,8 @@ export const traceNativeUiAction = async (
     (uiExecution.error._tag === "AnalysisCancelledError" ||
       uiExecution.error.cleanupIncomplete)
   )
-    return err(uiExecution.error);
-  if (!metadataExecution.ok) return err(metadataExecution.error);
+    return uiExecution;
+  if (!metadataExecution.ok) return metadataExecution;
   const metadata = nativeDispatchMetadataResultSchema.parse(
     metadataExecution.value,
   );
@@ -93,6 +93,8 @@ export const traceNativeUiAction = async (
 
   let graph = emptyGraph(targetSha256, metadata.provider);
   const coverage = [];
+  let uiOutputBoundReached = false;
+  let sourceGraphTruncated = false;
   if (uiExecution.ok) {
     const decoded = interfaceBuilderAnalysisSchema.safeParse(
       uiExecution.value.result,
@@ -134,8 +136,10 @@ export const traceNativeUiAction = async (
       examined: archiveDecode?.examined ?? decoded.data.documents.length,
       omitted: archiveDecode?.omitted ?? 0,
     });
+    sourceGraphTruncated = graph.truncated;
     const bounded = boundUiGraph(graph, input.max_nodes, input.max_edges);
     graph = bounded.graph;
+    uiOutputBoundReached = bounded.truncated;
     if (bounded.truncated)
       coverage.push({
         facet: "interface_builder_graph",
@@ -205,7 +209,7 @@ export const traceNativeUiAction = async (
       edges: [],
       unresolved: [],
       reached_depth: 0,
-      truncated: graph.truncated,
+      truncated: graph.truncated || uiOutputBoundReached,
       reason: selected.reason,
       coverage,
       limitations: [
@@ -257,7 +261,7 @@ export const traceNativeUiAction = async (
     nodes: expanded.nodes,
     edges: expanded.edges,
     coverage: [...graph.coverage, ...coverage],
-    truncated: graph.truncated || expanded.truncated,
+    truncated: sourceGraphTruncated,
   });
   const trace = traceNativeInvestigationGraph(finalGraph, {
     start: selected.nodeId,
@@ -268,19 +272,40 @@ export const traceNativeUiAction = async (
       max_edges: input.max_edges,
     },
   });
+  // Expansion starts from the bounded initial trace; its omitted relationships
+  // cannot be recovered merely by tracing that reduced graph again.
+  const initialCutoffReason =
+    initial.truncated && initial.reason !== "source_graph_truncated"
+      ? initial.reason
+      : null;
+  const reason =
+    trace.reason !== null && trace.reason !== "source_graph_truncated"
+      ? trace.reason
+      : (initialCutoffReason ??
+        (uiOutputBoundReached ? "native_trace_output_bound_reached" : null) ??
+        (expanded.truncated ? "native_call_traversal_bound_reached" : null) ??
+        trace.reason);
   return ok(
     jsonValueSchema.parse(
       nativeInvestigationTraceSchema.parse({
         ...trace,
-        truncated: trace.truncated || expanded.truncated || graph.truncated,
-        reason:
-          expanded.truncated && trace.reason === null
-            ? "native_call_traversal_bound_reached"
-            : graph.truncated && trace.reason === null
-              ? "native_trace_output_bound_reached"
-              : trace.reason,
+        truncated:
+          trace.truncated ||
+          initial.truncated ||
+          expanded.truncated ||
+          uiOutputBoundReached,
+        reason,
         limitations: [
           ...trace.limitations,
+          ...(initialCutoffReason !== null && initialCutoffReason !== reason
+            ? [
+                `The initial UI graph trace stopped traversal: ${initialCutoffReason}.`,
+              ]
+            : []),
+          ...(expanded.truncated &&
+          reason !== "native_call_traversal_bound_reached"
+            ? ["Native call expansion stopped at a traversal bound."]
+            : []),
           ...renderSourceLimitations(expanded.limitations),
         ],
       }),

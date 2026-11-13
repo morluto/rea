@@ -50,7 +50,7 @@ console.log(JSON.stringify({ wide: deeperThan(wide, 500), edge: deeperThan(neste
 it("pairs elements with a long tag and many attributes in a small heap, spelling a selector only once chosen", async () => {
   // Spelling the tag into a selector per attribute needed more than 140 MiB here.
   const pairing = await inSmallHeap(
-    "viewPointer.ts",
+    "memberPairing.ts",
     "pairMembers",
     `const tag = "t".repeat(40_000);
 const element = (id) => {
@@ -59,7 +59,7 @@ const element = (id) => {
   return { name: tag, attributes, children: [] };
 };
 const members = [element("1"), element("2")];
-const { newer, older } = pairMembers(members, members);
+const { newer, older } = pairMembers(members, members, undefined, "xml");
 console.log(JSON.stringify({ keys: newer.keys.map((key) => key.replace(tag, "T")), partners: newer.partners, same: older.keys.every((key, index) => key === newer.keys[index]) }));
 `,
   );

@@ -214,24 +214,25 @@ export class CdpElectronProvider implements ElectronObservationPort {
         }),
       );
     } catch (cause: unknown) {
+      const completedPrefix = {
+        browser_version: discovery?.version ?? null,
+        examined_targets: examined,
+        discovered_targets: discovery?.targets.length ?? null,
+        allowed_targets: allowed,
+        excluded: {
+          unsupported_url: unsupportedUrl,
+          non_page: nonPage,
+        },
+        unconnectable_targets: unconnectable,
+        coverage:
+          "partial: target authorization stopped; remaining targets are unknown",
+      };
       const fileFailure = mapElectronFileAuthorizationFailure(
         cause,
         CDP_ELECTRON_PROVIDER_IDENTITY.id,
         "list_electron_targets",
         {
-          completed_prefix: {
-            browser_version: discovery?.version ?? null,
-            examined_targets: examined,
-            discovered_targets: discovery?.targets.length ?? null,
-            allowed_targets: allowed,
-            excluded: {
-              unsupported_url: unsupportedUrl,
-              non_page: nonPage,
-            },
-            unconnectable_targets: unconnectable,
-            coverage:
-              "partial: target authorization stopped; remaining targets are unknown",
-          },
+          completed_prefix: completedPrefix,
         },
       );
       if (fileFailure !== undefined) return err(fileFailure);
@@ -240,19 +241,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
           ? new AnalysisCancelledError("list_electron_targets", {
               cause: options.signal.reason,
               diagnostics: {
-                completed_prefix: {
-                  browser_version: discovery?.version ?? null,
-                  examined_targets: examined,
-                  discovered_targets: discovery?.targets.length ?? null,
-                  allowed_targets: allowed,
-                  excluded: {
-                    unsupported_url: unsupportedUrl,
-                    non_page: nonPage,
-                  },
-                  unconnectable_targets: unconnectable,
-                  coverage:
-                    "partial: target authorization stopped; remaining targets are unknown",
-                },
+                completed_prefix: completedPrefix,
               },
             })
           : providerError(cause, "list_electron_targets"),

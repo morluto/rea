@@ -116,18 +116,22 @@ The result's limitations state this explicitly. A module-mode build with a main
 module record and no dependency records has an observed empty dependency list.
 
 When `include_string_literals: true` (CLI `--include-string-literals`, optional
-`max_string_literals` / `--max-string-literals`, default `2000`, maximum `10000`)
+`max_string_literals` / `--max-string-literals`, default `2000`)
 is selected, `string_literals` reports `evidence_kind: "inferred"` alongside
 deduplicated printable UTF-8 literals referenced by word-aligned two-word
 `(ptr, len)` string headers in non-executable initialized data. Because Go packs
 read-only string data contiguously without NUL terminators, slicing by `(ptr, len)`
 recovers exact literal boundaries instead of concatenated C-string runs. Each
-target slice (`1`–`4096` bytes) must stay within a single read-only mapped
+target slice (default `1`–`4096` bytes) must stay within a single read-only mapped
 section or segment, decode as printable UTF-8 (`\t`, `\n`, `\r`, joiners
 `U+200C` / `U+200D` and printable Unicode scalar values, excluding control and
 other format characters), and fit within
-a 64 MiB header-scan budget and 512 KiB aggregate string budget
-(`truncated: true` when capped). Compiler-inlined or
+a default 64 MiB header-scan budget and 512 KiB aggregate string budget
+(`truncated: true` when capped). Select `max_string_literal_bytes`,
+`max_string_bytes`, `max_string_header_scan_bytes`, or `max_string_candidates`
+to change these independent budgets. Their CLI flags use hyphens, for example
+`--max-string-literal-bytes 16384`. `limits_reached` names exhausted controls;
+increase those controls for a new inspection of the same complete artifact. Compiler-inlined or
 stack-constructed strings without static headers, unapplied relocation addends
 and Mach-O `LC_DYLD_CHAINED_FIXUPS` pointer encodings are noted in `limitations`.
 
@@ -201,23 +205,39 @@ host permission denial, changed artifacts and cancellation retain distinct
 errors. The selected file is never modified; this inspection creates no
 temporary files, starts no subprocesses and accesses no network endpoint.
 
-An input above 256 MiB returns `resource_constraint` with resource `file-size`
-and `reported_limits.maximum_input_bytes`. Select a suitable input within that
-fixed allowance; changing an output-write or transport budget does not admit it.
+The existing default resource budgets are now explicit per-call controls:
 
-Resource guards bound the selected file and cumulative header searches to 256 MiB
-each, aggregate embedded string contents to 1 MiB (varint length prefixes are
-framing and do not count toward this allowance), structural table decoding to
-16 MiB and the complete normalized metadata report to 8 MiB. Inline strings must
-also fit within their actual mapped source range. Identical search spans with
-the same virtual alignment are searched once; partially overlapping spans
-consume the cumulative search budget
-and fail with a CPU resource constraint when it is exhausted. Oversized results
-fail without partial success. MCP also applies
-its [response transport budget](../../reference/mcp-contracts.md), which counts both text and
-structured content; a report within the metadata limit can still require export
-from retained Evidence. These limits are not operating-system memory or CPU
-isolation.
+| Parameter                      | Default     | What it admits                                                |
+| ------------------------------ | ----------- | ------------------------------------------------------------- |
+| `max_input_bytes`              | 256 MiB     | Complete stable input file                                    |
+| `max_report_bytes`             | 8 MiB       | Complete normalized metadata representation                   |
+| `max_build_info_bytes`         | 1 MiB       | Aggregate embedded string contents, excluding length prefixes |
+| `max_header_search_bytes`      | 256 MiB     | Cumulative build-info search work                             |
+| `max_string_literals`          | 2,000       | Returned inferred string rows                                 |
+| `max_string_literal_bytes`     | 4,096 bytes | Each inferred string candidate                                |
+| `max_string_bytes`             | 512 KiB     | Aggregate returned inferred text                              |
+| `max_string_header_scan_bytes` | 64 MiB      | String-header and candidate-byte examination                  |
+| `max_string_candidates`        | 100,000     | Distinct inferred candidates retained before projection       |
+
+Every value is a positive safe integer. Input and string byte maxima follow the
+runtime Buffer/string representation, with base64 expansion accounted for in
+build-info admission; schemas advertise their exact maxima. CLI options use the same names with
+hyphens, such as `--max-build-info-bytes 2097152`. Inferred-string controls
+require `include_string_literals: true`. Omitted controls keep the defaults
+and stay omitted in request Evidence. Error recovery names the exhausted
+parameter and effective bytes; increase that parameter on the next call,
+without restarting REA. The original complete artifact and its identity are
+preserved. An unchanged retry cannot increase a deterministic allowance.
+
+The shared native container reader separately bounds structural table decoding
+to 16 MiB. None of these Go controls changes that boundary. Inline strings must
+also fit their actual mapped source range. Identical search spans with the same
+virtual alignment are searched once; partially overlapping spans consume the
+cumulative search budget. Oversized complete reports fail without partial
+success and without allocating the full JSON serialization. MCP's separate
+[response transport budget](../../reference/mcp-contracts.md) can still require
+export or paging of successfully retained Evidence. These controls do not
+establish operating-system memory or CPU isolation.
 
 Embedded metadata is evidence of file content. It does not authenticate a
 compiler, dependency, commit or supply chain, and it does not establish runtime

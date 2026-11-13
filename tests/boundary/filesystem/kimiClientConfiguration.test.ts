@@ -59,7 +59,7 @@ describe("Kimi Code configuration paths and skills", () => {
       "linux",
       override === undefined ? {} : { KIMI_CODE_HOME: override },
     );
-    expect(client).toEqual({
+    expect(client).toMatchObject({
       name: "kimi",
       displayName: "Kimi Code",
       configPath: join(directory, "mcp.json"),

@@ -1,3 +1,4 @@
+import { resolveJavaScriptSemanticPrecision } from "../../domain/javascript/javascriptSemanticPrecision.js";
 import type {
   JavaScriptSourceAnalysisLimits,
   JavaScriptSourceAnalysisPort,
@@ -128,8 +129,25 @@ const registerJavaScriptSourceAnalysisClose = (
 const sameLimits = (
   left: JavaScriptSourceAnalysisLimits,
   right: JavaScriptSourceAnalysisLimits,
-): boolean =>
-  left.heapMb === right.heapMb && left.timeoutMs === right.timeoutMs;
+): boolean => {
+  if (
+    left.heapMb !== right.heapMb ||
+    left.timeoutMs !== right.timeoutMs ||
+    left.heapSource !== right.heapSource ||
+    left.timeoutSource !== right.timeoutSource
+  )
+    return false;
+  const leftPrecision = resolveJavaScriptSemanticPrecision(
+    left.semanticPrecision,
+  );
+  const rightPrecision = resolveJavaScriptSemanticPrecision(
+    right.semanticPrecision,
+  );
+  return Object.entries(leftPrecision).every(
+    ([key, value]) =>
+      rightPrecision[key as keyof typeof rightPrecision] === value,
+  );
+};
 
 /**
  * Park a healthy worker on its scope. The next checkout with the same limits

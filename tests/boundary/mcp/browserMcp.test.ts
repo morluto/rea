@@ -101,21 +101,20 @@ it("preserves Link parameter order and context through the advertised MCP contra
   if (advertised?.outputSchema === undefined)
     throw new Error("inspect_web_page must advertise its output schema");
 
-  const inspected = await connected.client.callTool({
-    name: "inspect_web_page",
-    arguments: {
-      cdp_endpoint: browser.endpoint,
-      target_id: "allowed-page",
-      observation_ms: 0,
+  const inspected = await connected.client.callTool(
+    {
+      name: "inspect_web_page",
+      arguments: {
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        observation_ms: 0,
+      },
     },
-  });
+    { toolDefinition: advertised },
+  );
   expect(inspected.isError).not.toBe(true);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const outputSchema: Record<string, unknown> = advertised.outputSchema;
-  expect(
-    ajv.validate(outputSchema, inspected.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
 
   const normalized = webPageInspectionSchema.parse(
     normalizedResultOf(inspected.structuredContent),
@@ -249,7 +248,7 @@ cliTest(
       ],
       environment: process.env,
     });
-    expect(cliResult.exitCode).toBe(0);
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     expect(cliResult.signal).toBeNull();
     const mcp = await client.callTool({
       name: "analyze_web_bundle",
@@ -775,7 +774,7 @@ cliTest(
       ],
       environment: process.env,
     });
-    expect(cliResult.exitCode).toBe(0);
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     expect(cliResult.signal).toBeNull();
     const cliEvidence = parseEvidence(cliResult.json);
     expect(cliEvidence.normalized_result).toMatchObject(expectedResult);

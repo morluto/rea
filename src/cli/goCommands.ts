@@ -12,11 +12,7 @@ import {
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { machoSliceArchitectureSchema } from "../domain/apple/machoTargetSelection.js";
-import {
-  DEFAULT_MAX_GO_STRING_LITERALS,
-  MAX_GO_STRING_LITERALS_LIMIT,
-  goMaxStringLiteralsSchema,
-} from "../domain/go/goBinary.js";
+import { goResourceBudgetFields } from "../domain/go/goBinary.js";
 import { cliDecimalField } from "./options.js";
 
 /** Resolve caller paths and inspect static build metadata through the shared workflow. */
@@ -42,10 +38,26 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
         .describe(
           "Also recover bounded inferred Go UTF-8 string literals from static (ptr, len) headers",
         ),
+      maxInputBytes: cliDecimalField(goResourceBudgetFields.max_input_bytes),
+      maxReportBytes: cliDecimalField(goResourceBudgetFields.max_report_bytes),
+      maxBuildInfoBytes: cliDecimalField(
+        goResourceBudgetFields.max_build_info_bytes,
+      ),
+      maxHeaderSearchBytes: cliDecimalField(
+        goResourceBudgetFields.max_header_search_bytes,
+      ),
       maxStringLiterals: cliDecimalField(
-        goMaxStringLiteralsSchema.optional(),
-      ).describe(
-        `Maximum distinct recovered string literals (1-${String(MAX_GO_STRING_LITERALS_LIMIT)}; default ${String(DEFAULT_MAX_GO_STRING_LITERALS)}; requires --include-string-literals)`,
+        goResourceBudgetFields.max_string_literals,
+      ),
+      maxStringLiteralBytes: cliDecimalField(
+        goResourceBudgetFields.max_string_literal_bytes,
+      ),
+      maxStringBytes: cliDecimalField(goResourceBudgetFields.max_string_bytes),
+      maxStringHeaderScanBytes: cliDecimalField(
+        goResourceBudgetFields.max_string_header_scan_bytes,
+      ),
+      maxStringCandidates: cliDecimalField(
+        goResourceBudgetFields.max_string_candidates,
       ),
     }),
     run: ({ args, options }) =>
@@ -70,9 +82,41 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
                           include_string_literals:
                             options.includeStringLiterals,
                         }),
+                    ...(options.maxInputBytes === undefined
+                      ? {}
+                      : { max_input_bytes: options.maxInputBytes }),
+                    ...(options.maxReportBytes === undefined
+                      ? {}
+                      : { max_report_bytes: options.maxReportBytes }),
+                    ...(options.maxBuildInfoBytes === undefined
+                      ? {}
+                      : { max_build_info_bytes: options.maxBuildInfoBytes }),
+                    ...(options.maxHeaderSearchBytes === undefined
+                      ? {}
+                      : {
+                          max_header_search_bytes: options.maxHeaderSearchBytes,
+                        }),
                     ...(options.maxStringLiterals === undefined
                       ? {}
                       : { max_string_literals: options.maxStringLiterals }),
+                    ...(options.maxStringLiteralBytes === undefined
+                      ? {}
+                      : {
+                          max_string_literal_bytes:
+                            options.maxStringLiteralBytes,
+                        }),
+                    ...(options.maxStringBytes === undefined
+                      ? {}
+                      : { max_string_bytes: options.maxStringBytes }),
+                    ...(options.maxStringHeaderScanBytes === undefined
+                      ? {}
+                      : {
+                          max_string_header_scan_bytes:
+                            options.maxStringHeaderScanBytes,
+                        }),
+                    ...(options.maxStringCandidates === undefined
+                      ? {}
+                      : { max_string_candidates: options.maxStringCandidates }),
                   },
                   { signal },
                 ),

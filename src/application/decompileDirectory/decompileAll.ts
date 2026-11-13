@@ -1,3 +1,4 @@
+import { ExportPublishedCleanupFailure } from "./exportResources.js";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -199,7 +200,17 @@ export const decompileAll = async (
     ...(closed.ok ? [] : [closed.error]),
   ];
   const primary = failures[0];
+  const publishedIndex = indexed.ok
+    ? join(session.root, DECOMPILE_DIRECTORY_INDEX_NAME)
+    : indexed.error.cause instanceof ExportPublishedCleanupFailure
+      ? indexed.error.cause.publishedPath
+      : undefined;
+  const publishedOutput =
+    publishedIndex === undefined
+      ? undefined
+      : { output_directory: session.root, index_path: publishedIndex };
   if (primary !== undefined) {
+    let failure = primary;
     if (
       isAborted(signal) &&
       !(
@@ -210,22 +221,30 @@ export const decompileAll = async (
       primary.retainSecondaryFailure(cancelled(signal));
     for (const failure of failures.slice(1))
       primary.retainSecondaryFailure(failure);
-    return !closed.ok &&
+    if (
+      !closed.ok &&
       primary !== closed.error &&
       closed.error.cleanupIncomplete
-      ? err(
-          analysisErrorWithCleanupFailure(
-            primary,
-            closed.error,
-            "decompile_all",
-          ).bindCleanupDependencies([primary, closed.error]),
-        )
-      : err(primary);
+    ) {
+      failure = analysisErrorWithCleanupFailure(
+        primary,
+        closed.error,
+        "decompile_all",
+      ).bindCleanupDependencies([primary, closed.error]);
+    }
+    if (publishedOutput !== undefined)
+      failure.retainPrimaryDiagnostics({ published_output: publishedOutput });
+    return err(failure);
   }
   // Finalization succeeded, so committed files and the index are usable on
   // resume, but a caller abort that stopped the loop or arrived meanwhile is
   // not a success. Report it with the caller's own reason.
-  if (isAborted(signal)) return err(cancelled(signal));
+  if (isAborted(signal)) {
+    const failure = cancelled(signal);
+    if (publishedOutput !== undefined)
+      failure.retainPrimaryDiagnostics({ published_output: publishedOutput });
+    return err(failure);
+  }
   const manifest = decompileDirectoryManifestSchema.safeParse(
     manifestOf({
       root: session.root,
@@ -527,9 +546,8 @@ const publishOne = async (input: {
   // A provider still owns cleanup even if the caller aborted meanwhile.
   if (!decompiled.ok && decompiled.error.cleanupIncomplete)
     return { result: decompiled, bodySupport: body.support };
-  if (isAborted(input.signal))
-    return { result: err(cancelled(input.signal)), bodySupport: body.support };
   if (
+    !isAborted(input.signal) &&
     decompiled.ok &&
     input.retryFailed === "independent_fresh" &&
     decompiled.value.result === null &&
@@ -564,11 +582,6 @@ const publishOne = async (input: {
     );
     if (!decompiled.ok && decompiled.error.cleanupIncomplete)
       return { result: decompiled, bodySupport: body.support };
-    if (isAborted(input.signal))
-      return {
-        result: err(cancelled(input.signal)),
-        bodySupport: body.support,
-      };
   }
   if (!decompiled.ok) {
     if (decompiled.error instanceof AnalysisCancelledError)
@@ -603,7 +616,8 @@ const publishOne = async (input: {
       ...decompiled.value.limitations,
       ...(input.retryFailed === "independent_fresh" &&
       !attemptedIndependent &&
-      decompiled.value.result === null
+      decompiled.value.result === null &&
+      decompiled.value.pseudocodeAbsence?.kind !== "provider-failure"
         ? [
             "Independent retry was not attempted because the provider did not report a function failure for this observation.",
           ]
@@ -642,6 +656,10 @@ const publishOne = async (input: {
       bodySupport: body.support,
     };
   }
+  // Classify and journal settled failures before a later caller abort. A valid
+  // result still needs an active caller before publishing a new function file.
+  if (isAborted(input.signal))
+    return { result: err(cancelled(input.signal)), bodySupport: body.support };
   const relativePath = input.session.pathFor(input.procedure.address);
   const bytes = Buffer.from(
     functionFileText({

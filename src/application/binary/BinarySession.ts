@@ -54,7 +54,10 @@ import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { recordEvidenceSources } from "../investigation/recordEvidenceSources.js";
 import { recoverProviderSourceFailure } from "../investigation/sourcePublicationRecovery.js";
 import { BinarySessionRecords } from "./BinarySessionRecords.js";
-import { binarySessionStatus } from "./BinarySessionStatus.js";
+import {
+  binarySessionStatus,
+  currentRouteCapability,
+} from "./BinarySessionStatus.js";
 import { SessionRuntimeAvailability } from "./SessionRuntimeAvailability.js";
 import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
@@ -72,6 +75,7 @@ import {
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { ConfigurationError } from "../../domain/configurationErrors.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -224,7 +228,10 @@ export class BinarySession
     options: Pick<ExecutionOptions, "signal"> = {},
   ): Promise<Result<ResolvedAppBundleResourceRoot, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
-      const refused = this.#targetAcquisitionRefused("open_bundle_resources");
+      const refused = this.#targetAcquisitionRefused(
+        "open_bundle_resources",
+        options.signal,
+      );
       if (refused !== undefined) return refused;
       await this.#drainCalls(admittedThrough);
       if (isAborted(options.signal))
@@ -530,7 +537,10 @@ export class BinarySession
       const attempt = async (): Promise<
         Result<BinaryTarget, AnalysisError>
       > => {
-        const refused = this.#targetAcquisitionRefused("open_binary");
+        const refused = this.#targetAcquisitionRefused(
+          "open_binary",
+          options.signal,
+        );
         if (refused !== undefined) return refused;
         const admitted = await this.#withLoadedSnapshot(options);
         if (!admitted.ok) return admitted;
@@ -699,11 +709,27 @@ export class BinarySession
       profile = route.profile;
     }
     const runId = randomUUID();
-    const client = route.createClient(target, {
-      runId,
-    });
+    let client: ReturnType<typeof route.createClient>;
+    try {
+      client = route.createClient(target, {
+        runId,
+      });
+    } catch (cause: unknown) {
+      if (!(cause instanceof ConfigurationError)) throw cause;
+      return err(
+        previous === undefined
+          ? cause
+          : await this.#restoreAfterFailedOpen(previous, cause),
+      );
+    }
     const run: SessionRun = { client, route, runId };
-    const started = await client.execute("health", {}, options);
+    let started: Awaited<ReturnType<typeof client.execute>>;
+    try {
+      started = await client.execute("health", {}, options);
+    } catch (cause: unknown) {
+      if (!(cause instanceof ConfigurationError)) throw cause;
+      return err(await this.#failedOpen(run, previous, cause));
+    }
     if (!started.ok) {
       return err(await this.#failedOpen(run, previous, started.error));
     }
@@ -790,6 +816,12 @@ export class BinarySession
       failure: AnalysisError | undefined,
     ) => Promise<Result<null, AnalysisError>>,
   ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>> {
+    if (this.#shutdownStarted)
+      return Promise.resolve(
+        err(
+          new AnalysisCancelledError(operationName, { cause: signal?.reason }),
+        ),
+      );
     return this.#serialize(async (admittedThrough) => {
       if (this.#activeBundleResources !== undefined)
         return err(
@@ -921,9 +953,12 @@ export class BinarySession
 
   #targetAcquisitionRefused(
     operation: "open_binary" | "open_bundle_resources",
+    signal?: AbortSignal,
   ): Result<never, AnalysisCancelledError> | undefined {
     if (!this.#shutdownStarted) return undefined;
-    return err(new AnalysisCancelledError(operation));
+    return err(
+      new AnalysisCancelledError(operation, { cause: signal?.reason }),
+    );
   }
 
   /** Release the engine and replay state while retaining investigation history. */
@@ -1004,7 +1039,11 @@ export class BinarySession
   ): Promise<Result<ResetInvestigationReceipt, AnalysisError>> {
     if (this.#shutdownStarted)
       return Promise.resolve(
-        err(new AnalysisCancelledError("reset_investigation")),
+        err(
+          new AnalysisCancelledError("reset_investigation", {
+            cause: options.signal?.reason,
+          }),
+        ),
       );
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
@@ -1360,11 +1399,6 @@ export class BinarySession
       : structuredClone(this.#active.target);
   }
 
-  activeBundleResourceRoot(): ResolvedAppBundleResourceRoot | undefined {
-    const root = this.#activeBundleResources?.root;
-    return root === undefined ? undefined : structuredClone(root);
-  }
-
   override exportAnalysisSnapshot() {
     if (this.#activeBundleResources !== undefined)
       return err(new ResourceSnapshotMismatchError("export"));
@@ -1410,6 +1444,12 @@ export class BinarySession
     options?: ExecutionOptions,
     recoveryParameters?: Readonly<Record<string, JsonValue>>,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    if (this.#shutdownStarted)
+      return Promise.resolve(
+        err(
+          new AnalysisCancelledError(name, { cause: options?.signal?.reason }),
+        ),
+      );
     const generation = this.#transitionGeneration;
     const call = this.#execute(
       name,
@@ -1430,6 +1470,7 @@ export class BinarySession
   ): Promise<Result<AnalysisExecution, AnalysisError> | undefined> {
     const active = this.#active;
     if (
+      this.#shutdownStarted ||
       this.#transitionPending > 0 ||
       active === undefined ||
       active.client.executeIfReady === undefined
@@ -1461,7 +1502,11 @@ export class BinarySession
     operation: (analysis: AnalysisOperationPort) => Promise<Value>,
   ): Promise<Result<Value, AnalysisError>> {
     if (this.#shutdownStarted)
-      return Promise.resolve(err(new AnalysisCancelledError(operationName)));
+      return Promise.resolve(
+        err(
+          new AnalysisCancelledError(operationName, { cause: signal?.reason }),
+        ),
+      );
     const generation = this.#transitionGeneration;
     const transition = this.#transition;
     const call = (async (): Promise<Result<Value, AnalysisError>> => {
@@ -1520,6 +1565,8 @@ export class BinarySession
       parameters: arguments_,
       snapshotContext: options?.snapshotContext,
       nativeSourceAdmitted: this.#active?.nativeSourceAdmitted === true,
+      isOperationAvailable: (operation) => this.#currentlyAvailable(operation),
+      isOperationAdvertised: options?.isOperationAdvertised,
       unboundOperationError: (operation, route) =>
         this.#providerRouter.unboundOperationError(operation, route),
       lookupSnapshot: (target, profile, operation, parameters) =>
@@ -1532,8 +1579,14 @@ export class BinarySession
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
     const dispatch = this.#runtimeAvailability.dispatch();
-    const call = active.client.execute(name, arguments_, options);
-    const result = unrecordedExecution(await call);
+    let dispatched: Awaited<ReturnType<typeof active.client.execute>>;
+    try {
+      dispatched = await active.client.execute(name, arguments_, options);
+    } catch (cause: unknown) {
+      if (cause instanceof ConfigurationError) return err(cause);
+      throw cause;
+    }
+    const result = unrecordedExecution(dispatched);
     const profiled = bindExecutionTarget(
       commitExecutionProfile(name, result, profile),
       name,
@@ -1652,6 +1705,20 @@ export class BinarySession
     return execution;
   }
 
+  /** Whether the active route can run an operation now, as status reports it. */
+  #currentlyAvailable(operation: string): boolean {
+    const active = this.#active;
+    const descriptor = active?.route.capabilities.get(operation);
+    return (
+      descriptor !== undefined &&
+      currentRouteCapability(
+        descriptor,
+        active?.target,
+        this.#runtimeAvailability.entries,
+      ).available
+    );
+  }
+
   #clearRuntimeAvailability(): void {
     if (this.#runtimeAvailability.clear()) this.#emitAvailabilityChanged();
   }
@@ -1687,22 +1754,16 @@ export class BinarySession
     this.#transitionPending += 1;
     // Later calls wait for this transition and must not be included in its drain.
     const admittedThrough = this.#transitionGeneration++;
-    const result = this.#transition.then(
-      () => operation(admittedThrough),
-      () => operation(admittedThrough),
-    );
+    const perform = (): Promise<T> => operation(admittedThrough);
+    const result = this.#transition.then(perform, perform);
     this.#transition = result.then(
       () => undefined,
       () => undefined,
     );
-    void result.then(
-      () => {
-        this.#transitionPending -= 1;
-      },
-      () => {
-        this.#transitionPending -= 1;
-      },
-    );
+    const finish = (): void => {
+      this.#transitionPending -= 1;
+    };
+    void result.then(finish, finish);
     return result;
   }
 
@@ -1797,32 +1858,19 @@ export class BinarySession
         );
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      transition.then(
-        () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(
-            signal.aborted
-              ? err(
-                  new AnalysisCancelledError(operation, {
-                    cause: signal.reason,
-                  }),
-                )
-              : ok(undefined),
-          );
-        },
-        () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(
-            signal.aborted
-              ? err(
-                  new AnalysisCancelledError(operation, {
-                    cause: signal.reason,
-                  }),
-                )
-              : ok(undefined),
-          );
-        },
-      );
+      const finish = (): void => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(
+          signal.aborted
+            ? err(
+                new AnalysisCancelledError(operation, {
+                  cause: signal.reason,
+                }),
+              )
+            : ok(undefined),
+        );
+      };
+      transition.then(finish, finish);
     });
   }
 }

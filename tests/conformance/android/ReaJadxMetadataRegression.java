@@ -51,8 +51,14 @@ public class ReaJadxMetadataRegression {
             + prefix + ":versionName=\"" + encoded + "\" " + prefix + ":versionCode=\"7\""
             + " other:versionName=\"decoy\"><uses-sdk " + prefix + ":minSdkVersion=\"23\" "
             + prefix + ":targetSdkVersion=\"35\"/><uses-permission " + prefix
-            + ":name=\"org.example.MARKER\"/><application><uses-permission " + prefix
-            + ":name=\"nested.decoy\"/></application></manifest>";
+            + ":name=\"org.example.MARKER\"/><uses-permission-sdk-23 " + prefix
+            + ":name=\"org.example.SDK23\"/><uses-permission-sdk-m " + prefix
+            + ":name=\"org.example.SDKM\"/><other:uses-permission-sdk-23 " + prefix
+            + ":name=\"foreign.element\"/><uses-permission-sdk-23 other:name=\"foreign.attribute\"/>"
+            + "<uses-permission-sdk-230 " + prefix + ":name=\"unknown.tag\"/>"
+            + "<application><uses-permission " + prefix + ":name=\"nested.decoy\"/>"
+            + "<uses-permission-sdk-23 " + prefix + ":name=\"nested.sdk23\"/>"
+            + "<uses-permission-sdk-m " + prefix + ":name=\"nested.sdkm\"/></application></manifest>";
         Map<String, Object> summary = ReaJadxBridge.manifestSummary(xml);
         require(summary.get("package").equals("org.example.root"), "Wrong manifest package");
         require(summary.get("version_name").equals(
@@ -60,8 +66,9 @@ public class ReaJadxMetadataRegression {
             "Version name lost XML entity identity: " + summary);
         require(summary.get("version_code").equals("7") && summary.get("min_sdk").equals("23")
             && summary.get("target_sdk").equals("35"), "Namespace prefix changed summary values");
-        require(summary.get("permissions").equals(List.of("org.example.MARKER")),
-            "Permission summary included a nested or unrelated declaration");
+        require(summary.get("permissions").equals(
+            List.of("org.example.MARKER", "org.example.SDK23", "org.example.SDKM")),
+            "Permission summary lost SDK-gated declarations or included unrelated declarations");
       }
     }
     for (String xml : List.of("<other/>", "<manifest><application></manifest>",
@@ -80,7 +87,9 @@ public class ReaJadxMetadataRegression {
     for (boolean assetFirst : List.of(true, false)) {
       String pkg = assetFirst ? "org.example.first" : "org.example.second";
       String root = "<manifest xmlns:a=\"http://schemas.android.com/apk/res/android\" package=\""
-          + pkg + "\" a:versionName=\"one &amp; beta\" a:versionCode=\"7\"/>";
+          + pkg + "\" a:versionName=\"one &amp; beta\" a:versionCode=\"7\">"
+          + "<uses-permission-sdk-23 a:name=\"org.example.SDK23\"/>"
+          + "<uses-permission-sdk-m a:name=\"org.example.SDKM\"/></manifest>";
       String asset = "<manifest package=\"org.example.asset\"/>";
       Path apk = output.resolve(assetFirst ? "manifest-asset-first.apk" : "manifest-root-first.apk");
       try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(apk))) {
@@ -99,6 +108,9 @@ public class ReaJadxMetadataRegression {
       JsonObject summary = call(handle, bridge, "get_app_info", new JsonObject());
       require(summary.get("package").getAsString().equals(pkg), "Asset or previous session supplied package facts");
       require(summary.get("version_name").getAsString().equals("one & beta"), "Wrong root version value");
+      require(summary.getAsJsonArray("permissions").equals(JsonParser.parseString(
+          "[\"org.example.SDK23\",\"org.example.SDKM\"]")),
+          "Root manifest SDK-gated permissions were omitted");
       String raw = holder.current().getResources().stream()
           .filter(resource -> resource.getOriginalName().equals("AndroidManifest.xml"))
           .findFirst().orElseThrow().loadContent().getText().getCodeStr();

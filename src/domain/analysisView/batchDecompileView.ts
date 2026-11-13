@@ -243,9 +243,7 @@ const summarizeBatch = (items: readonly BatchDecompileItem[]) => {
   };
 };
 
-export const batchUnknowns = (
-  items: readonly BatchDecompileItem[],
-): string[] => {
+const batchUnknowns = (items: readonly BatchDecompileItem[]): string[] => {
   const unknownIdentity = items.filter(
     ({ procedure }) => procedure.status === "unknown",
   ).length;

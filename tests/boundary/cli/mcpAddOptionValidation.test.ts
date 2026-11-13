@@ -11,21 +11,18 @@ import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { registrationEnvironment } from "../../support/cli/registrationEnvironment.js";
 
 cliTest("mcp add rejects valued options without a value", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-mcp-add-value-");
   const home = join(root, "home");
   const settingsPath = (selectedHome: string) =>
     join(selectedHome, ".config", "amp", "settings.json");
-  const run = (arguments_: readonly string[], selectedHome = home) =>
+  const run = async (arguments_: readonly string[], selectedHome = home) =>
     cli.run({
       arguments: [...arguments_, "--json"],
       cwd: root,
-      environment: {
-        HOME: selectedHome,
-        USERPROFILE: selectedHome,
-        XDG_CONFIG_HOME: join(selectedHome, ".config"),
-      },
+      environment: await registrationEnvironment(selectedHome),
       timeoutMs: 20_000,
     });
 
@@ -103,15 +100,12 @@ cliTest(
     const root = await createTestTempDirectory("rea-mcp-add-argument-");
     const home = join(root, "home");
     const settingsPath = join(home, ".config", "amp", "settings.json");
+    const environment = await registrationEnvironment(home);
     const run = (arguments_: readonly string[]) =>
       cli.run({
         arguments: [...arguments_, "--json"],
         cwd: root,
-        environment: {
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: join(home, ".config"),
-        },
+        environment,
         timeoutMs: 20_000,
       });
 
@@ -178,15 +172,12 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-mcp-add-field-");
     const home = join(root, "home");
+    const environment = await registrationEnvironment(home);
     const run = (arguments_: readonly string[]) =>
       cli.run({
         arguments: [...arguments_, "--json"],
         cwd: root,
-        environment: {
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: join(home, ".config"),
-        },
+        environment,
         timeoutMs: 20_000,
       });
 
@@ -205,10 +196,49 @@ cliTest(
           expect.objectContaining({ code: "invalid_value", path: field }),
         ],
       });
-      expect(
-        (result.json as { message?: string }).message,
-        "the message and the field must describe the same error",
-      ).toContain("Missing value for flag");
+      expect(result.json).toMatchObject({
+        message: expect.stringContaining("Missing value for flag"),
+      });
     }
+  },
+);
+
+cliTest(
+  "packaged --no-global refuses a global-only member before writing any selected client",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-mcp-project-scope-");
+    const project = join(home, "project");
+    await mkdir(project);
+    const environment = await registrationEnvironment(home);
+    const result = await cli.run({
+      arguments: [
+        "mcp",
+        "add",
+        "--agent",
+        "cursor",
+        "--agent",
+        "goose",
+        "--no-global",
+        "--json",
+      ],
+      cwd: project,
+      environment,
+      timeoutMs: 20_000,
+    });
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("project-scoped"),
+    });
+    const goose =
+      process.platform === "win32"
+        ? join(home, "appdata", "Block", "goose", "config", "config.yaml")
+        : join(home, ".config", "goose", "config.yaml");
+    for (const path of [
+      join(home, ".cursor", "mcp.json"),
+      join(project, ".cursor", "mcp.json"),
+      goose,
+    ])
+      await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

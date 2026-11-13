@@ -187,7 +187,9 @@ cliTest(
         resolves: false,
       })),
     ].map(({ prefix, constructor, suffix, resolves }, index) => ({
-      source: `identity-${index}.ts`,
+      // `require` names a Node built-in only in a file proven to be CommonJS,
+      // which the `.cts` suffix establishes.
+      source: `identity-${index}.${/^const .*\brequire\(/u.test(prefix ?? "") ? "cts" : "ts"}`,
       prefix,
       expression: `${constructor}(new URL("./worker.js", import.meta.url))`,
       suffix,

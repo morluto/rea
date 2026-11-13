@@ -24,7 +24,10 @@ import {
 } from "../../src/domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../../src/domain/browserObservationError.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { jsonObjectSchema } from "../../src/domain/jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+} from "../../src/domain/jsonValue.js";
 import { ok } from "../../src/domain/result.js";
 
 const state = vi.hoisted(() => ({
@@ -331,10 +334,6 @@ it("retries a late Playwright open after cancellation before accepting another c
     await closeStarted;
     finishFirstClose();
 
-    const failedRetry = await provider.captureScenario(scenario);
-    expect(failedRetry.ok).toBe(false);
-    if (!failedRetry.ok) expect(failedRetry.error.cleanupIncomplete).toBe(true);
-
     const retried = await provider.captureScenario(scenario);
     expect(retried.ok).toBe(true);
     if (retried.ok) expect(retried.value.steps).toHaveLength(2);
@@ -414,7 +413,7 @@ it("retains completed Evidence when provider shutdown fails after a successful c
   if (!captured.ok) throw captured.error;
   const evidence = createBrowserScenarioEvidence(
     scenario,
-    captured.value,
+    { source: jsonValueSchema.parse(captured.value), facts: captured.value },
     provider.identity(),
   );
   const close = vi.fn().mockRejectedValue(

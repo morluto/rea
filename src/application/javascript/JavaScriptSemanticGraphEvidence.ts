@@ -1,6 +1,7 @@
 import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 
 const INFERENCE_LIMITATION =
   "This relationship is a conservative static candidate; it does not prove runtime execution or causal flow.";
@@ -63,6 +64,59 @@ export const inferredSemanticEvidenceAt = (
   confidence: "high",
   limitations: [INFERENCE_LIMITATION],
 });
+
+/** A built-in operation whose identity is conditional on loader or mutation facts. */
+export const candidateBuiltinSemanticEvidence = (
+  file: JavaScriptArtifactFile,
+  location: JavaScriptSourceRange,
+): ApplicationGraphEvidence => {
+  const evidence = inferredSemanticEvidenceAt(file, location);
+  return {
+    ...evidence,
+    confidence: "low",
+    limitations: [
+      ...evidence.limitations,
+      "The built-in identity or its mutation state is unproven; this operation is conditional.",
+    ],
+  };
+};
+
+type SemanticBuiltinOperation = {
+  readonly builtinAuthority?: "candidate" | undefined;
+  readonly location: JavaScriptSourceRange;
+};
+
+/** Keep the candidate marker and its Evidence together on built-in nodes. */
+export const builtinSemanticNode = (
+  file: JavaScriptArtifactFile,
+  operation: SemanticBuiltinOperation,
+  properties: Readonly<Record<string, JsonValue>>,
+): {
+  readonly properties: Readonly<Record<string, JsonValue>>;
+  readonly evidence?: ApplicationGraphEvidence;
+} =>
+  operation.builtinAuthority === "candidate"
+    ? {
+        evidence: candidateBuiltinSemanticEvidence(file, operation.location),
+        properties: { ...properties, builtin_authority: "candidate" },
+      }
+    : { properties };
+
+/** Keep conditional built-in authority and relation resolution together. */
+export const builtinSemanticRelation = (
+  file: JavaScriptArtifactFile,
+  operation: SemanticBuiltinOperation,
+  resolution: "resolved" | "candidate",
+): {
+  readonly resolution: "resolved" | "candidate";
+  readonly evidence?: ApplicationGraphEvidence;
+} =>
+  operation.builtinAuthority === "candidate"
+    ? {
+        resolution: "candidate",
+        evidence: candidateBuiltinSemanticEvidence(file, operation.location),
+      }
+    : { resolution };
 
 /** Explicit absence of semantic syntax for an artifact-level fallback root. */
 export const unavailableSemanticRootEvidence = (

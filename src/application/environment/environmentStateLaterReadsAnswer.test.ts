@@ -181,3 +181,47 @@ describe("served writes modelled on later reads", () => {
     });
   });
 });
+
+it.each([
+  ["item", SOFT_DELETED_ROWS, "delete_contacts_by_id", { id: "1" }],
+  ["bulk", STALE_BULK_DELETE_ROWS, "delete_contacts", { body: [{ id: 1 }] }],
+] as const)(
+  "invalidates the deletion flag override after a served %s delete",
+  (_kind, rows, tool, args) => {
+    const contacts = servedFrom(rows);
+    const snapshot = contacts.store.snapshot();
+    expect(
+      contacts.store.replace({
+        rea_state: {
+          ...snapshot.rea_state,
+          entities: snapshot.rea_state.entities.map((entity) =>
+            entity.id === "1"
+              ? {
+                  ...entity,
+                  view_fields: [
+                    {
+                      tool: "get_contacts_by_id",
+                      fields: { deleted: false, name: "Item display" },
+                    },
+                  ],
+                }
+              : entity,
+          ),
+        },
+      }).ok,
+    ).toBe(true);
+    expect(
+      contacts.answer("get_contacts_by_id", { id: "1" }).body,
+    ).toMatchObject({
+      deleted: false,
+    });
+    contacts.answer(tool, args);
+    expect(
+      contacts.answer("get_contacts_by_id", { id: "1" }).body,
+    ).toMatchObject({
+      id: 1,
+      name: "Item display",
+      deleted: true,
+    });
+  },
+);

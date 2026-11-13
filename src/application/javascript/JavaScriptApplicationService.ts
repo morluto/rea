@@ -1,8 +1,10 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
 import {
   ASAR_HEADER_ADMISSION_SETTING,
   parseAsarHeaderAdmission,
 } from "../../config/asarHeaderAdmission.js";
+import { parseAsarListingAdmission } from "../../config/asarListingAdmission.js";
 import { z } from "zod";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -69,12 +71,22 @@ export const analyzeJavaScriptApplicationValidated = async (
     options.environment?.[ASAR_HEADER_ADMISSION_SETTING],
   );
   if (!asarHeaderAdmission.ok) return asarHeaderAdmission;
+  const listingAdmission = parseAsarListingAdmission(
+    options.environment?.REA_ASAR_MAX_LISTING_BYTES,
+  );
+  if (!listingAdmission.ok) return listingAdmission;
   const overrides = options.settings?.().overrides;
   const header = overrides?.["asar.max_header_bytes"];
-  const acceptedAdmission =
-    header === undefined
+  const listing = overrides?.["asar.max_listing_bytes"];
+  const acceptedAdmission = {
+    ...(header === undefined
       ? asarHeaderAdmission.value
-      : { maximumBytes: header, source: "runtime" as const };
+      : { maximumBytes: header, source: "runtime" as const }),
+    listing:
+      listing === undefined
+        ? listingAdmission.value
+        : { maximumBytes: listing, source: "runtime" as const },
+  };
   let reconstructed: JavaScriptArtifactReconstructionResult | undefined;
   let result: JavaScriptApplicationAnalysisResult | undefined;
   let evidence: Evidence | undefined;
@@ -134,7 +146,8 @@ export const analyzeJavaScriptApplicationValidated = async (
     });
     assertJavaScriptAnalysisActive(options.signal);
     return ok(evidence);
-  } catch (cause: unknown) {
+  } catch (caught: unknown) {
+    let cause = caught;
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "cancelled" &&
@@ -235,12 +248,9 @@ const describeResultSchemaFailure = (cause: z.ZodError): string => {
   const pointer =
     path.length === 0
       ? "/"
-      : `/${path.map((part) => escapePointerPart(String(part))).join("/")}`;
+      : `/${path.map((part) => escapeJsonPointerToken(String(part))).join("/")}`;
   return `Result schema rejected ${String(cause.issues.length)} ${cause.issues.length === 1 ? "issue" : "issues"} at ${pointer} (${issue.code})`;
 };
-
-const escapePointerPart = (part: string): string =>
-  part.replaceAll("~", "~0").replaceAll("/", "~1");
 
 const FILESYSTEM_ERROR_CODES = new Set([
   "ENOENT",

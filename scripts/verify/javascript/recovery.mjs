@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -51,7 +55,7 @@ const call = async (name, args) => {
 const fingerprint = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const counts = [];
 let finalReport;
-try {
+await withVerifierCleanup(async () => {
   const fixtures = await buildRecoveryFixtures(
     root,
     process.env.REA_JAVASCRIPT_FIXTURE_TOOLS,
@@ -165,11 +169,15 @@ try {
     results: counts,
     verified: true,
   };
-} finally {
-  await client.close();
-  await transport.close();
-  await rm(root, { recursive: true, force: true });
-}
+}, [
+  async () => {
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
+    await rm(root, { recursive: true, force: true });
+  },
+]);
 console.log(JSON.stringify(finalReport));
 
 async function assertRecoveredArtifacts(evidence, result, fixture) {

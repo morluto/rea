@@ -56,15 +56,11 @@ mcpTest(
         ]),
       ),
     );
-    const result = await client.callTool({
-      name: "inspect_pe_certificates",
-      arguments: { path },
-    });
+    const result = await client.callTool(
+      { name: "inspect_pe_certificates", arguments: { path } },
+      { toolDefinition: advertised },
+    );
     expect(result.isError).not.toBe(true);
-    expect(
-      ajv.validate(schema, result.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
   },
 );
 

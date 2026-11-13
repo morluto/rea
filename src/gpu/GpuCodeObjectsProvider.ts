@@ -255,8 +255,8 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
   async #read(
     file: FileHandle,
     input: GpuCodeObjectsInput,
-    signal?: AbortSignal,
-    retainProgress?: (progress: {
+    signal: AbortSignal | undefined,
+    retainProgress: (progress: {
       inventory: GpuInventory;
       size: number;
     }) => void,
@@ -272,7 +272,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         "GPU source does not match the inventory's selected SHA-256",
       );
     const inventory = new GpuInventory(input, signal);
-    retainProgress?.({ inventory, size });
+    retainProgress({ inventory, size });
     const format = await inventory.inspect(source);
     const after = await file.stat({ bigint: true });
     const named = await lstat(input.path, { bigint: true }).catch(
