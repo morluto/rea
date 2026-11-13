@@ -74,8 +74,41 @@ describe("STM32 and GD32 peripheral lookup", () => {
       "0x40021400",
       "0x50000000",
     ]);
-    expect(candidates[0]?.platform).toBe("stm32f4");
-    expect(candidates[0]?.confidence).toBe(1);
+    const leaders = candidates.filter(
+      (candidate) => candidate.matchedCount === candidates[0]?.matchedCount,
+    );
+    expect(leaders.map((candidate) => candidate.platform)).toEqual([
+      "stm32f4",
+      "gd32f4",
+    ]);
+    expect(leaders.every((candidate) => candidate.confidence === 1)).toBe(true);
+  });
+
+  it("names the shared F4 windows with the GD32 manual's controller names", () => {
+    expect(lookupSocPeripheral("0x40020014", "gd32f4")).toMatchObject({
+      name: "GPIOA",
+      bus: "AHB1",
+    });
+    expect(lookupSocPeripheral("0x40023800", "gd32f4")?.name).toBe("RCU");
+    expect(lookupSocPeripheral("0x40026000", "gd32f4")?.name).toBe("DMA0");
+    expect(lookupSocPeripheral("0x40011000", "gd32f4")?.name).toBe("USART0");
+    expect(lookupSocPeripheral("0x4000380c", "gd32f4")?.name).toBe("SPI1");
+    expect(lookupSocPeripheral("0x50000000", "gd32f4")?.name).toBe("USBFS");
+    expect(lookupSocPeripheral("0xa0000000", "gd32f4")?.name).toBe("EXMC");
+    expect(lookupSocPeripheral("0x40006c00", "gd32f4")?.name).toBe("CTC");
+    expect(lookupSocPeripheral("0x40006c00", "stm32f4")).toBeNull();
+  });
+
+  it("lets the GD32F4 clock-trim window select only that family", () => {
+    expect(detectSocPlatform(["0x40006c00"], "arm")).toEqual([
+      {
+        platform: "gd32f4",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["CTC"],
+      },
+    ]);
   });
 });
 
@@ -149,7 +182,11 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
 
     expect(detectSocPlatform(["0x3ff40000"], "x86")).toEqual([]);
     expect(detectSocPlatform(["0x40011000"], "arm64")).toEqual([]);
-    expect(detectSocPlatform(["0x40023800"], "arm")).toEqual([
+    const sharedClock = detectSocPlatform(["0x40023800"], "arm");
+    const clockLeaders = sharedClock.filter(
+      (candidate) => candidate.matchedCount === sharedClock[0]?.matchedCount,
+    );
+    expect(clockLeaders).toEqual([
       {
         platform: "stm32f4",
         matchedCount: 1,
@@ -157,7 +194,31 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
         confidence: 1,
         matchedPeripherals: ["RCC"],
       },
+      {
+        platform: "gd32f4",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["RCU"],
+      },
     ]);
+  });
+
+  it("does not let a shared STM32F4 window select only one family", () => {
+    const tied = detectSocPlatform(
+      ["0x40020000", "0x40023800", "0x40026000"],
+      "cortex-m",
+    );
+    const leaders = tied.filter(
+      (candidate) => candidate.matchedCount === tied[0]?.matchedCount,
+    );
+    expect(leaders.map((candidate) => candidate.platform)).toEqual([
+      "stm32f4",
+      "gd32f4",
+    ]);
+    expect(leaders.every((candidate) => candidate.matchedCount === 3)).toBe(
+      true,
+    );
   });
 
   it("keeps overlapping STM32 and GD32 catalogs tied", () => {

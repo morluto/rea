@@ -2,7 +2,13 @@ import { z } from "zod";
 import type { HardwareArchitecture } from "./hardwareMemoryMap.js";
 
 /** Supported microcontroller and SoC platform families. */
-export const SOC_PLATFORMS = ["stm32f1", "stm32f4", "gd32f1", "esp32"] as const;
+export const SOC_PLATFORMS = [
+  "stm32f1",
+  "stm32f4",
+  "gd32f1",
+  "gd32f4",
+  "esp32",
+] as const;
 export type SocPlatform = (typeof SOC_PLATFORMS)[number];
 export const socPlatformSchema = z.enum(SOC_PLATFORMS);
 
@@ -900,6 +906,101 @@ const STM32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   },
 ];
 
+// GD32F4xx names from GigaDevice gd32f4xx.h (firmware library V2.1.0,
+// 2020-09-30) and the SPL instance macros. Shared bases match the STM32F4
+// windows, so one of those addresses cannot select only one family.
+// CTC is a GD32F4 window (CTC_BASE); it is not an STM32F4 window.
+const GD32F4_NAME: Record<string, string> = {
+  TIM2: "TIMER1",
+  TIM3: "TIMER2",
+  TIM4: "TIMER3",
+  TIM5: "TIMER4",
+  TIM6: "TIMER5",
+  TIM7: "TIMER6",
+  TIM12: "TIMER11",
+  TIM13: "TIMER12",
+  TIM14: "TIMER13",
+  RTC: "RTC",
+  WWDG: "WWDGT",
+  IWDG: "FWDGT",
+  I2S2ext: "I2S1_ADD",
+  SPI2: "SPI1",
+  SPI3: "SPI2",
+  I2S3ext: "I2S2_ADD",
+  USART2: "USART1",
+  USART3: "USART2",
+  UART4: "UART3",
+  UART5: "UART4",
+  I2C1: "I2C0",
+  I2C2: "I2C1",
+  I2C3: "I2C2",
+  CAN1: "CAN0",
+  CAN2: "CAN1",
+  PWR: "PMU",
+  DAC: "DAC",
+  TIM1: "TIMER0",
+  TIM8: "TIMER7",
+  USART1: "USART0",
+  USART6: "USART5",
+  ADC1_3: "ADC",
+  SDIO: "SDIO",
+  SPI1: "SPI0",
+  SYSCFG: "SYSCFG",
+  EXTI: "EXTI",
+  TIM9: "TIMER8",
+  TIM10: "TIMER9",
+  TIM11: "TIMER10",
+  GPIOA: "GPIOA",
+  GPIOB: "GPIOB",
+  GPIOC: "GPIOC",
+  GPIOD: "GPIOD",
+  GPIOE: "GPIOE",
+  GPIOF: "GPIOF",
+  GPIOG: "GPIOG",
+  GPIOH: "GPIOH",
+  GPIOI: "GPIOI",
+  CRC: "CRC",
+  RCC: "RCU",
+  Flash_IF: "FMC",
+  DMA1: "DMA0",
+  DMA2: "DMA1",
+  ETH: "ENET",
+  USB_OTG_HS: "USBHS",
+  USB_OTG_FS: "USBFS",
+  DCMI: "DCI",
+  RNG: "TRNG",
+  FSMC: "EXMC",
+};
+
+const gd32F4Window = (
+  entry: InternalPeripheralEntry,
+): InternalPeripheralEntry => {
+  const name = GD32F4_NAME[entry.name];
+  if (name === undefined) {
+    throw new Error(`GD32F4 has no name for the shared ${entry.name} window`);
+  }
+  return {
+    ...entry,
+    name,
+    description:
+      name === entry.name
+        ? entry.description
+        : `${entry.description}; the GD32F4 manual calls this ${name}`,
+  };
+};
+
+const GD32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [
+  ...STM32F4_PERIPHERALS.map(gd32F4Window),
+  {
+    name: "CTC",
+    base: 0x40006c00n,
+    size: 0x400,
+    bus: "APB1",
+    description:
+      "Clock trim controller. GD32F4xx CTC_BASE; the next header base is PMU",
+  },
+];
+
 // Espressif ESP32 series peripheral memory map (ESP32 Technical Reference Manual).
 const ESP32_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   {
@@ -1136,6 +1237,7 @@ const PLATFORM_PERIPHERALS: Record<
   stm32f1: STM32F1_PERIPHERALS,
   stm32f4: STM32F4_PERIPHERALS,
   gd32f1: GD32F1_PERIPHERALS,
+  gd32f4: GD32F4_PERIPHERALS,
   esp32: ESP32_PERIPHERALS,
 };
 
@@ -1144,6 +1246,7 @@ const PLATFORM_CPU: Record<SocPlatform, readonly HardwareArchitecture[]> = {
   stm32f1: ["arm", "cortex-m"],
   stm32f4: ["arm", "cortex-m"],
   gd32f1: ["arm", "cortex-m"],
+  gd32f4: ["arm", "cortex-m"],
   esp32: ["riscv"],
 };
 

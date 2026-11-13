@@ -69,7 +69,7 @@ describe("Hardware peripheral reconstruction from offline instruction references
     expect(uartBlock?.regionName).toBe("Peripheral MMIO");
     expect(uartBlock?.socPeripheralName ?? null).toBeNull();
     expect(report.limitations).toEqual([
-      "SoC platform is unresolved because stm32f1, stm32f4, gd32f1 share the highest peripheral match count",
+      "SoC platform is unresolved because stm32f1, stm32f4, gd32f1, gd32f4 share the highest peripheral match count",
     ]);
 
     // Block 1: SCS (0xe000e000)
@@ -161,22 +161,38 @@ describe("Hardware peripheral reconstruction from offline instruction references
 describe("SoC catalog selection", () => {
   it("names a peripheral only when one catalog leads", () => {
     const report = reconstructHardwareFromReferences(
-      [{ target_address: "0x40023800", read: true }],
-      "arm",
+      [{ target_address: "0x60000000", read: true }],
+      "riscv",
     );
 
     expect(report.detectedPlatforms).toEqual([
       {
-        platform: "stm32f4",
+        platform: "esp32",
         matchedCount: 1,
         totalAddresses: 1,
         confidence: 1,
-        matchedPeripherals: ["RCC"],
+        matchedPeripherals: ["UART0"],
       },
     ]);
-    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe("RCC");
+    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe("UART0");
     expect(report.peripheralBlocks[0]?.regionKind).toBe("peripheral_mmio");
     expect(report.limitations).toEqual([]);
+  });
+
+  it("does not name a controller when STM32F4 and GD32F4 share the window", () => {
+    const report = reconstructHardwareFromReferences(
+      [{ target_address: "0x40023800", read: true }],
+      "arm",
+    );
+
+    expect(report.detectedPlatforms.map((candidate) => candidate.platform)).toEqual(
+      ["stm32f4", "gd32f4"],
+    );
+    expect(
+      report.detectedPlatforms.every((candidate) => candidate.matchedCount === 1),
+    ).toBe(true);
+    expect(report.peripheralBlocks[0]?.socPeripheralName).toBeNull();
+    expect(report.limitations[0]).toContain("stm32f4, gd32f4");
   });
 
   it("keeps an ESP32-C UART when unrelated references are present", () => {
