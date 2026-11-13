@@ -27,6 +27,7 @@ import {
   createVerifierRun,
   completeVerifierRun,
 } from "./lib/verifier-run.mjs";
+import { committedProvidersEqual } from "../dist/domain/analysisProfile.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 
@@ -119,7 +120,7 @@ async function runControls(cleanup) {
     const invoke = (name, args = {}) => mcp.callTool({ name, arguments: args });
     const call = async (name, args = {}) =>
       requireMcpOperationResult(await invoke(name, args), name);
-    const currentGhidraRun = async () => {
+    const currentGhidraSession = async () => {
       const status = await call("binary_session");
       assert.equal(status.open, true);
       assert.equal(status.analysis_provider_binding?.provider.id, "ghidra");
@@ -127,7 +128,10 @@ async function runControls(cleanup) {
         status.analysis_run,
         "Ghidra session run receipt is unavailable",
       );
-      return status.analysis_run;
+      return {
+        run: status.analysis_run,
+        provider: status.analysis_provider_binding.provider,
+      };
     };
     await withVerifierCleanup(async () => {
       await mcp.connect(transport);
@@ -175,7 +179,7 @@ async function runControls(cleanup) {
         await call("open_binary", { path, provider_id: "ghidra" });
         // The session ID is authoritative before analyze_function can launch
         // Ghidra. Its token stays in the sweep even if that first call fails.
-        const providerRunId = (await currentGhidraRun()).run_id;
+        const providerRunId = (await currentGhidraSession()).run.run_id;
         cleanup.registerProviderRun(providerRunId);
         const evidence = parseEvidence(
           requireMcpOutput(
@@ -188,7 +192,8 @@ async function runControls(cleanup) {
         );
         const dossier = functionDossierSchema.parse(evidence.normalized_result);
         assert.ok(dossier.pseudocode.length > 0);
-        const activeRun = await currentGhidraRun();
+        const { run: activeRun, provider: activeProvider } =
+          await currentGhidraSession();
         assert.equal(activeRun.run_id, providerRunId);
         const providerLineage = activeRun.process_lineage.snapshots?.find(
           ({ provider }) => provider.id === "ghidra",
@@ -207,6 +212,33 @@ async function runControls(cleanup) {
         // A public lineage snapshot is optional; native ownership is mandatory.
         await cleanup.retainProviderRun(providerRunId, providerScope);
         const isMips1 = path === recordlessMips1Path;
+        assert.ok(
+          evidence.provider.id === "ghidra" &&
+            evidence.provider.version?.trim(),
+          "MIPS dossier Evidence omitted a concrete Ghidra provider identity",
+        );
+        assert.ok(
+          committedProvidersEqual(evidence.provider, activeProvider),
+          "MIPS dossier Evidence provider differs from the active Ghidra session",
+        );
+        const profile = evidence.analysis_profile;
+        assert.ok(
+          profile,
+          "MIPS dossier Evidence omitted its analysis profile",
+        );
+        const { mips_support_lane, mips_abi_basis } = profile.parameters;
+        assert.equal(
+          mips_support_lane,
+          isMips1
+            ? "elf32-exec-mips1-legacy-pinned-v1"
+            : "elf32-exec-arch32-legacy-pinned-v1",
+          "MIPS dossier Evidence reported the wrong support lane",
+        );
+        assert.equal(
+          mips_abi_basis,
+          "inferred-o32-assumption-v1",
+          "MIPS dossier Evidence reported the wrong ABI basis",
+        );
         // The provider's session limitations belong to the public Evidence;
         // the normalized function payload has its own local observations.
         const mips1Limitation = evidence.limitations.find((limitation) =>
@@ -231,6 +263,13 @@ async function runControls(cleanup) {
           control: isMips1 ? "recordless_mips1" : "recordless_mips32",
           run_id: providerRunId,
           language_id: image.observations.language_id,
+          dossier_evidence_id: evidence.evidence_id,
+          dossier_provider: evidence.provider,
+          dossier_profile: {
+            digest: profile.digest,
+            mips_support_lane,
+            mips_abi_basis,
+          },
           ...(isMips1 ? { dossier_evidence_limitation: mips1Limitation } : {}),
           ...(providerScope === undefined
             ? { public_lineage: "not_observed" }
