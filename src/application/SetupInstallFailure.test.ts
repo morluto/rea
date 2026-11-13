@@ -41,6 +41,20 @@ describe("macOS Hopper setup failure projection", () => {
   });
 });
 
+describe("Linux Hopper launcher digest projection", () => {
+  it("keeps the public integrity code without advising a retry", () => {
+    const failure = setupInstallFailure("launcher_digest_mismatch", {
+      platform: "linux",
+    });
+    expect(failure.code).toBe("integrity_mismatch");
+    expect(failure.remediation).toMatch(/signature verified/u);
+    expect(failure.remediation).not.toMatch(/^Retry setup/u);
+    expect(failure.remediation).not.toBe(
+      setupInstallFailure("integrity", { platform: "linux" }).remediation,
+    );
+  });
+});
+
 describe("Linux package-manager setup failure projection", () => {
   it("quotes the failing command and a sanitized bounded diagnostic", () => {
     const result = setupInstallFailure("authorization_or_package_manager", {
