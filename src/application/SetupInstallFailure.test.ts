@@ -39,6 +39,24 @@ describe("macOS Hopper setup failure projection", () => {
     expect(unsupported.code).toBe("unsupported_host");
     expect(incompatible.remediation).not.toBe(unsupported.remediation);
   });
+
+  it("names the detected Linux host when automated Hopper setup does not apply", () => {
+    const result = setupInstallFailure("unsupported_host", {
+      platform: "linux",
+      distribution: {
+        id: "bazzite",
+        versionId: "43",
+        packageFamily: "rpm",
+        architecture: "x64",
+        hopperSetupSupported: false,
+      },
+    });
+    expect(result.code).toBe("unsupported_host");
+    expect(result.remediation).toContain(
+      "This host reports bazzite 43, rpm packages on x64.",
+    );
+    expect(result.remediation).toContain("Ubuntu 24.04+");
+  });
 });
 
 describe("Linux package-manager setup failure projection", () => {

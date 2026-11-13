@@ -5,7 +5,11 @@ import {
   type HopperRequestFailure,
 } from "./HopperDownload.js";
 import { HOPPER_LINUX_PRIMARY_FINGERPRINT } from "./HopperReleaseFeed.js";
-import type { LinuxPackageInstallFailure } from "./LinuxHopper.js";
+import {
+  unsupportedLinuxHopperSetupRemediation,
+  type LinuxDistribution,
+  type LinuxPackageInstallFailure,
+} from "./LinuxHopper.js";
 
 export type SetupFailureCode =
   | "unsupported_host"
@@ -124,12 +128,14 @@ export const setupInstallFailure = (
     readonly packageFailure?: LinuxPackageInstallFailure | undefined;
     readonly platform?: NodeJS.Platform;
     readonly download?: HopperRequestFailure | undefined;
+    readonly distribution?: LinuxDistribution | undefined;
   } = {},
 ): SetupHopperInstallFailure => {
   const failure = stageFailure(
     reason,
     context.packageFailure,
     context.platform ?? "darwin",
+    context.distribution,
   );
   return context.download === undefined
     ? failure
@@ -144,13 +150,17 @@ const stageFailure = (
   reason: HopperInstallFailureReason,
   packageFailure: LinuxPackageInstallFailure | undefined,
   platform: NodeJS.Platform,
+  distribution: LinuxDistribution | undefined,
 ): SetupHopperInstallFailure => {
   switch (reason) {
     case "unsupported_host":
       return {
         status: "failed",
         code: "unsupported_host",
-        remediation: "Use a supported host, then rerun rea setup.",
+        remediation:
+          platform === "linux"
+            ? unsupportedLinuxHopperSetupRemediation(distribution)
+            : "Use a supported host, then rerun rea setup.",
       };
     case "incompatible_host_version":
       return {

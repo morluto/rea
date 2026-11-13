@@ -240,6 +240,7 @@ export const systemSetupHost = (
               packageFailure: result.packageFailure,
               platform: "linux",
               download: result.download,
+              distribution: result.distribution,
             });
             // A failed vendor request is already described by its owned facts.
             const detail =

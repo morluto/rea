@@ -50,6 +50,30 @@ const SUPPORTED_RELEASE_ARCHITECTURE: NodeJS.Architecture = "x64";
 export const LINUX_HOPPER_SETUP_HOSTS =
   "an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy";
 
+/**
+ * Name the detected Linux host, then the hosts that can install Hopper.
+ * An unreadable distribution stays an explicit unknown rather than looking
+ * like a supported host that failed later.
+ */
+export const unsupportedLinuxHopperSetupRemediation = (
+  distribution: LinuxDistribution | undefined,
+): string => {
+  const requirement = `Automated Hopper setup requires ${LINUX_HOPPER_SETUP_HOSTS}; configure an existing supported provider instead.`;
+  if (distribution === undefined)
+    return `This Linux distribution could not be read. ${requirement}`;
+  const version =
+    distribution.versionId === undefined ? "" : ` ${distribution.versionId}`;
+  const family =
+    distribution.packageFamily === undefined
+      ? ""
+      : `, ${distribution.packageFamily} packages`;
+  const architecture =
+    distribution.architecture === undefined
+      ? ""
+      : ` on ${distribution.architecture}`;
+  return `This host reports ${distribution.id}${version}${family}${architecture}. ${requirement}`;
+};
+
 /** Package mutations disclosed before a Linux Hopper installation. */
 export interface LinuxHopperInstallDisclosure {
   readonly networkOrigins: readonly string[];
@@ -90,6 +114,8 @@ export const linuxHopperInstallDisclosure = (
 interface LinuxDistributionIdentity {
   readonly id: string;
   readonly versionId?: string;
+  /** Architecture used to decide whether the pinned Hopper package applies. */
+  readonly architecture?: NodeJS.Architecture;
 }
 
 /**
@@ -250,6 +276,11 @@ export type LinuxHopperInstallResult =
       readonly download?: HopperRequestFailure;
       /** Original caller cancellation, without flattening its value into text. */
       readonly cancellationReason?: unknown;
+      /**
+       * Host classification that refused automated setup. Absent when
+       * os-release could not be read.
+       */
+      readonly distribution?: LinuxDistribution;
     } & { readonly cleanupFailure?: LinuxHopperTemporaryCleanupFailure });
 
 /** Failed removal of an owned temporary install directory. */
@@ -345,6 +376,7 @@ export const parseLinuxDistribution = (
       (id === "nobara" && versionAtLeast(versionId, 44)));
   const identity = {
     id,
+    architecture,
     ...(versionId === undefined ? {} : { versionId }),
   };
   return hopperSetupSupported
@@ -379,7 +411,11 @@ export const installLinuxHopper = async (
     return cancelledInstall(options.signal?.reason);
   const distribution = await host.distribution();
   if (distribution?.hopperSetupSupported !== true)
-    return { status: "failed", reason: "unsupported_host" };
+    return {
+      status: "failed",
+      reason: "unsupported_host",
+      ...(distribution === undefined ? {} : { distribution }),
+    };
   let temporary: string | undefined;
   let result: LinuxHopperInstallResult;
   let stage: Extract<LinuxHopperInstallResult, { status: "failed" }>["reason"] =
