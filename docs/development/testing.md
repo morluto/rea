@@ -239,7 +239,9 @@ changes additionally need package verification; provider changes need actual
 provider evidence.
 
 Vitest projects use up to two workers, bounded by host parallelism. GitHub
-Actions jobs own their runner and use up to four.
+Actions jobs own their runner and use up to four. Test deadlines are 30 seconds,
+or 60 with coverage; hosted CI doubles both because CPU-bound cases there share
+every core with other workers and their subprocesses.
 `process-boundary` runs later with serial files because process-tree sampling
 shares host resources. Acceptance and process-global cases use isolated forks
 without serial scheduling. Pure domain/service, composition, conformance,
