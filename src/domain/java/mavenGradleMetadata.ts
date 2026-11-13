@@ -24,20 +24,18 @@ const nullableText = z.string().min(1).nullable();
 
 const PROPERTY_REFERENCE = /\$\{([^}]+)\}/gu;
 
-/** Whether a Maven/Gradle spelling still names an interpolatable property. */
-export const mavenPropertyReference = (value: string | null): string | null => {
-  if (value === null) return null;
-  PROPERTY_REFERENCE.lastIndex = 0;
-  const match = PROPERTY_REFERENCE.exec(value);
-  return match?.[0] ?? null;
-};
+/** Every distinct interpolatable property a Maven/Gradle spelling still names, in order. */
+export const mavenPropertyReferences = (value: string | null): string[] =>
+  value === null
+    ? []
+    : [...new Set(Array.from(value.matchAll(PROPERTY_REFERENCE), (m) => m[0]))];
 
 /** Classify a requested version as spelled, without interpolating or resolving. */
 export const mavenRequestedVersionKind = (
   value: string | null,
 ): "literal" | "range" | "property" | "missing" => {
   if (value === null) return "missing";
-  if (mavenPropertyReference(value) !== null) return "property";
+  if (mavenPropertyReferences(value).length > 0) return "property";
   if (/[[(]/u.test(value)) return "range";
   return "literal";
 };

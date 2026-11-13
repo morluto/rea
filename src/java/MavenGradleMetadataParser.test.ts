@@ -252,6 +252,28 @@ it("does not interpolate Maven properties into coordinates", () => {
   expect(report.coordinates.version).not.toBe("1.2.3");
 });
 
+it("lists every property in a compound CI-friendly version", () => {
+  const report = parse(`<project>
+  <groupId>com.example</groupId>
+  <artifactId>demo</artifactId>
+  <version>\${revision}\${sha1}\${changelist}</version>
+</project>`);
+  expect(report.coordinates.version).toBe("\${revision}\${sha1}\${changelist}");
+  expect(
+    report.unresolved.filter(
+      (entry) => entry.owner === "project" && entry.field === "version",
+    ),
+  ).toEqual(
+    ["\${revision}", "\${sha1}", "\${changelist}"].map((reference) => ({
+      kind: "property",
+      reference,
+      field: "version",
+      owner: "project",
+      index: null,
+    })),
+  );
+});
+
 it("keeps an empty relativePath and a property-spelled optional distinct from omission", () => {
   const report = parse(`<project>
   <parent>

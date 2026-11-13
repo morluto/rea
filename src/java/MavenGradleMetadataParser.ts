@@ -2,7 +2,7 @@ import type { Element, Node } from "@xmldom/xmldom";
 
 import { parseXmlDocument, opensLikeXml } from "../domain/xmlDocument.js";
 import {
-  mavenPropertyReference,
+  mavenPropertyReferences,
   mavenRequestedVersionKind,
   type MavenGradleDependency,
   type MavenGradleMetadata,
@@ -96,15 +96,16 @@ const recordCoordinateGaps = (
     ["version", coordinates.version],
   ] as const;
   for (const [field, value] of fields) {
-    const property = mavenPropertyReference(value);
-    if (property !== null) {
-      pushUnresolved(unresolved, {
-        kind: "property",
-        reference: property,
-        field,
-        owner,
-        index,
-      });
+    const properties = mavenPropertyReferences(value);
+    if (properties.length > 0) {
+      for (const reference of properties)
+        pushUnresolved(unresolved, {
+          kind: "property",
+          reference,
+          field,
+          owner,
+          index,
+        });
       continue;
     }
     if (value !== null) continue;
@@ -186,11 +187,10 @@ const parseMavenDependency = (
     false,
   );
   const optional_spelling = childText(element, "optional");
-  const optionalProperty = mavenPropertyReference(optional_spelling);
-  if (optionalProperty !== null)
+  for (const reference of mavenPropertyReferences(optional_spelling))
     pushUnresolved(unresolved, {
       kind: "property",
-      reference: optionalProperty,
+      reference,
       field: "optional",
       owner,
       index,

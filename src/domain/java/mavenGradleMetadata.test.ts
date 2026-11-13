@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import {
   inspectMavenGradleMetadataInputSchema,
   mavenGradleMetadataSchema,
-  mavenPropertyReference,
+  mavenPropertyReferences,
   mavenRequestedVersionKind,
 } from "./mavenGradleMetadata.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -66,8 +66,13 @@ it("rejects extra caller arguments", () => {
 });
 
 it("classifies requested versions without interpolating properties", () => {
-  expect(mavenPropertyReference("${revision}")).toBe("${revision}");
-  expect(mavenPropertyReference("1.2.3")).toBeNull();
+  expect(mavenPropertyReferences("${revision}")).toEqual(["${revision}"]);
+  expect(mavenPropertyReferences("${revision}${sha1}${changelist}")).toEqual([
+    "${revision}",
+    "${sha1}",
+    "${changelist}",
+  ]);
+  expect(mavenPropertyReferences("1.2.3")).toEqual([]);
   expect(mavenRequestedVersionKind("${jackson.version}")).toBe("property");
   expect(mavenRequestedVersionKind("[5.10,6.0)")).toBe("range");
   expect(mavenRequestedVersionKind("(,1.0]")).toBe("range");
