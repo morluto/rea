@@ -12,9 +12,9 @@ cliTest(
   "reports the complete-fact ceiling for wide async chunk metadata",
   { timeout: 60_000 },
   async ({ cli }) => {
-    // The production worker has a larger stack than the boundary test process.
-    // This source reaches its checkpoint owner only after collecting all keys.
-    const { source } = javascriptAsyncChunkCapacity(300_000);
+    // This bounded public control exceeds the complete-fact allowance. The
+    // forked boundary regression separately owns call-argument capacity.
+    const { source } = javascriptAsyncChunkCapacity(50_000);
     const root = await createTestTempDirectory("rea-async-chunk-budget-");
     await writeFile(join(root, "entry.cjs"), source);
     const response = await cli.run({
@@ -34,7 +34,7 @@ cliTest(
       timeoutMs: 55_000,
     });
     // Analysis retains the interrupted file rather than failing the command.
-    expect(response.exitCode, response.stderr).toBe(0);
+    expect(response.exitCode, `${response.stdout}\n${response.stderr}`).toBe(0);
     const result = javascriptApplicationAnalysisResultSchema.parse(
       parseEvidence(response.json).normalized_result,
     );
