@@ -458,11 +458,16 @@ export const readMftAttributes = (
         malformed(cursor, "FILE_NAME string exceeds its value");
         break;
       }
+      const namespace = record[valueOffset + 65]!;
+      if (namespace > 3) {
+        malformed(cursor, "FILE_NAME namespace is outside the NTFS range");
+        break;
+      }
       fileNames.push({
         fileOffset: fileOffset + valueOffset,
         parent: decodeMftFileReference(record.readBigUInt64LE(valueOffset)),
         ...readTimes(record.subarray(valueOffset + 8)),
-        namespace: record[valueOffset + 65]!,
+        namespace,
         name: record.toString(
           "utf16le",
           valueOffset + 66,
