@@ -60,7 +60,6 @@ const inspectedPair = async (
 
 cliTest.for(["full", "compact"] as const)(
   "gives one comparison for retained, inline, file and mixed sources through MCP and the CLI (%s)",
-  { timeout: 60_000 },
   async (profile, { cli }) => {
     const { root, one, call, client, inspect, left, right } =
       await inspectedPair("rea-artifact-sources-", profile);

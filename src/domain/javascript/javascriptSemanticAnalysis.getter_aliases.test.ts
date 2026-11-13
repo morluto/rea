@@ -124,7 +124,7 @@ describe("private receiver field ownership", () => {
       status: "literal",
       value: 1,
     });
-  }, 1000);
+  });
 
   it.each([
     [
