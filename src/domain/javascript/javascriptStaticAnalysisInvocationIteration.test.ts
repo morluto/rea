@@ -8,7 +8,7 @@ import { expect, it } from "vitest";
 import {
   analyzeJavaScriptStaticSource,
   analyzeParsedJavaScriptStaticSource,
-} from "./javascriptStaticAnalysis.js";
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 const changedIterator =

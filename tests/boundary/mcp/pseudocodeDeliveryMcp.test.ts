@@ -41,15 +41,11 @@ it("retains a complete pseudocode observation once and pages its exact text thro
   const schema = await advertisedMcpToolSchemas(mcp, "procedure_pseudo_code");
   const input = { procedure: "fixture_main", detail: "summary" };
   expect(schema.ajv.validate(schema.inputSchema, input)).toBe(true);
-  const reply = await mcp.callTool({
-    name: "procedure_pseudo_code",
-    arguments: input,
-  });
+  const reply = await mcp.callTool(
+    { name: "procedure_pseudo_code", arguments: input },
+    { toolDefinition: schema.toolDefinition },
+  );
   expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-  expect(
-    schema.ajv.validate(schema.outputSchema, reply.structuredContent),
-    JSON.stringify(schema.ajv.errors),
-  ).toBe(true);
   const summary = parseEvidence(reply.structuredContent);
   const result = jsonObjectSchema.parse(summary.normalized_result);
   expect(result).toMatchObject({

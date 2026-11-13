@@ -45,7 +45,6 @@ import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { err } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
-import { isPortableBundleName } from "../environment/environmentBundle.js";
 import { readJsonFile } from "../JsonFiles.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 import { refuse } from "./DesktopExportInstall.js";
@@ -491,7 +490,7 @@ const admitScreenTask = async (
 };
 
 /** Whether a prompt names the app by its title, environment or package, in any letter case. */
-export const namesApp = (
+const namesApp = (
   prompt: string,
   {
     title,
@@ -663,10 +662,7 @@ export const admitDesktopTasks = async (
 ): Promise<AdmittedTasks | undefined> => {
   const tasks: DesktopTask[] = [];
   for (const path of given.paths) {
-    const parsed = parseDesktopTask(
-      await readTaskFile(path, signal),
-      isPortableBundleName,
-    );
+    const parsed = parseDesktopTask(await readTaskFile(path, signal));
     if (!parsed.ok)
       throw refuse(
         `The task file ${path} is refused: ${parsed.error}`,

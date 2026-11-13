@@ -462,7 +462,9 @@ most 64 procedures and retains at most 4 MiB of encoded scan results. A composed
 workflow reuses its own index and clears it when the workflow finishes. The
 default cooperative scan budget is
 2,000 ms; set `REA_HOPPER_CALLER_SCAN_BUDGET_MS` to a positive integer number of
-milliseconds before starting REA to change it. The default limits additional
+milliseconds before starting REA to change the launch value, or use
+`update_analysis_settings` with `hopper.caller_scan_budget_ms` for newly accepted
+operations. The default limits additional
 work on the serial Hopper bridge; larger documents may need a higher setting.
 Results report the examined procedure count and any budget interruption.
 An individual page, native caller list, and target instruction list each have
@@ -530,6 +532,24 @@ remain unknown. Budgets control depth, decompilations, call-site resolutions,
 nodes and edges. Node payloads are bounded to 8 MiB and serialized results to
 32 MiB. Pagination returns edges whose source is on the node page and preserves
 stable IDs for endpoints outside that page.
+
+After fully examining and retaining a callee's parameters, an unmatched
+recovered CALL operand is reported at the caller's call-site address in
+`unknowns[].call_inputs`. One group lists its `input_indices` (positive p-code
+input positions; input 0 is the destination), `call_node_id`, exact resolved
+`destination` selector and caller `evidence_id`. The operands themselves stay
+in the retained call node and source Evidence. For example, a three-argument
+call with only parameter ordinal 0 recovered retains the index-1 binding and
+reports indices `[2, 3]` together. This does not establish a variadic signature
+or invent formal parameters.
+
+A depth, function, node or edge refusal, unavailable value flow, or truncated
+callee recovery does not establish such an examined gap. Those conditions
+keep their existing unknowns and traversal reasons. Call-input groups remain
+available when paging omits their call node; follow `call_node_id` in subsequent
+pages or the source Evidence. Older traces may omit `call_inputs`. Parameter
+and return bindings use canonical procedure addresses established by analyzed
+dossiers while preserving the provider's destination selector.
 
 Procedure, node and edge `evidence_id` values identify the source function
 observations used by the trace. In an MCP session, retrieve them from the
@@ -1031,6 +1051,11 @@ complete observation.
     arm64e formats;
   - legacy `LC_DYLD_INFO` rebase and bind opcodes.
 
+  Text relocation records retain their import identity without claiming a
+  pointer value. Bind types are explicit: a non-lazy binding with no declared
+  type is invalid. Reads that overlap only part of an encoded chained-fixup word remain
+  unresolved rather than treating those stored bytes as an ordinary pointer.
+
   [dyld symbol names are byte strings](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/BindOpcodes.cpp#L203-L208),
   compared with [`strcmp`](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/BindOpcodes.cpp#L42-L56).
   Dependent library install names likewise originate as
@@ -1316,7 +1341,7 @@ the matching native decompiler. Experimental Windows x64 P0 admits native
 x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, [DOS MZ
 executables](../../providers/ghidra-dos.md), plus explicitly selected
 [raw NMOS 6502 images](../../providers/raw-binary.md#nmos-6502) with a caller-supplied load address,
-on fixed local NTFS volumes. Other raw CPU families remain unsupported on Windows.
+on fixed local NTFS/ReFS volumes. Other raw CPU families remain unsupported on Windows.
 The boundary uses bundled Job Object ownership, protected runtime DACLs, and
 handle-based path admission. See [Windows Ghidra P0](../../providers/windows-ghidra-p0.md) and
 [issue #527](https://github.com/morluto/rea/issues/527).

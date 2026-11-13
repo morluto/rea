@@ -6,6 +6,7 @@ import type { JavaScriptPackageType } from "../domain/javascript/javascriptSourc
 import { logicalPathEscapesRoot } from "../domain/artifactIdentity.js";
 import {
   createReferenceSourcePathLookup,
+  rebaseReferenceSourceTarget,
   decodeReferenceSourceModuleUrlPath,
   isPortableAbsoluteReferenceTarget,
   type ReferenceSourcePathLookup,
@@ -33,7 +34,7 @@ export interface ParsedReferenceSourceEntries {
 }
 
 /** Preserve the observed reader failure and add entry-specific recovery guidance. */
-export const projectReferenceSourceEntryFailure = (
+const projectReferenceSourceEntryFailure = (
   entry: Extract<ReferenceSourceEntry, { status: "failed" }>,
 ): string => `${entry.message} ${entryRecoveryGuidance(entry)}`;
 
@@ -630,7 +631,7 @@ const appendReadEntry = (
       entry.targetState === "internal" ||
       (entry.targetState === "missing" &&
         !isPortableAbsoluteReferenceTarget(entry.target))
-        ? posix.relative(posix.dirname(entry.path), entry.target) || "."
+        ? rebaseReferenceSourceTarget(entry.path, entry.target)
         : entry.target,
     target_state: entry.targetState,
     classifications,

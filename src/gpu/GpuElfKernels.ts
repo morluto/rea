@@ -23,7 +23,7 @@ import {
   type NativeSection,
   type NativeSectionDirectory,
 } from "../native/metadata/NativeSectionDirectory.js";
-import { readElfString } from "../native/metadata/ElfStringTable.js";
+import { readElfStringBytes } from "../native/metadata/ElfStringTable.js";
 import { readElfSymbol } from "../domain/elfSymbol.js";
 import {
   gpuCount,
@@ -43,7 +43,7 @@ const sectionBytes = (
   section: NativeSection,
   budget?: CudaMetadataBudget,
 ): Promise<Buffer> => {
-  if (!section.file_backed || (section.flags & 0x800n) !== 0n)
+  if (!section.file_backed || section.compressed)
     rejectGpu("GPU metadata section has no supported uncompressed file range");
   budget?.read(gpuCount(section.size));
   return source.read(gpuCount(section.offset), gpuCount(section.size));
@@ -321,7 +321,7 @@ const cudaKernels = async (
       const kernel = blankKernel(
         source,
         `sym:${section.index}:${offset / width}`,
-        readElfString(names, symbol.name_offset),
+        readElfStringBytes(names, symbol.name_offset).toString("latin1"),
         site(source, section, offset, width),
       );
       if (

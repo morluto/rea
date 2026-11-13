@@ -102,9 +102,7 @@ export const projectLldbPartialObservation = (input: {
 });
 
 /** Parse completed JSONL records while retaining valid records around bad ones. */
-export const parseLldbObservationJournal = (
-  bytes: Uint8Array,
-): ParsedLldbJournal => {
+const parseLldbObservationJournal = (bytes: Uint8Array): ParsedLldbJournal => {
   const hasTornTail = bytes.length > 0 && bytes[bytes.length - 1] !== 0x0a;
   const events: ParsedLldbJournal["events"] = [];
   const otherStops: string[] = [];

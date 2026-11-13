@@ -156,6 +156,8 @@ import { systemUninstallHost } from "../../src/application/Uninstall.js";
 import { ConfigurationError } from "../../src/domain/configurationErrors.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { createDeferred } from "../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
+import { supportedClientRegistrationProfile } from "../../src/application/SupportedClients.js";
 
 const ownReadHandle = async (path: string) => {
   const owner = new OwnedFileHandle(await open(path, "r"));
@@ -177,7 +179,12 @@ it("reports a failed config rollback and retains its backup path", async () => {
   state.rejectRestore = true;
 
   const result = await configureClientConfiguration(
-    { name: "cursor", configPath: path, format: "json" },
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath: path,
+      format: "json",
+    },
     {},
     ["rea", "mcp"],
   );
@@ -214,7 +221,12 @@ it("preserves the first backup and reports a verified backup of the current orig
   state.rejectRestore = true;
 
   const result = await configureClientConfiguration(
-    { name: "cursor", configPath: path, format: "json" },
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath: path,
+      format: "json",
+    },
     {},
     ["rea", "mcp"],
   );
@@ -254,7 +266,12 @@ it("does not write config when a recovery copy disappears before verification", 
   state.removeCopiedRecovery = true;
 
   const result = await configureClientConfiguration(
-    { name: "cursor", configPath: path, format: "json" },
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath: path,
+      format: "json",
+    },
     {},
     ["rea", "mcp"],
   );
@@ -285,7 +302,12 @@ it("does not roll back or remove config when its initial read cleanup fails", as
 
   await expect(
     configureClientConfiguration(
-      { name: "cursor", configPath: path, format: "json" },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: path,
+        format: "json",
+      },
       {},
       ["rea", "mcp"],
     ),
@@ -302,7 +324,12 @@ it("retains first-run configuration for manual recovery without deleting by path
   const path = join(root, "client.json");
 
   const result = await configureClientConfiguration(
-    { name: "cursor", configPath: path, format: "json" },
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath: path,
+      format: "json",
+    },
     {},
     ["rea", "mcp"],
   );
@@ -350,7 +377,12 @@ it("retains readback cleanup ownership when rollback also fails", async () => {
   let caught: unknown;
   try {
     await host.configureClient(
-      { name: "cursor", configPath: path, format: "json" },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: path,
+        format: "json",
+      },
       {},
       ["rea", "mcp"],
     );
@@ -395,7 +427,12 @@ it.each(["existing", "first-run"] as const)(
     };
 
     const result = await configureClientConfiguration(
-      { name: "cursor", configPath: path, format: "json" },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: path,
+        format: "json",
+      },
       {},
       ["rea", "mcp"],
     );
@@ -424,7 +461,12 @@ it("retains a replacement regular file when readback fails", async () => {
     fs.rename(replacement, publishedPath);
 
   const result = await configureClientConfiguration(
-    { name: "cursor", configPath: path, format: "json" },
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath: path,
+      format: "json",
+    },
     {},
     ["rea", "mcp"],
   );
@@ -463,7 +505,12 @@ it("retains and retries both readback and publication descriptors after mixed cl
   try {
     await expect(
       host.configureClient(
-        { name: "cursor", configPath: path, format: "json" },
+        {
+          name: "cursor",
+          registrationProfile: supportedClientRegistrationProfile("cursor"),
+          configPath: path,
+          format: "json",
+        },
         {},
         ["rea", "mcp"],
       ),
@@ -505,7 +552,12 @@ it("rejects a replaced publication even when the replacement passes registration
   };
   expect(
     await configureClientConfiguration(
-      { name: "cursor", configPath: path, format: "json" },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: path,
+        format: "json",
+      },
       {},
       ["rea", "mcp"],
     ),
@@ -528,7 +580,12 @@ it("retains concurrent edits to the published inode rather than overwriting them
     fs.writeFile(publishedPath, edited);
   expect(
     await configureClientConfiguration(
-      { name: "cursor", configPath: path, format: "json" },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: path,
+        format: "json",
+      },
       {},
       ["rea", "mcp"],
     ),
@@ -565,7 +622,12 @@ it("does not adopt a descriptor named by an opaque publication close rejection",
   try {
     await expect(
       host.configureClient(
-        { name: "cursor", configPath: path, format: "json" },
+        {
+          name: "cursor",
+          registrationProfile: supportedClientRegistrationProfile("cursor"),
+          configPath: path,
+          format: "json",
+        },
         {},
         ["rea", "mcp"],
       ),
@@ -612,6 +674,7 @@ it.each(["symlink", "regular", "valid-readback"] as const)(
     try {
       const result = await host.removeClient({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath: path,
         format: "json",
       });
@@ -651,6 +714,7 @@ it("uninstall retains concurrent edits to the published inode and reports failur
   try {
     const result = await host.removeClient({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: path,
       format: "json",
     });
@@ -692,6 +756,7 @@ it("uninstall retains both readback and publication owners until cleanup retry",
   try {
     const result = await host.removeClient({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: path,
       format: "json",
     });
@@ -743,6 +808,7 @@ it("uninstall retains the exact owner of a failed initial config read", async ()
     expect(
       await host.inspectClient({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath: path,
         format: "json",
       }),
@@ -785,27 +851,40 @@ it("uninstall close joins a publication already admitted by its host", async () 
   const host = systemUninstallHost(root);
   const removal = host.removeClient({
     name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
     configPath: path,
     format: "json",
   });
-  await arrived.promise;
   let closed = false;
-  const closing = host.close?.().then((result) => {
-    closed = true;
-    return result;
-  });
+  let closing: ReturnType<NonNullable<typeof host.close>> | undefined;
   try {
+    await awaitAcknowledgement(
+      arrived.promise,
+      removal,
+      "configuration publication",
+    );
+    closing = host.close?.().then((result) => {
+      closed = true;
+      return result;
+    });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
     expect(state.publicationHandles[0]!.fd).toBeGreaterThanOrEqual(0);
   } finally {
     release.resolve();
+    await Promise.allSettled([removal, ...(closing ? [closing] : [])]);
+    await host.close?.();
   }
   expect((await removal).status).toBe("failed");
   expect(await closing).toBeUndefined();
   expect(state.publicationHandles[0]!.fd).toBe(-1);
   await expect(
-    host.removeClient({ name: "cursor", configPath: path, format: "json" }),
+    host.removeClient({
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath: path,
+      format: "json",
+    }),
   ).rejects.toThrow("closed");
 });
 
@@ -845,7 +924,12 @@ it("preserves physical read origin through failed readback cleanup and rollback"
   const resources = new ArtifactResourceScope();
   try {
     const failure: unknown = await configureClientConfiguration(
-      { name: "cursor", configPath: path, format: "json" },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: path,
+        format: "json",
+      },
       {},
       ["rea", "mcp"],
     ).catch((cause: unknown) => cause);
@@ -953,12 +1037,17 @@ it("uninstall progresses when a peer leaves a denied-close descriptor pending", 
   const host = systemUninstallHost(root);
   const removal = host.removeClient({
     name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
     configPath: path,
     format: "json",
   });
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    await arrived.promise;
+    await awaitAcknowledgement(
+      arrived.promise,
+      removal,
+      "configuration publication",
+    );
     state.initialCleanupFailure = new RegularFileCleanupFailure({
       path: other,
       owner,
@@ -968,6 +1057,8 @@ it("uninstall progresses when a peer leaves a denied-close descriptor pending", 
     expect(
       await host.inspectClient({
         name: "other",
+        // Source-only peer actor models Cursor JSON registration.
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath: other,
         format: "json",
       }),
@@ -1033,6 +1124,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
         (
           await host.removeClient({
             name: "cursor",
+            registrationProfile: supportedClientRegistrationProfile("cursor"),
             configPath: path,
             format: "json",
           })
@@ -1043,7 +1135,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       expect(await fs.readFile(path, "utf8")).toBe(original);
       expect((await fs.lstat(path)).mode & 0o777).toBe(0o400);
       expect(state.publicationHandles).toHaveLength(0);
-      expect(await host.close?.()).toContain("cleanup failed");
+      expect(await host.close?.()).toBeInstanceOf(AnalysisError);
     } finally {
       if (inserted !== undefined) await fs.unlink(inserted);
       await host.close?.();
@@ -1074,6 +1166,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
         (
           await host.removeClient({
             name: "cursor",
+            registrationProfile: supportedClientRegistrationProfile("cursor"),
             configPath: path,
             format: "json",
           })
@@ -1081,7 +1174,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       ).toBe("failed");
       expect(state.publicationHandles).toHaveLength(1);
       expect(state.publicationHandles[0]!.fd).toBeGreaterThanOrEqual(0);
-      expect(await host.close?.()).toContain("cleanup failed");
+      expect(await host.close?.()).toBeInstanceOf(AnalysisError);
       state.rejectPublicationMode = false;
       state.rejectPublicationClose = false;
       expect(await host.close?.()).toBeUndefined();
@@ -1117,6 +1210,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     try {
       const result = await host.removeClient({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath: path,
         format: "json",
       });
@@ -1161,7 +1255,12 @@ it.each(["setup", "uninstall"] as const)(
       expect(
         (
           await configureClientConfiguration(
-            { name: "cursor", configPath: path, format: "json" },
+            {
+              name: "cursor",
+              registrationProfile: supportedClientRegistrationProfile("cursor"),
+              configPath: path,
+              format: "json",
+            },
             {},
             ["rea", "mcp"],
           )
@@ -1174,6 +1273,7 @@ it.each(["setup", "uninstall"] as const)(
           (
             await host.removeClient({
               name: "cursor",
+              registrationProfile: supportedClientRegistrationProfile("cursor"),
               configPath: path,
               format: "json",
             })
@@ -1196,7 +1296,12 @@ const runConfigurationChange = async (
 ) => {
   if (operation === "setup")
     return configureClientConfiguration(
-      { name: "cursor", configPath: path, format: "json" },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: path,
+        format: "json",
+      },
       {},
       ["new-rea", "mcp"],
     );
@@ -1204,6 +1309,7 @@ const runConfigurationChange = async (
   try {
     return await host.removeClient({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath: path,
       format: "json",
     });
@@ -1330,6 +1436,7 @@ it.each(["setup", "uninstall"] as const)(
     try {
       const client = {
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath: path,
         format: "json" as const,
       };
@@ -1351,15 +1458,13 @@ it.each(["setup", "uninstall"] as const)(
         ).toBe("failed");
       }
       const cleanupFailure = await host.close?.();
-      if (operation === "setup") {
-        expect(cleanupFailure).toBeInstanceOf(AnalysisError);
-        const retainedRoots = (await fs.readdir(root))
-          .filter((name) => name.startsWith(".rea-config-"))
-          .map((name) => join(root, name));
-        expect((cleanupFailure as AnalysisError).cleanupResources).toEqual(
-          retainedRoots,
-        );
-      } else expect(cleanupFailure).toContain("cleanup");
+      expect(cleanupFailure).toBeInstanceOf(AnalysisError);
+      const retainedRoots = (await fs.readdir(root))
+        .filter((name) => name.startsWith(".rea-config-"))
+        .map((name) => join(root, name));
+      expect((cleanupFailure as AnalysisError).cleanupResources).toEqual(
+        retainedRoots,
+      );
       expect(
         (await fs.readdir(root)).filter((name) =>
           name.startsWith(".rea-config-"),

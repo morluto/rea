@@ -10,6 +10,43 @@ import { readStableSymlinkTarget } from "../../../src/reference/ReferenceSourceR
 import { readReferenceSource } from "../../support/referenceSourceResourceScope.js";
 import { ok } from "../../../src/domain/result.js";
 
+it.each(["rejected", "returned"] as const)(
+  "retains a symlink's physical failure when cancellation accompanies its %s outcome",
+  async (outcome) => {
+    const root = await createTestTempDirectory("rea-reference-link-failure-");
+    const link = join(root, "alias");
+    await symlink("target", link);
+    const expected = await lstat(link, { bigint: true });
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("authored link EIO"), {
+      code: "EIO",
+    });
+    const result = await readStableSymlinkTarget(
+      link,
+      "alias",
+      expected,
+      controller.signal,
+      async () => {
+        controller.abort("during link failure");
+        if (outcome === "rejected") throw physical;
+        return {
+          status: "failed",
+          kind: "symlink",
+          path: "alias",
+          code: "io",
+          message: "authored link EIO",
+        };
+      },
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      kind: "symlink",
+      path: "alias",
+      code: "io",
+    });
+  },
+);
+
 it("retains the caller reason and observed entries when traversal is cancelled", async () => {
   const root = await createTestTempDirectory("rea-reference-cancel-");
   await writeFile(join(root, "observed.js"), "observed");

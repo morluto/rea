@@ -835,3 +835,63 @@ it("keeps root detail guidance so callers can choose bounded summaries", async (
   );
   expect(detailGuidance(compactTools)).toEqual(expected);
 });
+
+it.each([
+  [
+    "export_environment_bundle",
+    "name",
+    {
+      source: { kind: "evidence-file", path: "/capture.json" },
+      output_directory: "/bundle",
+    },
+  ],
+  [
+    "measure_build_task",
+    "task",
+    { bundle: "/bundle", model: "test-model", budget_usd: 1 },
+  ],
+] as const)(
+  "advertises portable names for %s through the SDK",
+  async (name, field, base) => {
+    const contract = toolContract(name);
+    const server = fullServer();
+    server.registerTool(
+      contract.name,
+      toolRegistrationOptions(contract),
+      async () => ({ content: [] }),
+    );
+    const tool = (await listToolsThroughTransport(server)).find(
+      ({ name }) => name === contract.name,
+    );
+    expect(tool).toBeDefined();
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validate = ajv.compile(tool!.inputSchema);
+    for (const [name, accepted] of [
+      [undefined, field === "name"],
+      ["replay-2", true],
+      ["123-replay", true],
+      ["a".repeat(63), true],
+      ["a".repeat(64), false],
+      ["../escape", false],
+      ["Uppercase", false],
+      ["two--hyphens", false],
+      ["trailing\n", false],
+      ["con", false],
+      ["com1", false],
+      ["lpt9", false],
+      ["123", false],
+      ["0128", false],
+      ["0x", false],
+      ["0xffffffff", false],
+      ["0xg", true],
+      ["com10", true],
+    ] as const) {
+      const input = {
+        ...base,
+        ...(name === undefined ? {} : { [field]: name }),
+      };
+      expect(validate(input), JSON.stringify(input)).toBe(accepted);
+      expect(contract.inputSchema.safeParse(input).success).toBe(accepted);
+    }
+  },
+);

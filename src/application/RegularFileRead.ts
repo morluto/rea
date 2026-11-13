@@ -53,16 +53,20 @@ export class RetainedRegularFileCleanupFailure<
 }
 
 /** Bind only explicit cleanup capabilities, never resource labels or opaque causes. */
+export const regularFileCleanupLeases = (
+  cause: unknown,
+): readonly AnalysisCleanupLease[] | undefined =>
+  cause instanceof RetainedRegularFileCleanupFailure
+    ? [cause.cleanupLease]
+    : cause instanceof ArtifactReaderFailure
+      ? cause.cleanupLeases
+      : undefined;
+
 export const bindRegularFileCleanup = (
   cause: unknown,
   error: AnalysisError,
 ): void => {
-  const leases =
-    cause instanceof RetainedRegularFileCleanupFailure
-      ? [cause.cleanupLease]
-      : cause instanceof ArtifactReaderFailure
-        ? cause.cleanupLeases
-        : undefined;
+  const leases = regularFileCleanupLeases(cause);
   if (leases !== undefined) new AnalysisCleanupLeaseGroup(error, leases);
 };
 

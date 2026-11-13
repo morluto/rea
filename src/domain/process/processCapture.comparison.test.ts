@@ -10,7 +10,6 @@ import { parseProcessCapture } from "./processCaptureParsing.js";
 import type { FileState } from "./processCapture.js";
 
 import {
-  deriveProcessComparisonStatus,
   PROCESS_COMPARISON_DIMENSIONS,
   processCaptureComparisonSchema,
 } from "./processComparison.js";
@@ -407,7 +406,7 @@ it("preserves independently observed file changes alongside an unknown effect", 
   }
 });
 
-it("compares recoverable symlink bytes across old and current captures", () => {
+it("compares exact symlink bytes beside an unrelated unknown effect", () => {
   const base = emptyCapture();
   const link = {
     path: "root_0:link",
@@ -420,11 +419,11 @@ it("compares recoverable symlink bytes across old and current captures", () => {
   };
   const make = (target: Extract<FileState, { type: "symlink" }>) => {
     const effect = {
-      path: link.path,
+      path: "root_0:unobserved",
       status: "unknown" as const,
-      before: target,
-      after: target,
-      reason: "Target bytes were not retained.",
+      before: null,
+      after: null,
+      reason: "The selected subtree was not observed.",
     };
     return {
       ...base,
@@ -439,18 +438,16 @@ it("compares recoverable symlink bytes across old and current captures", () => {
     };
   };
   const modern = make(link);
-  const { symlink_target_hex: _hex, ...legacyLink } = link;
-  const legacy = make({ ...legacyLink, symlink_target: "a" });
+  const other = make({ ...link, symlink_target_hex: "fe" });
   for (const [left, right] of [
-    [modern, legacy],
-    [legacy, modern],
+    [modern, other],
+    [other, modern],
   ] as const)
     expect(compareFullyObserved(left, right)).toMatchObject({
       filesystem: "changed",
       first_divergence: { status: "unknown" },
     });
-  const ambiguous = make({ ...legacyLink, symlink_target: "\ufffd" });
-  expect(compareFullyObserved(modern, ambiguous)).toMatchObject({
+  expect(compareFullyObserved(modern, modern)).toMatchObject({
     filesystem: "unknown",
     status: "unknown",
   });
@@ -643,11 +640,6 @@ it.each(PROCESS_COMPARISON_DIMENSIONS)(
   (dimension) => {
     const baseline = compareFullyObserved(emptyCapture(), emptyCapture());
     const result = { ...baseline, [dimension]: "contradiction" as const };
-    expect(
-      deriveProcessComparisonStatus(
-        PROCESS_COMPARISON_DIMENSIONS.map((name) => result[name]),
-      ),
-    ).toBe("contradiction");
     expect(processCaptureComparisonSchema.safeParse(result).success).toBe(
       false,
     );
@@ -675,9 +667,6 @@ it.each([
       ["contradiction", other],
       [other, "contradiction"],
     ] as const) {
-      expect(deriveProcessComparisonStatus([terminal, interaction])).toBe(
-        expected,
-      );
       expect(
         processCaptureComparisonSchema.parse({
           ...compareFullyObserved(emptyCapture(), emptyCapture()),
@@ -686,6 +675,14 @@ it.each([
           status: expected,
         }),
       ).toMatchObject({ status: expected });
+      expect(
+        processCaptureComparisonSchema.safeParse({
+          ...compareFullyObserved(emptyCapture(), emptyCapture()),
+          terminal,
+          interaction,
+          status: expected === "truncated" ? "contradiction" : "truncated",
+        }).success,
+      ).toBe(false);
     }
   },
 );

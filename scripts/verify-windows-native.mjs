@@ -246,7 +246,28 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
     await mkdir(sourceDirectory);
     const source = join(sourceDirectory, "target.bin");
     await writeFile(source, Buffer.alloc(1024 * 1024, 0x37));
+    const observeVolumeSemantics = (path) =>
+      process.argv[3] === undefined
+        ? undefined
+        : JSON.parse(
+            execFileSync(
+              resolve(process.argv[3]),
+              ["volume-semantics", parse(path).root],
+              { encoding: "utf8" },
+            ),
+          );
+    const volumeSemantics = observeVolumeSemantics(workspace);
+    if (volumeSemantics !== undefined) {
+      assert.equal(volumeSemantics.persistentAcls, true);
+      report.filesystem = volumeSemantics.filesystem;
+    }
+    const assertObservedFilesystem = (identity) => {
+      if (volumeSemantics !== undefined)
+        assert.equal(identity.filesystem, volumeSemantics.filesystem);
+    };
+    assertObservedFilesystem(native.inspection.filesystem);
     const sourceIdentity = native.call("open", [source]);
+    assertObservedFilesystem(sourceIdentity);
     try {
       for (const requested of [
         source.replaceAll("\\", "/"),
@@ -312,6 +333,7 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       runtimeParent,
       "rea-drive-root-",
     ]);
+    assertObservedFilesystem(driveRootRuntime);
     try {
       assert.equal(driveRootRuntime.path.startsWith(`${driveRoot}\\`), false);
       assert.equal(dirname(driveRootRuntime.path), driveRoot);
@@ -326,10 +348,13 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
         createHash("sha256").update(sourceBytes).digest("hex"),
       );
       assert.equal(snapshot.source.requestedPath, source);
+      assertObservedFilesystem(snapshot.source);
+      assertObservedFilesystem(snapshot.snapshot);
       const readback = native.call("runtime_open", [
         driveRootRuntime.handle,
         "probe.bin",
       ]);
+      assertObservedFilesystem(readback);
       try {
         assert.equal(readback.size, sourceBytes.byteLength);
         assert.deepEqual(
@@ -338,6 +363,24 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
         );
       } finally {
         native.call("close", [readback.handle]);
+      }
+      if (process.env.REA_TEST_CROSS_VOLUME_SOURCE !== undefined) {
+        const crossVolume = observeVolumeSemantics(
+          process.env.REA_TEST_CROSS_VOLUME_SOURCE,
+        );
+        assert.ok(crossVolume !== undefined && volumeSemantics !== undefined);
+        assert.notEqual(crossVolume.filesystem, volumeSemantics.filesystem);
+        const crossSnapshot = await native.call("runtime_snapshot", [
+          driveRootRuntime.handle,
+          process.env.REA_TEST_CROSS_VOLUME_SOURCE,
+          "cross-volume.bin",
+        ]);
+        assert.equal(crossSnapshot.source.filesystem, crossVolume.filesystem);
+        assert.equal(
+          crossSnapshot.snapshot.filesystem,
+          volumeSemantics.filesystem,
+        );
+        report.controls.crossVolumeSnapshotIdentity = true;
       }
     } finally {
       native.call("runtime_close", [driveRootRuntime.handle]);
@@ -348,6 +391,7 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       workspace.replace(/\\/u, "/"),
       "single-flight-",
     );
+    assertObservedFilesystem(snapshotOwner.observation);
     try {
       const rejectedController = new AbortController();
       const requestedSource = source.replaceAll("\\", "/");
@@ -454,11 +498,13 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
         "descriptor.json",
         Buffer.from("fixture"),
       ]);
-      assert.equal(
-        native.call("cutter_bridge_verify_directory", [runtime.path])
-          .privateDacl,
-        true,
-      );
+      const bridgeVerification = native.call("cutter_bridge_verify_directory", [
+        runtime.path,
+      ]);
+      assert.equal(bridgeVerification.privateDacl, true);
+      assertObservedFilesystem(bridgeVerification.identity);
+      if (volumeSemantics !== undefined)
+        report.controls.observedFilesystemIdentity = true;
       assert.equal(
         native
           .call("cutter_bridge_read_descriptor", [

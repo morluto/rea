@@ -1,9 +1,14 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { parseCliAnalysisEvidenceDelivery } from "./analysisEvidenceDelivery.js";
 import { javaScriptRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
+
 import { isAbsolute, resolve, sep } from "node:path";
 
 import { Cli, z } from "incur";
+import {
+  localPathStringSchema,
+  nulFreeStringSchema,
+} from "../domain/localPath.js";
 
 import { logCliCommand } from "../cliLogging.js";
 import {
@@ -37,7 +42,6 @@ import {
   evidenceBundleOption,
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
-import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
@@ -65,11 +69,9 @@ const registerElectronFuseCommand = (
     description:
       "Inspect packaged Electron fuse bytes without launching the application",
     args: z.object({
-      path: z
-        .string()
-        .describe(
-          "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
-        ),
+      path: nulFreeStringSchema.describe(
+        "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>

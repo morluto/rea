@@ -55,15 +55,11 @@ mcpTest(
       const root = await createTestTempDirectory("rea-dtb-mcp-");
       const path = join(root, "board.dtb");
       await writeFile(path, devicetreeFixture());
-      const response = await client.callTool({
-        name: "inspect_devicetree",
-        arguments: { path, detail: "summary" },
-      });
+      const response = await client.callTool(
+        { name: "inspect_devicetree", arguments: { path, detail: "summary" } },
+        { toolDefinition: schemas.toolDefinition },
+      );
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(
-        schemas.ajv.validate(schemas.outputSchema, response.structuredContent),
-        JSON.stringify(schemas.ajv.errors),
-      ).toBe(true);
       const result = toolContract("inspect_devicetree").outputSchema.parse(
         response.structuredContent,
       ).normalized_result;
