@@ -48,10 +48,13 @@ it("charges environment identity, aggregate tools and escaped text before produc
     query_parameter_names: [],
   }));
   expect(
-    environmentToolDefinitions({
-      ...source,
-      manifest: { ...source.manifest, tools },
-    }).ok,
+    environmentToolDefinitions(
+      {
+        ...source,
+        manifest: { ...source.manifest, tools },
+      },
+      source.manifest.name,
+    ).ok,
   ).toBe(false);
   expect(
     environmentToolDefinitions(
@@ -59,7 +62,7 @@ it("charges environment identity, aggregate tools and escaped text before produc
       "x".repeat(ENVIRONMENT_CATALOG_LIMIT_BYTES),
     ).ok,
   ).toBe(false);
-  const normal = environmentToolDefinitions(source);
+  const normal = environmentToolDefinitions(source, source.manifest.name);
   if (!normal.ok) throw normal.error;
   expect(
     Buffer.byteLength(

@@ -63,6 +63,10 @@ import {
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import {
+  processInspectionFailure,
+  retainProcessInspectionCleanup,
+} from "../../providers/OwnedCommandCleanup.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -456,12 +460,14 @@ export class HistoricalCaptureDecoder {
           lease: processLease,
         });
       }
-      const error = historicalCaptureFailure(
-        input,
-        cause,
-        phase,
-        options,
-        reportedHeap,
+      // Preparation transfers independent helper/descriptor owners. Keep that
+      // typed stage separate from the decoder supervisor lease above: its
+      // historical error already follows the post-launch completion owner.
+      const error = retainProcessInspectionCleanup(
+        processInspectionFailure(cause),
+        historicalCaptureFailure(input, cause, phase, options, reportedHeap),
+        runtimeResources,
+        OPERATION,
       );
       if (
         replyFinalization?.reason === "cancelled" &&

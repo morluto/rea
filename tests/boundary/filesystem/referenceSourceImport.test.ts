@@ -24,10 +24,7 @@ import {
   RegularFileReadFailure,
 } from "../../../src/application/RegularFileRead.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
-import {
-  parseReferenceSourceEntries,
-  projectReferenceSourceEntryFailure,
-} from "../../../src/application/ReferenceSourceImportEntries.js";
+import { parseReferenceSourceEntries } from "../../../src/application/ReferenceSourceImportEntries.js";
 import type { ReferenceSourceRead } from "../../../src/reference/ReferenceSourceReaderTypes.js";
 import { createHistoricalSourceManifest } from "../../../src/domain/referenceSourceGraph.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
@@ -117,13 +114,24 @@ describe("reference source import projections", () => {
       ["file", "cancelled"],
       ["unknown", "unsupported"],
     ] as const) {
-      const message = projectReferenceSourceEntryFailure({
-        status: "failed",
-        path: "safe/path",
-        kind,
-        code,
-        message: "Observed entry failure at /owned/fixture/path",
-      });
+      const parsed = parseReferenceSourceEntries(
+        {
+          root: "/owned/fixture",
+          entries: [
+            {
+              status: "failed",
+              path: "safe/path",
+              kind,
+              code,
+              message: "Observed entry failure at /owned/fixture/path",
+            },
+          ],
+          bytesRead: 0,
+          limitations: [],
+        },
+        [],
+      );
+      const message = parsed.entries[0]?.limitations[0];
       expect(message).toContain(
         "Observed entry failure at /owned/fixture/path",
       );

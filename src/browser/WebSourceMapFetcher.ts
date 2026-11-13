@@ -60,10 +60,6 @@ export interface WebSourceMapRequest {
 
 interface SourceMapFetchHost {
   readonly fetch: typeof fetch;
-  /** Fetch-operation deadline; injectable so boundary regressions stay fast. */
-  readonly timeoutMs?: number;
-  /** Maximum response bytes retained across this operation. */
-  readonly maxResponseBytes?: number;
 }
 
 // Source maps are normally fetched as a small part of a larger inspection.
@@ -125,12 +121,10 @@ export const fetchWebSourceMaps = async (
   const limits = selectedSourceMapLimits(input.source_map_limits);
   const items: WebSourceMapItem[] = [];
   const operationController = new AbortController();
-  const fetchTimeoutMs =
-    host.timeoutMs ??
-    selectedBrowserDeadlineMs(
-      input.source_map_fetch_timeout_ms,
-      SOURCE_MAP_FETCH_TIMEOUT_MS,
-    );
+  const fetchTimeoutMs = selectedBrowserDeadlineMs(
+    input.source_map_fetch_timeout_ms,
+    SOURCE_MAP_FETCH_TIMEOUT_MS,
+  );
   const fetchDeadlineLimitation =
     sourceMapFetchDeadlineLimitation(fetchTimeoutMs);
   const timeout = setTimeout(
@@ -695,7 +689,7 @@ const fetchOne = async (
     const body = await readBoundedText(
       response,
       budget,
-      host.maxResponseBytes ?? budget.decodedRecords.limits.fetchBytes,
+      budget.decodedRecords.limits.fetchBytes,
       signal,
       fetchedUrl,
     );

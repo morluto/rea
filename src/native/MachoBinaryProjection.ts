@@ -136,7 +136,7 @@ const STRING_FIELDS = new Map<number, string>([
   [0x39, "triple"],
 ]);
 
-const bytesText = (input: Uint8Array, fixed = false) => {
+const bytesText = (input: Uint8Array, fixed: boolean) => {
   const end = fixed ? input.indexOf(0) : -1;
   const bytes = end < 0 ? input : input.subarray(0, end);
   try {

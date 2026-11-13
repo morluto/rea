@@ -6,7 +6,7 @@ import {
 } from "../../python/PythonPyc.fixture.js";
 
 // PyInstaller CArchiveWriter's on-disk cookie signature, independent of REA's reader.
-const CARCHIVE_COOKIE_MAGIC = Buffer.from("4d45490c0b0a0b0e", "hex");
+export const CARCHIVE_COOKIE_MAGIC = Buffer.from("4d45490c0b0a0b0e", "hex");
 
 /** Final CPython 3.9 bytecode magic, little-endian with the CR LF trailer. */
 export const PYTHON_39_MAGIC = Buffer.from("610d0d0a", "hex");

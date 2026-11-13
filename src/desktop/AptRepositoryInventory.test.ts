@@ -94,6 +94,30 @@ it.each(["list", "sources"] as const)(
 describe.skipIf(
   process.platform !== "linux" || !existsSync("/usr/bin/apt-config"),
 )("resolveAptLocations with apt-config", () => {
+  it("preserves newline paths printed by the real apt-config command", async () => {
+    const root = await createTestTempDirectory("apt-config-newline-");
+    const selected = {
+      lists: `${root}/user's\nlists/`,
+      trustedParts: `${root}/trusted\nparts/`,
+      trusted: `${root}/trusted\nkeys.gpg`,
+    };
+    const configured: QueryRunner = (command, argv, signal) =>
+      runHostQuery(
+        command,
+        [
+          "-o",
+          `Dir::State::Lists=${selected.lists}`,
+          "-o",
+          `Dir::Etc::TrustedParts=${selected.trustedParts}`,
+          "-o",
+          `Dir::Etc::Trusted=${selected.trusted}`,
+          ...argv,
+        ],
+        signal,
+      );
+    expect(await resolveAptLocations(configured, undefined)).toEqual(selected);
+  });
+
   it("reads the lists folder an APT_CONFIG file names, resolved under Dir::State", async () => {
     const root = await createTestTempDirectory("apt-config-");
     const config = join(root, "apt.conf");

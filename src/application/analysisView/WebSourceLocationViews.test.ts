@@ -11,7 +11,7 @@ import {
   inspectAnalysisView,
   projectRetainedAnalysis,
 } from "./AnalysisViewService.js";
-import { analysisViewRequestSchema } from "../../domain/analysisView/analysisView.js";
+import { analysisViewRequestSchema } from "../../domain/analysisView/analysisViewRequest.js";
 import type { Evidence } from "../../domain/evidence.js";
 
 const trace = async (

@@ -5,10 +5,6 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
-import {
-  projectAnalysisError,
-  type AnalysisErrorProjection,
-} from "../domain/analysisErrorProjection.js";
 import type {
   AnalysisError,
   AnalysisErrorOptions,
@@ -124,12 +120,6 @@ export const referenceSourceImportAnalysisError = (
         }),
       );
 };
-
-/** Canonical CLI/MCP projection, retaining source facts under diagnostic details. */
-export const projectReferenceSourceImportError = (
-  error: ReferenceSourceImportError,
-): AnalysisErrorProjection =>
-  projectAnalysisError(referenceSourceImportAnalysisError(error));
 
 /** Import a caller-selected local source tree as historical reference. */
 export interface ReferenceSourceImportOptions {

@@ -28,13 +28,10 @@ const isRecord = (
 ): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const isJsonRecord = (value: JsonValue): value is Record<string, JsonValue> =>
-  isRecord(value);
-
 /** Whether every member holds a string at a key a selector can carry, each its own. */
 const namesEach = (members: readonly JsonValue[], key: string) => {
   const values = members.map((member) =>
-    isJsonRecord(member) ? member[key] : undefined,
+    isRecord(member) ? member[key] : undefined,
   );
   return (
     values.every(
@@ -222,7 +219,7 @@ export const pairRecordsById = (
     }
   | undefined => {
   const [first] = [...newer, ...older];
-  if (!isJsonRecord(first ?? null) || ![...newer, ...older].every(isJsonRecord))
+  if (!isRecord(first) || ![...newer, ...older].every(isRecord))
     return undefined;
   const key = Object.keys(first ?? {})
     .filter(
@@ -240,7 +237,7 @@ export const pairRecordsById = (
     })[0];
   if (key === undefined) return undefined;
   const idOf = (member: JsonValue) =>
-    isJsonRecord(member) ? String(member[key]) : "";
+    isRecord(member) ? String(member[key]) : "";
   const counts = { newer: tally(newer), older: tally(older) };
   const partnersOf = (
     members: readonly JsonValue[],

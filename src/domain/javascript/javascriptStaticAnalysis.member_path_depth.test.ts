@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 
 import { collectJavaScriptExports } from "./javascriptAstFingerprint.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 const memberChain = ".next".repeat(12_000);

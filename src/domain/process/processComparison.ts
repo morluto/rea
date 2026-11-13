@@ -54,7 +54,7 @@ export interface ProcessCaptureComparisonOptions {
 }
 
 /** Derive the overall comparison status from every process dimension. */
-export const deriveProcessComparisonStatus = (
+const deriveProcessComparisonStatus = (
   dimensions: readonly ComparisonStatus[],
 ): ComparisonStatus => {
   if (dimensions.includes("truncated")) return "truncated";

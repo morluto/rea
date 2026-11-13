@@ -41,7 +41,7 @@ import {
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { fixedAllowanceOptions as flutterBudget } from "../domain/fixedAllowanceRemediation.js";
 import {
   AnalysisError,
   type AnalysisPartialObservation,
@@ -84,8 +84,6 @@ const APK_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 // engine labels this keeps expanded result metadata below 512 KiB for ordinary
 // ABI names, independently of the archive's compressed-byte budget.
 const MAX_FLUTTER_ABIS = 32;
-const flutterBudget = (allowance: string, kind: "parser" | "input") =>
-  fixedAllowanceOptions(allowance, kind);
 /** A complete AOT image carries exactly one VM and one isolate section. */
 const SYMBOL_PAIR_COUNT = 2;
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;

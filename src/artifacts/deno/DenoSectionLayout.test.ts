@@ -1,17 +1,25 @@
 import { expect, it } from "vitest";
 
 import {
-  DENO_SECTION_MAGIC,
   MAX_DENO_METADATA_JSON_BYTES,
   MAX_DENO_TABLE_COUNT,
-  parseDenoSectionBytes,
+  parseDenoSection,
 } from "./DenoSectionLayout.js";
 import {
   buildDenoSection,
   defaultDenoMetadata,
+  DENO_FIXTURE_SECTION_MAGIC,
 } from "./DenoStandalone.fixture.js";
 
 const secret = "super-secret-value";
+
+const parseDenoSectionBytes = (bytes: Buffer, signal?: AbortSignal) =>
+  parseDenoSection(
+    bytes.length,
+    (offset, length) =>
+      Promise.resolve(bytes.subarray(offset, offset + length)),
+    signal,
+  );
 
 it("parses metadata, tables, remote regions, and embedded configuration", async () => {
   const original = Buffer.from("export const value = 1;\n");
@@ -123,9 +131,9 @@ it("treats a missing opening marker as an unsupported layout", async () => {
 
 it("refuses metadata JSON above the named allowance before reading it as JSON", async () => {
   const claimed = MAX_DENO_METADATA_JSON_BYTES + 1;
-  const bytes = Buffer.alloc(DENO_SECTION_MAGIC.length + 8 + claimed);
-  DENO_SECTION_MAGIC.copy(bytes, 0);
-  bytes.writeBigUInt64LE(BigInt(claimed), DENO_SECTION_MAGIC.length);
+  const bytes = Buffer.alloc(DENO_FIXTURE_SECTION_MAGIC.length + 8 + claimed);
+  DENO_FIXTURE_SECTION_MAGIC.copy(bytes, 0);
+  bytes.writeBigUInt64LE(BigInt(claimed), DENO_FIXTURE_SECTION_MAGIC.length);
   await expect(parseDenoSectionBytes(bytes)).rejects.toMatchObject({
     reason: "limit",
     message: expect.stringContaining("metadata JSON"),

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "../../../src/domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../fixtures/javascriptStaticAnalysis.js";
 
 it.each(
   (["call", "apply"] as const).flatMap((method) =>
