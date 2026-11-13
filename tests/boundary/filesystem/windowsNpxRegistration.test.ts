@@ -234,5 +234,4 @@ it.skipIf(process.platform !== "win32")(
       await transport.close();
     }
   },
-  30_000,
 );

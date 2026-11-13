@@ -240,7 +240,6 @@ const verifyPortableCli = async (
 
 cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
   "shared public CLI/MCP matching retains sources, pages exact facts, and feeds selected dossier pairs directly to compare_functions ($profile)",
-  { timeout: 60000 },
   async ({ profile }, { cli }) => {
     const fixture = await createMatchingFixture();
     const { left, right, leftDetails, rightDetails, importedPath } = fixture;
@@ -484,7 +483,6 @@ cliTest(
       retainedBefore.structuredContent,
     );
   },
-  60000,
 );
 
 cliTest(
@@ -657,7 +655,6 @@ cliTest(
       code: "evidence_integrity_mismatch",
     });
   },
-  60000,
 );
 
 cliTest(
@@ -693,12 +690,10 @@ cliTest(
       before.structuredContent,
     );
   },
-  60000,
 );
 
 cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
   "ties byte qualifications to selected observations through paged and offline MCP ($profile)",
-  { timeout: 60000 },
   async ({ profile }) => {
     const left = nativeMatchingInventory("1", [
       { address: "0x10", value: "left" },
@@ -831,7 +826,6 @@ cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
 
 cliTest(
   "bounds byte-source pages and recovers an oversized source",
-  { timeout: 60000 },
   async () => {
     const left = nativeMatchingInventory("1", [
       { address: "0x10", value: "left" },
@@ -940,7 +934,6 @@ cliTest(
 
 cliTest(
   "oversized inline matching Evidence points back to the caller's original record",
-  { timeout: 60000 },
   async () => {
     const left = nativeMatchingInventory("1", [
       { address: "0x10", value: "left" },

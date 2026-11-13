@@ -86,7 +86,7 @@ describe("runSolveHelper", () => {
       stop.abort();
       await Promise.allSettled([started, solved]);
     }
-  }, 30_000);
+  });
 
   it("records a helper stopped at its deadline without a report as a failed solve of unknown cost, its cleanup known", async () => {
     const runner = await fakeAgentEnvSolves([SOLVE]);
@@ -109,7 +109,7 @@ describe("runSolveHelper", () => {
     });
     expect(report.error).toMatch(/stopped \(SIG[A-Z]+\) without a report/u);
     expect(retained).toHaveLength(0);
-  }, 30_000);
+  });
 
   it("keeps a helper whose cleanup failed, so closing can retry it, and reports what is left", async () => {
     const runner = await fakeAgentEnvSolves([SOLVE]);
@@ -146,7 +146,7 @@ describe("runSolveHelper", () => {
       status: "verified-cleanup",
     });
     retained[0]?.dispose();
-  }, 30_000);
+  });
 });
 
 it("retains a reported sandbox on failed removal, then retries that exact sandbox", async () => {
@@ -184,7 +184,7 @@ it("retains a reported sandbox on failed removal, then retries that exact sandbo
   expect(failure.cleanupIncomplete).toBe(false);
   expect(failure.cleanupResources).toEqual([]);
   retained[0]?.dispose();
-}, 30_000);
+});
 
 it("retains a completed report if cancellation arrives during final cleanup", async () => {
   const runner = await fakeAgentEnvSolves([SOLVE]);
@@ -211,7 +211,7 @@ it("retains a completed report if cancellation arrives during final cleanup", as
     cause: reason,
     report: { outcome: "passed", turns: 3, usd: 0.1 },
   });
-}, 30_000);
+});
 
 it("retains an unrecognized sandbox root entry and retries after it is repaired", async () => {
   const runner = await fakeAgentEnvSolves([SOLVE]);
@@ -240,7 +240,7 @@ it("retains an unrecognized sandbox root entry and retries after it is repaired"
   if (!(failure instanceof ProviderCleanupError)) throw failure;
   expect(failure.cleanupIncomplete).toBe(false);
   retained[0]?.dispose();
-}, 30_000);
+});
 
 it("retains root cleanup and the spawn failure when admission fails", async () => {
   const runner = await fakeAgentEnvSolves([SOLVE]);
@@ -274,4 +274,4 @@ it("retains root cleanup and the spawn failure when admission fails", async () =
   expect(failure.cleanupIncomplete).toBe(false);
   expect(failure.cleanupResources).toEqual([]);
   retained[0]?.dispose();
-}, 30_000);
+});

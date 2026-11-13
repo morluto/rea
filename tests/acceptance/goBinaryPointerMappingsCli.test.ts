@@ -76,5 +76,4 @@ cliTest(
     expect(parseMcpToolError(response)).toEqual({ error: rejected.json });
     await client.ping();
   },
-  60000,
 );

@@ -781,7 +781,6 @@ describe("attached IDA regex supervision", () => {
         await client.close();
       }
     },
-    15_000,
   );
   it("bounds regex matching without caller cancellation and preserves subsequent searches", async () => {
     const { producer, client } = await fixture();
@@ -827,7 +826,7 @@ describe("attached IDA regex supervision", () => {
     } finally {
       await client.close();
     }
-  }, 15_000);
+  });
 });
 
 describe("attached IDA function failure handling", () => {

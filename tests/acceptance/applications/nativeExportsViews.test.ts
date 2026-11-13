@@ -20,7 +20,6 @@ const viewContract = toolContract("inspect_analysis_view");
 
 cliTest.for(["pe", "elf"] as const)(
   "queries retained %s exports through CLI and actual stdio MCP after the source is deleted",
-  { timeout: 60_000 },
   async (format, { cli }) => {
     const root = await createTestTempDirectory("rea-export-views-");
     const path = join(root, `library.${format}`);

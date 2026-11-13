@@ -74,7 +74,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -240,7 +239,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest("returns null metadata when .dep-v0 is absent", async ({ cli }) => {
@@ -427,7 +425,6 @@ cliTest(
     });
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -485,7 +482,6 @@ cliTest(
     expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -532,7 +528,6 @@ cliTest(
     expect(parseMcpToolError(response).error).toMatchObject(expectedFailure);
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -689,7 +684,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
