@@ -722,6 +722,29 @@ describe("Delphi form retained-value budgets", () => {
     expect(value.items.length).toBeGreaterThan(0);
     expect(value.items.length).toBeLessThan(1000);
   });
+
+  it("charges floating-point values by their serialized projection", () => {
+    const extended = bytes(5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Points",
+          list(...Array.from({ length: 50 }, () => extended)),
+        ),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_bytes: 10_000,
+      max_text_bytes: 1_000_000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(root.unknown?.reason).toContain("value budget exhausted");
+    const value = propertyOf(root, "Points").value;
+    expect(value.kind).toBe("list");
+    if (value.kind !== "list") throw new Error("Expected a list");
+    expect(value.items.length).toBeLessThan(50);
+  });
 });
 
 describe("Delphi form failure surface", () => {

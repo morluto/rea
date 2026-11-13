@@ -19,6 +19,7 @@
 
 import {
   DEFAULT_CODE_PAGE,
+  DELPHI_FORM_VALUE_TYPES,
   type DelphiFormCollectionItem,
   type DelphiFormObject,
   type DelphiFormProperty,
@@ -47,36 +48,8 @@ export interface DelphiFormDecode {
   readonly root: DelphiFormObject;
 }
 
-/** Delphi `System.Classes.TValueType`, indexed by ordinal. */
-const VALUE_TYPES: readonly string[] = [
-  "vaNull",
-  "vaList",
-  "vaInt8",
-  "vaInt16",
-  "vaInt32",
-  "vaExtended",
-  "vaString",
-  "vaIdent",
-  "vaFalse",
-  "vaTrue",
-  "vaBinary",
-  "vaSet",
-  "vaLString",
-  "vaNil",
-  "vaCollection",
-  "vaSingle",
-  "vaCurrency",
-  "vaDate",
-  "vaWString",
-  "vaInt64",
-  "vaUTF8String",
-  "vaDouble",
-  "vaUString",
-  "vaQWord",
-];
-
 const valueTypeName = (ordinal: number): string =>
-  VALUE_TYPES[ordinal] ?? `unknown_value_type(${String(ordinal)})`;
+  DELPHI_FORM_VALUE_TYPES[ordinal] ?? `unknown_value_type(${String(ordinal)})`;
 
 /** `TFilerFlag` from `classesh.inc`: ffInherited, ffChildPos, ffInline. */
 const FILER_FLAGS: readonly string[] = [
@@ -96,7 +69,7 @@ const MAX_VALUES = 32768;
 const MAX_TEXT_BYTES = 8 * 1024 * 1024;
 /** Bounds retained structural values before allocation. */
 const MAX_RETAINED_BYTES = 8 * 1024 * 1024;
-const VALUE_BYTES = 96;
+const VALUE_BYTES = 256;
 const OBJECT_BYTES = 192;
 const PROPERTY_BYTES = 160;
 const ITEM_BYTES = 96;

@@ -477,7 +477,10 @@ it("accepts explicit UTF-8 form text on a non-UTF-8 resource page", async () => 
   ).toMatchObject({ ok: true });
 });
 
-it("rejects a property whose value type contradicts its decoded value", async () => {
+const formWithProperty = async (
+  valueType: string,
+  value: Record<string, unknown>,
+) => {
   const report = await observedReport();
   const index = report.resources.findIndex(
     (resource) => resource.type.kind === "id" && resource.type.id === 10,
@@ -497,30 +500,96 @@ it("rejects a property whose value type contradicts its decoded value", async ()
         properties: [
           {
             name: {
-              text: "Tag",
-              bytes_hex: "54",
+              text: "Value",
+              bytes_hex: "56",
               code_page: pages.code_page,
               location: resource.payload.location,
             },
-            value_type: "vaInt32",
+            value_type: valueType,
             value: {
-              kind: "boolean",
-              value: true,
+              ...value,
               location: resource.payload.location,
-            },
+            } as never,
             location: resource.payload.location,
           },
         ],
       },
     },
   ];
+  return report;
+};
+
+const inspectReport = async (
+  report: Awaited<ReturnType<typeof observedReport>>,
+) => {
   const service = new PeResourcesService({
     identity: PE_RESOURCES_PROVIDER,
     inspect: () => Promise.resolve(ok(report)),
   });
-  expect(
-    await service.inspect({ path: "/fixtures/example.exe" }),
-  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+  return service.inspect({ path: "/fixtures/example.exe" });
+};
+
+it("rejects a property whose value type contradicts its decoded value", async () => {
+  const report = await formWithProperty("vaInt32", {
+    kind: "boolean",
+    value: true,
+  });
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects an invented value type even when the value is unknown", async () => {
+  const report = await formWithProperty("invented", {
+    kind: "unknown",
+    reason: "stopped",
+    bytes_hex: "",
+    truncated: true,
+  });
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects an integer whose value does not fit its declared width", async () => {
+  const report = await formWithProperty("vaInt8", {
+    kind: "integer",
+    text: "999",
+    width: 8,
+    signed: true,
+  });
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a complete root that stops before the payload end", async () => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signatureAt(resource.payload.location),
+      prefix: null,
+      ...codePageFields(resource.code_page),
+      root: validRoot({
+        offset: signatureAt(resource.payload.location).offset + 4,
+        bytes: 0,
+      }),
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
 });
 
 it("rejects a signature-bearing form without a root", async () => {

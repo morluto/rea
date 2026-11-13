@@ -122,6 +122,40 @@ export type DelphiFormObject = {
   } | null;
 };
 
+/** Declared `System.Classes.TValueType` names emitted by the decoder. */
+export const DELPHI_FORM_VALUE_TYPES: readonly string[] = [
+  "vaNull",
+  "vaList",
+  "vaInt8",
+  "vaInt16",
+  "vaInt32",
+  "vaExtended",
+  "vaString",
+  "vaIdent",
+  "vaFalse",
+  "vaTrue",
+  "vaBinary",
+  "vaSet",
+  "vaLString",
+  "vaNil",
+  "vaCollection",
+  "vaSingle",
+  "vaCurrency",
+  "vaDate",
+  "vaWString",
+  "vaInt64",
+  "vaUTF8String",
+  "vaDouble",
+  "vaUString",
+  "vaQWord",
+];
+
+/** The declared type vocabulary accepted at the Evidence boundary. */
+export const isDelphiFormValueType = (value: string): boolean =>
+  value === "unknown" ||
+  /^unknown_value_type\(\d+\)$/u.test(value) ||
+  DELPHI_FORM_VALUE_TYPES.includes(value);
+
 /** Where the code page came from: the resource, a default, or neither. */
 export type DelphiFormCodePageSource = "resource" | "default" | "unsupported";
 

@@ -12,6 +12,7 @@ import {
 import {
   BYTE_PRESERVING_CODE_PAGE,
   DEFAULT_CODE_PAGE,
+  isDelphiFormValueType,
   RESOURCE_CODE_PAGES,
   type DelphiFormObject,
   type DelphiFormResource,
@@ -204,6 +205,17 @@ const validReport = (
           : form.prefix.location.offset === payload.offset &&
             form.prefix.location.bytes === signature.offset - payload.offset &&
             form.prefix.location.bytes > 0;
+      const rootEnd = form.root.location.offset + form.root.location.bytes;
+      const payloadEnd = payload.offset + payload.bytes;
+      // A complete root reaches the payload end; a stopped root records the
+      // unread suffix on its unknown instead of silently dropping those bytes.
+      const rootCoversPayload =
+        form.root.unknown === null
+          ? rootEnd === payloadEnd
+          : form.root.unknown.location.offset === rootEnd &&
+            form.root.unknown.location.offset +
+              form.root.unknown.location.bytes ===
+              payloadEnd;
       return (
         // The declared page must be the resource's own declaration, and the
         // source classification must agree with it, so published Evidence
@@ -216,6 +228,7 @@ const validReport = (
         prefixMatches &&
         form.root.location.offset === signatureEnd &&
         within(form.root.location) &&
+        rootCoversPayload &&
         insideLocations(form.root, within, form.code_page)
       );
     })
@@ -281,11 +294,31 @@ const valuePageMatchesType = (
   return valueType === "vaUTF8String" && label === "utf-8";
 };
 
+const integerMatches = (
+  value: DelphiFormValue,
+  width: 8 | 16 | 32 | 64,
+  signed: boolean,
+): boolean => {
+  if (
+    value.kind !== "integer" ||
+    value.width !== width ||
+    value.signed !== signed
+  )
+    return false;
+  if (!/^(?:0|-?[1-9]\d*)$/u.test(value.text)) return false;
+  const number = BigInt(value.text);
+  const bits = BigInt(width);
+  const minimum = signed ? -(1n << (bits - 1n)) : 0n;
+  const maximum = signed ? (1n << (bits - 1n)) - 1n : (1n << bits) - 1n;
+  return number >= minimum && number <= maximum;
+};
+
 const valueMatchesType = (
   valueType: string,
   value: DelphiFormValue,
   codePage: string,
 ): boolean => {
+  if (!isDelphiFormValueType(valueType)) return false;
   if (value.kind === "unknown") return true;
   switch (valueType) {
     case "vaNull":
@@ -298,15 +331,15 @@ const valueMatchesType = (
         value.kind === "boolean" && value.value === (valueType === "vaTrue")
       );
     case "vaInt8":
-      return value.kind === "integer" && value.width === 8 && value.signed;
+      return integerMatches(value, 8, true);
     case "vaInt16":
-      return value.kind === "integer" && value.width === 16 && value.signed;
+      return integerMatches(value, 16, true);
     case "vaInt32":
-      return value.kind === "integer" && value.width === 32 && value.signed;
+      return integerMatches(value, 32, true);
     case "vaInt64":
-      return value.kind === "integer" && value.width === 64 && value.signed;
+      return integerMatches(value, 64, true);
     case "vaQWord":
-      return value.kind === "integer" && value.width === 64 && !value.signed;
+      return integerMatches(value, 64, false);
     case "vaExtended":
     case "vaSingle":
     case "vaCurrency":
