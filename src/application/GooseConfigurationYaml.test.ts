@@ -4,7 +4,6 @@ import { parseDocument } from "yaml";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   editGooseConfigurationYaml,
-  GooseConfigurationYamlError,
   parseGooseConfigurationYaml,
   stringifyGooseConfigurationYaml,
 } from "./GooseConfigurationYaml.js";
@@ -111,11 +110,15 @@ describe("Goose YAML 1.2 source facts", () => {
       } catch (cause: unknown) {
         failure = cause;
       }
-      expect(failure).toBeInstanceOf(GooseConfigurationYamlError);
+      expect(failure).toBeInstanceOf(ConfigurationError);
       expect(failure).toMatchObject({ kind: "shadowed_member", path });
+      expect(failure).toHaveProperty(
+        "message",
+        `Goose YAML contains a duplicate mapping member at ${path.join(".")}`,
+      );
       expect(() =>
         editGooseConfigurationYaml(source, ["extensions", "rea"], extension),
-      ).toThrow(GooseConfigurationYamlError);
+      ).toThrow(`duplicate mapping member at ${path.join(".")}`);
     },
   );
 

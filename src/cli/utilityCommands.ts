@@ -49,11 +49,7 @@ export const registerUtilityCommands = (
   registerReferenceSourceCommand(cli, logger, environment);
 };
 
-/** Decimal argv text; the shared deadline field owns the bounds and help. */
-const cliNativeDeadline = (field: typeof nativeUiDeadlineField) =>
-  cliDecimalField(field);
-
-// Decimal tokens only, for the same reason as cliNativeDeadline.
+// Decimal tokens only; shared fields own their bounds and help.
 const nativeUiScopeOptions = {
   pid: cliIntegerArgument(1).describe("Existing application PID"),
   windowId: cliIntegerArgument(1).describe(
@@ -70,7 +66,7 @@ const nativeUiScopeOptions = {
   maxNodes: cliIntegerArgument(1)
     .default(500)
     .describe("Maximum accessibility nodes per capture"),
-  nativeUiDeadlineMs: cliNativeDeadline(nativeUiDeadlineField),
+  nativeUiDeadlineMs: cliDecimalField(nativeUiDeadlineField),
 };
 
 const nativeUiScope = (options: {
@@ -208,7 +204,7 @@ const registerNativeCommands = (
         path: localPathStringSchema.describe("Mach-O or app path"),
       }),
       options: z.object({
-        nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
+        nativeCommandTimeoutMs: cliDecimalField(nativeCommandTimeoutField),
       }),
       run: ({ args, options }) =>
         logCliCommand(logger, command, () =>
@@ -235,7 +231,7 @@ const registerNativeCommands = (
         .describe(
           "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
         ),
-      nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
+      nativeCommandTimeoutMs: cliDecimalField(nativeCommandTimeoutField),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-plist", () =>
@@ -263,7 +259,7 @@ const registerNativeCommands = (
       symbols: swiftSymbolsSchema.describe("Swift mangled symbols to demangle"),
     }),
     options: z.object({
-      nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
+      nativeCommandTimeoutMs: cliDecimalField(nativeCommandTimeoutField),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "demangle-swift", () =>

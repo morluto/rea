@@ -6,10 +6,11 @@ import { readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   createDeferred,
@@ -98,7 +99,12 @@ describe("MCP snapshot lifecycle ordering", () => {
       name: "address_name",
       arguments: { address: "0x1000", document: "fixture" },
     });
-    await started.promise;
+    onTestFinished(() => release.resolve(ok(first)));
+    await awaitAcknowledgement(
+      started.promise,
+      observation,
+      "session observation",
+    );
     const snapshotPath = join(directory, "analysis.json");
     const closing = mcp.callTool({
       name: "close_binary",
@@ -360,8 +366,16 @@ describe("target-free MCP lifecycle", () => {
     await server.connect(serverTransport);
     await mcp.connect(clientTransport);
 
+    onTestFinished(() =>
+      availability.resolve({
+        status: "available",
+        code: null,
+        reason: null,
+        diagnostics: { configured: true },
+      }),
+    );
     const status = mcp.callTool({ name: "binary_session", arguments: {} });
-    await entered.promise;
+    await awaitAcknowledgement(entered.promise, status, "provider readiness");
     expect((await session.open(targetPath)).ok).toBe(true);
     availability.resolve({
       status: "available",

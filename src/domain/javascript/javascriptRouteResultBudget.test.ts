@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { javaScriptRouteSourceFactsSchema } from "./javascriptRouteFacts.js";
 import { fitJavaScriptRouteSourceFacts } from "./javascriptRouteResultBudget.js";
 

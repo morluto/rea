@@ -246,7 +246,9 @@ export class ZipArtifactReader implements ArtifactReader {
           });
         yield metadata;
       }
+      this.#assertOpen(signal);
       await this.#source.verify();
+      this.#assertOpen(signal);
     } finally {
       this.#enumerations.delete(enumeration);
     }

@@ -13,7 +13,7 @@ import {
 import { evidenceSchema, type Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
-import { err, ok } from "../domain/result.js";
+import { ok } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   OBJDUMP_ARTIFACT_OPERATIONS,
@@ -373,16 +373,14 @@ export const registerReverseEngineeringCommands = (
               const started = await manager.start(signal, {
                 inferiorTty: options.inferiorTty,
               });
-              if (!started.ok) return err(started.error);
+              if (!started.ok) return started;
               sessionId = started.value.session_id;
               const executed = await manager.execute(
                 sessionId,
                 args.command,
                 signal,
               );
-              return executed.ok
-                ? ok(executed.value.evidence)
-                : err(executed.error);
+              return executed.ok ? ok(executed.value.evidence) : executed;
             },
             service: {
               close: () =>
@@ -445,16 +443,14 @@ export const registerReverseEngineeringCommands = (
                 },
                 signal,
               );
-              if (!started.ok) return err(started.error);
+              if (!started.ok) return started;
               sessionId = started.value.session_id;
               const executed = await manager.execute(
                 sessionId,
                 args.command,
                 signal,
               );
-              return executed.ok
-                ? ok(executed.value.evidence)
-                : err(executed.error);
+              return executed.ok ? ok(executed.value.evidence) : executed;
             },
             {
               close: () =>

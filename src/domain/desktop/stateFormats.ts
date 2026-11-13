@@ -196,7 +196,7 @@ const jsonScalar = (scan: JsonScan, string: boolean): boolean => {
  * a time without building the value: it holds a byte per open container, so
  * text too large to parse into a view is still told apart from other text.
  */
-export const isJsonText = (text: string): boolean => {
+const isJsonText = (text: string): boolean => {
   const scan: JsonScan = {
     expect: "value",
     empty: false,
@@ -382,9 +382,9 @@ export const deeperThan = (root: JsonValue, limit: number): boolean => {
 };
 
 /** A JSON file's value, refused when a number would be rounded or it nests too deeply. */
-export const jsonView = (
+const jsonView = (
   text: string,
-  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
+  policy: DesktopViewPolicy,
 ): Result<JsonValue, string> => {
   let rounded = false;
   const parsed = safeParseJson(text, (_key, value, context) => {
@@ -392,7 +392,7 @@ export const jsonView = (
       rounded = true;
     return value;
   });
-  if (!parsed.ok) return err(parsed.error);
+  if (!parsed.ok) return parsed;
   if (rounded)
     return err(
       "a number in it cannot be read exactly, such as an integer above 2^53",

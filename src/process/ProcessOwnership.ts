@@ -1,3 +1,4 @@
+import { rethrowProcessInspectionFailure } from "./ProcessInspectionCleanup.js";
 import { execFile } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
@@ -496,6 +497,7 @@ export const cleanupOwnedProcessGroup = async (
         );
       }
     } catch (cause: unknown) {
+      rethrowProcessInspectionFailure(cause);
       return mergeUnverifiedObservations(
         {
           cleaned: false,
@@ -570,6 +572,7 @@ const readLiveProcessTable = async (
       processes: liveProcesses(await host.listProcesses()),
     };
   } catch (cause: unknown) {
+    rethrowProcessInspectionFailure(cause);
     return { available: false, reason: errorMessage(cause) };
   }
 };
@@ -777,7 +780,7 @@ const classifyUnlinkedExitRows = async (
     try {
       liveRows = liveProcesses(await host.listProcesses());
     } catch (cause: unknown) {
-      void cause;
+      rethrowProcessInspectionFailure(cause);
       liveRows = undefined;
     }
     const live =
@@ -1250,6 +1253,7 @@ const revalidateOwnedProcessGroup = async (
           observedGroupId === processGroupId,
       );
     } catch (cause: unknown) {
+      rethrowProcessInspectionFailure(cause);
       return {
         cleaned: false,
         reason: `process ownership could not be revalidated: ${errorMessage(cause)}`,
@@ -1430,8 +1434,8 @@ const processOwnershipFailures = async (
   members: readonly ProcessTableEntry[],
   ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost,
-  expectedIdentities: ReadonlyMap<number, string | null> = new Map(),
-  exitSettlement: ProcessExitSettlementBudget = { deadline: undefined },
+  expectedIdentities: ReadonlyMap<number, string | null>,
+  exitSettlement: ProcessExitSettlementBudget,
 ): Promise<{
   readonly failures: readonly ProcessOwnershipValidationFailure[];
   readonly validatedMembers: readonly ProcessTableEntry[];
@@ -1594,6 +1598,7 @@ const recheckOwnershipFailures = async (
       ({ pid, reason }) => reason === "run-token-mismatch" || live.has(pid),
     );
   } catch (cause: unknown) {
+    rethrowProcessInspectionFailure(cause);
     return failures.map((failure) =>
       failure.reason === "run-token-mismatch"
         ? failure
@@ -1661,9 +1666,9 @@ const scanTokenOwnedProcesses = async (
   processes: readonly ProcessTableEntry[],
   runId: string,
   host: ProcessOwnershipHost,
-  captureBaseline?: ProcessOwnershipBaseline,
-  relation?: OwnershipSweepRelation,
-  exitSettlement: ProcessExitSettlementBudget = { deadline: undefined },
+  captureBaseline: ProcessOwnershipBaseline | undefined,
+  relation: OwnershipSweepRelation | undefined,
+  exitSettlement: ProcessExitSettlementBudget,
 ): Promise<TokenOwnedProcessScan> => {
   if (host.processIdentities !== undefined)
     return scanWithOwnershipEvidence(
@@ -1736,7 +1741,7 @@ const scanTokenOwnedProcesses = async (
       liveProcesses(await host.listProcesses()).map(({ pid }) => pid),
     );
   } catch (cause: unknown) {
-    void cause;
+    rethrowProcessInspectionFailure(cause);
     finalLive = undefined;
   }
   for (const candidate of strict) {
@@ -2003,7 +2008,7 @@ const settleUnreadableTokenCandidates = async (
         liveProcesses(await host.listProcesses()).map(({ pid }) => pid),
       );
     } catch (cause: unknown) {
-      void cause;
+      rethrowProcessInspectionFailure(cause);
       live = undefined;
     }
     const stillUnreadable: UnreadableTokenCandidate[] = [];

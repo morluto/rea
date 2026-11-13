@@ -1,3 +1,10 @@
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { RegularFileState } from "../filesystem/RegularFile.js";
 import { createHash } from "node:crypto";
 import {
@@ -27,6 +34,7 @@ import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   copyAndHash,
+  kunaCopyFailureFacts,
   KUNA_INVENTORY_OUTPUT_BYTES,
   kunaFileCleanupError,
   runKunaCommand,
@@ -141,6 +149,7 @@ export interface KunaExportRequest {
   /** Directory, inside the workspace, that receives the export's files. */
   readonly output: string;
   readonly signal: AbortSignal;
+  readonly copyResources: ArtifactResourceScope;
   readonly retainFailedFileClose: (
     owner: OwnedFileHandle,
     resource: string,
@@ -164,6 +173,36 @@ export const kunaExportFailure = (
   cause: unknown,
   signal: AbortSignal | undefined,
 ): AnalysisError => {
+  if (cause instanceof ArtifactReaderFailure) {
+    const { completion } = kunaCopyFailureFacts(cause);
+    const primary =
+      cause.reason === "cancelled" || completion?.cancellation !== undefined
+        ? new AnalysisCancelledError(KUNA_EXPORT_OPERATION, {
+            cause:
+              completion?.cancellation === undefined
+                ? artifactFileCancellationCause(cause)
+                : completion.cancellation.reason,
+          })
+        : new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
+            cause,
+            userMessage: `Kuna project cache failed: ${message(cause)}`,
+          });
+    if (cause.cleanup === undefined) return primary;
+    const cleanup = new ProviderCleanupError(
+      KUNA_PROVIDER_ID,
+      cause.cleanup.resources,
+      { reason: cause.cleanup.reason },
+      { cause, operation: KUNA_EXPORT_OPERATION },
+    );
+    bindArtifactFileCleanup(cause, cleanup);
+    if (completion !== undefined && completion.cancellation === undefined)
+      return cleanup;
+    return analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      KUNA_EXPORT_OPERATION,
+    ).bindCleanupDependencies([cleanup]);
+  }
   if (cause instanceof RegularFileCleanupFailure)
     return kunaFileCleanupError(cause, KUNA_EXPORT_OPERATION);
   const cancellation = regularFileCancellation(cause);
@@ -236,7 +275,10 @@ export const exportKunaProject = async (
   await mkdir(join(request.workspace, "input"), { mode: 0o700 });
   await mkdir(request.output, { recursive: true, mode: 0o700 });
 
-  const copied = await copyAndHash(request.targetPath, input, signal);
+  const copied = await copyAndHash(request.targetPath, input, {
+    signal,
+    resources: request.copyResources,
+  });
   if (copied.sha256 !== request.targetSha256)
     return {
       kind: "done",

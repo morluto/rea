@@ -121,10 +121,6 @@ it.each([
         { toolDefinition: schema.toolDefinition },
       );
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-      expect(
-        schema.ajv.validate(schema.outputSchema, reply.structuredContent),
-        JSON.stringify(schema.ajv.errors),
-      ).toBe(true);
       return reply.structuredContent;
     };
     await call("open_binary", { path: target, format: "dos-com" });

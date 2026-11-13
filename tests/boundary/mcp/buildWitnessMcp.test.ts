@@ -157,6 +157,78 @@ const expectUndecided = (
   for (const fact of [stage, ...facts]) expect(error.message).toContain(fact);
 };
 
+it.each([
+  { kind: "file_present", passed: true },
+  { kind: "file_absent", passed: false },
+] as const)(
+  "grades $kind against an own __proto__ state file over MCP",
+  async ({ kind, passed }) => {
+    const witness = await witnessed(
+      0,
+      {},
+      {
+        name: "selected-file",
+        prompt: "Check the selected file.",
+        checks: [{ kind, file: "__proto__" }],
+      },
+    );
+    witness.app.state = JSON.parse(
+      '{"__proto__":{"format":"json","view":{"count":7}}}',
+    );
+    const report = parsed(await witness.check({}));
+    expect(report).toMatchObject({
+      passed: passed ? 1 : 0,
+      failed: passed ? 0 : 1,
+      results: [{ id: "check-1", passed }],
+    });
+  },
+);
+
+it.each([false, true])(
+  "keeps own row conditions through MCP (only special column: %s)",
+  async (onlySpecial) => {
+    const where = onlySpecial
+      ? JSON.parse('{"__proto__":"other"}')
+      : JSON.parse('{"id":1,"__proto__":"wanted"}');
+    const common = { file: "db.sqlite", table: "rows", where };
+    const witness = await witnessed(
+      0,
+      {},
+      {
+        name: "find-row",
+        prompt: "Check every selected column of the row.",
+        checks: [
+          { kind: "row_present", ...common },
+          { kind: "row_absent", ...common },
+          { kind: "row_count", ...common, equals: onlySpecial ? 1 : 0 },
+        ],
+      },
+    );
+    witness.app.state = {
+      "db.sqlite": {
+        format: "sqlite",
+        view: {
+          tables: {
+            rows: {
+              columns: ["id", "__proto__"],
+              primary_key: ["id"],
+              rows: [[1, "other"]],
+              truncated: false,
+            },
+          },
+          tables_truncated: false,
+        },
+        truncated: false,
+      },
+    };
+    const report = parsed(await witness.check({}));
+    expect(report).toMatchObject({ passed: 2, failed: 1 });
+    expect(report.results.map(({ passed }) => passed)).toEqual(
+      onlySpecial ? [true, false, true] : [false, true, true],
+    );
+  },
+);
+
 it("witnesses a task: the seed fails, the edit passes, a near miss fails and so does the reset seed", async () => {
   const { app, computer, directory, check, act } = await witnessed();
 

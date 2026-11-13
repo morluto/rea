@@ -1,7 +1,7 @@
 import * as t from "@babel/types";
 import { expect, it, vi } from "vitest";
 
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 

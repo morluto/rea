@@ -1,9 +1,6 @@
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { describe, expect, it } from "vitest";
-import {
-  traceNativeValues as traceNativeValuesCore,
-  UNRECORDED_NATIVE_VALUE_FLOW,
-} from "./NativeValueTrace.js";
+import { traceNativeValues as traceNativeValuesCore } from "./NativeValueTrace.js";
 import { executeComposedWorkflow } from "../WorkflowEvidence.js";
 import {
   createAnalysisExecution,
@@ -22,6 +19,7 @@ import {
 import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import { ok, err } from "../../domain/result.js";
 import {
+  EXPECTED_UNRECORDED_VALUE_FLOW,
   nativeFlowDossier,
   pcodeOperation as node,
   pcodeScalar as scalar,
@@ -196,7 +194,7 @@ describe("native value trace seed admission", () => {
         {
           procedure: base.procedure.address,
           address: null,
-          reason: UNRECORDED_NATIVE_VALUE_FLOW,
+          reason: EXPECTED_UNRECORDED_VALUE_FLOW,
         },
       ],
     });

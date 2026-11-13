@@ -17,7 +17,6 @@ import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTy
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 import { buildImmutableJavaScriptArtifactGraphSteps as buildGraph } from "./JavaScriptArtifactGraphBuilder.js";
 import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
-import { electronModuleReferenced } from "./ElectronBoundaryAnalysis.js";
 
 const SHA256 = "a".repeat(64);
 const PATH = "main.js";
@@ -178,25 +177,14 @@ describe("Electron semantic coverage", () => {
     expect(electronSemantics).toBeUndefined();
   });
 
-  it("does not count a type-only Electron import as boundary coverage", () => {
-    // A `.js` fixture cannot carry `import type`, so the module predicate is
-    // exercised directly here.
-    const analysisWith = (
-      kind: "require" | "type-import",
-    ): JavaScriptArtifactAnalysis =>
-      ({
-        files: [
-          {
-            file: fileFor(""),
-            javascript: null,
-            semantic: {
-              ir: { moduleLinks: [{ kind, specifier: "electron" }] },
-            },
-          },
-        ],
-      }) as unknown as JavaScriptArtifactAnalysis;
-    expect(electronModuleReferenced(analysisWith("require"))).toBe(true);
-    expect(electronModuleReferenced(analysisWith("type-import"))).toBe(false);
+  it("does not count a type-only Electron import as boundary coverage", async () => {
+    const result = await graphFor(
+      'import type { BrowserWindow } from "electron";\nexport type Window = BrowserWindow;\n',
+      undefined,
+      "main.ts",
+    );
+    expect(result.electronSemantics).toBeUndefined();
+    expect(result.limitations).not.toContain(EMPTY_COVERAGE);
   });
 
   it("matches a supported Electron subpath and ignores an unrelated package", async () => {

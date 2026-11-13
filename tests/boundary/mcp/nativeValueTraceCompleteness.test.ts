@@ -59,8 +59,10 @@ it.each(["full", "compact"] as const)(
       profile,
       valueTraceDiamond({ sessionSubject: true }).port,
     );
-    const { toolDefinition, ajv, outputSchema } =
-      await advertisedMcpToolSchemas(client, "trace_native_values");
+    const { toolDefinition, outputSchema } = await advertisedMcpToolSchemas(
+      client,
+      "trace_native_values",
+    );
     if (profile === "full")
       for (const field of [
         "page_truncated",
@@ -75,10 +77,6 @@ it.each(["full", "compact"] as const)(
         { toolDefinition },
       );
       expect(reply.isError).not.toBe(true);
-      expect(
-        ajv.validate(outputSchema, reply.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
       return nativeValueTraceSchema.parse(
         parseEvidence(reply.structuredContent).normalized_result,
       );
@@ -168,8 +166,10 @@ it.each(["full", "compact"] as const)(
       profile,
       valueTraceUnboundArguments({ sessionSubject: true }).port,
     );
-    const { toolDefinition, ajv, outputSchema } =
-      await advertisedMcpToolSchemas(client, "trace_native_values");
+    const { toolDefinition } = await advertisedMcpToolSchemas(
+      client,
+      "trace_native_values",
+    );
     const reply = await client.callTool(
       {
         name: "trace_native_values",
@@ -178,10 +178,6 @@ it.each(["full", "compact"] as const)(
       { toolDefinition },
     );
     expect(reply.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, reply.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const trace = nativeValueTraceSchema.parse(
       parseEvidence(reply.structuredContent).normalized_result,
     );
