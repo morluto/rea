@@ -834,17 +834,27 @@ cliTest(
     const url = 'new URL("./worker.js", import.meta.url)';
     const named = 'import { Worker } from "node:worker_threads";';
     // With `eval`, Node rejects a URL filename, so no script loads. Browser
-    // Workers have no `eval` option.
+    // Workers have no `eval` option. The `-data` rows are valid-URL controls
+    // for the rows whose options may set `eval`.
+    const byDefault = 'import threads from "node:worker_threads";';
     const sources: Readonly<Record<string, readonly [string, string]>> = {
+      "default-data.mjs": [
+        byDefault,
+        `new threads.Worker(${url}, { workerData: 1 })`,
+      ],
       "default-eval.mjs": [
-        'import threads from "node:worker_threads";',
+        byDefault,
         `new threads.Worker(${url}, { eval: true })`,
       ],
       "named-options.mjs": [named, `new Worker(${url}, options)`],
       "named-data.mjs": [named, `new Worker(${url}, { workerData: 1 })`],
       "browser-options.mjs": ["", `new globalThis.Worker(${url}, options)`],
     };
-    const resolves = new Set(["named-data.mjs", "browser-options.mjs"]);
+    const resolves = new Set([
+      "default-data.mjs",
+      "named-data.mjs",
+      "browser-options.mjs",
+    ]);
     await writeFixtureFiles(root, {
       ...Object.fromEntries(
         Object.entries(sources).map(([source, [prefix, expression]]) => [
