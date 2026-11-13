@@ -20,7 +20,9 @@ const numericBranches = (schema: unknown): boolean => {
   return false;
 };
 
-const bounds = (schema: unknown): Array<{ min: number; max: number }> => {
+const bounds = (
+  schema: unknown,
+): Array<{ min: number; max: number; candidate: number }> => {
   if (!isRecord(schema)) return [];
   const nested = ["anyOf", "oneOf", "allOf"].flatMap((key) =>
     Array.isArray(schema[key]) ? schema[key].flatMap(bounds) : [],
@@ -45,7 +47,7 @@ const bounds = (schema: unknown): Array<{ min: number; max: number }> => {
       ? schema.default
       : min;
   return Number.isSafeInteger(preferred) && preferred >= min && preferred <= max
-    ? [...nested, { min: preferred, max }]
+    ? [...nested, { min, max, candidate: preferred }]
     : nested;
 };
 
@@ -124,12 +126,24 @@ describe("decimal integer CLI admission", () => {
               // Decimal tokens are the only numeric spelling.
             }
           }
-          const candidate = bounds(property)[0]?.min;
+          const range = bounds(property)[0];
+          const candidate = range?.candidate;
           if (candidate === undefined) {
             failures.push(`${label}: no in-range decimal candidate`);
             continue;
           }
           const decimal = String(candidate);
+          if (range !== undefined) {
+            for (const value of [range.min - 1, range.max + 1]) {
+              if (value < 0) continue;
+              for (const token of [String(value), `000${value}`]) {
+                if (validate(token))
+                  failures.push(
+                    `${label}: advertised schema accepts out-of-range ${token}`,
+                  );
+              }
+            }
+          }
           try {
             expect(read(decimal)).toBe(candidate);
           } catch (error) {
@@ -138,8 +152,7 @@ describe("decimal integer CLI admission", () => {
             );
             continue;
           }
-          const admitsLeadingZeros =
-            JSON.stringify(property).includes("^[0-9]+$");
+          const admitsLeadingZeros = validate(`0${decimal}`);
           try {
             const parsed = read(`0${decimal}`);
             if (parsed !== candidate)

@@ -1,6 +1,8 @@
 import { z } from "incur";
 import { localPathStringSchema } from "../domain/localPath.js";
 
+import { decimalTokenPattern } from "./decimalTokenPattern.js";
+
 import {
   executableFormatHintSchema,
   type ExecutableFormatHint,
@@ -35,6 +37,7 @@ const decimalToken = (domain: z.ZodNumber) =>
   z
     .string()
     .regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer")
+    .meta({ pattern: decimalTokenPattern(domain) })
     .pipe(z.coerce.number<string>())
     .pipe(domain);
 
