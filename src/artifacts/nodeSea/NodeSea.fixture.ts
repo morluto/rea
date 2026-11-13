@@ -22,6 +22,8 @@ export interface NodeSeaBlobFixtureOptions {
   readonly assets?: readonly NodeSeaAssetFixture[];
   readonly execArgv?: readonly string[];
   readonly execArgvExtension?: 0 | 1 | 2;
+  /** Node 25.7+ main code format byte; omitted writes the Node 24 layout. */
+  readonly mainCodeFormat?: number;
   readonly disableExperimentalSeaWarning?: boolean;
   readonly trailing?: Buffer;
 }
@@ -66,7 +68,10 @@ export const buildNodeSeaBlob = (
   header.writeUInt32LE(NODE_SEA_FIXTURE_MAGIC, 0);
   header.writeUInt32LE(flags, 4);
   header[8] = options.execArgvExtension ?? 1;
-  const parts: Buffer[] = [header, sized(codePath), sized(body)];
+  const parts: Buffer[] = [header];
+  if (options.mainCodeFormat !== undefined)
+    parts.push(Buffer.from([options.mainCodeFormat]));
+  parts.push(sized(codePath), sized(body));
   if (options.codeCache !== undefined) parts.push(sized(options.codeCache));
   if (assets.length > 0) {
     parts.push(u64(assets.length));

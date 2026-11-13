@@ -66,8 +66,13 @@ source fields remain available in the retained Evidence.
 The decoder follows the 64-bit little-endian layout in Node
 [v24.10.0 node_sea.cc](https://github.com/nodejs/node/blob/v24.10.0/src/node_sea.cc)
 and [node_sea.h](https://github.com/nodejs/node/blob/v24.10.0/src/node_sea.h),
-including the exec-argument extension byte. Older layouts without that byte,
-32-bit length fields, big-endian blobs and future flags are not supported.
+including the exec-argument extension byte. It also reads the main code format
+byte that Node v25.7.0 and later write after that byte without changing the
+magic ([v26.12.1 node_sea.cc](https://github.com/nodejs/node/blob/v26.12.1/src/node_sea.cc)).
+The two layouts are told apart by byte 17: the high byte of the newer code-path
+length is zero, while the older layout's code path begins there. Older layouts
+without the extension byte, 32-bit length fields, big-endian blobs and future
+flags, including the Node 26 virtual file system flags, are not supported.
 Carrier byte order is independent of blob byte order.
 
 Malformed magic, truncation, unknown flags/extensions, invalid UTF-8, duplicate
