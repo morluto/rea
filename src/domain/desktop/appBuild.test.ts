@@ -321,3 +321,25 @@ describe("Electron launch rendering", () => {
     ).toBe(false);
   });
 });
+
+describe("build bundle host settings", () => {
+  it("keeps the host-control environment names reserved at runtime without advertising non-portable look-around", () => {
+    const parse = (settings: Record<string, string>) =>
+      buildSourceSchema.safeParse({
+        kind: "bundle",
+        path: "/tmp/bundle",
+        settings,
+      });
+
+    for (const reserved of [
+      "REA_AGENT_ENV_COMMAND",
+      "REA_DOCKER_COMMAND",
+      "REA_BUILD_COMPUTER_REA_ARCHIVE",
+    ]) {
+      const result = parse({ [reserved]: "handle" });
+      expect(result.success, reserved).toBe(false);
+    }
+
+    expect(parse({ REA_EXTRA_SETTING: "handle" }).success).toBe(true);
+  });
+});

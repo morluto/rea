@@ -122,7 +122,7 @@ export const READER_TIMEOUT_S = { default: 60, max: 300 } as const;
 const readerSchema = z.strictObject({
   id: z
     .string()
-    .regex(/^[a-z0-9][a-z0-9-]{0,63}$/u)
+    .regex(/^[a-z0-9][a-z0-9\x2d]{0,63}$/u)
     .describe(
       "Lowercase letters, digits and hyphens; a check names the reader by it.",
     ),
