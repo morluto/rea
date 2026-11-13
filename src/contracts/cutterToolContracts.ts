@@ -42,7 +42,7 @@ export const CUTTER_TOOL_CONTRACTS = [
     ...toolContractMetadata("list_cutter_sessions"),
     kind: "native-provider",
     description:
-      "Find live REA bridge sessions in Cutter and return document identity and bridge-directory security status. Examines at most 256 descriptors with up to eight concurrent probes; excess capacity returns bridge_directory_capacity_exceeded, not an empty session list. The fixed discovery budget is separate from REA_BRIDGE_MAX_REQUEST_BYTES and cannot be raised at runtime. no_live_bridge_found means no session published in bridge_directory answered, including when Cutter did not load the REA Python plugin; official Cutter 2.5.0 builds have been observed to reject Python plugins, including this one (rizinorg/cutter#3659).",
+      "Find live REA bridge sessions in Cutter and return document identity and bridge-directory security status. Examines at most 256 descriptors with up to eight concurrent probes; excess capacity returns bridge_directory_capacity_exceeded, not an empty session list. The fixed discovery budget is separate from REA_BRIDGE_MAX_REQUEST_BYTES and cannot be raised at runtime.",
     inputSchema: cutterListInputSchema,
     outputSchema: cutterDiscoverySchema,
     examples: [{ title: "List open Cutter instances", input: {} }],

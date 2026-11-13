@@ -35,6 +35,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
+  cutterDiscoveryLimitations,
   cutterSessionSchema,
   type CutterBridgeDiscovery,
   type CutterBridgeSession,
@@ -370,6 +371,7 @@ export class CutterBridgeClient {
         bridge_directory: this.#directory,
         discovery_status: loaded.error,
         bridge_directory_security: loaded.security,
+        limitations: cutterDiscoveryLimitations(loaded.error),
       };
     const descriptors = await mapDiscovery(
       loaded.descriptors,
@@ -448,12 +450,14 @@ export class CutterBridgeClient {
         "Cutter",
         "No status request was sent to the mismatched session.",
       );
+    const discoveryStatus =
+      sessions.length > 0 ? "sessions_found" : "no_live_bridge_found";
     return {
       sessions,
       bridge_directory: this.#directory,
-      discovery_status:
-        sessions.length > 0 ? "sessions_found" : "no_live_bridge_found",
+      discovery_status: discoveryStatus,
       bridge_directory_security: loaded.security,
+      limitations: cutterDiscoveryLimitations(discoveryStatus),
     };
   }
 

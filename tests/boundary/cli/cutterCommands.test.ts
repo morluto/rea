@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import ts from "typescript6";
 
 import { serveCli } from "./cliServeHarness.js";
+import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
 import {
   spawnOwnedProviderProcess,
   ProviderProcessSupervisor,
@@ -103,10 +104,14 @@ describe("Cutter CLI commands", () => {
     });
 
     expect(result.exitCode).toBe(0);
+    // The CLI projects the shared discovery owner's limitation unchanged.
+    const limitations = cutterDiscoveryLimitations("no_live_bridge_found");
+    expect(limitations).not.toEqual([]);
     expect(JSON.parse(result.stdout)).toMatchObject({
       sessions: [],
       discovery_status: "no_live_bridge_found",
       bridge_directory: directory,
+      limitations,
     });
   });
 

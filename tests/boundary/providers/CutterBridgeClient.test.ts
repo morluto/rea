@@ -22,6 +22,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
+import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
 
 const listen = async (
   server: ReturnType<typeof createServer>,
@@ -1404,6 +1405,7 @@ describe("CutterBridgeClient: scenario group 9", () => {
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found" as const,
       bridge_directory_security: "private_verified" as const,
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     };
     const service = new CutterBridgeService({
       listSessions: async () => discovery,
@@ -1491,6 +1493,7 @@ describe("CutterBridgeClient: scenario group 9", () => {
         bridge_directory: "/private/bridge",
         discovery_status: "no_live_bridge_found",
         bridge_directory_security: "private_verified",
+        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
       }),
       execute: async () => ({
         requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",

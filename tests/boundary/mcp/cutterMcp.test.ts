@@ -231,6 +231,7 @@ it("preserves live Cutter command Evidence and parity through the MCP boundary",
   expect(discovery.structuredContent).toMatchObject({
     discovery_status: "sessions_found",
     sessions: [{ session_id: sessionId, document_generation: 3 }],
+    limitations: [],
   });
 
   const command = await client.callTool({

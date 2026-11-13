@@ -27,7 +27,22 @@ export const cutterDiscoverySchema = z.strictObject({
     "unverified_platform_acl",
     "not_checked",
   ]),
+  /** What this discovery status cannot establish. */
+  limitations: z.array(z.string()),
 });
+
+/**
+ * An unanswered discovery cannot name its cause, so the limitation lists the
+ * possible ones, including the observed Cutter 2.5.0 plugin rejection.
+ */
+const NO_LIVE_BRIDGE_LIMITATION =
+  "No REA bridge session in bridge_directory answered. Discovery cannot tell whether Cutter is not running, did not load the REA Python plugin, or uses another REA_CUTTER_BRIDGE_DIR; Cutter's startup log shows whether the plugin loaded. Official Cutter 2.5.0 builds have been observed to reject Python plugins, including this one (rizinorg/cutter#3659).";
+
+/** Limitations owned by each discovery status. */
+export const cutterDiscoveryLimitations = (
+  status: z.infer<typeof cutterDiscoverySchema>["discovery_status"],
+): string[] =>
+  status === "no_live_bridge_found" ? [NO_LIVE_BRIDGE_LIMITATION] : [];
 
 export type CutterBridgeSession = z.infer<typeof cutterSessionSchema>;
 

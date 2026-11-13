@@ -263,12 +263,23 @@ they use `%LOCALAPPDATA%\REA\CutterBridge` on Windows when `LOCALAPPDATA` is set
 and `~/.cache/rea/cutter-bridge` otherwise. The two processes must resolve the
 same directory for discovery to find the published sessions.
 
-To install the plugin, copy `bridge/cutter/rea_bridge.py` from the installed REA
-package into the `python` subdirectory of Cutter's plugin directory, then restart
-Cutter. Cutter shows that directory and the loaded plugins under
-Edit > Preferences > Plugins. `list_cutter_sessions` reports
-`no_live_bridge_found` when no session published in the bridge directory
-answers, including when Cutter did not load the plugin.
+REA's npm package includes the plugin as `bridge/cutter/rea_bridge.py`. Use the
+copy from the REA version you run (`rea --version`, or the version in an
+`npx rea-agents@<version>` registration). An `npx` installation keeps that
+package in npm's cache rather than a stable folder, so take the file from the
+published package of the same version instead (in Windows PowerShell, use
+`npm.cmd`):
+
+```sh
+npm pack rea-agents@<version>
+tar -xzf rea-agents-<version>.tgz package/bridge/cutter/rea_bridge.py
+```
+
+Copy the extracted `package/bridge/cutter/rea_bridge.py` into the `python`
+subdirectory of Cutter's plugin directory, then restart Cutter. Cutter shows that
+directory and the loaded plugins under Edit > Preferences > Plugins. When no
+session in the bridge directory answers, `list_cutter_sessions` reports
+`no_live_bridge_found` with a limitation that names the possible causes.
 
 Official Cutter 2.5.0 builds have been observed to reject Python plugins at
 startup: Cutter's own sample plugin in the Linux AppImage, and this bridge and a
