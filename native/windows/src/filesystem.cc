@@ -235,6 +235,20 @@ static Handle openRelative(HANDLE parent, const std::wstring& name, DWORD access
   return result;
 }
 
+static std::string trusteeReadback(const char* constraint, PACL acl, SECURITY_DESCRIPTOR_CONTROL control,
+                                  const Security& expected) {
+  const bool protectedDacl = (control & SE_DACL_PROTECTED) != 0;
+  const bool userIsSystem = EqualSid(expected.userSid(), expected.system.data()) != FALSE;
+  std::string text = constraint;
+  text += "; ace_count=";
+  text += acl == nullptr ? "absent" : std::to_string(acl->AceCount);
+  text += " protected=";
+  text += protectedDacl ? "1" : "0";
+  text += " token_user_equals_system=";
+  text += userIsSystem ? "1" : "0";
+  return text;
+}
+
 static void verifyPrivate(HANDLE handle, const std::wstring& path, bool root) {
   Security expected;
   PSID owner = nullptr;
@@ -251,7 +265,9 @@ static void verifyPrivate(HANDLE handle, const std::wstring& path, bool root) {
   require(GetSecurityDescriptorControl(raw, &control, &revision), "Read DACL control flags failed", path);
   require(acl != nullptr && (control & SE_DACL_PRESENT) != 0 && (!root || (control & SE_DACL_PROTECTED) != 0),
           "Private object requires a present protected DACL", path, ERROR_ACCESS_DENIED);
-  require(acl->AceCount == 2, "Private DACL contains unexpected trustees", path, ERROR_ACCESS_DENIED);
+  if (acl->AceCount != 2)
+    throw Failure(trusteeReadback("Private DACL contains unexpected trustees", acl, control, expected), path,
+                  ERROR_ACCESS_DENIED);
   bool user = false, system = false;
   for (DWORD index = 0; index < acl->AceCount; ++index) {
     void* rawAce;
@@ -265,9 +281,12 @@ static void verifyPrivate(HANDLE handle, const std::wstring& path, bool root) {
     PSID sid = const_cast<DWORD*>(&ace->SidStart);
     if (EqualSid(sid, expected.userSid())) user = true;
     else if (EqualSid(sid, expected.system.data())) system = true;
-    else throw Failure("Private DACL permits an unrelated principal", path, ERROR_ACCESS_DENIED);
+    else throw Failure(trusteeReadback("Private DACL permits an unrelated principal", acl, control, expected), path,
+                       ERROR_ACCESS_DENIED);
   }
-  require(user && system, "Private DACL must allow only current user and SYSTEM", path, ERROR_ACCESS_DENIED);
+  if (!(user && system))
+    throw Failure(trusteeReadback("Private DACL must allow only current user and SYSTEM", acl, control, expected), path,
+                  ERROR_ACCESS_DENIED);
 }
 
 static std::unique_ptr<File> openPrivateBridgeDirectory(const std::wstring& path) {
