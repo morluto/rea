@@ -34,8 +34,9 @@ const row = {
 };
 const referenceRows = Array.from({ length: 500 }, (_, index) => ({
   ...row,
-  // Keep one duplicate to prove that paging preserves distinct row identities.
-  source_address: `0x${(0x2000 + Math.max(0, index - 1)).toString(16)}`,
+  // Separate duplicate matches so their filtered offsets differ from their source indices.
+  source_address:
+    index === 200 ? row.source_address : `0x${(0x2000 + index).toString(16)}`,
 }));
 const instruction = (
   incoming: "rows" | "empty" | "unavailable" | "not-recorded",
@@ -136,6 +137,52 @@ const checkContinuation = async (
   }
   expect(recovered).toEqual(original);
   expect(original).toEqual(referenceRows);
+};
+
+const checkFilteredReference = async (
+  client: Client,
+  schema: Readonly<Record<string, unknown>>,
+  source: { kind: "retained-evidence"; evidence_id: string },
+) => {
+  let offset: number | null = 0;
+  for (const sourceIndex of [0, 200]) {
+    if (offset === null)
+      throw new Error("Filtered page ended before both matches");
+    const filtered = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source,
+        view: {
+          kind: "native-instruction-references",
+          collection: "incoming_references",
+          source_address: "0x2000",
+          target_address: "0x1000",
+          offset,
+          limit: 1,
+        },
+      },
+    });
+    expect(filtered.isError, JSON.stringify(filtered.content)).not.toBe(true);
+    expect(
+      validation.assertions.validate(schema, filtered.structuredContent),
+      JSON.stringify(validation.assertions.errors),
+    ).toBe(true);
+    const page = analysisViewResultSchema.parse(
+      parseEvidence(filtered.structuredContent).normalized_result,
+    );
+    if (page.kind !== "native-instruction-references" || page.coverage === null)
+      throw new Error("Expected a filtered instruction reference page");
+    expect(page).toMatchObject({
+      parent_evidence_id: source.evidence_id,
+      items: {
+        state: "available",
+        rows: [{ source_index: sourceIndex, value: row }],
+      },
+      coverage: { total: 2, examined: 1 },
+    });
+    offset = page.coverage.next_offset;
+    expect(offset).toBe(sourceIndex === 0 ? 1 : null);
+  }
 };
 
 it.each(["full", "compact"] as const)(
@@ -240,7 +287,9 @@ it.each(["full", "compact"] as const)(
             view: {
               kind: "native-instruction-references",
               collection: "incoming_references",
-              offset: incoming === "rows" ? 1 : 0,
+              ...(incoming === "rows"
+                ? { offset: 1 }
+                : { source_address: "0x2000" }),
               limit: 1,
             },
           },
@@ -260,15 +309,16 @@ it.each(["full", "compact"] as const)(
           parent_evidence_id: source.evidence_id,
           instruction: { status: "data", address: "0x1000" },
         });
-        if (incoming === "rows")
+        if (incoming === "rows") {
           expect(page).toMatchObject({
             items: {
               state: "available",
-              rows: [{ source_index: 1, value: row }],
+              rows: [{ source_index: 1, value: referenceRows[1] }],
             },
             coverage: { total: 500, next_offset: 2 },
           });
-        else if (incoming === "empty")
+          await checkFilteredReference(client, advertised.outputSchema, source);
+        } else if (incoming === "empty")
           expect(page).toMatchObject({
             items: { state: "available", rows: [] },
             coverage: { total: 0, exhausted: true },
@@ -290,7 +340,11 @@ it.each(["full", "compact"] as const)(
 );
 
 it("recovers the complete parent when a single reference exceeds the page budget", async () => {
-  const oversized = { ...row, type: "x".repeat(1024 * 1024) };
+  const oversized = {
+    ...row,
+    source_address: "0x3000",
+    type: "x".repeat(1024 * 1024),
+  };
   const parent = createEvidence(undefined, provider, {
     operation: "inspect_native_instruction",
     parameters: { address: "0x1000" },
@@ -316,7 +370,12 @@ it("recovers the complete parent when a single reference exceeds the page budget
       kind: "retained-evidence",
       evidence_id: parent.evidence_id,
     };
-    const view = async (collection: string, offset: number, limit: number) =>
+    const view = async (
+      collection: string,
+      offset: number,
+      limit: number,
+      sourceAddress?: string,
+    ) =>
       client.callTool({
         name: "inspect_analysis_view",
         arguments: {
@@ -326,6 +385,9 @@ it("recovers the complete parent when a single reference exceeds the page budget
             collection,
             offset,
             limit,
+            ...(sourceAddress === undefined
+              ? {}
+              : { source_address: sourceAddress }),
           },
         },
       });
@@ -343,6 +405,17 @@ it("recovers the complete parent when a single reference exceeds the page budget
       code: "resource_constraint",
       details: { reported_limits: { parent_evidence_id: parent.evidence_id } },
     });
+    const small = await view("incoming_references", 0, 2, "0x2000");
+    expect(small.isError, JSON.stringify(small.content)).not.toBe(true);
+    expect(
+      parseEvidence(small.structuredContent).normalized_result,
+    ).toMatchObject({
+      items: { state: "available", rows: [{ source_index: 0, value: row }] },
+      byte_limited: false,
+      coverage: { total: 1, next_offset: null, exhausted: true },
+    });
+    const large = await view("incoming_references", 0, 1, "0x3000");
+    expect(parseMcpToolError(large).error.code).toBe("resource_constraint");
     const other = await view("references", 0, 1);
     expect(other.isError).not.toBe(true);
     expect(

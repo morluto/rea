@@ -404,7 +404,11 @@ Evidence files or bundles and require no live provider.
 For retained `inspect_native_instruction` Evidence, use
 `view: {"kind":"native-instruction-references","collection":"incoming_references","offset":0,"limit":64}`
 to page typed references to the exact code or data address. Select `references`
-for outgoing instruction references. Rows preserve their original indices and
+for outgoing instruction references. Optional `source_address` and
+`target_address` selectors compare exact retained strings, including address
+space prefixes. When both selectors are present, a row must match both. A
+missing or null source address cannot match a source selector. Offsets and
+coverage totals count matches. Rows preserve their original indices and
 provider-reported kind and provenance. `items.state` distinguishes available,
 unavailable, and not-recorded collections; coverage is null in the latter two
 cases. The fixed 1 MiB page projection allowance leaves room for Evidence and
