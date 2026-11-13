@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   ANDROID_NS,
   binaryManifestFixture,
@@ -83,6 +83,60 @@ it("bounds retained split types and reports the declaration's full count", () =>
     types: declared.slice(0, 64),
     declared_count: 200,
     truncated: true,
+  });
+});
+
+it("counts declared split types without materializing every token", () => {
+  // Splitting eagerly would build ~16k substring array entries before the
+  // retained cap applies. Spy on String.prototype.split to prove the scan
+  // never reaches it while the declared count stays exact.
+  const declared = Array.from(
+    { length: 16_000 },
+    (_, index) => `part${String(index)}`,
+  );
+  const spied = vi.spyOn(String.prototype, "split");
+  try {
+    const facts = readAndroidBinaryManifestSplitFacts(
+      binaryManifestFixture({
+        attributes: [
+          android("requiredSplitTypes", {
+            resourceId: 0x0101064c,
+            stringValue: declared.join(","),
+          }),
+        ],
+      }),
+    );
+    expect(facts.ok && facts.value.required_split_types).toMatchObject({
+      types: declared.slice(0, 64),
+      declared_count: declared.length,
+      truncated: true,
+    });
+    expect(spied).not.toHaveBeenCalled();
+  } finally {
+    spied.mockRestore();
+  }
+});
+
+it("reads an extended UTF-8 length prefix with an eight-bit shift", () => {
+  // A UTF-8 pool prefixes lengths with single-byte words, so a 300-byte
+  // literal is 0x80 0x2c — not the 16-bit 0x012c a shared shift would build.
+  // The declaration must survive as typed rather than fail as malformed.
+  const long = `${"a".repeat(280)},base__density`;
+  const facts = readAndroidBinaryManifestSplitFacts(
+    binaryManifestFixture({
+      utf8StringPool: true,
+      attributes: [
+        android("requiredSplitTypes", {
+          resourceId: 0x0101064c,
+          stringValue: long,
+        }),
+      ],
+    }),
+  );
+  expect(facts.ok && facts.value.required_split_types).toMatchObject({
+    types: ["a".repeat(280), "base__density"],
+    declared_count: 2,
+    truncated: false,
   });
 });
 

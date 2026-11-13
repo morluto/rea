@@ -92,7 +92,10 @@ const readLengthPrefix = (
   const continuation = readWord(at + wordBytes);
   if (continuation === null) return null;
   return {
-    value: ((first & payloadMask) << 16) | continuation,
+    value:
+      wordBytes === 1
+        ? ((first & payloadMask) << 8) | continuation
+        : ((first & payloadMask) << 16) | continuation,
     consumed: wordBytes * 2,
   };
 };
@@ -172,14 +175,25 @@ const readStringPool = (
   return ok(strings);
 };
 
+/**
+ * Walk the declaration one delimiter at a time. `split(",")` would build an
+ * array entry per token before the cap applies, so a literal admitted up to
+ * a mebibyte could still expand into a quarter of a million live substrings.
+ */
 const splitTypes = (value: string): AndroidBinaryManifestSplitTypeList => {
   const types: string[] = [];
   let declaredCount = 0;
-  for (const part of value.split(","))
-    if (part.trim().length > 0) {
+  let start = 0;
+  while (start <= value.length) {
+    const end = value.indexOf(",", start);
+    const token = value.slice(start, end === -1 ? value.length : end).trim();
+    if (token.length > 0) {
       declaredCount += 1;
-      if (types.length < MAXIMUM_REQUIRED_SPLIT_TYPES) types.push(part.trim());
+      if (types.length < MAXIMUM_REQUIRED_SPLIT_TYPES) types.push(token);
     }
+    if (end === -1) break;
+    start = end + 1;
+  }
   return {
     types,
     declared_count: declaredCount,

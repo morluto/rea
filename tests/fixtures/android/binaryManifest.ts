@@ -33,12 +33,17 @@ const flatten = (parts: readonly (readonly number[])[]): number[] =>
 /**
  * ResStringPool length prefix. A value of 0x8000 or more carries its high bits
  * in the first word (marker bit set, low 15 bits of the value) and its low bits
- * in a second word; smaller values use one word. Both forms are public AXML.
+ * in a second word; smaller values use one word. Both forms are public AXML,
+ * and a UTF-8 pool uses the same shape with single-byte words and an 8-bit
+ * shift.
  */
 const lengthPrefix16 = (units: number): readonly number[] =>
   units >= 0x8000
     ? [...bytes16((units >> 16) | 0x8000), ...bytes16(units & 0xffff)]
     : bytes16(units);
+
+const lengthPrefix8 = (bytes: number): readonly number[] =>
+  bytes >= 0x80 ? [(bytes >> 8) | 0x80, bytes & 0xff] : [bytes];
 
 const chunk = (
   type: number,
@@ -51,19 +56,29 @@ const chunk = (
   ...body,
 ];
 
-const stringPool = (values: readonly string[]): number[] => {
+const stringPool = (values: readonly string[], utf8 = false): number[] => {
   const data: number[] = [];
   const offsets: number[] = [];
   for (const value of values) {
     offsets.push(data.length);
+    if (utf8) {
+      const encoded = Buffer.from(value, "utf8");
+      for (const byte of lengthPrefix8(encoded.length)) data.push(byte);
+      for (const byte of lengthPrefix8(value.length)) data.push(byte);
+      for (const byte of encoded) data.push(byte);
+      data.push(0);
+      continue;
+    }
     const encoded = Buffer.from(value, "utf16le");
-    data.push(...lengthPrefix16(value.length), ...Array.from(encoded), 0, 0);
+    for (const byte of lengthPrefix16(value.length)) data.push(byte);
+    for (const byte of encoded) data.push(byte);
+    data.push(0, 0);
   }
   const headerSize = 28;
   return chunk(0x0001, headerSize, [
     ...bytes32(values.length),
     ...bytes32(0),
-    ...bytes32(0), // UTF-16, neither SORTED nor UTF8
+    ...bytes32(utf8 ? 0x100 : 0), // UTF8 pools flag the byte-length form
     ...bytes32(headerSize + offsets.length * 4),
     ...bytes32(0),
     ...flatten(offsets.map(bytes32)),
@@ -130,6 +145,8 @@ export const binaryManifestFixture = (input: {
    * chunk win.
    */
   readonly repeatedRootAttributes?: readonly BinaryManifestAttributeInput[];
+  /** Encode the string pool as UTF-8 (eight-bit length words) instead of UTF-16. */
+  readonly utf8StringPool?: boolean;
 }): Buffer => {
   const strings = [ANDROID_NS, "manifest"];
   const intern = (value: string): number => {
@@ -207,7 +224,7 @@ export const binaryManifestFixture = (input: {
           return [...child.start, ...child.end];
         })();
   // Every name is interned now; only then is the pool's offset table meaningful.
-  const pool = stringPool(strings);
+  const pool = stringPool(strings, input.utf8StringPool === true);
   const body = [
     ...pool,
     ...(resourceMap.length === 0 ? [] : chunk(0x0180, 8, resourceMapBytes)),
