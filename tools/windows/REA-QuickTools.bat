@@ -68,7 +68,13 @@ if not defined GHIDRA_INSTALL_DIR (
 :: analyst-provided paths survive untouched. The npm rea.cmd shim is NOT used
 :: as a fallback because CALL would re-parse the reconstructed arguments.
 set "NODE_EXE="
-for %%I in (node.exe) do if exist "%%~$PATH:I" set "NODE_EXE=%%~$PATH:I"
+REM Validate, not just exist: a packaged app (WindowsApps) can put a
+REM node.exe on PATH that cmd cannot exec (Access denied). Probe each
+REM candidate with --version and take the first that runs -- same
+REM shape as the owning resolver's executablePath() check.
+for %%I in (node.exe) do if not defined NODE_EXE if exist "%%~$PATH:I" (
+    "%%~$PATH:I" --version >nul 2>&1 && set "NODE_EXE=%%~$PATH:I"
+)
 set "REA_ENTRY="
 if defined NODE_EXE for %%D in ("%APPDATA%\npm\node_modules\rea-agents" "%~dp0..\..") do if not defined REA_ENTRY if exist "%%~D\scripts\rea.mjs" set "REA_ENTRY=%%~D\scripts\rea.mjs"
 if not defined REA_ENTRY goto NO_REA
