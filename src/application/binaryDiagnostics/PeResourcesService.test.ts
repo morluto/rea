@@ -1895,6 +1895,102 @@ it("rejects a terminated collection whose item property stopped", async () => {
   });
 });
 
+it("rejects an unknown property value that consumed type marker bytes", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("V", root.location.offset + 13, form.code_page);
+  const valueOffset = name.location.offset + name.location.bytes;
+  const propertyEnd = valueOffset + 1;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: stoppedRoot(report, form, propertyEnd, {
+        properties: [
+          {
+            name,
+            value_type: "unknown",
+            value: {
+              kind: "unknown",
+              reason: "stopped",
+              bytes_hex: "00",
+              truncated: false,
+              location: { offset: valueOffset, bytes: 1 },
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: propertyEnd - name.location.offset,
+            },
+          },
+        ],
+        children: [],
+      }),
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a child after a stopped property", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("V", root.location.offset + 13, form.code_page);
+  const valueOffset = name.location.offset + name.location.bytes + 1;
+  const childStart = valueOffset + 1;
+  const childClass = label("C", childStart, form.code_page);
+  const childComponent = label(
+    "D",
+    childClass.location.offset + childClass.location.bytes,
+    form.code_page,
+  );
+  const childEnd =
+    childComponent.location.offset + childComponent.location.bytes + 2;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: stoppedRoot(report, form, childEnd, {
+        properties: [
+          {
+            name,
+            value_type: "vaList",
+            value: {
+              kind: "list",
+              items: [],
+              terminated: false,
+              location: { offset: valueOffset, bytes: 0 },
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: valueOffset - name.location.offset,
+            },
+          },
+        ],
+        children: [
+          {
+            location: { offset: childStart, bytes: childEnd - childStart },
+            flags: [],
+            child_position: null,
+            class_name: childClass,
+            component_name: childComponent,
+            properties: [],
+            children: [],
+            unknown: null,
+          },
+        ],
+      }),
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("publishes a decoded collection with framed items", async () => {
   const report = await reportForPayload(
     delphiForm(
@@ -2305,6 +2401,60 @@ it("rejects a string whose projected text charge exceeds the budget", async () =
           location: { offset: rootEnd, bytes: 0 },
         },
       },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("counts a completed set terminator against the value budget", async () => {
+  const report = await reportForPayload(
+    delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty("Blob", delphiBinary(40000)),
+      ]),
+    ),
+  );
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("Deep", root.location.offset + 13, form.code_page);
+  const valueOffset = name.location.offset + name.location.bytes + 1;
+  const items = Array.from({ length: 16384 }, (_, item) => ({
+    value_type: "vaSet",
+    marker_location: { offset: valueOffset + item * 2, bytes: 1 },
+    value: {
+      kind: "set" as const,
+      names: [],
+      terminated: true,
+      location: { offset: valueOffset + item * 2 + 1, bytes: 1 },
+    },
+  }));
+  const propertyEnd = valueOffset + items.length * 2 + 1;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: stoppedRoot(report, form, propertyEnd, {
+        properties: [
+          {
+            name,
+            value_type: "vaList",
+            value: {
+              kind: "list",
+              items,
+              terminated: true,
+              location: { offset: valueOffset, bytes: items.length * 2 + 1 },
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: propertyEnd - name.location.offset,
+            },
+          },
+        ],
+        children: [],
+      }),
     },
   ];
   expect(await inspectReport(report)).toMatchObject({

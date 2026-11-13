@@ -322,8 +322,10 @@ const formTreeWithinDepth = (report: unknown): boolean => {
         counters.bytes += charge;
       } else if (value.kind === "set") {
         const names = arrayItems(value, "names");
-        counters.values += names.length;
+        // The closing zero-length name is read through the same value charge.
+        counters.values += names.length + (value.terminated === true ? 1 : 0);
         for (const name of names) addText(counters, name);
+        if (value.terminated === true) chargeText(counters, 0);
       } else if (value.kind === "collection")
         counters.values += arrayItems(value, "items").length;
       if (value.kind === "list") {
@@ -599,7 +601,8 @@ const valueFollowsName = (property: DelphiFormProperty): boolean => {
     // `unknown` means the type marker itself could not be read; any declared
     // ordinal means it was consumed.
     return property.value_type === "unknown"
-      ? property.value.location.offset === nameEnd
+      ? property.value.location.offset === nameEnd &&
+          property.value.location.bytes === 0
       : property.value.location.offset === nameEnd + 1;
   if (kind === "null" || kind === "nil" || kind === "boolean")
     return property.value.location.offset === nameEnd;
@@ -711,6 +714,9 @@ const objectSectionsFollowSource = (
     return objectEnd === cursor + 1;
   }
   if (object.children.length > 0) {
+    // A stopped property rethrows before the property terminator or child loop.
+    if (object.properties.some((property) => valueHasStop(property.value)))
+      return false;
     // The property terminator was consumed before the child list starts.
     if (object.children[0]!.location.offset !== propertiesEnd + 1) return false;
     const last = object.children.at(-1)!;
