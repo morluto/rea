@@ -540,6 +540,62 @@ describe("Claude Desktop MSIX process view when a probe changes during the compa
   });
 });
 
+describe("Claude Desktop migrated storage the app handed off to", () => {
+  const marker = `.user-data-left.${CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase()}`;
+  const appDataMarker = join(appDataDirectory, marker);
+  const privateMarker = join(privateDirectory, marker);
+  const migratedConfig = join(migratedDirectory, "claude_desktop_config.json");
+  const resolveWith = (
+    present: readonly string[],
+    hasPackage = true,
+  ): ReturnType<typeof resolveWindowsClaudeDesktopLocation> =>
+    resolveWindowsClaudeDesktopLocation(home, env, {
+      readdir: (path) => {
+        if (path === packages)
+          return hasPackage ? [CLAUDE_DESKTOP_PACKAGE_FAMILY] : [];
+        throw failure("ENOENT");
+      },
+      lstat: (path) => {
+        if (path === migratedDirectory) return folder;
+        if (present.includes(path)) return file;
+        throw failure("ENOENT");
+      },
+      realpath: (path) => path,
+    });
+  const selected = {
+    ok: true,
+    value: { configPath: migratedConfig, markerPath: migratedDirectory },
+  };
+
+  it("selects the migrated file when every older folder holds the marker", () => {
+    expect(resolveWith([appDataMarker, privateMarker])).toEqual(selected);
+  });
+
+  it("selects the migrated file without package storage", () => {
+    expect(resolveWith([appDataMarker], false)).toEqual(selected);
+  });
+
+  it("accepts a package folder that has no configuration of its own", () => {
+    expect(resolveWith([appDataMarker])).toEqual(selected);
+  });
+
+  it.each([
+    ["no AppData marker", [privateMarker]],
+    [
+      "a private configuration without a marker",
+      [appDataMarker, privateConfig],
+    ],
+  ])("stays unresolved with %s", (_label, present) => {
+    expect(resolveWith(present)).toMatchObject({
+      ok: false,
+      error: {
+        path: migratedConfig,
+        message: expect.stringContaining("migrated Claude Desktop storage"),
+      },
+    });
+  });
+});
+
 describe("unresolved Claude Desktop package identity", () => {
   it.each(["AnthropicPBC.Claude_fnn82j28hfe8t", "Claude_fnn82j28hfe8t"])(
     "refuses an unrecognized package deployment %s instead of selecting AppData",

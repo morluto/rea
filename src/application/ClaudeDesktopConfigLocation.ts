@@ -137,6 +137,19 @@ export const resolveWindowsClaudeDesktopLocation = (
         }
       : undefined;
   const family = families[0];
+  if (migrated.ok && migrated.value) {
+    const privateClaudeDirectory =
+      family === undefined
+        ? undefined
+        : join(packagesDirectory, family, "LocalCache", "Roaming", "Claude");
+    if (
+      migrationHandedOff(fileSystem, appDataDirectory, privateClaudeDirectory)
+    )
+      return ok({
+        configPath: migratedConfigPath,
+        markerPath: migratedDirectory,
+      });
+  }
   if (family === undefined)
     return migrationFailure === undefined
       ? ok({ configPath: appDataConfigPath, markerPath: appDataDirectory })
@@ -174,6 +187,40 @@ export const resolveWindowsClaudeDesktopLocation = (
     markerPath: container,
     msixPackage: packageView(),
   });
+};
+
+/**
+ * The marker Claude Desktop leaves in each folder it moved out of when it
+ * migrates its user data into `%LOCALAPPDATA%\Claude-Data\<family>`.
+ */
+const MIGRATION_MARKER = `.user-data-left.${CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase()}`;
+
+/**
+ * Whether Claude Desktop recorded that it moved its data out of every older
+ * location it could otherwise read: the AppData folder must hold the app's
+ * migration marker, and the package-private folder, when the package exists,
+ * must hold the marker too or have no configuration of its own. Anything that
+ * cannot be inspected leaves the migration unconfirmed.
+ */
+const migrationHandedOff = (
+  fileSystem: ClaudeDesktopLocationFileSystem,
+  appDataDirectory: string,
+  privateDirectory: string | undefined,
+): boolean => {
+  if (
+    entryKind(fileSystem, join(appDataDirectory, MIGRATION_MARKER)) !== "file"
+  )
+    return false;
+  if (privateDirectory === undefined) return true;
+  if (
+    entryKind(fileSystem, join(privateDirectory, MIGRATION_MARKER)) === "file"
+  )
+    return true;
+  const privateConfig = present(
+    fileSystem,
+    join(privateDirectory, CONFIG_FILE),
+  );
+  return privateConfig.ok && !privateConfig.value;
 };
 
 /**
