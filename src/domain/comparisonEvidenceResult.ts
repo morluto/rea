@@ -66,19 +66,24 @@ export function readComparisonResult(
       try {
         const { left, right } = comparisonSourceEvidenceSides(evidence);
         const sourceId = left[0];
+        // Normalized views project the same source, so they share its invariants.
+        const conclusions = [
+          ...parsed.value.dimensions,
+          ...(parsed.value.normalized_views?.views ?? []),
+        ];
         const sameSource =
           left.length === 1 &&
           right.length === 1 &&
           sourceId === right[0] &&
           sourceId !== undefined &&
           evidence.evidence_links.includes(sourceId) &&
-          parsed.value.dimensions.every(({ evidence_links }) =>
+          conclusions.every(({ evidence_links }) =>
             evidence_links.every((id) => id === sourceId),
           );
         const impossibleChange =
           parsed.value.left_subject_sha256 !==
             parsed.value.right_subject_sha256 ||
-          parsed.value.dimensions.some(
+          conclusions.some(
             (dimension) =>
               dimension.status === "changed" ||
               (dimension.status === "unchanged" &&

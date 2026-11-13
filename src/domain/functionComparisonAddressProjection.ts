@@ -239,8 +239,18 @@ interface NamedSymbolIndex {
   readonly namesByLastRun: ReadonlyMap<string, readonly string[]>;
 }
 
-const lastWordRun = (value: string): string | undefined =>
-  /[0-9A-Za-z_]+$/u.exec(value)?.[0];
+const WORD_CHARACTER = /^[0-9A-Za-z_]$/u;
+
+/**
+ * The final run of word characters, found with one backward scan: an
+ * end-anchored regex retries every start position when the value ends in
+ * punctuation, which is quadratic in the length of the run before it.
+ */
+const lastWordRun = (value: string): string | undefined => {
+  let start = value.length;
+  while (start > 0 && WORD_CHARACTER.test(value.charAt(start - 1))) start -= 1;
+  return start === value.length ? undefined : value.slice(start);
+};
 
 /** Index named symbols once, in linear space, so each token is a direct lookup. */
 const indexNamedSymbols = (names: ReadonlySet<string>): NamedSymbolIndex => {
