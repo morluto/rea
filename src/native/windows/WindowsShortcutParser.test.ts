@@ -933,3 +933,22 @@ it("derives the target extension of a name Win32 trims", async () => {
   // Trimmed to `report`, which has no extension.
   expect(await extensionFor("C:\\Tools\\report.")).toBeNull();
 });
+it("keeps a path that may expand into a device path as written", async () => {
+  // An EnvironmentVariableDataBlock can supply the whole prefix, and a prefix that expands to
+  // `\\?\` keeps the trailing periods Win32 would otherwise trim. The text cannot say which way
+  // it goes, so a leading unexpanded reference leaves the segments alone.
+  const extensionFor = async (localBasePath: string) => {
+    const report = await parse(
+      windowsShortcutBytes({ iconLocation: "", linkInfo: { localBasePath } }),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "target_extension",
+    );
+    return found?.kind === "target_extension" ? found.extension : undefined;
+  };
+  expect(await extensionFor("%ROOT%\\app.exe.")).toBeNull();
+  // The same name without the trailing period is read as usual.
+  expect(await extensionFor("%ROOT%\\app.exe")).toBe(".exe");
+  // A full path whose prefix is known to be a drive still trims.
+  expect(await extensionFor("C:\\Tools\\app.exe.")).toBe(".exe");
+});

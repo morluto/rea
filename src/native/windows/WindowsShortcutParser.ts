@@ -250,7 +250,10 @@ const extensionOf = (path: string | null | undefined): string | null => {
   const slash = normalized.lastIndexOf("\\");
   const stored = slash === -1 ? normalized : normalized.slice(slash + 1);
   // A `\\?\` path skips normalization, so it keeps the periods and spaces it stores.
-  const name = DEVICE_PATH.test(normalized) ? stored : fileNameSegment(stored);
+  const name =
+    DEVICE_PATH.test(normalized) || mayExpandToDevicePath(normalized)
+      ? stored
+      : fileNameSegment(stored);
   const dot = name.lastIndexOf(".");
   if (dot <= 0 || dot === name.length - 1) return null;
   return name.slice(dot).toLowerCase();
@@ -276,6 +279,17 @@ const directorySegment = (part: string): string =>
 const fileNameSegment = (part: string): string => part.replace(/[. ]+$/u, "");
 
 /**
+ * Whether a stored path may expand into a `\\?\` path.
+ *
+ * An `EnvironmentVariableDataBlock` can supply the whole prefix, and a caller whose variable
+ * expands to `\\?\` keeps the trailing periods Win32 would otherwise trim. The text alone cannot
+ * say which way it goes, so a path that starts with an unexpanded reference keeps its segments as
+ * written rather than guessing a normalization that may not apply.
+ */
+const mayExpandToDevicePath = (path: string): boolean =>
+  /^%[^%\\/]+%/u.test(path);
+
+/**
  * Compare form of a full path, from the text alone: no path is ever opened.
  * Folds case and separators, drops repeated separators and `.` segments, and
  * lets `..` remove one segment but never the drive or UNC `\\server\share` root.
@@ -284,7 +298,7 @@ const fileNameSegment = (part: string): string => part.replace(/[. ]+$/u, "");
  */
 const normalizePath = (path: string): string => {
   const folded = foldPath(path);
-  if (DEVICE_PATH.test(folded)) return folded;
+  if (DEVICE_PATH.test(folded) || mayExpandToDevicePath(folded)) return folded;
   const unc = folded.startsWith("\\\\");
   if (!unc && !/^[a-z]:\\/u.test(folded)) return folded;
   // Empty parts drop out first, so `\\server\\share` keeps its share in the root.
