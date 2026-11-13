@@ -195,6 +195,26 @@ describe("SoC catalog selection", () => {
     expect(report.limitations[0]).toContain("stm32f4, gd32f4");
   });
 
+  it("names an RP2040 UART when no other catalog owns the window", () => {
+    const report = reconstructHardwareFromReferences(
+      [{ target_address: "0x40034000", read: true }],
+      "arm",
+    );
+
+    expect(report.detectedPlatforms).toEqual([
+      {
+        platform: "rp2040",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART0"],
+      },
+    ]);
+    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe("UART0");
+    expect(report.peripheralBlocks[0]?.socPeripheralBus).toBe("APB");
+    expect(report.limitations).toEqual([]);
+  });
+
   it("keeps an ESP32-C UART when unrelated references are present", () => {
     const report = reconstructHardwareFromReferences(
       [

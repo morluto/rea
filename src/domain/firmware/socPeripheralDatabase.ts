@@ -7,6 +7,7 @@ export const SOC_PLATFORMS = [
   "stm32f4",
   "gd32f1",
   "gd32f4",
+  "rp2040",
   "esp32",
 ] as const;
 export type SocPlatform = (typeof SOC_PLATFORMS)[number];
@@ -20,6 +21,8 @@ export type PeripheralBusKind =
   | "AHB1"
   | "AHB2"
   | "AHB3"
+  | "APB"
+  | "AHBL"
   | "DPort"
   | "RTC"
   | "System";
@@ -48,6 +51,8 @@ export const socPeripheralDefinitionSchema = z.strictObject({
     "AHB1",
     "AHB2",
     "AHB3",
+    "APB",
+    "AHBL",
     "DPort",
     "RTC",
     "System",
@@ -989,6 +994,56 @@ const gd32F4Window = (
   };
 };
 
+// RP2040 blocks from pico-sdk addressmap.h. APB bases are 0x4000 apart, and
+// that header places the atomic alias pages at bit 12, so a free slot is
+// 0x4000 bytes. A slot that intersects an STM32 or GD32 window is omitted.
+const RP2040_SLOT = 0x4000;
+const rp2040Block = (
+  name: string,
+  base: bigint,
+  bus: PeripheralBusKind,
+  description: string,
+  size = RP2040_SLOT,
+): InternalPeripheralEntry => ({
+  name,
+  base,
+  size,
+  bus,
+  description,
+});
+
+const RP2040_PERIPHERALS: readonly InternalPeripheralEntry[] = [
+  rp2040Block("CLOCKS", 0x40008000n, "APB", "Clock control register block"),
+  rp2040Block("RESETS", 0x4000c000n, "APB", "Reset control register block"),
+  rp2040Block("IO_QSPI", 0x40018000n, "APB", "QSPI I/O register block"),
+  rp2040Block(
+    "PADS_BANK0",
+    0x4001c000n,
+    "APB",
+    "Pad control register block for bank 0",
+  ),
+  rp2040Block("PLL_USB", 0x4002c000n, "APB", "USB PLL register block"),
+  rp2040Block("BUSCTRL", 0x40030000n, "APB", "Bus fabric control register block"),
+  rp2040Block("UART0", 0x40034000n, "APB", "UART register block"),
+  rp2040Block("UART1", 0x40038000n, "APB", "UART register block"),
+  rp2040Block("SPI0", 0x4003c000n, "APB", "SPI register block"),
+  rp2040Block(
+    "USBCTRL_REGS",
+    0x50110000n,
+    "AHBL",
+    "USB FS/LS controller device registers",
+  ),
+  rp2040Block("PIO0", 0x50200000n, "AHBL", "Programmable IO block"),
+  rp2040Block("PIO1", 0x50300000n, "AHBL", "Programmable IO block"),
+  rp2040Block(
+    "SIO",
+    0xd0000000n,
+    "APB",
+    "Single-cycle IO block",
+    0x180,
+  ),
+];
+
 const GD32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   ...STM32F4_PERIPHERALS.map(gd32F4Window),
   {
@@ -1238,6 +1293,7 @@ const PLATFORM_PERIPHERALS: Record<
   stm32f4: STM32F4_PERIPHERALS,
   gd32f1: GD32F1_PERIPHERALS,
   gd32f4: GD32F4_PERIPHERALS,
+  rp2040: RP2040_PERIPHERALS,
   esp32: ESP32_PERIPHERALS,
 };
 
@@ -1247,6 +1303,7 @@ const PLATFORM_CPU: Record<SocPlatform, readonly HardwareArchitecture[]> = {
   stm32f4: ["arm", "cortex-m"],
   gd32f1: ["arm", "cortex-m"],
   gd32f4: ["arm", "cortex-m"],
+  rp2040: ["arm", "cortex-m"],
   esp32: ["riscv"],
 };
 

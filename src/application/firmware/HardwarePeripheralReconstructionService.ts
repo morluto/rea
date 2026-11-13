@@ -75,7 +75,7 @@ export const reconstructProcedureHardwareInputSchema = z.strictObject({
   platform: socPlatformSchema
     .optional()
     .describe(
-      "Optional explicit target SoC family (stm32f1, stm32f4, gd32f1, gd32f4, esp32) for device-specific register mapping",
+      "Optional explicit target SoC family (stm32f1, stm32f4, gd32f1, gd32f4, rp2040, esp32) for device-specific register mapping",
     ),
   board: boardIdSchema
     .optional()

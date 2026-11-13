@@ -266,3 +266,33 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
     expect(lookupSocPeripheral("0x3ff48c00", "esp32")?.name).toBe("RTC_I2C");
   });
 });
+
+describe("RP2040 peripheral windows", () => {
+  it("names blocks that sit outside the STM32 and GD32 windows", () => {
+    expect(lookupSocPeripheral("0x40034000", "rp2040")).toMatchObject({
+      name: "UART0",
+      bus: "APB",
+    });
+    expect(lookupSocPeripheral("0x40035000", "rp2040")?.name).toBe("UART0");
+    expect(lookupSocPeripheral("0x50200010", "rp2040")).toMatchObject({
+      name: "PIO0",
+      bus: "AHBL",
+    });
+    expect(lookupSocPeripheral("0xd0000004", "rp2040")?.name).toBe("SIO");
+    expect(lookupSocPeripheral("0x50110000", "rp2040")?.name).toBe(
+      "USBCTRL_REGS",
+    );
+    expect(lookupSocPeripheral("0x40040000", "rp2040")).toBeNull();
+    expect(lookupSocPeripheral("0x40024000", "rp2040")).toBeNull();
+    expect(detectSocPlatform(["0x40034000"], "arm")).toEqual([
+      {
+        platform: "rp2040",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART0"],
+      },
+    ]);
+    expect(detectSocPlatform(["0x40034000"], "riscv")).toEqual([]);
+  });
+});
