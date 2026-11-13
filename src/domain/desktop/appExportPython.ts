@@ -29,6 +29,7 @@ import json
 import math
 import os
 import re
+import shutil
 import sqlite3
 import struct
 import subprocess
@@ -178,11 +179,12 @@ def _ensure_state_aliases(home: Path) -> None:
 
 def _dconf(arguments: list, environment: dict, cwd: Path | None = None) -> str:
     child_environment = {**os.environ, **environment}
-    if cwd is not None:
-        child_environment["PATH"] = os.pathsep.join(
-            part if os.path.isabs(part) else os.path.join(os.getcwd(), part)
-            for part in child_environment.get("PATH", os.defpath).split(os.pathsep))
-    return subprocess.run(["dconf", *arguments], env=child_environment, capture_output=True, text=True,
+    command = shutil.which("dconf", path=child_environment.get("PATH", os.defpath) or os.curdir)
+    if command is None:
+        raise FileNotFoundError("dconf is not installed (dconf-cli)")
+    if not os.path.isabs(command):
+        command = os.path.join(os.getcwd(), command)
+    return subprocess.run([command, *arguments], env=child_environment, capture_output=True, text=True,
                           check=True, cwd=cwd).stdout
 
 

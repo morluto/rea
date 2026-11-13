@@ -165,3 +165,93 @@ for (const name of ["ordinary", "hash#directory", "line\nbreak"]) {
     },
   );
 }
+
+// A command-lookup boundary, independent of the optional system dconf provider.
+for (const searchPath of ["tools", ""]) {
+  cliTest.skipIf(process.platform === "win32" || !hasPython)(
+    `capture and exported helper preserve ${JSON.stringify(searchPath)} PATH from a colon-containing cwd`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("dconf-command-selection-");
+      const cwd = join(root, "launch:split");
+      const selected = searchPath === "" ? cwd : join(cwd, "tools");
+      const foreign = join(root, "launch");
+      const staged = join(root, "staged");
+      await Promise.all([
+        mkdir(selected, { recursive: true }),
+        mkdir(foreign),
+        mkdir(staged),
+      ]);
+      await writeFile(
+        join(selected, "dconf"),
+        `#!/bin/sh
+[ "$PATH" = '${searchPath}' ] || exit 19
+printf '[org/notes]\\nselected=true\\n'
+`,
+        { mode: 0o755 },
+      );
+      await writeFile(
+        join(foreign, "dconf"),
+        "#!/bin/sh\nprintf '[org/notes]\\nforeign=true\\n'\n",
+        { mode: 0o755 },
+      );
+      const path = `${HOME}/.config/dconf/user`;
+      const bytes = Buffer.from("GVariant");
+      const base = capture();
+      const folder = await writeCaptureFolder(
+        {
+          ...base,
+          state: {
+            ...base.state,
+            content_roots: [path],
+            checkpoints: [
+              checkpoint("baseline", "baseline", [], [retained(path, bytes)]),
+            ],
+          },
+        },
+        undefined,
+        [bytes],
+      );
+      const result = await cli.run({
+        arguments: ["inspect-desktop-application-state", folder, "--json"],
+        cwd,
+        environment: { PATH: searchPath, REA_DCONF_COMMAND: "dconf" },
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const state = desktopApplicationStateSchema.parse(
+        parseEvidence(result.json).normalized_result,
+      );
+      expect.soft(state.paths).toEqual([
+        expect.objectContaining({
+          versions: [
+            expect.objectContaining({
+              view: {
+                groups: { "org/notes": { selected: "true" } },
+                other_groups: [],
+              },
+              view_error: null,
+            }),
+          ],
+        }),
+      ]);
+      const helper = join(root, "exported.py");
+      await writeFile(
+        helper,
+        [
+          ...PYTHON_IMPORTS.split("\n").filter(
+            (line) => !line.includes("agentenv_protocol"),
+          ),
+          PYTHON_HELPERS,
+          'print(_dconf(["dump", "/"], {}, cwd=Path(sys.argv[1])), end="")',
+        ].join("\n"),
+      );
+      const exported = await execFileOutput(python, ["-I", helper, staged], {
+        cwd,
+        env: { PATH: searchPath },
+        timeout: 10_000,
+        maxBuffer: 64 * 1024,
+      });
+      expect(exported.stderr).toBe("");
+      expect(exported.stdout).toBe("[org/notes]\nselected=true\n");
+    },
+  );
+}

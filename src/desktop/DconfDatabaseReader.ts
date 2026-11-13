@@ -1,5 +1,5 @@
 import { realpath, writeFile } from "node:fs/promises";
-import { basename, delimiter, dirname, isAbsolute, join, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, sep } from "node:path";
 
 import {
   execFileOutput,
@@ -9,7 +9,10 @@ import {
 
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { resolveProgram } from "./ProgramLookup.js";
 
+const DCONF_NOT_INSTALLED =
+  "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND";
 const DCONF_TIMEOUT_MS = 30_000;
 const DCONF_MAX_BUFFER = 16 * 1024 * 1024;
 
@@ -47,27 +50,34 @@ export const dumpDconfDatabase = async (
       flag: "wx",
     });
     const command = environment.REA_DCONF_COMMAND ?? "dconf";
-    // Changing cwd must not change caller-selected commands or relative PATH entries.
+    // Resolve before changing cwd; serializing absolute PATH entries would split
+    // an original working directory containing the PATH delimiter.
     const startedIn = process.cwd();
-    const fromOriginalDirectory = (path: string): string =>
-      isAbsolute(path) ? path : `${startedIn}${sep}${path}`;
     const invocation =
       command.includes("/") || command.includes(sep)
-        ? fromOriginalDirectory(command)
-        : command;
-    const searchPath = (environment.PATH ?? "")
-      .split(delimiter)
-      .map(fromOriginalDirectory)
-      .join(delimiter);
+        ? isAbsolute(command)
+          ? command
+          : `${startedIn}${sep}${command}`
+        : (
+            await resolveProgram(
+              command,
+              { PATH: environment.PATH ?? "" },
+              startedIn,
+            )
+          )?.path;
+    assertArtifactReadActive(signal);
+    if (invocation === undefined)
+      return { ok: false, error: DCONF_NOT_INSTALLED };
     const { stdout } = await execFileOutput(invocation, ["dump", "/"], {
       cwd: directory,
-      env: { PATH: searchPath, DCONF_PROFILE: profile },
+      env: { PATH: environment.PATH ?? "", DCONF_PROFILE: profile },
       timeout: DCONF_TIMEOUT_MS,
       maxBuffer: DCONF_MAX_BUFFER,
       ...(signal === undefined ? {} : { signal }),
     });
     return { ok: true, text: stdout };
   } catch (cause: unknown) {
+    if (cause instanceof ArtifactReaderFailure) throw cause;
     if (cause instanceof ExecFileOutputCancelledError)
       throw new ArtifactReaderFailure("cancelled", "dconf dump was cancelled", {
         cause: cause.cause,
@@ -77,7 +87,7 @@ export const dumpDconfDatabase = async (
     if (failure?.code === "ENOENT")
       return {
         ok: false,
-        error: "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND",
+        error: DCONF_NOT_INSTALLED,
       };
     return {
       ok: false,
