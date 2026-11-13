@@ -1,7 +1,6 @@
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect } from "vitest";
 
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -14,24 +13,20 @@ import { managedMemberInspectionSchema } from "../../../src/domain/managed/manag
 import { managedApplicationGraphReferenceInputSchema } from "../../../src/domain/managed/managedApplicationGraph.js";
 import { managedNativeVerificationResultSchema } from "../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
-const client = new Client({ name: "managed-native-adapters", version: "1" });
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [resolve("scripts/rea.mjs"), "mcp"],
-  cwd: process.cwd(),
-  env: { PATH: process.env.PATH ?? "" },
-  stderr: "pipe",
-});
+let client: Client;
+const cleanups: Array<() => Promise<void>> = [];
 beforeAll(async () => {
-  await client.connect(transport);
-  transport.stderr?.on("data", () => undefined);
+  ({ client } = await connectLocalToolsMcp({}, (cleanup) => {
+    cleanups.push(cleanup);
+  }));
 });
 afterAll(async () => {
-  await Promise.all([client.close(), transport.close()]);
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
 cliTest(

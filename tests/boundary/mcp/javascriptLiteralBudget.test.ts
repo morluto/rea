@@ -1,29 +1,24 @@
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const client = new Client({ name: "literal-budget-boundary", version: "1" });
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [resolve("scripts/rea.mjs"), "mcp"],
-  cwd: process.cwd(),
-  env: { PATH: process.env.PATH ?? "" },
-  stderr: "pipe",
-});
+let client: Client;
+const cleanups: Array<() => Promise<void>> = [];
 beforeAll(async () => {
-  await client.connect(transport);
-  transport.stderr?.on("data", () => undefined);
+  ({ client } = await connectLocalToolsMcp({}, (cleanup) => {
+    cleanups.push(cleanup);
+  }));
 });
 afterAll(async () => {
-  await Promise.all([client.close(), transport.close()]);
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
 const large = "x".repeat(200_000);
