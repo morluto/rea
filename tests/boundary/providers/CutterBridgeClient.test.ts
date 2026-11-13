@@ -590,11 +590,14 @@ describe("CutterBridgeClient: scenario group 2", () => {
       port,
       "synthetic-cutter-bridge-token-for-test",
     );
+    // A published session whose status probe fails is a no-live discovery
+    // and carries the same limitation as an empty bridge directory.
     await expect(
       createClient({ REA_CUTTER_BRIDGE_DIR: directory }).listSessions(),
     ).resolves.toMatchObject({
       discovery_status: "no_live_bridge_found",
       sessions: [],
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     });
   });
 });
