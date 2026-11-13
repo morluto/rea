@@ -131,14 +131,15 @@ it("bounds V4 extent delivery while retaining full coverage counts and continuat
 });
 
 it.each([
-  [15, 1],
-  [17, 1],
-  [16, 65535],
+  [15, 1, 80],
+  // Both 17-byte extents fit, so only the alignment check rejects this record.
+  [17, 2, 104],
+  [16, 65535, 80],
 ])(
-  "refuses V4 stride %i / count %i before extent allocation",
-  (stride, count) => {
-    const bytes = Buffer.alloc(80);
-    bytes.writeUInt32LE(80);
+  "refuses V4 stride %i / count %i in a %i-byte record before extent allocation",
+  (stride, count, recordBytes) => {
+    const bytes = Buffer.alloc(recordBytes);
+    bytes.writeUInt32LE(bytes.length);
     bytes.writeUInt16LE(4, 4);
     bytes.writeUInt16LE(count, 60);
     bytes.writeUInt16LE(stride, 62);
