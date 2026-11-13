@@ -680,6 +680,32 @@ describe("production MCP doctor child lifecycle", () => {
     });
   });
 
+  it("does not hand an ambient target variable to the diagnostic child", async () => {
+    const root = await createTestTempDirectory("rea-mcp-doctor-target-free-");
+    const seenPath = join(root, "env.json");
+    const result = await runProductionMcpDoctor({
+      command: process.execPath,
+      args: [resolve("tests/fixtures/mcpDoctorEnvironment.mjs")],
+      cwd: root,
+      environment: {
+        ...process.env,
+        HOPPER_TARGET_PATH: "/tmp/ambient-target",
+        HOPPER_TARGET_KIND: "hop",
+        REA_MCP_DOCTOR_SEEN_PATH: seenPath,
+        REA_MCP_DOCTOR_DEADLINE_MS: "5000",
+      },
+    });
+    expect(result.healthy).toBe(false);
+    const seen = JSON.parse(await readFile(seenPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(seen).not.toHaveProperty("HOPPER_TARGET_PATH");
+    expect(seen).not.toHaveProperty("HOPPER_TARGET_KIND");
+    // The rest of the caller's environment still reaches the child.
+    expect(seen.REA_MCP_DOCTOR_SEEN_PATH).toBe(seenPath);
+  }, 10_000);
+
   it("retains only the stderr prefix while draining and counting the full child stream", async () => {
     const result = await runNoisyDoctorChild(`
       for (let index = 0; index < 64; index += 1) {
