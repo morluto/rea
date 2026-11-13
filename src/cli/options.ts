@@ -52,15 +52,13 @@ const publishDecimalInput = (field: z.ZodType): z.ZodType => {
   return field.meta(inputSchema);
 };
 
-const numericStack = (
+const unwrapWrappers = (
   field: z.ZodType,
-):
-  | {
-      readonly core: z.ZodNumber;
-      readonly wrappers: readonly DecimalWrapper[];
-      readonly description: string | undefined;
-    }
-  | undefined => {
+): {
+  readonly core: z.ZodType;
+  readonly wrappers: readonly DecimalWrapper[];
+  readonly description: string | undefined;
+} => {
   const wrappers: DecimalWrapper[] = [];
   let description: string | undefined;
   let current = field;
@@ -105,8 +103,44 @@ const numericStack = (
     }
     break;
   }
-  return current instanceof z.ZodNumber
-    ? { core: current, wrappers, description }
+  return { core: current, wrappers, description };
+};
+
+const numericStack = (
+  field: z.ZodType,
+):
+  | {
+      readonly core: z.ZodNumber;
+      readonly wrappers: readonly DecimalWrapper[];
+      readonly description: string | undefined;
+    }
+  | undefined => {
+  const stack = unwrapWrappers(field);
+  return stack.core instanceof z.ZodNumber
+    ? {
+        core: stack.core,
+        wrappers: stack.wrappers,
+        description: stack.description,
+      }
+    : undefined;
+};
+
+const arrayStack = (
+  field: z.ZodType,
+):
+  | {
+      readonly core: z.ZodArray<z.ZodType>;
+      readonly wrappers: readonly DecimalWrapper[];
+      readonly description: string | undefined;
+    }
+  | undefined => {
+  const stack = unwrapWrappers(field);
+  return stack.core instanceof z.ZodArray
+    ? {
+        core: stack.core as z.ZodArray<z.ZodType>,
+        wrappers: stack.wrappers,
+        description: stack.description,
+      }
     : undefined;
 };
 
@@ -162,6 +196,42 @@ export const cliDecimalShape = <Shape extends Record<string, z.ZodType>>(
       numericStack(field) === undefined ? field : cliDecimalField(field),
     ]),
   ) as Shape;
+
+/**
+ * Adapt a domain array of decimal integers for CLI argv options. Decimal
+ * text tokens are parsed and coerced into the domain element schema, while the
+ * array's bounds, cardinality, description, and optionality are derived from
+ * the domain field. The outer schema remains a ZodArray for Incur's option parser.
+ */
+export const cliDecimalArrayField = <Field extends z.ZodType>(
+  field: Field,
+): z.ZodType<z.output<Field>> => {
+  const stack = arrayStack(field);
+  if (stack === undefined)
+    throw new Error(
+      `cliDecimalArrayField expected an array domain field, received ${field.constructor.name}`,
+    );
+  const element = stack.core.element;
+  const tokenElement = z.union([
+    element,
+    z
+      .string()
+      .regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer")
+      .pipe(z.coerce.number<string>().safe())
+      .pipe(element as never),
+  ]);
+  let arraySchema: z.ZodArray<z.ZodType> = z.array(tokenElement);
+  const checks = stack.core._def.checks;
+  if (Array.isArray(checks) && checks.length > 0) {
+    arraySchema = arraySchema.check(...(checks as never[]));
+  }
+  const admitted = applyDecimalWrappers(arraySchema, stack.wrappers);
+  const described =
+    stack.description === undefined
+      ? admitted
+      : admitted.describe(stack.description);
+  return publishDecimalInput(described) as z.ZodType<z.output<Field>>;
+};
 
 export const providerSelectionOption = analysisProviderSelectorSchema
   .optional()
