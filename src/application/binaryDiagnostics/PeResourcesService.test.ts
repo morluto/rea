@@ -2023,6 +2023,35 @@ it("publishes a signature-only form with a disjoint unknown suffix", async () =>
   expect(await inspectReport(report)).toMatchObject({ ok: true });
 });
 
+it("publishes a complete form followed by an unknown payload suffix", async () => {
+  const report = await reportForPayload(
+    Buffer.concat([
+      delphiForm(delphiComponent("TForm1", "Form1")),
+      delphiBytes(0xaa, 0xbb),
+    ]),
+  );
+  expect(report.delphi_forms[0]?.root.unknown).not.toBeNull();
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
+it("publishes a complete form with children followed by a payload suffix", async () => {
+  const report = await reportForPayload(
+    Buffer.concat([
+      delphiForm(
+        delphiComponent(
+          "TForm1",
+          "Form1",
+          [delphiProperty("Width", delphiInt32(1))],
+          { children: [delphiComponent("TButton", "Button1")] },
+        ),
+      ),
+      delphiBytes(0xaa, 0xbb),
+    ]),
+  );
+  expect(report.delphi_forms[0]?.root.unknown).not.toBeNull();
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
 it("rejects component names that reuse the class name range", async () => {
   const report = await reportWithFormPrefix(0);
   const form = report.delphi_forms[0];

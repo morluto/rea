@@ -508,7 +508,10 @@ const childrenFollowSource = (object: DelphiFormObject): boolean => {
  * property terminator, the children and the object terminator in order. Tie
  * the section edges to that source layout instead of checking containment only.
  */
-const objectSectionsFollowSource = (object: DelphiFormObject): boolean => {
+const objectSectionsFollowSource = (
+  object: DelphiFormObject,
+  isRoot: boolean,
+): boolean => {
   const objectEnd = object.location.offset + object.location.bytes;
   let cursor = object.location.offset;
   const flagged = object.flags.length > 0 || object.child_position !== null;
@@ -561,14 +564,22 @@ const objectSectionsFollowSource = (object: DelphiFormObject): boolean => {
     // The property terminator was consumed before the child list starts.
     if (object.children[0]!.location.offset !== propertiesEnd + 1) return false;
     const last = object.children.at(-1)!;
-    return objectEnd === last.location.offset + last.location.bytes;
+    const lastEnd = last.location.offset + last.location.bytes;
+    if (objectHasStop(last)) return objectEnd === lastEnd;
+    // A root may have read every section before the top-level decoder kept
+    // the remaining payload bytes as an unknown suffix.
+    return objectEnd === lastEnd || (isRoot && objectEnd === lastEnd + 1);
   }
   if (object.properties.length > 0) {
     if (object.component_name === null) return false;
     // A stopped value ends the object before the property terminator.
     if (object.properties.some((property) => valueHasStop(property.value)))
       return objectEnd === propertiesEnd;
-    return objectEnd === propertiesEnd || objectEnd === propertiesEnd + 1;
+    return (
+      objectEnd === propertiesEnd ||
+      objectEnd === propertiesEnd + 1 ||
+      (isRoot && objectEnd === propertiesEnd + 2)
+    );
   }
   if (object.class_name === null)
     return (
@@ -576,7 +587,11 @@ const objectSectionsFollowSource = (object: DelphiFormObject): boolean => {
       (optionalFlagByte === 1 && objectEnd === headerEnd + 1)
     );
   if (object.component_name === null) return objectEnd === namesEnd;
-  return objectEnd === namesEnd || objectEnd === namesEnd + 1;
+  return (
+    objectEnd === namesEnd ||
+    objectEnd === namesEnd + 1 ||
+    (isRoot && objectEnd === namesEnd + 2)
+  );
 };
 
 /** Every nested location of a decoded form must stay inside its owner. */
@@ -585,6 +600,7 @@ const insideLocations = (
   within: (range: { offset: number; bytes: number }) => boolean,
   codePage: string,
   payloadWithin: (range: { offset: number; bytes: number }) => boolean = within,
+  isRoot = true,
 ): boolean => {
   if (!within(object.location)) return false;
   if (
@@ -631,7 +647,7 @@ const insideLocations = (
       !positionMatches(object.child_position, object.location))
   )
     return false;
-  if (!objectSectionsFollowSource(object)) return false;
+  if (!objectSectionsFollowSource(object, isRoot)) return false;
   if (!propertiesFollowSource(object.properties)) return false;
   if (!childrenFollowSource(object)) return false;
   return (
@@ -652,6 +668,7 @@ const insideLocations = (
         (range) => withinRange(range, object.location),
         codePage,
         payloadWithin,
+        false,
       ),
     )
   );
