@@ -400,12 +400,11 @@ const parseGradle = (
   let parsed: unknown;
   try {
     parsed = JSON.parse(source) as unknown;
-  } catch (cause: unknown) {
+  } catch {
+    // The engine's message quotes source text, which may hold URL credentials.
     throw new MavenGradleMetadataFormatFailure(
       "malformed",
-      `Gradle module metadata is not well-formed JSON${
-        cause instanceof Error ? `: ${cause.message}` : "."
-      }`,
+      "Gradle module metadata is not well-formed JSON.",
     );
   }
   if (!isRecord(parsed))

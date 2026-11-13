@@ -420,6 +420,22 @@ it("refuses malformed Gradle JSON", () => {
   expectFailure("{", "malformed");
 });
 
+it("keeps malformed Gradle JSON source out of the failure message", () => {
+  const bytes = Buffer.from('{\n "url": //user:secret@repo.example/x}', "utf8");
+  let message = "";
+  try {
+    parseMavenGradleMetadata(bytes, {
+      path: "/artifacts/demo.module",
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    });
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(MavenGradleMetadataFormatFailure);
+    message = cause instanceof Error ? cause.message : "";
+  }
+  expect(message).toBe("Gradle module metadata is not well-formed JSON.");
+});
+
 it("refuses JSON that is not Gradle module metadata", () => {
   expectFailure('{"name":"demo"}', "unsupported");
 });
