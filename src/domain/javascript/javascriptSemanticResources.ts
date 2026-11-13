@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { rejectsSemanticEventListener } from "./javascriptSemanticAsyncEffects.js";
 
 import {
   BUILTIN_RESOURCE_SPECIFIERS,
@@ -95,9 +96,16 @@ export const collectJavaScriptSemanticResources = (
   ];
 };
 
+/** These expressions have typeof "function", including a class constructor. */
+const isFunctionValuedSyntax = (value: t.Node): boolean =>
+  t.isFunctionExpression(value) ||
+  t.isArrowFunctionExpression(value) ||
+  t.isClassExpression(value);
+
 /** Literal kinds Node rejects for both open flags and modes. */
 const rejectsFlagOrModeLiteral = (value: t.Node): boolean => {
   return (
+    isFunctionValuedSyntax(value) ||
     t.isBigIntLiteral(value) ||
     t.isBooleanLiteral(value) ||
     t.isRegExpLiteral(value) ||
@@ -118,6 +126,7 @@ const rejectsFlagOrModeLiteral = (value: t.Node): boolean => {
 const rejectsOpenFlagLiteral = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: DataEffectTraversalContext,
+  callbackForm: boolean,
 ): boolean => {
   // A spread before the flag slot shifts the runtime position, so argument 1 is
   // not provably the flag. `openSync(...args, "0600")` with
@@ -126,6 +135,16 @@ const rejectsOpenFlagLiteral = (
   const flag = node.arguments[1];
   if (flag === undefined || t.isSpreadElement(flag)) return false;
   const value = unwrapJavaScriptExpression(flag).node;
+  // fs.open(path, callback) defaults the flags. Later spreads may all be
+  // empty; a fixed third argument is needed to exclude that overload.
+  if (
+    callbackForm &&
+    isFunctionValuedSyntax(value) &&
+    node.arguments.every(
+      (argument, index) => index < 2 || t.isSpreadElement(argument),
+    )
+  )
+    return false;
   // A no-expression template literal is exactly readable, so it is the same flag
   // string Node receives.
   const flagText = t.isStringLiteral(value)
@@ -289,6 +308,7 @@ const isNonFiniteNumber = (
 const rejectsOpenModeLiteral = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: DataEffectTraversalContext,
+  callbackForm: boolean,
 ): boolean => {
   // A spread before the mode slot shifts the runtime position.
   if (
@@ -299,6 +319,8 @@ const rejectsOpenModeLiteral = (
   const mode = node.arguments[2];
   if (mode === undefined || t.isSpreadElement(mode)) return false;
   const value = unwrapJavaScriptExpression(mode).node;
+  // Only callback-form fs.open treats a function in this slot as its callback.
+  if (callbackForm && isFunctionValuedSyntax(value)) return false;
   // `null`, `undefined` and `void <expr>` all default the mode.
   if (t.isNullLiteral(value)) return false;
   // A no-expression template literal is exactly readable, so it is the same
@@ -339,6 +361,21 @@ const openFlagInFirstArgument = (reference: AcquisitionReference): boolean =>
     ? reference.specifier === "fs" || reference.specifier === "fs/promises"
     : false;
 
+/** Node normalizes fs.open's callback before validating its function type. */
+const rejectsOpenCallbackLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): boolean => {
+  // A spread can change both arity and which operand is the callback.
+  if (node.arguments.some((argument) => t.isSpreadElement(argument)))
+    return false;
+  if (node.arguments.length < 3)
+    return rejectsSemanticEventListener(node.arguments[1]);
+  // A function-valued mode is the callback; an unknown mode may be one too.
+  // Both can supersede a missing or invalid fourth operand.
+  if (!rejectsSemanticEventListener(node.arguments[2])) return false;
+  return rejectsSemanticEventListener(node.arguments[3]);
+};
+
 const collectAcquisitions = (
   program: t.Program,
   context: DataEffectTraversalContext,
@@ -348,9 +385,15 @@ const collectAcquisitions = (
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const reference = acquisitionMethod(node.callee, context.state);
     if (reference === null) return;
-    if (openFlagInFirstArgument(reference)) {
-      if (rejectsOpenFlagLiteral(node, context)) return;
-      if (rejectsOpenModeLiteral(node, context)) return;
+    if (
+      openFlagInFirstArgument(reference) &&
+      reference.builtinAuthority !== "candidate"
+    ) {
+      const callbackForm =
+        reference.specifier === "fs" && reference.method === "open";
+      if (callbackForm && rejectsOpenCallbackLiteral(node)) return;
+      if (rejectsOpenFlagLiteral(node, context, callbackForm)) return;
+      if (rejectsOpenModeLiteral(node, context, callbackForm)) return;
     }
     output.push({
       node,
