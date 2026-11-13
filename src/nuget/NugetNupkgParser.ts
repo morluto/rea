@@ -68,9 +68,19 @@ const ZIP_UNSUPPORTED_MESSAGES = new Set([
   ERR_UNSUPPORTED_ENCRYPTION,
 ]);
 
+/** Limitation wording owned by the parser; tests assert delivery through these. */
+export const NUPKG_LIMITATIONS = {
+  memberRoles:
+    "Member roles are derived from NuGet folder conventions in the ZIP names; they are not restore-time asset selection.",
+  noNuspec: "No .nuspec was selected.",
+  ambiguousRootNuspec:
+    "Multiple root .nuspec members are present; identity was not decoded.",
+  malformedNuspec: "The selected .nuspec is not well-formed XML.",
+} as const;
+
 const BASE_LIMITATIONS = [
   "This workflow reads the .nupkg ZIP and .nuspec metadata without restoring, executing, or contacting a NuGet feed.",
-  "Member roles are derived from NuGet folder conventions in the ZIP names; they are not restore-time asset selection.",
+  NUPKG_LIMITATIONS.memberRoles,
   "Dependency version ranges are recorded as spelled in the .nuspec; restore results are unknown.",
   "Directory ZIP markers are omitted from contents; only file members are listed.",
 ] as const;
@@ -279,7 +289,7 @@ const parseNuspecDocument = (
     limitations.push(
       parsed.error.reason === "doctype"
         ? "The selected .nuspec declares a document type, which is unsupported."
-        : "The selected .nuspec is not well-formed XML.",
+        : NUPKG_LIMITATIONS.malformedNuspec,
     );
     return empty;
   }
@@ -377,14 +387,12 @@ const findNuspec = (
       !file.name.includes("/") && file.name.toLowerCase().endsWith(".nuspec"),
   );
   if (rootNuspecs.length > 1) {
-    limitations.push(
-      "Multiple root .nuspec members are present; identity was not decoded.",
-    );
+    limitations.push(NUPKG_LIMITATIONS.ambiguousRootNuspec);
     return { member: undefined, source: undefined };
   }
   if (rootNuspecs.length === 1)
     return { member: rootNuspecs[0], source: "root-nuspec" };
-  limitations.push("No .nuspec was selected.");
+  limitations.push(NUPKG_LIMITATIONS.noNuspec);
   return { member: undefined, source: undefined };
 };
 

@@ -13,7 +13,7 @@ import {
   nugetNupkgMissingNuspecFixture,
   ungroupedNuspec,
 } from "./NugetNupkg.fixture.js";
-import { parseNugetNupkg } from "./NugetNupkgParser.js";
+import { NUPKG_LIMITATIONS, parseNugetNupkg } from "./NugetNupkgParser.js";
 import {
   NugetNupkgCapacityFailure,
   NugetNupkgFormatFailure,
@@ -87,11 +87,7 @@ it("reads identity, license, repository, dependency groups and folder roles", as
     ]),
   );
   expect(report.coverage.status).toBe("complete");
-  expect(report.limitations).toEqual(
-    expect.arrayContaining([
-      "Member roles are derived from NuGet folder conventions in the ZIP names; they are not restore-time asset selection.",
-    ]),
-  );
+  expect(report.limitations).toContain(NUPKG_LIMITATIONS.memberRoles);
 });
 
 it("records ungrouped dependencies as a group with a null target framework", async () => {
@@ -127,9 +123,7 @@ it("inventories a package with no .nuspec and leaves identity unknown", async ()
   expect(report.identity).toBeNull();
   expect(report.nuspec).toBeNull();
   expect(report.contents.some((entry) => entry.role === "lib")).toBe(true);
-  expect(report.limitations).toEqual(
-    expect.arrayContaining(["No .nuspec was selected."]),
-  );
+  expect(report.limitations).toContain(NUPKG_LIMITATIONS.noNuspec);
 });
 
 it("inventories a package with an ambiguous pair of root .nuspec members", async () => {
@@ -142,11 +136,7 @@ it("inventories a package with an ambiguous pair of root .nuspec members", async
   expect(
     report.contents.filter((entry) => entry.role === "nuspec"),
   ).toHaveLength(2);
-  expect(report.limitations).toEqual(
-    expect.arrayContaining([
-      "Multiple root .nuspec members are present; identity was not decoded.",
-    ]),
-  );
+  expect(report.limitations).toContain(NUPKG_LIMITATIONS.ambiguousRootNuspec);
 });
 
 it("inventories a package whose .nuspec is not well-formed XML", async () => {
@@ -156,9 +146,7 @@ it("inventories a package whose .nuspec is not well-formed XML", async () => {
   );
   expect(report.identity).toBeNull();
   expect(report.nuspec?.path).toBe("Demo.Package.nuspec");
-  expect(report.limitations).toEqual(
-    expect.arrayContaining(["The selected .nuspec is not well-formed XML."]),
-  );
+  expect(report.limitations).toContain(NUPKG_LIMITATIONS.malformedNuspec);
 });
 
 it("refuses a non-ZIP file without claiming a package inventory", async () => {
