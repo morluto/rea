@@ -31,6 +31,7 @@ import {
   zipEntryPath,
 } from "../artifacts/ZipArtifactReader.js";
 import { parseXmlDocument } from "../domain/xmlDocument.js";
+import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasZipSignature } from "../domain/zipPackageFormat.js";
 import {
   nugetNupkgEntryRole,
@@ -42,8 +43,6 @@ import {
   NugetNupkgCapacityFailure,
   NugetNupkgFormatFailure,
 } from "./NugetNupkg.errors.js";
-
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 const ZIP_FORMAT_MESSAGES = new Set([
   ERR_AMBIGUOUS_ARCHIVE,
@@ -537,10 +536,10 @@ export const parseNugetNupkg = async (
           "OPC relationships member",
         );
         try {
-          relsXml = UTF8.decode(relsBytes);
+          relsXml = decodeXmlPlistText(relsBytes);
         } catch {
           limitations.push(
-            "OPC relationships member is not valid UTF-8; the .nuspec was selected by ZIP name when possible.",
+            "OPC relationships member is not valid UTF-8 or BOM-marked UTF-16 XML text; the .nuspec was selected by ZIP name when possible.",
           );
         }
       }
@@ -602,9 +601,11 @@ export const parseNugetNupkg = async (
     );
     let xml: string;
     try {
-      xml = UTF8.decode(nuspecBytes);
+      xml = decodeXmlPlistText(nuspecBytes);
     } catch {
-      limitations.push("The selected .nuspec is not valid UTF-8.");
+      limitations.push(
+        "The selected .nuspec is not valid UTF-8 or BOM-marked UTF-16 XML text.",
+      );
       return {
         artifact: {
           path: artifact.path,

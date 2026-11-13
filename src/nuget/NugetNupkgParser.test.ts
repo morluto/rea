@@ -354,3 +354,27 @@ it("does not follow a manifest relationship Target that resolves above the packa
     'OPC manifest relationship Target "../Actual.nuspec" leaves the package and was not followed.',
   );
 });
+
+const utf16Nuspec = (littleEndian: boolean) => {
+  const text = ungroupedNuspec.replace('encoding="utf-8"', 'encoding="utf-16"');
+  const bytes = new Uint8Array(2 + text.length * 2);
+  const view = new DataView(bytes.buffer);
+  view.setUint16(0, 0xfeff, littleEndian);
+  for (let index = 0; index < text.length; index += 1)
+    view.setUint16(2 + index * 2, text.charCodeAt(index), littleEndian);
+  return bytes;
+};
+
+it.for([true, false])(
+  "decodes a BOM-marked UTF-16 .nuspec (little-endian %s)",
+  async (littleEndian) => {
+    const bytes = await nugetNupkgFixture({
+      nuspecBytes: utf16Nuspec(littleEndian),
+    });
+    const report = nugetNupkgSchema.parse(
+      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.identity?.id).toBe("Ungrouped.Package");
+    expect(report.dependency_groups).not.toEqual([]);
+  },
+);

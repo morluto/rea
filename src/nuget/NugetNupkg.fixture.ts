@@ -68,6 +68,8 @@ const addText = async (
 export const nugetNupkgFixture = async (
   options: {
     readonly nuspec?: string;
+    /** Exact .nuspec bytes, for encodings other than UTF-8. */
+    readonly nuspecBytes?: Uint8Array;
     readonly nuspecName?: string;
     readonly relsTarget?: string;
     readonly extraMembers?: Readonly<Record<string, string>>;
@@ -85,7 +87,12 @@ export const nugetNupkgFixture = async (
       "_rels/.rels",
       relsXml(options.relsTarget ?? `/${nuspecName}`),
     );
-  await addText(writer, nuspecName, options.nuspec ?? defaultNuspec);
+  if (options.nuspecBytes === undefined)
+    await addText(writer, nuspecName, options.nuspec ?? defaultNuspec);
+  else
+    await writer.add(nuspecName, new Uint8ArrayReader(options.nuspecBytes), {
+      level: 0,
+    });
   await writer.add(
     "lib/net8.0/Demo.dll",
     new Uint8ArrayReader(Uint8Array.from([0x4d, 0x5a])),
