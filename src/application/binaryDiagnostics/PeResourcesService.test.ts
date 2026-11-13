@@ -484,9 +484,12 @@ it("accepts explicit UTF-8 form text on a non-UTF-8 resource page", async () => 
   ).toMatchObject({ ok: true });
 });
 
-const formWithProperty = async (
+const formWithBuiltProperty = async (
   valueType: string,
-  value: Record<string, unknown>,
+  buildValue: (location: {
+    offset: number;
+    bytes: number;
+  }) => Record<string, unknown>,
 ) => {
   const report = await observedReport();
   const index = report.resources.findIndex(
@@ -515,7 +518,7 @@ const formWithProperty = async (
             },
             value_type: valueType,
             value: {
-              ...value,
+              ...buildValue(location),
               location,
             } as never,
             location,
@@ -526,6 +529,9 @@ const formWithProperty = async (
   ];
   return report;
 };
+
+const formWithProperty = (valueType: string, value: Record<string, unknown>) =>
+  formWithBuiltProperty(valueType, () => value);
 
 const inspectReport = async (
   report: Awaited<ReturnType<typeof observedReport>>,
@@ -572,6 +578,117 @@ it("rejects an integer whose value does not fit its declared width", async () =>
     width: 8,
     signed: true,
   });
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects an integer projection whose retained bytes disagree", async () => {
+  const report = await formWithProperty("vaInt8", {
+    kind: "integer",
+    text: "1",
+    bytes_hex: "ff",
+    width: 8,
+    signed: true,
+  });
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a list item whose declared value type contradicts its value", async () => {
+  const report = await formWithBuiltProperty("vaList", (location) => ({
+    kind: "list",
+    items: [
+      {
+        value_type: "vaInt8",
+        marker_location: location,
+        value: { kind: "boolean", value: true, location },
+      },
+    ],
+  }));
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a nested stop that does not propagate to its ancestors", async () => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  const location = rootAfterSignature(resource.payload.location);
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signatureAt(resource.payload.location),
+      prefix: null,
+      ...codePageFields(resource.code_page),
+      root: {
+        ...validRoot(location),
+        children: [
+          {
+            location: { offset: location.offset, bytes: 1 },
+            flags: [],
+            child_position: null,
+            class_name: null,
+            component_name: null,
+            properties: [],
+            children: [],
+            unknown: {
+              reason: "nested stop",
+              bytes_hex: "",
+              truncated: false,
+              location: {
+                offset: location.offset + 1,
+                bytes: location.bytes - 1,
+              },
+            },
+          },
+        ],
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a child position whose retained bytes disagree", async () => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  const location = rootAfterSignature(resource.payload.location);
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signatureAt(resource.payload.location),
+      prefix: null,
+      ...codePageFields(resource.code_page),
+      root: {
+        ...validRoot(location),
+        child_position: {
+          kind: "integer",
+          text: "1",
+          bytes_hex: "ff",
+          width: 8,
+          signed: true,
+          location,
+        },
+      },
+    },
+  ];
   expect(await inspectReport(report)).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisOutputError" },

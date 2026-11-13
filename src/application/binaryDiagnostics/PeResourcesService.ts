@@ -15,6 +15,7 @@ import {
   isDelphiFormValueType,
   RESOURCE_CODE_PAGES,
   type DelphiFormObject,
+  type DelphiFormPosition,
   type DelphiFormResource,
   type DelphiFormText,
   type DelphiFormValue,
@@ -242,6 +243,25 @@ const withinRange = (
   child.offset >= parent.offset &&
   child.offset + child.bytes <= parent.offset + parent.bytes;
 
+/** A stopped value must also stop every object that owns it. */
+const valueHasStop = (value: DelphiFormValue): boolean => {
+  if (value.kind === "unknown") return true;
+  if (value.kind === "string" || value.kind === "binary")
+    return value.truncated;
+  if (value.kind === "list")
+    return value.items.some((entry) => valueHasStop(entry.value));
+  if (value.kind === "collection")
+    return value.items.some((item) =>
+      item.properties.some((property) => valueHasStop(property.value)),
+    );
+  return false;
+};
+
+const objectHasStop = (object: DelphiFormObject): boolean =>
+  object.unknown !== null ||
+  object.properties.some((property) => valueHasStop(property.value)) ||
+  object.children.some(objectHasStop);
+
 /** Every nested location of a decoded form must stay inside its owner. */
 const insideLocations = (
   object: DelphiFormObject,
@@ -266,6 +286,20 @@ const insideLocations = (
   if (
     !text(object.class_name, object.location) ||
     !text(object.component_name, object.location)
+  )
+    return false;
+  // A nested stop must propagate: the producer rethrows a stopped child
+  // through every ancestor, so an ancestor without an unknown is not a shape
+  // this decoder can produce.
+  if (
+    object.unknown === null &&
+    (object.properties.some((property) => valueHasStop(property.value)) ||
+      object.children.some(objectHasStop))
+  )
+    return false;
+  if (
+    object.child_position !== null &&
+    !positionMatches(object.child_position, object.location)
   )
     return false;
   return (
@@ -340,12 +374,25 @@ const integerMatches = (
   )
     return false;
   if (!/^(?:0|-?[1-9]\d*)$/u.test(value.text)) return false;
-  const number = BigInt(value.text);
-  const bits = BigInt(width);
-  const minimum = signed ? -(1n << (bits - 1n)) : 0n;
-  const maximum = signed ? (1n << (bits - 1n)) - 1n : (1n << bits) - 1n;
-  return number >= minimum && number <= maximum;
+  // The retained bytes are the source of the text projection; a provider
+  // cannot pair a decimal string with bytes that decode to another value.
+  if (value.bytes_hex.length !== width / 4) return false;
+  let raw = 0n;
+  for (let index = value.bytes_hex.length - 2; index >= 0; index -= 2)
+    raw =
+      (raw << 8n) |
+      BigInt(Number.parseInt(value.bytes_hex.slice(index, index + 2), 16));
+  const decoded = signed ? BigInt.asIntN(width, raw) : raw;
+  return decoded === BigInt(value.text);
 };
+
+/** A positional integer must match its own bytes and stay inside its owner. */
+const positionMatches = (
+  position: DelphiFormPosition,
+  owner: { offset: number; bytes: number },
+): boolean =>
+  integerMatches(position, position.width, true) &&
+  withinRange(position.location, owner);
 
 const valueMatchesType = (
   valueType: string,
@@ -420,12 +467,16 @@ const insideValue = (
   if (value.kind === "list")
     return (
       within(value.location) &&
-      value.items.every((item) =>
-        insideValue(
-          item,
-          (range) => withinRange(range, value.location),
-          codePage,
-        ),
+      value.items.every(
+        (entry) =>
+          withinRange(entry.marker_location, value.location) &&
+          entry.marker_location.bytes === 1 &&
+          valueMatchesType(entry.value_type, entry.value, codePage) &&
+          insideValue(
+            entry.value,
+            (range) => withinRange(range, value.location),
+            codePage,
+          ),
       )
     );
   if (value.kind === "set")
@@ -443,6 +494,8 @@ const insideValue = (
       value.items.every(
         (item) =>
           withinRange(item.location, value.location) &&
+          (item.position === null ||
+            positionMatches(item.position, item.location)) &&
           item.properties.every(
             (property) =>
               withinRange(property.location, item.location) &&

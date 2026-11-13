@@ -145,7 +145,13 @@ describe("Delphi form object tree", () => {
     );
     const child = root.children[0];
     expect(child?.flags).toEqual(["ffChildPos", "ffInline"]);
-    expect(child?.child_position).toBe("7");
+    expect(child?.child_position).toMatchObject({
+      kind: "integer",
+      text: "7",
+      bytes_hex: "07000000",
+      width: 32,
+      signed: true,
+    });
   });
 
   it("keeps inherited and inline flags distinct", () => {
@@ -585,9 +591,9 @@ describe("Delphi form binary and container values", () => {
     expect(propertyOf(root, "Items").value).toMatchObject({
       kind: "list",
       items: [
-        { kind: "integer", text: "1" },
-        { kind: "string", text: "A" },
-        { kind: "boolean", value: true },
+        { value_type: "vaInt32", value: { kind: "integer", text: "1" } },
+        { value_type: "vaString", value: { kind: "string", text: "A" } },
+        { value_type: "vaTrue", value: { kind: "boolean", value: true } },
       ],
     });
     expect(propertyOf(root, "Options").value).toMatchObject({
@@ -598,14 +604,22 @@ describe("Delphi form binary and container values", () => {
     expect(columns).toMatchObject({ kind: "collection" });
     if (columns.kind !== "collection") throw new Error("Expected collection");
     expect(columns.items).toHaveLength(2);
-    expect(columns.items[0]?.position).toBe("0");
+    expect(columns.items[0]?.position).toMatchObject({
+      kind: "integer",
+      text: "0",
+      bytes_hex: "00",
+      width: 8,
+      signed: true,
+    });
     expect(columns.items[0]?.properties[0]).toMatchObject({
       name: { text: "Width" },
       value: { kind: "integer", text: "64" },
     });
     expect(columns.items[1]?.position).toBeNull();
   });
+});
 
+describe("Delphi form list item evidence", () => {
   it("includes the value tag in marker-only source ranges", () => {
     const root = rootOf(
       form(
@@ -616,18 +630,94 @@ describe("Delphi form binary and container values", () => {
     );
     const value = propertyOf(root, "Items").value;
     if (value.kind !== "list") throw new Error("Expected a list");
-    expect(value.items.map((item) => item.kind)).toEqual([
+    expect(value.items.map((item) => item.value.kind)).toEqual([
       "boolean",
       "boolean",
       "nil",
     ]);
-    expect(value.items.map((item) => item.location.bytes)).toEqual([1, 1, 1]);
-    expect(value.items[1]?.location.offset).toBe(
-      (value.items[0]?.location.offset ?? 0) + 1,
+    expect(value.items.map((item) => item.value_type)).toEqual([
+      "vaTrue",
+      "vaFalse",
+      "vaNil",
+    ]);
+    expect(value.items.map((item) => item.marker_location.bytes)).toEqual([
+      1, 1, 1,
+    ]);
+    expect(value.items.map((item) => item.value.location.bytes)).toEqual([
+      1, 1, 1,
+    ]);
+    expect(value.items[1]?.value.location.offset).toBe(
+      (value.items[0]?.value.location.offset ?? 0) + 1,
     );
-    expect(value.items[2]?.location.offset).toBe(
-      (value.items[1]?.location.offset ?? 0) + 1,
+    expect(value.items[2]?.value.location.offset).toBe(
+      (value.items[1]?.value.location.offset ?? 0) + 1,
     );
+  });
+
+  it("keeps list item types that decode to the same string shape", () => {
+    // vaWString (18) and vaUString (22) share the UTF-16LE payload; only the
+    // item's declared type and tag byte distinguish them.
+    const raw = Buffer.from("A", "utf16le");
+    const length = Buffer.alloc(4);
+    length.writeUInt32LE(1, 0);
+    const root = rootOf(
+      form(
+        component("TForm1", "Form1", [
+          property_(
+            "Items",
+            list(
+              Buffer.concat([bytes(18), length, raw]),
+              Buffer.concat([bytes(22), length, raw]),
+            ),
+          ),
+        ]),
+      ),
+    );
+    const value = propertyOf(root, "Items").value;
+    if (value.kind !== "list") throw new Error("Expected a list");
+    expect(value.items.map((item) => item.value_type)).toEqual([
+      "vaWString",
+      "vaUString",
+    ]);
+    expect(value.items[1]?.marker_location.offset).toBe(
+      (value.items[0]?.marker_location.offset ?? 0) + 1 + 4 + raw.length,
+    );
+    expect(value.items[0]?.value).toMatchObject({
+      kind: "string",
+      text: "A",
+      code_page: "utf-16le",
+    });
+    expect(value.items[1]?.value).toMatchObject({
+      kind: "string",
+      text: "A",
+      code_page: "utf-16le",
+    });
+  });
+
+  it("keeps an odd UTF-16LE source byte as a replacement", () => {
+    const utf16Name = (text: string) =>
+      Buffer.concat([
+        Buffer.from([text.length * 2]),
+        Buffer.from(text, "utf16le"),
+      ]);
+    const payload = Buffer.concat([
+      Buffer.from("TPF0", "latin1"),
+      utf16Name("TForm1"),
+      utf16Name("Form1"),
+      utf16Name("Caption"),
+      Buffer.from([6, 1, 0x41]),
+      Buffer.from([0, 0]),
+    ]);
+    const root = rootOf(payload, "utf-16le");
+    expect(root.class_name?.text).toBe("TForm1");
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      text: "\ufffd",
+      bytes_hex: "41",
+      code_page: "utf-16le",
+      declared_bytes: 1,
+      truncated: false,
+    });
   });
 
   it("records null and nil as distinct value kinds", () => {
@@ -907,7 +997,9 @@ describe("Delphi form truncation and limits", () => {
     expect(property?.name.text).toBe("Items");
     expect(property?.value).toMatchObject({ kind: "list" });
     if (property?.value.kind !== "list") throw new Error("Expected a list");
-    expect(property.value.items).toMatchObject([{ kind: "integer" }]);
+    expect(property.value.items).toMatchObject([
+      { value: { kind: "integer" } },
+    ]);
   });
 
   it("keeps list entries when the payload ends after a complete item", () => {
@@ -923,7 +1015,7 @@ describe("Delphi form truncation and limits", () => {
     expect(property?.value).toMatchObject({ kind: "list" });
     if (property?.value.kind !== "list") throw new Error("Expected a list");
     expect(property.value.items).toMatchObject([
-      { kind: "integer", text: "7" },
+      { value: { kind: "integer", text: "7" } },
     ]);
     expect(root.unknown?.reason).toContain("Payload ended");
   });

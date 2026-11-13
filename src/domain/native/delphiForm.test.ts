@@ -21,6 +21,7 @@ describe("delphi form advertised schema", () => {
       '"component_name"',
       '"location"',
       '"value_type"',
+      '"marker_location"',
       '"items"',
       '"children"',
       '"position"',
@@ -117,6 +118,34 @@ describe("delphi form advertised schema", () => {
             },
             location: range,
           },
+          {
+            name: {
+              text: "Items",
+              bytes_hex: "4974656d73",
+              code_page: "windows-1252",
+              location: range,
+            },
+            value_type: "vaList",
+            value: {
+              kind: "list",
+              items: [
+                {
+                  value_type: "vaInt8",
+                  marker_location: range,
+                  value: {
+                    kind: "integer",
+                    text: "1",
+                    bytes_hex: "01",
+                    width: 8,
+                    signed: true,
+                    location: range,
+                  },
+                },
+              ],
+              location: range,
+            },
+            location: range,
+          },
         ],
         children: [nestedComponent],
         unknown: null,
@@ -129,7 +158,9 @@ describe("delphi form advertised schema", () => {
     expect(validate(resource)).toBe(true);
     expect(validate.errors).toBeNull();
   });
+});
 
+describe("delphi form advertised byte projections", () => {
   it("rejects byte projections that are not lowercase even-length hex", () => {
     const range = { offset: 0, bytes: 4 };
     const resource = {

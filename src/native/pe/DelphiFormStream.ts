@@ -21,7 +21,9 @@ import {
   DEFAULT_CODE_PAGE,
   DELPHI_FORM_VALUE_TYPES,
   type DelphiFormCollectionItem,
+  type DelphiFormListEntry,
   type DelphiFormObject,
+  type DelphiFormPosition,
   type DelphiFormProperty,
   type DelphiFormRange,
   type DelphiFormText,
@@ -73,6 +75,10 @@ const VALUE_BYTES = 256;
 const OBJECT_BYTES = 192;
 const PROPERTY_BYTES = 160;
 const ITEM_BYTES = 96;
+/** The list-entry wrapper retains its declared type and tag range. */
+const LIST_ENTRY_BYTES = 128;
+/** Positional integers retain width, source bytes and their own range. */
+const POSITION_BYTES = 128;
 /** Bounds recursion so a deeply nested value cannot exhaust the call stack. */
 const MAX_DEPTH = 32;
 
@@ -181,13 +187,17 @@ const formUnknown = (
   location,
 });
 
+const utf16le = new TextDecoder("utf-16le", { ignoreBOM: true });
+
 /**
  * Decode short Pascal strings with the declared code page. `latin1` is only a
  * last resort for labels that cannot be decoded; it never replaces a declared
  * page.
  */
 const decodeText = (raw: Buffer, codePage: string): string => {
-  if (codePage === "utf-16le") return raw.toString("utf16le");
+  // `Buffer.toString("utf16le")` silently drops a trailing odd byte. The host
+  // decoder retains it as U+FFFD so the projection still accounts for it.
+  if (codePage === "utf-16le") return utf16le.decode(raw);
   if (codePage === "utf-8") return raw.toString("utf8");
   // `TextDecoder` maps the "latin1" label to Windows-1252, which changes bytes
   // such as 0x80. Keep the byte-preserving projection for this sentinel.
@@ -338,11 +348,28 @@ function readShortStringValue(
   return value;
 }
 
-function readInteger(stream: Stream, width: 8 | 16 | 32 | 64): string {
-  if (width === 64) return stream.take(8).readBigInt64LE(0).toString();
-  if (width === 32) return String(stream.take(4).readInt32LE(0));
-  if (width === 16) return String(stream.take(2).readInt16LE(0));
-  return String(stream.take(1).readInt8(0));
+function positionValue(
+  stream: Stream,
+  width: 8 | 16 | 32,
+  budget: Budget,
+): DelphiFormPosition {
+  spendBytes(budget, POSITION_BYTES);
+  const at = stream.position;
+  const raw = stream.take(width / 8);
+  const text =
+    width === 32
+      ? String(raw.readInt32LE(0))
+      : width === 16
+        ? String(raw.readInt16LE(0))
+        : String(raw.readInt8(0));
+  return {
+    kind: "integer",
+    text,
+    bytes_hex: raw.toString("hex"),
+    width,
+    signed: true,
+    location: range(at, stream.position),
+  };
 }
 
 function integerValue(
@@ -556,7 +583,7 @@ function readValue(
       const hex = hexOf(raw);
       const value: DelphiFormValue = {
         kind: "string",
-        text: raw.toString("utf16le"),
+        text: decodeText(raw, "utf-16le"),
         ...hex,
         code_page: "utf-16le",
         declared_bytes: declared,
@@ -600,7 +627,7 @@ function readValue(
       return value;
     }
     case 1: {
-      const items: DelphiFormValue[] = [];
+      const items: DelphiFormListEntry[] = [];
       const partialLocation = () => range(at, stream.position);
       for (;;) {
         let next: number;
@@ -617,15 +644,30 @@ function readValue(
           });
         }
         if (next === 0) break;
+        const markerAt = stream.position;
         stream.byte();
+        const markerLocation = range(markerAt, markerAt + 1);
         try {
-          items.push(readValue(stream, next, budget, codePage, depth + 1));
+          // The wrapper retains the declared type and tag byte; charge it
+          // before allocating alongside the value it describes.
+          spendBytes(budget, LIST_ENTRY_BYTES);
+          const value = readValue(stream, next, budget, codePage, depth + 1);
+          items.push({
+            value_type: valueTypeName(next),
+            marker_location: markerLocation,
+            value,
+          });
         } catch (error) {
           if (error instanceof StoppedForm) throw error;
           if (!(error instanceof StreamEnd)) throw error;
           // Entries decoded before the stop stay evidence. A stopped nested
           // list keeps its own partial items as the last entry of this one.
-          if (error instanceof StoppedValue) items.push(error.partial);
+          if (error instanceof StoppedValue)
+            items.push({
+              value_type: valueTypeName(next),
+              marker_location: markerLocation,
+              value: error.partial,
+            });
           throw new StoppedValue(error.message, {
             kind: "list",
             items,
@@ -689,14 +731,15 @@ function readValue(
           stop(error.message);
         }
         const itemAt = stream.position;
-        let position: string | null = null;
+        let position: DelphiFormPosition | null = null;
         try {
           const next = stream.peek();
           if (next === 2 || next === 3 || next === 4) {
             stream.byte();
-            position = readInteger(
+            position = positionValue(
               stream,
               next === 2 ? 8 : next === 3 ? 16 : 32,
+              budget,
             );
           }
           // `ReadListBegin` consumes the vaList marker that opens each item.
@@ -844,7 +887,7 @@ function readObject(
     );
   const at = stream.position;
   const flags: string[] = [];
-  let childPosition: string | null = null;
+  let childPosition: DelphiFormPosition | null = null;
   let className: DelphiFormText | null = null;
   let componentName: DelphiFormText | null = null;
   const properties: DelphiFormProperty[] = [];
@@ -881,9 +924,10 @@ function readObject(
         const width = stream.byte();
         if (width !== 2 && width !== 3 && width !== 4)
           throw new StreamEnd("Child position is not encoded as vaInt8/16/32.");
-        childPosition = readInteger(
+        childPosition = positionValue(
           stream,
           width === 2 ? 8 : width === 3 ? 16 : 32,
+          budget,
         );
       }
     }

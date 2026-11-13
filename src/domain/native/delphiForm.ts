@@ -22,9 +22,22 @@ export type DelphiFormText = {
   readonly location: DelphiFormRange;
 };
 
+/**
+ * A signed positional integer. The encoded width, source bytes and range stay
+ * with the value so equal positions encoded as vaInt8/16/32 remain distinct.
+ */
+export type DelphiFormPosition = {
+  readonly kind: "integer";
+  readonly text: string;
+  readonly bytes_hex: string;
+  readonly width: 8 | 16 | 32;
+  readonly signed: true;
+  readonly location: DelphiFormRange;
+};
+
 /** One item of a `vaCollection` value. */
 export type DelphiFormCollectionItem = {
-  readonly position: string | null;
+  readonly position: DelphiFormPosition | null;
   readonly properties: DelphiFormProperty[];
   readonly location: DelphiFormRange;
 };
@@ -85,7 +98,7 @@ export type DelphiFormValue =
     }
   | {
       readonly kind: "list";
-      readonly items: DelphiFormValue[];
+      readonly items: DelphiFormListEntry[];
       readonly location: DelphiFormRange;
     }
   | {
@@ -106,11 +119,21 @@ export type DelphiFormValue =
       readonly location: DelphiFormRange;
     };
 
+/**
+ * One `vaList` entry. A list item's type byte is the only source of its
+ * declared `TValueType`; `vaWString` and `vaUString` otherwise decode alike.
+ */
+export type DelphiFormListEntry = {
+  readonly value_type: string;
+  readonly marker_location: DelphiFormRange;
+  readonly value: DelphiFormValue;
+};
+
 /** A component: class and name, filer flags, properties and nested components. */
 export type DelphiFormObject = {
   readonly location: DelphiFormRange;
   readonly flags: string[];
-  readonly child_position: string | null;
+  readonly child_position: DelphiFormPosition | null;
   readonly class_name: DelphiFormText | null;
   readonly component_name: DelphiFormText | null;
   readonly properties: DelphiFormProperty[];
@@ -251,6 +274,22 @@ const textSchema = z.strictObject({
   code_page: z.string(),
   location: rangeSchema,
 });
+const integerValueSchema = z.strictObject({
+  kind: z.literal("integer"),
+  text: z.string(),
+  bytes_hex: hexSchema,
+  width: z.union([z.literal(8), z.literal(16), z.literal(32), z.literal(64)]),
+  signed: z.boolean(),
+  location: rangeSchema,
+});
+const positionSchema: z.ZodType<DelphiFormPosition> = z.strictObject({
+  kind: z.literal("integer"),
+  text: z.string(),
+  bytes_hex: hexSchema,
+  width: z.union([z.literal(8), z.literal(16), z.literal(32)]),
+  signed: z.literal(true),
+  location: rangeSchema,
+});
 
 /**
  * Every recursive position is built twice from the same field builders: the
@@ -277,9 +316,16 @@ const propertySchemaOf = <V extends z.ZodType>(value: V) =>
 
 const collectionItemSchemaOf = <P extends z.ZodType>(property: P) =>
   z.strictObject({
-    position: z.string().nullable(),
+    position: positionSchema.nullable(),
     properties: z.array(property),
     location: rangeSchema,
+  });
+
+const listEntrySchemaOf = <V extends z.ZodType>(value: V) =>
+  z.strictObject({
+    value_type: z.string(),
+    marker_location: rangeSchema,
+    value,
   });
 
 const valueSchemaOf = <V extends z.ZodType, C extends z.ZodType>(
@@ -294,19 +340,7 @@ const valueSchemaOf = <V extends z.ZodType, C extends z.ZodType>(
       value: z.boolean(),
       location: rangeSchema,
     }),
-    z.strictObject({
-      kind: z.literal("integer"),
-      text: z.string(),
-      bytes_hex: hexSchema,
-      width: z.union([
-        z.literal(8),
-        z.literal(16),
-        z.literal(32),
-        z.literal(64),
-      ]),
-      signed: z.boolean(),
-      location: rangeSchema,
-    }),
+    integerValueSchema,
     z.strictObject({
       kind: z.literal("float"),
       text: z.string().nullable(),
@@ -338,7 +372,7 @@ const valueSchemaOf = <V extends z.ZodType, C extends z.ZodType>(
     }),
     z.strictObject({
       kind: z.literal("list"),
-      items: z.array(value),
+      items: z.array(listEntrySchemaOf(value)),
       location: rangeSchema,
     }),
     z.strictObject({
@@ -367,7 +401,7 @@ const objectSchemaOf = <P extends z.ZodType, O extends z.ZodType>(
   z.strictObject({
     location: rangeSchema,
     flags: z.array(z.string()),
-    child_position: z.string().nullable(),
+    child_position: positionSchema.nullable(),
     class_name: textSchema.nullable(),
     component_name: textSchema.nullable(),
     properties: z.array(property),

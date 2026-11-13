@@ -278,9 +278,11 @@ Those payloads are decoded statically into `delphi_forms`: the filer signature
 and any byte prefix before it, the root component's class and component name,
 filer flags with the child position, and properties with their declared value
 type and decoded value, each carrying byte offsets into the resource payload
-alongside the original value bytes. Value type ordinals follow Delphi's
-`System.Classes.TValueType`; the Free Pascal table differs at ordinals 21–23.
-Nested components are decoded recursively.
+alongside the original value bytes. List items keep their own declared type and
+tag-byte range, and positional integers keep the encoded width, source bytes and
+range, so equal values encoded differently remain distinguishable. Value type
+ordinals follow Delphi's `System.Classes.TValueType`; the Free Pascal table
+differs at ordinals 21–23. Nested components are decoded recursively.
 Strings keep their raw bytes and are decoded with the resource's declared code
 page, recorded beside the declared code page id; when the resource declares
 none, the Delphi 7 ANSI default is used and recorded as

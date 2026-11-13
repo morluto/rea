@@ -24,9 +24,11 @@ alongside the existing resource inventory.
 - Decode `System.Classes.TValueType` ordinals as declared value types. Preserve
   scalar width and signedness, numeric source bytes and the decoded projection.
 - Decode lists, sets, collections, strings, identifiers and binary values.
-  Keep a collection item's position and every property's name and type.
+  Keep every list item's declared type and tag-byte range, a collection item's
+  position and every property's name and type.
 - Record byte ranges and the original value bytes for every projection so a
-  claim can be traced back to the resource payload.
+  claim can be traced back to the resource payload. Positional integers keep
+  their encoded width, source bytes and range.
 - Decode strings with the resource's declared code page. When no page is
   declared, record the Delphi 7 ANSI default and `code_page_source: "default"`.
   When the host cannot label the declared page, preserve bytes and record
