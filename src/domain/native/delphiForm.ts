@@ -151,10 +151,14 @@ export const DELPHI_FORM_VALUE_TYPES: readonly string[] = [
 ];
 
 /** The declared type vocabulary accepted at the Evidence boundary. */
-export const isDelphiFormValueType = (value: string): boolean =>
-  value === "unknown" ||
-  /^unknown_value_type\(\d+\)$/u.test(value) ||
-  DELPHI_FORM_VALUE_TYPES.includes(value);
+export const isDelphiFormValueType = (value: string): boolean => {
+  if (value === "unknown" || DELPHI_FORM_VALUE_TYPES.includes(value))
+    return true;
+  const match = /^unknown_value_type\((\d{1,3})\)$/u.exec(value);
+  if (match === null) return false;
+  const ordinal = Number(match[1]);
+  return ordinal >= 24 && ordinal <= 255 && String(ordinal) === match[1];
+};
 
 /** Where the code page came from: the resource, a default, or neither. */
 export type DelphiFormCodePageSource = "resource" | "default" | "unsupported";

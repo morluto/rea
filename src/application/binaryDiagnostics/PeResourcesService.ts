@@ -235,7 +235,14 @@ const validReport = (
   );
 };
 
-/** Every nested location of a decoded form must stay inside its payload. */
+const withinRange = (
+  child: { offset: number; bytes: number },
+  parent: { offset: number; bytes: number },
+): boolean =>
+  child.offset >= parent.offset &&
+  child.offset + child.bytes <= parent.offset + parent.bytes;
+
+/** Every nested location of a decoded form must stay inside its owner. */
 const insideLocations = (
   object: DelphiFormObject,
   within: (range: { offset: number; bytes: number }) => boolean,
@@ -243,17 +250,36 @@ const insideLocations = (
 ): boolean => {
   if (!within(object.location)) return false;
   if (object.unknown !== null && !within(object.unknown.location)) return false;
-  const text = (item: DelphiFormText | null): boolean =>
-    item === null || (within(item.location) && item.code_page === codePage);
-  if (!text(object.class_name) || !text(object.component_name)) return false;
+  const text = (
+    item: DelphiFormText | null,
+    owner: { offset: number; bytes: number },
+  ): boolean =>
+    item === null ||
+    (withinRange(item.location, owner) && item.code_page === codePage);
+  if (
+    !text(object.class_name, object.location) ||
+    !text(object.component_name, object.location)
+  )
+    return false;
   return (
     object.properties.every(
       (property) =>
-        within(property.location) &&
-        text(property.name) &&
-        insideValue(property.value, within, codePage, property.value_type),
+        withinRange(property.location, object.location) &&
+        text(property.name, property.location) &&
+        insideValue(
+          property.value,
+          (range) => withinRange(range, property.location),
+          codePage,
+          property.value_type,
+        ),
     ) &&
-    object.children.every((child) => insideLocations(child, within, codePage))
+    object.children.every((child) =>
+      insideLocations(
+        child,
+        (range) => withinRange(range, object.location),
+        codePage,
+      ),
+    )
   );
 };
 
@@ -386,13 +412,21 @@ const insideValue = (
   if (value.kind === "list")
     return (
       within(value.location) &&
-      value.items.every((item) => insideValue(item, within, codePage))
+      value.items.every((item) =>
+        insideValue(
+          item,
+          (range) => withinRange(range, value.location),
+          codePage,
+        ),
+      )
     );
   if (value.kind === "set")
     return (
       within(value.location) &&
       value.names.every(
-        (item) => within(item.location) && item.code_page === codePage,
+        (item) =>
+          withinRange(item.location, value.location) &&
+          item.code_page === codePage,
       )
     );
   if (value.kind === "collection")
@@ -400,15 +434,15 @@ const insideValue = (
       within(value.location) &&
       value.items.every(
         (item) =>
-          within(item.location) &&
+          withinRange(item.location, value.location) &&
           item.properties.every(
             (property) =>
-              within(property.location) &&
-              within(property.name.location) &&
+              withinRange(property.location, item.location) &&
+              withinRange(property.name.location, property.location) &&
               property.name.code_page === codePage &&
               insideValue(
                 property.value,
-                within,
+                (range) => withinRange(range, property.location),
                 codePage,
                 property.value_type,
               ),

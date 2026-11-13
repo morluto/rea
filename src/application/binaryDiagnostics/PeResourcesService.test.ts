@@ -416,6 +416,7 @@ const formWithStringValue = async (
   );
   const resource = report.resources[index]!;
   resource.code_page = 1251;
+  const location = rootAfterSignature(resource.payload.location);
   report.delphi_forms = [
     {
       resource_index: index,
@@ -427,14 +428,14 @@ const formWithStringValue = async (
       code_page: "windows-1251",
       code_page_source: "resource",
       root: {
-        ...validRoot(rootAfterSignature(resource.payload.location)),
+        ...validRoot(location),
         properties: [
           {
             name: {
               text: "Caption",
               bytes_hex: "43",
               code_page: "windows-1251",
-              location: resource.payload.location,
+              location,
             },
             value_type: valueType,
             value: {
@@ -444,9 +445,9 @@ const formWithStringValue = async (
               code_page: valueCodePage,
               declared_bytes: 2,
               truncated: false,
-              location: resource.payload.location,
+              location,
             },
-            location: resource.payload.location,
+            location,
           },
         ],
       },
@@ -487,6 +488,7 @@ const formWithProperty = async (
   );
   const resource = report.resources[index]!;
   const pages = codePageFields(resource.code_page);
+  const location = rootAfterSignature(resource.payload.location);
   report.delphi_forms = [
     {
       resource_index: index,
@@ -496,21 +498,21 @@ const formWithProperty = async (
       prefix: null,
       ...pages,
       root: {
-        ...validRoot(rootAfterSignature(resource.payload.location)),
+        ...validRoot(location),
         properties: [
           {
             name: {
               text: "Value",
               bytes_hex: "56",
               code_page: pages.code_page,
-              location: resource.payload.location,
+              location,
             },
             value_type: valueType,
             value: {
               ...value,
-              location: resource.payload.location,
+              location,
             } as never,
-            location: resource.payload.location,
+            location,
           },
         ],
       },
@@ -540,18 +542,21 @@ it("rejects a property whose value type contradicts its decoded value", async ()
   });
 });
 
-it("rejects an invented value type even when the value is unknown", async () => {
-  const report = await formWithProperty("invented", {
-    kind: "unknown",
-    reason: "stopped",
-    bytes_hex: "",
-    truncated: true,
-  });
-  expect(await inspectReport(report)).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisOutputError" },
-  });
-});
+it.each(["invented", "unknown_value_type(999)", "unknown_value_type(01)"])(
+  "rejects undeclared value type %s even when the value is unknown",
+  async (valueType) => {
+    const report = await formWithProperty(valueType, {
+      kind: "unknown",
+      reason: "stopped",
+      bytes_hex: "",
+      truncated: true,
+    });
+    expect(await inspectReport(report)).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
+  },
+);
 
 it("rejects an integer whose value does not fit its declared width", async () => {
   const report = await formWithProperty("vaInt8", {
@@ -560,6 +565,47 @@ it("rejects an integer whose value does not fit its declared width", async () =>
     width: 8,
     signed: true,
   });
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a property name range outside its owning property", async () => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  const payload = resource.payload.location;
+  const pages = codePageFields(resource.code_page);
+  const location = rootAfterSignature(payload);
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signatureAt(payload),
+      prefix: null,
+      ...pages,
+      root: {
+        ...validRoot(location),
+        properties: [
+          {
+            name: {
+              text: "Caption",
+              bytes_hex: "43",
+              code_page: pages.code_page,
+              location: payload,
+            },
+            value_type: "vaNull",
+            value: { kind: "null", location },
+            location,
+          },
+        ],
+      },
+    },
+  ];
   expect(await inspectReport(report)).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisOutputError" },
