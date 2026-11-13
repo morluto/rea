@@ -89,7 +89,7 @@ const deriveAccessKind = (
 /**
  * Attribute an analyzed instruction reference to its underlying hardware memory
  * region, calculating peripheral block coordinates and access direction.
- * Optionally accepts an explicit SoC platform family (stm32f1, stm32f4, gd32f1, gd32f4, rp2040, esp32).
+ * Optionally accepts an explicit SoC platform family (stm32f1, stm32f4, gd32f1, gd32f4, rp2040, esp32, esp32c3).
  * for exact peripheral controller identification and base address resolution.
  */
 export const attributeHardwareAccess = (

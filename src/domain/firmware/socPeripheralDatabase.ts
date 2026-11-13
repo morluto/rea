@@ -9,6 +9,7 @@ export const SOC_PLATFORMS = [
   "gd32f4",
   "rp2040",
   "esp32",
+  "esp32c3",
 ] as const;
 export type SocPlatform = (typeof SOC_PLATFORMS)[number];
 export const socPlatformSchema = z.enum(SOC_PLATFORMS);
@@ -1285,6 +1286,105 @@ const ESP32_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   },
 ];
 
+// ESP32-C3 bases from esp-idf soc/esp32c3/register/soc/reg_base.h.
+// Windows already recorded on esp32 stay here too, so a shared address cannot
+// select only one family. UART1 and USB_SERIAL_JTAG are C3 bases the esp32
+// catalog does not own.
+const ESP32C3_PERIPHERALS: readonly InternalPeripheralEntry[] = [
+  {
+    name: "UART0",
+    base: 0x60000000n,
+    size: 0x1000,
+    bus: "System",
+    description: "UART register block. DR_REG_UART_BASE",
+  },
+  {
+    name: "SPI1",
+    base: 0x60002000n,
+    size: 0x1000,
+    bus: "System",
+    description: "SPI1 register block. DR_REG_SPI1_BASE",
+  },
+  {
+    name: "SPI0",
+    base: 0x60003000n,
+    size: 0x1000,
+    bus: "System",
+    description: "SPI0 register block. DR_REG_SPI0_BASE",
+  },
+  {
+    name: "GPIO",
+    base: 0x60004000n,
+    size: 0x1000,
+    bus: "System",
+    description: "GPIO register block. DR_REG_GPIO_BASE",
+  },
+  {
+    name: "RTCCNTL",
+    base: 0x60008000n,
+    size: 0x800,
+    bus: "RTC",
+    description:
+      "RTC control register block. DR_REG_RTCCNTL_BASE; the next header base is EFUSE",
+  },
+  {
+    name: "IO_MUX",
+    base: 0x60009000n,
+    size: 0x1000,
+    bus: "System",
+    description: "IO mux register block. DR_REG_IO_MUX_BASE",
+  },
+  {
+    name: "UART1",
+    base: 0x60010000n,
+    size: 0x1000,
+    bus: "System",
+    description: "UART1 register block. DR_REG_UART1_BASE",
+  },
+  {
+    name: "I2C0",
+    base: 0x60013000n,
+    size: 0x1000,
+    bus: "System",
+    description: "I2C register block. DR_REG_I2C_EXT_BASE",
+  },
+  {
+    name: "TIMG0",
+    base: 0x6001f000n,
+    size: 0x1000,
+    bus: "System",
+    description: "Timer group 0. DR_REG_TIMERGROUP0_BASE",
+  },
+  {
+    name: "TIMG1",
+    base: 0x60020000n,
+    size: 0x1000,
+    bus: "System",
+    description: "Timer group 1. DR_REG_TIMERGROUP1_BASE",
+  },
+  {
+    name: "SYSTIMER",
+    base: 0x60023000n,
+    size: 0x1000,
+    bus: "System",
+    description: "System timer. DR_REG_SYSTIMER_BASE",
+  },
+  {
+    name: "SYSTEM",
+    base: 0x600c0000n,
+    size: 0x1000,
+    bus: "System",
+    description: "System register block. DR_REG_SYSTEM_BASE",
+  },
+  {
+    name: "USB_SERIAL_JTAG",
+    base: 0x60043000n,
+    size: 0x1000,
+    bus: "System",
+    description: "USB serial JTAG. DR_REG_USB_SERIAL_JTAG_BASE",
+  },
+];
+
 const PLATFORM_PERIPHERALS: Record<
   SocPlatform,
   readonly InternalPeripheralEntry[]
@@ -1295,6 +1395,7 @@ const PLATFORM_PERIPHERALS: Record<
   gd32f4: GD32F4_PERIPHERALS,
   rp2040: RP2040_PERIPHERALS,
   esp32: ESP32_PERIPHERALS,
+  esp32c3: ESP32C3_PERIPHERALS,
 };
 
 /** CPU families whose memory maps can contain each catalog. */
@@ -1305,6 +1406,7 @@ const PLATFORM_CPU: Record<SocPlatform, readonly HardwareArchitecture[]> = {
   gd32f4: ["arm", "cortex-m"],
   rp2040: ["arm", "cortex-m"],
   esp32: ["riscv"],
+  esp32c3: ["riscv"],
 };
 
 const HEX_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{1,16}$/u;

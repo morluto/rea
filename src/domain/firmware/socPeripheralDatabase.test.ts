@@ -178,6 +178,13 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
         confidence: 1,
         matchedPeripherals: ["UART0"],
       },
+      {
+        platform: "esp32c3",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART0"],
+      },
     ]);
 
     expect(detectSocPlatform(["0x3ff40000"], "x86")).toEqual([]);
@@ -294,5 +301,32 @@ describe("RP2040 peripheral windows", () => {
       },
     ]);
     expect(detectSocPlatform(["0x40034000"], "riscv")).toEqual([]);
+  });
+});
+
+describe("ESP32-C3 peripheral windows", () => {
+  it("keeps a shared UART from selecting only one family", () => {
+    expect(lookupSocPeripheral("0x60000000", "esp32c3")?.name).toBe("UART0");
+    expect(lookupSocPeripheral("0x60010000", "esp32c3")?.name).toBe("UART1");
+    expect(lookupSocPeripheral("0x60010000", "esp32")).toBeNull();
+    expect(lookupSocPeripheral("0x60043000", "esp32c3")?.name).toBe(
+      "USB_SERIAL_JTAG",
+    );
+    expect(lookupSocPeripheral("0x6002e000", "esp32c3")).toBeNull();
+    const leaders = detectSocPlatform(["0x60000000"], "riscv");
+    expect(leaders.map((candidate) => candidate.platform)).toEqual([
+      "esp32",
+      "esp32c3",
+    ]);
+    expect(detectSocPlatform(["0x60043000"], "riscv")).toEqual([
+      {
+        platform: "esp32c3",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["USB_SERIAL_JTAG"],
+      },
+    ]);
+    expect(detectSocPlatform(["0x60043000"], "arm")).toEqual([]);
   });
 });

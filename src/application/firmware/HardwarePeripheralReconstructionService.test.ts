@@ -161,7 +161,7 @@ describe("Hardware peripheral reconstruction from offline instruction references
 describe("SoC catalog selection", () => {
   it("names a peripheral only when one catalog leads", () => {
     const report = reconstructHardwareFromReferences(
-      [{ target_address: "0x60000000", read: true }],
+      [{ target_address: "0x3ff40000", read: true }],
       "riscv",
     );
 
@@ -225,17 +225,40 @@ describe("SoC catalog selection", () => {
       "riscv",
     );
 
-    expect(report.detectedPlatforms[0]).toMatchObject({
-      platform: "esp32",
-      matchedCount: 1,
-      totalAddresses: 1,
-      confidence: 1,
-    });
-    const uart = report.peripheralBlocks.find(
-      (block) => block.socPeripheralName === "UART0",
+    expect(report.detectedPlatforms.map((candidate) => candidate.platform)).toEqual(
+      ["esp32", "esp32c3"],
     );
-    expect(uart?.regionKind).toBe("peripheral_mmio");
-    expect(uart?.socPeripheralBus).toBe("System");
+    expect(
+      report.detectedPlatforms.every(
+        (candidate) =>
+          candidate.matchedCount === 1 && candidate.totalAddresses === 1,
+      ),
+    ).toBe(true);
+    expect(
+      report.peripheralBlocks.some((block) => block.socPeripheralName === "UART0"),
+    ).toBe(false);
+    expect(report.limitations[0]).toContain("esp32, esp32c3");
+  });
+
+  it("names the ESP32-C3 USB serial block when no other catalog owns it", () => {
+    const report = reconstructHardwareFromReferences(
+      [{ target_address: "0x60043000", read: true }],
+      "riscv",
+    );
+
+    expect(report.detectedPlatforms).toEqual([
+      {
+        platform: "esp32c3",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["USB_SERIAL_JTAG"],
+      },
+    ]);
+    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe(
+      "USB_SERIAL_JTAG",
+    );
+    expect(report.limitations).toEqual([]);
   });
 
   it("does not rename an x86 data read to an ESP32 UART", () => {
