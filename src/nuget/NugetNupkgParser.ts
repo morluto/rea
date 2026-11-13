@@ -240,6 +240,13 @@ const opcManifestTargets = (xml: string, limitations: string[]): string[] => {
     if (type === null || !type.toLowerCase().endsWith("/manifest")) continue;
     const target = attribute(relationship, "Target");
     if (target === null) continue;
+    // OPC external targets may be relative, so the mode decides, not the URI shape.
+    if (attribute(relationship, "TargetMode")?.toLowerCase() === "external") {
+      limitations.push(
+        `OPC manifest relationship Target ${JSON.stringify(target)} is external and was not followed.`,
+      );
+      continue;
+    }
     if (/^[a-z][a-z0-9+.-]*:/iu.test(target)) {
       limitations.push(
         `OPC manifest relationship Target ${JSON.stringify(target)} is an absolute URI and was not followed.`,
