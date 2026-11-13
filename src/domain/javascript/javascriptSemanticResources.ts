@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { rejectsSemanticEventListener } from "./javascriptSemanticAsyncEffects.js";
 
 import {
   BUILTIN_RESOURCE_SPECIFIERS,
@@ -78,7 +79,11 @@ export const collectJavaScriptSemanticResources = (
   const acquisitions = collectAcquisitions(program, context).filter(
     (candidate) =>
       !socketPortInFirstArgument(candidate) ||
-      (!rejectsSocketPortLiteral(candidate.node, context) &&
+      (!rejectsSocketLiteralArguments(
+        candidate.node,
+        candidate.specifier,
+        context,
+      ) &&
         !rejectsTlsProtocolVersionLiteral(
           candidate.node,
           candidate.specifier,
@@ -91,6 +96,26 @@ export const collectJavaScriptSemanticResources = (
   ];
 };
 
+/** These expressions have typeof "function", including a class constructor. */
+const isFunctionValuedSyntax = (value: t.Node): boolean =>
+  t.isFunctionExpression(value) ||
+  t.isArrowFunctionExpression(value) ||
+  t.isClassExpression(value);
+
+/** Literal kinds Node rejects for both open flags and modes. */
+const rejectsFlagOrModeLiteral = (value: t.Node): boolean => {
+  return (
+    isFunctionValuedSyntax(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value) ||
+    (t.isUnaryExpression(value) &&
+      t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node))
+  );
+};
+
 /**
  * `fs.open`/`fs.openSync` validate the flag before touching the filesystem, so
  * a flag Node rejects at the call site throws synchronously and no descriptor
@@ -101,6 +126,7 @@ export const collectJavaScriptSemanticResources = (
 const rejectsOpenFlagLiteral = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: DataEffectTraversalContext,
+  callbackForm: boolean,
 ): boolean => {
   // A spread before the flag slot shifts the runtime position, so argument 1 is
   // not provably the flag. `openSync(...args, "0600")` with
@@ -109,6 +135,16 @@ const rejectsOpenFlagLiteral = (
   const flag = node.arguments[1];
   if (flag === undefined || t.isSpreadElement(flag)) return false;
   const value = unwrapJavaScriptExpression(flag).node;
+  // fs.open(path, callback) defaults the flags. Later spreads may all be
+  // empty; a fixed third argument is needed to exclude that overload.
+  if (
+    callbackForm &&
+    isFunctionValuedSyntax(value) &&
+    node.arguments.every(
+      (argument, index) => index < 2 || t.isSpreadElement(argument),
+    )
+  )
+    return false;
   // A no-expression template literal is exactly readable, so it is the same flag
   // string Node receives.
   const flagText = t.isStringLiteral(value)
@@ -132,15 +168,7 @@ const rejectsOpenFlagLiteral = (
   if (isNonFiniteNumber(value, context)) return true;
   // BigInt, boolean, object and array literals all fail Node's flag check. A
   // unary operator over a BigInt literal is a BigInt too.
-  return (
-    t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value) ||
-    t.isRegExpLiteral(value) ||
-    t.isObjectExpression(value) ||
-    t.isArrayExpression(value) ||
-    (t.isUnaryExpression(value) &&
-      t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node))
-  );
+  return rejectsFlagOrModeLiteral(value);
 };
 
 /**
@@ -280,6 +308,7 @@ const isNonFiniteNumber = (
 const rejectsOpenModeLiteral = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: DataEffectTraversalContext,
+  callbackForm: boolean,
 ): boolean => {
   // A spread before the mode slot shifts the runtime position.
   if (
@@ -290,6 +319,8 @@ const rejectsOpenModeLiteral = (
   const mode = node.arguments[2];
   if (mode === undefined || t.isSpreadElement(mode)) return false;
   const value = unwrapJavaScriptExpression(mode).node;
+  // Only callback-form fs.open treats a function in this slot as its callback.
+  if (callbackForm && isFunctionValuedSyntax(value)) return false;
   // `null`, `undefined` and `void <expr>` all default the mode.
   if (t.isNullLiteral(value)) return false;
   // A no-expression template literal is exactly readable, so it is the same
@@ -321,15 +352,7 @@ const rejectsOpenModeLiteral = (
   // BigInt, boolean, object and array literals all fail Node's mode check. A
   // unary operator over a BigInt literal is a BigInt too, and the range helpers
   // above only price numeric operands.
-  return (
-    t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value) ||
-    t.isRegExpLiteral(value) ||
-    t.isObjectExpression(value) ||
-    t.isArrayExpression(value) ||
-    (t.isUnaryExpression(value) &&
-      t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node))
-  );
+  return rejectsFlagOrModeLiteral(value);
 };
 
 /** `fs.open`, `fs.openSync` and `fs/promises.open` take the flag in slot 1. */
@@ -337,6 +360,21 @@ const openFlagInFirstArgument = (reference: AcquisitionReference): boolean =>
   reference.method === "open" || reference.method === "openSync"
     ? reference.specifier === "fs" || reference.specifier === "fs/promises"
     : false;
+
+/** Node normalizes fs.open's callback before validating its function type. */
+const rejectsOpenCallbackLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): boolean => {
+  // A spread can change both arity and which operand is the callback.
+  if (node.arguments.some((argument) => t.isSpreadElement(argument)))
+    return false;
+  if (node.arguments.length < 3)
+    return rejectsSemanticEventListener(node.arguments[1]);
+  // A function-valued mode is the callback; an unknown mode may be one too.
+  // Both can supersede a missing or invalid fourth operand.
+  if (!rejectsSemanticEventListener(node.arguments[2])) return false;
+  return rejectsSemanticEventListener(node.arguments[3]);
+};
 
 const collectAcquisitions = (
   program: t.Program,
@@ -347,9 +385,15 @@ const collectAcquisitions = (
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const reference = acquisitionMethod(node.callee, context.state);
     if (reference === null) return;
-    if (openFlagInFirstArgument(reference)) {
-      if (rejectsOpenFlagLiteral(node, context)) return;
-      if (rejectsOpenModeLiteral(node, context)) return;
+    if (
+      openFlagInFirstArgument(reference) &&
+      reference.builtinAuthority !== "candidate"
+    ) {
+      const callbackForm =
+        reference.specifier === "fs" && reference.method === "open";
+      if (callbackForm && rejectsOpenCallbackLiteral(node)) return;
+      if (rejectsOpenFlagLiteral(node, context, callbackForm)) return;
+      if (rejectsOpenModeLiteral(node, context, callbackForm)) return;
     }
     output.push({
       node,
@@ -447,6 +491,9 @@ const collectReleases = (
       resolution:
         !opaqueReceiver &&
         linked.length === 1 &&
+        (binding.kind !== "parameter" ||
+          semanticBindingAtRead(binding, member.object, context.state)
+            .hasDefiniteInitializer) &&
         holdsOnlyAcquisitions(binding, linked, context.state)
           ? "complete"
           : "partial",
@@ -573,16 +620,25 @@ const resourceCandidateId = (candidate: ResourceCandidate): string =>
  * readable non-port literal is decided. `""` is a path with no length, which
  * Node also rejects.
  *
- * `undefined` and an empty object throw `ERR_MISSING_ARGS`, but those are a
- * missing option rather than a bad port, so they stay undecided here.
+ * `net` also rejects an omitted or undefined port, before it returns a socket.
+ * TLS merges later options, so an undefined first argument alone cannot decide
+ * its admission. Object arguments and spread positions remain undecided here.
  */
-const rejectsSocketPortLiteral = (
+const rejectsSocketLiteralArguments = (
   node: t.CallExpression | t.OptionalCallExpression,
+  specifier: string,
   context: DataEffectTraversalContext,
 ): boolean => {
   const port = node.arguments[0];
-  if (port === undefined || t.isSpreadElement(port)) return false;
+  if (port === undefined) return specifier === "net";
+  if (t.isSpreadElement(port)) return false;
   const value = unwrapJavaScriptExpression(port).node;
+  if (
+    specifier === "net" &&
+    (t.isUnaryExpression(value, { operator: "void" }) ||
+      isUnmodifiedGlobalReference(value, context.state, "undefined"))
+  )
+    return true;
   if (t.isStringLiteral(value)) return value.value.length === 0;
   if (
     t.isNullLiteral(value) ||
@@ -601,13 +657,14 @@ const rejectsSocketPortLiteral = (
     isUnmodifiedGlobalReference(value, context.state, value.name)
   )
     return true;
-  // `-1` and `-1.5` are unary expressions over numeric literals: always out of
-  // range because a port is never negative.
+  // Numeric unary operators are judged by their result: `-0` is port zero,
+  // and `~(-1.5)` is zero too. `typeof` instead yields a nonempty IPC path.
   if (t.isUnaryExpression(value)) {
-    const operand = unwrapJavaScriptExpression(value.argument).node;
+    if (value.operator === "!" || value.operator === "delete") return true;
+    const number = unaryOperandNumber(value, context, 0);
     return (
-      t.isNumericLiteral(operand) &&
-      (value.operator === "-" || !Number.isInteger(operand.value))
+      number !== undefined &&
+      (!Number.isInteger(number) || number < 0 || number > 65535)
     );
   }
   return false;

@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 const windowPrefix =
   "import {BrowserWindow} from 'electron'; import {fileURLToPath} from 'node:url';";
@@ -152,3 +153,52 @@ it("keeps a reused renderer receiver uncertain after its native method call", ()
     "independent.html",
   ]);
 });
+
+it.each([
+  ["untouched exports", "", 1],
+  [
+    "object-pattern exports write",
+    "({value: module.exports} = replacement);",
+    0,
+  ],
+  ["array-pattern exports write", "[module.exports] = replacement;", 0],
+  ["loop-target exports write", "for (module.exports of replacement) {}", 0],
+] as const)(
+  "requires intact bootstrap exports after %s",
+  (_name, write, expected) => {
+    const source = `(() => {
+      const table = {
+        external(module, exports, load) { module.exports = require('electron'); },
+        entry(module, exports, load) { new (load('external').BrowserWindow)(); }
+      };
+      function load(key) {
+        const module = {exports: {}};
+        table[key](module, module.exports, load);
+        ${write}
+        return module.exports;
+      }
+      load('entry');
+    })();`;
+    const observed: string[] = [];
+    const windowClass = (identity: string) =>
+      class {
+        constructor() {
+          observed.push(identity);
+        }
+      };
+    const local = { BrowserWindow: windowClass("replacement") };
+    runInNewContext(source, {
+      replacement: Object.assign([local], { value: local }),
+      require: (specifier: string) => {
+        expect(specifier).toBe("electron");
+        return { BrowserWindow: windowClass("electron") };
+      },
+    });
+    expect(observed).toEqual([expected === 1 ? "electron" : "replacement"]);
+    expect(
+      analyzeCommonJsStaticFixture(source).electron.browser_windows,
+    ).toHaveLength(expected);
+  },
+);
+
+import { runInNewContext } from "node:vm";

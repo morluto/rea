@@ -215,6 +215,7 @@ export interface ArtifactReader {
     | "dfuse"
     | "esp-flash-image"
     | "fit"
+    | "ntfs-mft"
     | "file";
   entries(
     signal?: AbortSignal,

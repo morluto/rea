@@ -1,4 +1,6 @@
-import { expect, it, vi } from "vitest";
+import { createTestProcessCaptureResourceScope } from "../../../tests/fixtures/processCaptureResourceScope.js";
+import { assertProcessOwnershipInspectionActive } from "../ProcessInspectionCancellation.js";
+import { expect, it, vi, onTestFinished } from "vitest";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import {
@@ -7,7 +9,6 @@ import {
 } from "./ProcessHarness.js";
 import {
   settleProcessCaptureJournal,
-  releaseProcessResources,
   ProcessCaptureResourceScope,
   createProcessCaptureObservationBuffer,
   prepareProcessCapture,
@@ -66,11 +67,12 @@ it("retains cancellation and cleanup facts when ownership baseline inspection ab
         createTemporaryRoot: async () => "/fixture/allocated-root",
         captureOwnershipBaseline: async () => {
           controller.abort(reason);
-          controller.signal.throwIfAborted();
+          assertProcessOwnershipInspectionActive(controller.signal);
           return [];
         },
         cleanup: async () => undefined,
       },
+      createTestProcessCaptureResourceScope(),
     ),
   ).rejects.toMatchObject({
     reason: "cancelled",
@@ -103,6 +105,12 @@ it("keeps prelaunch snapshot evidence and the ownership failure when root cleanu
     executable: process.execPath,
     filesystem_observation_paths: ["/fixture/root"],
   });
+  const resources = new ProcessCaptureResourceScope();
+  let cleanupDenied = true;
+  onTestFinished(async () => {
+    cleanupDenied = false;
+    await resources.close();
+  });
   try {
     await prepareProcessCapture(
       scenario,
@@ -119,9 +127,10 @@ it("keeps prelaunch snapshot evidence and the ownership failure when root cleanu
           throw ownershipFailure;
         },
         cleanup: async () => {
-          throw new Error("root removal denied");
+          if (cleanupDenied) throw new Error("root removal denied");
         },
       },
+      resources,
     );
     throw new Error("expected preparation failure");
   } catch (cause: unknown) {
@@ -247,7 +256,6 @@ it("preserves the actionable Darwin ownership compiler prerequisite", () => {
     new DarwinProcessOwnershipInspectionError(
       "macOS process ownership inspection requires the Apple Swift compiler via xcrun",
     ),
-    undefined,
   );
 
   expect(normalized).toBeInstanceOf(ProcessCaptureError);
@@ -336,7 +344,7 @@ it("keeps empty cleanup exception messages actionable in the report", async () =
       throw new Error("");
     },
   };
-  const outcome = await releaseProcessResources({
+  const outcome = await new ProcessCaptureResourceScope().release({
     timers: new Set(),
     terminal: undefined,
     renderer: undefined,
@@ -442,7 +450,7 @@ it("retains unrelated withheld processes through cleanup, capture, and JSON", as
     }),
     removeTemporaryRoot: async () => undefined,
   };
-  const outcome = await releaseProcessResources({
+  const outcome = await new ProcessCaptureResourceScope().release({
     timers: new Set(),
     terminal: { pid: 321 },
     renderer: undefined,
@@ -497,7 +505,7 @@ it("passes sampled detached groups into cleanup even when their token is unknown
     removeTemporaryRoot: async () => undefined,
   };
 
-  const outcome = await releaseProcessResources({
+  const outcome = await new ProcessCaptureResourceScope().release({
     timers: new Set(),
     terminal: { pid: 321 },
     renderer: undefined,

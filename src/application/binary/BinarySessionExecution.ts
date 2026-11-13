@@ -17,6 +17,7 @@ import type {
   CapabilityDescriptor,
   ExecutionOptions,
 } from "../AnalysisProvider.js";
+import { offeredOperationAlternatives } from "../OperationAlternatives.js";
 import {
   isSnapshotCacheable,
   requestsFreshIndependentDecompile,
@@ -45,6 +46,11 @@ interface PrepareSessionExecutionInput {
   readonly parameters: Readonly<Record<string, JsonValue>>;
   readonly snapshotContext?: ExecutionOptions["snapshotContext"];
   readonly nativeSourceAdmitted: boolean;
+  /** Current availability as binary_session reports it, not the declaration. */
+  readonly isOperationAvailable: (operation: AnalysisOperation) => boolean;
+  readonly isOperationAdvertised:
+    | ((operation: AnalysisOperation) => boolean)
+    | undefined;
   readonly unboundOperationError: (
     operation: AnalysisOperation,
     route: SessionProviderRoute,
@@ -58,9 +64,9 @@ interface PrepareSessionExecutionInput {
 }
 
 /** Recovery for an operation absent from the selected binary route. */
-export const undeclaredOperationGuidance = (
+const undeclaredOperationGuidance = (
   operation: string,
-  entryCommentAvailable = false,
+  entryCommentAvailable: boolean,
 ): string => {
   const entryComment =
     entryCommentAvailable &&
@@ -79,6 +85,8 @@ export const prepareSessionExecution = (
     operation,
     parameters,
     nativeSourceAdmitted,
+    isOperationAvailable,
+    isOperationAdvertised,
     unboundOperationError,
     lookupSnapshot,
   } = input;
@@ -97,6 +105,15 @@ export const prepareSessionExecution = (
       capability === undefined
         ? undeclaredOperationGuidance(operation, entryCommentAvailable)
         : undefined;
+    const offered =
+      capability === undefined
+        ? offeredOperationAlternatives(
+            operation,
+            (alternative) =>
+              isOperationAvailable(alternative) &&
+              (isOperationAdvertised?.(alternative) ?? true),
+          )
+        : undefined;
     return err(
       new AnalysisCapabilityUnavailableError(
         active.route.binding?.identity.id ?? active.route.identity.id,
@@ -114,6 +131,12 @@ export const prepareSessionExecution = (
           : {
               userMessage: `The selected provider does not declare ${operation}.`,
               fallbackRemediationAction: undeclaredGuidance,
+              ...(offered === undefined
+                ? {}
+                : {
+                    alternatives: offered.operations,
+                    remediationAction: offered.remediation,
+                  }),
             },
       ),
     );

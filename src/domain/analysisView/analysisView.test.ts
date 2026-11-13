@@ -27,7 +27,6 @@ import {
 } from "../javascript/javascriptSemanticGraph.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
-import { javascriptModulePaths } from "./javascriptApplicationView.js";
 import {
   analysisViewResultSchema,
   inspectAnalysisViewInputSchema,
@@ -65,6 +64,19 @@ const nativeParent = (
   normalizedResult: result,
   limitations: ["Retained provider limitation"],
   artifact: { path: "/fixtures/example.exe", sha256: "a".repeat(64) },
+});
+
+it("returns input errors for malformed parent Evidence identifiers before projection", () => {
+  for (const evidenceId of [`xx_${"a".repeat(64)}`, "ev_bad"])
+    expect(
+      projectAnalysisView(
+        { ...nativeParent(), evidenceId },
+        { kind: "summary" },
+      ),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+  expect(projectAnalysisView(nativeParent(), { kind: "summary" }).ok).toBe(
+    true,
+  );
 });
 
 it("projects native procedure and bounded assembly and high-pcode with exact parent identity", () => {
@@ -432,6 +444,7 @@ it("pages every retained dossier collection and the native API record", () => {
     page("swift_string_literals", {
       ...original,
       swift_string_literals: [literal],
+      swift_string_literal_omissions: [],
     }),
   ).toMatchObject({ item: [literal], coverage: { total: 1 } });
   expect(page("swift_string_literals")).toMatchObject({
@@ -779,9 +792,6 @@ it("projects JavaScript summary and preserves selected module observations", () 
     selector: { path: "renderer.js" },
   });
   if (!item.ok) throw item.error;
-  const moduleNode = analysis.graph.nodes[0];
-  if (moduleNode === undefined) throw new Error("missing module");
-  expect(javascriptModulePaths(moduleNode)).toEqual(["renderer.js"]);
   if (item.value.kind !== "item") throw new Error("expected item view");
   expect(item.value.item).toMatchObject({
     path: "renderer.js",

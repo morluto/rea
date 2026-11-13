@@ -67,7 +67,7 @@ export const projectGhidraDoctorInspection = (
               code: !readiness.available ? readiness.code : null,
               detail: !readiness.available
                 ? readiness.reason
-                : "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS only.",
+                : "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS/ReFS only.",
               remediation: !readiness.available ? readiness.remediation : null,
               classification:
                 !readiness.available && readiness.code === "runtime_unavailable"
@@ -102,7 +102,7 @@ const temporaryDirectoryCheck = (
         name: "temp_directory",
         ok: false,
         code: "temp_directory_unwritable",
-        detail: `REA could not ${probe.stage === "write" ? "write" : "delete"} a probe file under the Ghidra session root ${probe.directory}, where session runtimes are created${probe.code === undefined ? "" : ` (${probe.code})`}: ${probe.message}${probe.retainedPath === undefined ? "" : `. The probe file ${probe.retainedPath} remains; REA retains its cleanup and retries removal when doctor finishes.`}`,
+        detail: `REA could not ${probe.stage === "write" ? "write" : "clean up"} a probe file under the Ghidra session root ${probe.directory}, where session runtimes are created${probe.code === undefined ? "" : ` (${probe.code})`}: ${probe.message}${probe.retainedPath === undefined ? "" : `. The probe file ${probe.retainedPath} remains; REA retains its cleanup and retries removal when doctor finishes.`}`,
         remediation: GHIDRA_RESTRICTED_TEMP_REMEDIATION,
         classification: "runtime_failure",
         details: {
@@ -120,9 +120,6 @@ export const inspectSystemGhidraProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   resourceOwner: RetainedResourceScope,
   signal?: AbortSignal,
-  probeTemporaryDirectory: (
-    resourceOwner: RetainedResourceScope,
-  ) => Promise<GhidraTemporaryDirectoryProbe> = probeGhidraTemporaryDirectory,
 ): Promise<DoctorProviderInspection> => {
   try {
     const installation = await inspectGhidraInstallation({
@@ -139,7 +136,7 @@ export const inspectSystemGhidraProvider = async (
     // The restricted-host denial reported for #7075 is Windows-specific.
     const temporaryDirectory =
       installation.status === "available" && installation.platform === "win32"
-        ? await probeTemporaryDirectory(resourceOwner)
+        ? await probeGhidraTemporaryDirectory(resourceOwner)
         : undefined;
     return projectGhidraDoctorInspection(installation, temporaryDirectory);
   } catch (cause: unknown) {

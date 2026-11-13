@@ -32,9 +32,6 @@ export const androidNativeDeclarationsSchema = z.strictObject({
   unknowns: z.array(z.string()),
 });
 
-export type AndroidNativeDeclaration = z.infer<
-  typeof androidNativeDeclarationSchema
->;
 export type AndroidNativeDeclarations = z.infer<
   typeof androidNativeDeclarationsSchema
 >;

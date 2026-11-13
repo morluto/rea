@@ -1,11 +1,9 @@
-import {
-  projectAnalysisView,
-  analysisViewRequestSchema,
-} from "./analysisView/analysisView.js";
+import { projectAnalysisView } from "./analysisView/analysisView.js";
+import { analysisViewRequestSchema } from "./analysisView/analysisViewRequest.js";
 import { describe, expect, it } from "vitest";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
-import { analyzeJavaScriptStaticSource } from "./javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../tests/fixtures/javascriptStaticAnalysis.js";
 import { analyzeCapturedWebScript } from "./webBundleAnalyzer.js";
 import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
 import { buildCapturedWebBundleAnalysis } from "./webBundleAnalyzerResult.js";
@@ -2122,6 +2120,32 @@ it("keeps known capture omissions in compact route summaries and queryable gap f
   for (const row of gaps.value.items)
     expect(row).toMatchObject({ source_id: null, provenance: null });
 });
+
+it.each(
+  (["scripts", "script_sources"] as const).flatMap((section) =>
+    [0, 1, null].map((count) => ({ section, count })),
+  ),
+)(
+  "preserves actual capture omission coverage for $section count $count",
+  ({ section, count }) => {
+    const captured = inspection("export {};");
+    captured.completeness.excluded.push({
+      section,
+      reason: "resource_budget_exhausted",
+      count,
+    });
+    const result = analyzeWebBundleFixture(captured);
+    expect(result.completeness.status).toBe(
+      count === 0 ? "complete" : "partial",
+    );
+    expect(result.unknowns).toHaveLength(count === 0 ? 0 : 1);
+    expect(
+      result.route_inventory?.unknowns.filter(
+        ({ kind }) => kind === "capture-omission",
+      ),
+    ).toHaveLength(count === 0 ? 0 : 1);
+  },
+);
 
 it("retains captured Next script identity while deriving decoded route patterns", () => {
   const url = `${origin}/base/_next/static/chunks/app/%28shop%29/blog/%5Bid%5D/page-abc.js`;

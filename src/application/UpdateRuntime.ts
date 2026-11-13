@@ -144,7 +144,7 @@ const INVALID_NPM_RELEASE_METADATA =
   "Invalid npm release metadata: expected a version string or a single-element version array.";
 
 /** bun info arguments for dist-tags.latest; Bun resolves its configured registry. */
-export const BUN_LATEST_VERSION_COMMAND: readonly string[] = [
+const BUN_LATEST_VERSION_COMMAND: readonly string[] = [
   "bun",
   "info",
   PRODUCT_IDENTITY.packageName,
@@ -173,7 +173,7 @@ const npmLatestVersionCommand = (
  */
 const parseNpmLatestVersion = (metadata: string): Result<string, string> => {
   const decoded = safeParseJson(metadata);
-  if (!decoded.ok) return err(decoded.error);
+  if (!decoded.ok) return decoded;
   const version = readNpmLatestVersion(decoded.value);
   return version === undefined
     ? err(INVALID_NPM_RELEASE_METADATA)

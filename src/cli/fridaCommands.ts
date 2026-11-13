@@ -1,6 +1,7 @@
 import { fridaCapturePolicyInputSchema } from "../domain/fridaCapturePolicy.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import type {
@@ -166,9 +167,7 @@ export const registerFridaCommands = (
           .string()
           .optional()
           .describe(`Inline JavaScript to load. ${exactlyOneScriptSource}`),
-        scriptFile: z
-          .string()
-          .min(1)
+        scriptFile: localPathStringSchema
           .optional()
           .describe(
             `Path to JavaScript source file. ${exactlyOneScriptSource}`,

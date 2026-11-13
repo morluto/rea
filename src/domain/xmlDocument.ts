@@ -5,7 +5,7 @@ import { err, ok, type Result } from "./result.js";
 /** XML 1.0 literal line endings; Unicode separators remain source characters. */
 export const XML_LINE_ENDING = /\r\n?|\n/gu;
 
-export class XmlDocumentParseError extends Error {
+class XmlDocumentParseError extends Error {
   readonly _tag = "XmlDocumentParseError";
   constructor(
     readonly reason: "malformed" | "doctype" | "internal-subset",

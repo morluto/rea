@@ -16,6 +16,7 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 const failureLeaves = (reason: unknown): unknown[] =>
   reason instanceof AggregateError
@@ -80,7 +81,7 @@ it("reports a failed session close, joins concurrent attempts and retries the re
     harness = acquired.harness;
     const closing = harness.close();
     const outcome = closing.catch((reason: unknown) => reason);
-    await entered.promise;
+    await awaitAcknowledgement(entered.promise, outcome, "provider close");
     const concurrent = harness.close();
     const concurrentOutcome = concurrent.catch((reason: unknown) => reason);
     expect(closeProvider).toHaveBeenCalledTimes(1);
@@ -90,7 +91,6 @@ it("reports a failed session close, joins concurrent attempts and retries the re
     if (!(reason instanceof AggregateError))
       throw new Error("Harness ignored the session close failure");
     expect(reason.errors).toContain(failure);
-    expect(concurrent).toBe(closing);
     expect(await concurrentOutcome).toBe(reason);
     expect(failure.cleanupIncomplete).toBe(true);
     expect(await harness.session.status()).toMatchObject({

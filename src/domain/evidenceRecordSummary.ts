@@ -202,7 +202,7 @@ export const summarizeEvidenceBundle = (
 export const EVIDENCE_RECORD_SELECTION_LIMIT = 8;
 
 /** Labels every record selection as historical and as distinct from an importable bundle. */
-export const EVIDENCE_RECORD_SELECTION_LIMITATIONS = [
+const EVIDENCE_RECORD_SELECTION_LIMITATIONS = [
   "Selected records are retained historical observations; they do not establish current live provider or database state.",
   "A record selection is not an Evidence bundle: it omits manifests and residual unknowns and cannot be imported. Use export_evidence_bundle for a portable bundle.",
 ] as const;
@@ -280,7 +280,7 @@ export const evidenceLinkStatusFilterSchema = z.enum([
 export const EVIDENCE_LINK_INSPECTION_LIMIT = 64;
 
 /** Bounds what link membership establishes, in every inspection. */
-export const EVIDENCE_LINK_INSPECTION_LIMITATIONS = [
+const EVIDENCE_LINK_INSPECTION_LIMITATIONS = [
   "Link status is membership in this session or bundle: missing means absent here, not nonexistent, and neither status describes analysis coverage or a record's meaning.",
 ] as const;
 

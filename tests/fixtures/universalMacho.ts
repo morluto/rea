@@ -1,5 +1,5 @@
 /** One thin Mach-O slice and the CPU identity its header and FAT entry declare. */
-export interface UniversalSlice {
+interface UniversalSlice {
   readonly bytes: Buffer;
   readonly cpuType: number;
   readonly cpuSubtype: number;
@@ -8,7 +8,7 @@ export interface UniversalSlice {
 }
 
 /** The FAT32 container and where each slice landed. */
-export interface UniversalMachoFixture {
+interface UniversalMachoFixture {
   readonly bytes: Buffer;
   readonly slices: readonly {
     readonly offset: number;

@@ -26,7 +26,7 @@ it("retains only declared package metadata despite inherited host fields", () =>
   declaredFile.text = {
     included: true,
     value:
-      '{"name":"source-name","version":"1.0.0","main":null,"browser":"source-browser.cjs"}',
+      '{"name":"source-name","version":"1.0.0","main":null,"browser":"source-browser.cjs","dependencies":{"next":"source-next"}}',
   };
   const inherited = {
     name: "host-name",
@@ -35,6 +35,9 @@ it("retains only declared package metadata despite inherited host fields", () =>
     renderer: "host-renderer.cjs",
     browser: "host-browser.cjs",
     module: "host-module.mjs",
+    dependencies: { next: "host-next" },
+    devDependencies: { next: "host-next-dev" },
+    peerDependencies: { next: "host-next-peer" },
   };
   const previous = Object.fromEntries(
     Object.keys(inherited).map((key) => [
@@ -63,6 +66,8 @@ it("retains only declared package metadata despite inherited host fields", () =>
   }
   expect(absent.status).toBe("included");
   expect(declared.status).toBe("included");
+  expect(absent).toMatchObject({ nextDependency: "unproven" });
+  expect(declared).toMatchObject({ nextDependency: "declared" });
   if (absent.packageFields === null || declared.packageFields === null)
     throw new Error("Expected package metadata fields");
   expect(Object.getPrototypeOf(absent.packageFields)).toBeNull();

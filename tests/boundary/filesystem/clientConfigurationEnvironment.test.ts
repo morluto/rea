@@ -26,6 +26,7 @@ import { snapshotEnvironment } from "../../../src/process/snapshotEnvironment.js
 
 import { ok } from "../../../src/domain/result.js";
 import { MCP_STARTUP_POLICY } from "../../../src/mcpStartupPolicy.js";
+import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
 
 const staleOwnedCommand = ["npx", "-y", "rea-agents@6.6.0", "mcp"] as const;
 
@@ -84,7 +85,12 @@ it("preserves owner-parsed registration facts and revalidates later inspections"
     },
   });
   await writeFile(configPath, original);
-  const client = { name: "kimi", format: "kimi", configPath } as const;
+  const client = {
+    name: "kimi",
+    registrationProfile: supportedClientRegistrationProfile("kimi"),
+    format: "kimi",
+    configPath,
+  } as const;
   let providerTimeoutMs = 17;
   const observedBudgets = new Set<number>();
   const resolveBudget = async (
@@ -173,7 +179,12 @@ it.skipIf(process.platform !== "win32").each([
     const configPath = join(root, "cordis.patch.yml");
     const source = `- insert:\n    - id: rea-mcp\n      name: "@deepseek-ai/dsh-mcp-client"\n      config:\n        serverName: rea\n        transport: stdio\n        command: old-rea\n        args: [mcp]\n        env:\n          # retain preceding rationale\n          ${key}: "hopper" # retain inline rationale\n${duplicate ? `          ${override}: "ghidra" # retain winning rationale\n` : ""}          CUSTOM: !!js caller.custom\n`;
     await writeFile(configPath, source);
-    const client = { name: "dsh", format: "dsh", configPath } as const;
+    const client = {
+      name: "dsh",
+      registrationProfile: supportedClientRegistrationProfile("dsh"),
+      format: "dsh",
+      configPath,
+    } as const;
     const result = await configureClientConfiguration(
       client,
       { [override]: value },
@@ -226,7 +237,12 @@ it.skipIf(process.platform !== "win32")(
         },
       }),
     );
-    const client = { name: "kimi", format: "kimi", configPath } as const;
+    const client = {
+      name: "kimi",
+      registrationProfile: supportedClientRegistrationProfile("kimi"),
+      format: "kimi",
+      configPath,
+    } as const;
     const command = currentClientRegistrationCommand();
     expect(
       await configureClientConfiguration(client, {}, command),
@@ -256,7 +272,12 @@ it
     const configPath = join(root, "cordis.patch.yml");
     const source = `- insert:\n    - id: rea-mcp\n      name: "@deepseek-ai/dsh-mcp-client"\n      config:\n        serverName: rea\n        transport: stdio\n        command: old-rea\n        args: [mcp]\n        env:\n          rea_analysis_provider: ${stored}\n          CUSTOM: !!js caller.custom\n`;
     await writeFile(configPath, source);
-    const client = { name: "dsh", format: "dsh", configPath } as const;
+    const client = {
+      name: "dsh",
+      registrationProfile: supportedClientRegistrationProfile("dsh"),
+      format: "dsh",
+      configPath,
+    } as const;
     const overrides = { REA_ANALYSIS_PROVIDER: "ghidra" };
     const configured = await configureClientConfiguration(client, overrides, [
       "rea",
@@ -344,7 +365,12 @@ it.skipIf(process.platform !== "win32")(
     });
     await writeFile(configPath, original);
     const result = await configureClientConfiguration(
-      { name: "cursor", format: "json", configPath },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        format: "json",
+        configPath,
+      },
       {},
       ["rea", "mcp"],
     );
@@ -366,7 +392,12 @@ it.each([
   async (name, format, serversKey, environmentKey) => {
     const root = await createTestTempDirectory("rea-setup-environment-");
     const configPath = join(root, "config");
-    const client = { name, format, configPath };
+    const client = {
+      name,
+      registrationProfile: supportedClientRegistrationProfile(name),
+      format,
+      configPath,
+    };
     const custom = {
       REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
@@ -377,7 +408,7 @@ it.each([
       REA_REFERENCE_SECRET_PATTERNS_JSON: '["*.private", "local/**"]',
       REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
       REA_GHIDRA_COMPILER_SPEC_ID: "borlandcpp",
-      CALLER_SETTING: "preserve exactly",
+      CALLER_SETTING: "preserve exactly = caller value",
       ["__proto__"]: "caller prototype setting",
       constructor: "caller constructor setting",
       toString: "caller string setting",
@@ -674,7 +705,12 @@ it("rejects a non-string caller environment key before editing configuration", a
   });
   expect(
     await configureClientConfiguration(
-      { name: "cursor", format: "json", configPath },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        format: "json",
+        configPath,
+      },
       {},
       ["rea", "mcp"],
     ),
@@ -700,6 +736,7 @@ it("does not hide an invalid JEB endpoint in an untouched configuration layer", 
   await writeFile(configPath, "{}\n");
   const client = {
     name: "opencode",
+    registrationProfile: supportedClientRegistrationProfile("opencode"),
     format: "opencode",
     configPath,
     configPaths: [lower, configPath],
@@ -718,7 +755,12 @@ it("does not hide an invalid JEB endpoint in an untouched configuration layer", 
 it("retains legacy OpenCode environment when migrating into a native server table", async () => {
   const root = await createTestTempDirectory("rea-opencode-environment-");
   const configPath = join(root, "opencode.json");
-  const client = { name: "opencode", format: "opencode", configPath } as const;
+  const client = {
+    name: "opencode",
+    registrationProfile: supportedClientRegistrationProfile("opencode"),
+    format: "opencode",
+    configPath,
+  } as const;
   const custom = { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" };
   await writeFile(
     configPath,
@@ -748,6 +790,11 @@ it("retains legacy OpenCode environment when migrating into a native server tabl
 });
 
 it.each([
+  [
+    "environment name containing an equals delimiter",
+    { "CALLER=SETTING": "value" },
+    "CALLER=SETTING",
+  ],
   [
     "non-string member",
     { REA_MCP_INPUT_SCHEMA_PROFILE: "compact", PORT: 8080 },
@@ -897,7 +944,12 @@ it.each([
       mcpServers: { rea: { command: "rea", args: ["mcp"], env } },
     });
     await writeFile(configPath, original);
-    const client = { name: "cursor", format: "json", configPath } as const;
+    const client = {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      format: "json",
+      configPath,
+    } as const;
     expect(
       await inspectClientConfiguration(client, {}, ["rea", "mcp"]),
     ).toMatchObject({
@@ -928,7 +980,12 @@ it("refuses an unidentified launch command before creating a client configuratio
   const home = await createTestTempDirectory("rea-registration-unidentified-");
   const configPath = join(home, "missing", "mcp.json");
   const result = await configureClientConfiguration(
-    { name: "claude_code", configPath, format: "json" },
+    {
+      name: "claude_code",
+      registrationProfile: supportedClientRegistrationProfile("claude_code"),
+      configPath,
+      format: "json",
+    },
     {},
     [],
   );
@@ -954,7 +1011,10 @@ it("treats a variable-expanding client's recorded expression as unresolved", () 
     }),
     "json",
   );
-  const qwen = clientRegistrationEnvironmentDetails(parsed, "qwen_code");
+  const qwen = clientRegistrationEnvironmentDetails(parsed, {
+    name: "qwen_code",
+    registrationProfile: supportedClientRegistrationProfile("qwen_code"),
+  });
   if (!qwen.ok) throw qwen.error;
   // Qwen expands the expression from its own environment, so REA records the
   // name as unresolved rather than treating the literal text as the value.
@@ -962,7 +1022,10 @@ it("treats a variable-expanding client's recorded expression as unresolved", () 
   expect(qwen.value.values.PATH).toBe("${PATH}:/opt/jdk/bin");
 
   // A client that does not expand expressions keeps the same text as a value.
-  const cursor = clientRegistrationEnvironmentDetails(parsed, "cursor");
+  const cursor = clientRegistrationEnvironmentDetails(parsed, {
+    name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+  });
   if (!cursor.ok) throw cursor.error;
   expect(cursor.value.unresolvedSettings).toEqual(new Set());
   expect(cursor.value.values.PATH).toBe("${PATH}:/opt/jdk/bin");
@@ -981,7 +1044,10 @@ it("keeps a typed Qwen setting unresolved without discarding its recorded expres
     }),
     "json",
   );
-  const details = clientRegistrationEnvironmentDetails(parsed, "qwen_code");
+  const details = clientRegistrationEnvironmentDetails(parsed, {
+    name: "qwen_code",
+    registrationProfile: supportedClientRegistrationProfile("qwen_code"),
+  });
   expect(details.ok).toBe(true);
   if (!details.ok) return;
   expect(details.value.values.REA_GHIDRA_STARTUP_TIMEOUT_MS).toBe("${JOBS}");
@@ -1005,7 +1071,10 @@ it("keeps a differently cased Qwen expression unresolved on Windows", () => {
   );
   const details = clientRegistrationEnvironmentDetails(
     parsed,
-    "qwen_code",
+    {
+      name: "qwen_code",
+      registrationProfile: supportedClientRegistrationProfile("qwen_code"),
+    },
     {},
     "fragment",
     "win32",
@@ -1016,3 +1085,45 @@ it("keeps a differently cased Qwen expression unresolved on Windows", () => {
     [...details.value.unresolvedSettings].map((name) => name.toUpperCase()),
   ).toEqual(["REA_GHIDRA_STARTUP_TIMEOUT_MS"]);
 });
+
+it.each([
+  ["cline", "selected"],
+  ["cline", 42],
+  ["cursor", "metadata"],
+  ["cursor", 42],
+] as const)(
+  "reads only the profile-selected %s environment with nested value %j",
+  (name, value) => {
+    const parsed = parseClientConfiguration(
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "outer",
+            env: { SELECTED: "outer" },
+            transport: {
+              type: "stdio",
+              command: "nested",
+              env: { SELECTED: value },
+            },
+          },
+        },
+      }),
+      "json",
+    );
+    const details = clientRegistrationEnvironmentDetails(parsed, {
+      name,
+      registrationProfile: supportedClientRegistrationProfile(name),
+    });
+    if (name === "cline" && typeof value !== "string") {
+      expect(details).toMatchObject({
+        ok: false,
+        error: { settings: [{ setting: "transport.env.SELECTED" }] },
+      });
+    } else {
+      expect(details).toMatchObject({
+        ok: true,
+        value: { values: { SELECTED: name === "cline" ? value : "outer" } },
+      });
+    }
+  },
+);

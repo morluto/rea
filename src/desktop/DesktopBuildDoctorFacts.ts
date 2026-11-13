@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { access, stat, statfs } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 
 import { z } from "zod";
 
@@ -30,6 +30,9 @@ import {
 
 const DEFAULT_DOCKER_ROOT = "/var/lib/docker";
 const CONFIG_BYTES = 1024 * 1024;
+
+const missingPath = (cause: unknown): boolean =>
+  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
 /** Inspect the same tar compression formats as the build's Python extractor without extracting files. */
 const ARCHIVE_VERSION = String.raw`
@@ -235,7 +238,7 @@ const freeSpace = async (path: string): Promise<DesktopBuildFacts["disk"]> => {
       return { path: candidate, freeBytes: fs.bavail * fs.bsize };
     } catch (cause: unknown) {
       const parent = dirname(candidate);
-      if (parent === candidate)
+      if (parent === candidate || !missingPath(cause))
         return {
           path,
           error: cause instanceof Error ? cause.message : String(cause),
@@ -265,11 +268,19 @@ const archiveFact = async (
     source === "cache"
       ? defaultBuildComputerArchive(input.environment, input.platform)
       : (selected as string);
-  const file = await stat(path).then(
-    (entry) => entry.isFile(),
-    () => false,
-  );
-  if (!file) return { path, source, status: "missing" };
+  try {
+    if (!(await stat(path)).isFile())
+      return { path, source, status: "missing" };
+  } catch (cause: unknown) {
+    return missingPath(cause)
+      ? { path, source, status: "missing" }
+      : {
+          path,
+          source,
+          status: "unknown",
+          detail: `REA could not inspect ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        };
+  }
   if (source === "cache") return { path, source, status: "current" };
   const python = await pythonForArchive();
   if (python === undefined)

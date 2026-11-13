@@ -6,10 +6,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { buildCapabilityInventory } from "../../../src/application/CapabilityInventory.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import {
-  EVM_PRLIMIT_COMMAND_DEFAULT,
-  evmLimiterAvailability,
-} from "../../../src/evm/EvmoleInterfaceProvider.js";
+import { evmLimiterAvailability } from "../../../src/evm/EvmoleInterfaceProvider.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 const linux = { platform: "linux" as const, arch: "x64" };
@@ -36,11 +33,11 @@ it("probes the default limiter with executable and regular-file checks", async (
 
   expect(availability).toMatchObject({
     status: "available",
-    diagnostics: { limiter_path: EVM_PRLIMIT_COMMAND_DEFAULT },
+    diagnostics: { limiter_path: "/usr/bin/prlimit" },
   });
   expect(calls).toEqual([
-    ["access", EVM_PRLIMIT_COMMAND_DEFAULT, 1],
-    ["stat", EVM_PRLIMIT_COMMAND_DEFAULT],
+    ["access", "/usr/bin/prlimit", 1],
+    ["stat", "/usr/bin/prlimit"],
   ]);
 });
 

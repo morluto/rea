@@ -6,13 +6,11 @@ import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import {
-  probeBunStandaloneGraph,
-  BUN_GRAPH_SUFFIX_BYTES,
-} from "./BunModuleGraphLayout.js";
+import { probeBunStandaloneGraph } from "./BunModuleGraphLayout.js";
 import { decodeBunModuleGraph } from "./BunModuleGraphMembers.js";
 import {
   locateBunGraphFixture,
+  BUN_FIXTURE_GRAPH_SUFFIX_BYTES,
   bunModuleGraphPayload,
   bunPrefixedPayload,
   machoBunSection,
@@ -167,7 +165,11 @@ it.each(["trailer", "byte_count"])(
       modules: [{ name: "/$bunfs/root/main.js" }],
     });
     if (field === "trailer") payload[payload.length - 1] = 0;
-    else payload.writeBigUInt64LE(0n, payload.length - BUN_GRAPH_SUFFIX_BYTES);
+    else
+      payload.writeBigUInt64LE(
+        0n,
+        payload.length - BUN_FIXTURE_GRAPH_SUFFIX_BYTES,
+      );
     const prefix = Buffer.alloc(4);
     prefix.writeUInt32LE(payload.length);
     expect(

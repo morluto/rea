@@ -35,6 +35,23 @@ it("classifies external indexed sections as unsupported with their exact URL", (
   }
 });
 
+it.each([
+  ["root field", { ...leaf, version: 2 }],
+  ["leaf field", { ...leaf, mappings: "!" }],
+  [
+    "section field",
+    { version: 3, sections: [{ offset: { line: "0" }, map: leaf }] },
+  ],
+])("reports a %s schema rejection as a format failure", (_, map) => {
+  try {
+    inspectSourceMap(JSON.stringify(map));
+    throw new Error("Expected schema rejection");
+  } catch (error: unknown) {
+    expect(error).toBeInstanceOf(SourceMapFormatFailure);
+    expect(error).toMatchObject({ reason: "format" });
+  }
+});
+
 it("uses the same conservative section classification for URL-plus-map and malformed URLs", () => {
   const externalUrl = "https://app.test/maps/part.map";
   const external = () =>

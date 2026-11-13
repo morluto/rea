@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 import { semanticWriteTargets } from "./javascriptAstValues.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 it.each(
   [false, true].flatMap((typed) =>

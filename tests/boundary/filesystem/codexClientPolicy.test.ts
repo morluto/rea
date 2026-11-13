@@ -16,6 +16,7 @@ import {
   codexToolPolicy,
   codexToolPolicySource,
 } from "../../fixtures/codexToolPolicy.js";
+import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
 
 it.each(["tables", "inline table"] as const)(
   "preserves Codex %s policy and status through refresh",
@@ -25,7 +26,12 @@ it.each(["tables", "inline table"] as const)(
     await mkdir(dirname(configPath));
     const original = codexToolPolicySource(layout);
     await writeFile(configPath, original);
-    const client = { name: "codex", configPath, format: "toml" } as const;
+    const client = {
+      name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
+      configPath,
+      format: "toml",
+    } as const;
     const status = async () =>
       (
         await readClientRegistrationStatuses(home, undefined, {
@@ -103,7 +109,12 @@ it.each([
       "",
     ].join("\n");
     await writeFile(configPath, original);
-    const client = { name: "codex", configPath, format: "toml" } as const;
+    const client = {
+      name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
+      configPath,
+      format: "toml",
+    } as const;
     const inspection = await inspectClientConfiguration(
       client,
       {},
@@ -153,6 +164,7 @@ it.each([{ tools: ["binary_session"] }, { tools: ["*"] }, { tools: [] }])(
     await writeFile(configPath, original);
     const client = {
       name: "copilot_cli",
+      registrationProfile: supportedClientRegistrationProfile("copilot_cli"),
       configPath,
       format: "copilot_cli",
     } as const;
