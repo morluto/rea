@@ -39,12 +39,23 @@ color 0A
 :: mask a caller-selected installation. REA discovery below always runs.
 if not defined GHIDRA_INSTALL_DIR (
     set "GHIDRA_ON_PATH="
-    :: Mirror the owning resolver exactly (GhidraInstallation.ts:1135):
-    :: ghidra.bat ghidraRun.bat ghidra.exe ghidraRun.exe -- it validates
-    :: application.properties + support/analyzeHeadless.bat at the root
-    :: itself. analyzeHeadless.bat is not in the owner's list and would
-    :: mismatch its decision, so it is not a candidate here either.
-    for %%I in (ghidra.bat ghidraRun.bat ghidra.exe ghidraRun.exe) do if exist "%%~$PATH:I" set "GHIDRA_ON_PATH=1"
+    REM Mirror the owning resolver exactly (GhidraInstallation.ts:1135):
+    REM ghidra.bat ghidraRun.bat ghidra.exe ghidraRun.exe -- it validates
+    REM application.properties + support/analyzeHeadless.bat at the root
+    REM itself. analyzeHeadless.bat is not in the owner's list and would
+    REM mismatch its decision, so it is not a candidate here either.
+    REM Existence alone is not enough: a stale or unrelated ghidra.exe on
+    REM PATH must not suppress the fallback. Mirror the owner's
+    REM validation per GhidraInstallation.ts 1133-1162 -- resolve the
+    REM candidate, then require Ghidra\application.properties AND
+    REM support\analyzeHeadless.bat at the resolved root.
+    REM One chained line: a parenthesized FOR body inside this
+    REM parenthesized block silently mis-parses (verified flat-vs-nested).
+    for %%I in (ghidra.bat ghidraRun.bat ghidra.exe ghidraRun.exe) do if not defined GHIDRA_ON_PATH if exist "%%~$PATH:I" set "GHIDRA_PROBE=%%~$PATH:I"
+    if defined GHIDRA_PROBE for %%R in ("!GHIDRA_PROBE!") do set "GHIDRA_ROOT=%%~dpR"
+    if defined GHIDRA_ROOT if exist "!GHIDRA_ROOT!Ghidra\application.properties" if exist "!GHIDRA_ROOT!support\analyzeHeadless.bat" set "GHIDRA_ON_PATH=1"
+    set "GHIDRA_PROBE="
+    set "GHIDRA_ROOT="
     if not defined GHIDRA_ON_PATH if exist "C:\tools\ghidra_12.1.4_PUBLIC\support\analyzeHeadless.bat" set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
 )
 :: No JAVA_HOME guessing here: release identity and java.exe selection
@@ -300,8 +311,8 @@ goto FILE_DROPPED
 :GUIDE
 :: The installed skill ships the guide; the source checkout keeps it beside the skill.
 set "GUIDE_FILE="
-if exist "%APPDATA%\npm\node_modules\rea-agents\docs\getting-started\windows-quicktools.md" set "GUIDE_FILE=%APPDATA%\npm\node_modules\rea-agents\docs\windows-quicktools.md"
-if not defined GUIDE_FILE if exist "%~dp0..\..\docs\getting-started\windows-quicktools.md" set "GUIDE_FILE=%~dp0..\..\docs\windows-quicktools.md"
+if exist "%APPDATA%\npm\node_modules\rea-agents\docs\getting-started\windows-quicktools.md" set "GUIDE_FILE=%APPDATA%\npm\node_modules\rea-agents\docs\getting-started\windows-quicktools.md"
+if not defined GUIDE_FILE if exist "%~dp0..\..\docs\getting-started\windows-quicktools.md" set "GUIDE_FILE=%~dp0..\..\docs\getting-started\windows-quicktools.md"
 if defined GUIDE_FILE goto OPEN_GUIDE
 echo ไม่พบคู่มือภาษาไทยในเครื่องนี้
 echo ค้นหาได้ที่: docs\getting-started\windows-quicktools.md ในโฟลเดอร์ติดตั้ง

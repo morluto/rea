@@ -26,8 +26,10 @@ public `rea` command documented in `docs\getting-started\windows-quicktools.md`.
   search terms) is only ever referenced through delayed expansion. Fixed
   actions (doctor, mcp doctor, PE resources) dispatch one `!REA_ARGS!` line;
   the three selector actions (function decompile, strings search,
-  procedure search) dispatch through a quoted FOR-carrier into a
-  single-shot `:RUN_ONE` subroutine. Values never travel through
+  procedure search) exec Node directly from a quoted FOR-carrier body --
+  one boundary per action site, no CALL and no helper subroutine (a CALL
+  would re-parse the constructed line and expand percent pairs inside the
+  selector). Values never travel through
   parse-time `%*` or CALL re-expansion.
 - Leading-dash function symbols and search terms route through the
   documented `--procedure=` / `--pattern=` selectors instead of positionals.
