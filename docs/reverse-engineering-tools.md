@@ -263,6 +263,24 @@ they use `%LOCALAPPDATA%\REA\CutterBridge` on Windows when `LOCALAPPDATA` is set
 and `~/.cache/rea/cutter-bridge` otherwise. The two processes must resolve the
 same directory for discovery to find the published sessions.
 
+To install the plugin, copy `bridge/cutter/rea_bridge.py` from the installed REA
+package into the `python` subdirectory of Cutter's plugin directory, then restart
+Cutter. Cutter shows that directory and the loaded plugins under
+Edit > Preferences > Plugins. `list_cutter_sessions` reports
+`no_live_bridge_found` when no session published in the bridge directory
+answers, including when Cutter did not load the plugin.
+
+Official Cutter 2.5.0 builds have been observed to reject Python plugins at
+startup: Cutter's own sample plugin in the Linux AppImage, and this bridge and a
+minimal independent plugin on macOS arm64
+([rizinorg/cutter#3659](https://github.com/rizinorg/cutter/issues/3659)). The
+log then shows `Plugin's create_cutter_plugin() function did not return an
+instance of CutterPlugin` and `Loaded 0 plugin(s)`, and no session is
+published. Because a minimal plugin fails the same way, a change to REA's
+bridge is not expected to help; the cause is unconfirmed upstream. Cutter 2.4.1
+loaded the bridge on the same macOS arm64 host, where discovery and an `ij`
+command worked. Other hosts and Cutter builds have not been checked.
+
 The client and plugin must support the current v2 handshake; older peers are
 rejected before dispatch because they cannot preserve cross-caller recovery proof.
 The client checks the final encoded request against
