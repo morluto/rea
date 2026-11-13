@@ -46,7 +46,9 @@ never published as the whole list.
 Each event group states whether an ids extent made its declared period a
 frequency or a period, and retains the declared attribute size. A non-perf file
 reports what was observed and a null header rather than a fabricated magic,
-byte order or size.
+byte order or size. A file short enough that every byte it carries matches one
+of the two magic spellings is a truncated recording rather than unrelated
+input, and is reported as such.
 
 ## Authority and overlap
 

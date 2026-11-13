@@ -134,6 +134,25 @@ describe("parsePerfData rejection diagnostics", () => {
     });
   });
 
+  it("reports a file cut short inside the magic as truncated, not as another format", () => {
+    // Every byte present matches the magic, so the file is a damaged recording
+    // rather than unrelated input.
+    const archive = parsed(Buffer.from("PERFI", "latin1"));
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "truncated-header" }),
+    ]);
+    expect(archive.diagnostics.map(({ code }) => code)).not.toContain(
+      "not-a-perf-data-file",
+    );
+  });
+
+  it("still rejects a short file that diverges from the magic", () => {
+    const archive = parsed(Buffer.from("PERFINE", "latin1"));
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "not-a-perf-data-file" }),
+    ]);
+  });
+
   it("reports a header shorter than the fixed layout", () => {
     const archive = parsed(buildPerfRecording().subarray(0, 0x40));
     expect(archive.diagnostics).toEqual([
@@ -324,6 +343,19 @@ describe("parsePerfData section accounting", () => {
         "empty-attribute-section",
       ]),
     );
+    expect(archive.source_coverage.status).not.toBe("complete-within-scope");
+  });
+
+  it("marks the id inventory incomplete when a rejected stride blocks the walk", () => {
+    const bytes = buildPerfRecording({ attrBytes: 8 });
+    const archive = parsed(bytes);
+    // The section holds entries the walk never reached, so a `true` flag here
+    // would publish an unread inventory as a complete empty one.
+    expect(archive.events).toEqual([]);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "unsupported-attribute-size" }),
+    ]);
+    expect(archive.summary.identifiers_present).toBe(false);
     expect(archive.source_coverage.status).not.toBe("complete-within-scope");
   });
 

@@ -479,6 +479,16 @@ const byteOrder = (bytes: Buffer): boolean | null => {
   return magic === [...MAGIC].reverse().join("") ? false : null;
 };
 
+/**
+ * Whether a file shorter than the magic could still be a recording cut short
+ * inside it: every byte it does carry has to match the magic in one order or
+ * the other. A file that diverges before its end is unrelated input instead.
+ */
+const magicPrefixOf = (bytes: Buffer): boolean =>
+  [MAGIC, [...MAGIC].reverse().join("")].some((spelling) =>
+    bytes.equals(Buffer.from(spelling.slice(0, bytes.length), "latin1")),
+  );
+
 export const parsePerfData = (
   bytes: Buffer,
   artifact: PerfDataArtifact,
@@ -498,11 +508,17 @@ export const parsePerfData = (
   };
   const little = byteOrder(bytes);
   if (little === null) {
+    // A file cut short inside the magic is a damaged recording, not unrelated
+    // input: reporting it as a wrong format sends callers looking at the wrong
+    // thing, so the truncation wins when the bytes present all match.
+    const truncatedMagic = bytes.length < 8 && magicPrefixOf(bytes);
     diagnose(
       state,
       null,
-      "not-a-perf-data-file",
-      "The file does not start with the PERFILE2 magic in either byte order.",
+      truncatedMagic ? "truncated-header" : "not-a-perf-data-file",
+      truncatedMagic
+        ? `The file ends after ${bytes.length} of the ${MAGIC.length} magic bytes, so its sections were not read.`
+        : "The file does not start with the PERFILE2 magic in either byte order.",
     );
     return ok(noHeaderRecording(artifact, state.diagnostics));
   }
@@ -690,6 +706,10 @@ export const parsePerfData = (
         dataSection,
         ...(eventTypes === null ? [] : [eventTypes]),
       ]);
+    // A section that holds entries but whose stride was rejected never reaches
+    // `readEvents`, so no ids descriptor was examined; leaving the inventory
+    // flagged present would publish an unread section as a complete empty one.
+    else state.identifiersPresent = false;
   }
   if (state.diagnosticsSuppressed)
     state.diagnostics.push({
