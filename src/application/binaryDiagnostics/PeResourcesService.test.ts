@@ -643,6 +643,34 @@ it("publishes a decoded form that stopped with an explicit unknown", async () =>
   expect(await inspectReport(report)).toMatchObject({ ok: true });
 });
 
+it("publishes a nested child that stopped with an explicit unknown", async () => {
+  const payload = delphiForm(
+    delphiComponent("TForm1", "Form1", [], {
+      children: [
+        delphiComponent("TButton", "Button1", [
+          delphiProperty("Future", delphiBytes(24, 1, 2, 3)),
+        ]),
+      ],
+    }),
+  );
+  const { bytes } = peResourceFixture(false, [
+    { type: 10, name: 7, language: 1033, payload },
+  ]);
+  const report = await parsePeResources(
+    bytes,
+    {
+      path: "/fixtures/example.exe",
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    },
+    inspectPeResourcesInputSchema.parse({ path: "/fixtures/example.exe" }),
+  );
+  expect(report.delphi_forms[0]?.root.children[0]?.unknown?.reason).toContain(
+    "Unsupported value type",
+  );
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
 it("rejects a complete root that stops before the payload end", async () => {
   const report = await observedReport();
   const index = report.resources.findIndex(

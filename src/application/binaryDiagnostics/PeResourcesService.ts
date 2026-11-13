@@ -247,9 +247,16 @@ const insideLocations = (
   object: DelphiFormObject,
   within: (range: { offset: number; bytes: number }) => boolean,
   codePage: string,
+  payloadWithin: (range: { offset: number; bytes: number }) => boolean = within,
 ): boolean => {
   if (!within(object.location)) return false;
-  if (object.unknown !== null && !within(object.unknown.location)) return false;
+  if (
+    object.unknown !== null &&
+    (!payloadWithin(object.unknown.location) ||
+      object.unknown.location.offset <
+        object.location.offset + object.location.bytes)
+  )
+    return false;
   const text = (
     item: DelphiFormText | null,
     owner: { offset: number; bytes: number },
@@ -278,6 +285,7 @@ const insideLocations = (
         child,
         (range) => withinRange(range, object.location),
         codePage,
+        payloadWithin,
       ),
     )
   );
