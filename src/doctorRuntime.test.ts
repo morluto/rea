@@ -436,11 +436,11 @@ test("preserves both X11 and Python failures and their independent remediation",
 
 const it = test.skipIf(process.platform === "win32");
 
-test("exposes jadx through the doctor provider selector", () => {
+it("exposes jadx through the doctor provider selector", () => {
   expect(DOCTOR_PROVIDER_IDS).toContain("jadx");
 });
 
-test("carries a validated REA_JADX_MCP_JAR into the provider registration environment", async () => {
+it("carries a validated REA_JADX_MCP_JAR into the provider registration environment", async () => {
   const root = await createTestTempDirectory("rea-jadx-registration-");
   const jar = join(root, "jadx-headless-mcp.jar");
   const javaHome = await createFakeJdk(root);
@@ -459,7 +459,7 @@ test("carries a validated REA_JADX_MCP_JAR into the provider registration enviro
   });
 });
 
-test("omits REA_JADX_MCP_JAR from the provider registration environment when it is not configured", async () => {
+it("omits REA_JADX_MCP_JAR from the provider registration environment when it is not configured", async () => {
   const host = createSystemDoctorHost({});
   const inspections = await host.providerInspections?.([]);
 
@@ -467,7 +467,7 @@ test("omits REA_JADX_MCP_JAR from the provider registration environment when it 
   expect(environment).not.toHaveProperty("REA_JADX_MCP_JAR");
 });
 
-test("shares one parsed IDA registration between timeout-budget and doctor projections", async () => {
+it("shares one parsed IDA registration between timeout-budget and doctor projections", async () => {
   const root = await createTestTempDirectory("rea-ida-registration-fact-");
   const registration = join(root, "registration.json");
   await writeFile(
@@ -493,7 +493,7 @@ test("shares one parsed IDA registration between timeout-budget and doctor proje
   }
 });
 
-test("carries a validated REA_KUNA_COMMAND into the provider registration environment", async () => {
+it("carries a validated REA_KUNA_COMMAND into the provider registration environment", async () => {
   expect(DOCTOR_PROVIDER_IDS).toContain("kuna");
   const root = await createTestTempDirectory("rea-kuna-registration-");
   const kuna = join(root, "kuna");
@@ -575,7 +575,7 @@ test("carries a validated REA_BINARY_NINJA_MCP_CONFIG into the provider registra
   });
 });
 
-test("does not save inherited cache defaults into a Kuna registration", async () => {
+it("does not save inherited cache defaults into a Kuna registration", async () => {
   const root = await createTestTempDirectory("rea-kuna-inherited-");
   const home = join(root, "home");
   await mkdir(home, { recursive: true });
@@ -1102,7 +1102,7 @@ test("keeps a Qwen PATH expression unresolved for provider readiness", async () 
   }
 });
 
-test.each(["REA_KUNA_COMMAND", "REA_KUNA_JOBS", "USERPROFILE"] as const)(
+it.each(["REA_KUNA_COMMAND", "REA_KUNA_JOBS", "USERPROFILE"] as const)(
   "keeps unresolved %s unknown when it affects Kuna readiness",
   async (unknown) => {
     const home = await createTestTempDirectory("rea-dsh-kuna-unknown-");
@@ -1147,7 +1147,7 @@ test.each(["REA_KUNA_COMMAND", "REA_KUNA_JOBS", "USERPROFILE"] as const)(
   },
 );
 
-test("probes Kuna when only the unused client PATH is unresolved", async () => {
+it("probes Kuna when only the unused client PATH is unresolved", async () => {
   const home = await createTestTempDirectory("rea-dsh-doctor-kuna-path-");
   const kuna = join(home, "kuna");
   await writeFile(kuna, "#!/bin/sh\nprintf 'kuna 1.833\\n'\n", { mode: 0o700 });
