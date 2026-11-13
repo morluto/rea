@@ -969,3 +969,35 @@ it("does not trim a relative target that may be a URL", async () => {
   // A full path recorded in `RelativePath` is still a filesystem path and keeps its trim.
   expect(await extensionFor("C:\\Tools\\app.exe.")).toBe(".exe");
 });
+it("reads the stored spelling to decide whether Win32 would trim", async () => {
+  // A scheme-relative URL folds to the same separators as a UNC path, so the spelling is the
+  // evidence: a filesystem path is written with backslashes and a URL keeps forward slashes.
+  const extensionFor = async (
+    path: string,
+    source: "link_info" | "relative",
+  ) => {
+    const report = await parse(
+      windowsShortcutBytes(
+        source === "link_info"
+          ? { iconLocation: "", linkInfo: { localBasePath: path } }
+          : { iconLocation: "", linkInfo: null, relativePath: path },
+      ),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "target_extension",
+    );
+    return found?.kind === "target_extension" ? found.extension : undefined;
+  };
+  // A URL's terminal period is part of the resource, whichever form it takes.
+  expect(await extensionFor("//example.test/app.exe.", "relative")).toBeNull();
+  expect(
+    await extensionFor("https://example.test/app.exe.", "relative"),
+  ).toBeNull();
+  expect(await extensionFor("//example.test/app.exe", "relative")).toBe(".exe");
+  // A real filesystem path in either source keeps the Win32 trim.
+  expect(await extensionFor("C:\\Tools\\app.exe.", "link_info")).toBe(".exe");
+  expect(await extensionFor("\\\\server\\share\\app.exe.", "link_info")).toBe(
+    ".exe",
+  );
+  expect(await extensionFor("C:\\Tools\\app.exe.", "relative")).toBe(".exe");
+});

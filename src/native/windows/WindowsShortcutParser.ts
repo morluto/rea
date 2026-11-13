@@ -249,11 +249,13 @@ const extensionOf = (path: string | null | undefined): string | null => {
   const normalized = path.replaceAll("/", "\\");
   const slash = normalized.lastIndexOf("\\");
   const stored = slash === -1 ? normalized : normalized.slice(slash + 1);
-  // Only a filesystem path gets Win32 trimming. A `RelativePath` may hold a URL, where a
-  // trailing period addresses a different resource, and an unexpanded prefix may expand to a
-  // `\\?\` path that skips the pass entirely.
+  // Only a path Win32 will open as a filesystem path gets the trim, and the stored spelling
+  // says which those are: a drive or a UNC share is written with backslashes, while a URL keeps
+  // forward slashes. `//example.test/app.exe.` and `https://example.test/app.exe.` address a
+  // different resource at that period; an unexpanded prefix may expand to a `\\?\` path that
+  // skips the pass entirely.
   const name =
-    !isFullPath(normalized) ||
+    !WRITTEN_FILESYSTEM_PATH.test(path) ||
     DEVICE_PATH.test(normalized) ||
     mayExpandToDevicePath(normalized)
       ? stored
@@ -268,6 +270,16 @@ const foldPath = (path: string): string =>
 
 /** `\\?\` and `\\.\` paths reach Windows verbatim, so their segments are kept as written. */
 const DEVICE_PATH = /^\\\\[?.]\\/u;
+
+/**
+ * A path as the producer wrote it when Win32 opens it as a filesystem path.
+ *
+ * The spelling is the evidence: a drive or UNC path is written with backslashes, while a URL —
+ * including a scheme-relative `//host/…` one, which folds to the same separators — keeps forward
+ * slashes. A trailing period in a URL addresses a different resource, so it is not a name Win32
+ * trims.
+ */
+const WRITTEN_FILESYSTEM_PATH = /^(?:[a-z]:\\|\\\\)/iu;
 
 /**
  * A segment as Win32 normalization leaves it when it names a directory.
