@@ -81,7 +81,7 @@ export const compareBrowserScenarios = (
     input.before_scenario,
     input.after_scenario,
   );
-  const incomparableReason = eventCoverageReason(
+  const incomparableReason = joinIncomparableReasons(
     familyIncomparableReason,
     networkContentCoverageReason(input.before_scenario, input.after_scenario),
     beforeEvents.coverageReason,
@@ -496,20 +496,6 @@ const digestScenarioEvents = (
       network_transactions: parsed.network_transactions,
     },
     "Browser scenario",
-  );
-};
-
-const eventCoverageReason = (
-  familyReason: string | undefined,
-  networkContentReason: string | undefined,
-  beforeNetworkReason: string | undefined,
-  afterNetworkReason: string | undefined,
-): string | undefined => {
-  return joinIncomparableReasons(
-    familyReason,
-    networkContentReason,
-    beforeNetworkReason,
-    afterNetworkReason,
   );
 };
 

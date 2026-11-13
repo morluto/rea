@@ -2,6 +2,8 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
+  isBinaryFormatOrStringLimitFailure,
+  type BinaryStringReadLimitFailure,
   mappedFileOffset,
   imageFileMappings,
   readMappedCString,
@@ -96,7 +98,7 @@ const coverage = (
       };
 
 const failureMessage = (cause: unknown): string => {
-  if (cause instanceof BinaryFormatFailure) return cause.message;
+  if (isBinaryFormatOrStringLimitFailure(cause)) return cause.message;
   throw cause;
 };
 
@@ -350,7 +352,7 @@ const createVersionNameReader = () => {
   const decodedNames = new Map<
     string,
     | { readonly value: DecodedElfString | null }
-    | { readonly failure: BinaryFormatFailure }
+    | { readonly failure: BinaryFormatFailure | BinaryStringReadLimitFailure }
   >();
   let cacheBytes = 0;
   const chargeCache = (bytes: number): void => {
@@ -373,7 +375,7 @@ const createVersionNameReader = () => {
     try {
       raw = readElfStringBytes(names, offset);
     } catch (cause) {
-      if (!(cause instanceof BinaryFormatFailure)) throw cause;
+      if (!isBinaryFormatOrStringLimitFailure(cause)) throw cause;
       // Invalid offsets/unterminated aliases must not repeatedly scan strings
       // either. Account for the cached error and its stack conservatively.
       chargeCache(4096);

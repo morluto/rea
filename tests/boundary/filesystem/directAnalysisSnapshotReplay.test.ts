@@ -18,14 +18,14 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
-import type {
-  AnalysisProvider,
-  CapabilityDescriptor,
-  ProviderIdentity,
+import {
+  createAnalysisExecution,
+  type AnalysisProvider,
+  type CapabilityDescriptor,
+  type ProviderIdentity,
 } from "../../../src/application/AnalysisProvider.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { err, ok } from "../../../src/domain/result.js";
 import {
   readAnalysisSnapshot,

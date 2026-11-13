@@ -1,10 +1,10 @@
 import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,
@@ -21,7 +21,6 @@ import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { RustBinaryPort } from "../application/rust/RustBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
@@ -395,20 +394,13 @@ const artifactFailure = (
     cause instanceof ArtifactReaderFailure
   )
     return artifactReaderFailure(cause, path, limits);
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    path,
+    "artifact",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
     cause,
     diagnostics: {

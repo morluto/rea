@@ -1,8 +1,8 @@
 import {
+  projectSelectedArtifactFileFailure,
   stableArtifactInputRecovery,
   projectStableArtifactFailure,
 } from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
 import {
@@ -12,7 +12,6 @@ import {
 } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
@@ -114,20 +113,13 @@ const peBinaryFailurePrimary = <Limit extends string>(
         [{ path: ["path"], reason: "invalid_format", message: cause.message }],
       );
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(operation, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(operation, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected image could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    operation,
+    input.path,
+    "image",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(providerId, operation, {
     cause,
     diagnostics: {

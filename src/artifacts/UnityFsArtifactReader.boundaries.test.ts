@@ -7,6 +7,7 @@ import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { buildUnityFs } from "../../tests/fixtures/unityfs.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -185,9 +186,12 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
         });
         expect(reads).toHaveBeenCalledTimes(1); // bounded header only
       } finally {
-        await reader.close();
-        reads.mockRestore();
-        await admitted.handle.close();
+        try {
+          await reader.close();
+        } finally {
+          reads.mockRestore();
+          await admitted.handle.close();
+        }
       }
     },
   );
@@ -223,6 +227,19 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
       size,
       data: index === 0 ? Buffer.alloc(size, 0x61) : Buffer.alloc(0),
     }));
+    const control = new UnityFsArtifactReader(
+      await fixture(
+        buildUnityFs(members.slice(0, 256), {
+          blockSize: size,
+          encodeBlock: repeatedBlock,
+        }),
+      ),
+    );
+    try {
+      expect(await entries(control)).toHaveLength(256);
+    } finally {
+      await control.close();
+    }
     const reader = new UnityFsArtifactReader(
       await fixture(
         buildUnityFs(members, {
@@ -232,7 +249,9 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
       ),
     );
     try {
-      await expect(entries(reader)).rejects.toMatchObject({ reason: "limit" });
+      await expect(entries(reader)).rejects.toMatchObject({
+        reason: "limit",
+      });
     } finally {
       await reader.close();
     }
@@ -354,7 +373,7 @@ describe("UnityFS stream ownership and immutable cache", () => {
     let consumed: Promise<Buffer> | undefined;
     try {
       consumed = buffer(await reader.open(entry!, controller.signal));
-      await reached.promise;
+      await awaitAcknowledgement(reached.promise, consumed, "member read");
       controller.abort(new Error("caller cancelled"));
       release.resolve();
       await expect(consumed).rejects.toBe(failure);
@@ -405,10 +424,12 @@ describe("UnityFS stream ownership and immutable cache", () => {
       await release.promise;
       return Reflect.apply(nativeRead, admitted.handle, args);
     }) as typeof admitted.handle.read);
+    let consumed: Promise<Buffer> | undefined;
     try {
       const stream = await reader.open(entry!);
-      stream.read(0);
-      await reached.promise;
+      consumed = buffer(stream);
+      void consumed.catch(() => undefined);
+      await awaitAcknowledgement(reached.promise, consumed, "member read");
       let closed = false;
       const closing = reader.close().then(() => {
         closed = true;
@@ -420,9 +441,13 @@ describe("UnityFS stream ownership and immutable cache", () => {
       expect(stream.closed).toBe(true);
     } finally {
       release.resolve();
-      await reader.close();
-      reads.mockRestore();
-      await admitted.handle.close();
+      try {
+        await reader.close();
+      } finally {
+        await consumed?.catch(() => undefined);
+        reads.mockRestore();
+        await admitted.handle.close();
+      }
     }
   });
 
@@ -454,9 +479,12 @@ describe("UnityFS stream ownership and immutable cache", () => {
         buffer(await reader.open(entry!, controller.signal)),
       ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
     } finally {
-      await reader.close();
-      reads.mockRestore();
-      await admitted.handle.close();
+      try {
+        await reader.close();
+      } finally {
+        reads.mockRestore();
+        await admitted.handle.close();
+      }
     }
   });
 });
@@ -474,12 +502,19 @@ describe("UnityFS stream capacity and cache ownership", () => {
       await fixture(buildUnityFs(members, { blockSize: 1 })),
     );
     try {
+      let completed = 0;
       await expect(
         (async () => {
-          for (const entry of await entries(reader))
+          for (const entry of await entries(reader)) {
             await buffer(await reader.open(entry));
+            completed += 1;
+          }
         })(),
-      ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
+      ).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "capacity",
+      });
+      expect(completed).toBe(128);
     } finally {
       await reader.close();
     }
