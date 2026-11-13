@@ -1,25 +1,15 @@
-import { Client } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterAll, beforeAll, expect } from "vitest";
+import { expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { fileLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-let client: Client;
-const cleanups: Array<() => Promise<void>> = [];
-beforeAll(async () => {
-  ({ client } = await connectLocalToolsMcp({}, (cleanup) => {
-    cleanups.push(cleanup);
-  }));
-});
-afterAll(async () => {
-  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
-});
+const mcp = fileLocalToolsMcp();
 
 const large = "x".repeat(200_000);
 for (const scenario of [
@@ -62,7 +52,7 @@ for (const scenario of [
       const cliEvidence = toolContract(
         "analyze_javascript_application",
       ).outputSchema.parse(cliResponse.json);
-      const response = await client.callTool({
+      const response = await mcp.client.callTool({
         name: "analyze_javascript_application",
         arguments: { input_path: root },
       });
@@ -126,7 +116,7 @@ for (const scenario of [
         ).toMatchObject({ sha256: digest });
       }
       expect(await readFile(path, "utf8")).toBe(source);
-      await client.ping();
+      await mcp.client.ping();
     },
   );
 }
