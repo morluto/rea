@@ -113,7 +113,7 @@ const chargeDecodedName = (budget: DecodedNameBudget, bytes: number): void => {
 };
 
 /** Decode an OBJECT IDENTIFIER content buffer as dotted decimal. */
-export const decodeOid = (content: Buffer): string => {
+const decodeOid = (content: Buffer): string => {
   const decoded = decodeAsn1Oid(content, {
     bytes: MAX_OID_BYTES,
     arcBytes: MAX_OID_ARC_BYTES,

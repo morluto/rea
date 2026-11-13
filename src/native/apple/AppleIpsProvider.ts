@@ -258,7 +258,7 @@ const resourceRecovery = (
 const appleIpsFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
   input: InspectAppleIpsInput,
-  field: "path" | "join_path" = "path",
+  field: "path" | "join_path",
 ): AnalysisError => {
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)

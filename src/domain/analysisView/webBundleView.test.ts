@@ -3,10 +3,10 @@ import type { WebBundleAnalysis } from "../webBundleAnalysis.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
 import {
-  analysisViewRequestSchema,
   projectAnalysisView,
   type AnalysisViewParent,
 } from "./analysisView.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const sampleAnalysis = (): WebBundleAnalysis => ({
   capture: {

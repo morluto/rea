@@ -26,11 +26,14 @@ const withTools = (tools: readonly EnvironmentManifestTool[]) => ({
   manifest: { ...source.manifest, tools: [...tools] },
 });
 const environmentToolInputSchema = (tool: EnvironmentManifestTool) => {
-  const [definition] = environmentToolDefinitions(withTools([tool]));
+  const [definition] = environmentToolDefinitions(
+    withTools([tool]),
+    source.manifest.name,
+  );
   if (definition === undefined) throw new Error("Missing tool definition");
   return definition.inputSchema;
 };
-const definitions = environmentToolDefinitions(source);
+const definitions = environmentToolDefinitions(source, source.manifest.name);
 
 const tool = (name: string): EnvironmentManifestTool => {
   const found = source.manifest.tools.find((entry) => entry.name === name);
@@ -47,9 +50,9 @@ describe("environmentToolDefinitions", () => {
       expect(definition.description).toContain(
         "state.source, not replay.exact_match, identifies state vs recording",
       );
-    expect(environmentToolDefinitions(source)[0]?.description).not.toContain(
-      "state.source",
-    );
+    expect(
+      environmentToolDefinitions(source, source.manifest.name)[0]?.description,
+    ).not.toContain("state.source");
   });
 
   it("maps every manifest tool in order with a replay description naming its records and evidence", () => {
@@ -154,10 +157,13 @@ const usersAnswering = (
     record_ordinals: [...exchanges.keys()],
     statuses: [...statuses],
   };
-  const [definition] = environmentToolDefinitions({
-    ...withTools([users]),
-    exchanges,
-  });
+  const [definition] = environmentToolDefinitions(
+    {
+      ...withTools([users]),
+      exchanges,
+    },
+    source.manifest.name,
+  );
   return definition?.description;
 };
 const returnsOf = (bodyText: string): string | undefined =>
@@ -314,28 +320,31 @@ describe("environment tool response summaries", () => {
     const users = tool("get_users_by_id");
     const ordinal = users.record_ordinals[0] ?? 0;
     const catalog = (contentType: string) =>
-      prepareDefinitions({
-        ...withTools(
-          Array.from({ length: 200 }, (_, index) => ({
-            ...users,
-            name: `get_users_${String(index)}`,
-            record_ordinals: [ordinal],
-          })),
-        ),
-        exchanges: new Map([
-          [
-            ordinal,
-            {
+      prepareDefinitions(
+        {
+          ...withTools(
+            Array.from({ length: 200 }, (_, index) => ({
+              ...users,
+              name: `get_users_${String(index)}`,
+              record_ordinals: [ordinal],
+            })),
+          ),
+          exchanges: new Map([
+            [
               ordinal,
-              path: "/api/users/2",
-              query: null,
-              status: 200,
-              contentType,
-              bodyText: JSON.stringify(fields),
-            },
-          ],
-        ]),
-      });
+              {
+                ordinal,
+                path: "/api/users/2",
+                query: null,
+                status: 200,
+                contentType,
+                bodyText: JSON.stringify(fields),
+              },
+            ],
+          ]),
+        },
+        source.manifest.name,
+      );
     expect(catalog("text/html").ok).toBe(true);
     const bounded = catalog("application/json");
     expect(bounded).toMatchObject({
@@ -346,18 +355,21 @@ describe("environment tool response summaries", () => {
         reportedLimits: { max_catalog_bytes: ENVIRONMENT_CATALOG_LIMIT_BYTES },
       },
     });
-    const [single] = environmentToolDefinitions({
-      ...withTools([users]),
-      exchanges: new Map([
-        [
-          ordinal,
-          {
-            ...source.exchanges.get(ordinal)!,
-            bodyText: JSON.stringify(fields),
-          },
-        ],
-      ]),
-    });
+    const [single] = environmentToolDefinitions(
+      {
+        ...withTools([users]),
+        exchanges: new Map([
+          [
+            ordinal,
+            {
+              ...source.exchanges.get(ordinal)!,
+              bodyText: JSON.stringify(fields),
+            },
+          ],
+        ]),
+      },
+      source.manifest.name,
+    );
     expect(Buffer.byteLength(single?.description ?? "")).toBeLessThan(1700);
     expect(single?.description).toContain(
       "/300 shown; full list in capture Evidence)",
@@ -374,7 +386,10 @@ describe("environment catalog description budgets", () => {
       path_template: `/${"😀".repeat(1000)}`,
       query_parameter_names: [query],
     };
-    const [definition] = environmentToolDefinitions(withTools([expanded]));
+    const [definition] = environmentToolDefinitions(
+      withTools([expanded]),
+      source.manifest.name,
+    );
     expect(definition?.tool).toBe(expanded);
     expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(3500);
     expect(definition?.description).toContain(
@@ -406,7 +421,10 @@ describe("environment catalog description budgets", () => {
       })),
       record_ordinals: ordinals,
     };
-    const [definition] = environmentToolDefinitions(withTools([expanded]));
+    const [definition] = environmentToolDefinitions(
+      withTools([expanded]),
+      source.manifest.name,
+    );
     expect(definition?.tool).toBe(expanded);
     expect(expanded.params[0]?.observed_values).toBe(observations);
     expect(expanded.record_ordinals).toBe(ordinals);
@@ -431,7 +449,10 @@ describe("environment catalog description budgets", () => {
       ...users,
       path_template: `/api/${"segment/".repeat(200_000)}{id}`,
     };
-    const [definition] = environmentToolDefinitions(withTools([long]));
+    const [definition] = environmentToolDefinitions(
+      withTools([long]),
+      source.manifest.name,
+    );
     expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(2048);
     expect(definition?.description).toContain(
       "path display truncated; full value in manifest Evidence",
@@ -595,6 +616,7 @@ describe("environment tool annotations", () => {
           method,
         })),
       ),
+      source.manifest.name,
     ).map((definition) => definition.annotations);
     expect(hints).toEqual([
       { readOnlyHint: true, idempotentHint: true, openWorldHint: false },

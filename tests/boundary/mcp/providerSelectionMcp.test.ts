@@ -24,7 +24,6 @@ import {
 } from "../../../src/application/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
-import { undeclaredOperationGuidance } from "../../../src/application/binary/BinarySessionExecution.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { AnalysisSnapshotMismatchError } from "../../../src/domain/evidenceErrors.js";
@@ -275,16 +274,15 @@ describe("provider selection over MCP", () => {
         message: expect.stringContaining("read_bytes"),
         details: { provider_id: "beta", operation: "read_bytes" },
         remediation: {
-          action: undeclaredOperationGuidance("read_bytes"),
+          action: expect.stringMatching(
+            /binary_session.*complete.*open_binary.*provider_id/u,
+          ),
         },
       },
     });
-    const remediation = undeclaredOperationGuidance("read_bytes");
-    expect(parseMcpToolError(unsupported).error.message).not.toContain(
-      remediation,
-    );
-    expect(remediation).toMatch(
-      /binary_session.*complete.*open_binary.*provider_id/u,
+    const unsupportedError = parseMcpToolError(unsupported).error;
+    expect(unsupportedError.message).not.toContain(
+      unsupportedError.remediation.action,
     );
     expect(starts).toEqual(["beta"]);
 
@@ -935,8 +933,8 @@ it.each([true, false])(
       const error = parseMcpToolError(reply).error;
       expect(error.code).toBe("capability_unavailable");
       expect(error.details).toMatchObject({ provider_id: "beta", operation });
-      expect(error.remediation.action).toBe(
-        undeclaredOperationGuidance(operation, entryCommentAvailable),
+      expect(error.remediation.action).toMatch(
+        /binary_session.*complete.*open_binary.*provider_id/u,
       );
       if (entryCommentAvailable) {
         expect(error.remediation.action).toContain("annotate_native_function");

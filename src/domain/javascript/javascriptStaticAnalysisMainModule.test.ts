@@ -2,7 +2,7 @@ import { Module } from "node:module";
 import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const cases = [
   ["native main", "require.main.require('node:path');", true, true],

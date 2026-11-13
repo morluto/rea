@@ -1837,10 +1837,10 @@ const projectObservedJvmMemoryFailure = (
 };
 
 /** Outcome addition that only a caller keeping the Ghidra session receives. */
-export const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
+const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
 
 /** The same addition when a failed search leaves session annotations intact. */
-export const GHIDRA_ANNOTATIONS_RETAINED =
+const GHIDRA_ANNOTATIONS_RETAINED =
   "The active analysis session and annotations remain available.";
 
 /** What a new Ghidra session repeats in the configured startup mode. */

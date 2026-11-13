@@ -408,17 +408,6 @@ const semanticPathsOverlap = (
   return true;
 };
 
-/** Share the lexical index with bounded, demand-driven boundary analyses. */
-export function* indexJavaScriptBindingsSteps(
-  program: t.Program,
-  precision?: JavaScriptSemanticPrecisionInput,
-): Generator<void, JavaScriptSemanticAnalysisState> {
-  const state = createState(program, "import", precision);
-  yield* collectDefinitionsSteps(program, state);
-  yield* indexSemanticAmbientWritesSteps(state);
-  return state;
-}
-
 /** Recover semantics from an already parsed JavaScript artifact. */
 export const analyzeParsedJavaScriptSemantics = (
   file: ParsedJavaScriptSource,

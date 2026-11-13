@@ -53,9 +53,7 @@ export const parseRawBinaryEntryPoint = (
 };
 
 /** Reject empty or non-integral file extents for a headerless image. */
-export const validateRawBinaryLength = (
-  length: number,
-): Result<null, string> =>
+const validateRawBinaryLength = (length: number): Result<null, string> =>
   Number.isSafeInteger(length) && length >= 1
     ? ok(null)
     : err("raw-binary requires at least one file byte");

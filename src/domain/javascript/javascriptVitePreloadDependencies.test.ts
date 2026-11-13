@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   analyzeJavaScriptStaticSource,
   analyzeParsedJavaScriptStaticSource,
-} from "./javascriptStaticAnalysis.js";
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 describe("Vite preload dependency recovery", () => {

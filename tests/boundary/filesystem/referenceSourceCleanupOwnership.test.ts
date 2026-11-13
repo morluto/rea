@@ -13,7 +13,8 @@ import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
-import { projectReferenceSourceImportError } from "../../../src/application/ReferenceSourceImportTypes.js";
+import { referenceSourceImportAnalysisError } from "../../../src/application/ReferenceSourceImportTypes.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { readReferenceSource } from "../../../src/reference/ReferenceSourceReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -451,7 +452,9 @@ it.each([
       surface === "import" &&
       result.error.tag === "reference-source-import"
     ) {
-      const projected = projectReferenceSourceImportError(result.error);
+      const projected = projectAnalysisError(
+        referenceSourceImportAnalysisError(result.error),
+      );
       expect(projected.details?.secondary_failures).toEqual([
         expect.objectContaining({ category: "cancelled" }),
       ]);

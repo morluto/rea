@@ -38,7 +38,7 @@ const serveEnvironment = async (
   if (!result.ok) throw result.error;
   return result.value;
 };
-const definitions = environmentToolDefinitions(source);
+const definitions = environmentToolDefinitions(source, source.manifest.name);
 
 /**
  * The agentenv echo example's card, key for key. Only `name` and the tool

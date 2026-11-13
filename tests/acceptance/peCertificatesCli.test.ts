@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { UNSIGNED_ATTRIBUTES_LIMITATION } from "../../src/native/pe/PeCertificateParser.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   peCertificateFixture,
@@ -156,7 +155,9 @@ cliTest("reports unsigned attributes through CLI and MCP", async ({ cli }) => {
     expect(
       report.entries[0]?.pkcs7?.signers[0]?.unsigned_attribute_oids,
     ).toEqual(["1.3.6.1.4.1.311.3.3.1"]);
-    expect(report.limitations).toContain(UNSIGNED_ATTRIBUTES_LIMITATION);
+    expect(report.limitations).toContain(
+      "Signer unsigned attribute contents are not decoded; nested signatures and timestamp token certificates and times may be omitted.",
+    );
   }
 });
 

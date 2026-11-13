@@ -9,7 +9,10 @@ import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
 import { classifyAndHashRootForInventory } from "../inventory/classify.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
-import { cArchiveExecutable } from "./CArchive.fixture.js";
+import {
+  CARCHIVE_COOKIE_MAGIC,
+  cArchiveExecutable,
+} from "./CArchive.fixture.js";
 import * as layout from "./CArchiveLayout.js";
 
 const fixture = () =>
@@ -248,7 +251,7 @@ it("retains rejected magic candidates without classifying their native carrier a
     path,
     Buffer.concat([
       fixture().subarray(0, 64),
-      layout.PYINSTALLER_COOKIE_MAGIC,
+      CARCHIVE_COOKIE_MAGIC,
       Buffer.alloc(88),
     ]),
   );
@@ -288,11 +291,7 @@ it("continues past an invalid trailing magic copy to inventory the valid cookie"
   const path = join(root, "app");
   await writeFile(
     path,
-    Buffer.concat([
-      fixture(),
-      layout.PYINSTALLER_COOKIE_MAGIC,
-      Buffer.alloc(88),
-    ]),
+    Buffer.concat([fixture(), CARCHIVE_COOKIE_MAGIC, Buffer.alloc(88)]),
   );
   const resourceScope = new ArtifactResourceScope();
   try {
