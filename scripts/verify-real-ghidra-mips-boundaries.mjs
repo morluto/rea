@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { assertMipsLoadedImage } from "../tests/conformance/ghidra/mips-checks.mjs";
 import { buildMips1Fixture } from "../tests/conformance/ghidra/mips1-fixture.mjs";
 import {
@@ -18,6 +17,7 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
+import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
 import { prepareVerifierTokenCleanup } from "./lib/verifier-token-cleanup.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
@@ -147,12 +147,15 @@ async function runControls(cleanup, commands) {
       `readelf diagnostics: ${attributes.stderr}`,
     );
     assert.match(attributes.stdout, /Tag_GNU_MIPS_ABI_FP.*Soft float/iu);
-    const transport = new StdioClientTransport({
+    const transport = await createOwnedMcpStdioTransport({
       command: process.execPath,
-      args: [cli, "mcp"],
-      env,
-      stderr: "inherit",
+      arguments: [cli, "mcp"],
+      hostEnvironment: env,
+      cwd: process.cwd(),
+      expectedCommand: null,
+      sweepTokenOwnedProcesses: true,
     });
+    commands.adopt(transport, "MIPS verifier MCP process");
     const client = new Client({ name: "rea-mips-boundaries", version: "1" });
     const mcp = createGhidraVerifierMcpOperations(client, requestOptions);
     const invoke = (name, args = {}) => mcp.callTool({ name, arguments: args });
