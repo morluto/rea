@@ -154,6 +154,51 @@ it("retains uncertain command completion as Evidence without encouraging a retry
   });
 });
 
+it("states that JSON integers beyond the exact range are returned as text", async () => {
+  const service = new CutterBridgeService({
+    listSessions: async () => ({
+      sessions: [],
+      bridge_directory: "/private/bridge",
+      discovery_status: "no_live_bridge_found",
+      bridge_directory_security: "private_verified",
+    }),
+    execute: async () => ({
+      requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
+      output: [{ offset: "18446744071578845304", size: 8 }],
+      currentFile: "/fixtures/sample.bin",
+      documentGeneration: 7,
+      identityStatus: "partial",
+      cutterVersion: "Cutter fixture version",
+      executionState: "complete",
+      error: null,
+      message: null,
+      outputTruncated: false,
+    }),
+  });
+  const run = (json: boolean) =>
+    service.execute({
+      session_id: "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a",
+      expected_generation: 7,
+      command: "aflj",
+      json,
+    });
+  const exactRange = /beyond JavaScript's exact range.*decimal strings/u;
+  const json = await run(true);
+  if (!json.ok) throw json.error;
+  expect(json.value.normalized_result).toMatchObject({
+    output: [{ offset: "18446744071578845304", size: 8 }],
+  });
+  expect(json.value.limitations).toContainEqual(
+    expect.stringMatching(exactRange),
+  );
+  const text = await run(false);
+  if (!text.ok) throw text.error;
+  expect(text.value.limitations).not.toContainEqual(
+    expect.stringMatching(exactRange),
+  );
+  await service.close();
+});
+
 it("clears a poisoned command only after its exact UI-dispatcher receipt", async () => {
   const requestId = "4b18ce4d-bf31-456e-ae31-e8c547b2f9db";
   const wrongId = "8ca93d11-107d-41ed-8b40-31dd53cd26a6";

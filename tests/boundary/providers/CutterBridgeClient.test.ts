@@ -858,6 +858,66 @@ describe("CutterBridgeClient: scenario group 4", () => {
   });
 });
 
+describe("CutterBridgeClient: exact JSON integers", () => {
+  let directory: string | undefined;
+  let server: ReturnType<typeof createServer> | undefined;
+
+  afterEach(async () => {
+    if (server !== undefined)
+      await new Promise<void>((resolve) => server?.close(() => resolve()));
+    if (directory !== undefined)
+      await rm(directory, { recursive: true, force: true });
+    server = undefined;
+    directory = undefined;
+  });
+
+  it("keeps exact digits of Rizin's unsigned 64-bit JSON addresses", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-cutter-exact-integers-"));
+    const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+    const token = "synthetic-cutter-bridge-token-for-test";
+    // Rizin 0.9.1 `aflj` for an x86-64 function at 0xffffffff81000078. Cutter's
+    // cmdj is json.loads, so the bridge forwards these integers exactly.
+    const aflj =
+      '[{"offset":18446744071578845304,"name":"entry0","size":8,' +
+      '"minbound":18446744071578845304,"maxbound":18446744071578845312,' +
+      '"stackframe":8,"nbbs":1}]';
+    server = authenticatedServer(token, sessionId, (request, respond) =>
+      request.kind === "ack"
+        ? respond({ ok: true, acknowledged: true })
+        : respond(
+            `{"ok":true,"output":${aflj},"document_generation":8,"execution_state":"complete"}`,
+            { raw: true },
+          ),
+    );
+    const port = await listen(server);
+    await writeDescriptor(directory, sessionId, port, token, {
+      documentGeneration: 8,
+    });
+    await expect(
+      createClient({ REA_CUTTER_BRIDGE_DIR: directory }).execute({
+        sessionId,
+        expectedGeneration: 8,
+        command: "aflj",
+        json: true,
+      }),
+    ).resolves.toMatchObject({
+      executionState: "complete",
+      documentGeneration: 8,
+      output: [
+        {
+          offset: "18446744071578845304",
+          name: "entry0",
+          size: 8,
+          minbound: "18446744071578845304",
+          maxbound: "18446744071578845312",
+          stackframe: 8,
+          nbbs: 1,
+        },
+      ],
+    });
+  });
+});
+
 describe("CutterBridgeClient: scenario group 5", () => {
   let directory: string | undefined;
   let server: ReturnType<typeof createServer> | undefined;
