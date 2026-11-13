@@ -1215,7 +1215,6 @@ it("rejects a complete root whose structural value lost its terminator", async (
   const root = form.root;
   const name = label("Items", root.location.offset + 13, form.code_page);
   const valueOffset = name.location.offset + name.location.bytes + 1;
-  const propertyEnd = root.location.offset + root.location.bytes;
   report.delphi_forms = [
     {
       ...form,
@@ -1229,14 +1228,11 @@ it("rejects a complete root whose structural value lost its terminator", async (
               kind: "list",
               items: [],
               terminated: false,
-              location: {
-                offset: valueOffset,
-                bytes: propertyEnd - valueOffset,
-              },
+              location: { offset: valueOffset, bytes: 0 },
             },
             location: {
               offset: name.location.offset,
-              bytes: propertyEnd - name.location.offset,
+              bytes: valueOffset - name.location.offset,
             },
           },
         ],
@@ -1331,6 +1327,171 @@ it("rejects an unknown value type that claims a consumed marker", async () => {
             location: {
               offset: name.location.offset,
               bytes: name.location.bytes + 1,
+            },
+          },
+        ],
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a property that follows a stopped value", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const first = label("A", root.location.offset + 13, form.code_page);
+  const listOffset = first.location.offset + first.location.bytes + 1;
+  const firstEnd = listOffset + 1;
+  const second = label("B", firstEnd, form.code_page);
+  const secondValueOffset = second.location.offset + second.location.bytes;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...root,
+        unknown: {
+          reason: "stopped",
+          bytes_hex: "",
+          truncated: false,
+          location: {
+            offset: root.location.offset + root.location.bytes,
+            bytes: 0,
+          },
+        },
+        properties: [
+          {
+            name: first,
+            value_type: "vaList",
+            value: {
+              kind: "list",
+              items: [
+                {
+                  value_type: "vaNull",
+                  marker_location: { offset: listOffset, bytes: 1 },
+                  value: {
+                    kind: "null",
+                    location: { offset: listOffset, bytes: 1 },
+                  },
+                },
+              ],
+              terminated: false,
+              location: { offset: listOffset, bytes: 1 },
+            },
+            location: {
+              offset: first.location.offset,
+              bytes: firstEnd - first.location.offset,
+            },
+          },
+          {
+            name: second,
+            value_type: "vaNull",
+            value: {
+              kind: "null",
+              location: { offset: secondValueOffset, bytes: 1 },
+            },
+            location: {
+              offset: second.location.offset,
+              bytes: secondValueOffset + 1 - second.location.offset,
+            },
+          },
+        ],
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a stopped string whose text disagrees with its retained bytes", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("S", root.location.offset + 13, form.code_page);
+  const valueOffset = name.location.offset + name.location.bytes + 1;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...root,
+        unknown: {
+          reason: "stopped",
+          bytes_hex: "",
+          truncated: false,
+          location: {
+            offset: root.location.offset + root.location.bytes,
+            bytes: 0,
+          },
+        },
+        properties: [
+          {
+            name,
+            value_type: "vaString",
+            value: {
+              kind: "string",
+              text: "B",
+              bytes_hex: "41",
+              code_page: form.code_page,
+              declared_bytes: 2,
+              truncated: true,
+              decode_truncated: true,
+              location: { offset: valueOffset, bytes: 2 },
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: valueOffset + 2 - name.location.offset,
+            },
+          },
+        ],
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects list entries that reuse the same source ranges", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("Items", root.location.offset + 13, form.code_page);
+  const listOffset = name.location.offset + name.location.bytes + 1;
+  const entry = {
+    value_type: "vaNull",
+    marker_location: { offset: listOffset, bytes: 1 },
+    value: {
+      kind: "null" as const,
+      location: { offset: listOffset, bytes: 1 },
+    },
+  };
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...root,
+        properties: [
+          {
+            name,
+            value_type: "vaList",
+            value: {
+              kind: "list",
+              items: [entry, { ...entry }],
+              terminated: true,
+              location: { offset: listOffset, bytes: 2 },
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: listOffset + 2 - name.location.offset,
             },
           },
         ],

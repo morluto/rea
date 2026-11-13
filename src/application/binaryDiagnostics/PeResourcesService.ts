@@ -330,6 +330,8 @@ const propertiesFollowSource = (
     const previous = index === 0 ? undefined : properties[index - 1];
     return (
       valueFollowsName(property) &&
+      // A stopped value ends the property loop; nothing can follow it.
+      (!valueHasStop(property.value) || index === properties.length - 1) &&
       (previous === undefined ||
         previous.location.offset + previous.location.bytes ===
           property.location.offset)
@@ -540,7 +542,17 @@ const stringMatchesType = (
   )
     return false;
   if (value.decode_truncated)
-    return value.truncated && available <= value.declared_bytes;
+    return (
+      value.truncated &&
+      available <= value.declared_bytes &&
+      // When the preview covers every available byte, the text still has to
+      // be their decode.
+      (value.bytes_hex.length / 2 !== available ||
+        decodeDelphiText(
+          Buffer.from(value.bytes_hex, "hex"),
+          value.code_page,
+        ) === value.text)
+    );
   if (
     available !== value.declared_bytes ||
     value.truncated !== value.declared_bytes > projection.previewBytes
@@ -642,6 +654,34 @@ const valueMatchesType = (
   }
 };
 
+/**
+ * List entries are read sequentially. A complete list also owns its closing
+ * terminator byte; a stopped list ends at the last entry or explicit stop.
+ */
+const listEntriesFollowSource = (
+  value: Extract<DelphiFormValue, { kind: "list" }>,
+): boolean => {
+  let expected = value.location.offset;
+  for (const entry of value.items) {
+    if (
+      entry.marker_location.offset !== expected ||
+      entry.marker_location.bytes !== 1
+    )
+      return false;
+    const markerOnly =
+      entry.value.kind === "null" ||
+      entry.value.kind === "nil" ||
+      entry.value.kind === "boolean";
+    if (entry.value.location.offset !== expected + (markerOnly ? 0 : 1))
+      return false;
+    const entryEnd = entry.value.location.offset + entry.value.location.bytes;
+    if (markerOnly && entryEnd !== expected + 1) return false;
+    expected = entryEnd;
+  }
+  const listEnd = value.location.offset + value.location.bytes;
+  return value.terminated ? listEnd === expected + 1 : listEnd === expected;
+};
+
 const insideValue = (
   value: DelphiFormValue,
   within: (range: { offset: number; bytes: number }) => boolean,
@@ -658,6 +698,7 @@ const insideValue = (
   if (value.kind === "list")
     return (
       within(value.location) &&
+      listEntriesFollowSource(value) &&
       value.items.every(
         (entry) =>
           withinRange(entry.marker_location, value.location) &&
