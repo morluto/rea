@@ -96,6 +96,10 @@ Persistent command Evidence retains the caller-selected and resolved startup pat
 
 Session status retains up to 64 recent protocol frames. Each history entry keeps a complete-character UTF-8 prefix of at most 16 KiB, plus a truncation marker when needed; `recent_output_truncated` reports omitted history. This history budget also accounts for replacement characters from invalid UTF-8. It does not shorten command Evidence, whose output budget defaults to 16 MiB. Rizin debug startup waits 30000 ms with no runtime override. Each command frame defaults to 120000 ms; its deadline, command-output budget, session capacity and pending-command queue use the [shared debugger launch settings](#debugger-launch-settings). The 16777216-byte frame cap and 4096-frame command cap remain fixed. Evidence names the cap that stopped the command. The one-shot `command_timeout_ms` setting does not change a debug session.
 
+### Stopped debugger sessions
+
+A Rizin or GDB session stops accepting commands when REA stops it, for example after an output or frame limit, a command deadline, cancellation or a protocol failure, or when the debugger process exits. REA keeps the stopped session and the first reason it observed until `close_rizin_debug_session` or `close_gdb_session` releases it, including after a retried cleanup succeeds. `rizin_debug_session_status` and `gdb_session_status` then report `state: "closed"` with that reason in `closed_reason`. A later `rizin_debug_command` or `gdb_console` on the session fails with `capability_unavailable`; `details.reason` carries the same reason, and the remediation is to close the session and start a new one. A `session_id` that this server never returned, or that close already released, fails with `invalid_request` instead.
+
 ### Debugger launch settings
 
 GDB and Rizin share these settings in the environment that launches REA:

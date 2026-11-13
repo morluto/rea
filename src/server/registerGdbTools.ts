@@ -2,6 +2,10 @@ import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
 import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
+import {
+  GDB_SESSION_TOOLS,
+  unknownDebuggerSessionError,
+} from "../domain/debuggerSessionErrors.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import {
@@ -10,7 +14,6 @@ import {
 } from "../application/analysisView/AnalysisViewService.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import {
   runOwnedCleanupWithExternalMutationAdmission,
   runWithExternalMutationAdmission,
@@ -117,7 +120,12 @@ export const registerGdbTools = (
       const result = manager.status(input.session_id);
       if (result === undefined)
         return delivery.toCallToolResult(
-          err(invalidSession("gdb_session_status")),
+          err(
+            unknownDebuggerSessionError(
+              GDB_SESSION_TOOLS,
+              "gdb_session_status",
+            ),
+          ),
           status,
         );
       return delivery.toCallToolResult(
@@ -150,6 +158,3 @@ export const registerGdbTools = (
     },
   );
 };
-
-const invalidSession = (operation: string): AnalysisInputError =>
-  new AnalysisInputError(operation);
