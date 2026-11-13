@@ -67,4 +67,4 @@ it("preserves Map omission and uncertain endpoint Evidence through public MCP", 
       ({ observations }) => observations[0]?.properties.value === "/network",
     )?.observations[0]?.evidence,
   ).toMatchObject({ state: "observed", confidence: "exact" });
-}, 20_000);
+});

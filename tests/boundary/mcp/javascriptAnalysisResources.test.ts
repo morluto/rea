@@ -174,7 +174,7 @@ it("accepts more work after application expansion exceeds memory and retains eve
     await client.close();
     await transport.close();
   }
-}, 90000);
+});
 
 const repeatedSourceCount = 1500;
 const repeatedSourceText = "export const observed = 7;\n";
@@ -306,7 +306,7 @@ it("returns a directly usable partial analysis reference for an oversized timeou
     await client.close();
     await transport.close();
   }
-}, 90000);
+});
 
 const verifyRecovery = async (
   client: Client,

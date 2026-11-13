@@ -141,7 +141,6 @@ cliTest(
     });
     await client.ping();
   },
-  120_000,
 );
 
 interface EndpointWorkflowInput {

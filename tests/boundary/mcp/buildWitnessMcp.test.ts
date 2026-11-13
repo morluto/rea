@@ -901,7 +901,7 @@ it("keeps a completed reset when the screenshot after it is cancelled", async ()
   const near = parseMcpToolError(await witness.check({ stage: "near_miss" }));
   expect(near.error.message).toContain("put the seed back");
   expect(witness.app.state).toEqual(lines("milk"));
-}, 30_000);
+});
 
 it("checks after_reset once the reset sent before it has relaunched the app", async () => {
   const witness = await witnessed(4);
@@ -925,7 +925,7 @@ it("checks after_reset once the reset sent before it has relaunched the app", as
     outcome: "applied",
   });
   expect(app.methods.slice(-2)).toEqual(["data/reset", "data/get"]);
-}, 30_000);
+});
 
 it("sends progress while a reset waits for the relaunched app", async () => {
   const witness = await witnessed(14);
@@ -939,7 +939,7 @@ it("sends progress while a reset waits for the relaunched app", async () => {
   );
   expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
   expect(progress.length).toBeGreaterThan(0);
-}, 30_000);
+});
 
 /** The shipped timing scaled down a tenfold: a read every 50 ms, a 300 ms window, a 1.5 s bound. */
 const SETTLE: SettleTiming = { intervalMs: 50, windowMs: 300, boundMs: 1500 };

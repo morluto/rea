@@ -68,5 +68,4 @@ cliTest(
     expect(mcp.evidence_id).toBe(evidence.evidence_id);
     expect(mcp.normalized_result).toEqual(evidence.normalized_result);
   },
-  30_000,
 );

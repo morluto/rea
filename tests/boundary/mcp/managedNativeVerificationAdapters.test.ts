@@ -146,7 +146,6 @@ cliTest(
     );
     expect(evidence.evidence_links).toEqual([original.evidence_id]);
   },
-  60_000,
 );
 
 /** Authentic native Evidence whose operation the workflow cannot read symbols from. */
@@ -357,7 +356,6 @@ cliTest(
       ]);
     }
   },
-  60_000,
 );
 
 cliTest(
@@ -427,5 +425,4 @@ cliTest(
       error: { code: "evidence_integrity_mismatch" },
     });
   },
-  60_000,
 );

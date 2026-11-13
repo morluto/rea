@@ -65,7 +65,6 @@ cliTest.skipIf(process.platform !== "darwin")(
       evidence.normalized_result.architectures.items[0]?.file_offset,
     ).toBeGreaterThan(0);
   },
-  60_000,
 );
 
 cliTest.skipIf(process.platform === "darwin")(

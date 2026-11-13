@@ -142,7 +142,6 @@ cliTest(
     ).toEqual(listeners.map(() => name));
     await client.ping();
   },
-  120_000,
 );
 
 cliTest(
@@ -203,5 +202,4 @@ cliTest(
     );
     expect(new Set(trace.seed_node_ids)).toEqual(retained);
   },
-  120_000,
 );

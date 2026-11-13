@@ -515,5 +515,4 @@ cliTest(
     ).toBe(false);
     await client.ping();
   },
-  30_000,
 );

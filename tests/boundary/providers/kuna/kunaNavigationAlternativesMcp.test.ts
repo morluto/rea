@@ -110,4 +110,4 @@ test("names only Kuna's assembly text for navigation refusals in a scoped catalo
     await mcp.close();
     expect(await session.close()).toEqual({ ok: true, value: null });
   }
-}, 60_000);
+});

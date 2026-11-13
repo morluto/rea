@@ -164,5 +164,4 @@ cliTest(
     );
     await client.ping();
   },
-  60_000,
 );
