@@ -24,7 +24,7 @@ import {
   type NativeCommandRunner,
 } from "../../../../src/native/CommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
-import { parseLipoOutput } from "../../../../src/native/parsers/lipo.js";
+import { parseLipoFixture } from "../../../fixtures/lipo.js";
 import {
   dylibCommand,
   LC,
@@ -1789,11 +1789,11 @@ describe("native macOS provider failures and parsing", () => {
   });
 
   it("parses thin and universal lipo fixtures", async () => {
-    expect(parseLipoOutput(await fixture("lipo-thin.txt"))).toMatchObject({
+    expect(parseLipoFixture(await fixture("lipo-thin.txt"))).toMatchObject({
       format: "thin",
       architectures: [{ name: "arm64" }],
     });
-    expect(parseLipoOutput(await fixture("lipo-fat.txt"))).toMatchObject({
+    expect(parseLipoFixture(await fixture("lipo-fat.txt"))).toMatchObject({
       format: "fat",
       architectures: [
         { name: "x86_64", file_offset: 16384, size: 4096 },
@@ -1811,7 +1811,7 @@ describe("native macOS provider failures and parsing", () => {
       "    size 0x10",
       "    align 2^14 (16384)",
     ].join("\n");
-    expect(parseLipoOutput(output).architectures).toMatchObject([
+    expect(parseLipoFixture(output).architectures).toMatchObject([
       { name: "arm64", file_offset: null, size: null, alignment: 16384 },
     ]);
   });
@@ -1824,11 +1824,11 @@ describe("native macOS provider failures and parsing", () => {
       "    align 2^14 (16384)",
     ].join("\n");
     expect(
-      parseLipoOutput(output.replace("(16384)", "(8192)")).architectures[0]
+      parseLipoFixture(output.replace("(16384)", "(8192)")).architectures[0]
         ?.alignment,
     ).toBeNull();
     expect(
-      parseLipoOutput(output.replace("2^14 (16384)", "2^14")).architectures[0]
+      parseLipoFixture(output.replace("2^14 (16384)", "2^14")).architectures[0]
         ?.alignment,
     ).toBe(16384);
   });

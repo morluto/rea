@@ -36,6 +36,7 @@ const assertFirstSummaryDelivery = async (
     ajv: wasmAjv,
     inputSchema,
     outputSchema,
+    toolDefinition,
   } = await advertisedMcpToolSchemas(
     harness.client,
     "inspect_wasm_artifact",
@@ -43,15 +44,11 @@ const assertFirstSummaryDelivery = async (
   );
   const summaryInput = { path: value.artifact.path, detail: "summary" };
   expect(wasmAjv.validate(inputSchema, summaryInput)).toBe(true);
-  const directSummary = await harness.client.callTool({
-    name: "inspect_wasm_artifact",
-    arguments: summaryInput,
-  });
+  const directSummary = await harness.client.callTool(
+    { name: "inspect_wasm_artifact", arguments: summaryInput },
+    { toolDefinition },
+  );
   expect(directSummary.isError).not.toBe(true);
-  expect(
-    wasmAjv.validate(outputSchema, directSummary.structuredContent),
-    JSON.stringify(wasmAjv.errors),
-  ).toBe(true);
   const summaryEvidence = parseEvidence(directSummary.structuredContent);
   const summary = wasmArtifactSummaryViewResultSchema.parse(
     summaryEvidence.normalized_result,
@@ -227,14 +224,16 @@ it("records inline WASM evidence with compact inputs and canonical option checks
       approval: true,
     }),
   ).toBe(false);
-  const response = await client.callTool({
-    name: "inspect_wasm_artifact",
-    arguments: { path: value.artifact.path, command_timeout_ms: 42_000 },
-  });
+  const response = await client.callTool(
+    {
+      name: "inspect_wasm_artifact",
+      arguments: { path: value.artifact.path, command_timeout_ms: 42_000 },
+    },
+    { toolDefinition: schemas.toolDefinition },
+  );
   assertRecordedMcpEvidence(
     response,
     "inspect_wasm_artifact",
-    schemas,
     session,
     value,
     "observed",
@@ -549,7 +548,6 @@ it("reads an oversized completed WASM result through its reported retained refer
     throw new Error("Missing WASM view schemas");
   const ajv = schemaValidation.assertions;
   const input: Record<string, unknown> = advertised.inputSchema;
-  const output: Record<string, unknown> = advertised.outputSchema;
   for (const [view, expected] of [
     [
       { kind: "summary" },
@@ -581,18 +579,14 @@ it("reads an oversized completed WASM result through its reported retained refer
   ] as const) {
     const args = { source: reference, view };
     expect(ajv.validate(input, args), JSON.stringify(ajv.errors)).toBe(true);
-    const selected = await harness.client.callTool({
-      name: "inspect_analysis_view",
-      arguments: args,
-    });
+    const selected = await harness.client.callTool(
+      { name: "inspect_analysis_view", arguments: args },
+      { toolDefinition: advertised },
+    );
     expect(
       selected.isError,
       JSON.stringify(selected.structuredContent),
     ).not.toBe(true);
-    expect(
-      ajv.validate(output, selected.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(selected.structuredContent);
     expect(evidence.confidence).toBe("derived");
     expect(evidence.evidence_links).toEqual([reference.evidence_id]);

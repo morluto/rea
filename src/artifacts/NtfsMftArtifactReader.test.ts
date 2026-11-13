@@ -225,6 +225,22 @@ it("retries a shared preparation cancelled by another traversal", async () => {
   }
 });
 
+it("reports cancellation during MFT coverage", async () => {
+  const path = await writeMft("$MFT", recordBytes({}));
+  const reader = new NtfsMftArtifactReader(path);
+  const controller = new AbortController();
+  try {
+    const entries = reader
+      .entries(controller.signal, {
+        onCoverage: () => controller.abort(),
+      })
+      [Symbol.asyncIterator]();
+    await expect(entries.next()).rejects.toMatchObject({ reason: "cancelled" });
+  } finally {
+    await reader.close();
+  }
+});
+
 it("revalidates the source before reusing a completed header inventory", async () => {
   const path = await writeMft("$MFT", recordBytes({}));
   const reader = new NtfsMftArtifactReader(path);

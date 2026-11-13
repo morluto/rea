@@ -38,7 +38,7 @@ export const MAX_RELEASE_EXPOSURE_SAMPLES = 8;
 
 export const RELEASE_EXPOSURE_OPERATION = "audit_release_exposure";
 
-export const RELEASE_EXPOSURE_LIMITATION =
+const RELEASE_EXPOSURE_LIMITATION =
   "This report states what static analysis of the selected artifact recovered. It does not establish that the application is secure.";
 
 export const RELEASE_EXPOSURE_ALLOWANCES = [
@@ -67,7 +67,7 @@ export const RELEASE_EXPOSURE_SEVERITIES = [
 ] as const;
 export const RELEASE_EXPOSURE_FAIL_LEVELS = ["high", "medium", "low"] as const;
 
-export const RELEASE_EXPOSURE_CHECK_IDS = [
+const RELEASE_EXPOSURE_CHECK_IDS = [
   "javascript.source_map_sources",
   "javascript.source_maps",
   "electron.run_as_node",

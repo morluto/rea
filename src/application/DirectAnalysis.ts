@@ -296,7 +296,7 @@ export const runProviderAnalysis = async (
               delivery.detail,
               operationSignal,
             );
-      return result.ok ? ok(result.value) : err(cliError(result.error, path));
+      return result.ok ? result : err(cliError(result.error, path));
     }
     const admitted = admitOneShotOperation(tool, arguments_, operationSignal);
     if (!admitted.ok) return err(cliError(admitted.error, path));
@@ -445,14 +445,14 @@ const runAnalysis = async (
     let isDirectory = false;
     if (BUNDLE_RESOURCE_OPERATIONS.has(tool)) {
       const inspected = await inspectBundleResourceInput(path);
-      if (!inspected.ok) return err(inspected.error);
+      if (!inspected.ok) return inspected;
       isDirectory = inspected.value;
     }
     if (BUNDLE_RESOURCE_OPERATIONS.has(tool) && isDirectory) {
       const opened = await session.openBundleResources(path, { signal });
-      if (!opened.ok) return err(opened.error);
+      if (!opened.ok) return opened;
       const execution = await session.execute(tool, arguments_, { signal });
-      if (!execution.ok) return err(execution.error);
+      if (!execution.ok) return execution;
       return ok(
         withEvidenceCallerInputPath(
           createAnalysisExecutionEvidence(
@@ -472,7 +472,7 @@ const runAnalysis = async (
       signal,
       ...targetSelection(options),
     });
-    if (!prepared.ok) return err(prepared.error);
+    if (!prepared.ok) return prepared;
     const { snapshot } = prepared.value;
     let resolvedTarget: ResolvedSessionOpen | undefined;
     if (snapshot !== undefined && prepared.value.target !== undefined) {
@@ -484,7 +484,7 @@ const runAnalysis = async (
           ? {}
           : { providerId: options.providerId }),
       });
-      if (!preview.ok) return err(preview.error);
+      if (!preview.ok) return preview;
       resolvedTarget = preview.value;
       const route = preview.value.route;
       const bindingProfile =
@@ -548,7 +548,7 @@ const runAnalysis = async (
       resolvedTarget === undefined
         ? await session.open(path, openOptions)
         : await session.openResolvedTarget(resolvedTarget, openOptions);
-    if (!opened.ok) return err(opened.error);
+    if (!opened.ok) return opened;
     const evidenceProfile = analysisProfileForEvidence(session, tool);
     const executed = await executeAnalysisTool({
       session,

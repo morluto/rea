@@ -43,11 +43,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
 import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import {
-  environmentCard,
-  STATE_INTAKE_EXTENSION,
-  STATE_OPERATIONS,
-} from "../../application/environment/environmentTools.js";
+import { environmentCard } from "../../application/environment/environmentTools.js";
 import { stateDataPlane } from "./environmentDataPlane.js";
 import {
   ENVIRONMENT_CARD_PATH,
@@ -991,8 +987,28 @@ describe("serveEnvironment with a state", () => {
     ).json();
     expect(card).toEqual(JSON.parse(JSON.stringify(environment.card)));
     const { capabilities } = environment.card;
-    expect(capabilities.extensions).toEqual([STATE_INTAKE_EXTENSION]);
-    expect(capabilities.operations).toEqual(STATE_OPERATIONS);
+    expect(capabilities.extensions).toMatchObject([
+      {
+        uri: "urn:agentenv:intake/v1",
+        params: {
+          add: [
+            { part: "data", format: "rea-state/v1", load: "replace" },
+            {
+              part: "file",
+              format: "rea-state/v1",
+              mimeTypes: ["application/json"],
+              load: "replace",
+            },
+          ],
+          get: [{ part: "data", format: "rea-state/v1" }],
+        },
+      },
+    ]);
+    expect(capabilities.operations).toEqual([
+      "data/reset",
+      "data/add",
+      "data/get",
+    ]);
     const names = capabilities.tools.map((tool) => tool.name);
     expect(names).toContain("get_users_by_id");
     for (const write of [

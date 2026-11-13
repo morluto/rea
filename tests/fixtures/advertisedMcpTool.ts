@@ -54,16 +54,11 @@ export const assertRecordedMcpEvidence = (
     | "inspect_binary_layout"
     | "inspect_evm_interface"
     | "inspect_native_exports",
-  schemas: Awaited<ReturnType<typeof advertisedMcpToolSchemas>>,
   session: BinarySession,
   expected: { readonly artifact: { readonly sha256: string } },
   confidence: ReturnType<typeof parseEvidence>["confidence"],
 ) => {
   expect(response.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.outputSchema, response.structuredContent),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
   const parsed = toolContract(name).outputSchema.parse(
     response.structuredContent,
   );

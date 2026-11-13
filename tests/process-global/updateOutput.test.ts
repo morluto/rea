@@ -1,14 +1,12 @@
 import { ProviderProcessSupervisor } from "../../src/process/ProviderProcess.js";
 import { systemUpdateHost } from "../../src/application/UpdateRuntime.js";
-import {
-  UpdateCommandRunner,
-  UPDATE_COMMAND_OUTPUT_BYTES,
-} from "../../src/application/UpdateCommandRunner.js";
+import { UpdateCommandRunner } from "../../src/application/UpdateCommandRunner.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { Writable } from "node:stream";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
+const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
 const execution = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("cross-spawn", () => ({ default: execution.spawn }));
 let child: ChildProcess | undefined;

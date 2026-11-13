@@ -26,11 +26,13 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 
 import { ZipArtifactReader } from "./ZipArtifactReader.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
-import { MINIMUM_ARTIFACT_EXPANDED_BYTES } from "../domain/artifactExpansionBudget.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "./ArtifactHash.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+
 import { analysisErrorUserMessage } from "../domain/analysisErrorPresentation.js";
+
+const MINIMUM_ARTIFACT_EXPANDED_BYTES = 256 * 1024 * 1024;
 
 /** Small real ZIP carriers with forged sizes; metadata-only controls, never decompressed. */
 const writeZipWithDeclaredSize = async (
@@ -754,7 +756,11 @@ describe("ZipArtifactReader producer ownership", () => {
           for await (const _chunk of stream) break;
         }
         const closing = reader.close();
-        expect(reader.close()).toBe(closing);
+        const secondClose = reader.close();
+        let secondClosed = false;
+        void secondClose.then(() => {
+          secondClosed = true;
+        });
         await held.reached;
         expect(stream.destroyed).toBe(true);
         expect(fileClose).not.toHaveBeenCalled();
@@ -764,8 +770,9 @@ describe("ZipArtifactReader producer ownership", () => {
         });
         await Promise.resolve();
         expect(closed).toBe(false);
+        expect(secondClosed).toBe(false);
         held.release();
-        await closing;
+        await Promise.all([closing, secondClose]);
         expect(fileClose).toHaveBeenCalledTimes(1);
         await reader.close();
         expect(fileClose).toHaveBeenCalledTimes(1);

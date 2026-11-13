@@ -208,7 +208,7 @@ export const parseBinaryTarget = async (
     throwIfTargetResolutionCancelled(signal);
     const resolved = await resolveAppBundle(canonical);
     throwIfTargetResolutionCancelled(signal);
-    if (!resolved.ok) return err(resolved.error);
+    if (!resolved.ok) return resolved;
     const { executable: path, infoPlist } = resolved.value;
     const bundle =
       infoPlist === undefined ? {} : { bundleInfoPlist: infoPlist };

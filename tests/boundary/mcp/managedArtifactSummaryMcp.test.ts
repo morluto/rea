@@ -55,15 +55,14 @@ it("returns a first-call overview and pages the unchanged source after its file 
       { path, detail: "summary" },
     ),
   ).toBe(false);
-  const reply = await client.callTool({
-    name: "inspect_managed_artifact",
-    arguments: { path, detail: "summary" },
-  });
+  const reply = await client.callTool(
+    {
+      name: "inspect_managed_artifact",
+      arguments: { path, detail: "summary" },
+    },
+    { toolDefinition: definition },
+  );
   expect(reply.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, reply.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const receipt = parseEvidence(reply.structuredContent);
   const view = managedArtifactSummaryViewResultSchema.parse(
     receipt.normalized_result,

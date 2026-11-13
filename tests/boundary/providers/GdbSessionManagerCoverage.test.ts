@@ -14,7 +14,7 @@ import {
 import {
   commandMayChangeInferiorOutput,
   gdbOneShotCommandMayInvalidateDetachProof,
-  gdbThreadGroupCount,
+  gdbThreadGroupPids,
   GdbSessionManager,
   miStringField,
 } from "../../../src/gdb/GdbSessionManager.js";
@@ -114,13 +114,21 @@ it.each([
     undefined,
   ],
 ] as const)("parses recursive GDB MI groups: %s", (_label, mi, expected) => {
-  expect(gdbThreadGroupCount(mi)).toBe(expected);
+  expect(gdbThreadGroupPids(mi)?.length).toBe(expected);
+});
+
+it("preserves the reported inferior PIDs in inventory order", () => {
+  expect(
+    gdbThreadGroupPids(
+      '1^done,groups=[{id="i1",pid="123"},{id="i2",pid="456"}]',
+    ),
+  ).toEqual(["123", "456"]);
 });
 
 it("keeps GDB inventory unknown when MI nesting exceeds the parser frame budget", () => {
   const nestedValue = "[".repeat(257) + "]".repeat(257);
   expect(
-    gdbThreadGroupCount("1^done,groups=[],extension=" + nestedValue),
+    gdbThreadGroupPids("1^done,groups=[],extension=" + nestedValue),
   ).toBeUndefined();
 });
 
