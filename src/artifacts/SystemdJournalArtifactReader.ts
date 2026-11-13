@@ -152,6 +152,9 @@ export class SystemdJournalArtifactReader implements ArtifactReader {
           ),
       }) as AsyncIterable<Buffer>) {
         this.#assertOpen(signal);
+        // The decoder discards payload bytes as they stream past, so each
+        // chunk's work is bounded and cancellation is never blocked on a
+        // whole-file buffer.
         const written = decoder.value.write(chunk);
         if (!written.ok) throw this.#failure(written.error);
       }

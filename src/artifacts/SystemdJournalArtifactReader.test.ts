@@ -8,6 +8,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
 const HEADER_BYTES = 272;
+const JOURNAL_HEADER_MIN_BYTES = 208;
 
 interface ObjectSpec {
   readonly type: number;
@@ -25,16 +26,18 @@ const journalBytes = (
     readonly incompatibleFlags?: number;
     readonly compatibleFlags?: number;
     readonly tailBytes?: number;
+    readonly tailObjectOffset?: number;
   } = {},
 ): Buffer => {
   const objects = options.objects ?? [];
+  /** Each object starts at the previous extent aligned up to eight bytes. */
   const bodySize = objects.reduce(
-    (total, object) => total + Math.min(object.size, 64),
+    (total, object) => total + Math.ceil(Math.min(object.size, 64) / 8) * 8,
     0,
   );
-  /** The object area begins after the declared header, which may exceed 272. */
+  /** The object area begins after the declared header, which may differ from 272. */
   const objectStart = Math.max(
-    HEADER_BYTES,
+    JOURNAL_HEADER_MIN_BYTES,
     options.headerSize ?? HEADER_BYTES,
   );
   const file = Buffer.alloc(objectStart + bodySize + (options.tailBytes ?? 0));
@@ -47,13 +50,16 @@ const journalBytes = (
   file.writeBigUInt64LE(BigInt(options.headerSize ?? HEADER_BYTES), 88);
   file.writeBigUInt64LE(BigInt(file.length - objectStart), 96);
   file.writeBigUInt64LE(BigInt(options.nObjects ?? objects.length), 144);
+  const tailObjectOffset = options.tailObjectOffset;
+  if (tailObjectOffset !== undefined)
+    file.writeBigUInt64LE(BigInt(tailObjectOffset), 136);
   /** An oversized object is written only as far as the file's stub for it. */
   let offset = objectStart;
   for (const object of objects) {
     file.writeUInt8(object.type, offset);
     file.writeUInt8(object.flags ?? 0, offset + 1);
     file.writeBigUInt64LE(BigInt(object.size), offset + 8);
-    offset += Math.min(object.size, 64);
+    offset += Math.ceil(Math.min(object.size, 64) / 8) * 8;
   }
   return file;
 };
@@ -188,6 +194,133 @@ it("does not walk objects when the declared header size cannot anchor them", asy
   } finally {
     await reader.close();
   }
+});
+
+it("accepts a 208-byte legacy header and omits the fields it does not carry", async () => {
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeJournal(
+      "legacy.journal",
+      journalBytes({
+        headerSize: 208,
+        objects: [{ type: 1, size: 64 }],
+      }),
+    ),
+  );
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    object_count: 1,
+    valid_object_count: 1,
+    header: {
+      header_size: 208,
+      n_data: null,
+      n_fields: null,
+      n_tags: null,
+      tail_entry_offset: null,
+    },
+  });
+});
+
+it("advances past an object whose size is not a multiple of eight", async () => {
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeJournal(
+      "unaligned-size.journal",
+      journalBytes({
+        objects: [
+          { type: 1, size: 60 },
+          { type: 3, size: 32 },
+        ],
+      }),
+    ),
+  );
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    object_count: 2,
+    valid_object_count: 2,
+    truncated_object_count: 0,
+  });
+});
+
+it("ends the chain at the declared tail object instead of walking arena capacity", async () => {
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeJournal(
+      "preallocated.journal",
+      journalBytes({
+        objects: [{ type: 1, size: 64 }],
+        tailObjectOffset: HEADER_BYTES,
+        tailBytes: 64,
+      }),
+    ),
+  );
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    object_count: 1,
+    valid_object_count: 1,
+    truncated_object_count: 0,
+    trailing_bytes: 64,
+  });
+  expect(inventory.limitations.join(" ")).not.toMatch(/declared size does not fit/iu);
+});
+
+it("refuses to describe objects under incompatible flags it does not know", async () => {
+  const path = await writeJournal(
+    "unknown-flags.journal",
+    journalBytes({
+      incompatibleFlags: 1 << 5,
+      objects: [{ type: 1, size: 64 }],
+    }),
+  );
+  const reader = new SystemdJournalArtifactReader(path);
+  try {
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ reason: "format" });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("reads the compact tail-array fields as 32-bit values", async () => {
+  const bytes = journalBytes({ headerSize: HEADER_BYTES });
+  bytes.writeUInt32LE(0x1234, 256);
+  bytes.writeUInt32LE(7, 260);
+  bytes.writeBigUInt64LE(0x99n, 264);
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeJournal("compact-tail.journal", bytes),
+  );
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    header: {
+      tail_entry_array_offset: 0x1234,
+      tail_entry_array_n_entries: 7,
+      tail_entry_offset: 0x99,
+    },
+  });
+});
+
+it("reports a header field above 2^53-1 as the ceiling and names it", async () => {
+  const bytes = journalBytes({ headerSize: HEADER_BYTES });
+  bytes.writeBigUInt64LE((1n << 60n) + 3n, 192);
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeJournal("overflow.journal", bytes),
+  );
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    header: {
+      tail_entry_realtime: Number.MAX_SAFE_INTEGER,
+      overflowed_fields: ["tail_entry_realtime"],
+    },
+  });
+  expect(inventory.limitations.join(" ")).toMatch(/above 2\^53-1/u);
+});
+
+it("does not claim compressed payloads were skipped when no object is compressed", async () => {
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeJournal(
+      "advertised-compression.journal",
+      journalBytes({
+        incompatibleFlags: 0x1,
+        objects: [{ type: 1, size: 64 }],
+      }),
+    ),
+  );
+  const limitations = inventory.limitations.join(" ");
+  expect(limitations).toMatch(/advertises a compression algorithm/u);
+  expect(limitations).not.toMatch(/compressed object payloads are not decompressed/u);
 });
 
 it("refuses a file that does not begin with the journal signature", async () => {

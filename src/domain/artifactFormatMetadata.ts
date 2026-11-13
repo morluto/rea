@@ -391,15 +391,18 @@ export const systemdJournalHeaderSchema = z.strictObject({
   head_entry_realtime: offset,
   tail_entry_realtime: offset,
   tail_entry_monotonic: offset,
-  n_data: offset,
-  n_fields: offset,
-  n_tags: offset,
-  n_entry_arrays: offset,
-  data_hash_chain_depth: offset,
-  field_hash_chain_depth: offset,
-  tail_entry_array_offset: offset,
-  tail_entry_array_n_entries: offset,
-  tail_entry_offset: offset,
+  // Null when the declared header predates the field's introduction.
+  n_data: offset.nullable(),
+  n_fields: offset.nullable(),
+  n_tags: offset.nullable(),
+  n_entry_arrays: offset.nullable(),
+  data_hash_chain_depth: offset.nullable(),
+  field_hash_chain_depth: offset.nullable(),
+  tail_entry_array_offset: uint32.nullable(),
+  tail_entry_array_n_entries: uint32.nullable(),
+  tail_entry_offset: offset.nullable(),
+  // Fields whose declared value exceeded 2^53-1 and report that ceiling.
+  overflowed_fields: z.array(z.string()),
 });
 
 export const systemdJournalObjectHeaderSchema = z.strictObject({
