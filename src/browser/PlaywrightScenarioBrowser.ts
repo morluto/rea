@@ -380,9 +380,11 @@ const resolveAndroidChromiumExecutable = async (
   const parent = posix.isAbsolute(selected)
     ? posix.dirname(selected)
     : dirname(selected);
-  const termuxBin = win32.isAbsolute(prefix)
-    ? win32.resolve(prefix, "bin")
-    : absoluteCallerPath(appendCallerPath(prefix, "bin"));
+  const termuxBin = posix.isAbsolute(prefix)
+    ? absoluteCallerPath(appendCallerPath(prefix, "bin"))
+    : win32.isAbsolute(prefix)
+      ? win32.resolve(prefix, "bin")
+      : absoluteCallerPath(appendCallerPath(prefix, "bin"));
   if (parent !== termuxBin) return executablePath;
   const sibling = appendCallerPath(parent, "../lib/chromium/chrome");
   try {
