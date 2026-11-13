@@ -195,7 +195,7 @@ const clients: HopperClient[] = [];
 
 afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
-}, 45_000);
+});
 
 describe("HopperClient startup deadline", () => {
   it("applies one deadline to launcher, socket, and health startup phases", async () => {

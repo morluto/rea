@@ -127,7 +127,6 @@ cliTest(
       ),
     ).toBe(true);
   },
-  20_000,
 );
 
 cliTest(
@@ -205,5 +204,4 @@ cliTest(
       ),
     ).toBe(true);
   },
-  20_000,
 );

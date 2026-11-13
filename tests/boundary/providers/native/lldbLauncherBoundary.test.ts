@@ -207,5 +207,4 @@ setTimeout(() => process.exit(0), 10000);
       } else expect(closed.ok).toBe(true);
     }
   },
-  15_000,
 );

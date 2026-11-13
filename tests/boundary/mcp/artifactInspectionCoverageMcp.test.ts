@@ -71,7 +71,6 @@ describe.skipIf(process.platform === "win32")(
       },
     ] as const)(
       "derives inspection and summary coverage from inventory traversal (FIFO: $withFifo)",
-      { timeout: 30_000 },
       async ({ withFifo, status, sourceCoverage }, { mcp, onTestFinished }) => {
         const path = await writeBundle(withFifo);
         const { client, outputSchema } = await connect(mcp, onTestFinished);

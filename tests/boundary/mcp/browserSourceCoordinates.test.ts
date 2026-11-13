@@ -126,7 +126,7 @@ it("reports malformed source coordinates as unknown through MCP", async () => {
       },
     },
   });
-}, 20_000);
+});
 
 it("keeps a negative column Chrome reports in passive source locations", async () => {
   const { page, tools } = await inspectSourceCoordinates({
@@ -178,4 +178,4 @@ it("keeps a negative column Chrome reports in passive source locations", async (
         },
       },
     });
-}, 20_000);
+});
