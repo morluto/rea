@@ -226,7 +226,7 @@ describe("SoC catalog selection", () => {
     );
 
     expect(report.detectedPlatforms.map((candidate) => candidate.platform)).toEqual(
-      ["esp32", "esp32c2", "esp32c3", "esp32c6"],
+      ["esp32", "esp32c2", "esp32c3", "esp32c6", "esp32h2"],
     );
     expect(
       report.detectedPlatforms.every(
@@ -237,12 +237,14 @@ describe("SoC catalog selection", () => {
     expect(
       report.peripheralBlocks.some((block) => block.socPeripheralName === "UART0"),
     ).toBe(false);
-    expect(report.limitations[0]).toContain("esp32, esp32c2, esp32c3, esp32c6");
+    expect(report.limitations[0]).toContain(
+      "esp32, esp32c2, esp32c3, esp32c6, esp32h2",
+    );
   });
 
-  it("names the ESP32-C6 UART when no other catalog owns the window", () => {
+  it("names the ESP32-C6 low-power UART when no other catalog owns the window", () => {
     const report = reconstructHardwareFromReferences(
-      [{ target_address: "0x60001000", read: true }],
+      [{ target_address: "0x600b1400", read: true }],
       "riscv",
     );
 
@@ -252,10 +254,10 @@ describe("SoC catalog selection", () => {
         matchedCount: 1,
         totalAddresses: 1,
         confidence: 1,
-        matchedPeripherals: ["UART1"],
+        matchedPeripherals: ["LP_UART"],
       },
     ]);
-    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe("UART1");
+    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe("LP_UART");
     expect(report.limitations).toEqual([]);
   });
 
@@ -331,6 +333,27 @@ describe("ESP32-C2 catalog selection", () => {
       report.peripheralBlocks.some((block) => block.socPeripheralName === "SENSITIVE"),
     ).toBe(false);
     expect(report.limitations[0]).toContain("esp32c2, esp32c3");
+  });
+});
+
+describe("ESP32-H2 catalog selection", () => {
+  it("names the ESP32-H2 ECDSA block when no other catalog owns it", () => {
+    const report = reconstructHardwareFromReferences(
+      [{ target_address: "0x6008e000", read: true }],
+      "riscv",
+    );
+
+    expect(report.detectedPlatforms).toEqual([
+      {
+        platform: "esp32h2",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["ECDSA"],
+      },
+    ]);
+    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe("ECDSA");
+    expect(report.limitations).toEqual([]);
   });
 });
 

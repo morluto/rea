@@ -263,6 +263,13 @@ describe("CPU-compatible catalog scoring", () => {
         confidence: 1,
         matchedPeripherals: ["UART0"],
       },
+      {
+        platform: "esp32h2",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART0"],
+      },
     ]);
 
     expect(detectSocPlatform(["0x3ff40000"], "x86")).toEqual([]);
@@ -336,6 +343,7 @@ describe("ESP32-C3 peripheral windows", () => {
       "esp32c2",
       "esp32c3",
       "esp32c6",
+      "esp32h2",
     ]);
     expect(detectSocPlatform(["0x60043000"], "riscv")).toEqual([
       {
@@ -356,22 +364,27 @@ describe("ESP32-C6 peripheral windows", () => {
     expect(lookupSocPeripheral("0x60002000", "esp32c2")?.name).toBe("SPI1");
     expect(lookupSocPeripheral("0x60002000", "esp32c3")?.name).toBe("SPI1");
     expect(lookupSocPeripheral("0x60002000", "esp32c6")?.name).toBe("SPI0");
+    expect(lookupSocPeripheral("0x60002000", "esp32h2")?.name).toBe("SPI0");
     expect(lookupSocPeripheral("0x60010000", "esp32c2")?.name).toBe("UART1");
     expect(lookupSocPeripheral("0x60010000", "esp32c3")?.name).toBe("UART1");
     expect(lookupSocPeripheral("0x60010000", "esp32c6")?.name).toBe("INTMTX");
+    expect(lookupSocPeripheral("0x60010000", "esp32h2")?.name).toBe("INTMTX");
     expect(lookupSocPeripheral("0x600c0000", "esp32c2")?.name).toBe("SYSTEM");
     expect(lookupSocPeripheral("0x600c0000", "esp32c3")?.name).toBe("SYSTEM");
     expect(lookupSocPeripheral("0x600c0000", "esp32c6")?.name).toBe("TRACE");
+    expect(lookupSocPeripheral("0x600c0000", "esp32h2")?.name).toBe("TRACE");
     expect(detectSocPlatform(["0x60002000"], "riscv").map((candidate) => candidate.platform)).toEqual([
       "esp32",
       "esp32c2",
       "esp32c3",
       "esp32c6",
+      "esp32h2",
     ]);
     expect(detectSocPlatform(["0x60010000"], "riscv").map((candidate) => candidate.platform)).toEqual([
       "esp32c2",
       "esp32c3",
       "esp32c6",
+      "esp32h2",
     ]);
   });
 
@@ -380,19 +393,28 @@ describe("ESP32-C6 peripheral windows", () => {
     expect(lookupSocPeripheral("0x60001000", "esp32c2")).toBeNull();
     expect(lookupSocPeripheral("0x60001000", "esp32c3")).toBeNull();
     expect(lookupSocPeripheral("0x60001000", "esp32c6")?.name).toBe("UART1");
+    expect(lookupSocPeripheral("0x60001000", "esp32h2")?.name).toBe("UART1");
     expect(lookupSocPeripheral("0x6000f000", "esp32c3")).toBeNull();
     expect(lookupSocPeripheral("0x6000f000", "esp32c6")?.name).toBe(
       "USB_SERIAL_JTAG",
     );
+    expect(lookupSocPeripheral("0x6000f000", "esp32h2")?.name).toBe(
+      "USB_SERIAL_JTAG",
+    );
+    expect(lookupSocPeripheral("0x600b1400", "esp32h2")).toBeNull();
     expect(lookupSocPeripheral("0x600b1400", "esp32c6")?.name).toBe("LP_UART");
     expect(lookupSocPeripheral("0x600b1400", "esp32c6")?.sizeBytes).toBe(0x400);
-    expect(detectSocPlatform(["0x60001000"], "riscv")).toEqual([
+    expect(detectSocPlatform(["0x60001000"], "riscv").map((candidate) => candidate.platform)).toEqual([
+      "esp32c6",
+      "esp32h2",
+    ]);
+    expect(detectSocPlatform(["0x600b1400"], "riscv")).toEqual([
       {
         platform: "esp32c6",
         matchedCount: 1,
         totalAddresses: 1,
         confidence: 1,
-        matchedPeripherals: ["UART1"],
+        matchedPeripherals: ["LP_UART"],
       },
     ]);
     expect(detectSocPlatform(["0x6000f000"], "arm")).toEqual([]);
@@ -410,12 +432,15 @@ describe("ESP32-C2 peripheral windows", () => {
     expect(lookupSocPeripheral("0x600c1000", "esp32c2")?.name).toBe("SENSITIVE");
     expect(lookupSocPeripheral("0x600c1000", "esp32c3")?.name).toBe("SENSITIVE");
     expect(lookupSocPeripheral("0x600c1000", "esp32c6")).toBeNull();
+    expect(lookupSocPeripheral("0x600c1000", "esp32h2")).toBeNull();
+    expect(lookupSocPeripheral("0x60008800", "esp32h2")?.name).toBe("LEDC");
     expect(lookupSocPeripheral("0x60020000", "esp32c2")).toBeNull();
     expect(detectSocPlatform(["0x60008800"], "riscv").map((candidate) => candidate.platform)).toEqual([
       "esp32",
       "esp32c2",
       "esp32c3",
       "esp32c6",
+      "esp32h2",
     ]);
     expect(detectSocPlatform(["0x600c1000"], "riscv").map((candidate) => candidate.platform)).toEqual([
       "esp32c2",
@@ -427,6 +452,7 @@ describe("ESP32-C2 peripheral windows", () => {
     expect(lookupSocPeripheral("0x6004e800", "esp32")).toBeNull();
     expect(lookupSocPeripheral("0x6004e800", "esp32c3")).toBeNull();
     expect(lookupSocPeripheral("0x6004e800", "esp32c6")).toBeNull();
+    expect(lookupSocPeripheral("0x6004e800", "esp32h2")).toBeNull();
     expect(lookupSocPeripheral("0x6004e800", "esp32c2")?.name).toBe("I2C_MST");
     expect(detectSocPlatform(["0x6004e800"], "riscv")).toEqual([
       {
@@ -438,5 +464,25 @@ describe("ESP32-C2 peripheral windows", () => {
       },
     ]);
     expect(detectSocPlatform(["0x6004e800"], "arm")).toEqual([]);
+  });
+});
+
+describe("ESP32-H2 peripheral windows", () => {
+  it("lets an H2-only window select that family", () => {
+    expect(lookupSocPeripheral("0x6008e000", "esp32")).toBeNull();
+    expect(lookupSocPeripheral("0x6008e000", "esp32c2")).toBeNull();
+    expect(lookupSocPeripheral("0x6008e000", "esp32c3")).toBeNull();
+    expect(lookupSocPeripheral("0x6008e000", "esp32c6")).toBeNull();
+    expect(lookupSocPeripheral("0x6008e000", "esp32h2")?.name).toBe("ECDSA");
+    expect(detectSocPlatform(["0x6008e000"], "riscv")).toEqual([
+      {
+        platform: "esp32h2",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["ECDSA"],
+      },
+    ]);
+    expect(detectSocPlatform(["0x6008e000"], "arm")).toEqual([]);
   });
 });
