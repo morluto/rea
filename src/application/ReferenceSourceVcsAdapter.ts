@@ -1,11 +1,21 @@
 import fs from "node:fs";
 import { join } from "node:path";
-import { locateReferenceSourceGitDirectory } from "./ReferenceSourceGitDirectory.js";
+import {
+  locateReferenceSourceGitDirectory,
+  ReferenceSourceGitDirectoryCancelled,
+} from "./ReferenceSourceGitDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { readRegularFile, retryRegularFileCleanup } from "./RegularFileRead.js";
+import {
+  RegularFileCleanupFailure,
+  regularFileCancellation,
+} from "../filesystem/OwnedRegularFile.js";
+import {
+  readRegularFile,
+  RegularFileReadFailure,
+  retryRegularFileCleanup,
+} from "./RegularFileRead.js";
 import { referenceSourceResourceFailure } from "../reference/ReferenceSourceReaderErrors.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
 
@@ -39,7 +49,12 @@ export const readReferenceSourceVcs = async (
     });
   } catch (cause: unknown) {
     if (!(cause instanceof ArtifactReaderFailure)) throw cause;
-    return err(referenceSourceResourceFailure(cause));
+    return err({
+      ...referenceSourceResourceFailure(cause),
+      ...(cause.reason !== "cancelled" && signal?.aborted === true
+        ? { secondaryCancellation: { cause: signal.reason } }
+        : {}),
+    });
   }
 };
 
@@ -60,13 +75,45 @@ const resolveSourceVcs = async (
   const cleanupFailures: ArtifactReaderFailure[] = [];
   const readMetadataBytes = async (path: string): Promise<Buffer> => {
     try {
-      return await readRegularFile(path, { signal });
+      return await readRegularFile(path, {
+        signal,
+        cancellationFailure: (reason) =>
+          new ArtifactReaderFailure(
+            "cancelled",
+            "Git metadata read cancelled",
+            {
+              cause: reason,
+            },
+          ),
+      });
     } catch (cause: unknown) {
-      if (signal?.aborted === true && cause === signal.reason) throw cause;
-      if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
+      if (cause instanceof ArtifactReaderFailure) throw cause;
+      if (!(cause instanceof RegularFileCleanupFailure)) {
+        if (
+          signal?.aborted === true &&
+          regularFileCancellation(cause) === undefined
+        ) {
+          const physical =
+            cause instanceof RegularFileReadFailure
+              ? cause.operationCause
+              : cause;
+          // The Git directory owner interprets absence of optional metadata.
+          if (errorCode(physical) === "ENOENT") throw physical;
+          throw new ArtifactReaderFailure(
+            "io",
+            `Git metadata could not be read safely: ${errorMessage(physical)}`,
+            { cause: physical },
+          );
+        }
+        throw cause instanceof RegularFileReadFailure
+          ? cause.operationCause
+          : cause;
+      }
+      const cancellation = regularFileCancellation(cause);
       const retry = await retryRegularFileCleanup(cause, resources, signal);
       if (
         retry.outcome.kind === "failed" &&
+        cancellation === undefined &&
         errorCode(retry.outcome.cause) !== "ENOENT"
       )
         failedRead ??= { cause: retry.outcome.cause };
@@ -81,10 +128,10 @@ const resolveSourceVcs = async (
           ? retry.outcome.cause
           : cause.cleanupCause;
       throw new ArtifactReaderFailure(
-        isAborted(signal) ? "cancelled" : "io",
+        cancellation === undefined ? "io" : "cancelled",
         `Git metadata could not be read safely: ${errorMessage(primary)}`,
         {
-          cause: primary,
+          cause: cancellation === undefined ? primary : cancellation.reason,
           ...(retry.cleanup === undefined ? {} : { cleanup: retry.cleanup }),
         },
       );
@@ -97,7 +144,9 @@ const resolveSourceVcs = async (
       failure.cleanup === undefined ? [] : [failure.cleanup],
     );
     throw new ArtifactReaderFailure(
-      isAborted(signal) ? "cancelled" : "io",
+      primary instanceof ArtifactReaderFailure && primary.reason === "cancelled"
+        ? "cancelled"
+        : "io",
       `Git metadata could not be read safely: ${errorMessage(primary)}`,
       {
         cause: new AggregateError(
@@ -124,9 +173,9 @@ const resolveSourceVcs = async (
     ...fs,
     promises: {
       ...fs.promises,
-      // Let isomorphic-git continue from a failed loose ref to packed-refs,
-      // then report the original read failure after resolution. This preserves
-      // both observations when packed metadata also fails cleanup.
+      // Let isomorphic-git finish probing refs, then report original failures.
+      // A later resolved ref must not discard an earlier physical read or
+      // retained cleanup failure.
       readFile: async (
         path: string | undefined,
         options:
@@ -155,6 +204,8 @@ const resolveSourceVcs = async (
         } catch (cause: unknown) {
           if (cause instanceof ArtifactReaderFailure) {
             cleanupFailures.push(cause);
+            if (cause.reason !== "cancelled")
+              failedRead ??= { cause: cause.cause ?? cause };
           } else if (errorCode(cause) !== "ENOENT") failedRead ??= { cause };
           throw cause;
         }
@@ -170,22 +221,38 @@ const resolveSourceVcs = async (
       head = await resolveRef({ fs: referenceFs, dir: root, ...options });
     } catch (cause: unknown) {
       if (cleanupFailures.length > 0)
-        throwCleanupFailures(failedRead?.cause ?? cause);
+        throwCleanupFailures(failedRead?.cause ?? cleanupFailures[0] ?? cause);
       if (failedRead !== undefined) throw failedRead.cause;
       throw cause;
     }
     if (cleanupFailures.length > 0)
-      throwCleanupFailures(failedRead?.cause ?? cleanupFailures[0]?.cause);
+      throwCleanupFailures(failedRead?.cause ?? cleanupFailures[0]);
     signal?.throwIfAborted();
     if (failedRead !== undefined) throw failedRead.cause;
     return head;
   };
-  const locations = await locateReferenceSourceGitDirectory(
-    root,
-    readMetadataText,
-    signal,
-  );
+  let locations;
+  try {
+    locations = await locateReferenceSourceGitDirectory(
+      root,
+      readMetadataText,
+      signal,
+    );
+  } catch (cause: unknown) {
+    if (
+      signal?.aborted === true &&
+      !(cause instanceof ReferenceSourceGitDirectoryCancelled) &&
+      !(cause instanceof ArtifactReaderFailure)
+    )
+      throw new ArtifactReaderFailure(
+        "io",
+        `Git directory could not be resolved: ${errorMessage(cause)}`,
+        { cause },
+      );
+    throw cause;
+  }
   if (locations === undefined) return { kind: "none", head: null, dirty: null };
+  if (isAborted(signal)) return unknownVcs();
   const { gitDirectory, commonDirectory } = locations;
   if (gitDirectory === commonDirectory) {
     const head = await readRef({ gitdir: gitDirectory, ref: "HEAD" });

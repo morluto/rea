@@ -149,6 +149,7 @@ export const registerElectronTools = (
           const recorded = recordEvidenceSources(
             options.recordEvidence,
             result.value.sources,
+            { evidence: result.value.evidence },
           );
           return recorded.ok
             ? { ok: true, value: result.value.evidence }

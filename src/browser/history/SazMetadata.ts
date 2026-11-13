@@ -1,7 +1,7 @@
+import { captureBudgets } from "./CaptureBudgets.js";
 import type { Node } from "@xmldom/xmldom";
 import { parseXmlDocument } from "../../domain/xmlDocument.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 import {
   decodeXmlPlistText,
   XmlPlistTextDecodeError,
@@ -61,10 +61,10 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
       "SAZ metadata must have a Session document element.",
     );
   const visit = (node: Node, depth: number): JsonValue => {
-    if (depth > WEB_NETWORK_CAPTURE_LIMITS.depth)
+    if (depth > captureBudgets().depth)
       throw new CaptureFormatError(
         "input-limit",
-        "SAZ metadata exceeds the complete-evidence nesting budget. This release has no runtime override.",
+        `SAZ metadata exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
       );
     const children: JsonValue[] = [];
     for (let child = node.firstChild; child !== null; child = child.nextSibling)

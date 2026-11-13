@@ -21,10 +21,25 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   Clang/LLD/LLVM readelf/LLVM objdump; `REA_RISCV_CLANG`, `REA_RISCV_LLD`,
   `REA_RISCV_READELF` and `REA_RISCV_OBJDUMP` select existing tool commands.
 
+- `ReaInstructionContextProbe.java` inspects source-owned ARM, Thumb, MIPS32
+  and MIPS16 instructions through the production bridge in an ephemeral,
+  read-only Ghidra project. It checks exact decoder-context register names,
+  values and provenance; the ARM lane also injects an unavailable provider
+  value. The `ghidra-bridge-sources` CI job runs both processor families. The
+  input bytes are never executed.
 - `ReaDecodeProbe.java` decodes source-owned instruction bytes from a
   language's default context and checks each mnemonic, length and optional
   complete operand. The `ghidra-bridge-sources` CI job runs it for `ARM:LE:32:Cortex`,
   `ARM:LE:32:v8-m` and `Xtensa:LE:32:default`; the bytes are never executed.
+- `ReaComputedCallCoverageProbe.java` decodes source-owned x86-64 calls
+  through a writable slot, a register and a direct target, injects only the
+  slot call's recorded `COMPUTED_CALL` target, and reads callees through the
+  production bridge. The recorded target stays an observed callee while callee
+  coverage is `partial` and names the call site; the targetless call stays
+  `partial` without that candidate limitation, and the direct call stays
+  `complete`. The `ghidra-bridge-sources` CI job runs it; the bytes are never
+  executed. It does not establish which references Ghidra's own analysis
+  records for other slot shapes.
 - `inventory.c` produces separate x86-64 debug and stripped ELF executables.
   It covers imports, an external `puts` function, linker thunks, source symbols,
   direct calls, a targetless callback call, two referenced strings, and a

@@ -1,3 +1,7 @@
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../lib/verifier-cleanup.mjs";
 import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
@@ -92,207 +96,221 @@ bridge.exposeInMainWorld("fixture", {
   });
   let application;
   let stderr = "";
-  try {
-    await readProcessRunId(process.pid);
-    application = spawn(
-      executable,
-      [
-        "--remote-debugging-address=127.0.0.1",
-        "--remote-debugging-port=0",
-        `--user-data-dir=${join(root, "profile")}`,
-        main,
-      ],
-      {
-        cwd: root,
-        env: { ...process.env, REA_PROCESS_RUN_ID: runId },
-        detached: true,
-        stdio: ["ignore", "ignore", "pipe"],
-      },
-    );
-    application.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    const endpoint = await waitForEndpoint(application, () => stderr);
-    await client.connect(transport);
-    const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    const validators = new Map(
-      (await client.listTools()).tools.map((tool) => {
-        ajv.compile(tool.inputSchema);
-        return [
-          tool.name,
-          tool.outputSchema
-            ? (tool.outputSchema.$id && ajv.getSchema(tool.outputSchema.$id)) ||
-              ajv.compile(tool.outputSchema)
-            : undefined,
-        ];
-      }),
-    );
-    const call = async (name, arguments_) => {
-      console.log(`PROBE ${name}`);
-      const result = await client.callTool(
-        { name, arguments: arguments_ },
+  await withVerifierCleanup(async () => {
+    try {
+      await readProcessRunId(process.pid);
+      application = spawn(
+        executable,
+        [
+          "--remote-debugging-address=127.0.0.1",
+          "--remote-debugging-port=0",
+          `--user-data-dir=${join(root, "profile")}`,
+          main,
+        ],
+        {
+          cwd: root,
+          env: { ...process.env, REA_PROCESS_RUN_ID: runId },
+          detached: true,
+          stdio: ["ignore", "ignore", "pipe"],
+        },
+      );
+      application.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      const endpoint = await waitForEndpoint(application, () => stderr);
+      await client.connect(transport);
+      const ajv = new Ajv2020({ strict: false, validateFormats: false });
+      const validators = new Map(
+        (await client.listTools()).tools.map((tool) => {
+          ajv.compile(tool.inputSchema);
+          return [
+            tool.name,
+            tool.outputSchema
+              ? (tool.outputSchema.$id &&
+                  ajv.getSchema(tool.outputSchema.$id)) ||
+                ajv.compile(tool.outputSchema)
+              : undefined,
+          ];
+        }),
+      );
+      const call = async (name, arguments_) => {
+        console.log(`PROBE ${name}`);
+        const result = await client.callTool(
+          { name, arguments: arguments_ },
+          { timeout: 150_000 },
+        );
+        assert.notEqual(result.isError, true, JSON.stringify(result));
+        const validate = validators.get(name);
+        assert.ok(
+          validate?.(result.structuredContent),
+          JSON.stringify(validate?.errors),
+        );
+        return result.structuredContent;
+      };
+      let targets;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        targets = await call("list_electron_targets", {
+          cdp_endpoint: endpoint,
+        });
+        if (targets.normalized_result.targets.length > 0) break;
+        await pause(100);
+      }
+      const target = targets.normalized_result.targets.find(
+        (item) => item.file_path === join(root, "renderer.html"),
+      );
+      assert.ok(target, JSON.stringify(targets));
+      const page = await call("inspect_electron_page", {
+        cdp_endpoint: endpoint,
+        target_id: target.target_id,
+        include_script_sources: true,
+        observation_ms: 50,
+      });
+      assert.ok(
+        page.normalized_result.scripts.items.some(
+          (script) =>
+            script.file_path === join(root, "renderer.js") &&
+            script.source.included,
+        ),
+      );
+      const staticAnalysis = await call("analyze_javascript_application", {
+        input_path: root,
+      });
+      assert.equal(staticAnalysis.normalized_result.summary.browser_windows, 1);
+      assert.equal(
+        staticAnalysis.normalized_result.summary.preload_entrypoints,
+        1,
+      );
+      assert.equal(
+        staticAnalysis.normalized_result.summary.context_bridge_apis,
+        1,
+      );
+      assert.equal(
+        staticAnalysis.normalized_result.summary.ipc.main_handlers,
+        1,
+      );
+      assert.equal(
+        staticAnalysis.normalized_result.summary.ipc.renderer_transmissions,
+        1,
+      );
+      assert.equal(
+        staticAnalysis.normalized_result.summary.ipc
+          .paired_renderer_transmissions,
+        1,
+      );
+      const reconciled = await call("reconcile_javascript_runtime", {
+        static_layers: [
+          {
+            analysis: staticAnalysis,
+            runtime_mappings: [{ kind: "file-root", root }],
+          },
+        ],
+        runtime_observations: [page],
+      });
+      assert.ok(reconciled.normalized_result.runtime_captures.length > 0);
+      const cli = await execute(
+        process.execPath,
+        [
+          entrypoint,
+          "inspect-electron-page",
+          endpoint,
+          target.target_id,
+          "--include-script-sources",
+          "--json",
+        ],
+        {
+          env: { ...process.env, REA_LOG_LEVEL: "silent" },
+          timeout: 60_000,
+          maxBuffer: 32 * 1024 * 1024,
+        },
+      );
+      assert.equal(
+        JSON.parse(cli.stdout).normalized_result.target.file_path,
+        target.file_path,
+      );
+      const input = {
+        executable_path: executable,
+        application_path: main,
+        application_root: root,
+        actions: [{ step_id: "ipc", kind: "click", selector: "#run" }],
+      };
+      const active = await client.callTool(
+        { name: "capture_electron_scenario", arguments: input },
         { timeout: 150_000 },
       );
-      assert.notEqual(result.isError, true, JSON.stringify(result));
-      const validate = validators.get(name);
+      const activeError = active.isError
+        ? requireMcpToolError(active)
+        : undefined;
+      if (activeError !== undefined)
+        assert.equal(
+          activeError.code,
+          "cleanup_incomplete",
+          JSON.stringify(activeError),
+        );
+      const capture =
+        activeError === undefined
+          ? active.structuredContent.normalized_result
+          : activeError.details?.partial_observation?.capture;
+      assert.ok(capture, JSON.stringify(activeError ?? active));
+      if (activeError !== undefined) {
+        assert.equal(capture.application.cleanup, "unverified");
+      } else {
+        assert.ok(
+          validators.get("capture_electron_scenario")(active.structuredContent),
+        );
+        assert.equal(capture.application.cleanup, "terminated-owned-process");
+      }
+      assert.equal(capture.actions[0].status, "completed");
       assert.ok(
-        validate?.(result.structuredContent),
-        JSON.stringify(validate?.errors),
+        capture.ipc.events.some(
+          ({ kind, channel }) =>
+            kind === "main-handler-invocation" && channel === "fixture:echo",
+        ),
+        JSON.stringify(capture.ipc),
       );
-      return result.structuredContent;
-    };
-    let targets;
-    for (let attempt = 0; attempt < 30; attempt++) {
-      targets = await call("list_electron_targets", { cdp_endpoint: endpoint });
-      if (targets.normalized_result.targets.length > 0) break;
-      await pause(100);
-    }
-    const target = targets.normalized_result.targets.find(
-      (item) => item.file_path === join(root, "renderer.html"),
-    );
-    assert.ok(target, JSON.stringify(targets));
-    const page = await call("inspect_electron_page", {
-      cdp_endpoint: endpoint,
-      target_id: target.target_id,
-      include_script_sources: true,
-      observation_ms: 50,
-    });
-    assert.ok(
-      page.normalized_result.scripts.items.some(
-        (script) =>
-          script.file_path === join(root, "renderer.js") &&
-          script.source.included,
-      ),
-    );
-    const staticAnalysis = await call("analyze_javascript_application", {
-      input_path: root,
-    });
-    assert.equal(staticAnalysis.normalized_result.summary.browser_windows, 1);
-    assert.equal(
-      staticAnalysis.normalized_result.summary.preload_entrypoints,
-      1,
-    );
-    assert.equal(
-      staticAnalysis.normalized_result.summary.context_bridge_apis,
-      1,
-    );
-    assert.equal(staticAnalysis.normalized_result.summary.ipc.main_handlers, 1);
-    assert.equal(
-      staticAnalysis.normalized_result.summary.ipc.renderer_transmissions,
-      1,
-    );
-    assert.equal(
-      staticAnalysis.normalized_result.summary.ipc
-        .paired_renderer_transmissions,
-      1,
-    );
-    const reconciled = await call("reconcile_javascript_runtime", {
-      static_layers: [
-        {
-          analysis: staticAnalysis,
-          runtime_mappings: [{ kind: "file-root", root }],
-        },
-      ],
-      runtime_observations: [page],
-    });
-    assert.ok(reconciled.normalized_result.runtime_captures.length > 0);
-    const cli = await execute(
-      process.execPath,
-      [
-        entrypoint,
-        "inspect-electron-page",
-        endpoint,
-        target.target_id,
-        "--include-script-sources",
-        "--json",
-      ],
-      {
-        env: { ...process.env, REA_LOG_LEVEL: "silent" },
-        timeout: 60_000,
-        maxBuffer: 32 * 1024 * 1024,
-      },
-    );
-    assert.equal(
-      JSON.parse(cli.stdout).normalized_result.target.file_path,
-      target.file_path,
-    );
-    const input = {
-      executable_path: executable,
-      application_path: main,
-      application_root: root,
-      actions: [{ step_id: "ipc", kind: "click", selector: "#run" }],
-    };
-    const active = await client.callTool(
-      { name: "capture_electron_scenario", arguments: input },
-      { timeout: 150_000 },
-    );
-    const activeError = active.isError
-      ? requireMcpToolError(active)
-      : undefined;
-    if (activeError !== undefined)
       assert.equal(
-        activeError.code,
-        "cleanup_incomplete",
-        JSON.stringify(activeError),
+        capture.coverage.status,
+        "partial_attach",
+        JSON.stringify(capture),
       );
-    const capture =
-      activeError === undefined
-        ? active.structuredContent.normalized_result
-        : activeError.details?.partial_observation?.capture;
-    assert.ok(capture, JSON.stringify(activeError ?? active));
-    if (activeError !== undefined) {
-      assert.equal(capture.application.cleanup, "unverified");
-    } else {
       assert.ok(
-        validators.get("capture_electron_scenario")(active.structuredContent),
+        capture.timeline.events.some(
+          (event) =>
+            event.kind === "window-lifecycle" && event.event === "created",
+        ),
       );
-      assert.equal(capture.application.cleanup, "terminated-owned-process");
+      await client.ping();
+      console.log(
+        `PASS live Electron CLI/MCP discovery, inspection, reconciliation, and active observations; active cleanup=${capture.application.cleanup}`,
+      );
+      if (process.platform !== "win32")
+        await verifyCancellation({ input, ready, entrypoint, root });
+    } catch (cause) {
+      throw new Error(
+        `Electron public-tool verification failed: ${cause.message}\nMCP stderr:\n${serverStderr}`,
+        { cause },
+      );
     }
-    assert.equal(capture.actions[0].status, "completed");
-    assert.ok(
-      capture.ipc.events.some(
-        ({ kind, channel }) =>
-          kind === "main-handler-invocation" && channel === "fixture:echo",
-      ),
-      JSON.stringify(capture.ipc),
-    );
-    assert.equal(
-      capture.coverage.status,
-      "partial_attach",
-      JSON.stringify(capture),
-    );
-    assert.ok(
-      capture.timeline.events.some(
-        (event) =>
-          event.kind === "window-lifecycle" && event.event === "created",
-      ),
-    );
-    await client.ping();
-    console.log(
-      `PASS live Electron CLI/MCP discovery, inspection, reconciliation, and active observations; active cleanup=${capture.application.cleanup}`,
-    );
-    if (process.platform !== "win32")
-      await verifyCancellation({ input, ready, entrypoint, root });
-  } catch (cause) {
-    throw new Error(
-      `Electron public-tool verification failed: ${cause.message}\nMCP stderr:\n${serverStderr}`,
-      { cause },
-    );
-  } finally {
-    await client.close();
-    await transport.close();
-    if (application?.pid) {
-      const cleanup = await cleanupOwnedProcessGroup({
-        runId,
-        leaderPid: application.pid,
-        processGroupId: application.pid,
-        expectedParentPid: process.pid,
-        expectedCommand: executable,
-      });
-      assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
-    }
-    await rm(root, { recursive: true, force: true });
-  }
+  }, [
+    async () => {
+      await closeVerifierResources([
+        () => client.close(),
+        () => transport.close(),
+        async () => {
+          if (application?.pid) {
+            const cleanup = await cleanupOwnedProcessGroup({
+              runId,
+              leaderPid: application.pid,
+              processGroupId: application.pid,
+              expectedParentPid: process.pid,
+              expectedCommand: executable,
+            });
+            assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
+          }
+        },
+      ]);
+      await rm(root, { recursive: true, force: true });
+    },
+  ]);
 }
 
 const pause = (milliseconds) =>
@@ -345,7 +363,7 @@ async function verifyCancellation({ input, ready, entrypoint, root }) {
     child.once("exit", (code, signal) => resolve({ code, signal }));
   });
   let ownership;
-  try {
+  await withVerifierCleanup(async () => {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       const table = (
@@ -419,14 +437,35 @@ async function verifyCancellation({ input, ready, entrypoint, root }) {
     console.log(
       `PASS real Electron CLI SIGTERM, retained cancelled actions, and owned group termination; reported code=${error.code}`,
     );
-  } finally {
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGTERM");
-      await exited;
-    }
-    if (ownership) {
-      const cleanup = await cleanupOwnedProcessGroup(ownership);
-      assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
-    }
-  }
+  }, [
+    async () => {
+      for (const signal of ["SIGTERM", "SIGKILL"]) {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        child.kill(signal);
+        let timer;
+        try {
+          if (
+            await Promise.race([
+              exited.then(() => true),
+              new Promise((resolve) => {
+                timer = setTimeout(() => resolve(false), 2000);
+              }),
+            ])
+          )
+            return;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      throw new Error(
+        "Electron verifier CLI did not exit after SIGKILL; application cleanup remains independently owned",
+      );
+    },
+    async () => {
+      if (ownership) {
+        const cleanup = await cleanupOwnedProcessGroup(ownership);
+        assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
+      }
+    },
+  ]);
 }

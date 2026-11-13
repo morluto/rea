@@ -252,3 +252,74 @@ export const artifactReaderLifecycleCases = (setup: LifecycleFixture): void => {
     validationCases(setup);
   });
 };
+
+/** An interrupted preparation belongs to its caller, not concurrent readers. */
+export const artifactPreparationRecoveryCases = ({
+  image,
+  createReader,
+}: LifecycleFixture): void => {
+  it.each(["cancelled", "physical failure"] as const)(
+    "preserves independent preparation after %s",
+    async (scenario) => {
+      const path = await fixture(image());
+      const admitted = await openRegularFile(path, { symlinks: "reject" });
+      const reader = createReader(path, admitted);
+      const controller = new AbortController();
+      const reason = { request: "first inventory" };
+      const physical = Object.assign(new Error("controlled read failure"), {
+        code: "EIO",
+      });
+      const reached = createDeferred<void>();
+      const release = createDeferred<void>();
+      const nativeRead = admitted.handle.read.bind(admitted.handle);
+      let blocked = false;
+      const read = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+        ...args: unknown[]
+      ) => {
+        const result = await Reflect.apply(nativeRead, admitted.handle, args);
+        if (!blocked) {
+          blocked = true;
+          reached.resolve();
+          await release.promise;
+          if (scenario === "physical failure") throw physical;
+        }
+        return result;
+      }) as typeof admitted.handle.read);
+      const pending: Promise<unknown>[] = [];
+      try {
+        const first = (async () => {
+          for await (const _ of reader.entries(controller.signal)) {
+          }
+        })();
+        pending.push(first);
+        void first.catch(() => undefined);
+        await awaitAcknowledgement(reached.promise, first, "preparation read");
+        const peer = entries(reader);
+        pending.push(peer);
+        void peer.catch(() => undefined);
+        controller.abort(reason);
+        release.resolve();
+        if (scenario === "physical failure") {
+          await expect(first).rejects.toBe(physical);
+          await expect(peer).rejects.toBe(physical);
+        } else {
+          await expect(first).rejects.toMatchObject({
+            reason: "cancelled",
+            cause: reason,
+          });
+          const recovered = await peer;
+          expect(recovered.length).toBeGreaterThan(0);
+          expect(
+            (await buffer(await reader.open(recovered[0]!))).length,
+          ).toBeGreaterThan(0);
+        }
+      } finally {
+        release.resolve();
+        await Promise.allSettled(pending);
+        read.mockRestore();
+        await reader.close();
+        await admitted.handle.close();
+      }
+    },
+  );
+};

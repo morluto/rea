@@ -16,7 +16,10 @@ const fileCommands = [
   "decode-signal-recording",
   "inspect-model-artifact",
   "inspect-elf-notes",
+  "inspect-native-initializers",
+  "inspect-elf-unwind-ranges",
   "inspect-kernel-module",
+  "inspect-kernel-build-config",
   "inspect-byte-entropy",
   "inspect-pe-resources",
   "inspect-pe-certificates",
@@ -27,6 +30,7 @@ const fileCommands = [
   "inspect-rust-binary",
   "inspect-gpu-code-objects",
   "inspect-il2cpp-metadata",
+  "inspect-native-data-type",
 ] as const;
 
 cliTest(
@@ -38,6 +42,8 @@ cliTest(
         arguments: [command, ""],
         field: "path",
       })),
+      { arguments: ["decompile-all", "", "--output", "out"], field: "path" },
+      { arguments: ["observe-native-calls", "", "{}"], field: "path" },
       { arguments: ["inspect-evm-interface", "", "hex"], field: "path" },
       {
         arguments: ["inspect-web-network-capture", "", "har"],
@@ -90,6 +96,57 @@ cliTest(
       {
         arguments: ["decompile-all", "unread", "--output", ""],
         field: "output",
+      },
+      { arguments: ["capture-process", ""], field: "scenario" },
+      {
+        arguments: ["compare-process-captures", "", "unread"],
+        field: "left",
+      },
+      {
+        arguments: ["compare-process-captures", "unread", ""],
+        field: "right",
+      },
+      {
+        arguments: ["compare-process-captures", "unread", "unread", ""],
+        field: "traceSpec",
+      },
+      {
+        arguments: ["export-desktop-application", "", "unread"],
+        field: "capture",
+      },
+      {
+        arguments: ["export-desktop-application", "unread", ""],
+        field: "directory",
+      },
+      {
+        arguments: [
+          "export-desktop-application",
+          "unread",
+          "output",
+          "--task",
+          "",
+        ],
+        field: "task.0",
+      },
+      {
+        arguments: ["describe-desktop-application-task", ""],
+        field: "capture",
+      },
+      {
+        arguments: ["inspect-desktop-application-state", ""],
+        field: "capture",
+      },
+      {
+        arguments: [
+          "capture-desktop-application",
+          "--executable",
+          "notes",
+          "--output",
+          "unread",
+          "--package-file",
+          "",
+        ],
+        field: "packageFile",
       },
       { arguments: ["environment-export", "unread", ""], field: "directory" },
       {

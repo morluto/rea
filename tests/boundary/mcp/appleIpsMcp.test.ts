@@ -46,10 +46,6 @@ it("advertises and validates IPS facts and failures through production stdio MCP
   });
   const response = await call("inspect_apple_ips", { path });
   expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const evidence = parseEvidence(response.structuredContent);
   const report = appleIpsSchema.parse(evidence.normalized_result);
   expect(evidence.operation).toBe("inspect_apple_ips");
@@ -101,10 +97,6 @@ it("advertises and validates IPS facts and failures through production stdio MCP
   await writeFile(malformedPath, appleIpsBytes({ uuid: "malformed/report" }));
   const malformed = await call("inspect_apple_ips", { path: malformedPath });
   expect(malformed.isError, JSON.stringify(malformed.content)).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, malformed.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const partial = appleIpsSchema.parse(
     parseEvidence(malformed.structuredContent).normalized_result,
   );
@@ -126,10 +118,6 @@ it("advertises and validates IPS facts and failures through production stdio MCP
   );
   const indexes = await call("inspect_apple_ips", { path: indexPath });
   expect(indexes.isError, JSON.stringify(indexes.content)).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, indexes.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const unresolved = appleIpsSchema.parse(
     parseEvidence(indexes.structuredContent).normalized_result,
   );

@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
 
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
+import { hopperImageCopyFileSystem } from "../../tests/fixtures/hopperImageCopyFileSystem.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
@@ -62,7 +63,7 @@ const createFileSystemWithCloseHook = async (
 const prepareWithChunkWriteFailure = (
   fixture: Awaited<ReturnType<typeof createThinCopyFixture>>,
   cause: Error,
-  options: Omit<Parameters<typeof prepareHopperMachOImage>[4], "observer">,
+  options: Parameters<typeof prepareHopperMachOImage>[4],
 ) =>
   prepareHopperMachOImage(
     fixture.sourcePath,
@@ -71,17 +72,19 @@ const prepareWithChunkWriteFailure = (
     fixture.destination,
     {
       ...options,
-      observer: {
-        afterChunkWritten: async () => {
+      fileSystem: hopperImageCopyFileSystem(
+        fixture.destination,
+        async () => {
           throw cause;
         },
-      },
+        options.fileSystem?.open,
+      ),
     },
   );
 
-it("keeps an observer failure primary and closes real source handles", async () => {
+it("keeps a partial write failure primary and closes real source handles", async () => {
   const fixture = await createThinCopyFixture("rea-hopper-copy-primary-");
-  const writeFailure = new Error("controlled copy observer failure");
+  const writeFailure = new Error("controlled partial write failure");
   const prepared = await prepareWithChunkWriteFailure(fixture, writeFailure, {
     resourceScope: new ArtifactResourceScope(),
   });
@@ -89,6 +92,11 @@ it("keeps an observer failure primary and closes real source handles", async () 
   if (prepared.ok) throw new Error("A failed copy was accepted");
   expect(prepared.error.cause).toBe(writeFailure);
   expect(prepared.error.cleanupIncomplete).toBe(false);
+  const source = await readFile(fixture.sourcePath);
+  const partial = await readFile(fixture.destination);
+  expect(partial.length).toBeGreaterThan(0);
+  expect(partial.length).toBeLessThan(source.length);
+  expect(partial.equals(source.subarray(0, partial.length))).toBe(true);
 });
 
 it("keeps a copy failure primary while retaining and retrying a real source handle", async () => {
@@ -110,7 +118,7 @@ it("keeps a copy failure primary while retaining and retrying a real source hand
     },
   );
   const resourceScope = new ArtifactResourceScope();
-  const writeFailure = new Error("controlled copy observer failure");
+  const writeFailure = new Error("controlled partial write failure");
   const prepared = await prepareWithChunkWriteFailure(fixture, writeFailure, {
     resourceScope,
     fileSystem,
@@ -191,12 +199,13 @@ it("keeps cancellation observed before close primary and retains an output-close
     fixture.image,
     fixture.destination,
     {
-      fileSystem,
+      fileSystem: hopperImageCopyFileSystem(
+        fixture.destination,
+        async () => controller.abort(reason),
+        fileSystem.open,
+      ),
       resourceScope,
       signal: controller.signal,
-      observer: {
-        afterChunkWritten: async () => controller.abort(reason),
-      },
     },
   );
 

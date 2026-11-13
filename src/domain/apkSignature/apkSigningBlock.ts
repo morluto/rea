@@ -176,6 +176,15 @@ const centralDirectoryOffset = (
       offset: recordOffset,
       detail: "invalid Zip64 EOCD signature",
     });
+  // The size excludes the signature and size field. Check the declared
+  // body before using its fixed fields to locate the central directory.
+  const recordSize = dv.getBigUint64(recordOffset + 4, true);
+  if (recordSize < 44n || recordSize > BigInt(locator - recordOffset - 12))
+    return err({
+      kind: "malformed-zip",
+      offset: recordOffset + 4,
+      detail: "invalid Zip64 EOCD record size",
+    });
   const z64Offset = u64(dv, recordOffset + 48);
   const z64Size = u64(dv, recordOffset + 40);
   // The Zip64 record's total entry count; the 16-bit EOCD field saturates.

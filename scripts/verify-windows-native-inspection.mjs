@@ -16,7 +16,9 @@ import { join, resolve } from "node:path";
 import { prepareWindowsNativeInspectionWorkspace } from "./lib/windows-native-inspection-workspace.mjs";
 
 if (process.platform !== "win32")
-  throw new Error("Native inspection ownership requires real Windows NTFS");
+  throw new Error(
+    "Native inspection ownership requires real Windows NTFS/ReFS",
+  );
 const root = resolve(process.argv[2] ?? ".");
 const artifact = resolve(
   process.argv[3] ?? ".cache/windows-native-inspection-fixture",
@@ -54,7 +56,7 @@ if(creation){
 }
 const [name,...extra]=readdirSync(temp);assert.ok(name);assert.equal(extra.length,0);
 const path=join(temp,name);const identity=statSync(path,{bigint:true});
-// Delete sharing permits rename; ownership follows the retained NTFS handle.
+// Delete sharing permits rename; ownership follows the retained NTFS/ReFS handle.
 writeFileSync(join(path,'owned-child.txt'),'owned child');
 const renamed=path+'-renamed';renameSync(path,renamed);
 const moved=statSync(renamed,{bigint:true});

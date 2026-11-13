@@ -39,6 +39,7 @@ export const nodeReconciliationFixture = (scriptObserved: boolean) => {
               script_key: `v8_script_${"4".repeat(64)}`,
               location,
               execution_context_key: null,
+              execution_context_id: null,
               cdp_hash: null,
               length: null,
               is_module: null,

@@ -25,6 +25,5 @@ export const projectAndroidApplicationEvidence = (
     operation: OPERATION,
     predicateType: "rea.android-application-graph",
     provider: ANDROID_APPLICATION_PROVIDER,
-    subjectFormat: () => "apk",
   });
 };

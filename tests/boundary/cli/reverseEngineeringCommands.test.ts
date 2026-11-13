@@ -15,6 +15,7 @@ import {
   evidenceSchema,
 } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import { closeOwnedDebuggerSessions } from "../../../src/process/ownedDebuggerSession.js";
 import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../../src/application/reverse/ReverseEngineeringService.js";
@@ -54,6 +55,7 @@ const runObjdump = async (
     operation?: string;
     symbol?: string;
     commandTimeoutMs?: number;
+    maxOutputBytes?: number;
   } = {},
 ) => {
   const commands = new Map<
@@ -65,6 +67,7 @@ const runObjdump = async (
           followDebugLinks: boolean;
           symbol?: string;
           commandTimeoutMs?: number;
+          maxOutputBytes?: number;
         };
       }): Promise<unknown>;
     }
@@ -79,6 +82,7 @@ const runObjdump = async (
             followDebugLinks: boolean;
             symbol?: string;
             commandTimeoutMs?: number;
+            maxOutputBytes?: number;
           };
         }): Promise<unknown>;
       },
@@ -102,6 +106,9 @@ const runObjdump = async (
     options: {
       followDebugLinks: false,
       ...(selection.symbol === undefined ? {} : { symbol: selection.symbol }),
+      ...(selection.maxOutputBytes === undefined
+        ? {}
+        : { maxOutputBytes: selection.maxOutputBytes }),
       ...(selection.commandTimeoutMs === undefined
         ? {}
         : { commandTimeoutMs: selection.commandTimeoutMs }),
@@ -126,17 +133,21 @@ it("forwards the selected native symbol to the shared workflow", async () => {
   });
 });
 
-it("forwards a selected objdump command deadline and omits the field otherwise", async () => {
+it("forwards selected objdump resource budgets and preserves omission", async () => {
   const inspectWithObjdump = vi.fn(async (_input: unknown) =>
     ok(observation("complete")),
   );
   const service = { inspectWithObjdump, close: async () => undefined };
-  await runObjdump(service, "/tmp/sample", { commandTimeoutMs: 5_000 });
+  await runObjdump(service, "/tmp/sample", {
+    commandTimeoutMs: 5_000,
+    maxOutputBytes: 1234,
+  });
   expect(inspectWithObjdump.mock.calls[0]?.[0]).toEqual({
     path: "/tmp/sample",
     operation: "file_headers",
     follow_debug_links: false,
     command_timeout_ms: 5_000,
+    max_output_bytes: 1234,
   });
   await runObjdump(service, "/tmp/sample");
   expect(inspectWithObjdump.mock.calls[1]?.[0]).toEqual({
@@ -388,6 +399,56 @@ it("returns cancellation with the completed observation when the caller interrup
     details: { partial_observation: evidence },
   });
   expect(process.exitCode).toBe(130);
+});
+
+it("retains completed objdump Evidence when final cleanup fails", async () => {
+  const evidence = observation("complete");
+  const result = await runObjdump({
+    inspectWithObjdump: async () => ok(evidence),
+    close: async () => {
+      throw new ProviderCleanupError(
+        "objdump.command",
+        ["owned-run"],
+        { reason: "process cleanup remains incomplete" },
+        { operation: "inspect_with_objdump" },
+      );
+    },
+  });
+
+  expect(result).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      resources: ["owned-run"],
+      partial_observation: evidence,
+    },
+  });
+});
+
+it("retains an unexpected operation failure and an independent cleanup failure", async () => {
+  const result = await runObjdump({
+    inspectWithObjdump: async () => {
+      throw new AnalysisTimeoutError("inspect_with_objdump", 1_000);
+    },
+    close: async () => {
+      throw new ProviderCleanupError(
+        "objdump.command",
+        ["owned-run"],
+        { reason: "process cleanup remains incomplete" },
+        { operation: "inspect_with_objdump" },
+      );
+    },
+  });
+
+  expect(result).toMatchObject({
+    code: "cleanup_incomplete",
+    category: "timeout",
+    details: {
+      diagnostics: {
+        primary_error: { code: "provider_timeout" },
+        cleanup_error: { details: { resources: ["owned-run"] } },
+      },
+    },
+  });
 });
 
 it.each([false, true])(

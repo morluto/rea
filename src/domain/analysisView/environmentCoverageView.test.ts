@@ -11,11 +11,11 @@ import {
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import type { Evidence } from "../evidence.js";
 import {
-  analysisViewRequestSchema,
   projectAnalysisView,
   type AnalysisViewParent,
   type AnalysisViewResult,
 } from "./analysisView.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 import {
   WITHHELD_WRITE_HINTS,
   summarizeEnvironmentCoverage,

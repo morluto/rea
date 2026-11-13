@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../../src/domain/result.js";
@@ -89,7 +90,7 @@ it("reports launch work until the first authenticated handshake completes", asyn
     await client.close();
   });
   const starting = client.callTool("current_document");
-  await entered;
+  await awaitAcknowledgement(entered, starting, "Hopper launch", 10_000);
   expect(client.requestActivity()).toBeNull();
   expect(client.operationHealth()).toMatchObject({
     state: "busy",

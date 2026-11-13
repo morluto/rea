@@ -1,12 +1,11 @@
+import { createLoadImageChecks } from "./GhidraLoadImageChecks.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { DolHeader } from "../domain/gamecubeDol.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import { nativeAddressCoordinateInputSchema } from "../domain/native/nativeAddress.js";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
-  type NativeLoadImageCheck,
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -89,23 +88,7 @@ export const attestGhidraDolLoadImage = (
   if (snapshot.sectionSha256.length !== header.sections.length)
     return err("Ghidra DOL snapshot section digests do not match the header");
   const language = ghidraDolLanguage(languageOverride);
-  const checks: NativeLoadImageCheck[] = [];
-  const check = (
-    name: string,
-    expected: JsonValue,
-    observed: JsonValue,
-    fileOffset: number | null = null,
-    location: string | null = null,
-  ): void => {
-    checks.push({
-      name,
-      matched: JSON.stringify(expected) === JSON.stringify(observed),
-      expected,
-      observed,
-      file_offset: fileOffset,
-      address: location,
-    });
-  };
+  const { checks, check } = createLoadImageChecks();
 
   // Field order is fixed: checks compare serialized values.
   const fileFacts = (mapping: FileFacts) => ({

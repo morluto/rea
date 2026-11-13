@@ -240,16 +240,22 @@ const tryAcquireLease = async (
       : { acquired: false, owner: existingOwner };
   }
   let released = false;
+  let releasing: Promise<void> | undefined;
   const lease: OwnedLease = {
     socketPath,
-    release: async () => {
-      if (released) return;
-      // Owner replies do not require peers to close their writable half. End
-      // every accepted connection before awaiting the listening server.
-      for (const socket of connections) socket.destroy();
-      // Node removes the bound socket; never unlink a later owner's socket.
-      await closeServer(server);
-      released = true;
+    release: () => {
+      if (released) return Promise.resolve();
+      releasing ??= (async () => {
+        // Owner replies do not require peers to close their writable half. End
+        // every accepted connection before awaiting the listening server.
+        for (const socket of connections) socket.destroy();
+        // Node removes the bound socket; never unlink a later owner's socket.
+        await closeServer(server);
+        released = true;
+      })().finally(() => {
+        releasing = undefined;
+      });
+      return releasing;
     },
   };
   if (securePath)

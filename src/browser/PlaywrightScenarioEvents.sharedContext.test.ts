@@ -153,3 +153,56 @@ it("detaches owned-context popup discovery when a scenario finishes", async () =
   await events.finish();
   expect(context.listenerCount("page")).toBe(0);
 });
+
+it.each([false, true])(
+  "keeps requested popup page errors when popup lifecycle metadata exceeds the event budget (lifecycle selected: %s)",
+  async (lifecycle) => {
+    const page = new EventEmitter();
+    let popupUrl = `https://app.example.test/${"x".repeat(5000)}`;
+    const popup = Object.assign(new EventEmitter(), {
+      url: () => popupUrl,
+    });
+    const scenario = browserScenarioSchema.parse({
+      browser: { mode: "launch", executable_path: "/fixture/browser" },
+      start_url: { url: "https://app.example.test/" },
+      actions: [
+        { step_id: "wait", action: "wait_for_timeout", duration_ms: 1 },
+      ],
+      capture: { limits: { max_event_allocation_bytes: 20_000 } },
+    });
+    const events = new PlaywrightScenarioEvents({
+      page: page as unknown as Page,
+      enabled: lifecycle
+        ? new Set(["page-errors", "popups"])
+        : new Set(["page-errors"]),
+      limits: scenario.capture.limits,
+      secrets: resolveScenarioSecrets(scenario, {}),
+    });
+    page.emit("popup", popup);
+    const error = new Error("small popup application failure");
+    error.stack = "";
+    popup.emit("pageerror", error);
+    expect(events.result().items).toEqual([
+      expect.objectContaining({ kind: "page-error", message: error.message }),
+    ]);
+    expect(events.result().omissions.by_kind).toEqual(
+      lifecycle
+        ? [
+            {
+              kind: "popup-opened",
+              count: 1,
+              reasons: ["max-event-allocation-bytes"],
+            },
+          ]
+        : [],
+    );
+    popupUrl = "https://app.example.test/closed";
+    popup.emit("close");
+    expect(events.result().items.map(({ kind }) => kind)).toEqual(
+      lifecycle ? ["page-error", "popup-closed"] : ["page-error"],
+    );
+    expect(popup.listenerCount("pageerror")).toBe(0);
+    await events.finish();
+    expect(popup.listenerCount("close")).toBe(0);
+  },
+);

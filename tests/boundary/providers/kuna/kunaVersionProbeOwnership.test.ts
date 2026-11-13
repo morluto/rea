@@ -315,7 +315,7 @@ it.skipIf(process.platform === "win32")(
     });
     const provider = new KunaProvider(
       { REA_KUNA_COMMAND: executable, REA_KUNA_CACHE_DIR: join(root, "cache") },
-      { launcher: launcher.launcher, probeTimeoutMs: 2_500 },
+      { launcher: launcher.launcher },
     );
     const input = target(join(root, "target"));
     await writeFile(input.path, "target");

@@ -1,7 +1,6 @@
 import * as t from "@babel/types";
 
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 
 /** Computed definition keys use the surrounding evaluation environment. */
@@ -240,7 +239,7 @@ const PROPERTYLESS_BINARY = new Set([
 ]);
 
 /** Operator results are primitive even when their value is not statically known. */
-const primitiveOwnKeys = (
+export const primitiveOwnKeys = (
   node: t.Node,
   isNullish?: (node: t.Node) => boolean,
 ): "indices" | "none" | null => {
@@ -313,14 +312,22 @@ export const isObjectPrototypeSetter = (
   !property.shorthand &&
   key === "__proto__";
 
-/** Expand only bounded literal spreads, preserving unknown writes in order. */
+/** Iterate literal syntax once, preserving unknown writes and prototype order. */
 const appendStaticObjectMembers = (
   members: StaticObjectMember[],
   object: t.ObjectExpression,
   depth: number,
   isNullish?: (node: t.Node) => boolean,
 ): void => {
-  for (const property of object.properties) {
+  const pending = [{ object, depth, next: 0 }];
+  while (pending.length > 0) {
+    const frame = pending[pending.length - 1]!;
+    const property = frame.object.properties[frame.next++];
+    if (property === undefined) {
+      pending.pop();
+      continue;
+    }
+    const depth = frame.depth;
     if (!t.isSpreadElement(property)) {
       const key = semanticStaticPropertyKey(property.key, property.computed);
       if (
@@ -346,34 +353,36 @@ const appendStaticObjectMembers = (
       members.push({ kind: "property", property, key });
       continue;
     }
-    if (
-      !appendStaticSpreadMembers(members, property.argument, depth, isNullish)
-    )
-      members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
+    const nested = appendEnumerableSourceMembers(
+      members,
+      property.argument,
+      depth,
+      isNullish,
+    );
+    if (nested !== undefined) pending.push({ ...nested, next: 0 });
   }
 };
 
-/** Append the keys one spread copies; false, appending nothing, when unbounded. */
-const appendStaticSpreadMembers = (
+/** Record atomic own-key facts or return literal syntax for iterative copying. */
+const appendEnumerableSourceMembers = (
   members: StaticObjectMember[],
-  argument: t.Node,
+  source: t.Node,
   depth: number,
   isNullish?: (node: t.Node) => boolean,
-): boolean => {
-  const { node: spread, depth: wrappers } =
-    unwrapJavaScriptExpression(argument);
-  const nextDepth = depth + wrappers + 1;
+):
+  | { readonly object: t.ObjectExpression; readonly depth: number }
+  | undefined => {
+  const { node: spread, depth: wrappers } = unwrapJavaScriptExpression(source);
   if (t.isObjectExpression(spread)) {
-    // Copying a getter can run code that changes another source key.
     if (
-      nextDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT ||
       spread.properties.some((entry) =>
         t.isObjectMethod(entry, { kind: "get" }),
       )
-    )
-      return false;
-    appendStaticObjectMembers(members, spread, nextDepth, isNullish);
-    return true;
+    ) {
+      members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
+      return undefined;
+    }
+    return { object: spread, depth: depth + wrappers + 1 };
   }
   if (t.isArrayExpression(spread)) {
     let firstSpread = -1;
@@ -387,25 +396,18 @@ const appendStaticSpreadMembers = (
         break;
       }
     }
-    // Literal arrays own only present indices. A spread can shift later
-    // indices, but never adds named keys to the array under construction.
     if (hasElements)
       members.push({
         kind: "array-indices",
         elements: spread.elements,
         firstSpread,
       });
-    return true;
+    return undefined;
   }
-  // `||` and `??` may copy their left operand, whose keys syntax does not bound.
-  if (
-    t.isConditionalExpression(spread) ||
-    t.isLogicalExpression(spread, { operator: "&&" })
-  )
-    return (
-      nextDepth <= SEMANTIC_EXPRESSION_DEPTH_LIMIT &&
-      appendConditionalSpreadMembers(members, spread, nextDepth, isNullish)
-    );
+  if (isConditionalSpreadSource(spread)) {
+    appendConditionalSpreadMembers(members, spread, depth, isNullish);
+    return undefined;
+  }
   const primitive = primitiveOwnKeys(spread, isNullish);
   if (primitive === "indices") {
     const literal = readExactJavaScriptLiteral(spread);
@@ -413,52 +415,90 @@ const appendStaticSpreadMembers = (
       literal.found && typeof literal.value === "string"
         ? literal.value.length
         : null;
-    // Retain indexed writes without expanding strings or synthesizing properties.
     if (length !== 0) members.push({ kind: "primitive-indices", length });
-    return true;
+    return undefined;
   }
-  return (
+  if (
     primitive === "none" ||
     t.isFunctionExpression(spread) ||
     t.isArrowFunctionExpression(spread) ||
     t.isRegExpLiteral(spread)
-  );
+  )
+    return undefined;
+  members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
+  return undefined;
 };
 
+type ConditionalSpreadSource = t.ConditionalExpression | t.LogicalExpression;
+
 /**
- * Record the keys either branch may copy. The test runs before the branch and
- * cannot reach the object under construction, so the branches alone bound
- * the copied keys; none of them is known to be present. A falsy `&&` operand
- * is copied itself and is bounded like a branch: document.all, the only falsy
- * object, can carry expando properties with any key.
+ * Sources whose branches syntax bounds. `||` and `??` can copy a left operand
+ * whose keys syntax does not bound, so they stay unknown.
+ */
+const isConditionalSpreadSource = (
+  node: t.Node,
+): node is ConditionalSpreadSource =>
+  t.isConditionalExpression(node) ||
+  t.isLogicalExpression(node, { operator: "&&" });
+
+/**
+ * Record the keys any branch may copy, with one worklist so nesting depth never
+ * recurses. The test runs before the branch and cannot reach the object under
+ * construction, so the branches alone bound the copied keys; none of them is
+ * known to be present. A falsy `&&` operand is copied itself and is bounded
+ * like a branch: an unresolved operand may be document.all, the only falsy
+ * object, which can carry expando properties with any key.
  */
 const appendConditionalSpreadMembers = (
   members: StaticObjectMember[],
-  spread: t.ConditionalExpression | t.LogicalExpression,
+  spread: ConditionalSpreadSource,
   depth: number,
   isNullish?: (node: t.Node) => boolean,
-): boolean => {
+): void => {
   const copied: StaticObjectMember[] = [];
-  for (const branch of t.isConditionalExpression(spread)
-    ? [spread.consequent, spread.alternate]
-    : [spread.left, spread.right])
-    if (!appendStaticSpreadMembers(copied, branch, depth, isNullish))
-      return false;
   const keys = new Set<string>();
+  const pending: t.Node[] = [spread];
+  let bounded = true;
+  while (bounded && pending.length > 0) {
+    const { node } = unwrapJavaScriptExpression(pending.pop()!);
+    if (isConditionalSpreadSource(node)) {
+      pending.push(
+        ...(t.isConditionalExpression(node)
+          ? [node.consequent, node.alternate]
+          : [node.left, node.right]),
+      );
+      continue;
+    }
+    const literal = appendEnumerableSourceMembers(
+      copied,
+      node,
+      depth,
+      isNullish,
+    );
+    if (literal === undefined) continue;
+    for (const property of literal.object.properties) {
+      if (t.isSpreadElement(property)) {
+        pending.push(property.argument);
+        continue;
+      }
+      const key = semanticStaticPropertyKey(property.key, property.computed);
+      if (key === null) {
+        bounded = false;
+        break;
+      }
+      // A prototype setter copied through spread has no effect on the target.
+      if (!isObjectPrototypeSetter(property, key)) keys.add(key);
+    }
+  }
   const indices: StaticObjectIndexMember[] = [];
   for (const member of copied) {
-    if (member.kind === "unknown") return false;
-    if (member.kind === "property") {
-      if (member.key === null) return false;
-      keys.add(member.key);
-    } else if (member.kind === "conditional-keys") {
-      for (const key of member.keys) keys.add(key);
-      for (const entry of member.indices) indices.push(entry);
-    } else if (member.kind !== "prototype-setter") indices.push(member);
+    if (member.kind === "primitive-indices" || member.kind === "array-indices")
+      indices.push(member);
+    else bounded = false;
   }
-  if (keys.size > 0 || indices.length > 0)
+  if (!bounded) members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
+  else if (keys.size > 0 || indices.length > 0)
     members.push({ kind: "conditional-keys", keys, indices });
-  return true;
 };
 
 const staticObjectMembers = (
@@ -542,8 +582,25 @@ const readStaticObjectProperty = (
 export const staticObjectPropertyReader = (
   object: t.Node | undefined,
   isNullish?: (node: t.Node) => boolean,
+): ((name: string) => StaticObjectProperty) =>
+  indexStaticObjectProperties(staticObjectPropertySource(object, isNullish));
+
+/** Index values copied by object spread or Object.assign, excluding inheritance. */
+export const staticObjectCopyPropertyReader = (
+  source: t.Node | undefined,
+  isNullish?: (node: t.Node) => boolean,
 ): ((name: string) => StaticObjectProperty) => {
-  const source = staticObjectPropertySource(object, isNullish);
+  if (source === undefined) return indexStaticObjectProperties("missing");
+  const members: StaticObjectMember[] = [];
+  const nested = appendEnumerableSourceMembers(members, source, 0, isNullish);
+  if (nested !== undefined)
+    appendStaticObjectMembers(members, nested.object, nested.depth, isNullish);
+  return indexStaticObjectProperties(members);
+};
+
+const indexStaticObjectProperties = (
+  source: StaticObjectPropertySource,
+): ((name: string) => StaticObjectProperty) => {
   if (typeof source === "string") return () => ({ status: source });
   const properties = new Map<string, StaticObjectProperty>();
   let fallback: "missing" | "dynamic" = "missing";

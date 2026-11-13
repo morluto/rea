@@ -61,6 +61,8 @@ export const listAdbDevicesOperation = async (
     context.signal,
   );
   if (!ran.ok) return ran;
+  // Keep exact transport identities internally; the shared client boundary
+  // alone produces the legacy numeric projection.
   const { devices, unparsedLines, daemonStarted } = parseAdbDevicesOutput(
     ran.value.stdout,
     ran.value.stderr,

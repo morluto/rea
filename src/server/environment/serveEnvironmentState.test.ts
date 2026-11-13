@@ -7,6 +7,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const closeFailureControl = vi.hoisted(() => ({
   failure: null as Error | null,
@@ -43,11 +44,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
 import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import {
-  environmentCard,
-  STATE_INTAKE_EXTENSION,
-  STATE_OPERATIONS,
-} from "../../application/environment/environmentTools.js";
+import { environmentCard } from "../../application/environment/environmentTools.js";
 import { stateDataPlane } from "./environmentDataPlane.js";
 import {
   ENVIRONMENT_CARD_PATH,
@@ -991,8 +988,28 @@ describe("serveEnvironment with a state", () => {
     ).json();
     expect(card).toEqual(JSON.parse(JSON.stringify(environment.card)));
     const { capabilities } = environment.card;
-    expect(capabilities.extensions).toEqual([STATE_INTAKE_EXTENSION]);
-    expect(capabilities.operations).toEqual(STATE_OPERATIONS);
+    expect(capabilities.extensions).toMatchObject([
+      {
+        uri: "urn:agentenv:intake/v1",
+        params: {
+          add: [
+            { part: "data", format: "rea-state/v1", load: "replace" },
+            {
+              part: "file",
+              format: "rea-state/v1",
+              mimeTypes: ["application/json"],
+              load: "replace",
+            },
+          ],
+          get: [{ part: "data", format: "rea-state/v1" }],
+        },
+      },
+    ]);
+    expect(capabilities.operations).toEqual([
+      "data/reset",
+      "data/add",
+      "data/get",
+    ]);
     const names = capabilities.tools.map((tool) => tool.name);
     expect(names).toContain("get_users_by_id");
     for (const write of [
@@ -1037,7 +1054,127 @@ describe("serveEnvironment with a state", () => {
       expect(missing.isError).toBe(true);
     });
   });
+});
 
+describe("state response cleanup", () => {
+  it("reports pending teed response cleanup and retries after its sibling closes", async () => {
+    let sourceCancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+      },
+      cancel() {
+        sourceCancelled = true;
+      },
+    });
+    const [body, sibling] = stream.tee();
+    const environment = await serveState(
+      { source, state },
+      {
+        fetchState: async () =>
+          new Response(body, {
+            headers: { "content-length": String(STATE_INTAKE_LIMIT_BYTES + 1) },
+          }),
+      },
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const response = await fetch(
+        new URL(ENVIRONMENT_RPC_PATH, environment.url),
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(addByUri(1)),
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: -32602 },
+      });
+      const closing = Promise.race([
+        environment.close(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("server close waited for tee sibling")),
+            10_000,
+          );
+        }),
+      ]);
+      await expect(closing).rejects.toMatchObject({
+        _tag: "AnalysisOutputError",
+        cleanupIncomplete: true,
+        diagnostics: { cleanup_stages: ["state-responses"] },
+      });
+      expect(sourceCancelled).toBe(false);
+      await sibling.cancel();
+      expect(sourceCancelled).toBe(true);
+      await expect(environment.close()).resolves.toBeUndefined();
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      await Promise.allSettled([body.cancel(), sibling.cancel()]);
+      await environment.close();
+    }
+  });
+
+  it("retains a late response cleanup after an earlier successful stop", async () => {
+    let giveResponse!: (response: Response) => void;
+    const gate = new Promise<Response>((resolve) => {
+      giveResponse = resolve;
+    });
+    const held = heldFetcher(() => gate);
+    let release!: () => void;
+    let acknowledge!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const environment = await serveState(
+      { source, state },
+      { fetchState: held.fetchState },
+    );
+    const answered = fetch(new URL(ENVIRONMENT_RPC_PATH, environment.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(addByUri(1)),
+      signal: AbortSignal.timeout(10_000),
+    }).catch(() => undefined);
+    try {
+      await awaitAcknowledgement(
+        held.fetching,
+        answered,
+        "state fetch admission",
+      );
+      await environment.close();
+      giveResponse(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              acknowledge();
+              return cleanup;
+            },
+          }),
+        ),
+      );
+      await awaitAcknowledgement(entered, cleanup, "late response cleanup");
+      await expect(environment.close()).rejects.toMatchObject({
+        _tag: "AnalysisOutputError",
+        cleanupIncomplete: true,
+        diagnostics: { cleanup_stages: ["state-responses"] },
+      });
+      release();
+      await expect(environment.close()).resolves.toBeUndefined();
+    } finally {
+      giveResponse(new Response(null, { status: 500 }));
+      release();
+      await answered;
+      await environment.close();
+    }
+  });
+});
+
+describe("serveEnvironment state file cleanup", () => {
   it("stops without waiting for a stalled download", async () => {
     const held = heldFetcher(() => new Promise<Response>(() => undefined));
     const environment = await serveState(

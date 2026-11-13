@@ -261,6 +261,12 @@ describe("pyc and BEAM limit options", () => {
     ["inspect-erlang-beam", "--max-file-bytes", "maxFileBytes", ["0x10"]],
     ["inspect-erlang-beam", "--max-chunks", "maxChunks", ["1e1"]],
     ["inspect-erlang-beam", "--max-atoms", "maxAtoms", ["0b1"]],
+    [
+      "inspect-go-binary",
+      "--max-string-literals",
+      "maxStringLiterals",
+      ["", "0x10", "1e2"],
+    ],
   ] as const) {
     cliTest.for(values)(
       `rejects %j as ${command} ${flag}`,

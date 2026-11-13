@@ -170,6 +170,20 @@ it("feeds the exact public CLI/MCP process comparison into all three MCP consume
   await expectConsumerResults(client, comparison);
 });
 
+it("compares exact retained capture Evidence without resending its payloads", async () => {
+  const { client, left, right, comparison } = await connectedComparison();
+  const response = await client.callTool({
+    name: "compare_process_captures",
+    arguments: {
+      left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+      right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+    },
+  });
+
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(inlineEvidence(response)).toEqual(comparison);
+});
+
 it("advertises the same process comparison Evidence that its example inputs produce", async () => {
   const { client } = await connectedComparison();
   const response = await client.callTool({

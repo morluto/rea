@@ -10,6 +10,7 @@ import { execFileOutput } from "../process/ExecFileOutput.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   downloadHopperPackage,
+  isHopperRequestCancellation,
   type HopperDownload,
   type HopperRequestFailure,
 } from "./HopperDownload.js";
@@ -486,19 +487,14 @@ export const installLinuxHopper = async (
       return { status: "installed", launcherPath };
     })();
   } catch (cause: unknown) {
+    const cancelled = isHopperRequestCancellation(cause, options.signal);
     result = {
       status: "failed",
-      reason:
-        isAborted(options.signal) || isAbortCause(cause) ? "cancelled" : stage,
+      reason: cancelled ? "cancelled" : stage,
       operationFailure: operationFailure(stage, cause, operationPath),
+      ...(cancelled ? { cancellationReason: options.signal?.reason } : {}),
     };
   }
-  if (
-    result.status === "failed" &&
-    result.reason === "cancelled" &&
-    isAborted(options.signal)
-  )
-    result = { ...result, cancellationReason: options.signal?.reason };
   if (temporary === undefined) return result;
   try {
     await host.cleanup(temporary);
@@ -515,7 +511,7 @@ export const installLinuxHopper = async (
 };
 
 /** Canonical launcher path for a legacy user-local Linux Hopper installation. */
-export const linuxHopperLauncherPath = (home: string): string =>
+const linuxHopperLauncherPath = (home: string): string =>
   appendCallerPath(home, ".local/share/rea/hopper/bin/Hopper", "linux");
 
 /** REA's managed Linux install path, preferred when no explicit launcher is set. */
@@ -739,6 +735,7 @@ const publisherFailure = (
   status: "failed",
   reason,
   verificationFailure: error,
+  ...(reason === "cancelled" ? { cancellationReason: error.cause } : {}),
   ...(error.download === undefined ? {} : { download: error.download }),
 });
 
@@ -799,7 +796,7 @@ const runPackageManagerCommand = async (
 };
 
 /** Preserve argument boundaries in a command shown to the user. */
-export const formatCommandForDisplay = (
+const formatCommandForDisplay = (
   executable: string,
   args: readonly string[],
 ): string =>
@@ -810,7 +807,7 @@ export const formatCommandForDisplay = (
     .join(" ");
 
 /** Select the native package manager and authorization boundary without shell evaluation. */
-export const linuxPackageManagerCommands = (
+const linuxPackageManagerCommands = (
   family: LinuxPackageFamily,
   archive: string,
   isRoot: boolean,
@@ -868,5 +865,3 @@ const versionAtLeast = (
 ): boolean =>
   version !== undefined &&
   Number.parseInt(version.split(".")[0] ?? "0", 10) >= minimum;
-const isAbortCause = (cause: unknown): boolean =>
-  cause instanceof Error && cause.name === "AbortError";

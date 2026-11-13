@@ -1,33 +1,36 @@
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { writeAmpRegistrationBackup } from "../../../src/cli/ampRegistrationBackup.js";
+import { writeClientRegistrationBackup } from "../../../src/application/ClientRegistrationBackup.js";
+import { mcpRegistrationReportSchema } from "../../../src/contracts/mcpRegistration.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { registrationEnvironment } from "../../support/cli/registrationEnvironment.js";
 
 const ampSettings = (home: string) =>
   join(home, ".config", "amp", "settings.json");
 
 cliTest(
-  "mcp add preserves Amp environment and reports unreadable settings",
+  "packaged Amp refresh preserves policy and creates recovery only for changed launchers",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-amp-registration-");
     const home = join(root, "home");
-    const environment = {
-      HOME: home,
-      USERPROFILE: home,
-    };
-    const run = (arguments_: readonly string[]) =>
+    const environment = await registrationEnvironment(home);
+    const run = (options: readonly string[]) =>
       cli.run({
-        arguments: [...arguments_, "--json"],
+        arguments: ["mcp", "add", "--agent=amp", ...options, "--json"],
         cwd: root,
         environment,
         timeoutMs: 20_000,
       });
-
-    // An existing rea registration keeps its environment map and the file is
-    // backed up before the refresh.
     const settingsPath = ampSettings(home);
     const original = JSON.stringify(
       {
@@ -36,6 +39,7 @@ cliTest(
             command: "npx",
             args: ["-y", "rea-agents@6.8.0", "mcp"],
             env: { KEEP_ME: "1" },
+            disabled: false,
           },
           other: { command: "other" },
         },
@@ -46,141 +50,122 @@ cliTest(
     );
     await mkdir(join(home, ".config", "amp"), { recursive: true });
     await writeFile(settingsPath, original);
-
-    const refreshed = await run(["mcp", "add", "--agent", "amp"]);
-    expect(refreshed.exitCode, refreshed.stderr).toBe(0);
+    const first = await run([]);
+    expect(first.exitCode, first.stderr).toBe(0);
+    const firstReport = mcpRegistrationReportSchema.parse(first.json);
+    expect(firstReport.clients).toMatchObject([
+      {
+        client: "amp",
+        status: "configured",
+        backup_path: `${settingsPath}.rea.backup`,
+      },
+    ]);
     const after = JSON.parse(await readFile(settingsPath, "utf8"));
-    expect(after["amp.mcpServers"].rea).toMatchObject({
-      command: expect.any(String),
-      env: { KEEP_ME: "1" },
+    expect(after).toMatchObject({
+      "amp.mcpServers": {
+        rea: {
+          command: firstReport.command,
+          args: firstReport.args,
+          env: { KEEP_ME: "1" },
+          disabled: false,
+        },
+        other: { command: "other" },
+      },
+      theme: "dark",
     });
-    const registrationBackupPath = `${settingsPath}.rea.backup`;
-    expect(await readFile(registrationBackupPath, "utf8")).toBe(original);
-    expect(refreshed.stderr).toContain(registrationBackupPath);
-    expect(after.theme).toBe("dark");
-    expect(after["amp.mcpServers"].other).toEqual({ command: "other" });
-
-    // The equals form --agent=amp is parsed as a spaced form before Incur sees
-    // it, so the Amp registration lands and keeps the environment map.
-    const settingsBeforeEquals = await readFile(settingsPath, "utf8");
-    const equals = await run(["mcp", "add", "--agent=amp"]);
+    expect(await readFile(`${settingsPath}.rea.backup`, "utf8")).toBe(original);
+    const beforeEquals = await readFile(settingsPath, "utf8");
+    const beforeState = await stat(settingsPath);
+    const equals = await run([]);
     expect(equals.exitCode, equals.stderr).toBe(0);
-    const afterEquals = JSON.parse(await readFile(settingsPath, "utf8"));
-    expect(afterEquals["amp.mcpServers"].rea).toMatchObject({
-      command: expect.any(String),
-      env: { KEEP_ME: "1" },
-    });
-    expect(afterEquals["amp.mcpServers"].other).toEqual({ command: "other" });
-    expect(await readFile(registrationBackupPath, "utf8")).toBe(original);
-    const recoveryBackupPath = equals.stderr.match(
-      /Amp MCP registration backup retained at (.+)/,
-    )?.[1];
-    expect(recoveryBackupPath).toContain(".recovery");
-    if (recoveryBackupPath === undefined)
-      throw new Error("Amp did not report the current recovery backup path.");
-    expect(await readFile(recoveryBackupPath, "utf8")).toBe(
-      settingsBeforeEquals,
+    expect(
+      mcpRegistrationReportSchema.parse(equals.json).clients,
+    ).toMatchObject([{ client: "amp", status: "unchanged" }]);
+    expect(await readFile(settingsPath, "utf8")).toBe(beforeEquals);
+    expect((await stat(settingsPath)).ino).toBe(beforeState.ino);
+    expect(equals.stderr).not.toContain("backup retained");
+    expect(await readdir(join(home, ".config", "amp"))).toEqual([
+      "settings.json",
+      "settings.json.rea.backup",
+    ]);
+    const changed = await run(["--command", '"fixture replacement" "" --mcp']);
+    expect(changed.exitCode, changed.stderr).toBe(0);
+    const changedReceipt = mcpRegistrationReportSchema.parse(changed.json)
+      .clients[0];
+    if (
+      changedReceipt?.status !== "configured" ||
+      changedReceipt.backup_path === undefined
+    )
+      throw Error("Missing changed-launcher recovery receipt.");
+    expect(changedReceipt.backup_path).toContain(".recovery");
+    expect(await readFile(changedReceipt.backup_path, "utf8")).toBe(
+      beforeEquals,
     );
-
-    // A malformed settings file is rejected instead of reporting success.
-    const broken = join(root, "broken");
-    const brokenSettings = ampSettings(broken);
-    const malformed = '{ "amp.mcpServers": { "rea": {} ';
-    await mkdir(join(broken, ".config", "amp"), { recursive: true });
-    await writeFile(brokenSettings, malformed);
-    const rejected = await cli.run({
-      arguments: ["mcp", "add", "--agent", "amp", "--json"],
-      cwd: root,
-      environment: { HOME: broken, USERPROFILE: broken },
-      timeoutMs: 20_000,
-    });
-    expect(rejected.exitCode, rejected.stderr).toBe(1);
-    expect(rejected.json).toMatchObject({
-      code: "VALIDATION_ERROR",
-      fieldErrors: expect.arrayContaining([
-        expect.objectContaining({
-          code: "invalid_value",
-          missing: false,
-          path: "amp",
-        }),
-      ]),
-    });
-    expect(await readFile(brokenSettings, "utf8")).toBe(malformed);
-
-    // JSON null is valid JSON but not a settings object; reject it as a
-    // validation error instead of letting property access throw.
-    const nullHome = join(root, "null-settings");
-    const nullSettings = ampSettings(nullHome);
-    await mkdir(join(nullHome, ".config", "amp"), { recursive: true });
-    await writeFile(nullSettings, "null\n");
-    const nullRejected = await cli.run({
-      arguments: ["mcp", "add", "--agent", "amp", "--json"],
-      cwd: root,
-      environment: { HOME: nullHome, USERPROFILE: nullHome },
-      timeoutMs: 20_000,
-    });
-    expect(nullRejected.exitCode, nullRejected.stderr).toBe(1);
-    expect(nullRejected.json).toMatchObject({
-      code: "VALIDATION_ERROR",
-      message: expect.stringContaining("must contain a JSON object"),
-    });
-    expect(await readFile(nullSettings, "utf8")).toBe("null\n");
-
-    // An array-valued amp.mcpServers is rejected instead of claiming success.
-    const arrayHome = join(root, "array");
-    const arraySettings = ampSettings(arrayHome);
-    const array = '{"amp.mcpServers": []}\n';
-    await mkdir(join(arrayHome, ".config", "amp"), { recursive: true });
-    await writeFile(arraySettings, array);
-    const arrayRejected = await cli.run({
-      arguments: ["mcp", "add", "--agent", "amp", "--json"],
-      cwd: root,
-      environment: { HOME: arrayHome, USERPROFILE: arrayHome },
-      timeoutMs: 20_000,
-    });
-    expect(arrayRejected.exitCode, arrayRejected.stderr).toBe(1);
-    expect(arrayRejected.json).toMatchObject({
-      code: "VALIDATION_ERROR",
-      fieldErrors: expect.arrayContaining([
-        expect.objectContaining({
-          code: "invalid_value",
-          missing: false,
-          path: "amp",
-        }),
-      ]),
-    });
-    expect(await readFile(arraySettings, "utf8")).toBe(array);
-
-    // A backup write failure is reported as a filesystem problem, not as bad
-    // JSON.
-    const backupHome = join(root, "backup-error");
-    const backupSettings = ampSettings(backupHome);
-    const backupPath = `${backupSettings}.rea.backup`;
-    await mkdir(join(backupHome, ".config", "amp"), { recursive: true });
-    await writeFile(backupSettings, '{"amp.mcpServers": {}}\n');
-    await mkdir(backupPath);
-    const backupRejected = await cli.run({
-      arguments: ["mcp", "add", "--agent", "amp", "--json"],
-      cwd: root,
-      environment: { HOME: backupHome, USERPROFILE: backupHome },
-      timeoutMs: 20_000,
-    });
-    expect(backupRejected.exitCode, backupRejected.stderr).toBe(1);
-    expect(backupRejected.json).toMatchObject({
-      code: "VALIDATION_ERROR",
-      message: expect.stringContaining("Unable to create Amp settings backup"),
+    expect(await readFile(`${settingsPath}.rea.backup`, "utf8")).toBe(original);
+    expect(
+      JSON.parse(await readFile(settingsPath, "utf8"))["amp.mcpServers"].rea,
+    ).toMatchObject({
+      command: "fixture replacement",
+      args: ["", "--mcp"],
+      env: { KEEP_ME: "1" },
+      disabled: false,
     });
   },
 );
 
-it("keeps the first Amp registration backup and secures later recovery copies", async () => {
+cliTest(
+  "packaged Amp reports malformed owned documents and unavailable backups as client failures",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-amp-rejected-");
+    for (const [index, source] of [
+      '{ "amp.mcpServers": { "rea": {} ',
+      "null\n",
+      '{"amp.mcpServers": []}\n',
+      '{"amp.mcpServers": {}}\n',
+    ].entries()) {
+      const home = join(root, String(index));
+      const environment = await registrationEnvironment(home);
+      const settingsPath = ampSettings(home);
+      await mkdir(join(home, ".config", "amp"), { recursive: true });
+      await writeFile(settingsPath, source);
+      if (index === 3) await mkdir(`${settingsPath}.rea.backup`);
+      const rejected = await cli.run({
+        arguments: ["mcp", "add", "--agent", "amp", "--json"],
+        cwd: root,
+        environment,
+        timeoutMs: 20_000,
+      });
+      expect(rejected.exitCode, rejected.stderr).toBe(1);
+      expect(mcpRegistrationReportSchema.parse(rejected.json)).toMatchObject({
+        ok: false,
+        clients: [
+          {
+            client: "amp",
+            status: "failed",
+            error: { code: expect.any(String), message: expect.any(String) },
+          },
+        ],
+      });
+      expect(await readFile(settingsPath, "utf8")).toBe(source);
+      expect(await readdir(join(home, ".config", "amp"))).toEqual(
+        index === 3
+          ? ["settings.json", "settings.json.rea.backup"]
+          : ["settings.json"],
+      );
+    }
+  },
+);
+
+it("keeps the first registration backup and secures later recovery copies", async () => {
   const root = await createTestTempDirectory("rea-amp-backup-permissions-");
   const settingsPath = join(root, "settings.json");
   const settingsText =
     '{"amp.mcpServers":{"rea":{"env":{"TOKEN":"secret"}}}}\n';
   await writeFile(settingsPath, settingsText);
-
-  const backup = await writeAmpRegistrationBackup(settingsPath, settingsText);
+  const backup = await writeClientRegistrationBackup(
+    settingsPath,
+    settingsText,
+  );
   if (!backup.ok)
     throw new Error(
       `${backup.error.kind} ${backup.error.path}: ${backup.error.detail}`,
@@ -189,11 +174,10 @@ it("keeps the first Amp registration backup and secures later recovery copies", 
   expect(await readFile(backupPath, "utf8")).toBe(settingsText);
   if (process.platform !== "win32")
     expect((await stat(backupPath)).mode & 0o777).toBe(0o600);
-
   await chmod(backupPath, 0o644);
   const updatedSettings = "updated settings";
   await writeFile(settingsPath, updatedSettings);
-  const updatedBackup = await writeAmpRegistrationBackup(
+  const updatedBackup = await writeClientRegistrationBackup(
     settingsPath,
     updatedSettings,
   );
@@ -201,29 +185,22 @@ it("keeps the first Amp registration backup and secures later recovery copies", 
     throw new Error(
       `${updatedBackup.error.kind} ${updatedBackup.error.path}: ${updatedBackup.error.detail}`,
     );
-  const updatedBackupPath = updatedBackup.value;
-  expect(updatedBackupPath).not.toBe(backupPath);
-  expect(await readFile(updatedBackupPath, "utf8")).toBe(updatedSettings);
+  expect(updatedBackup.value).not.toBe(backupPath);
+  expect(await readFile(updatedBackup.value, "utf8")).toBe(updatedSettings);
   expect(await readFile(backupPath, "utf8")).toBe(settingsText);
-  if (process.platform !== "win32")
-    expect((await stat(updatedBackupPath)).mode & 0o777).toBe(0o600);
-  if (process.platform !== "win32")
+  if (process.platform !== "win32") {
+    expect((await stat(updatedBackup.value)).mode & 0o777).toBe(0o600);
     expect((await stat(backupPath)).mode & 0o777).toBe(0o600);
+  }
 });
 
-it("returns a tagged failure when the Amp backup path is occupied", async () => {
+it("returns a tagged failure when the registration backup path is occupied", async () => {
   const root = await createTestTempDirectory("rea-amp-backup-occupied-");
   const settingsPath = join(root, "settings.json");
   const backupPath = `${settingsPath}.rea.backup`;
   await writeFile(settingsPath, "{}\n");
   await mkdir(backupPath);
-
-  const result = await writeAmpRegistrationBackup(settingsPath, "{}\n");
-  expect(result).toMatchObject({
-    ok: false,
-    error: {
-      kind: "occupied",
-      path: backupPath,
-    },
-  });
+  expect(
+    await writeClientRegistrationBackup(settingsPath, "{}\n"),
+  ).toMatchObject({ ok: false, error: { kind: "occupied", path: backupPath } });
 });

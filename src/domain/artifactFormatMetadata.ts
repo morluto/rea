@@ -1,4 +1,15 @@
+import {
+  ntfsFileReferenceSchema,
+  ntfsFileNameSchema,
+  ntfsAttributeSchema,
+  ntfsAttributeIssueSchema,
+  ntfsAttributeListResolutionSchema,
+} from "./windows/ntfsMftAttributes.js";
 import { z } from "zod";
+import { MFT_INLINE_HEADER_LIMIT } from "./windows/ntfsMft.js";
+
+import { jsonRecordSchema } from "./jsonRecord.js";
+import { jsonValueSchema } from "./jsonValue.js";
 
 const offset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 export const uint32 = z.number().int().min(0).max(0xffff_ffff);
@@ -294,6 +305,63 @@ export const hexRecordRegionMetadataSchema = z.strictObject({
   record_count: offset,
   first_line: offset,
   last_line: offset,
+});
+
+const ntfsRecordHeaderSchema = z.strictObject({
+  index: offset,
+  fileOffset: offset,
+  sequenceNumber: offset,
+  hardLinkCount: offset,
+  flags: z.strictObject({
+    raw: offset,
+    names: z.array(z.string()),
+    unknownMask: offset,
+  }),
+  inUse: z.boolean(),
+  directory: z.boolean(),
+  usedBytes: offset,
+  totalBytes: offset,
+  extentValid: z.boolean(),
+  baseRecordReference: ntfsFileReferenceSchema.nullable(),
+  declaredRecordNumber: offset.nullable(),
+  recordNumberMatchesSlot: z.boolean().nullable(),
+  logFileSequenceNumber: z.string().regex(/^(?:0|[1-9][0-9]*)$/u),
+  firstAttributeOffset: offset,
+  nextAttributeId: offset,
+  fileNames: z.array(ntfsFileNameSchema).exactOptional(),
+  attributes: z.array(ntfsAttributeSchema).exactOptional(),
+  attributeCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
+  attributeIssue: ntfsAttributeIssueSchema.nullable().exactOptional(),
+  fileNameCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
+  attributeListResolution: ntfsAttributeListResolutionSchema.exactOptional(),
+  fixups: z.strictObject({
+    sequenceNumber: offset,
+    entries: offset,
+    verifiedSectors: offset,
+    coveredSectors: offset,
+    mismatchSector: offset.nullable(),
+    malformed: z.boolean(),
+  }),
+});
+
+/** NTFS $MFT record-header and resident file-name coverage facts. */
+export const ntfsMftMetadataSchema = z.strictObject({
+  kind: z.literal("ntfs-mft"),
+  record_bytes: offset,
+  record_count: offset,
+  in_use_record_count: offset,
+  directory_record_count: offset,
+  extension_record_count: offset,
+  fixup_mismatch_count: offset,
+  fixup_unverified_record_count: offset,
+  truncated_tail_bytes: offset,
+  record_headers: z.array(ntfsRecordHeaderSchema).max(MFT_INLINE_HEADER_LIMIT),
+  omitted_record_headers: offset,
+  record_header_start_index: offset.exactOptional(),
+  next_record_header_index: offset.nullable().exactOptional(),
+  file_name_count: offset.exactOptional(),
+  file_name_incomplete_record_count: offset.exactOptional(),
+  attribute_incomplete_record_count: offset.exactOptional(),
 });
 
 /**
@@ -778,6 +846,86 @@ export type BunStandaloneEntryMetadata = z.infer<
   typeof bunStandaloneEntryMetadataSchema
 >;
 
+const denoListingSchema = z.enum(["listed", "unsupported"]);
+
+const denoEnvVarSchema = z.strictObject({
+  name: z.string(),
+  value: z.string(),
+  value_byte_length: offset,
+});
+
+/**
+ * Container facts for one Deno compile section. The metadata JSON has no Deno
+ * version field. Environment-file values and CA bytes are retained as local evidence.
+ */
+export const denoStandaloneMetadataSchema = z.strictObject({
+  kind: z.literal("deno-standalone"),
+  carrier: z.enum(["mach-o", "elf", "pe"]),
+  embedding: z.enum([
+    "mach-o-section",
+    "mach-o-intel-trailer",
+    "elf-note",
+    "pe-resource",
+  ]),
+  section_offset: offset,
+  section_length: offset,
+  entrypoint_key: z.string(),
+  argv: z.array(z.string()).nullable(),
+  v8_flags: z.array(z.string()).nullable(),
+  permissions: jsonRecordSchema(jsonValueSchema).nullable(),
+  unstable_config: jsonRecordSchema(jsonValueSchema).nullable(),
+  app_name: z.string().nullable(),
+  self_extracting: z.string().nullable(),
+  npm_snapshot_byte_length: offset,
+  env_var_count: uint32.nullable(),
+  env_vars: z.array(denoEnvVarSchema).nullable(),
+  ca_data: z.array(z.number().int().min(0).max(255)).nullable(),
+  ca_data_byte_length: offset.nullable(),
+  specifier_count: uint32,
+  specifier_byte_length: offset,
+  specifier_listing: denoListingSchema,
+  redirect_count: uint32,
+  redirect_byte_length: offset,
+  redirect_listing: denoListingSchema,
+  remote_module_count: uint32,
+  remote_module_byte_length: offset,
+  remote_module_listing: denoListingSchema,
+  vfs_header_byte_length: offset,
+  vfs_file_data_byte_length: offset,
+  vfs_listing: denoListingSchema,
+  vfs_case_sensitivity: z.enum(["sensitive", "insensitive"]).nullable(),
+});
+export type DenoStandaloneMetadata = z.infer<
+  typeof denoStandaloneMetadataSchema
+>;
+
+/** One stored region of a Deno virtual file, symlink, or remote module. */
+export const denoStandaloneEntryMetadataSchema = z.strictObject({
+  kind: z.literal("deno-standalone-entry"),
+  role: z.enum([
+    "vfs-file",
+    "vfs-transpiled",
+    "vfs-cjs-export-analysis",
+    "vfs-source-map",
+    "vfs-symlink",
+    "remote-module",
+    "remote-transpiled",
+    "remote-source-map",
+    "remote-cjs-export-analysis",
+  ]),
+  index: uint32,
+  source_path: z.string().nullable(),
+  entry_point: z.boolean(),
+  executable: z.boolean(),
+  is_valid_utf8: z.boolean().nullable(),
+  symlink_dest_parts: z.array(z.string()).nullable(),
+  media_type: z.number().int().min(0).max(255).nullable(),
+  media_type_name: z.string().nullable(),
+});
+export type DenoStandaloneEntryMetadata = z.infer<
+  typeof denoStandaloneEntryMetadataSchema
+>;
+
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckMetadataSchema,
   godotPckEntryMetadataSchema,
@@ -790,6 +938,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   dotnetBundleEntryMetadataSchema,
   bunStandaloneMetadataSchema,
   bunStandaloneEntryMetadataSchema,
+  denoStandaloneMetadataSchema,
+  denoStandaloneEntryMetadataSchema,
   nodeSeaMetadataSchema,
   nodeSeaEntryMetadataSchema,
   hexRecordsMetadataSchema,
@@ -801,6 +951,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espImageSignatureBlockMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
+  ntfsMftMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
   espFlashImageMetadataSchema,
@@ -890,6 +1041,14 @@ const declarationsByKind: {
     notCompared:
       "Its fields come from the carrier's module graph, whose bytes the carrier's content comparison covers.",
   },
+  "deno-standalone": {
+    notCompared:
+      "Its fields come from the carrier's own bytes, which content comparison covers.",
+  },
+  "deno-standalone-entry": {
+    notCompared:
+      "Its fields come from the carrier's Deno section, whose bytes the carrier's content comparison covers.",
+  },
   "node-sea": {
     notCompared:
       "Its fields come from the carrier's own bytes, which content comparison covers.",
@@ -942,6 +1101,10 @@ const declarationsByKind: {
   "uf2-region": {
     notCompared:
       "Its familyID and addresses are in its path, family_name is REA's label for the familyID, and its block counts and positions are layout; content comparison covers its bytes.",
+  },
+  "ntfs-mft": {
+    notCompared:
+      "Its fields come from the file's own FILE record headers and resident file-name attributes, which content comparison covers.",
   },
   dfuse: {
     notCompared:

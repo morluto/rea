@@ -105,13 +105,52 @@ export abstract class WebNetworkProjectionAccumulator {
   }
 
   addLimitations(limitations: readonly string[]): Result<void, AnalysisError> {
-    for (const limitation of limitations) {
-      if (this.#limitations.has(limitation)) continue;
-      if (!this.retain(ENTRY_BYTES + textBytes(limitation.length)))
-        return this.overBudget();
-      this.#limitations.add(limitation);
-    }
+    const prepared = this.prepareLimitations(limitations);
+    if (!prepared.ok) return prepared;
+    prepared.value();
     return ok(undefined);
+  }
+
+  /** Admit record qualifications without publishing them before the record commits. */
+  protected prepareLimitations(
+    limitations: readonly string[],
+  ): Result<() => void, AnalysisError> {
+    const rollbackAdmission = this.retainedCheckpoint();
+    const pending = new Set<string>();
+    for (const limitation of limitations) {
+      if (this.#limitations.has(limitation) || pending.has(limitation))
+        continue;
+      if (!this.retain(ENTRY_BYTES + textBytes(limitation.length))) {
+        rollbackAdmission();
+        return this.overBudget();
+      }
+      pending.add(limitation);
+    }
+    return ok(() => {
+      for (const limitation of pending) this.#limitations.add(limitation);
+    });
+  }
+
+  /** Derive budgeted qualifications for this snapshot without retaining old snapshots. */
+  protected snapshotLimitations(
+    derived: readonly string[],
+  ): Result<string[], AnalysisError> {
+    const release = this.temporaryCheckpoint();
+    if (
+      !this.scratch(
+        derived.reduce(
+          (bytes, limitation) =>
+            bytes + ENTRY_BYTES + textBytes(limitation.length),
+          0,
+        ),
+      )
+    )
+      return this.overBudget();
+    try {
+      return ok([...new Set([...this.#limitations, ...derived])].sort(compare));
+    } finally {
+      release();
+    }
   }
 
   protected sortedLimitations(): string[] {

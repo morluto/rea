@@ -46,7 +46,7 @@ export const createNativeDispatchBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
 ): BinarySession =>
   composeDeepBinarySession(
-    config,
+    runtimeAnalysisConfig(config),
     logger,
     selectedEnvironment,
     "inspect_native_dispatch_metadata",

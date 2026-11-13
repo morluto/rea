@@ -293,7 +293,6 @@ it("retries a transient import close failure before admitting the bundle", async
   );
   await writeFile(path, JSON.stringify(createEvidenceBundle([imported])));
 
-  const originalClose = OwnedFileHandle.prototype.close;
   const close = vi
     .spyOn(OwnedFileHandle.prototype, "close")
     .mockImplementationOnce(async () => {

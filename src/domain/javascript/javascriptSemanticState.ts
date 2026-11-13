@@ -1,3 +1,4 @@
+import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.js";
 import type { SemanticPropertyReadSource } from "./javascriptSemanticIterationSources.js";
 import * as t from "@babel/types";
 import {
@@ -82,6 +83,7 @@ export interface JavaScriptSemanticReferenceEffectsAtSite {
 
 export interface JavaScriptSemanticRequiredModuleEffect extends JavaScriptSemanticMemberEffect {
   readonly kind: "write" | "escape";
+  readonly loaderAuthority?: "candidate";
 }
 
 export interface JavaScriptSemanticBindingState {
@@ -148,6 +150,7 @@ export type SemanticPrototypeOwner = (typeof semanticPrototypeOwners)[number];
 
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
+  readonly precision: JavaScriptSemanticPrecision;
   arrayIterationUnknown: boolean;
   /** Receiver isolation requires the completed member-effect inventory. */
   memberMutationFactsComplete: boolean;
@@ -192,7 +195,9 @@ export interface JavaScriptSemanticAnalysisState {
   readonly callableNodesById: Map<string, t.Node>;
   readonly moduleLinks: JavaScriptSemanticModuleLink[];
   /** Exact calls already represented by binding or dependency links. */
-  readonly linkedRequireCalls: WeakSet<t.CallExpression>;
+  readonly linkedRequireCalls: WeakSet<
+    t.CallExpression | t.OptionalCallExpression
+  >;
   readonly moduleLinkBindings: WeakMap<
     JavaScriptSemanticModuleLink,
     JavaScriptSemanticBindingState
@@ -530,7 +535,7 @@ const semanticWithPrototypeKind = (
       t.isObjectProperty(property) &&
       !property.computed &&
       !property.shorthand &&
-      t.isIdentifier(property.key, { name: "__proto__" })
+      semanticStaticPropertyKey(property.key, false) === "__proto__"
     )
       return t.isNullLiteral(unwrapJavaScriptExpression(property.value).node)
         ? "null"

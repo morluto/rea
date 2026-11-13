@@ -14,6 +14,7 @@ export interface ZipMember {
   readonly madeBy?: number;
   /** External attributes; a slash-ended name gets the MS-DOS directory bit. */
   readonly external?: number;
+  readonly centralExtra?: Uint8Array;
 }
 
 const UTF8_NAME = 0x800;
@@ -59,6 +60,7 @@ export const zipArchive = (members: readonly ZipMember[]): Buffer => {
     central.writeUInt32LE(fields.compressed, 20);
     central.writeUInt32LE(fields.size, 24);
     central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(member.centralExtra?.length ?? 0, 30);
     central.writeUInt32LE(
       member.external ?? (member.name.endsWith("/") ? 0x10 : 0),
       38,
@@ -66,6 +68,8 @@ export const zipArchive = (members: readonly ZipMember[]): Buffer => {
     central.writeUInt32LE(offset, 42);
     locals.push(local, name, stored);
     centrals.push(central, name);
+    if (member.centralExtra !== undefined)
+      centrals.push(Buffer.from(member.centralExtra));
     offset += local.length + name.length + stored.length;
   }
   const directory = Buffer.concat(centrals);

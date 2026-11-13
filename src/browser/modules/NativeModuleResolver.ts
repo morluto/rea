@@ -16,6 +16,7 @@ import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import type { WebModuleResolutionPort } from "../../application/WebModulePorts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -283,12 +284,19 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
       if (lease !== undefined)
         new AnalysisCleanupLeaseGroup(cleanupError, [lease]);
     }
-    if (result.ok && options?.signal?.aborted)
+    if (options?.signal?.aborted)
       result = err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-          partialObservation: completedObservation(input, result.value),
-        }),
+        analysisErrorWithCancellation(
+          result.ok ? undefined : result.error,
+          new AnalysisCancelledError(OPERATION, {
+            cause: options.signal.reason,
+            ...(result.ok
+              ? {
+                  partialObservation: completedObservation(input, result.value),
+                }
+              : {}),
+          }),
+        ),
       );
     if (cleanupError !== undefined)
       return err(
@@ -319,9 +327,11 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
   }
 
   #closedError(): AnalysisError {
-    return new BrowserObservationError(OPERATION, "cleanup_failed", {
-      detail: "Native module resolver is closing.",
-    });
+    return new AnalysisCapabilityUnavailableError(
+      "native-module-resolver",
+      OPERATION,
+      "Native module resolver is closing.",
+    );
   }
 
   async #retryCleanup(): Promise<AnalysisError | undefined> {

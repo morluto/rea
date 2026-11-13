@@ -18,7 +18,10 @@ import {
   FINALIZED_PROCESS_CAPTURE_EXAMPLE,
 } from "../domain/process/processCapture.fixture.js";
 import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
-import { parseProcessCapture } from "../domain/process/processCaptureParsing.js";
+import {
+  parseProcessCapture,
+  safeParseProcessCapture,
+} from "../domain/process/processCaptureParsing.js";
 import {
   digestProcessCommitment,
   processScenarioSchema,
@@ -79,10 +82,32 @@ const applicationWithUnknowns = (
       ],
     }),
   );
+  const root = createJavaScriptApplicationNode({
+    kind: "artifact",
+    identity: {
+      strategy: "content-digest",
+      stability: "global-exact",
+      sha256: APPLICATION_GRAPH_DIGESTS.asar,
+    },
+    observations: [
+      {
+        label: "managed root",
+        properties: {},
+        evidence: artifactEvidence(
+          APPLICATION_GRAPH_DIGESTS.asar,
+          "artifact-root",
+        ),
+      },
+    ],
+  });
   const graph = createJavaScriptApplicationGraph({
     schema: "JavaScriptApplicationGraph",
-    root_node_ids: base.root_node_ids,
-    nodes: [...base.nodes, ...unknownNodes],
+    root_node_ids: [root.node_id],
+    nodes: [
+      ...base.nodes.filter(({ node_id }) => node_id !== root.node_id),
+      ...unknownNodes,
+      root,
+    ],
     edges: base.edges,
     coverage: completeCoverage,
     limitations: base.limitations,
@@ -230,6 +255,10 @@ describe("reconstruction obligation candidates", () => {
         },
       },
     });
+    const invalid = safeParseProcessCapture(evidence.normalized_result);
+    expect(invalid.success).toBe(false);
+    if (invalid.success) throw new Error("Expected invalid capture fixture");
+    expect(invalid.error.issues).toHaveLength(2);
     const generated = deriveCandidates(createEvidenceBundle([evidence]), []);
 
     expect(generated.limitations).toHaveLength(1);
@@ -237,6 +266,7 @@ describe("reconstruction obligation candidates", () => {
     expect(generated.limitations[0]).toMatch(
       /Process Evidence.*could not generate candidates.*manifest\.completed_at/iu,
     );
+    expect(generated.limitations[0]).toContain("(1 more issues)");
   });
 });
 

@@ -168,7 +168,7 @@ export const createDarwinHelperCache = (options: {
 }) => {
   const uid = process.getuid?.();
   // Failed closes and removals stay owned until close() retries them.
-  const retained = new Map<string, () => Promise<void>>();
+  const retained = new Map<string | OwnedFileHandle, () => Promise<void>>();
   // The first unresolved close failure; later ones depend on it.
   let cleanupAnchor: ProviderCleanupError | undefined;
   let key: Promise<string> | undefined;
@@ -271,7 +271,7 @@ export const createDarwinHelperCache = (options: {
   };
 
   const retainClose = (owner: OwnedFileHandle): void => {
-    retained.set(`file handle ${String(owner.handle.fd)}`, () => owner.close());
+    retained.set(owner, () => owner.close());
   };
 
   /** Hash the opened descriptor itself; FIFOs and links never block or pass. */
@@ -431,13 +431,19 @@ export const createDarwinHelperCache = (options: {
   /** Retry every retained close or removal; unresolved ones stay owned. */
   const close = async (): Promise<void> => {
     const failed: string[] = [];
+    const causes: unknown[] = [];
     // Deleting the visited entry while iterating a Map is well defined.
     for (const [resource, cleanup] of retained) {
       try {
         await cleanup();
         retained.delete(resource);
-      } catch {
-        failed.push(resource);
+      } catch (cause: unknown) {
+        failed.push(
+          typeof resource === "string"
+            ? resource
+            : `file handle ${String(resource.handle.fd)}`,
+        );
+        causes.push(cause);
       }
     }
     if (failed.length > 0) {
@@ -448,7 +454,13 @@ export const createDarwinHelperCache = (options: {
           reason:
             "Darwin ownership-helper cache resources remain owned until cleanup succeeds.",
         },
-        { operation: "prepare_owned_process" },
+        {
+          cause: new AggregateError(
+            causes,
+            "Darwin helper cache cleanup failed",
+          ),
+          operation: "prepare_owned_process",
+        },
       );
       // Every returned failure clears once a later retry releases them all.
       if (cleanupAnchor === undefined) cleanupAnchor = failure;

@@ -1,6 +1,10 @@
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  InMemoryTransport,
+  type CallToolRequestOptions,
+} from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
@@ -38,29 +42,27 @@ import {
 
 async function assertAndroidPackageSelectedFacetContract(options: {
   client: Pick<Client, "callTool">;
-  ajv: Ajv2020;
-  outputSchema: Record<string, unknown>;
+  toolDefinition: NonNullable<CallToolRequestOptions["toolDefinition"]>;
   apk: string;
   parent: Evidence;
   retained: (id: string) => Evidence | undefined;
   sourceStatus: string;
 }): Promise<void> {
-  const { client, ajv, outputSchema, apk, parent, retained, sourceStatus } =
+  const { client, toolDefinition, apk, parent, retained, sourceStatus } =
     options;
   for (const facet of ["components", "component-summary"] as const) {
-    const selected = await client.callTool({
-      name: "inspect_android_package",
-      arguments: {
-        path: apk,
-        detail: "summary",
-        view: { kind: "android", facet },
+    const selected = await client.callTool(
+      {
+        name: "inspect_android_package",
+        arguments: {
+          path: apk,
+          detail: "summary",
+          view: { kind: "android", facet },
+        },
       },
-    });
+      { toolDefinition },
+    );
     expect(selected.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, selected.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const result = parseEvidence(selected.structuredContent).normalized_result;
     const projected =
       facet === "components"
@@ -185,22 +187,17 @@ it("defaults JNI MCP inspection to a retained summary while preserving explicit 
   );
   if (definition?.outputSchema === undefined)
     throw new Error("Missing JNI output schema");
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const request = { path: apk, ...selection };
   expect(
     ajv.validate(definition.inputSchema, request),
     JSON.stringify(ajv.errors),
   ).toBe(true);
-  const compact = await client.callTool({
-    name: "inspect_android_jni_bindings",
-    arguments: request,
-  });
+  const compact = await client.callTool(
+    { name: "inspect_android_jni_bindings", arguments: request },
+    { toolDefinition: definition },
+  );
   expect(compact.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, compact.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const summaryEvidence = parseEvidence(compact.structuredContent);
   const summary = androidJniSummaryViewResultSchema.parse(
     summaryEvidence.normalized_result,
@@ -226,15 +223,14 @@ it("defaults JNI MCP inspection to a retained summary while preserving explicit 
   expect(fullReport.declarations).toEqual(declarations);
   expect(parent.parameters).toEqual(request);
   expect(summaryEvidence.evidence_links).toEqual([parent.evidence_id]);
-  const complete = await client.callTool({
-    name: "inspect_android_jni_bindings",
-    arguments: { ...request, detail: "complete" },
-  });
+  const complete = await client.callTool(
+    {
+      name: "inspect_android_jni_bindings",
+      arguments: { ...request, detail: "complete" },
+    },
+    { toolDefinition: definition },
+  );
   expect(complete.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, complete.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const completeEvidence = parseEvidence(complete.structuredContent);
   expect(completeEvidence.normalized_result).toEqual(fullReport);
   expect(completeEvidence.raw_result).toEqual(raw);
@@ -309,15 +305,14 @@ it.skipIf(process.platform === "win32")(
         },
       ),
     ).toBe(true);
-    const reply = await client.callTool({
-      name: "inspect_android_package",
-      arguments: { path: apk, detail: "summary" },
-    });
+    const reply = await client.callTool(
+      {
+        name: "inspect_android_package",
+        arguments: { path: apk, detail: "summary" },
+      },
+      { toolDefinition: definition },
+    );
     expect(reply.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, reply.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const receipt = parseEvidence(reply.structuredContent);
     const view = androidPackageSummaryViewResultSchema.parse(
       receipt.normalized_result,
@@ -363,8 +358,7 @@ it.skipIf(process.platform === "win32")(
     }
     await assertAndroidPackageSelectedFacetContract({
       client,
-      ajv,
-      outputSchema,
+      toolDefinition: definition,
       apk,
       parent,
       retained: (id) => session.evidenceById(id),

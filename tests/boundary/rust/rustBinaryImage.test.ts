@@ -110,6 +110,23 @@ it.each(["elf", "pe"] as const)(
   },
 );
 
+it.each([
+  ["\\", [{ hash: RUSTC_HASH, file_offset: 2048 }]],
+  ["-", undefined],
+] as const)(
+  "reads a rustc hash followed by %s only when it is a path separator",
+  (separator, hashes) => {
+    // Windows builds store /rustc/<hash>\library\...; the fixture path is at 2048.
+    const bytes = createRustImage({ format: "pe" });
+    bytes.write(
+      separator,
+      2048 + "/rustc/".length + RUSTC_HASH.length,
+      "latin1",
+    );
+    expect(readRustBinaryImage(bytes).rustc_commit?.hashes).toEqual(hashes);
+  },
+);
+
 it("reads a Mach-O __DATA,.dep-v0 section", () => {
   const image = readRustBinaryImage(createRustImage({ format: "macho" }));
   expect(image).toMatchObject({
@@ -324,16 +341,23 @@ it("reads a rustc path from a read-only ELF section whose name exceeds 64 bytes"
   });
 });
 
-it("refuses read-only data with more distinct rustc paths than it retains", () => {
+it("retains dependency facts when compiler paths exceed the selected prefix", () => {
   const bytes = createRustHashOverflowImage();
-  expect(() => readRustBinaryImage(bytes)).toThrow(
-    expect.objectContaining({
-      constraint: {
-        resource: "capacity",
-        reported_limits: { maximum_rustc_hashes: 64 },
-      },
-    }),
-  );
+  const partial = readRustBinaryImage(bytes);
+  expect(partial.auditable_metadata?.packages.map(({ name }) => name)).toEqual([
+    "itoa",
+    "sample",
+  ]);
+  expect(partial.rustc_commit?.hashes).toHaveLength(64);
+  expect(partial.rustc_commit?.coverage).toEqual({
+    status: "partial",
+    reason: "max_rustc_hashes",
+    effective_limit: 64,
+  });
+  const recovered = readRustBinaryImage(bytes, 65);
+  expect(recovered.rustc_commit?.hashes).toHaveLength(65);
+  expect(recovered.rustc_commit).not.toHaveProperty("coverage");
+  expect(recovered.auditable_metadata).toEqual(partial.auditable_metadata);
 });
 
 it.each([

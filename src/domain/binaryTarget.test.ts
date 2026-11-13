@@ -19,6 +19,7 @@ describe("executable header parsing", () => {
     });
   });
   it.each([
+    // x32 uses ELF32 with the x86-64 machine identity.
     [elf(1, 1, 62), "elf", "x86_64"],
     [elf(2, 2, 183), "elf", "arm64"],
     [elf(1, 1, 164), "elf", "hexagon"],
@@ -30,13 +31,6 @@ describe("executable header parsing", () => {
   ] as const)("parses metadata for %s", (bytes, format, architecture) => {
     const result = parseExecutableHeader(bytes, "arm64");
     expect(result.ok && result.value).toMatchObject({ format, architecture });
-  });
-
-  it("retains ELF32 x86-64 identity for the x32 ABI", () => {
-    expect(parseExecutableHeader(elf(1, 1, 62), "x64")).toMatchObject({
-      ok: true,
-      value: { format: "elf", architecture: "x86_64" },
-    });
   });
 
   it("distinguishes native PE applications, DLLs, and managed assemblies", () => {
@@ -193,6 +187,99 @@ describe("FAT Mach-O slice selection", () => {
     expect(
       parseExecutableHeader(fat([0x0100000c, 0x0100000c, 0x01000007]), "arm"),
     ).toMatchObject({ value: { architecture: "x86_64" } });
+  });
+
+  const withSubtype = (bytes: Buffer, index: number, subtype: number) => {
+    const entry = 8 + index * 20;
+    bytes.writeUInt32BE(subtype, entry + 4);
+    bytes.writeUInt32BE(subtype, bytes.readUInt32BE(entry + 8) + 8);
+    return bytes;
+  };
+
+  const selectedIdentity = (bytes: Buffer) => {
+    const parsed = parseExecutableHeader(bytes, "arm64");
+    if (!parsed.ok || parsed.value.format !== "mach-o-universal")
+      throw new Error(parsed.ok ? parsed.value.format : parsed.error);
+    const header = parsed.value;
+    return header.universalSlices.find(
+      (slice) => slice.offset === header.universalSlice.offset,
+    );
+  };
+
+  it("selects generic arm64 when an earlier slice is arm64e", () => {
+    const bytes = withSubtype(fat([0x0100000c, 0x0100000c, 0x01000007]), 0, 2);
+    expect(selectedIdentity(bytes)).toMatchObject({
+      cpuType: 0x0100000c,
+      cpuSubtype: 0,
+    });
+    expect(parseExecutableHeader(bytes, "arm64")).toMatchObject({
+      value: {
+        format: "mach-o-universal",
+        architecture: "arm64",
+        availableArchitectures: ["arm64", "x86_64"],
+      },
+    });
+  });
+
+  it("selects the earliest arm64e capability variant", () => {
+    const bytes = withSubtype(
+      withSubtype(fat([0x0100000c, 0x0100000c]), 0, 0x81000002),
+      1,
+      0x80000002,
+    );
+    expect(selectedIdentity(bytes)).toMatchObject({
+      cpuType: 0x0100000c,
+      cpuSubtype: 0x81000002,
+    });
+  });
+
+  it("refuses a capability-variant set that repeats a subtype", () => {
+    const bytes = fat([0x0100000c, 0x0100000c, 0x0100000c]);
+    withSubtype(bytes, 0, 0x81000002);
+    withSubtype(bytes, 1, 0x81000002);
+    withSubtype(bytes, 2, 0x80000002);
+    expect(parseExecutableHeader(bytes, "arm64")).toEqual({
+      ok: false,
+      error: "FAT binary declares several arm64 slices; no slice was selected",
+    });
+  });
+
+  it("refuses identical host subtypes instead of a foreign family", () => {
+    expect(
+      parseExecutableHeader(fat([0x0100000c, 0x0100000c, 0x01000007]), "arm64"),
+    ).toEqual({
+      ok: false,
+      error: "FAT binary declares several arm64 slices; no slice was selected",
+    });
+  });
+
+  it("refuses a tie between unlisted arm64 subtypes", () => {
+    const bytes = withSubtype(
+      withSubtype(fat([0x0100000c, 0x0100000c]), 0, 42),
+      1,
+      43,
+    );
+    expect(parseExecutableHeader(bytes, "arm64")).toEqual({
+      ok: false,
+      error: "FAT binary declares several arm64 slices; no slice was selected",
+    });
+  });
+
+  it("prefers generic x86_64 over an earlier x86_64h slice", () => {
+    const bytes = withSubtype(
+      withSubtype(fat([0x01000007, 0x01000007]), 0, 8),
+      1,
+      3,
+    );
+    const parsed = parseExecutableHeader(bytes, "x64");
+    if (!parsed.ok || parsed.value.format !== "mach-o-universal")
+      throw new Error(parsed.ok ? parsed.value.format : parsed.error);
+    const header = parsed.value;
+    expect(
+      header.universalSlices.find(
+        (slice) => slice.offset === header.universalSlice.offset,
+      ),
+    ).toMatchObject({ cpuType: 0x01000007, cpuSubtype: 3 });
   });
 });
 

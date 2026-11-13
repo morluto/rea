@@ -527,7 +527,7 @@ export function* readPtxKernels(
   if (outerDepth !== 0) rejectGpu("Unbalanced PTX body");
 }
 
-export interface PtxTargetFacts {
+interface PtxTargetFacts {
   readonly recognized: boolean;
   readonly target: string | null;
   readonly limitation: string | null;

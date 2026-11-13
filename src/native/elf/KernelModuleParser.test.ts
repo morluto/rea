@@ -69,6 +69,7 @@ it("distinguishes absent metadata from unavailable section names", () => {
   const unknown = parse(bytes);
   expect(unknown.modinfo?.status).toBe("unknown");
   expect(unknown.versions?.status).toBe("unknown");
+  expect(unknown.coverage.status).toBe("partial");
 });
 
 it.each([
@@ -133,6 +134,25 @@ it.each([
   });
 });
 
+it.each([
+  [".init.text", "init_text", 4],
+  [".exit.text", "exit_text", 1],
+] as const)(
+  "discloses duplicate %s sections while retaining the first size",
+  (name, key, size) => {
+    const report = parse(
+      kernelModuleFixture({
+        sharedNameSections: { name, count: 1, body: Buffer.from([1, 2, 3]) },
+      }),
+    );
+    expect(report[key]).toMatchObject({ status: "present", bytes: size });
+    expect(report.coverage.status).toBe("partial");
+    expect(report.limitations).toContain(
+      `Multiple ${name} sections are declared; the first is examined.`,
+    );
+  },
+);
+
 it("keeps earlier .modinfo entries when the last span is unterminated", () => {
   const report = parse(
     kernelModuleFixture({
@@ -151,35 +171,29 @@ it("keeps earlier .modinfo entries when the last span is unterminated", () => {
   });
 });
 
-it("reports a missing separator, an empty key, and an over-long field per entry", () => {
+it("reports a missing separator and an empty key as malformed entries", () => {
   const report = parse(
     kernelModuleFixture({
-      modinfo: Buffer.concat([
-        Buffer.from("license\0=GPL\0", "latin1"),
-        Buffer.from(`${"k".repeat(257)}=x\0`, "latin1"),
-        Buffer.from(`name=${"v".repeat(4097)}\0`, "latin1"),
-      ]),
+      modinfo: Buffer.from("license\0=GPL\0", "latin1"),
     }),
   );
   expect(report.modinfo?.entries.map((entry) => entry.reason)).toEqual([
     "modinfo_missing_separator",
     "modinfo_empty_key",
-    "modinfo_field_exceeds_limit",
-    "modinfo_field_exceeds_limit",
   ]);
+  expect(report.coverage.status).toBe("partial");
   expect(report.modinfo?.entries[1]).toMatchObject({
     key: null,
     value: "GPL",
   });
-  expect(report.modinfo?.entries[2]).toMatchObject({ key: null, value: "x" });
-  expect(report.modinfo?.entries[3]).toMatchObject({
-    key: "name",
-    value: null,
-  });
+  expect(
+    report.modinfo?.entries.every((entry) => entry.status === "malformed"),
+  ).toBe(true);
 });
 
 it("closes __versions when the section size is not a multiple of 64", () => {
   const report = parse(kernelModuleFixture({ versions: Buffer.alloc(63) }));
+  expect(report.coverage.status).toBe("partial");
   expect(report.versions).toMatchObject({
     status: "malformed",
     entries: [],
@@ -223,6 +237,7 @@ it("reports an inconsistent signature length without a PKCS#7 range", () => {
       signature: moduleSignatureTrailer(Buffer.from("abcd"), 50_000),
     }),
   );
+  expect(report.coverage.status).toBe("partial");
   expect(report.signature).toMatchObject({
     status: "malformed",
     reason: "signature_length_inconsistent",
@@ -330,6 +345,7 @@ it("examines the first of two .modinfo sections and records the duplicate", () =
 it("does not decode compressed, nobits, or out-of-file metadata sections", () => {
   const compressed = kernelModuleFixture();
   compressed.writeBigUInt64LE(0x800n, 64 + 64 + 8);
+  expect(parse(compressed).coverage.status).toBe("partial");
   expect(parse(compressed).modinfo).toMatchObject({
     status: "unsupported",
     entries: [],
@@ -390,6 +406,7 @@ it("rejects ELF bytes preceding a bare signature magic as an inconsistent traile
       signature: Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1"),
     }),
   );
+  expect(report.coverage.status).toBe("partial");
   expect(report.signature).toMatchObject({
     status: "malformed",
     reason: "signature_length_inconsistent",

@@ -44,6 +44,14 @@ export type RecordedResponseDeclaration = ReturnType<
   typeof readRecordedResponseDeclaration
 >;
 
+/** HAR's zero status sentinel and nonnumeric declarations do not prove a response status. */
+export const recordedResponseStatus = (
+  declaration: RecordedResponseDeclaration,
+): number | null => {
+  const status = declaration?.status;
+  return typeof status === "number" && status !== 0 ? status : null;
+};
+
 /** Strict, and keeping a leading byte-order mark, so callers see the recorded text unchanged. */
 const strictUtf8 = (): TextDecoder =>
   new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -83,6 +91,28 @@ export const readRecordedResponseBody = (
 ): RecordedResponseBody => {
   const content = declaration?.content;
   if (content == null) return { bodyText: null };
+  const bodyCoordinates = [
+    "/response/content/text",
+    "/response/content/encoding",
+  ];
+  const within = (pointer: string, ancestor: string): boolean =>
+    pointer.startsWith(ancestor) &&
+    (pointer.length === ancestor.length || pointer[ancestor.length] === "/");
+  // Explicit value exclusions also govern imported retained facts. Keep their
+  // source text in complete Evidence, but never promote it into replay/state.
+  if (
+    record.redactions.some(
+      (redaction) =>
+        !("scope" in redaction) &&
+        bodyCoordinates.some((pointer) => within(pointer, redaction.pointer)),
+    ) ||
+    record.binary_fields.some(
+      (field) =>
+        field.state === "redacted" &&
+        bodyCoordinates.some((pointer) => within(pointer, field.pointer)),
+    )
+  )
+    return { bodyText: null };
   const { text, encoding } = content;
   if (typeof text !== "string") return { bodyText: null };
   if (encoding === undefined) {

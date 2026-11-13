@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
   cdpCommandTimeoutUnrelatedControl,
+  cdpDiscoveryTimeoutRecovery,
   noRuntimeOverrideSentence,
 } from "../domain/browserDeadline.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -32,7 +33,7 @@ const endpointVersionSchema = z.object({
   webSocketDebuggerUrl: z.string().min(1),
 });
 
-/** Per-response bounds for loopback CDP discovery documents. There is no runtime override. */
+/** Default per-response bounds for loopback CDP discovery documents. The byte budget has no runtime override. */
 const CDP_DISCOVERY_RESPONSE_LIMITS = {
   bytes: 8 * 1024 * 1024,
   timeoutMs: CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
@@ -48,17 +49,15 @@ const discoveryTimeout = (
   timeoutMs: number,
   phase: "response" | "browser-socket",
 ): BrowserObservationError => {
-  const subject =
-    phase === "response"
-      ? `CDP discovery response exceeded its ${String(timeoutMs)} ms deadline.`
-      : `CDP browser-socket discovery exceeded its ${String(timeoutMs)} ms deadline.`;
-  const fixed = noRuntimeOverrideSentence(
-    `${discoveryBudget(phase)} and the ${String(timeoutMs)} ms discovery deadline stay fixed.`,
-    cdpCommandTimeoutUnrelatedControl(operation),
+  const recovery = cdpDiscoveryTimeoutRecovery(
+    operation,
+    timeoutMs,
+    phase,
+    discoveryBudget(phase),
   );
   return new BrowserObservationError(operation, "timeout", {
-    detail: `${subject} ${fixed}`,
-    remediationAction: fixed,
+    detail: recovery.userMessage,
+    remediationAction: recovery.remediationAction,
   });
 };
 
@@ -116,16 +115,23 @@ export const discoverCdpEndpoint = async (
   endpoint: string,
   operation: BrowserObservationOperation,
   signal?: AbortSignal,
+  timeoutMs: number = CDP_DISCOVERY_RESPONSE_LIMITS.timeoutMs,
 ): Promise<CdpEndpointDiscovery> => {
+  const limits: CdpDiscoveryResponseLimits = {
+    bytes: CDP_DISCOVERY_RESPONSE_LIMITS.bytes,
+    timeoutMs,
+  };
   const versionInput = await readCdpJson(
     new URL("/json/version", endpoint),
     operation,
     signal,
+    limits,
   );
   const targetsInput = await readCdpJson(
     new URL("/json/list", endpoint),
     operation,
     signal,
+    limits,
   );
   const version = parseCdpEndpointValue(
     endpointVersionSchema,

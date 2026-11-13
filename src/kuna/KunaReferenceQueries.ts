@@ -1,8 +1,5 @@
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisResourceConstraintError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { FunctionDossier } from "../domain/native/functionDossier.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
@@ -95,17 +92,12 @@ export class KunaReferenceQueries {
     if (this.#graphFailure !== undefined) return err(this.#graphFailure);
     if (this.#graph === undefined) {
       if (this.#pendingGraph?.signal.aborted === true) {
-        const retired = await this.work.wait(
+        const retired = await this.work.retire(
           this.#pendingGraph,
           signal,
           operation,
         );
-        if (!retired.ok && !(retired.error instanceof AnalysisCancelledError))
-          return retired;
-        if (signal?.aborted === true)
-          return err(
-            new AnalysisCancelledError(operation, { cause: signal?.reason }),
-          );
+        if (!retired.ok) return retired;
         return this.#loadGraph(installation, operation, signal);
       }
       if (this.#pendingGraph === undefined) {
@@ -243,13 +235,8 @@ export class KunaReferenceQueries {
     }
     let pending = this.#pendingXrefs.get(address);
     if (pending?.signal.aborted === true) {
-      const retired = await this.work.wait(pending, signal, "xrefs");
-      if (!retired.ok && !(retired.error instanceof AnalysisCancelledError))
-        return retired;
-      if (signal?.aborted === true)
-        return err(
-          new AnalysisCancelledError("xrefs", { cause: signal?.reason }),
-        );
+      const retired = await this.work.retire(pending, signal, "xrefs");
+      if (!retired.ok) return retired;
       return this.incoming(installation, address, signal);
     }
     if (pending === undefined) {

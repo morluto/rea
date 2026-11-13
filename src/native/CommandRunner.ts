@@ -1,3 +1,5 @@
+import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { processInspectionFailure } from "../providers/OwnedCommandCleanup.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -55,9 +57,7 @@ export class NativeCommandFailure extends Error {
   readonly cleanupFailures: readonly NativeCommandCleanupFailure[];
   readonly cleanupMarker: ProviderCleanupError | undefined;
   readonly detail: string | null;
-  readonly preparationFailure:
-    | DarwinProcessOwnershipInspectionError
-    | undefined;
+  readonly preparationFailure: ProcessInspectionFailure | undefined;
 
   constructor(
     readonly tool: string,
@@ -83,18 +83,15 @@ export class NativeCommandFailure extends Error {
     this.cleanupFailures = options?.cleanupFailures ?? [];
     this.cleanupMarker = options?.cleanupMarker;
     this.preparationFailure =
-      options?.cause instanceof DarwinProcessOwnershipInspectionError
-        ? options.cause
-        : options?.cause instanceof NativeCommandFailure ||
-            options?.cause instanceof OwnedCommandFailure
-          ? options.cause.preparationFailure
-          : undefined;
+      options?.cause instanceof NativeCommandFailure
+        ? options.cause.preparationFailure
+        : processInspectionFailure(options?.cause);
     this.detail = options?.detail ?? this.preparationFailure?.message ?? null;
   }
 }
 
 /** Named cleanup ownership carried alongside the ordinary error cause. */
-export interface NativeCommandFailureOptions extends ErrorOptions {
+interface NativeCommandFailureOptions extends ErrorOptions {
   /** Exact opaque reason recorded by the cancellation-owning boundary. */
   readonly cancellation?: { readonly reason: unknown };
   /** Typed owner retained when command process cleanup was incomplete. */
@@ -116,7 +113,7 @@ export interface NativeCommandCleanupFailure {
 }
 
 /** Partial output and lifecycle details retained when a native command fails. */
-export interface NativeCommandFailureCapture {
+interface NativeCommandFailureCapture {
   readonly stdout: string;
   readonly stderr: string;
   readonly stdoutBytes: number;
@@ -150,7 +147,7 @@ export type NativeCommandLauncher = (
 ) => Promise<SpawnedOwnedProviderProcess>;
 
 /** Resolve one native tool's selected invocation and prelaunch file identity. */
-export type NativeToolResolver = (
+type NativeToolResolver = (
   tool: string,
   signal?: AbortSignal,
   launcher?: NativeCommandLauncher,

@@ -7,9 +7,9 @@ import {
   staticObjectOwnMethodReader,
   staticObjectProperty,
   staticObjectPropertyReader,
+  staticObjectCopyPropertyReader,
   staticObjectPropertyNames,
 } from "./javascriptAstValues.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 it("keeps string spread indices separate from named descriptor fields", () => {
   for (const text of ["", "x", "😀", "x".repeat(1_000_000)]) {
@@ -276,30 +276,47 @@ it("keeps fallback and unresolved conditional spreads unknown", () => {
   }
 });
 
-it("bounds nested conditional spreads by expression depth", () => {
+it("reads nested conditional spreads beyond the former evaluator depth cap", () => {
   const preload = t.objectProperty(
     t.identifier("preload"),
     t.stringLiteral("./preload.js"),
   );
-  const nested = (levels: number): t.Expression => {
-    let argument: t.Expression = t.objectExpression([
+  const negation = () => t.unaryExpression("!", t.identifier("flag"));
+  const frame = () =>
+    t.objectExpression([
       t.objectProperty(t.identifier("frame"), t.booleanLiteral(false)),
     ]);
-    for (let level = 0; level < levels; level++)
-      argument = t.logicalExpression(
-        "&&",
-        t.unaryExpression("!", t.identifier("flag")),
-        argument,
-      );
+  const wrapped = (
+    wrap: (inner: t.Expression) => t.Expression,
+    levels: number,
+  ): t.Expression => {
+    let argument: t.Expression = frame();
+    for (let level = 0; level < levels; level++) argument = wrap(argument);
     return argument;
   };
-  const read = (levels: number) =>
-    staticObjectProperty(
-      t.objectExpression([preload, t.spreadElement(nested(levels))]),
-      "preload",
-    ).status;
-  expect(read(SEMANTIC_EXPRESSION_DEPTH_LIMIT - 1)).toBe("explicit");
-  expect(read(SEMANTIC_EXPRESSION_DEPTH_LIMIT)).toBe("dynamic");
+  // A left-deep chain nests one level per operand; a recursive reader
+  // overflows the stack at this length.
+  let chain: t.Expression = negation();
+  for (let operand = 0; operand < 20_000; operand++)
+    chain = t.logicalExpression("&&", chain, negation());
+  for (const argument of [
+    wrapped((inner) => t.logicalExpression("&&", negation(), inner), 1_024),
+    wrapped(
+      (inner) => t.conditionalExpression(negation(), inner, t.nullLiteral()),
+      1_024,
+    ),
+    t.logicalExpression("&&", chain, frame()),
+  ]) {
+    const object = t.objectExpression([preload, t.spreadElement(argument)]);
+    expect(staticObjectProperty(object, "preload").status).toBe("explicit");
+    expect(staticObjectProperty(object, "frame")).toEqual({
+      status: "dynamic",
+    });
+    expect(staticObjectPropertyNames(object)).toEqual({
+      status: "partial",
+      names: ["preload"],
+    });
+  }
 });
 
 it("limits unary-plus keys to transparent numeric literals", () => {
@@ -317,17 +334,17 @@ it("limits unary-plus keys to transparent numeric literals", () => {
     ).toBeNull();
 });
 
-it("bounds nested inline object spreads without losing a shallow final property", () => {
+it("reads nested inline object spreads beyond the former evaluator depth cap", () => {
   let object = t.objectExpression([
     t.objectProperty(t.identifier("stdio"), t.stringLiteral("inherit")),
   ]);
-  for (let depth = 0; depth < SEMANTIC_EXPRESSION_DEPTH_LIMIT; depth++)
+  for (let depth = 0; depth < 1_024; depth++)
     object = t.objectExpression([t.spreadElement(object)]);
   expect(staticObjectProperty(object, "stdio").status).toBe("explicit");
   expect(
     staticObjectProperty(t.objectExpression([t.spreadElement(object)]), "stdio")
       .status,
-  ).toBe("dynamic");
+  ).toBe("explicit");
 });
 
 it("collects complete own-key sets through bounded literal spreads", () => {
@@ -394,17 +411,17 @@ it("retains known keys alongside unresolved object membership", () => {
   ).toEqual({ status: "partial", names: ["direct"] });
 });
 
-it("does not claim a complete key set after exceeding spread depth", () => {
+it("keeps complete key sets across deeply nested finite inline spreads", () => {
   let object = t.objectExpression([
     t.objectProperty(t.identifier("query"), t.objectExpression([])),
   ]);
-  for (let depth = 0; depth < SEMANTIC_EXPRESSION_DEPTH_LIMIT; depth++)
+  for (let depth = 0; depth < 1_024; depth++)
     object = t.objectExpression([t.spreadElement(object)]);
   expect(staticObjectPropertyNames(object).status).toBe("complete");
   expect(
     staticObjectPropertyNames(t.objectExpression([t.spreadElement(object)]))
       .status,
-  ).toBe("partial");
+  ).toBe("complete");
 });
 
 it("enumerates a wide inline spread without a variadic call overflow", () => {
@@ -596,4 +613,69 @@ it("keeps primitive unary results propertyless and typeof results index-only", (
     value: value.value,
   });
   expect(staticObjectProperty(object, "0")).toEqual({ status: "dynamic" });
+});
+
+it("keeps enumerable-copy facts separate from inherited lookup", () => {
+  const inherited = t.objectExpression([
+    t.objectProperty(
+      t.identifier("__proto__"),
+      t.objectExpression([
+        t.objectProperty(
+          t.identifier("minVersion"),
+          t.stringLiteral("TLSv1.2"),
+        ),
+      ]),
+    ),
+  ]);
+  expect(staticObjectPropertyReader(inherited)("minVersion").status).toBe(
+    "dynamic",
+  );
+  expect(staticObjectCopyPropertyReader(inherited)("minVersion").status).toBe(
+    "missing",
+  );
+  const value = t.objectExpression([]);
+  const copied = t.objectExpression([
+    t.objectProperty(t.stringLiteral("__proto__"), value, true),
+  ]);
+  expect(staticObjectCopyPropertyReader(copied)("__proto__")).toMatchObject({
+    status: "explicit",
+    value,
+  });
+});
+it("ignores null and propertyless copy sources without erasing indexed strings", () => {
+  for (const source of [
+    t.nullLiteral(),
+    t.numericLiteral(1),
+    t.arrowFunctionExpression([], t.numericLiteral(1)),
+  ])
+    expect(staticObjectCopyPropertyReader(source)("minVersion").status).toBe(
+      "missing",
+    );
+  const read = staticObjectCopyPropertyReader(t.stringLiteral("abc"));
+  expect(read("0").status).toBe("dynamic");
+  expect(read("minVersion").status).toBe("missing");
+});
+
+it("bounds conditional copy sources by the keys their branches may copy", () => {
+  const flag = t.identifier("flag");
+  const comparison = t.binaryExpression("===", flag, t.stringLiteral("darwin"));
+  const version = () =>
+    t.objectExpression([
+      t.objectProperty(t.identifier("minVersion"), t.stringLiteral("TLSv1.2")),
+    ]);
+  for (const source of [
+    t.conditionalExpression(flag, version(), t.nullLiteral()),
+    t.logicalExpression("&&", comparison, version()),
+  ]) {
+    const read = staticObjectCopyPropertyReader(source);
+    // A possibly copied key is unresolved; every other key is not copied.
+    expect(read("minVersion")).toEqual({ status: "dynamic" });
+    expect(read("maxVersion")).toEqual({ status: "missing" });
+  }
+  // An unresolved `&&` operand is copied itself, so no key is bounded.
+  const unresolved = staticObjectCopyPropertyReader(
+    t.logicalExpression("&&", flag, version()),
+  );
+  expect(unresolved("minVersion")).toEqual({ status: "dynamic" });
+  expect(unresolved("maxVersion")).toEqual({ status: "dynamic" });
 });

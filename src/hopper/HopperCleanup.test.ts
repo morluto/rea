@@ -73,6 +73,59 @@ const externalApplicationResources = (): HopperOwnedResources => ({
   },
 });
 
+it.each(["throw", "reject"] as const)(
+  "releases owned runtime and lease when cleanup progress observers %s",
+  async (failureMode) => {
+    const parent = await createTestTempDirectory(
+      "rea-hopper-progress-cleanup-",
+    );
+    const runtimeRoot = await PrivateRuntimeRoot.create({ parent });
+    const backingPath = join(runtimeRoot.path, "image.macho");
+    await writeFile(backingPath, "owned backing bytes");
+    const resources = externalApplicationResources();
+    const releaseLease = vi.fn(async () => undefined);
+    resources.externalApplication = undefined;
+    resources.runtimeRoot = runtimeRoot;
+    resources.launch = {
+      ...resources.launch!,
+      preparedImagePath: backingPath,
+      releaseLease,
+    };
+    const request = vi.fn(async () =>
+      ok({ shutdown: true, analysis_stopped: true, document_closed: true }),
+    );
+    try {
+      const result = await cleanupHopperSession({
+        socket: new Socket(),
+        resources,
+        activeRequest: null,
+        retainDocument: false,
+        progress: {
+          report: () => {
+            const cause = new Error("observer failed");
+            if (failureMode === "throw") throw cause;
+            return Promise.reject(cause);
+          },
+        },
+        logger: loggerHarness().logger,
+        onDiagnostic: undefined,
+        request,
+        releaseTransport: () => undefined,
+      });
+      expect(result).toEqual(ok(null));
+      expect(request).toHaveBeenCalledExactlyOnceWith("shutdown_document");
+      await expect(access(backingPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(releaseLease).toHaveBeenCalledOnce();
+      expect(resources.runtimeRoot).toBeUndefined();
+      expect(resources.launch).toBeUndefined();
+    } finally {
+      await runtimeRoot.close();
+    }
+  },
+);
+
 describe("external Hopper process exit confirmation", () => {
   it("confirms only the captured GUI process exit and releases its transport", async () => {
     const resources = externalApplicationResources();

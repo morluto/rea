@@ -52,7 +52,7 @@ describe.each(["attached", "headless"] as const)(
         expect(operations).toContain("resolve_containing_procedure");
     });
     it.each(operations)(
-      "declares %s UI effects matching the upstream tools it reaches",
+      "serializes %s against its named advertised output contract",
       async (operation) => {
         const { root, target } = await createIdaTarget();
         roots.push(root);
@@ -70,49 +70,17 @@ describe.each(["attached", "headless"] as const)(
           producer,
         );
         try {
-          const execution = await client.execute(
-            operation,
-            parametersFor(operation),
-          );
-          if (mode === "headless" && operation === "procedure_callers")
-            expect(execution).toMatchObject({
-              ok: false,
-              error: { _tag: "AnalysisCapabilityUnavailableError" },
-            });
-          else if (!execution.ok) throw execution.error;
-        } finally {
-          expect((await client.close()).ok).toBe(true);
-        }
-        const descriptor = idaCapabilities(
-          IDA_COMPATIBILITY_PROFILES[mode === "attached" ? "legacy" : "modern"],
-          true,
-        ).find((capability) => capability.operation === operation);
-        expect(descriptor?.effects.mayShowUi).toBe(
-          producer.calls.some(({ name }) => GUI_NAVIGATING_TOOLS.has(name)),
-        );
-      },
-    );
-
-    it.each(operations)(
-      "serializes %s against its named advertised output contract",
-      async (operation) => {
-        const { root, target } = await createIdaTarget();
-        roots.push(root);
-        const client = new IdaSessionClient(
-          {
-            command: "fixture",
-            args: [],
-            env: {},
-            mode,
-            workspaceRoot: root,
-            timeoutMs: 1000,
-          },
-          target,
-          new RecordingIdaMcp(target, mode),
-        );
-        try {
           const parameters = parametersFor(operation);
           const execution = await client.execute(operation, parameters);
+          const descriptor = idaCapabilities(
+            IDA_COMPATIBILITY_PROFILES[
+              mode === "attached" ? "legacy" : "modern"
+            ],
+            true,
+          ).find((capability) => capability.operation === operation);
+          expect(descriptor?.effects.mayShowUi).toBe(
+            producer.calls.some(({ name }) => GUI_NAVIGATING_TOOLS.has(name)),
+          );
           if (mode === "headless" && operation === "procedure_callers") {
             expect(execution.ok).toBe(false);
             if (!execution.ok)

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { PointerFixups } from "./AppleMachoFixups.js";
-import { parsePointerFixups } from "./AppleMachoFixups.js";
+import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
 import type { MachoLayout } from "./AppleMachoSelection.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 

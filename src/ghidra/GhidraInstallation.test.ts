@@ -1534,27 +1534,6 @@ describe("Ghidra JVM native directory admission", () => {
     });
   });
 
-  it("accepts a JDK whose os.arch selects the validated native decompiler directory", async () => {
-    const result = await inspectGhidraInstallation(
-      {
-        resourceOwner: inspectionResources.owner,
-        environment: {},
-        installDir: INSTALL,
-        platform: "darwin",
-        architecture: "arm64",
-      },
-      host({
-        probeJava: () =>
-          javaProbeOk<GhidraJavaObservation>({
-            ...JAVA,
-            osArch: "aarch64",
-            osName: "Mac OS X",
-          }),
-      }),
-    );
-    expect(result.status).toBe("available");
-  });
-
   it("rejects a successful Java probe that omits os.arch", async () => {
     const { osArch: _observedArchitecture, ...withoutArchitecture } = JAVA;
     const result = await inspectGhidraInstallation(

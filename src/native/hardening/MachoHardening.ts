@@ -1,5 +1,8 @@
 import { validateFatSliceIdentity } from "../../domain/apple/machoContainer.js";
-import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
+import {
+  machoArchitectureName,
+  machoKnownArm64Subtype,
+} from "../../domain/apple/machoCpuIdentity.js";
 import {
   MACHO_HEADER_FLAGS_OFFSET,
   readMachoLinkeditDataCommand,
@@ -340,7 +343,10 @@ const readCommandFacts = (
  * wrong width, is structural and fails the slice before any row exists.
  */
 const admitEncryption = (encrypted: MachoSliceEncryption): void => {
-  if (encrypted.status === "malformed" && encrypted.commands.length < 2)
+  if (
+    encrypted.status === "malformed" &&
+    encrypted.malformed_kind !== "duplicate-commands"
+  )
     malformed(
       encrypted.reason ?? "Mach-O encryption load command is malformed",
     );
@@ -386,7 +392,6 @@ const buildRows = (
       flagLocation,
     );
   };
-  const architecture = machoArchitectureName(header.cpuType, header.cpuSubtype);
   const pie =
     header.fileType === MH_DYLIB || header.fileType === MH_BUNDLE
       ? row(
@@ -435,7 +440,7 @@ const buildRows = (
           },
         ),
     encryptionRow(encrypted),
-    arm64Row(header.cpuType, architecture, ref.offset),
+    arm64Row(header.cpuType, header.cpuSubtype, ref.offset),
     stackRow(bytes, ref, header.wide, symtab),
     row(
       "hardened_runtime",
@@ -523,7 +528,7 @@ const encryptionRow = (encrypted: MachoSliceEncryption): BinaryHardeningRow => {
 
 const arm64Row = (
   cpuType: number,
-  architecture: string,
+  cpuSubtype: number,
   sliceOffset: number,
 ): BinaryHardeningRow => {
   const location = { offset: sliceOffset + 8, bytes: 4 };
@@ -533,6 +538,14 @@ const arm64Row = (
       "not_applicable",
       `CPU type 0x${cpuType.toString(16)} is not ARM64.`,
       location,
+    );
+  const architecture = machoKnownArm64Subtype(cpuSubtype);
+  if (architecture === undefined)
+    return row(
+      "arm64e",
+      "unknown",
+      `Unrecognized ARM64 CPU subtype 0x${(cpuSubtype >>> 0).toString(16)}; arm64e status is unknown.`,
+      { offset: sliceOffset + 8, bytes: 4 },
     );
   const enabled = architecture === "arm64e" || architecture === "arm64e.x1";
   return row(
@@ -585,10 +598,11 @@ const stackRow = (
     const entry = symbolAt + index * width;
     const nameOffset = bytes.readUInt32LE(entry);
     if (nameOffset === 0) continue;
-    // N_EXT with N_TYPE clear is an undefined external. A defined export of
-    // the same name, including libc itself, is not an import into this image.
+    // N_STAB records use a different type namespace. Only an ordinary N_EXT
+    // with N_TYPE clear is an undefined external; defined exports are not imports.
     const nType = bytes.readUInt8(entry + 4);
-    if ((nType & 0x0e) !== 0 || (nType & 0x01) === 0) continue;
+    if ((nType & 0xe0) !== 0 || (nType & 0x0e) !== 0 || (nType & 0x01) === 0)
+      continue;
     // A common definition shares those type bits but carries its size in
     // n_value, so only a zero n_value names an import.
     if (
