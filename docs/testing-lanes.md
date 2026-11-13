@@ -843,8 +843,7 @@ unset, and Vitest uses its own assignment. A later schedule that reuses
 qualification without uploading timings leaves the previous artifact in place.
 
 Each tier keeps its own history because stale weights from another tier, or
-from before a large test change, unbalance the shards; see the
-[shard scheduling measurements](verification/ci-shard-scheduling-2026-10-20.md).
+from before a large test change, unbalance the shards.
 CI assigns discovered files by historical duration rather than dividing only
 by file count. A file with no recorded duration, such as a newly added or
 renamed test, is weighted at the median recorded duration until a published

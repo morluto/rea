@@ -1080,9 +1080,7 @@ Fast built shards target under ten minutes of uncontended shard-job execution.
 That figure is the `test-shard` job. The job waits for classification and the
 build, and the portable-test merge runs after the slowest shard. Runner queue is
 separate and grows when more shard jobs compete for runners. The npm download
-cache stays the setup cache rather than a shared `node_modules` artifact. The
-[shard scheduling measurements](../verification/ci-shard-scheduling-2026-10-20.md)
-record how the eight-shard count and that setup choice were measured.
+cache stays the setup cache rather than a shared `node_modules` artifact.
 `process-boundary` stays serial because process-tree sampling shares the host.
 Hosted CI jobs use four workers; other hosts stay at two
 because they are shared with other checks. Full qualification keeps six covered
