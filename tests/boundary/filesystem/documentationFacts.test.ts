@@ -20,6 +20,7 @@ const README_FACT_FIXTURE_PATHS = [
   "docs/readme/README_ar.md",
   "website/locales/languages.json",
   "docs/getting-started/installation.md",
+  ".agents/skills/reverse-engineer-anything/references/connection-and-recovery.md",
   "AGENTS.md",
   ".github/pull_request_template.md",
 ] as const;
