@@ -179,7 +179,7 @@ describe("canonical product catalog drift", () => {
     ]);
   });
 
-  it("requires setup-client facts in the canonical installation guide", async () => {
+  it("requires setup-client facts in the installation guide and the skill's repair list", async () => {
     const catalog = await createProductCatalog(root);
     const drifted = {
       ...catalog,
@@ -198,6 +198,9 @@ describe("canonical product catalog drift", () => {
       "docs/getting-started/installation.md: missing Future Client",
     );
     expect(issues).not.toContain("README.md: missing Future Client");
+    expect(issues).toContain(
+      ".agents/skills/reverse-engineer-anything/references/connection-and-recovery.md: missing `future_client`",
+    );
   });
 
   it("fails check mode without rewriting a stale generated artifact", async () => {
