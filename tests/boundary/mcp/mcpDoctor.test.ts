@@ -332,7 +332,6 @@ describe("production MCP doctor", () => {
       if (cliParity)
         await assertCliCatalogIdentity(selectedEnvironment, identity);
     },
-    30_000,
   );
 });
 
@@ -384,7 +383,6 @@ describe("production MCP doctor family scopes", () => {
       await assertStatusCatalogIdentity(environment, identity);
       if (cliParity) await assertCliCatalogIdentity(environment, identity);
     },
-    30_000,
   );
 
   it("discovers an empty prompt inventory and explains a scope without session", async () => {
@@ -428,7 +426,7 @@ describe("production MCP doctor family scopes", () => {
     expect(result.diagnostics?.stderr).toEqual(
       expect.stringContaining("REA_MCP_TOOL_FAMILIES"),
     );
-  }, 30_000);
+  });
 });
 
 describe("production MCP doctor output", () => {
@@ -662,7 +660,7 @@ describe("production MCP doctor probe validation", () => {
         });
       }
     }
-  }, 30_000);
+  });
 });
 
 describe("production MCP doctor child lifecycle", () => {

@@ -68,5 +68,4 @@ itWithCaptureCapability(
       await harness.close();
     }
   },
-  30_000,
 );

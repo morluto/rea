@@ -689,7 +689,7 @@ it("runs one computer's calls in the order they arrive and another computer's be
     "reset",
     "screenshot behind the reset",
   ]);
-}, 30_000);
+});
 
 it("sends progress while an action waits for the call before it on its computer", async () => {
   const app = slowApp(14);
@@ -715,7 +715,7 @@ it("sends progress while an action waits for the call before it on its computer"
   expect(waited.isError, JSON.stringify(waited)).not.toBe(true);
   expect(progress.length).toBeGreaterThan(0);
   await reset;
-}, 30_000);
+});
 
 it("cancels a computer's call in progress on close and refuses the calls waiting behind it", async () => {
   const app = slowApp(600);

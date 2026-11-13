@@ -98,4 +98,4 @@ it("admits exact Amp command facts and rejects invalid commands before publicati
   } finally {
     await rm(home, { recursive: true, force: true });
   }
-}, 30_000);
+});

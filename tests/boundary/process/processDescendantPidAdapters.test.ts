@@ -163,5 +163,4 @@ itWithCaptureCapability.each([
       }),
     );
   },
-  30_000,
 );

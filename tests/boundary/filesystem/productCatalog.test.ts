@@ -129,7 +129,7 @@ describe("canonical CLI catalog", () => {
     const inventory = createCliInventory(createCli());
     expect(inventory.primary).toEqual([...CLI_COMMAND_NAMES].sort());
     expect(inventory.aliases).toEqual([]);
-  }, 30_000);
+  });
 
   it("describes every primary command argument and option", () => {
     expect(cliCommandDescriptionIssues(createCli())).toEqual([]);

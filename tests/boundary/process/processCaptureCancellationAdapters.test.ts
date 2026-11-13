@@ -237,7 +237,6 @@ itWithCaptureCapability(
       }
     }
   },
-  30_000,
 );
 
 itWithCaptureCapability(

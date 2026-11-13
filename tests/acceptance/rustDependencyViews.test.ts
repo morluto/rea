@@ -451,5 +451,4 @@ cliTest(
     }
     expect((await readFile(path)).length).toBeGreaterThan(0);
   },
-  30000,
 );

@@ -250,7 +250,6 @@ cliTest(
       details: { issues: [{ path: ["evidence_output"] }] },
     });
   },
-  30000,
 );
 
 cliTest(
@@ -280,7 +279,6 @@ cliTest(
     expect(parseMcpToolError(response).error).toMatchObject(expected);
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -307,7 +305,6 @@ cliTest(
     expect(infos[1]).toEqual(infos[0]);
     await client.ping();
   },
-  30000,
 );
 
 for (const bits of [32, 64] as const) {
@@ -357,7 +354,6 @@ for (const bits of [32, 64] as const) {
         expect(buildInfos[1]).toEqual(buildInfos[0]);
         await client.ping();
       },
-      30000,
     );
   }
 }
@@ -413,7 +409,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {

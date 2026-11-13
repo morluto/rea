@@ -262,7 +262,6 @@ processTest
   .skipIf(process.platform === "win32")
   .each(["interactive", "redirected"] as const)(
   "preserves selected configuration and closes the real PTY for %s setup",
-  { timeout: 30_000 },
   async (mode) => {
     const root = await createTestTempDirectory("rea-package-setup-success-");
     const scratch = join(root, "scratch");

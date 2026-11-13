@@ -228,7 +228,6 @@ itWithCaptureCapability(
       temporary_root: "removed",
     });
   },
-  30_000,
 );
 
 itWithCaptureCapability(

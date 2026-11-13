@@ -298,7 +298,6 @@ itWithCaptureCapability(
       },
     });
   },
-  30_000,
 );
 
 itWithCaptureCapability(
@@ -348,7 +347,6 @@ itWithCaptureCapability(
       },
     });
   },
-  30_000,
 );
 
 itWithCaptureCapability(
@@ -388,7 +386,6 @@ itWithCaptureCapability(
     ).toBeGreaterThanOrEqual(10);
     expect(updates.at(-1)?.details.owned_process_group).toBe("cleaned");
   },
-  30_000,
 );
 
 itWithCaptureCapability(
@@ -417,7 +414,6 @@ itWithCaptureCapability(
       },
     });
   },
-  30_000,
 );
 
 itWithCaptureCapability(
@@ -449,7 +445,6 @@ itWithCaptureCapability(
       },
     });
   },
-  30_000,
 );
 
 itWithCaptureCapability(
@@ -540,7 +535,6 @@ itWithCaptureCapability(
       code: 0,
     });
   },
-  30_000,
 );
 
 itWithCaptureCapability(
@@ -641,5 +635,4 @@ itWithCaptureCapability(
       /setInterval|CHILD/u,
     );
   },
-  30_000,
 );

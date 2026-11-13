@@ -451,7 +451,7 @@ describe("target-free MCP lifecycle", () => {
       path: canonicalTargetPath,
       sha256: z.object({ sha256: z.string() }).parse(second).sha256,
     });
-  }, 30_000);
+  });
 });
 
 describe("snapshot receipt after MCP cleanup", () => {

@@ -94,5 +94,4 @@ captureTest(
       reason: "exited",
     });
   },
-  30_000,
 );

@@ -176,7 +176,6 @@ const macosIt = it.skipIf(process.platform !== "darwin");
 
 macosIt(
   "completes at the permission boundary when the helper refuses changed target bytes",
-  { timeout: 30_000 },
   async () => {
     const result = await runVerifier(answersChangedBytes, [
       "--allow-permission-denial",
@@ -195,7 +194,6 @@ macosIt(
 
 macosIt(
   "fails when the helper does not refuse changed target bytes",
-  { timeout: 30_000 },
   async () => {
     const result = await runVerifier(denied, ["--allow-permission-denial"]);
     expect(result.code).toBe(1);
@@ -210,7 +208,6 @@ macosIt(
 
 macosIt(
   "keeps a permission denial a failure in the positive lane",
-  { timeout: 30_000 },
   async () => {
     const result = await runVerifier(answersChangedBytes, []);
     expect(result.code).toBe(1);
