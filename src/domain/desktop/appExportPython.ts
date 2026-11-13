@@ -31,7 +31,6 @@ import math
 import os
 import re
 import sqlite3
-import stat
 import struct
 import subprocess
 import sys
@@ -181,26 +180,38 @@ def _ensure_state_aliases(home: Path) -> None:
 def _dconf(arguments: list, environment: dict, cwd: Path | None = None) -> str:
     child_environment = {**os.environ, **environment}
     refusal = None
+    missing = None
     for directory in os.get_exec_path(child_environment):
         command = os.path.join(directory, "dconf")
         if not os.path.isabs(command):
             command = os.path.join(os.getcwd(), command)
         try:
-            if not stat.S_ISREG(os.stat(command).st_mode) or not os.access(command, os.X_OK):
-                raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), command)
-        except (FileNotFoundError, NotADirectoryError):
-            continue
+            child = subprocess.Popen([command, *arguments], env=child_environment,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd)
         except OSError as error:
-            if refusal is None:
+            # Match Python's executable search: retain the first non-missing
+            # spawn error, but never retry a child that actually started.
+            if error.errno in (errno.ENOENT, errno.ENOTDIR):
+                missing = error
+            elif refusal is None:
                 refusal = error
             continue
         break
     else:
         if refusal is not None:
             raise refusal
+        if missing is not None:
+            raise missing
         raise FileNotFoundError(errno.ENOENT, "dconf is not installed (dconf-cli)", "dconf")
-    return subprocess.run([command, *arguments], env=child_environment, capture_output=True, text=True,
-                          check=True, cwd=cwd).stdout
+    with child:
+        try:
+            stdout, stderr = child.communicate()
+        except BaseException:
+            child.kill()
+            raise
+        result = subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
+        result.check_returncode()
+        return result.stdout
 
 
 def _load_dconf(home: Path) -> None:

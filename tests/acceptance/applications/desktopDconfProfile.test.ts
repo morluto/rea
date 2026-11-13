@@ -170,7 +170,15 @@ for (const name of ["ordinary", "hash#directory", "line\nbreak"]) {
 }
 
 // A command-lookup boundary, independent of the optional system dconf provider.
-for (const searchPath of ["tools", "", "denied:tools", "denied"]) {
+for (const searchPath of [
+  "tools",
+  "",
+  "denied:tools",
+  "denied",
+  "broken:tools",
+  "broken:denied",
+  "failed:tools",
+]) {
   cliTest.skipIf(process.platform === "win32" || !hasPython)(
     `capture and exported helper preserve ${JSON.stringify(searchPath)} PATH from a colon-containing cwd`,
     async ({ cli }) => {
@@ -178,11 +186,15 @@ for (const searchPath of ["tools", "", "denied:tools", "denied"]) {
       const cwd = join(root, "launch:split");
       const selected = searchPath === "" ? cwd : join(cwd, "tools");
       const denied = join(cwd, "denied");
+      const broken = join(cwd, "broken");
+      const failed = join(cwd, "failed");
       const foreign = join(root, "launch");
       const staged = join(root, "staged");
       await Promise.all([
         mkdir(selected, { recursive: true }),
         mkdir(denied, { recursive: true }),
+        mkdir(broken, { recursive: true }),
+        mkdir(failed, { recursive: true }),
         mkdir(foreign),
         mkdir(staged),
       ]);
@@ -202,6 +214,25 @@ printf '[org/notes]\\nselected=true\\n'
       await writeFile(join(denied, "dconf"), "#!/bin/sh\nexit 18\n", {
         mode: 0o600,
       });
+      await writeFile(
+        join(broken, "dconf"),
+        `#!${join(root, "removed-interpreter")}\n`,
+        { mode: 0o755 },
+      );
+      await writeFile(
+        join(failed, "dconf"),
+        "#!/bin/sh\nprintf 'selected reader failed' >&2\nexit 17\n",
+        { mode: 0o755 },
+      );
+      if (searchPath === "broken:tools") {
+        const control = await execFileOutput("dconf", ["dump", "/"], {
+          cwd,
+          env: { PATH: searchPath },
+          timeout: 10_000,
+          maxBuffer: 64 * 1024,
+        });
+        expect(control.stdout).toBe("[org/notes]\nselected=true\n");
+      }
       const path = `${HOME}/.config/dconf/user`;
       const bytes = Buffer.from("GVariant");
       const base = capture();
@@ -228,13 +259,17 @@ printf '[org/notes]\\nselected=true\\n'
       const state = desktopApplicationStateSchema.parse(
         parseEvidence(result.json).normalized_result,
       );
-      if (searchPath === "denied") {
+      if (searchPath.endsWith("denied")) {
         expect
           .soft(state.paths[0]?.versions[0]?.view_error)
           .toContain("EACCES");
         expect
           .soft(state.paths[0]?.versions[0]?.view_error)
           .toContain(join(denied, "dconf"));
+      } else if (searchPath === "failed:tools") {
+        expect
+          .soft(state.paths[0]?.versions[0]?.view_error)
+          .toContain("selected reader failed");
       } else
         expect.soft(state.paths).toEqual([
           expect.objectContaining({
@@ -266,13 +301,20 @@ printf '[org/notes]\\nselected=true\\n'
         timeout: 10_000,
         maxBuffer: 64 * 1024,
       });
-      if (searchPath === "denied") {
+      if (searchPath.endsWith("denied")) {
         const failure = await pending.then(
           () => undefined,
           (cause: unknown) => execFileOutputFailure(cause),
         );
         expect(failure?.stderr).toContain("PermissionError");
         expect(failure?.stderr).toContain(join(denied, "dconf"));
+      } else if (searchPath === "failed:tools") {
+        const failure = await pending.then(
+          () => undefined,
+          (cause: unknown) => execFileOutputFailure(cause),
+        );
+        expect(failure?.stderr).toContain("CalledProcessError");
+        expect(failure?.stderr).toContain("exit status 17");
       } else {
         const exported = await pending;
         expect(exported.stderr).toBe("");
@@ -281,3 +323,53 @@ printf '[org/notes]\\nselected=true\\n'
     },
   );
 }
+
+it.skipIf(process.platform === "win32" || !hasPython)(
+  "generated dconf does not retry an EIO after starting and reaps its child",
+  async () => {
+    const root = await createTestTempDirectory("dconf-capture-io-");
+    const tools = join(root, "tools");
+    await mkdir(tools);
+    await writeFile(
+      join(tools, "dconf"),
+      `#!${python}\nimport time\ntime.sleep(60)\n`,
+      { mode: 0o755 },
+    );
+    const helper = join(root, "io.py");
+    await writeFile(
+      helper,
+      [
+        ...PYTHON_IMPORTS.split("\n").filter(
+          (line) => !line.includes("agentenv_protocol"),
+        ),
+        PYTHON_HELPERS,
+        "started = []",
+        'failure = OSError(errno.EIO, "controlled pipe read failure")',
+        "original_popen = subprocess.Popen",
+        "class ReadFailure(original_popen):",
+        "    def __init__(self, *args, **kwargs):",
+        "        super().__init__(*args, **kwargs)",
+        "        started.append(self)",
+        "    def communicate(self, *args, **kwargs):",
+        "        raise failure",
+        "subprocess.Popen = ReadFailure",
+        "try:",
+        '    _dconf(["dump", "/"], {})',
+        "except OSError as error:",
+        "    assert error is failure",
+        "else:",
+        '    raise AssertionError("read failure was hidden")',
+        "assert len(started) == 1",
+        "assert started[0].poll() is not None",
+        'print("read failure preserved; child reaped")',
+      ].join("\n"),
+    );
+    const result = await execFileOutput(python, ["-I", helper], {
+      env: { PATH: `${tools}:${tools}` },
+      timeout: 10_000,
+      maxBuffer: 64 * 1024,
+    });
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("read failure preserved; child reaped\n");
+  },
+);

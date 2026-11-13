@@ -9,7 +9,7 @@ import {
 
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { resolveProgram } from "./ProgramLookup.js";
+import { programCandidates } from "./ProgramLookup.js";
 
 const DCONF_NOT_INSTALLED =
   "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND";
@@ -53,41 +53,50 @@ export const dumpDconfDatabase = async (
     // Resolve before changing cwd; serializing absolute PATH entries would split
     // an original working directory containing the PATH delimiter.
     const startedIn = process.cwd();
-    let invocation: string;
-    if (command.includes("/") || command.includes(sep)) {
-      invocation = isAbsolute(command)
-        ? command
-        : `${startedIn}${sep}${command}`;
-    } else {
-      const found = await resolveProgram(
-        command,
-        { PATH: environment.PATH ?? "" },
-        startedIn,
-      );
+    const direct = command.includes("/") || command.includes(sep);
+    const candidates = direct
+      ? [
+          {
+            path: isAbsolute(command)
+              ? command
+              : `${startedIn}${sep}${command}`,
+          },
+        ]
+      : programCandidates(command, { PATH: environment.PATH ?? "" }, startedIn);
+    let refusal: unknown;
+    let missing: unknown;
+    for (const candidate of candidates) {
       assertArtifactReadActive(signal);
-      if (!found.ok) {
-        const failure = found.error;
-        return {
-          ok: false,
-          error:
-            failure.reason === "not_found"
-              ? DCONF_NOT_INSTALLED
-              : failure.reason === "not_file"
-                ? `dconf command is not a regular executable file: ${failure.path}`
-                : String(failure.cause),
-        };
+      try {
+        const { stdout } = await execFileOutput(candidate.path, ["dump", "/"], {
+          cwd: directory,
+          env: { PATH: environment.PATH ?? "", DCONF_PROFILE: profile },
+          timeout: DCONF_TIMEOUT_MS,
+          maxBuffer: DCONF_MAX_BUFFER,
+          ...(signal === undefined ? {} : { signal }),
+        });
+        return { ok: true, text: stdout };
+      } catch (cause: unknown) {
+        const failure = execFileOutputFailure(cause);
+        // Only POSIX PATH-search spawn failures permit another candidate.
+        // An actual child exit, cancellation or host capacity failure is final.
+        if (
+          !direct &&
+          failure?.spawnFailed === true &&
+          (failure.code === "ENOENT" ||
+            failure.code === "ENOTDIR" ||
+            failure.code === "EACCES")
+        ) {
+          if (failure.code === "EACCES") refusal ??= cause;
+          else missing = cause;
+          continue;
+        }
+        throw cause;
       }
-      invocation = found.value.path;
     }
-    assertArtifactReadActive(signal);
-    const { stdout } = await execFileOutput(invocation, ["dump", "/"], {
-      cwd: directory,
-      env: { PATH: environment.PATH ?? "", DCONF_PROFILE: profile },
-      timeout: DCONF_TIMEOUT_MS,
-      maxBuffer: DCONF_MAX_BUFFER,
-      ...(signal === undefined ? {} : { signal }),
-    });
-    return { ok: true, text: stdout };
+    if (refusal !== undefined) throw refusal;
+    if (missing !== undefined) throw missing;
+    return { ok: false, error: DCONF_NOT_INSTALLED };
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
     if (cause instanceof ExecFileOutputCancelledError)

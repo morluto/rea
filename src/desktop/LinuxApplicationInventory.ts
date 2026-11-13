@@ -431,15 +431,15 @@ export const inspectLinuxApplication = async (
     environment,
     workingDirectory,
   );
-  if (!found.ok)
+  if (found === undefined)
     return err({ reason: "executable_not_found", program: wrapper.program });
   // The PATH an env prefix sets travels with the launch; the host's own does not.
-  if (found.value.fromRelativeEntry && wrapper.environment.PATH === undefined)
+  if (found.fromRelativeEntry && wrapper.environment.PATH === undefined)
     return err({
       reason: "executable_on_relative_path",
       program: wrapper.program,
     });
-  const { path } = found.value;
+  const { path } = found;
   const resolved = await realpath(path).catch(() => null);
   const context: InventoryContext = {
     libraryPolicy: desktopLibraryPolicy(request.libraryPolicy),
