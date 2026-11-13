@@ -528,7 +528,11 @@ const parseBannerText = (
   rest = rest.slice(version.length);
   let builder: string | null = null;
   let compiler: string | null = null;
-  if (rest.startsWith(" (")) {
+  if (rest.startsWith(" ()")) {
+    // Linux banners can carry an empty first parenthesized group for a
+    // missing build-host field. Consume it like a present builder group.
+    rest = rest.slice(3);
+  } else if (rest.startsWith(" (")) {
     const close = rest.indexOf(")");
     if (close > 2) {
       builder = rest.slice(2, close);

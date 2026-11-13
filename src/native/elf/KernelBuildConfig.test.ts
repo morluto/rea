@@ -21,6 +21,7 @@ import {
   LONG_KERNEL_CONFIG_STRING,
   longStringKernelConfigFixture,
   nonConfigGzipFixture,
+  emptyBuilderKernelConfigFixture,
   plainIkcfgStringFixture,
   SAMPLE_KERNEL_BANNER,
   SAMPLE_KERNEL_CONFIG,
@@ -48,6 +49,17 @@ const parse = async (
       }),
     ),
   );
+
+it("does not bleed an empty builder group into the compiler field", async () => {
+  const report = await parse(emptyBuilderKernelConfigFixture());
+  expect(report.banner).toMatchObject({
+    status: "present",
+    text: "Linux version 6.1.0 () (gcc 12.2.0) #1 SMP",
+    version: "6.1.0",
+    builder: null,
+    compiler: "gcc 12.2.0",
+  });
+});
 
 it("reads the banner and the gzip IKCFG config after skipping a decoy marker", async () => {
   const bytes = kernelBuildConfigFixture();

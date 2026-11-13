@@ -56,6 +56,19 @@ export const kernelBuildConfigFixture = (): Buffer =>
     embeddedKernelConfig(),
   );
 
+/** Kernel banner whose build-host group is empty before the compiler group. */
+
+export const EMPTY_BUILDER_KERNEL_BANNER =
+  "Linux version 6.1.0 () (gcc 12.2.0) #1 SMP";
+
+/** ELF with an empty builder group and a regular non-config IKCFG marker. */
+export const emptyBuilderKernelConfigFixture = (): Buffer =>
+  concat(
+    elfPrefix(),
+    Buffer.from(`${EMPTY_BUILDER_KERNEL_BANNER}\0`, "latin1"),
+    Buffer.from("ordinary IKCFG_ST string without gzip\0", "latin1"),
+  );
+
 /** ELF with a banner and an `IKCFG_ST` string that is not a gzip member. */
 export const plainIkcfgStringFixture = (): Buffer =>
   concat(
