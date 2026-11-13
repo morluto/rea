@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import * as artifactPaths from "../ArtifactPaths.js";
 import { BunStandaloneArtifactReader } from "../BunStandaloneArtifactReader.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
@@ -284,7 +285,7 @@ it("keeps another caller's in-flight inventory independent of cancelled preparat
       },
       (cause: unknown) => cause,
     );
-    await started;
+    await awaitAcknowledgement(started, first, "Bun artifact read");
     const second = collect(reader.entries());
     controller.abort(reason);
     resume();

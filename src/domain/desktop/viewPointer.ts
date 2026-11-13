@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, isTimestamp } from "./appTask.js";
 import {
@@ -31,10 +32,6 @@ type Stepped =
   | { readonly kind: "unresolved"; readonly problem: string };
 
 const INDEX = /^(?:0|[1-9][0-9]*)$/u;
-
-/** A pointer segment for a key: `~` and `/` escaped as RFC 6901 writes them. */
-export const escapeToken = (token: string) =>
-  token.replaceAll("~", "~0").replaceAll("/", "~1");
 
 const isRecord = (
   value: JsonValue | null | undefined,
@@ -226,7 +223,7 @@ export const locatePointer = (
   const segments = pointer.slice(1).split("/");
   const steps = { searched: [] as string[], byPosition: [] as string[] };
   for (const [position, segment] of segments.entries()) {
-    const token = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+    const token = unescapeJsonPointerToken(segment);
     if (Array.isArray(current)) {
       const array = segments
         .slice(0, position)

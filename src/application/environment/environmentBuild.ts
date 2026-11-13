@@ -14,7 +14,6 @@ import {
   TEMPLATE_RULES,
   type TemplateRule,
 } from "../../domain/analysisView/environmentManifestRules.js";
-import type { Evidence } from "../../domain/evidence.js";
 import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";

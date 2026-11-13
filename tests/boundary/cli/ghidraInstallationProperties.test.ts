@@ -3,9 +3,10 @@ import { promisify } from "node:util";
 import { mkdir, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES } from "../../../src/ghidra/GhidraInstallationProperties.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
 
 cliTest.for(["pipe", "capacity"] as const)(
   "doctor reports selected properties %s without launching Java",

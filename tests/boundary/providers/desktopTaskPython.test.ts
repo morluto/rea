@@ -298,6 +298,38 @@ it("evaluates every kind of file check without computer-exec as REA does", async
   );
 });
 
+it("decodes JSON pointer escapes once in the exported verifier", async () => {
+  const checks: DesktopTaskCheck[] = [
+    {
+      id: "tilde",
+      kind: "value_equals",
+      file: "settings.json",
+      pointer: "/~01",
+      value: "literal",
+    },
+    {
+      id: "slash",
+      kind: "value_equals",
+      file: "settings.json",
+      pointer: "/~1",
+      value: "slash",
+    },
+  ];
+  const views = {
+    "settings.json": {
+      format: "json" as const,
+      view: { "~1": "literal", "/": "slash" },
+      truncated: false,
+    },
+  };
+  const output = await runVerifier(checks, [[0, views]], [], { exec: false });
+  const expected = evaluateTaskChecks(checks, new Map(Object.entries(views)));
+  expect(output.results.map(({ id, result }) => [id, result])).toEqual(
+    expected.map(({ id, passed }) => [id, passed]),
+  );
+  expect(output.results.map(({ result }) => result)).toEqual([true, true]);
+});
+
 it("grades an app that saves seconds after the agent stops on what it saved", async () => {
   // Gnote saved 2.2 s after the verifier's first read in the run this missed.
   const saved = 2.2;

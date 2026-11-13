@@ -389,14 +389,10 @@ export class PlaywrightScenarioServiceWorkers {
     // Abort discovery/handshakes and reads, never an already-sent page mutation.
     this.#setup.abort();
     const restoration = (this.#restoration ??= this.restore());
-    void restoration.then(
-      () => {
-        if (this.#restoration === restoration) this.#restoration = undefined;
-      },
-      () => {
-        if (this.#restoration === restoration) this.#restoration = undefined;
-      },
-    );
+    const clearRestoration = (): void => {
+      if (this.#restoration === restoration) this.#restoration = undefined;
+    };
+    void restoration.then(clearRestoration, clearRestoration);
     // Restoration completion does not discharge a stop request that arrived
     // after that restoration began. Both paths share the owner's stop latch.
     const completion = restoration.then(() => this.fulfillStopRequest());
@@ -427,14 +423,10 @@ export class PlaywrightScenarioServiceWorkers {
       this.#loadingStopped = true;
     })();
     this.#stopPromise = stopping;
-    void stopping.then(
-      () => {
-        if (this.#stopPromise === stopping) this.#stopPromise = undefined;
-      },
-      () => {
-        if (this.#stopPromise === stopping) this.#stopPromise = undefined;
-      },
-    );
+    const clearStop = (): void => {
+      if (this.#stopPromise === stopping) this.#stopPromise = undefined;
+    };
+    void stopping.then(clearStop, clearStop);
     return stopping;
   }
 

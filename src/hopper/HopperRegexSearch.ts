@@ -55,10 +55,10 @@ export class HopperRegexSearch {
       signal,
     });
     this.#active.set(controller, pending);
-    void pending.then(
-      () => this.#active.delete(controller),
-      () => this.#active.delete(controller),
-    );
+    const remove = (): void => {
+      this.#active.delete(controller);
+    };
+    void pending.then(remove, remove);
     return pending;
   }
 

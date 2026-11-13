@@ -31,7 +31,6 @@ import type {
 } from "../AnalysisProvider.js";
 import {
   AnalysisSnapshotCache,
-  SNAPSHOT_CACHE_ENTRY_CEILING,
   isSnapshotCacheable,
   isSourceEvidenceRetainable,
 } from "./AnalysisSnapshotCache.js";
@@ -595,7 +594,7 @@ describe("analysis snapshot cache capacity", () => {
       parameters: { query: "existing" },
       execution,
     };
-    for (let index = 0; index < SNAPSHOT_CACHE_ENTRY_CEILING - 1; index += 1)
+    for (let index = 0; index < 9_999; index += 1)
       cache.recordWorkflow({
         ...workflowInput,
         parameters: { query: String(index) },
@@ -620,9 +619,7 @@ describe("analysis snapshot cache capacity", () => {
     });
     cache.recordWorkflow(workflowInput);
     expect(cache.entries()).toHaveLength(1);
-    expect(cache.workflowEntries()).toHaveLength(
-      SNAPSHOT_CACHE_ENTRY_CEILING - 1,
-    );
+    expect(cache.workflowEntries()).toHaveLength(9_999);
 
     cache.record({
       ...directInput,
@@ -669,9 +666,7 @@ describe("analysis snapshot cache capacity", () => {
       ),
       "a capacity-refused workflow binding is not counted",
     ).toBe(0);
-    expect(cache.workflowEntries()).toHaveLength(
-      SNAPSHOT_CACHE_ENTRY_CEILING - 1,
-    );
+    expect(cache.workflowEntries()).toHaveLength(9_999);
 
     const otherTarget = { ...target, sha256: "b".repeat(64) };
     cache.recordWorkflow({
