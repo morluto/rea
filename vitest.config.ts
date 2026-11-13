@@ -32,8 +32,14 @@ const { options: testOptions } = parseCLI(
 );
 const COVERAGE_ENABLED = testOptions.coverage?.enabled === true;
 const COVERAGE_SHARD = testOptions.shard !== undefined;
-// Keep local and CI concurrency bounded by the runner rather than command locks.
-const MAX_TEST_WORKERS = Math.min(2, availableParallelism());
+// Bound concurrency by the runner rather than command locks. A hosted CI job
+// owns its whole four-core runner, so it may use every core; other hosts stay
+// at two workers because developers and agents share them with other checks.
+const DEDICATED_CI_RUNNER = process.env.GITHUB_ACTIONS === "true";
+const MAX_TEST_WORKERS = Math.min(
+  DEDICATED_CI_RUNNER ? 4 : 2,
+  availableParallelism(),
+);
 
 const TEST_PROJECTS = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS];
 const PROJECT_POLICIES = {
