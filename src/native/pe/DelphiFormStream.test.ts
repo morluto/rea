@@ -667,6 +667,24 @@ describe("Delphi form list item evidence", () => {
     );
   });
 
+  it("retains the marker of a list item with an unsupported type", () => {
+    const root = rootOf(
+      form(component("TForm1", "Form1", [property_("Items", list(bytes(24)))])),
+    );
+    const value = propertyOf(root, "Items").value;
+    if (value.kind !== "list") throw new Error("Expected a list");
+    expect(value.items).toHaveLength(1);
+    expect(value.items[0]).toMatchObject({
+      value_type: "unknown_value_type(24)",
+      marker_location: { bytes: 1 },
+      value: { kind: "unknown" },
+    });
+    expect(value.items[0]?.value).toMatchObject({
+      reason: "Unsupported value type unknown_value_type(24) (24).",
+    });
+    expect(root.unknown?.reason).toContain("Unsupported value type");
+  });
+
   it("keeps list item types that decode to the same string shape", () => {
     // vaWString (18) and vaUString (22) share the UTF-16LE payload; only the
     // item's declared type and tag byte distinguish them.
@@ -1011,9 +1029,19 @@ describe("Delphi form truncation and limits", () => {
     expect(property?.name.text).toBe("Items");
     expect(property?.value).toMatchObject({ kind: "list" });
     if (property?.value.kind !== "list") throw new Error("Expected a list");
+    // The first entry is complete evidence; the marker of the truncated second
+    // entry stays in the partial list as an explicit unknown value.
     expect(property.value.items).toMatchObject([
-      { value: { kind: "integer" } },
+      { value: { kind: "integer", text: "7" } },
+      {
+        value_type: "vaInt32",
+        value: {
+          kind: "unknown",
+          reason: "Payload ended before the stream was complete.",
+        },
+      },
     ]);
+    expect(property.value.items[1]?.marker_location.bytes).toBe(1);
   });
 
   it("keeps list entries when the payload ends after a complete item", () => {

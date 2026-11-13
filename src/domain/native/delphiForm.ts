@@ -188,6 +188,39 @@ export const isDelphiFormValueType = (value: string): boolean => {
   return ordinal >= 24 && ordinal <= 255 && String(ordinal) === match[1];
 };
 
+/** The decoder probes a filer signature within this many prefix bytes. */
+export const MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES = 16;
+
+/**
+ * `TFilerFlag` values the decoder can emit. It emits each once, in bit order,
+ * and stops on the reserved bit, so no other flag is an observed value.
+ */
+export const DELPHI_FORM_FILER_FLAGS = [
+  "ffInherited",
+  "ffChildPos",
+  "ffInline",
+] as const;
+
+const utf16le = new TextDecoder("utf-16le", { ignoreBOM: true });
+
+/**
+ * Decode short Pascal-string bytes with the declared code page. `latin1` is
+ * only a last resort for labels that cannot be decoded; it never replaces a
+ * declared page.
+ */
+export const decodeDelphiText = (raw: Buffer, codePage: string): string => {
+  if (codePage === "utf-16le") return utf16le.decode(raw);
+  if (codePage === "utf-8") return raw.toString("utf8");
+  // `TextDecoder` maps the "latin1" label to Windows-1252, which changes bytes
+  // such as 0x80. Keep the byte-preserving projection for this sentinel.
+  if (codePage === "latin1") return raw.toString("latin1");
+  try {
+    return new TextDecoder(codePage).decode(raw);
+  } catch {
+    return raw.toString("latin1");
+  }
+};
+
 /** Notes emitted for each floating-point value type. */
 export const DELPHI_FORM_FLOAT_NOTES: Readonly<Record<string, string>> = {
   vaSingle: "IEEE-754 binary32.",
@@ -308,6 +341,13 @@ const uint = z.number().int().min(0).max(0xffffffff);
 const declaredStringBytes = z.number().int().min(0).max(0x1fffffffe);
 const hexSchema = z.string().regex(/^(?:[0-9a-f]{2})*$/u);
 const rangeSchema = z.strictObject({ offset: uint, bytes: uint });
+// The producer emits each declared filer flag at most once; an invented or
+// duplicated flag is not a value the decoder can observe.
+const filerFlagsSchema = z
+  .array(z.enum(DELPHI_FORM_FILER_FLAGS))
+  .refine((flags) => new Set(flags).size === flags.length, {
+    message: "Duplicate filer flag.",
+  });
 const textSchema = z.strictObject({
   text: z.string(),
   bytes_hex: hexSchema,
@@ -442,7 +482,7 @@ const objectSchemaOf = <P extends z.ZodType, O extends z.ZodType>(
 ) =>
   z.strictObject({
     location: rangeSchema,
-    flags: z.array(z.string()),
+    flags: filerFlagsSchema,
     child_position: positionSchema.nullable(),
     class_name: textSchema.nullable(),
     component_name: textSchema.nullable(),

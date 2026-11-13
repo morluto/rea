@@ -162,6 +162,56 @@ describe("delphi form advertised schema", () => {
   });
 });
 
+describe("delphi form filer flags", () => {
+  const range = { offset: 0, bytes: 4 };
+  const resource = (flags: string[]) => ({
+    resource_index: 0,
+    signature: "TPF0",
+    version: "boVersion0",
+    signature_location: range,
+    prefix: null,
+    declared_code_page: 0,
+    code_page: "windows-1252",
+    code_page_source: "default",
+    root: {
+      location: range,
+      flags,
+      child_position: null,
+      class_name: null,
+      component_name: null,
+      properties: [],
+      children: [],
+      unknown: {
+        reason: "empty",
+        bytes_hex: "",
+        truncated: false,
+        location: { offset: 4, bytes: 0 },
+      },
+    },
+  });
+
+  it("accepts the declared filer flag vocabulary", () => {
+    expect(
+      delphiFormResourceSchema.safeParse(
+        resource(["ffInherited", "ffChildPos", "ffInline"]),
+      ).success,
+    ).toBe(true);
+  });
+
+  it("rejects a filer flag the decoder cannot emit", () => {
+    expect(
+      delphiFormResourceSchema.safeParse(resource(["invented"])).success,
+    ).toBe(false);
+  });
+
+  it("rejects a duplicated filer flag", () => {
+    expect(
+      delphiFormResourceSchema.safeParse(resource(["ffInline", "ffInline"]))
+        .success,
+    ).toBe(false);
+  });
+});
+
 describe("delphi form advertised byte projections", () => {
   it("rejects byte projections that are not lowercase even-length hex", () => {
     const range = { offset: 0, bytes: 4 };

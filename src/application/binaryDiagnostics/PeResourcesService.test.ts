@@ -6,6 +6,7 @@ import { inspectPeResourcesInputSchema } from "../../domain/native/peResources.j
 import {
   BYTE_PRESERVING_CODE_PAGE,
   DEFAULT_CODE_PAGE,
+  DELPHI_FORM_FLOAT_NOTES,
   RESOURCE_CODE_PAGES,
 } from "../../domain/native/delphiForm.js";
 import {
@@ -40,29 +41,37 @@ const observedReport = () => {
   );
 };
 
+const label = (text: string, offset: number, codePage = DEFAULT_CODE_PAGE) => {
+  const raw = Buffer.from(text, "latin1");
+  return {
+    text,
+    bytes_hex: raw.toString("hex"),
+    code_page: codePage,
+    location: { offset, bytes: 1 + raw.length },
+  };
+};
+
 const validRoot = (
   location: { offset: number; bytes: number },
   codePage = DEFAULT_CODE_PAGE,
-) => ({
-  location,
-  flags: [],
-  child_position: null,
-  class_name: {
-    text: "TForm1",
-    bytes_hex: "54466f726d31",
-    code_page: codePage,
+) => {
+  const class_name = label("TForm1", location.offset, codePage);
+  const component_name = label(
+    "Form1",
+    location.offset + class_name.location.bytes,
+    codePage,
+  );
+  return {
     location,
-  },
-  component_name: {
-    text: "Form1",
-    bytes_hex: "466f726d31",
-    code_page: codePage,
-    location,
-  },
-  properties: [],
-  children: [],
-  unknown: null,
-});
+    flags: [],
+    child_position: null,
+    class_name,
+    component_name,
+    properties: [],
+    children: [],
+    unknown: null,
+  };
+};
 
 const signatureAt = (location: { offset: number; bytes: number }) => ({
   offset: location.offset,
@@ -295,9 +304,9 @@ it.each([
               {
                 name: {
                   text: "Items",
-                  bytes_hex: "",
+                  bytes_hex: "4974656d73",
                   code_page: "windows-1252",
-                  location: payload,
+                  location: { offset: payload.offset, bytes: 6 },
                 },
                 value_type: "vaList",
                 value: {
@@ -355,6 +364,96 @@ it.each([
   },
 );
 
+const reportWithFormPrefix = async (prefixBytes: number) => {
+  const payload = delphiForm(
+    delphiComponent("TForm1", "Form1", [
+      delphiProperty("Blob", delphiBinary(64)),
+    ]),
+  );
+  const report = await reportForPayload(payload);
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  const formPayload = resource.payload.location;
+  const pages = codePageFields(resource.code_page);
+  const signature = { offset: formPayload.offset + prefixBytes, bytes: 4 };
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signature,
+      prefix:
+        prefixBytes === 0
+          ? null
+          : {
+              location: { offset: formPayload.offset, bytes: prefixBytes },
+              bytes_hex: "00".repeat(prefixBytes),
+              note: "test prefix",
+            },
+      ...pages,
+      root: validRoot(
+        {
+          offset: signature.offset + 4,
+          bytes: formPayload.bytes - prefixBytes - 4,
+        },
+        pages.code_page,
+      ),
+    },
+  ];
+  return report;
+};
+
+const reportWithSyntheticValue = async (
+  valueType: string,
+  value: Record<string, unknown>,
+  valueBytes: number,
+) => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("Value", root.location.offset + 13, form.code_page);
+  const valueLocation = {
+    offset: name.location.offset + name.location.bytes,
+    bytes: valueBytes,
+  };
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...root,
+        properties: [
+          {
+            name,
+            value_type: valueType,
+            value: { ...value, location: valueLocation } as never,
+            location: {
+              offset: name.location.offset,
+              bytes: name.location.bytes + valueBytes,
+            },
+          },
+        ],
+      },
+    },
+  ];
+  return report;
+};
+
+it("accepts a form prefix at the decoder probe-window boundary", async () => {
+  const report = await reportWithFormPrefix(16);
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
+it("rejects a form prefix longer than the decoder probe window", async () => {
+  const report = await reportWithFormPrefix(17);
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("rejects a non-default label for a zero declared code page", async () => {
   const report = await observedReport();
   const index = report.resources.findIndex(
@@ -408,12 +507,15 @@ it("rejects nested form text whose code page contradicts the form", async () => 
           {
             name: {
               text: "Caption",
-              bytes_hex: "43",
+              bytes_hex: "43617074696f6e",
               code_page: otherPage,
-              location: resource.payload.location,
+              location: { offset: resource.payload.location.offset, bytes: 8 },
             },
             value_type: "vaNull",
-            value: { kind: "null", location: resource.payload.location },
+            value: {
+              kind: "null",
+              location: { offset: resource.payload.location.offset, bytes: 1 },
+            },
             location: resource.payload.location,
           },
         ],
@@ -427,6 +529,72 @@ it("rejects nested form text whose code page contradicts the form", async () => 
   expect(
     await service.inspect({ path: "/fixtures/example.exe" }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+});
+
+it("rejects a form label whose retained bytes decode to another text", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  const componentName = form?.root.component_name;
+  if (
+    form === undefined ||
+    componentName === null ||
+    componentName === undefined
+  )
+    throw new Error("Missing component name");
+  // The bytes still decode to "Form1"; only the published text changed.
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...form.root,
+        component_name: { ...componentName, text: "B" },
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects an identifier whose text disagrees with its retained bytes", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("Ident", root.location.offset + 13, form.code_page);
+  const valueLocation = {
+    offset: name.location.offset + name.location.bytes,
+    bytes: 2,
+  };
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...root,
+        properties: [
+          {
+            name,
+            value_type: "vaIdent",
+            value: {
+              kind: "identifier",
+              text: "B",
+              bytes_hex: "41",
+              location: valueLocation,
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: name.location.bytes + valueLocation.bytes,
+            },
+          },
+        ],
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
 });
 
 const formWithStringValue = async (
@@ -495,6 +663,20 @@ it("rejects a string value whose code page contradicts its value type", async ()
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
 });
 
+it("rejects a complete string whose text disagrees with its retained bytes", async () => {
+  const report = await formWithStringValue("vaString", "windows-1251", {
+    declaredBytes: 1,
+    bytesHex: "41",
+    retainedBytes: 1,
+    truncated: false,
+    decodeTruncated: false,
+  });
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("accepts explicit UTF-8 form text on a non-UTF-8 resource page", async () => {
   const report = await formWithStringValue("vaUTF8String", "utf-8");
   const service = new PeResourcesService({
@@ -532,12 +714,7 @@ const formWithBuiltProperty = async (
         ...validRoot(location, pages.code_page),
         properties: [
           {
-            name: {
-              text: "Value",
-              bytes_hex: "56",
-              code_page: pages.code_page,
-              location,
-            },
+            name: label("Value", location.offset, pages.code_page),
             value_type: valueType,
             value: {
               ...buildValue(location),
@@ -637,6 +814,47 @@ it("rejects an integer projection whose retained bytes disagree", async () => {
   });
 });
 
+it("rejects an integer whose source range is not its encoded width", async () => {
+  const report = await reportWithSyntheticValue(
+    "vaInt8",
+    { kind: "integer", text: "1", bytes_hex: "01", width: 8, signed: true },
+    0,
+  );
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a marker-only scalar whose source range is empty", async () => {
+  const report = await reportWithSyntheticValue(
+    "vaTrue",
+    { kind: "boolean", value: true },
+    0,
+  );
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a float whose source range is not its encoded width", async () => {
+  const report = await reportWithSyntheticValue(
+    "vaSingle",
+    {
+      kind: "float",
+      text: "1.5",
+      bytes_hex: "0000c03f",
+      note: DELPHI_FORM_FLOAT_NOTES.vaSingle ?? "",
+    },
+    0,
+  );
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("rejects a list item whose declared value type contradicts its value", async () => {
   const report = await formWithBuiltProperty("vaList", (location) => ({
     kind: "list",
@@ -700,6 +918,51 @@ it("rejects a nested stop that does not propagate to its ancestors", async () =>
   });
 });
 
+it("rejects a nested unknown that does not start at the object end", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const location = root.location;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...root,
+        unknown: {
+          reason: "root suffix",
+          bytes_hex: "",
+          truncated: false,
+          location: { offset: location.offset + location.bytes, bytes: 0 },
+        },
+        children: [
+          {
+            location: { offset: location.offset, bytes: 1 },
+            flags: [],
+            child_position: null,
+            class_name: null,
+            component_name: null,
+            properties: [],
+            children: [],
+            unknown: {
+              reason: "nested stop",
+              bytes_hex: "",
+              truncated: false,
+              // The child ends at +1; its unknown starts one byte later, so
+              // that gap would belong to neither the child nor its unknown.
+              location: { offset: location.offset + 2, bytes: 1 },
+            },
+          },
+        ],
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("rejects a child position whose retained bytes disagree", async () => {
   const report = await observedReport();
   const index = report.resources.findIndex(
@@ -722,6 +985,34 @@ it("rejects a child position whose retained bytes disagree", async () => {
           kind: "integer",
           text: "1",
           bytes_hex: "ff",
+          width: 8,
+          signed: true,
+          location,
+        },
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a child position whose source range is not its encoded width", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const location = form.root.location;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...form.root,
+        flags: ["ffChildPos"],
+        child_position: {
+          kind: "integer",
+          text: "1",
+          bytes_hex: "01",
           width: 8,
           signed: true,
           location,
@@ -876,20 +1167,34 @@ it("rejects a complete string whose declared bytes are not retained", async () =
 });
 
 it("publishes a zero-length stopped string inside a partial root", async () => {
-  const report = await observedReport();
+  const payload = delphiForm(
+    delphiComponent("TForm1", "Form1", [
+      delphiProperty("Blob", delphiBinary(64)),
+    ]),
+  );
+  const report = await reportForPayload(payload);
   const index = report.resources.findIndex(
     (resource) => resource.type.kind === "id" && resource.type.id === 10,
   );
   const resource = report.resources[index]!;
-  const payload = resource.payload.location;
+  const formPayload = resource.payload.location;
   const pages = codePageFields(resource.code_page);
-  const rootLocation = { offset: payload.offset + 4, bytes: payload.bytes - 4 };
+  const rootLocation = {
+    offset: formPayload.offset + 4,
+    bytes: formPayload.bytes - 4,
+  };
+  const name = {
+    text: "E",
+    bytes_hex: "45",
+    code_page: pages.code_page,
+    location: { offset: rootLocation.offset, bytes: 2 },
+  };
   report.delphi_forms = [
     {
       resource_index: index,
       signature: "TPF0",
       version: "boVersion0",
-      signature_location: signatureAt(payload),
+      signature_location: signatureAt(formPayload),
       prefix: null,
       ...pages,
       root: {
@@ -900,12 +1205,7 @@ it("publishes a zero-length stopped string inside a partial root", async () => {
         component_name: null,
         properties: [
           {
-            name: {
-              text: "E",
-              bytes_hex: "45",
-              code_page: pages.code_page,
-              location: { offset: rootLocation.offset, bytes: 1 },
-            },
+            name,
             value_type: "vaString",
             value: {
               kind: "string",
@@ -915,9 +1215,10 @@ it("publishes a zero-length stopped string inside a partial root", async () => {
               declared_bytes: 0,
               truncated: true,
               decode_truncated: true,
-              location: rootLocation,
+              // Only the one-byte length prefix was observed.
+              location: { offset: rootLocation.offset + 2, bytes: 1 },
             },
-            location: rootLocation,
+            location: { offset: rootLocation.offset, bytes: 3 },
           },
         ],
         children: [],
@@ -927,7 +1228,7 @@ it("publishes a zero-length stopped string inside a partial root", async () => {
           truncated: false,
           location: {
             offset: rootLocation.offset + rootLocation.bytes,
-            bytes: payload.bytes - 4 - rootLocation.bytes,
+            bytes: 0,
           },
         },
       },
@@ -984,9 +1285,9 @@ it("rejects a property name range outside its owning property", async () => {
           {
             name: {
               text: "Caption",
-              bytes_hex: "43",
+              bytes_hex: "43617074696f6e",
               code_page: pages.code_page,
-              location: payload,
+              location: { offset: payload.offset, bytes: 8 },
             },
             value_type: "vaNull",
             value: { kind: "null", location },

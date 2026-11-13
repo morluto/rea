@@ -19,10 +19,13 @@
 
 import {
   DEFAULT_CODE_PAGE,
+  DELPHI_FORM_FILER_FLAGS,
   DELPHI_FORM_FLOAT_NOTES,
   DELPHI_FORM_VALUE_TYPES,
   decodeDelphiExtended,
+  decodeDelphiText,
   formatDelphiCurrency,
+  MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES,
   type DelphiFormCollectionItem,
   type DelphiFormListEntry,
   type DelphiFormObject,
@@ -56,18 +59,6 @@ export interface DelphiFormDecode {
 const valueTypeName = (ordinal: number): string =>
   DELPHI_FORM_VALUE_TYPES[ordinal] ?? `unknown_value_type(${String(ordinal)})`;
 
-/** `TFilerFlag` from `classesh.inc`: ffInherited, ffChildPos, ffInline. */
-const FILER_FLAGS: readonly string[] = [
-  "ffInherited",
-  "ffChildPos",
-  "ffInline",
-];
-
-/**
- * Signatures are probed only near the payload start so a match stays
- * falsifiable; the limit is part of the reported limitations.
- */
-const MAX_SIGNATURE_PREFIX_BYTES = 16;
 /** Hex projections are capped; the byte count is always reported in full. */
 const HEX_LIMIT_BYTES = 128;
 const MAX_OBJECTS = 1024;
@@ -93,7 +84,7 @@ export const DELPHI_FORM_LIMITATIONS: readonly string[] = [
   "Static TPF0 filer-stream decode over the located resource payload; class semantics, event-handler binding and runtime form state are not resolved.",
   'String bytes are decoded with the recorded code page and retained verbatim; a resource that declares no code page is decoded as windows-1252 and reported as code_page_source: "default".',
   "Undecodable value types and truncated streams are reported as explicit unknowns instead of failing the whole inventory.",
-  `A filer signature is recognized only within the first ${String(MAX_SIGNATURE_PREFIX_BYTES)} bytes of an RT_RCDATA payload; a longer prefix leaves the payload opaque.`,
+  `A filer signature is recognized only within the first ${String(MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES)} bytes of an RT_RCDATA payload; a longer prefix leaves the payload opaque.`,
 ];
 
 /** A read that leaves the payload, or exceeds a decode budget. */
@@ -194,28 +185,6 @@ const formUnknown = (
   location,
 });
 
-const utf16le = new TextDecoder("utf-16le", { ignoreBOM: true });
-
-/**
- * Decode short Pascal strings with the declared code page. `latin1` is only a
- * last resort for labels that cannot be decoded; it never replaces a declared
- * page.
- */
-const decodeText = (raw: Buffer, codePage: string): string => {
-  // `Buffer.toString("utf16le")` silently drops a trailing odd byte. The host
-  // decoder retains it as U+FFFD so the projection still accounts for it.
-  if (codePage === "utf-16le") return utf16le.decode(raw);
-  if (codePage === "utf-8") return raw.toString("utf8");
-  // `TextDecoder` maps the "latin1" label to Windows-1252, which changes bytes
-  // such as 0x80. Keep the byte-preserving projection for this sentinel.
-  if (codePage === "latin1") return raw.toString("latin1");
-  try {
-    return new TextDecoder(codePage).decode(raw);
-  } catch {
-    return raw.toString("latin1");
-  }
-};
-
 /**
  * Locate a filer signature at the start of a payload. Bytes ahead of the
  * signature are reported verbatim: the `FF 0A 00` prefix some RCDATA payloads
@@ -227,7 +196,10 @@ export const detectDelphiFormSignature = (
   end: number,
 ): DelphiFormSignature | null => {
   const stop = Math.min(end, bytes.length);
-  const window = Math.min(stop, start + MAX_SIGNATURE_PREFIX_BYTES + 4);
+  const window = Math.min(
+    stop,
+    start + MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES + 4,
+  );
   for (let at = start; at + 4 <= window; at++) {
     const text = bytes.toString("latin1", at, at + 4);
     if (text !== "TPF0" && text !== "TPF1") continue;
@@ -293,7 +265,7 @@ function readShortString(
   spendText(budget, length * 10 + 256);
   const raw = stream.take(length);
   return {
-    text: decodeText(raw, codePage),
+    text: decodeDelphiText(raw, codePage),
     bytes_hex: raw.toString("hex"),
     code_page: codePage,
     location: range(at, stream.position),
@@ -327,7 +299,7 @@ function readShortStringValue(
   const raw = stream.take(available);
   const value: DelphiFormValue = {
     kind: "string",
-    text: decodeText(raw, codePage),
+    text: decodeDelphiText(raw, codePage),
     bytes_hex: raw.toString("hex"),
     code_page: codePage,
     declared_bytes: declared,
@@ -534,7 +506,7 @@ function readValue(
       const hex = hexOf(raw);
       const value: DelphiFormValue = {
         kind: "string",
-        text: decodeText(raw, page),
+        text: decodeDelphiText(raw, page),
         ...hex,
         code_page: page,
         declared_bytes: declared,
@@ -570,7 +542,7 @@ function readValue(
       const hex = hexOf(raw);
       const value: DelphiFormValue = {
         kind: "string",
-        text: decodeText(raw, "utf-16le"),
+        text: decodeDelphiText(raw, "utf-16le"),
         ...hex,
         code_page: "utf-16le",
         declared_bytes: declared,
@@ -657,6 +629,21 @@ function readValue(
               value_type: valueTypeName(next),
               marker_location: markerLocation,
               value: error.partial,
+            });
+          else
+            // The type marker was already consumed, so dropping this entry
+            // would leave those bytes outside both the list and its unknown.
+            // Retain the declared type, the marker and the bytes the failed
+            // read consumed as one explicit unknown value.
+            items.push({
+              value_type: valueTypeName(next),
+              marker_location: markerLocation,
+              value: {
+                kind: "unknown",
+                reason: error.message,
+                ...hexOf(stream.bytes.subarray(markerAt + 1, stream.position)),
+                location: range(markerAt + 1, stream.position),
+              },
             });
           throw new StoppedValue(error.message, {
             kind: "list",
@@ -902,7 +889,7 @@ function readObject(
     const prefix = stream.peek();
     if ((prefix & 0xf0) === 0xf0) {
       stream.byte();
-      for (const [bit, name] of FILER_FLAGS.entries())
+      for (const [bit, name] of DELPHI_FORM_FILER_FLAGS.entries())
         if ((prefix & (1 << bit)) !== 0) flags.push(name);
       // Only bits 0-2 are defined by TFilerFlag. Dropping a reserved low bit
       // would present a malformed or newer stream as fully decoded.

@@ -14,8 +14,10 @@ import {
   DEFAULT_CODE_PAGE,
   DELPHI_FORM_FLOAT_NOTES,
   decodeDelphiExtended,
+  decodeDelphiText,
   formatDelphiCurrency,
   isDelphiFormValueType,
+  MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES,
   RESOURCE_CODE_PAGES,
   type DelphiFormObject,
   type DelphiFormPosition,
@@ -208,7 +210,11 @@ const validReport = (
           ? signature.offset === payload.offset
           : form.prefix.location.offset === payload.offset &&
             form.prefix.location.bytes === signature.offset - payload.offset &&
-            form.prefix.location.bytes > 0;
+            form.prefix.location.bytes > 0 &&
+            // The decoder probes offsets 0 through 16 only; a longer prefix
+            // describes a signature the producer can never have matched.
+            form.prefix.location.bytes <=
+              MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES;
       const rootEnd = form.root.location.offset + form.root.location.bytes;
       const payloadEnd = payload.offset + payload.bytes;
       // A complete root reaches the payload end; a stopped root records the
@@ -265,6 +271,19 @@ const objectHasStop = (object: DelphiFormObject): boolean =>
   object.properties.some((property) => valueHasStop(property.value)) ||
   object.children.some(objectHasStop);
 
+/**
+ * A short Pascal label retains one length byte plus its source bytes, so its
+ * text must be exactly the decode of those retained bytes under the form page.
+ */
+const textMatchesBytes = (item: DelphiFormText, codePage: string): boolean => {
+  const raw = Buffer.from(item.bytes_hex, "hex");
+  return (
+    item.code_page === codePage &&
+    item.location.bytes === 1 + raw.length &&
+    decodeDelphiText(raw, codePage) === item.text
+  );
+};
+
 /** Every nested location of a decoded form must stay inside its owner. */
 const insideLocations = (
   object: DelphiFormObject,
@@ -275,8 +294,10 @@ const insideLocations = (
   if (!within(object.location)) return false;
   if (
     object.unknown !== null &&
+    // The producer stops an object at the point its unknown starts, so a gap
+    // between them would leave bytes claimed by neither.
     (!payloadWithin(object.unknown.location) ||
-      object.unknown.location.offset <
+      object.unknown.location.offset !==
         object.location.offset + object.location.bytes)
   )
     return false;
@@ -285,7 +306,7 @@ const insideLocations = (
     owner: { offset: number; bytes: number },
   ): boolean =>
     item === null ||
-    (withinRange(item.location, owner) && item.code_page === codePage);
+    (withinRange(item.location, owner) && textMatchesBytes(item, codePage));
   if (
     !text(object.class_name, object.location) ||
     !text(object.component_name, object.location)
@@ -377,7 +398,8 @@ const integerMatches = (
   if (
     value.kind !== "integer" ||
     value.width !== width ||
-    value.signed !== signed
+    value.signed !== signed ||
+    value.location.bytes !== width / 8
   )
     return false;
   if (!/^(?:0|-?[1-9]\d*)$/u.test(value.text)) return false;
@@ -416,6 +438,7 @@ const floatMatches = (
   const width = FLOAT_WIDTH_BYTES[valueType];
   if (
     width === undefined ||
+    value.location.bytes !== width ||
     value.bytes_hex.length !== width * 2 ||
     value.note !== DELPHI_FORM_FLOAT_NOTES[valueType]
   )
@@ -460,9 +483,17 @@ const stringMatchesType = (
     return false;
   if (value.decode_truncated)
     return value.truncated && available <= value.declared_bytes;
+  if (
+    available !== value.declared_bytes ||
+    value.truncated !== value.declared_bytes > projection.previewBytes
+  )
+    return false;
+  // A complete projection retains every source byte, so its published text
+  // must be exactly what those bytes decode to under the reported page.
   return (
-    available === value.declared_bytes &&
-    value.truncated === value.declared_bytes > projection.previewBytes
+    value.truncated ||
+    decodeDelphiText(Buffer.from(value.bytes_hex, "hex"), value.code_page) ===
+      value.text
   );
 };
 
@@ -480,6 +511,18 @@ const binaryMatches = (
   );
 };
 
+/** `vaIdent` is a short string: one length byte plus its retained bytes. */
+const identifierMatches = (
+  value: Extract<DelphiFormValue, { kind: "identifier" }>,
+  codePage: string,
+): boolean => {
+  const raw = Buffer.from(value.bytes_hex, "hex");
+  return (
+    value.location.bytes === 1 + raw.length &&
+    decodeDelphiText(raw, codePage) === value.text
+  );
+};
+
 const valueMatchesType = (
   valueType: string,
   value: DelphiFormValue,
@@ -489,13 +532,15 @@ const valueMatchesType = (
   if (value.kind === "unknown") return true;
   switch (valueType) {
     case "vaNull":
-      return value.kind === "null";
+      return value.kind === "null" && value.location.bytes === 1;
     case "vaNil":
-      return value.kind === "nil";
+      return value.kind === "nil" && value.location.bytes === 1;
     case "vaFalse":
     case "vaTrue":
       return (
-        value.kind === "boolean" && value.value === (valueType === "vaTrue")
+        value.kind === "boolean" &&
+        value.value === (valueType === "vaTrue") &&
+        value.location.bytes === 1
       );
     case "vaInt8":
       return integerMatches(value, 8, true);
@@ -524,7 +569,7 @@ const valueMatchesType = (
         valuePageMatchesType(valueType, value.code_page, codePage)
       );
     case "vaIdent":
-      return value.kind === "identifier";
+      return value.kind === "identifier" && identifierMatches(value, codePage);
     case "vaBinary":
       return value.kind === "binary" && binaryMatches(value);
     case "vaList":
@@ -572,7 +617,7 @@ const insideValue = (
       value.names.every(
         (item) =>
           withinRange(item.location, value.location) &&
-          item.code_page === codePage,
+          textMatchesBytes(item, codePage),
       )
     );
   if (value.kind === "collection")
@@ -587,7 +632,7 @@ const insideValue = (
             (property) =>
               withinRange(property.location, item.location) &&
               withinRange(property.name.location, property.location) &&
-              property.name.code_page === codePage &&
+              textMatchesBytes(property.name, codePage) &&
               insideValue(
                 property.value,
                 (range) => withinRange(range, property.location),
