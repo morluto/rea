@@ -21,10 +21,8 @@ import {
   semanticDefiniteEffectPrecedesReference,
   semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
-import {
-  semanticIterationSources,
-  type SemanticIterationSource,
-} from "./javascriptSemanticIterationSources.js";
+import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
+import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
 import {
   joinSemanticPropertyPaths,
   semanticPropertyPathKeyMatches,
@@ -41,11 +39,6 @@ import {
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
-
-export {
-  isUnmodifiedGlobalReference,
-  isUnmodifiedImportMetaUrl,
-} from "./javascriptSemanticGlobalReference.js";
 
 /** Global self references retain object identity, rather than adding a property. */
 const canonicalAmbientPath = (

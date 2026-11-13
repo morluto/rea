@@ -17,7 +17,7 @@ import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import {
   analysisViewResultSchema,
   type AnalysisViewResult,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,

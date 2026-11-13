@@ -8,7 +8,7 @@ import {
   analysisDetailSchema,
   analysisDetailOutputSchemaOf,
 } from "../analysisDetail.js";
-import { evmInterfaceSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { evmInterfaceSummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 
 /** Delivery selection leaves the existing provider input and original Evidence unchanged. */
 const evmInterfaceInspectionInputSchema = inspectEvmInterfaceInputSchema.extend(

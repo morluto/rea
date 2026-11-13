@@ -10,7 +10,7 @@ import {
 import {
   modelArtifactSummaryViewResultSchema,
   analysisViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { DEFAULT_BRIDGE_MAX_REQUEST_BYTES } from "../config/bridgeMaxRequestBytes.js";
+import { DEFAULT_BRIDGE_MAX_REQUEST_BYTES } from "../domain/analysisResourceLimits.js";
 import { parseHopperServerInfo } from "./HopperSessionValues.js";
 
 const health = {

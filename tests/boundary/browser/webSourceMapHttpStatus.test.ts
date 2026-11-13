@@ -9,7 +9,7 @@ import {
   analyzeWebBundleInputSchema,
   webSourceMapsSchema,
 } from "../../../src/domain/webBundleAnalysis.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/webSourceLocation.js";
+import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/sourceMapLimits.js";
 
 it.each([
   { status: 300, followsRedirect: false },

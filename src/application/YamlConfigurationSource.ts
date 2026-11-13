@@ -3,10 +3,17 @@ import {
   isNode,
   isScalar,
   isSeq,
+  Pair,
+  visit,
+  YAMLMap,
+  type Document,
   type Node,
   type ScalarTag,
   type Tags,
+  type YAMLSeq,
 } from "yaml";
+import { isDeepStrictEqual } from "node:util";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { retainYamlSequenceAnnotations } from "./YamlSequenceAnnotations.js";
 
 export const yamlNumericValuesEqual = (
@@ -26,12 +33,50 @@ export const yamlNumericValuesEqual = (
   );
 };
 
-/** Keep source annotations and unchanged scalars when updating a value. */
+const normalizeYamlInteger = (_key: unknown, value: unknown): unknown =>
+  typeof value === "bigint" && Number.isSafeInteger(Number(value))
+    ? Number(value)
+    : value;
+
+const containsRetainedSource = (
+  roots: readonly unknown[],
+  retainedSources: ReadonlySet<Node>,
+): boolean => {
+  if (retainedSources.size === 0) return false;
+  let found = false;
+  for (const root of roots) {
+    if (!isNode(root)) continue;
+    visit(root, {
+      Value: (_key, node) => {
+        if (retainedSources.has(node)) found = true;
+      },
+    });
+  }
+  return found;
+};
+
+/** Keep source nodes and annotations when updating a value. */
 export const retainYamlConfigurationSource = (
   previous: unknown,
   next: Node,
   retainedSources: ReadonlySet<Node>,
+  document: Document,
 ): Node => {
+  if (
+    (isMap(previous) || isSeq(previous)) &&
+    ((isMap(previous) && isMap(next)) || (isSeq(previous) && isSeq(next)))
+  ) {
+    // Object projection can collapse distinct YAML keys. Reuse an unchanged
+    // collection before reconstructing its children from that projection.
+    if (
+      !containsRetainedSource([previous], retainedSources) &&
+      isDeepStrictEqual(
+        previous.toJS(document, { reviver: normalizeYamlInteger }),
+        next.toJS(document, { reviver: normalizeYamlInteger }),
+      )
+    )
+      return previous;
+  }
   if (
     isScalar(previous) &&
     isScalar(next) &&
@@ -60,51 +105,233 @@ export const retainYamlConfigurationSource = (
       next.spaceBefore = previous.spaceBefore;
   }
   if (isMap(previous) && isMap(next)) {
-    const entries = new Map(
-      previous.items.flatMap((pair) =>
-        isScalar(pair.key) && typeof pair.key.value === "string"
-          ? [[pair.key.value, pair] as const]
-          : [],
-      ),
-    );
-    for (const pair of next.items) {
-      const key = isScalar(pair.key) ? pair.key.value : undefined;
-      const prior = typeof key === "string" ? entries.get(key) : undefined;
-      if (prior === undefined) continue;
-      pair.key = isNode(pair.key)
-        ? retainYamlConfigurationSource(prior.key, pair.key, retainedSources)
-        : prior.key;
-      if (isNode(pair.value))
-        pair.value = retainYamlConfigurationSource(
-          prior.value,
-          pair.value,
-          retainedSources,
-        );
-    }
+    retainYamlMapSource(previous, next, retainedSources, document);
   } else if (isSeq(previous) && isSeq(next)) {
-    const stringItems = (items: readonly unknown[]) =>
-      items.every((item) => isScalar(item) && typeof item.value === "string");
-    if (stringItems(previous.items) && stringItems(next.items))
-      retainYamlSequenceAnnotations(
-        previous,
-        next,
-        (item) => (isScalar(item) ? item.value : undefined),
-        (source, target) =>
-          retainYamlConfigurationSource(source, target, retainedSources),
-        (source) => !retainedSources.has(source),
-      );
-    else
-      next.items = next.items.map((item, index) =>
-        isNode(item)
-          ? retainYamlConfigurationSource(
-              previous.items[index],
-              item,
-              retainedSources,
-            )
-          : item,
-      );
+    retainYamlSequenceSource(previous, next, retainedSources, document);
   }
   return next;
+};
+
+const retainYamlSequenceSource = (
+  previous: YAMLSeq,
+  next: YAMLSeq,
+  retainedSources: ReadonlySet<Node>,
+  document: Document,
+): void => {
+  const stringItems = (items: readonly unknown[]) =>
+    items.every((item) => isScalar(item) && typeof item.value === "string");
+  if (stringItems(previous.items) && stringItems(next.items)) {
+    retainYamlSequenceAnnotations(
+      previous,
+      next,
+      (item) => (isScalar(item) ? item.value : undefined),
+      (source, target) =>
+        retainYamlConfigurationSource(
+          source,
+          target,
+          retainedSources,
+          document,
+        ),
+      (source) => !retainedSources.has(source),
+    );
+    return;
+  }
+  next.items = next.items.map((item, index) =>
+    isNode(item)
+      ? retainYamlConfigurationSource(
+          previous.items[index],
+          item,
+          retainedSources,
+          document,
+        )
+      : item,
+  );
+};
+
+const retainYamlMapSource = (
+  previous: YAMLMap,
+  next: YAMLMap,
+  retainedSources: ReadonlySet<Node>,
+  document: Document,
+): void => {
+  const hasMerges = retainYamlMergeSources(previous, next, document);
+  const hasSourceOnlyKeys = retainProjectedYamlKeys(
+    previous,
+    next,
+    retainedSources,
+    document,
+  );
+  const entries = new Map(
+    previous.items.flatMap((pair) =>
+      isScalar(pair.key) && typeof pair.key.value === "string"
+        ? [[pair.key.value, pair] as const]
+        : [],
+    ),
+  );
+  for (const pair of next.items) {
+    if (previous.items.includes(pair)) continue;
+    const key = isScalar(pair.key) ? pair.key.value : undefined;
+    const prior = typeof key === "string" ? entries.get(key) : undefined;
+    if (prior === undefined) continue;
+    pair.key = isNode(pair.key)
+      ? retainYamlConfigurationSource(
+          prior.key,
+          pair.key,
+          retainedSources,
+          document,
+        )
+      : prior.key;
+    if (isNode(pair.value))
+      pair.value = retainYamlConfigurationSource(
+        prior.value,
+        pair.value,
+        retainedSources,
+        document,
+      );
+  }
+  if (hasSourceOnlyKeys || hasMerges) {
+    // Object property ordering moves integer-like keys ahead of their
+    // source neighbors. Restore source order so aliases stay after anchors.
+    const positions = new Map(
+      previous.items.map((pair, index) => [pair, index] as const),
+    );
+    const position = (pair: (typeof next.items)[number]): number => {
+      const key = isScalar(pair.key) ? pair.key.value : undefined;
+      const original =
+        positions.has(pair) || typeof key !== "string"
+          ? pair
+          : entries.get(key);
+      return original === undefined
+        ? Infinity
+        : (positions.get(original) ?? Infinity);
+    };
+    next.items.sort((left, right) => position(left) - position(right));
+  }
+};
+
+const isYamlMergeKey = (key: unknown): boolean =>
+  isScalar(key) && typeof key.value === "symbol" && key.source === "<<";
+
+/** Retain inheritance while materializing only explicit changes to it. */
+const retainYamlMergeSources = (
+  previous: YAMLMap,
+  next: YAMLMap,
+  document: Document,
+): boolean => {
+  const merges = previous.items.filter((pair) => isYamlMergeKey(pair.key));
+  if (merges.length === 0) return false;
+  const inherited = new YAMLMap(document.schema);
+  inherited.items = merges;
+  const direct = new YAMLMap(document.schema);
+  direct.items = previous.items.filter((pair) => !isYamlMergeKey(pair.key));
+  const project = (map: YAMLMap): Record<string, unknown> =>
+    map.toJS(document, { reviver: normalizeYamlInteger }) as Record<
+      string,
+      unknown
+    >;
+  const inheritedValues = project(inherited);
+  const directValues = project(direct);
+  const desired = project(next);
+  const inheritedUnchanged = new Set<string>();
+  for (const [key, value] of Object.entries(inheritedValues)) {
+    if (Object.hasOwn(directValues, key)) continue;
+    if (!Object.hasOwn(desired, key))
+      throw new ConfigurationError(
+        `Cannot remove inherited YAML setting ${JSON.stringify(key)} while retaining its merge.`,
+      );
+    if (isDeepStrictEqual(value, desired[key])) inheritedUnchanged.add(key);
+  }
+  next.items = [
+    ...merges,
+    ...next.items.filter((pair) => {
+      const key = isScalar(pair.key) ? pair.key.value : undefined;
+      return typeof key !== "string" || !inheritedUnchanged.has(key);
+    }),
+  ];
+  return true;
+};
+
+const retainProjectedYamlKeys = (
+  previous: YAMLMap,
+  next: YAMLMap,
+  retainedSources: ReadonlySet<Node>,
+  document: Document,
+): boolean => {
+  // A JS property can represent several distinct native YAML keys. Keep
+  // those source pairs together when the property was not edited.
+  const groups = new Map<string, typeof previous.items>();
+  const sourceOnlyKeys = new Set<string>();
+  for (const pair of previous.items) {
+    if (isYamlMergeKey(pair.key)) continue;
+    let key: string;
+    if (isScalar(pair.key) && typeof pair.key.value === "string")
+      key = pair.key.value;
+    else {
+      const singleton = new YAMLMap(document.schema);
+      singleton.items.push(new Pair(pair.key, null));
+      const projected: unknown = singleton.toJS(document);
+      if (typeof projected !== "object" || projected === null)
+        throw new ConfigurationError(
+          "YAML mapping key could not be resolved safely",
+        );
+      const [projectedKey] = Object.keys(projected);
+      if (projectedKey === undefined || Object.keys(projected).length !== 1)
+        throw new ConfigurationError(
+          "YAML mapping key could not be resolved safely",
+        );
+      key = projectedKey;
+      sourceOnlyKeys.add(key);
+    }
+    const group = groups.get(key) ?? [];
+    group.push(pair);
+    groups.set(key, group);
+  }
+  if (sourceOnlyKeys.size > 0) {
+    const oldValue: unknown = previous.toJS(document, {
+      reviver: normalizeYamlInteger,
+    });
+    const newValue: unknown = next.toJS(document, {
+      reviver: normalizeYamlInteger,
+    });
+    if (
+      typeof oldValue !== "object" ||
+      oldValue === null ||
+      typeof newValue !== "object" ||
+      newValue === null
+    )
+      throw new ConfigurationError("YAML mapping could not be compared safely");
+    const oldProperties = oldValue as Record<string, unknown>;
+    const newProperties = newValue as Record<string, unknown>;
+    const replacements = new Map<string, typeof previous.items>();
+    for (const key of sourceOnlyKeys) {
+      const group = groups.get(key);
+      if (group === undefined) continue;
+      if (
+        !Object.hasOwn(newProperties, key) ||
+        !isDeepStrictEqual(oldProperties[key], newProperties[key])
+      )
+        throw new ConfigurationError(
+          `Cannot safely change YAML mapping key ${JSON.stringify(key)} because its source identity is not a plain string key.`,
+        );
+      if (
+        containsRetainedSource(
+          group.flatMap((pair) => [pair.key, pair.value]),
+          retainedSources,
+        )
+      )
+        throw new ConfigurationError(
+          `Cannot safely preserve YAML mapping key ${JSON.stringify(key)} while its anchor is moved.`,
+        );
+      replacements.set(key, group);
+    }
+    next.items = next.items.flatMap((pair) => {
+      const key = isScalar(pair.key) ? pair.key.value : undefined;
+      const replacement =
+        typeof key === "string" ? replacements.get(key) : undefined;
+      return replacement ?? [pair];
+    });
+  }
+  return sourceOnlyKeys.size > 0;
 };
 
 /** Keep a source spelling only while the selected schema resolves its value unchanged. */

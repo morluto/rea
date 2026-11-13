@@ -1,7 +1,7 @@
 import { execFile, spawnSync } from "node:child_process";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
@@ -176,6 +176,28 @@ describe("live capability constructor ownership", () => {
 const execute = promisify(execFile);
 const verifier = resolve("scripts/verify-module-boundaries.mjs");
 
+const resolvePackageImport = (
+  root: string,
+  file: string,
+  specifier: string,
+) => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--experimental-import-meta-resolve",
+      "--input-type=module",
+      "-e",
+      "console.log(import.meta.resolve(process.argv[1], process.argv[2]))",
+      specifier,
+      pathToFileURL(join(root, file)).href,
+    ],
+    { encoding: "utf8" },
+  );
+  if (result.error !== undefined) throw result.error;
+  expect(result.status, result.stderr).toBe(0);
+  return fileURLToPath(result.stdout.trim());
+};
+
 describe("incremental module import boundaries", () => {
   it.each([
     ["src/domain/probe.ts", "../application/Workflow.js", false],
@@ -282,6 +304,72 @@ describe("incremental module import boundaries", () => {
         { file, boundary: expect.any(String) },
       ]);
   });
+});
+
+describe("package-map module ownership", () => {
+  it.each([
+    ["./dist/composition/worker.js"],
+    ["./dist/%63omposition/worker.js"],
+    ["./%64ist/composition/worker.js"],
+  ])("checks the package-map source owner for %s", async (target) => {
+    const root = await createTestTempDirectory("rea-module-package-");
+    await mkdir(join(root, "src/application"), { recursive: true });
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ imports: { "#worker": target } }),
+    );
+    const file = "src/application/probe.ts";
+    await writeFile(join(root, file), 'import "#worker";\n');
+    expect(resolvePackageImport(root, file, "#worker")).toBe(
+      join(root, "dist/composition/worker.js"),
+    );
+    const checked = spawnSync(process.execPath, [verifier, file], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    if (checked.error !== undefined) throw checked.error;
+    expect(checked.status).toBe(1);
+    expect(checked.stderr).toContain(
+      "application-composition: #worker resolves to src/composition/worker.ts",
+    );
+  });
+
+  it.each([
+    [
+      "#worker",
+      {
+        "#worker": {
+          import: "./dist/composition/worker.js",
+          default: "./dist/composition/other.js",
+        },
+      },
+    ],
+    ["#worker", { "#worker": ["./dist/composition/worker.js"] }],
+    ["#workers/worker", { "#workers/*": "./dist/composition/*.js" }],
+  ])(
+    "fails closed for unsupported package map %s",
+    async (specifier, imports) => {
+      const root = await createTestTempDirectory("rea-module-package-");
+      await mkdir(join(root, "src/domain"), { recursive: true });
+      await writeFile(join(root, "package.json"), JSON.stringify({ imports }));
+      const file = "src/domain/probe.ts";
+      await writeFile(
+        join(root, file),
+        `import ${JSON.stringify(specifier)};\n`,
+      );
+      expect(resolvePackageImport(root, file, specifier)).toBe(
+        join(root, "dist/composition/worker.js"),
+      );
+      const checked = spawnSync(process.execPath, [verifier, file], {
+        cwd: root,
+        encoding: "utf8",
+      });
+      if (checked.error !== undefined) throw checked.error;
+      expect(checked.status).toBe(1);
+      expect(checked.stderr).toContain("Cannot resolve package import");
+      expect(checked.stderr).toContain("relative source import");
+    },
+  );
 });
 
 describe("module import syntax and source discovery", () => {

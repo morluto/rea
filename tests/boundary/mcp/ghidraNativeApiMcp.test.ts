@@ -15,7 +15,7 @@ import { ok } from "../../../src/domain/result.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 
 it("retains complete load-image facts and pages selected relocations through the advertised SDK contracts", async () => {
   const fixture = fixtureDosOverlapLoadImage();

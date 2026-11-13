@@ -4,7 +4,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { NATIVE_INVENTORY_OPERATIONS } from "../../../src/domain/native/nativeInventory.js";
 import { ok } from "../../../src/domain/result.js";

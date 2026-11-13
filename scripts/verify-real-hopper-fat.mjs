@@ -23,6 +23,10 @@ import {
   requireMcpOperationResult,
 } from "./lib/mcp-verifier-results.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
 import { parseConfig } from "../dist/config/parseConfig.js";
 import {
@@ -70,14 +74,12 @@ const intel = join(directory, "c-x86_64");
 const fat = join(directory, "c-fat");
 const fat64 = join(directory, "c-fat64");
 const singleFat = join(directory, "c-single-fat");
-const owned = new Set();
 const extraFat64 = [];
 const invalidFat64 = [];
 let preparedImagePath;
-const before = await snapshotHopperRuntime(
-  "/tmp",
-  HOPPER_TARGET_LEASE_DIRECTORY,
-);
+const before = (
+  await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
+).paths;
 const client = new Client({ name: "hopper-fat-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -94,7 +96,7 @@ const ajv = new Ajv({ strict: false });
 addFormats(ajv);
 const observations = [];
 const sourceBinding = [];
-try {
+await withVerifierCleanup(async () => {
   await run(toolPaths.clang, [
     "-isysroot",
     sdk,
@@ -183,9 +185,17 @@ try {
         "overlap",
         /slices overlap/u,
         (bytes) => {
-          const cpu = process.arch === "arm64" ? 0x100000c : 0x1000007;
-          const base = bytes.readUInt32BE(8) === cpu ? 8 : 40;
-          bytes.copy(bytes, base === 8 ? 40 : 8, base, base + 32);
+          const firstOffset = bytes.readBigUInt64BE(16);
+          const secondOffset = bytes.readBigUInt64BE(48);
+          const earlier = firstOffset < secondOffset ? 8 : 40;
+          const laterOffset =
+            firstOffset < secondOffset ? secondOffset : firstOffset;
+          const earlierOffset =
+            firstOffset < secondOffset ? firstOffset : secondOffset;
+          bytes.writeBigUInt64BE(
+            laterOffset - earlierOffset + 16n,
+            earlier + 16,
+          );
         },
       ],
     ]) {
@@ -211,11 +221,14 @@ try {
     }
     const path = join(directory, "c-fat64-ambiguous");
     await writeFile(path, ambiguous);
-    invalidFat64.push({ path, reason: /selection.*ambiguous/u });
+    invalidFat64.push({
+      path,
+      reason:
+        /FAT binary declares several (?:arm64|x86_64) slices; no slice was selected/u,
+    });
   }
   await client.connect(transport);
   assert.ok(transport.pid !== null);
-  owned.add(transport.pid);
   const catalog = await client.listTools();
   const call = async (name, args = {}) => {
     const reply = await client.callTool(
@@ -359,14 +372,27 @@ try {
   if (verifyFat64) {
     await call("open_binary", { path: fat64 });
     await call("list_procedures");
-    const resources = [
-      ...(await snapshotHopperRuntime(
-        "/tmp",
-        HOPPER_TARGET_LEASE_DIRECTORY,
-        owned,
-      )),
-    ].filter((path) => !before.has(path));
-    for (const root of resources) {
+    const session = await call("binary_session");
+    const runId = session.analysis_run?.run_id;
+    assert.ok(
+      typeof runId === "string" && runId.length > 0,
+      "Missing analysis run identity",
+    );
+    const resources = await snapshotHopperRuntime(
+      "/tmp",
+      HOPPER_TARGET_LEASE_DIRECTORY,
+      runId,
+    );
+    const unresolvedNew = [...resources.unresolvedSessions].filter(
+      (path) => !before.has(path),
+    );
+    assert.deepEqual(
+      unresolvedNew,
+      [],
+      "Cannot identify a prepared image while new Hopper resource ownership is unresolved",
+    );
+    for (const root of resources.confirmedSessions) {
+      if (before.has(root)) continue;
       const image = join(root, "image.macho");
       if (
         await access(image).then(
@@ -403,27 +429,43 @@ try {
       },
     );
     assert.ok(pending.child.pid !== undefined);
-    owned.add(pending.child.pid);
     const cli = JSON.parse((await pending).stdout);
     assert.deepEqual(cli.normalized_result, expected.mapping);
   }
-} finally {
-  await client.close();
-  await transport.close();
-  await rm(directory, { recursive: true, force: true });
-}
-const retained = [
-  ...(await snapshotHopperRuntime(
-    "/tmp",
-    HOPPER_TARGET_LEASE_DIRECTORY,
-    owned,
-  )),
-].filter((path) => !before.has(path));
-assert.deepEqual(
-  retained,
-  [],
-  "FAT verification retained owned Hopper sessions or leases",
-);
+}, [
+  async () => {
+    try {
+      await closeVerifierResources([
+        () => client.close(),
+        () => transport.close(),
+      ]);
+    } catch (cause) {
+      throw new Error(
+        `Hopper cleanup failed; fixture retained at ${directory}`,
+        {
+          cause,
+        },
+      );
+    }
+    try {
+      const retained = [
+        ...(await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY))
+          .paths,
+      ].filter((path) => !before.has(path));
+      assert.deepEqual(
+        retained,
+        [],
+        "Hopper resources remain or are unresolved",
+      );
+    } catch (cause) {
+      throw new Error(
+        `Hopper resource verification failed; fixture retained at ${directory}`,
+        { cause },
+      );
+    }
+    await rm(directory, { recursive: true, force: true });
+  },
+]);
 console.log(
   JSON.stringify(
     {

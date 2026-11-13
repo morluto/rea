@@ -21,7 +21,7 @@ import {
   parseEvidence,
   rebindEvidenceToTargetPath,
 } from "../../domain/evidence.js";
-import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisViewRequest.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import {

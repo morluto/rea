@@ -2,10 +2,8 @@ import { expect, it } from "vitest";
 
 import { ANALYSIS_EVIDENCE_PREDICATE } from "../evidence.js";
 
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
   evidenceId: `ev_${"a".repeat(64)}`,

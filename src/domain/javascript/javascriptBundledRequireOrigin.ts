@@ -12,10 +12,8 @@ import {
 import { collectJavaScriptIdentityWritesSteps } from "./javascriptElectronMemberWrites.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
-import {
-  semanticRequireOriginCandidate,
-  type JavaScriptRequireOrigin,
-} from "./javascriptSemanticRequireOrigin.js";
+import { semanticRequireOriginCandidate } from "./javascriptSemanticRequireOrigin.js";
+import type { JavaScriptRequireOrigin } from "./javascriptSemanticRequireOriginSlot.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,

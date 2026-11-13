@@ -59,7 +59,7 @@ import {
 import {
   analysisViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   BINARY_LAYOUT_TEST_PROVIDER,
   binaryLayoutFixture,

@@ -2,10 +2,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import {
-  artifactInventorySummaryViewResultSchema,
-  sealAnalysisView,
-} from "../../src/domain/analysisView/analysisView.js";
+import { sealAnalysisView } from "../../src/domain/analysisView/analysisView.js";
+import { artifactInventorySummaryViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { artifactComparisonResultSchema } from "../../src/domain/artifactComparison.js";
 import { digestCanonicalValue } from "../../src/domain/canonicalDigest.js";
 import {

@@ -6,7 +6,7 @@ import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import {
   elfExportImage,

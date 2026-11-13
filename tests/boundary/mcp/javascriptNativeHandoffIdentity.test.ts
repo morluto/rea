@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import {
   applicationFeatureTraceResultSchema,

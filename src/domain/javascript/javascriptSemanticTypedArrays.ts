@@ -1,7 +1,7 @@
 import * as t from "@babel/types";
 
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 

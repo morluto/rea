@@ -12,7 +12,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { playwrightTraceSchema } from "../../../src/domain/playwrightTrace/playwrightTrace.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 
 type McpCall = Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"];

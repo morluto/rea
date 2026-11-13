@@ -99,9 +99,3 @@ export function createGitHubApi(options?: {
     budget: { requests: number; startedAt: number; limitMs: number },
   ) => Promise<unknown>;
 }): FailureReportApi;
-
-export function writeFailureReport(
-  report: CiFailureReport,
-  outputDirectory?: string,
-  summaryPath?: string,
-): Promise<{ jsonPath: string; markdownPath: string }>;

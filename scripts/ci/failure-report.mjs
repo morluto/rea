@@ -467,7 +467,7 @@ function errorCode(error) {
   return error instanceof Error ? error.message.slice(0, 160) : "unknown_error";
 }
 
-export async function writeFailureReport(
+async function writeFailureReport(
   report,
   outputDirectory = OUTPUT_DIRECTORY,
   summaryPath,

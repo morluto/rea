@@ -64,6 +64,18 @@
   },
   "overrides": [
     {
+      "files": ["src/domain/**/*.ts"],
+      "rules": { "rea/no-locale-compare": "error" }
+    },
+    {
+      "files": [
+        "src/domain/**/*.test.ts",
+        "src/domain/**/*.spec.ts",
+        "src/domain/**/*.fixture.ts"
+      ],
+      "rules": { "rea/no-locale-compare": "off" }
+    },
+    {
       "files": [
         "scripts/electron-active-hook*.cjs",
         "tests/conformance/readiness/electron/*.js",
@@ -76,12 +88,19 @@
     {
       "files": ["src/**/*.ts"],
       "rules": {
+        "rea/no-babel-visitor-keys": "error",
         "typescript/no-misused-promises": "error"
       }
     },
     {
-      "files": ["tests/**/*.ts", "src/**/*.test.ts", "src/**/*.fixture.ts"],
+      "files": [
+        "tests/**/*.ts",
+        "src/**/*.test.ts",
+        "src/**/*.spec.ts",
+        "src/**/*.fixture.ts"
+      ],
       "rules": {
+        "rea/no-babel-visitor-keys": "off",
         "max-lines": "off",
         "max-lines-per-function": [
           "error",
@@ -93,6 +112,10 @@
         ],
         "typescript/no-misused-promises": "warn"
       }
+    },
+    {
+      "files": ["src/domain/javascript/javascriptSemanticTraversal.ts"],
+      "rules": { "rea/no-babel-visitor-keys": "off" }
     },
     {
       "files": ["src/application/**/*.test.ts"],

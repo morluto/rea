@@ -52,14 +52,14 @@ import {
   semanticObjectPropertyReferences,
   semanticObjectAccessorReferences,
   semanticNativePrototypeChain,
-  type JavaScriptSemanticObjectReference,
 } from "./javascriptSemanticObjectReferences.js";
+import type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
 import {
   semanticIterationSources,
   semanticPropertyReadSources,
-  type SemanticIterationSource,
   type SemanticPropertyReadSource,
 } from "./javascriptSemanticIterationSources.js";
+import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
 import { semanticGetterReceiverReferences } from "./javascriptSemanticGetterResults.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";

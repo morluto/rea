@@ -21,7 +21,7 @@ import {
   androidJniSummaryViewResultSchema,
   androidJniPageViewResultSchema,
   analysisViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   createEvidence,
   parseEvidence,

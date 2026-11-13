@@ -12,6 +12,69 @@ import {
   stringifyHermesConfigurationYaml,
 } from "./HermesConfigurationYaml.js";
 
+it("uses the first inherited mapping when creating an override", () => {
+  const source =
+    "first: &first\n  mcp_servers:\n    one: {command: first}\nsecond: &second\n  mcp_servers:\n    two: {command: second}\n<<: [*first, *second]\n";
+  const updated = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+    command: "rea",
+  });
+  const parsed = parseHermesConfigurationYaml(updated) as {
+    mcp_servers: Record<string, unknown>;
+  };
+  expect(parsed.mcp_servers).toEqual({
+    one: { command: "first" },
+    rea: { command: "rea" },
+  });
+  expect(
+    parseHermesConfigurationYaml(
+      updated.replace("command: first", "command: changed"),
+    ),
+  ).toMatchObject({
+    mcp_servers: { one: { command: "changed" } },
+  });
+});
+
+it("refuses an inherited override when an existing anchor name is shadowed", () => {
+  const source =
+    "shared: &shared\n  mcp_servers: &table\n    other: {command: first}\nshadow: &table {other: {command: second}}\n<<: *shared\n";
+  expect(() =>
+    editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+      command: "rea",
+    }),
+  ).toThrow(/anchor is shadowed/);
+});
+
+it("retains inherited YAML settings when updating a registration", () => {
+  const source =
+    "defaults: &defaults\n  enabled: false\nmcp_servers:\n  rea:\n    <<: *defaults\n    command: old\n";
+  const parsed = parseHermesConfigurationYaml(source) as {
+    mcp_servers: { rea: Record<string, unknown> };
+  };
+  const updated = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+    ...parsed.mcp_servers.rea,
+    command: "rea",
+  });
+  expect(updated).toContain("<<: *defaults");
+  const changedDefault = updated.replace("enabled: false", "enabled: true");
+  expect(parseHermesConfigurationYaml(changedDefault)).toMatchObject({
+    mcp_servers: { rea: { command: "rea", enabled: true } },
+  });
+  const overridden = editHermesConfigurationYaml(
+    source,
+    ["mcp_servers", "rea"],
+    { ...parsed.mcp_servers.rea, command: "rea", enabled: true },
+  );
+  expect(overridden).toContain("<<: *defaults");
+  expect(parseHermesConfigurationYaml(overridden)).toMatchObject({
+    mcp_servers: { rea: { command: "rea", enabled: true } },
+  });
+  expect(() =>
+    editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+      command: "rea",
+    }),
+  ).toThrow(/Cannot remove inherited YAML setting/);
+});
+
 it("preserves annotations on changed registration mappings and scalar fields", () => {
   const source =
     "mcp_servers:\n  rea: # registration note\n    command: old # command note\n    env: # environment note\n      MODE: old # mode note\n    args: # arguments note\n      - old # argument note\n";

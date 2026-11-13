@@ -9,7 +9,7 @@ import { createFlutterBuildAnalysisProvider } from "../../../src/composition/flu
 import {
   analysisViewResultSchema,
   dartAotSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { flutterResultSchemas } from "../../../src/domain/flutter/flutterBuildAnalysis.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
