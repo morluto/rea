@@ -13195,9 +13195,14 @@ msgstr "{ph0}을 대상의 함수 목록에 있는 함수 이름이나 주소로
 #: website/public/get-started/index.html:1694
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
-"Node.js:"
-msgstr "macOS나 Linux에서는 Node.js를 준비한 뒤 curl 설치 프로그램을 사용할 수도 있습니다."
+"On macOS or Linux, review a release-tagged installer before running it. This example "
+"pins 6.9.0. The default-branch script tracks main and is not a pinned release."
+msgstr ""
+
+#~ msgid ""
+#~ "On macOS or Linux, you can also use the curl installer after preparing "
+#~ "Node.js:"
+#~ msgstr "macOS나 Linux에서는 Node.js를 준비한 뒤 curl 설치 프로그램을 사용할 수도 있습니다."
 
 #: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"

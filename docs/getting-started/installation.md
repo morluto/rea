@@ -2127,38 +2127,30 @@ without asking npm to resolve the workspace's dependency graph.
 
 ### Global installation wrapper
 
-The optional curl wrapper installs only the global npm package:
+The optional curl wrapper installs only the global npm package. Review a
+release-tagged script before running it. The example below is the 6.9.0
+release; replace the version when installing a different tag.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
+rea_version=6.9.0
+curl -fsSL "https://raw.githubusercontent.com/morluto/rea/rea-agents-${rea_version}/install.sh" -o rea-install.sh
+less rea-install.sh
+bash rea-install.sh --version "$rea_version"
 ```
 
-It prints the version, runtime, npm command, and destination before installing. When a controlling terminal exists it starts `rea setup`; otherwise it prints the command to run later.
+The tag pins the selected script revision; `--version` selects the npm package
+version. Neither command verifies a signature on the downloaded script. The
+script prints the version, runtime, npm command, and destination before
+installing. When a controlling terminal exists it starts `rea setup`; otherwise
+it prints the command to run later.
 
-Pass options with `bash -s --`:
+The default-branch URL tracks `main` and is not a pinned release. Use it only
+when that moving script is intentional:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh |
   bash -s -- --dry-run
 ```
-
-To review a version-pinned installer before running it, select the release
-version, download its tagged script, and inspect the downloaded file:
-
-```bash
-rea_version=6.7.0
-curl -fsSL "https://raw.githubusercontent.com/morluto/rea/rea-agents-${rea_version}/install.sh" -o rea-install.sh
-less rea-install.sh
-```
-
-After reviewing it, install the same package version:
-
-```bash
-bash rea-install.sh --version "$rea_version"
-```
-
-The tag pins the selected script revision; `--version` selects the npm package
-version. Neither command verifies a signature on the downloaded script.
 
 Supported options are `--version <semver>`, `--dry-run`, `--no-setup`, `--no-prompt`, and `--verbose`. Neither `--no-prompt` nor a non-interactive shell grants permission to install external dependencies.
 
