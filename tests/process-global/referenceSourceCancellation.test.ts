@@ -113,11 +113,14 @@ it.each([
     } finally {
       held?.release();
       releaseClose?.();
-      await running;
-      fileClose.mockRestore();
-      scopeClose.mockRestore();
-      vi.restoreAllMocks();
-      process.exitCode = previousExitCode;
+      try {
+        await running;
+      } finally {
+        fileClose.mockRestore();
+        scopeClose.mockRestore();
+        vi.restoreAllMocks();
+        process.exitCode = previousExitCode;
+      }
     }
     expect(await readFile(file, "utf8")).toBe(contents);
   },

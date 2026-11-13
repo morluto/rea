@@ -1,9 +1,11 @@
 import { open, writeFile, type FileHandle } from "node:fs/promises";
+import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import * as artifactPaths from "../ArtifactPaths.js";
 import { BunStandaloneArtifactReader } from "../BunStandaloneArtifactReader.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
@@ -16,6 +18,34 @@ import {
   elfPrefix,
   elfAppendedBunPayload,
 } from "./BunStandalone.fixture.js";
+
+it.each(["close", "cancel"] as const)(
+  "does not report a complete inventory after %s while iteration is paused",
+  async (interruption) => {
+    const path = join(await createTestTempDirectory("rea-bun-paused-"), "app");
+    await writeFile(
+      path,
+      elfAppendedBunPayload(
+        bunModuleGraphPayload({
+          modules: [{ name: "main.js", contents: Buffer.from("body") }],
+        }),
+      ),
+    );
+    const reader = new BunStandaloneArtifactReader(path);
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it("keeps duplicate and unsafe names distinct while extracting exact bytes", async () => {
   const path = join(await createTestTempDirectory("rea-bun-reader-"), "app");
@@ -130,6 +160,35 @@ async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
   return result;
 }
 
+it("cancels buffered member bytes after production finishes", async () => {
+  const path = join(await createTestTempDirectory("rea-bun-buffered-"), "app");
+  await writeFile(
+    path,
+    elfAppendedBunPayload(
+      bunModuleGraphPayload({
+        modules: [{ name: "main.js", contents: Buffer.from("buffered") }],
+      }),
+    ),
+  );
+  const reader = new BunStandaloneArtifactReader(path);
+  const controller = new AbortController();
+  const reason = new Error("cancel buffered Bun member");
+  try {
+    const [entry] = await collect(reader.entries());
+    if (entry === undefined) throw new Error("Expected Bun member");
+    const stream = await reader.open(entry, controller.signal);
+    await once(stream, "finish");
+    expect(stream.readableLength).toBeGreaterThan(0);
+    controller.abort(reason);
+    await expect(buffer(stream)).rejects.toMatchObject({
+      reason: "cancelled",
+      cause: reason,
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
 it("allows an uncancelled inventory after a cancelled graph preparation", async () => {
   const path = join(
     await createTestTempDirectory("rea-bun-cancel-retry-"),
@@ -226,7 +285,7 @@ it("keeps another caller's in-flight inventory independent of cancelled preparat
       },
       (cause: unknown) => cause,
     );
-    await started;
+    await awaitAcknowledgement(started, first, "Bun artifact read");
     const second = collect(reader.entries());
     controller.abort(reason);
     resume();

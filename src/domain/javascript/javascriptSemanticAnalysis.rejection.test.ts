@@ -7,7 +7,7 @@ import {
   analyzeParsedJavaScriptSemantics,
 } from "./javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import {
   collectJavaScriptExports,
   fingerprintJavaScriptAst,

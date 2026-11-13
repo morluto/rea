@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../../../domain/jsonPointer.js";
 import { captureBudgets } from "../CaptureBudgets.js";
 import { isAbsolute } from "node:path";
 import { CaptureFormatError } from "../CaptureFormatError.js";
@@ -63,10 +64,7 @@ const excludeBody = (
           sha256: null,
         },
   );
-  const parts = pointer
-    .split("/")
-    .slice(1)
-    .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"));
+  const parts = pointer.split("/").slice(1).map(unescapeJsonPointerToken);
   let parent: JsonValue | undefined = record.reported;
   for (const part of parts.slice(0, -1)) {
     if (

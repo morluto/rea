@@ -1,3 +1,4 @@
+import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { KernelModulePort } from "./KernelModulePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -15,7 +16,6 @@ import {
   type KernelModule,
   type InspectKernelModuleInput,
 } from "../../domain/native/kernelModule.js";
-import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
@@ -59,11 +59,8 @@ export class KernelModuleService {
         ),
       );
     const value = report.data;
-    const machine = value.machine;
-    const mapped = machine === null ? undefined : elfArchitecture(machine);
-    const architecture = BINARY_ARCHITECTURES.find(
-      (supported) => supported === mapped,
-    );
+    const architecture =
+      value.machine === null ? undefined : elfArchitecture(value.machine);
     const locations = [
       { kind: "artifact-path" as const, path: value.artifact.path },
       ...rangesOf(value).map((range) => ({
@@ -94,11 +91,6 @@ export class KernelModuleService {
     );
   }
 }
-
-const inside =
-  (fileBytes: number) =>
-  (range: Range): boolean =>
-    range.bytes <= fileBytes && range.offset <= fileBytes - range.bytes;
 
 const rangesOf = (report: KernelModule): Range[] => {
   const found: Range[] = [];
@@ -290,7 +282,7 @@ const validReport = (
   if (
     report.artifact.bytes > input.max_file_bytes ||
     report.coverage.examined_entries > input.max_entries ||
-    !rangesOf(report).every(inside(report.artifact.bytes))
+    !rangesOf(report).every(insideArtifact(report.artifact.bytes))
   )
     return false;
   if (report.applicability === "unsupported")

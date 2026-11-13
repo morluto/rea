@@ -37,8 +37,9 @@ it("reports independent cleanup failures and retries only retained owners", asyn
     .mockRejectedValueOnce(sdkFailure);
   try {
     const first = harness.close();
-    expect(harness.close()).toBe(first);
+    const concurrent = harness.close().catch((cause: unknown) => cause);
     const failure: unknown = await first.catch((cause: unknown) => cause);
+    expect(failureLeaves(await concurrent)).toEqual(failureLeaves(failure));
     expect(failureLeaves(failure)).toEqual(
       expect.arrayContaining([
         sdkFailure,

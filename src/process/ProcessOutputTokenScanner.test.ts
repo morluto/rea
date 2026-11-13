@@ -1,13 +1,11 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES,
-  ProcessOutputTokenScanner,
-} from "./ProcessOutputTokenScanner.js";
+import { ProcessOutputTokenScanner } from "./ProcessOutputTokenScanner.js";
 import { ProviderProcessSupervisor } from "./ProviderProcess.js";
 
 const MARKER = "java.lang.OutOfMemoryError";
+const EXPECTED_CONTEXT_BYTES = 1024;
 const OOME_LINE =
   "ERROR Abort due to Headless analyzer error: Java heap space (HeadlessAnalyzer) java.lang.OutOfMemoryError: Java heap space";
 
@@ -116,8 +114,8 @@ describe("ProviderProcessSupervisor output marker", () => {
 describe("ProcessOutputTokenScanner", () => {
   it("bounds the retained line and omits a prefix it could not keep whole", () => {
     const scanner = new ProcessOutputTokenScanner(MARKER);
-    const prefix = "p".repeat(PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES * 3);
-    const suffix = `: ${"s".repeat(PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES * 3)}`;
+    const prefix = "p".repeat(EXPECTED_CONTEXT_BYTES * 3);
+    const suffix = `: ${"s".repeat(EXPECTED_CONTEXT_BYTES * 3)}`;
     scanner.scan(Buffer.from(prefix.slice(0, 1000)), 0);
     scanner.scan(Buffer.from(prefix.slice(1000)), 1000);
     scanner.scan(Buffer.from(`${MARKER}${suffix.slice(0, 50)}`), prefix.length);
@@ -128,7 +126,7 @@ describe("ProcessOutputTokenScanner", () => {
     const observed = scanner.latestWithin(0, Number.MAX_SAFE_INTEGER);
     expect(observed).toEqual({
       offset: prefix.length,
-      line: `${MARKER}${suffix.slice(0, PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES)}`,
+      line: `${MARKER}${suffix.slice(0, EXPECTED_CONTEXT_BYTES)}`,
       truncated: true,
       trailingContextIncomplete: true,
     });

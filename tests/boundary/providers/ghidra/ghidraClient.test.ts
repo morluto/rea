@@ -39,10 +39,7 @@ import {
   GhidraLaunchError,
 } from "../../../../src/ghidra/GhidraLauncher.js";
 import type { GhidraDiagnostic } from "../../../../src/ghidra/GhidraClientTypes.js";
-import type {
-  GhidraLaunchSession,
-  GhidraLauncher,
-} from "../../../../src/ghidra/GhidraLauncher.js";
+import type { GhidraLauncher } from "../../../../src/ghidra/GhidraLauncher.js";
 import type { ProviderProcessHandle } from "../../../../src/process/ProviderProcess.js";
 import type { GhidraTransportKind } from "../../../../src/ghidra/GhidraTransport.js";
 import {

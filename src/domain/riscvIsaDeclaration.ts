@@ -1,3 +1,4 @@
+import { readElfAttributeUleb } from "./elfAttributeUleb.js";
 import type { RiscvIsaDeclaration } from "./binaryTargetTypes.js";
 import {
   readElfTableDeclarations,
@@ -52,21 +53,6 @@ export const parseRiscvAttributes = (
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const readU32 = (offset: number): number =>
     view.getUint32(offset, littleEndian);
-  const readUleb = (
-    offset: number,
-    end: number,
-  ): { readonly value: number; readonly next: number } | undefined => {
-    let value = 0;
-    for (let index = 0; index < 5 && offset + index < end; index += 1) {
-      const byte = bytes[offset + index]!;
-      value += (byte & 0x7f) * 2 ** (7 * index);
-      if ((byte & 0x80) === 0)
-        return value <= 0xffffffff
-          ? { value, next: offset + index + 1 }
-          : undefined;
-    }
-    return undefined;
-  };
   const readString = (
     offset: number,
     end: number,
@@ -103,7 +89,7 @@ export const parseRiscvAttributes = (
     let cursor = vendor.next;
     while (cursor < end) {
       const scopeStart = cursor;
-      const scope = readUleb(cursor, end);
+      const scope = readElfAttributeUleb(bytes, cursor, end);
       if (scope === undefined)
         return err("malformed RISC-V attribute scope tag");
       if (scope.value !== TAG_FILE)
@@ -121,7 +107,7 @@ export const parseRiscvAttributes = (
       const scopeEnd = scopeStart + scopeLength;
       cursor = scope.next + 4;
       while (cursor < scopeEnd) {
-        const tag = readUleb(cursor, scopeEnd);
+        const tag = readElfAttributeUleb(bytes, cursor, scopeEnd);
         if (tag === undefined) return err("malformed RISC-V attribute tag");
         if (tag.value % 2 === 1) {
           const value = readString(tag.next, scopeEnd);
@@ -136,7 +122,7 @@ export const parseRiscvAttributes = (
           }
           cursor = value.next;
         } else {
-          const value = readUleb(tag.next, scopeEnd);
+          const value = readElfAttributeUleb(bytes, tag.next, scopeEnd);
           if (value === undefined)
             return err(
               `malformed integer value for RISC-V attribute tag ${tag.value}`,

@@ -40,7 +40,7 @@ type Escape = "none" | "slash" | "hex" | "low-slash" | "low-u" | "low-hex";
 
 const invalid = (): Error => new Error("invalid authenticated response");
 
-export interface DecodedCutterResponse {
+interface DecodedCutterResponse {
   readonly response: string;
   readonly proof: string;
 }
@@ -262,7 +262,7 @@ export class CutterAuthenticatedResponseDecoder {
   }
 }
 
-export type CutterInboundFrame =
+type CutterInboundFrame =
   | { readonly kind: "challenge"; readonly value: unknown }
   | {
       readonly kind: "response";

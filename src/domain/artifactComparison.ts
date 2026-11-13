@@ -98,7 +98,7 @@ export type ArtifactComparisonResult = z.infer<
 type ArtifactChange = z.infer<typeof artifactChangeSchema>;
 
 /** Comparison limitation when a path's format declarations cannot be compared. */
-export const FORMAT_DECLARATION_UNKNOWN_LIMITATION =
+const FORMAT_DECLARATION_UNKNOWN_LIMITATION =
   "Format metadata declarations are missing on one side or differ in kind for matching paths; omitted metadata may be a legacy or non-container observation and leaves the complete declaration unavailable.";
 
 const comparisonInventory = (input: unknown, side: "left" | "right") => {

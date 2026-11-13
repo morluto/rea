@@ -872,7 +872,7 @@ const readClientConfiguration = async (
   client: UninstallClient,
   fileSystem: UninstallFileSystem,
   resources: ArtifactResourceScope,
-  ownershipEstablished = false,
+  ownershipEstablished: boolean,
 ): Promise<ClientConfigurationRead> => {
   const applicabilityUnverified =
     client.applicability === "unverified" && !ownershipEstablished;

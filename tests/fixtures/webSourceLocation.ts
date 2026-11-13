@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
-import type { WebSourceLocationArtifacts } from "../../src/application/WebSourceLocationPorts.js";
+import type {
+  WebSourceLocationArtifacts,
+  WebSourceMapPort,
+} from "../../src/application/WebSourceLocationPorts.js";
 import { webModuleArtifactsFixture } from "./webModuleTrace.js";
 import { traceSourceMap } from "../../src/javascript/sourceMaps/TraceSourceMap.js";
-import type { WebSourceMapPort } from "../../src/application/WebSourceLocationPorts.js";
 import { ok } from "../../src/domain/result.js";
 
 /** Inert codec seam for workflow tests; real process verification is separate. */

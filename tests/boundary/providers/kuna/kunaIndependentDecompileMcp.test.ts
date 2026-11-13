@@ -8,7 +8,7 @@ import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
 import { KunaRunSlots } from "../../../../src/kuna/KunaRunSlots.js";
 import { elfNoteFixture } from "../../../../src/native/elf/ElfNotes.fixture.js";
 import { createApplicationMcpHarness } from "../../../fixtures/applicationMcpHarness.js";
-import { advertisedMcpToolSchemas } from "../../../fixtures/advertisedMcpTool.js";
+import { callAdvertisedMcpTool } from "../../../fixtures/advertisedMcpTool.js";
 import { createMcpSchemaValidation } from "../../../fixtures/mcpSchemaValidation.js";
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -145,23 +145,8 @@ it.each(["compact", "full"] as const)(
       },
     });
     try {
-      const call = async (name: string, args: Record<string, unknown>) => {
-        const schema = await advertisedMcpToolSchemas(
-          harness.client,
-          name,
-          schemas.assertions,
-        );
-        const result = await harness.client.callTool(
-          { name, arguments: args },
-          { toolDefinition: schema.toolDefinition },
-        );
-        expect(result.isError, JSON.stringify(result)).not.toBe(true);
-        expect(
-          schema.ajv.validate(schema.outputSchema, result.structuredContent),
-          JSON.stringify(schema.ajv.errors),
-        ).toBe(true);
-        return result.structuredContent;
-      };
+      const call = (name: string, args: Record<string, unknown>) =>
+        callAdvertisedMcpTool(harness.client, name, args, schemas.assertions);
       await call("open_binary", { path: target, provider_id: "kuna" });
       await call("procedure_assembly", { procedure: "broken" });
       const original = parseEvidence(

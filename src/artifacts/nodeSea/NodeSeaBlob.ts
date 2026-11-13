@@ -9,7 +9,7 @@ import {
 import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 
 /** Node `SeaBlob::kMagic` from `src/node_sea.h` (v24). */
-export const NODE_SEA_MAGIC = 0x143da20;
+const NODE_SEA_MAGIC = 0x143da20;
 
 const FLAG_DISABLE_EXPERIMENTAL_SEA_WARNING = 1 << 0;
 const FLAG_USE_SNAPSHOT = 1 << 1;
