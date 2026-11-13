@@ -16,7 +16,6 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import type {
   Browser,
   BrowserContext,
