@@ -117,6 +117,30 @@ const arrayItems = (node: object, key: string): readonly unknown[] => {
   return Array.isArray(items) ? items : [];
 };
 
+/** A depth-overflow node is the decoder's explicit, non-recursive stop. */
+const terminalStoppedNode = (
+  frame: Extract<FormTreeFrame, { depth: number }>,
+  node: object,
+): boolean => {
+  if (frame.kind === "object")
+    return (
+      arrayItems(node, "children").length === 0 &&
+      arrayItems(node, "properties").length === 0 &&
+      (node as Record<string, unknown>).unknown !== null &&
+      typeof (node as Record<string, unknown>).unknown === "object"
+    );
+  if (frame.kind === "property")
+    return (
+      (node as Record<string, unknown>).value !== null &&
+      typeof (node as Record<string, unknown>).value === "object" &&
+      ((node as Record<string, unknown>).value as Record<string, unknown>)
+        .kind === "unknown"
+    );
+  if (frame.kind === "value")
+    return (node as Record<string, unknown>).kind === "unknown";
+  return false;
+};
+
 /**
  * Zod follows the lazy form schema before the producer invariants run, so a
  * cyclic or over-deep provider tree would exhaust the call stack instead of
@@ -145,7 +169,17 @@ const formTreeWithinDepth = (report: unknown): boolean => {
     }
     const node = frame.value;
     if (typeof node !== "object" || node === null) continue;
-    if (frame.depth > MAX_DELPHI_FORM_DEPTH) return false;
+    if (frame.depth > MAX_DELPHI_FORM_DEPTH) {
+      // The decoder refuses to enter the next level but its caller retains a
+      // zero-length stop node there. Allow that terminal sentinel, without
+      // following it, and reject anything deeper.
+      if (
+        frame.depth > MAX_DELPHI_FORM_DEPTH + 1 ||
+        !terminalStoppedNode(frame, node)
+      )
+        return false;
+      continue;
+    }
     if (ancestors.has(node)) return false;
     ancestors.add(node);
     stack.push({ kind: "leave", value: node });
@@ -469,6 +503,82 @@ const childrenFollowSource = (object: DelphiFormObject): boolean => {
   );
 };
 
+/**
+ * The decoder reads the optional flag byte and position, both names, the
+ * property terminator, the children and the object terminator in order. Tie
+ * the section edges to that source layout instead of checking containment only.
+ */
+const objectSectionsFollowSource = (object: DelphiFormObject): boolean => {
+  const objectEnd = object.location.offset + object.location.bytes;
+  let cursor = object.location.offset;
+  const flagged = object.flags.length > 0 || object.child_position !== null;
+  if (flagged) cursor += 1;
+  if (object.child_position !== null) {
+    // The tag byte precedes the retained position payload.
+    if (object.child_position.location.offset !== cursor + 1) return false;
+    cursor =
+      object.child_position.location.offset +
+      object.child_position.location.bytes;
+  }
+  const headerEnd = cursor;
+  // A prefix byte of 0xF0 declares no flag, so an empty flag list cannot
+  // distinguish its presence from an unprefixed header.
+  const optionalFlagByte =
+    object.flags.length === 0 && object.child_position === null ? 1 : 0;
+  if (object.class_name !== null) {
+    if (
+      object.class_name.location.offset !== headerEnd &&
+      object.class_name.location.offset !== headerEnd + optionalFlagByte
+    )
+      return false;
+    cursor =
+      object.class_name.location.offset + object.class_name.location.bytes;
+  } else if (object.component_name !== null) return false;
+  if (object.component_name !== null) {
+    if (object.component_name.location.offset !== cursor) return false;
+    cursor =
+      object.component_name.location.offset +
+      object.component_name.location.bytes;
+  }
+  const namesEnd = cursor;
+  if (object.properties.length > 0) {
+    if (object.properties[0]!.location.offset !== namesEnd) return false;
+    const last = object.properties.at(-1)!;
+    cursor = last.location.offset + last.location.bytes;
+  }
+  const propertiesEnd = cursor;
+  if (object.unknown === null) {
+    // Complete: property-list terminator, children, object terminator.
+    cursor = propertiesEnd + 1;
+    if (object.children.length > 0) {
+      if (object.children[0]!.location.offset !== cursor) return false;
+      const last = object.children.at(-1)!;
+      cursor = last.location.offset + last.location.bytes;
+    }
+    return objectEnd === cursor + 1;
+  }
+  if (object.children.length > 0) {
+    // The property terminator was consumed before the child list starts.
+    if (object.children[0]!.location.offset !== propertiesEnd + 1) return false;
+    const last = object.children.at(-1)!;
+    return objectEnd === last.location.offset + last.location.bytes;
+  }
+  if (object.properties.length > 0) {
+    if (object.component_name === null) return false;
+    // A stopped value ends the object before the property terminator.
+    if (object.properties.some((property) => valueHasStop(property.value)))
+      return objectEnd === propertiesEnd;
+    return objectEnd === propertiesEnd || objectEnd === propertiesEnd + 1;
+  }
+  if (object.class_name === null)
+    return (
+      objectEnd === headerEnd ||
+      (optionalFlagByte === 1 && objectEnd === headerEnd + 1)
+    );
+  if (object.component_name === null) return objectEnd === namesEnd;
+  return objectEnd === namesEnd || objectEnd === namesEnd + 1;
+};
+
 /** Every nested location of a decoded form must stay inside its owner. */
 const insideLocations = (
   object: DelphiFormObject,
@@ -521,6 +631,7 @@ const insideLocations = (
       !positionMatches(object.child_position, object.location))
   )
     return false;
+  if (!objectSectionsFollowSource(object)) return false;
   if (!propertiesFollowSource(object.properties)) return false;
   if (!childrenFollowSource(object)) return false;
   return (
@@ -832,7 +943,14 @@ const listEntriesFollowSource = (
   value: Extract<DelphiFormValue, { kind: "list" }>,
 ): boolean => {
   let expected = value.location.offset;
-  for (const entry of value.items) {
+  for (const [index, entry] of value.items.entries()) {
+    // A stopped entry ends the list: the decoder rethrows the stop instead of
+    // reading another marker or the closing terminator.
+    if (
+      valueHasStop(entry.value) &&
+      (value.terminated || index !== value.items.length - 1)
+    )
+      return false;
     if (
       entry.marker_location.offset !== expected ||
       entry.marker_location.bytes !== 1
@@ -887,7 +1005,8 @@ const collectionItemFollowsSource = (
     cursor = item.position.location.offset + item.position.location.bytes;
   }
   // A stopped item can end after a complete position but before its marker.
-  if (itemEnd < cursor + 1) return !complete && item.properties.length === 0;
+  if (itemEnd < cursor + 1)
+    return !complete && item.properties.length === 0 && itemEnd === cursor;
   if (!propertiesFollowSource(item.properties)) return false;
   if (item.properties.length > 0) {
     // Properties start right after the marker and run to the item end.
@@ -897,7 +1016,12 @@ const collectionItemFollowsSource = (
   } else {
     cursor += 1;
   }
-  return complete ? itemEnd === cursor + 1 : itemEnd >= cursor;
+  // A stop leaves the cursor exactly after the marker, after a property, or
+  // after the item terminator; it cannot silently claim a gap. A stopped
+  // property ends the item before its terminator is read.
+  if (item.properties.some((property) => valueHasStop(property.value)))
+    return !complete && itemEnd === cursor;
+  return itemEnd === cursor + 1 || (!complete && itemEnd === cursor);
 };
 
 const collectionFollowsSource = (
@@ -906,6 +1030,13 @@ const collectionFollowsSource = (
   let expected = value.location.offset;
   for (const [index, item] of value.items.entries()) {
     if (item.location.offset !== expected) return false;
+    // A stopped property ends its item and the collection: the decoder
+    // rethrows the stop instead of reading another item or the terminator.
+    if (
+      item.properties.some((property) => valueHasStop(property.value)) &&
+      (value.terminated || index !== value.items.length - 1)
+    )
+      return false;
     // Every item of a terminated collection is complete; in a stopped
     // collection only the last item may carry an unfinished prefix.
     if (

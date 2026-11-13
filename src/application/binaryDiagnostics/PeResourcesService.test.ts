@@ -7,7 +7,7 @@ import {
   BYTE_PRESERVING_CODE_PAGE,
   DEFAULT_CODE_PAGE,
   DELPHI_FORM_FLOAT_NOTES,
-  MAX_DELPHI_FORM_DEPTH,
+  MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES,
   RESOURCE_CODE_PAGES,
 } from "../../domain/native/delphiForm.js";
 import {
@@ -370,13 +370,49 @@ it.each([
   },
 );
 
+const stoppedRoot = (
+  report: Awaited<ReturnType<typeof observedReport>>,
+  form: (typeof report.delphi_forms)[number],
+  stopEnd: number,
+  overrides: Record<string, unknown> = {},
+): typeof form.root => {
+  const root = form.root;
+  const payload = report.resources[form.resource_index]?.payload.location;
+  const payloadEnd =
+    payload === undefined ? stopEnd : payload.offset + payload.bytes;
+  const tail = Math.max(0, payloadEnd - stopEnd);
+  return {
+    ...root,
+    ...overrides,
+    location: {
+      offset: root.location.offset,
+      bytes: stopEnd - root.location.offset,
+    },
+    unknown: {
+      reason: "stopped",
+      bytes_hex: "00".repeat(Math.min(tail, 128)),
+      truncated: tail > 128,
+      location: { offset: stopEnd, bytes: tail },
+    },
+  } as never;
+};
+
 const reportWithFormPrefix = async (prefixBytes: number) => {
-  const payload = delphiForm(
+  const body = delphiForm(
     delphiComponent("TForm1", "Form1", [
       delphiProperty("Blob", delphiBinary(512)),
     ]),
   );
-  const report = await reportForPayload(payload);
+  if (prefixBytes <= MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES) {
+    // Parse a real prefix so the baseline root keeps decoder geometry.
+    return reportForPayload(
+      prefixBytes === 0
+        ? body
+        : Buffer.concat([Buffer.alloc(prefixBytes), body]),
+    );
+  }
+  // Only an over-window rejection case needs a form the decoder cannot emit.
+  const report = await reportForPayload(body);
   const index = report.resources.findIndex(
     (resource) => resource.type.kind === "id" && resource.type.id === 10,
   );
@@ -390,14 +426,11 @@ const reportWithFormPrefix = async (prefixBytes: number) => {
       signature: "TPF0",
       version: "boVersion0",
       signature_location: signature,
-      prefix:
-        prefixBytes === 0
-          ? null
-          : {
-              location: { offset: formPayload.offset, bytes: prefixBytes },
-              bytes_hex: "00".repeat(prefixBytes),
-              note: "test prefix",
-            },
+      prefix: {
+        location: { offset: formPayload.offset, bytes: prefixBytes },
+        bytes_hex: "00".repeat(prefixBytes),
+        note: "test prefix",
+      },
       ...pages,
       root: validRoot(
         {
@@ -429,23 +462,24 @@ const reportWithSyntheticValue = async (
     offset: valueOffset,
     bytes: valueBytes,
   };
+  const property = {
+    name,
+    value_type: valueType,
+    value: { ...value, location: valueLocation } as never,
+    location: {
+      offset: name.location.offset,
+      bytes: valueOffset - name.location.offset + valueBytes,
+    },
+  };
   report.delphi_forms = [
     {
       ...form,
-      root: {
-        ...root,
-        properties: [
-          {
-            name,
-            value_type: valueType,
-            value: { ...value, location: valueLocation } as never,
-            location: {
-              offset: name.location.offset,
-              bytes: valueOffset - name.location.offset + valueBytes,
-            },
-          },
-        ],
-      },
+      root: stoppedRoot(
+        report,
+        form,
+        valueLocation.offset + valueLocation.bytes,
+        { properties: [property], children: [] },
+      ),
     },
   ];
   return report;
@@ -453,10 +487,13 @@ const reportWithSyntheticValue = async (
 
 const reportWithBuiltSyntheticValue = async (
   valueType: string,
-  buildValue: (location: {
-    offset: number;
-    bytes: number;
-  }) => Record<string, unknown>,
+  buildValue: (
+    location: {
+      offset: number;
+      bytes: number;
+    },
+    codePage: string,
+  ) => Record<string, unknown>,
   valueBytes: number,
 ) => {
   const report = await reportWithFormPrefix(0);
@@ -465,72 +502,72 @@ const reportWithBuiltSyntheticValue = async (
   const root = form.root;
   const name = label("Value", root.location.offset + 13, form.code_page);
   const valueOffset = name.location.offset + name.location.bytes + 1;
+  const property = {
+    name,
+    value_type: valueType,
+    value: {
+      ...buildValue({ offset: valueOffset, bytes: valueBytes }, form.code_page),
+      location: { offset: valueOffset, bytes: valueBytes },
+    } as never,
+    location: {
+      offset: name.location.offset,
+      bytes: valueOffset - name.location.offset + valueBytes,
+    },
+  };
   report.delphi_forms = [
     {
       ...form,
-      root: {
-        ...root,
-        properties: [
-          {
-            name,
-            value_type: valueType,
-            value: {
-              ...buildValue({ offset: valueOffset, bytes: valueBytes }),
-              location: { offset: valueOffset, bytes: valueBytes },
-            } as never,
-            location: {
-              offset: name.location.offset,
-              bytes: valueOffset - name.location.offset + valueBytes,
-            },
-          },
-        ],
-      },
+      root: stoppedRoot(report, form, valueOffset + valueBytes, {
+        properties: [property],
+        children: [],
+      }),
     },
   ];
   return report;
 };
 
+const nestedComponentForm = (levels: number): Buffer => {
+  let child = delphiComponent("TLeaf", "Leaf1");
+  for (let index = 0; index < levels; index += 1)
+    child = delphiComponent(
+      `TLevel${String(index)}`,
+      `Level${String(index)}`,
+      [],
+      {
+        children: [child],
+      },
+    );
+  return delphiForm(child);
+};
+
+const nestedListForm = (levels: number): Buffer => {
+  let nested = delphiBytes(1, 0);
+  for (let index = 0; index < levels; index += 1)
+    nested = Buffer.concat([delphiBytes(1), nested, delphiBytes(0)]);
+  return delphiForm(
+    delphiComponent("TForm1", "Form1", [delphiProperty("Deep", nested)]),
+  );
+};
+
 const stopRoot = (report: Awaited<ReturnType<typeof observedReport>>): void => {
   const form = report.delphi_forms[0];
   if (form === undefined) throw new Error("Missing form");
-  report.delphi_forms = [
-    {
-      ...form,
-      root: {
-        ...form.root,
-        unknown: {
-          reason: "stopped",
-          bytes_hex: "",
-          truncated: false,
-          location: {
-            offset: form.root.location.offset + form.root.location.bytes,
-            bytes: 0,
-          },
-        },
-      },
-    },
-  ];
+  const root = form.root;
+  const lastChild = root.children.at(-1);
+  const lastProperty = root.properties.at(-1);
+  const stopEnd =
+    lastChild !== undefined
+      ? lastChild.location.offset + lastChild.location.bytes
+      : lastProperty !== undefined
+        ? lastProperty.location.offset + lastProperty.location.bytes
+        : root.component_name !== null
+          ? root.component_name.location.offset +
+            root.component_name.location.bytes
+          : root.class_name !== null
+            ? root.class_name.location.offset + root.class_name.location.bytes
+            : root.location.offset;
+  report.delphi_forms = [{ ...form, root: stoppedRoot(report, form, stopEnd) }];
 };
-
-const stoppedObjectChain = (
-  location: { offset: number; bytes: number },
-  remaining: number,
-): Record<string, unknown> => ({
-  location,
-  flags: [],
-  child_position: null,
-  class_name: null,
-  component_name: null,
-  properties: [],
-  children:
-    remaining === 0 ? [] : [stoppedObjectChain(location, remaining - 1)],
-  unknown: {
-    reason: "stopped",
-    bytes_hex: "",
-    truncated: false,
-    location: { offset: location.offset + location.bytes, bytes: 0 },
-  },
-});
 
 it("accepts the synthetic form baseline", async () => {
   expect(await inspectReport(await reportWithFormPrefix(0))).toMatchObject({
@@ -1743,6 +1780,107 @@ it("rejects a complete collection item that consumes no source bytes", async () 
   });
 });
 
+it("rejects a stopped collection item that claims bytes after its marker", async () => {
+  const report = await reportWithBuiltSyntheticValue(
+    "vaCollection",
+    (location) => ({
+      kind: "collection",
+      items: [
+        {
+          position: null,
+          properties: [],
+          location: { offset: location.offset, bytes: 3 },
+        },
+      ],
+      terminated: false,
+    }),
+    3,
+  );
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a list entry that follows a stopped nested list", async () => {
+  const report = await reportWithBuiltSyntheticValue(
+    "vaList",
+    (location) => ({
+      kind: "list",
+      items: [
+        {
+          value_type: "vaList",
+          marker_location: { offset: location.offset, bytes: 1 },
+          value: {
+            kind: "list",
+            items: [],
+            terminated: false,
+            location: { offset: location.offset + 1, bytes: 0 },
+          },
+        },
+        {
+          value_type: "vaNull",
+          marker_location: { offset: location.offset + 1, bytes: 1 },
+          value: {
+            kind: "null",
+            location: { offset: location.offset + 1, bytes: 1 },
+          },
+        },
+      ],
+      terminated: false,
+    }),
+    2,
+  );
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a terminated collection whose item property stopped", async () => {
+  const report = await reportWithBuiltSyntheticValue(
+    "vaCollection",
+    (location, codePage) => {
+      const name = label("V", location.offset + 1, codePage);
+      const valueOffset = name.location.offset + name.location.bytes + 1;
+      return {
+        kind: "collection",
+        items: [
+          {
+            position: null,
+            properties: [
+              {
+                name,
+                value_type: "vaList",
+                value: {
+                  kind: "list",
+                  items: [],
+                  terminated: false,
+                  location: { offset: valueOffset, bytes: 0 },
+                },
+                location: {
+                  offset: name.location.offset,
+                  bytes: valueOffset - name.location.offset,
+                },
+              },
+            ],
+            location: {
+              offset: location.offset,
+              bytes: valueOffset - location.offset + 1,
+            },
+          },
+        ],
+        terminated: true,
+      };
+    },
+    6,
+  );
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("publishes a decoded collection with framed items", async () => {
   const report = await reportForPayload(
     delphiForm(
@@ -1885,28 +2023,51 @@ it("publishes a signature-only form with a disjoint unknown suffix", async () =>
   expect(await inspectReport(report)).toMatchObject({ ok: true });
 });
 
-it.each([
-  [MAX_DELPHI_FORM_DEPTH, true],
-  [MAX_DELPHI_FORM_DEPTH + 1, false],
-] as const)(
-  "uses the decoder depth limit for a %i-level form object chain",
-  async (remaining, accepted) => {
-    const report = await reportWithFormPrefix(0);
-    const form = report.delphi_forms[0];
-    if (form === undefined) throw new Error("Missing form");
-    report.delphi_forms = [
-      {
-        ...form,
-        root: stoppedObjectChain(form.root.location, remaining) as never,
-      },
-    ];
-    expect(await inspectReport(report)).toMatchObject(
-      accepted
-        ? { ok: true }
-        : { ok: false, error: { _tag: "AnalysisOutputError" } },
-    );
+it("rejects component names that reuse the class name range", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const className = form.root.class_name;
+  if (className === null) throw new Error("Missing class name");
+  report.delphi_forms = [
+    {
+      ...form,
+      root: { ...form.root, component_name: className, class_name: className },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a complete object that omits its section terminators", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  report.delphi_forms = [
+    { ...form, root: validRoot(form.root.location, form.code_page) },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it.each([32, 33])(
+  "publishes the decoder boundary for %i nested components",
+  async (levels) => {
+    expect(
+      await inspectReport(await reportForPayload(nestedComponentForm(levels))),
+    ).toMatchObject({ ok: true });
   },
 );
+
+it("publishes a list that stopped at the decoder depth limit", async () => {
+  expect(
+    await inspectReport(await reportForPayload(nestedListForm(33))),
+  ).toMatchObject({ ok: true });
+});
 
 it("rejects a cyclic form tree before schema parsing", async () => {
   const report = await reportWithFormPrefix(0);
@@ -2026,73 +2187,23 @@ it("rejects a fully consumed binary marked decode-truncated", async () => {
 });
 
 it("publishes a zero-length stopped string inside a partial root", async () => {
-  const payload = delphiForm(
-    delphiComponent("TForm1", "Form1", [
-      delphiProperty("Blob", delphiBinary(512)),
-    ]),
-  );
-  const report = await reportForPayload(payload);
-  const index = report.resources.findIndex(
-    (resource) => resource.type.kind === "id" && resource.type.id === 10,
-  );
-  const resource = report.resources[index]!;
-  const formPayload = resource.payload.location;
-  const pages = codePageFields(resource.code_page);
-  const rootLocation = {
-    offset: formPayload.offset + 4,
-    bytes: formPayload.bytes - 4,
-  };
-  const name = {
-    text: "E",
-    bytes_hex: "45",
-    code_page: pages.code_page,
-    location: { offset: rootLocation.offset, bytes: 2 },
-  };
-  report.delphi_forms = [
+  // The decoder charges the representation budget before taking any body
+  // bytes, so a zero-length vaString can stop with only its length byte.
+  const baseline = await reportWithFormPrefix(0);
+  const page = baseline.delphi_forms[0]?.code_page ?? DEFAULT_CODE_PAGE;
+  const report = await reportWithSyntheticValue(
+    "vaString",
     {
-      resource_index: index,
-      signature: "TPF0",
-      version: "boVersion0",
-      signature_location: signatureAt(formPayload),
-      prefix: null,
-      ...pages,
-      root: {
-        location: rootLocation,
-        flags: [],
-        child_position: null,
-        class_name: null,
-        component_name: null,
-        properties: [
-          {
-            name,
-            value_type: "vaString",
-            value: {
-              kind: "string",
-              text: "",
-              bytes_hex: "",
-              code_page: pages.code_page,
-              declared_bytes: 0,
-              truncated: true,
-              decode_truncated: true,
-              // The type marker precedes the observed one-byte length prefix.
-              location: { offset: rootLocation.offset + 3, bytes: 1 },
-            },
-            location: { offset: rootLocation.offset, bytes: 4 },
-          },
-        ],
-        children: [],
-        unknown: {
-          reason: "stopped",
-          bytes_hex: "",
-          truncated: false,
-          location: {
-            offset: rootLocation.offset + rootLocation.bytes,
-            bytes: 0,
-          },
-        },
-      },
+      kind: "string",
+      text: "",
+      bytes_hex: "",
+      code_page: page,
+      declared_bytes: 0,
+      truncated: true,
+      decode_truncated: true,
     },
-  ];
+    1,
+  );
   expect(await inspectReport(report)).toMatchObject({ ok: true });
 });
 
