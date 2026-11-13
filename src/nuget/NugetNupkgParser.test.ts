@@ -1,5 +1,6 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+import { ZipReader } from "@zip.js/zip.js";
 
 import {
   inspectNugetNupkgInputSchema,
@@ -13,7 +14,10 @@ import {
   ungroupedNuspec,
 } from "./NugetNupkg.fixture.js";
 import { parseNugetNupkg } from "./NugetNupkgParser.js";
-import { NugetNupkgFormatFailure } from "./NugetNupkg.errors.js";
+import {
+  NugetNupkgCapacityFailure,
+  NugetNupkgFormatFailure,
+} from "./NugetNupkg.errors.js";
 
 const defaults = inspectNugetNupkgInputSchema.parse({
   path: "/artifacts/Demo.Package.nupkg",
@@ -162,4 +166,41 @@ it("refuses a non-ZIP file without claiming a package inventory", async () => {
   await expect(
     parseNugetNupkg(bytes, artifactOf(bytes), defaults),
   ).rejects.toBeInstanceOf(NugetNupkgFormatFailure);
+});
+
+it("stops ZIP enumeration as soon as the entry budget is exceeded", async () => {
+  const bytes = await nugetNupkgFixture({
+    extraMembers: Object.fromEntries(
+      Array.from({ length: 20 }, (_, index) => [
+        `content/f${String(index)}.txt`,
+        "x",
+      ]),
+    ),
+  });
+  const original = ZipReader.prototype.getEntriesGenerator;
+  let yielded = 0;
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+      for await (const entry of original.call(this, options)) {
+        yielded += 1;
+        yield entry;
+      }
+      return true;
+    });
+  try {
+    await expect(
+      parseNugetNupkg(bytes, artifactOf(bytes), {
+        ...defaults,
+        max_entries: 2,
+      }),
+    ).rejects.toMatchObject({
+      constructor: NugetNupkgCapacityFailure,
+      resource: "max_entries",
+      maximum: 2,
+    });
+    expect(yielded).toBe(3);
+  } finally {
+    enumeration.mockRestore();
+  }
 });

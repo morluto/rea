@@ -408,21 +408,25 @@ export const parseNugetNupkg = async (
   const reader = new ZipReader(new Uint8ArrayReader(bytes), ZIP_READER_OPTIONS);
   const limitations: string[] = [...BASE_LIMITATIONS];
   try {
-    let entries: Entry[];
+    // Count while enumerating so an oversized directory stops at the budget
+    // instead of materializing and decoding every member first.
+    const entries: Entry[] = [];
     try {
-      entries = await reader.getEntries({
+      for await (const entry of reader.getEntriesGenerator({
         decodeText: decodeZipEntryText,
         ...(signal === undefined ? {} : { signal }),
-      });
+      })) {
+        if (entries.length >= input.max_entries)
+          throw new NugetNupkgCapacityFailure(
+            "max_entries",
+            input.max_entries,
+            `NuGet package ZIP exceeds the ${String(input.max_entries)}-entry budget.`,
+          );
+        entries.push(entry);
+      }
     } catch (cause: unknown) {
       return wrapZipFailure(cause);
     }
-    if (entries.length > input.max_entries)
-      throw new NugetNupkgCapacityFailure(
-        "max_entries",
-        input.max_entries,
-        `NuGet package ZIP exceeds the ${String(input.max_entries)}-entry budget.`,
-      );
     const files: { entry: FileEntry; name: string }[] = [];
     const contents: NugetNupkg["contents"] = [];
     for (const entry of entries) {
