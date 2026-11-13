@@ -80,6 +80,7 @@ import {
   presentCliArgumentErrors,
 } from "./cli/argumentErrors.js";
 import { completionHelpNote, createCliCompletions } from "./cli/completions.js";
+import { recordHelpOutput } from "./cli/outputFormatHelp.js";
 import { reportUnknownMcpSubcommand } from "./cli/mcpBuiltinCommands.js";
 import {
   closeCliGuidanceResources,
@@ -266,7 +267,8 @@ export const createCli = (
       options ?? {},
     );
     if (registration !== undefined) return registration;
-    const result = serveStrict(normalized, options ?? {}, (tokens, selected) =>
+    const help = recordHelpOutput(normalized, options ?? {});
+    const result = serveStrict(normalized, help.options, (tokens, selected) =>
       serveDeclared(tokens, selected, (declared, declaredOptions) =>
         reportUnknownMcpSubcommand(cli.name, declared, declaredOptions)
           ? Promise.resolve()
@@ -274,8 +276,9 @@ export const createCli = (
       ),
     );
     const note = completionHelpNote(normalized);
-    if (note === undefined) return result;
-    return result.then(() => {
+    const completed = help.finish(result);
+    if (note === undefined) return completed;
+    return completed.then(() => {
       const write =
         options?.stdout ?? ((text: string) => process.stdout.write(text));
       write(`\n${note}`);
