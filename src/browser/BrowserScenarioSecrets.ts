@@ -1,3 +1,7 @@
+import {
+  scenarioSerializationAllowance,
+  scenarioQueryLength,
+} from "./BrowserScenarioSerialization.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactSensitiveFailure } from "../domain/explicitSensitiveFailure.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
@@ -666,8 +670,28 @@ export class BrowserScenarioSecrets {
 
   url(destination: BrowserScenarioUrl): string {
     const url = new URL(destination.url);
-    for (const { name, value } of destination.query)
-      url.searchParams.append(name, this.value(value));
+    if (destination.query.length > 0) {
+      const query: [string, string][] = destination.query.map(
+        ({ name, value }) => [name, this.value(value)],
+      );
+      const entries = [...url.searchParams, ...query];
+      // Appending form entries reserializes the literal query too; fragments remain unchanged.
+      const queryStart = url.href.indexOf("?");
+      const hashStart = url.href.indexOf("#");
+      const existingQueryLength =
+        queryStart >= 0 && (hashStart < 0 || queryStart < hashStart)
+          ? (hashStart < 0 ? url.href.length : hashStart) - queryStart
+          : 0;
+      const budget =
+        scenarioSerializationAllowance() -
+        (url.href.length - existingQueryLength) -
+        1;
+      if (scenarioQueryLength(entries, budget, "form") > budget)
+        throw new Error(
+          "Expanded scenario URL exceeds the current heap/string serialization allowance; reduce repeated values or raise the parent Node heap and restart.",
+        );
+      for (const [name, value] of query) url.searchParams.append(name, value);
+    }
     return url.href;
   }
 

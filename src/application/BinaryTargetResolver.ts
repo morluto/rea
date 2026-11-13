@@ -164,8 +164,9 @@ export interface BinaryTargetResolverOptions {
 
 /**
  * Resolve and classify a readable local target before a provider is selected.
- * FAT Mach-O inputs select the host-compatible architecture, otherwise their
- * first declared supported slice, so setup remains non-interactive; unsupported
+ * FAT Mach-O inputs select the host-compatible slice. Several subtypes of that
+ * family use subtype preference, then the earliest capability variant.
+ * Otherwise the first foreign family declared once is selected. Unsupported
  * or ambiguous inputs are returned as typed errors.
  */
 export const parseBinaryTarget = async (
@@ -207,7 +208,7 @@ export const parseBinaryTarget = async (
     throwIfTargetResolutionCancelled(signal);
     const resolved = await resolveAppBundle(canonical);
     throwIfTargetResolutionCancelled(signal);
-    if (!resolved.ok) return err(resolved.error);
+    if (!resolved.ok) return resolved;
     const { executable: path, infoPlist } = resolved.value;
     const bundle =
       infoPlist === undefined ? {} : { bundleInfoPlist: infoPlist };
@@ -746,8 +747,8 @@ const throwIfTargetResolutionCancelled = (signal?: AbortSignal): void => {
 const detectArtifactFormat = async (
   path: string,
   source: StableRegularFileDescriptor,
-  signal?: AbortSignal,
-  sourcePath = path,
+  signal: AbortSignal | undefined,
+  sourcePath: string,
 ): Promise<
   | Exclude<
       BinaryTarget["format"],

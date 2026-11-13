@@ -235,10 +235,6 @@ type CheckpointTaken = Omit<
   readonly more_changed_files: number | null;
 };
 
-/** The capture's progress event in a line the controller waited for. */
-const eventOf = (line: string): DesktopCaptureEvent | undefined =>
-  captureProgressEvent(line);
-
 /**
  * One capture in the computer. `unreleased` is a capture that may be
  * running although its start failed, kept until a stop is confirmed;
@@ -441,7 +437,8 @@ export class DesktopBuildCapture {
         ),
         answer,
       });
-    const event = answer.line === undefined ? undefined : eventOf(answer.line);
+    const event =
+      answer.line === undefined ? undefined : captureProgressEvent(answer.line);
     if (event?.kind !== "window_open")
       return err({
         failure: await endedCapture(
@@ -501,7 +498,9 @@ export class DesktopBuildCapture {
         { timeoutS: 600, signal },
       );
       const event =
-        answer.line === undefined ? undefined : eventOf(answer.line);
+        answer.line === undefined
+          ? undefined
+          : captureProgressEvent(answer.line);
       if (event?.kind === "checkpoint_refused")
         return err(refused(MARK, event.reason, "Use another checkpoint name."));
       if (event?.kind !== "checkpoint")

@@ -27,6 +27,8 @@ import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -48,6 +50,7 @@ import {
 } from "../filesystem/OwnedRegularFile.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
+import type { KunaDeadline } from "./KunaConfiguration.js";
 import {
   kunaExportFileNames,
   exportKunaProject,
@@ -235,6 +238,8 @@ export interface KunaProjectRequest {
   readonly targetSha256: string;
   readonly signal?: AbortSignal;
   readonly onStatus?: (status: KunaExportStatus) => void;
+  /** Deadline accepted by the session that started this export. */
+  readonly deadline?: KunaDeadline;
 }
 
 /** One build whose process tree REA could not prove stopped. */
@@ -366,6 +371,16 @@ export class KunaProjectCache {
       readonly cleanupOwner: object;
     }
   >();
+  /** A staging root cannot retire before its copy descriptors have closed. */
+  readonly #copyScopes = new Map<
+    string,
+    {
+      readonly key: string;
+      readonly resources: ArtifactResourceScope;
+      error?: ProviderCleanupError;
+      retry?: Promise<ProviderCleanupError | undefined>;
+    }
+  >();
   /** Hash descriptors whose close was not confirmed; staging stays until retry. */
   readonly #retainedHashFiles = new Map<OwnedFileHandle, RetainedHashFile>();
   /** Keep the exact close lease available for errors bound after a retry ends. */
@@ -398,7 +413,8 @@ export class KunaProjectCache {
     return (
       this.#retainedProcesses.size > 0 ||
       this.#retainedFiles.size > 0 ||
-      this.#retainedHashFiles.size > 0
+      this.#retainedHashFiles.size > 0 ||
+      [...this.#copyScopes.values()].some(({ error }) => error !== undefined)
     );
   }
 
@@ -653,6 +669,12 @@ export class KunaProjectCache {
   /** Retry only stopped file resources belonging to the closing task, or all. */
   async #retryFiles(key?: string): Promise<void> {
     await this.#retryHashFiles(key);
+    for (const [staging, retained] of [...this.#copyScopes])
+      if (
+        retained.error !== undefined &&
+        (key === undefined || retained.key === key)
+      )
+        await this.#retireStaging(staging, retained.key);
     for (const [path, retained] of [...this.#retainedFiles])
       if (key === undefined || retained.key === key)
         await this.#removeRetired(path).catch(() => undefined);
@@ -739,6 +761,17 @@ export class KunaProjectCache {
 
   #retainedCleanupFailures(key?: string): CleanupFailureOwner[] {
     return [
+      ...[...this.#copyScopes.entries()].flatMap(([staging, retained]) =>
+        retained.error === undefined ||
+        (key !== undefined && retained.key !== key)
+          ? []
+          : [
+              {
+                error: retained.error,
+                owners: [this.#stagingCleanupOwner(staging)],
+              },
+            ],
+      ),
       ...[...this.#retainedProcesses]
         .filter((retained) => key === undefined || retained.key === key)
         .map((retained) => ({
@@ -837,6 +870,36 @@ export class KunaProjectCache {
     staging: string,
     key: string,
   ): Promise<ProviderCleanupError | undefined> {
+    const copying = this.#copyScopes.get(staging);
+    if (copying === undefined) return this.#retireCopiedStaging(staging, key);
+    copying.retry ??= this.#retireCopiedStaging(staging, key).finally(() => {
+      if (!copying.resources.hasPending) this.#copyScopes.delete(staging);
+      delete copying.retry;
+    });
+    return copying.retry;
+  }
+
+  async #retireCopiedStaging(
+    staging: string,
+    key: string,
+  ): Promise<ProviderCleanupError | undefined> {
+    const copying = this.#copyScopes.get(staging);
+    if (copying !== undefined) {
+      try {
+        await copying.resources.close();
+      } catch (cause: unknown) {
+        const failure = new ProviderCleanupError(
+          KUNA_PROVIDER_ID,
+          copying.resources.cleanupResources,
+          { reason: cause instanceof Error ? cause.message : String(cause) },
+          { cause, operation: KUNA_EXPORT_OPERATION },
+        );
+        bindArtifactFileCleanup(cause, failure);
+        copying.error = failure;
+        this.#bindCleanupError(failure, [this.#stagingCleanupOwner(staging)]);
+        return failure;
+      }
+    }
     let cleanupPath = staging;
     const stagingOwner = this.#stagingCleanupOwners.get(staging);
     try {
@@ -993,6 +1056,8 @@ export class KunaProjectCache {
     signal: AbortSignal,
     onStatus: (status: KunaExportStatus) => void,
   ): Promise<StagedResult> {
+    const copyResources = new ArtifactResourceScope();
+    this.#copyScopes.set(staging, { key, resources: copyResources });
     const outcome = await exportKunaProject({
       installation: request.installation,
       targetPath: request.targetPath,
@@ -1002,8 +1067,10 @@ export class KunaProjectCache {
       signal,
       onStatus,
       launcher: this.#launcher,
+      copyResources,
       retainFailedFileClose: (owner, resource) =>
         this.#retainHashFile(owner, key, staging, resource),
+      ...(request.deadline === undefined ? {} : { deadline: request.deadline }),
     });
     if (outcome.kind === "retained") {
       const retained: RetainedProcess = {

@@ -15,6 +15,7 @@ export interface MipsElfRelocationSection {
   readonly offset: number;
   readonly size: number;
   readonly entrySize: number;
+  readonly compressed: boolean;
 }
 type SharedLoadFacts = Extract<
   NonNullable<MipsElfMetadata["sharedLoad"]>,
@@ -155,6 +156,8 @@ export const readMipsElfSharedLoad = async (
     let observed = 0;
     for (const section of sections) {
       checkCancelled();
+      if (section.compressed)
+        return `MIPS section relocation declarations at file offset ${section.offset} use compressed storage; decoded relocation coverage is unavailable`;
       if (section.size === 0) continue;
       if (
         section.type !== 9 ||

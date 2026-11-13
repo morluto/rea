@@ -70,8 +70,7 @@ export const readElfImage = (
   }
   for (const section of directory.sections) {
     const range = declaredFileRange(bytes.length, section.offset, section.size);
-    const file_backed = section.type !== 8 && range.file_backed;
-    const compressed = (section.flags & 0x800n) !== 0n;
+    const { file_backed, compressed } = section;
     const read_only =
       section.type === 1 &&
       file_backed &&

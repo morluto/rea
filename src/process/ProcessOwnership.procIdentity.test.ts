@@ -15,7 +15,26 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...original,
-    readFile: filesystem.readFile,
+    open: async (path: unknown) => {
+      if (!String(path).startsWith("/proc/"))
+        throw new Error(`Unexpected descriptor open: ${String(path)}`);
+      let bytes: Buffer | undefined;
+      return {
+        fd: 42,
+        close: async () => {},
+        read: async (
+          buffer: Buffer,
+          offset: number,
+          length: number,
+          position: bigint,
+        ) => {
+          bytes ??= Buffer.from(await filesystem.readFile(path));
+          const start = Number(position);
+          const count = bytes.copy(buffer, offset, start, start + length);
+          return { bytesRead: count, buffer };
+        },
+      };
+    },
     readlink: filesystem.readlink,
     stat: filesystem.stat,
   };
@@ -543,12 +562,23 @@ it("preserves cancellation before and after the signal-zero probe", async () => 
   const controller = new AbortController();
   const reason = new Error("cancelled");
   controller.abort(reason);
-  filesystem.readFile.mockRejectedValueOnce(
-    Object.assign(new Error("aborted"), { name: "AbortError" }),
-  );
+  const readsBefore = filesystem.readFile.mock.calls.length;
   await expect(
     host.processIdentities?.([entry], controller.signal),
-  ).rejects.toMatchObject({ name: "AbortError" });
+  ).rejects.toMatchObject({
+    _tag: "ProcessOwnershipIdentityBatchFailure",
+    failures: [
+      {
+        pid: 42,
+        cause: {
+          _tag: "ProcessOwnershipInspectionCancelled",
+          reason,
+          cause: reason,
+        },
+      },
+    ],
+  });
+  expect(filesystem.readFile).toHaveBeenCalledTimes(readsBefore);
 
   const afterProbe = new AbortController();
   const probeAbort = vi.spyOn(process, "kill").mockImplementation(() => {
@@ -559,7 +589,19 @@ it("preserves cancellation before and after the signal-zero probe", async () => 
     filesystem.readFile.mockRejectedValueOnce(filesystemError("ENOENT"));
     await expect(
       host.processIdentities?.([entry], afterProbe.signal),
-    ).rejects.toBe(reason);
+    ).rejects.toMatchObject({
+      _tag: "ProcessOwnershipIdentityBatchFailure",
+      failures: [
+        {
+          pid: 42,
+          cause: {
+            _tag: "ProcessOwnershipInspectionCancelled",
+            reason,
+            cause: reason,
+          },
+        },
+      ],
+    });
   } finally {
     probeAbort.mockRestore();
   }

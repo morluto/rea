@@ -1,3 +1,4 @@
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
@@ -35,7 +36,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 const client = (fail = false): AnalysisClient => ({
   execute: () => Promise.resolve(fail ? err(new HopperStartError()) : ok(null)),
@@ -235,7 +236,15 @@ it("drains session calls and retires analysis after an admitted external mutatio
     },
     (_value, error) => error,
   );
-  await started.promise;
+  onTestFinished(async () => {
+    release.resolve();
+    try {
+      await mutation;
+    } finally {
+      await session.close();
+    }
+  });
+  await awaitAcknowledgement(started.promise, mutation, "external mutation");
   const queuedAnalysis = session.execute("address_name", {});
   expect(calls).toEqual([]);
 
@@ -894,8 +903,8 @@ describe("snapshot invalidation at mutation dispatch", () => {
         ...parameters,
         name: "after",
       });
-      await started.promise;
       try {
+        await awaitAcknowledgement(started.promise, writing, "session write");
         const during = await session.execute("address_name", parameters);
         if (!during.ok) throw during.error;
         expect(during.value.result).toBe("after");
@@ -1713,14 +1722,19 @@ describe("cancellation during profile resolution", () => {
         openSettled = true;
         return result;
       });
-    await admitted.promise;
-    controller.abort(reason);
     let closeSettled = false;
-    const closing = session.close().then((result) => {
-      closeSettled = true;
-      return result;
-    });
+    let closing: ReturnType<typeof session.close> | undefined;
     try {
+      await awaitAcknowledgement(
+        admitted.promise,
+        opening,
+        "profile admission",
+      );
+      controller.abort(reason);
+      closing = session.close().then((result) => {
+        closeSettled = true;
+        return result;
+      });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(observedSignal?.reason).toBe(reason);
       expect(openSettled).toBe(false);
@@ -1735,9 +1749,13 @@ describe("cancellation during profile resolution", () => {
       expect(created).toBe(0);
       expect(await session.status()).toMatchObject({ cleanup_pending: false });
     } finally {
+      controller.abort(reason);
       release.resolve();
-      await Promise.all([opening, closing]);
-      await session.close();
+      try {
+        await Promise.all([opening, closing]);
+      } finally {
+        await session.close();
+      }
     }
   });
 });

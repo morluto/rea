@@ -134,7 +134,7 @@ function admittedAs(
 }
 
 /** One capability row for every ZIP-backed package family. */
-export const ZIP_FAMILY_CAPABILITIES = {
+const ZIP_FAMILY_CAPABILITIES = {
   zipFamily: true,
   occurrenceContainer: true,
   roleContainer: false,
@@ -470,7 +470,7 @@ const NON_ZIP_FORMATS = {
     ...plain,
     retainClassifiedSource: true,
     readerLimitation:
-      "MFT inventory reports whole-stream counts and up to 32 FILE record details with fixup coverage, supported filenames, timestamps, declared sizes and attribute metadata; omitted details are counted. Nonresident payloads and extension records are not assembled, full paths are not reconstructed, and MFT inventory alone does not establish change history. Use inspect_ntfs_journal with caller-paired acquisitions for bounded journal events.",
+      "MFT inventory reports whole-stream counts and up to 32 physical FILE record details, including fixup coverage, supported names, timestamps, declared sizes and attributes. Bounded attribute-list links expose verified metadata from acquired extension records, with explicit reference outcomes and omissions. Nonresident list values and file contents are not recovered; full paths and complete change history are not established. Use inspect_ntfs_journal for caller-paired journal events.",
     createReader: (path, options) =>
       new NtfsMftArtifactReader(path, sourceOf(options)),
   }),

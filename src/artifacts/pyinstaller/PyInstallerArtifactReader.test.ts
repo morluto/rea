@@ -30,6 +30,41 @@ const sha256 = (bytes: Buffer): string =>
 
 const PYTHON_313_MAGIC = Buffer.from("f30d0d0a", "hex");
 
+it.each(["close", "cancel"] as const)(
+  "does not complete a PyInstaller inventory after %s while paused",
+  async (interruption) => {
+    const path = join(await createTestTempDirectory("rea-pyi-paused-"), "app");
+    await writeFile(
+      path,
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 311,
+        members: [
+          {
+            name: "data",
+            typeCode: "x",
+            payload: Buffer.from("x"),
+            compress: false,
+          },
+        ],
+      }),
+    );
+    const reader = new PyInstallerArtifactReader(path);
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
+
 const derived = (payload: Buffer): Buffer =>
   Buffer.concat([reconstructedPycHeader(PYTHON_39_MAGIC), payload]);
 

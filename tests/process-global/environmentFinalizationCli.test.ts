@@ -5,6 +5,7 @@ import type { ServedEnvironment } from "../../src/server/environment/serveEnviro
 import type { ServeStreamableHttpOptions } from "../../src/server/http/serveStreamableHttp.js";
 import { StreamableHttpListenError } from "../../src/server/http/streamableHttpListenError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { writeEnvironmentServeFiles } from "../fixtures/environmentServe.js";
 
 const control = vi.hoisted(() => ({
@@ -130,7 +131,12 @@ it.each([
       },
     );
     try {
-      await started;
+      await awaitAcknowledgement(
+        started,
+        pending,
+        "environment CLI startup",
+        10_000,
+      );
       const served = observedEnvironment();
       if (served === undefined) throw new Error("Environment was not admitted");
       if (ending === "signal") {

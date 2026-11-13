@@ -19,6 +19,7 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
@@ -205,7 +206,7 @@ export class IsolatedWebBundleAnalyzer {
         });
     };
     try {
-      await WebBundleAnalysisWorker.retryPending();
+      await this.#admission.workers.retry();
       this.#worker = this.createWorker(
         input.max_heap_mb ?? DEFAULT_WEB_BUNDLE_HEAP_MB,
       );
@@ -302,17 +303,14 @@ export class IsolatedWebBundleAnalyzer {
     } finally {
       deadline.dispose();
     }
-    if (
-      !hasPrimaryFailure &&
-      caller.aborted &&
-      deadline.interruption !== "timeout"
-    ) {
+    if (caller.aborted && deadline.interruption !== "timeout") {
       const cancelled = new AnalysisCancelledError("analyze_web_bundle", {
         cause: caller.reason,
         partialObservation: partial ?? inspection,
       });
-      failure =
-        failure?.cleanupIncomplete === true
+      failure = hasPrimaryFailure
+        ? analysisErrorWithCancellation(failure, cancelled)
+        : failure?.cleanupIncomplete === true
           ? analysisErrorWithCleanupFailure(
               cancelled,
               failure,

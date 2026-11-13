@@ -1,3 +1,4 @@
+import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { NativeInitializersPort } from "./NativeInitializersPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -12,6 +13,7 @@ import {
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
+import { MACHO_CPU_TYPES } from "../../domain/apple/machoTargetSelection.js";
 
 const OPERATION = "inspect_native_initializers";
 
@@ -67,7 +69,7 @@ export class NativeInitializersService {
       createEvidence(
         {
           path: value.artifact.path,
-          format: value.format,
+          format: value.slice === null ? value.format : "mach-o-universal",
           sha256: value.artifact.sha256,
           ...(value.architecture === null
             ? {}
@@ -93,9 +95,28 @@ const validReport = (
   input: InspectNativeInitializersInput,
 ): boolean => {
   const { coverage } = report;
-  const inside = (offset: number | null, bytes: number): boolean =>
-    offset === null || offset <= report.artifact.bytes - bytes;
+  const slice = report.slice;
   if (
+    slice === null
+      ? input.architecture !== undefined
+      : report.format !== "mach-o" ||
+        input.architecture === undefined ||
+        slice.cpu_type !== MACHO_CPU_TYPES[input.architecture] ||
+        slice.architecture !== input.architecture ||
+        report.machine !== slice.cpu_type ||
+        report.architecture !== input.architecture
+  )
+    return false;
+  const inside = insideArtifact(report.artifact.bytes);
+  // Entry file offsets name the selected image, not another slice in the container.
+  const imageStart = slice?.file_offset ?? 0;
+  const imageEnd =
+    slice === null ? report.artifact.bytes : slice.file_offset + slice.size;
+  const insideImage = (offset: number | null, bytes: number): boolean =>
+    offset === null || (offset >= imageStart && bytes <= imageEnd - offset);
+  if (
+    (slice !== null &&
+      !inside({ offset: slice.file_offset, bytes: slice.size })) ||
     report.artifact.bytes > input.max_file_bytes ||
     coverage.offset !== input.offset ||
     coverage.limit !== input.limit ||
@@ -109,7 +130,7 @@ const validReport = (
   return report.entries.every(
     (entry, position) =>
       entry.index === coverage.offset + position &&
-      inside(entry.slot_file_offset, entry.slot_bytes) &&
-      inside(entry.value_file_offset, 1),
+      insideImage(entry.slot_file_offset, entry.slot_bytes) &&
+      insideImage(entry.value_file_offset, 1),
   );
 };

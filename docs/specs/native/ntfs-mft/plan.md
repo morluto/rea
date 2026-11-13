@@ -45,3 +45,24 @@ signature.
 
 Current analyst behavior and limitations live in the
 [NTFS guide](../../../guides/native/ntfs-metadata.md).
+
+## Acquired extension metadata
+
+The MFT owner resolves attribute-list graphs for selected base records, using
+its existing verified record decoder and a page-local cache. The scanner's
+bounded sample and the journal's independent detail projection share this rule.
+The acquisition cache continues retaining only headers and raw validated bytes.
+Typed reference outcomes and linked attribute/name schemas belong to
+`ntfsMftAttributes.ts` and are consumed by the common metadata contract. Global
+physical counts stay independent of bounded reference delivery.
+
+A page decodes at most 32 additional records beyond its selected physical
+records. Each base emits at most 32 reference results, retaining source list
+entries and explicit discovered omissions. This adds no volume reads, path
+reconstruction, nonresident payload recovery or target execution. Real extension
+captures and Windows-host execution remain unverified; source-built fixtures
+exercise reference ownership, malformed prefixes, cycles and resource bounds.
+
+Journal and extension joins share `hasVerifiedMftRecordIdentity` at the MFT
+owner. It consumes parsed sequence, slot verdict, extent and fixup facts; each
+consumer keeps its separate base-versus-extension ownership rule.

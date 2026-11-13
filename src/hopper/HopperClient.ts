@@ -1,3 +1,4 @@
+import { Utf8NdjsonDecodingError } from "../process/Utf8NdjsonLineBuffer.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
@@ -21,6 +22,7 @@ import {
   HopperTimeoutError,
 } from "../domain/hopperErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
@@ -93,7 +95,7 @@ import {
 } from "./protocol.js";
 
 /** Aggregate in-memory retention budget for this provider's launcher output. */
-export const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
+const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
 
 const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
 
@@ -103,6 +105,12 @@ export interface HopperClientOptions {
   readonly runId?: string;
   readonly startupTimeoutMs?: number;
   readonly readStartupTimeoutMs?: () => number;
+  /** Selection owner for the startup deadline. Absent when the caller did not record it. */
+  readonly readStartupTimeoutSource?: () =>
+    | "default"
+    | "setting"
+    | "runtime"
+    | undefined;
   /** Effective request ceiling. Omitted uses the 16 MiB default. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
@@ -161,8 +169,21 @@ export class HopperClient {
   #runId: string | undefined;
   #startupAttempt: HopperStartupAttempt | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
-  readonly #onSocketData = (chunk: string): void => {
-    this.#responses.push(chunk);
+  readonly #onSocketData = (chunk: Buffer): void => {
+    try {
+      this.#responses.push(chunk);
+    } catch (cause: unknown) {
+      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
+      this.#abortProtocol("Hopper bridge response is not valid UTF-8", cause);
+    }
+  };
+  readonly #onSocketEnd = (): void => {
+    try {
+      this.#responses.finish();
+    } catch (cause: unknown) {
+      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
+      this.#abortProtocol("Hopper bridge response is not valid UTF-8", cause);
+    }
   };
   readonly #onSocketError = (): void => {
     const error = new HopperProcessError(null, {
@@ -437,14 +458,20 @@ export class HopperClient {
           new HopperProtocolError("Hopper client is already started"),
       );
     }
+    let startupTimeoutMs: number;
+    try {
+      startupTimeoutMs =
+        this.#options.readStartupTimeoutMs?.() ??
+        this.#options.startupTimeoutMs;
+    } catch (cause: unknown) {
+      if (cause instanceof ConfigurationError) return err(cause);
+      throw cause;
+    }
     this.#operationFailure = undefined;
     this.#startupFailureResult = undefined;
     this.#resources.shutdownConfirmed = false;
     this.#resources.externalApplication = undefined;
-    const deadline = new ProviderStartupDeadline(
-      this.#options.readStartupTimeoutMs?.() ?? this.#options.startupTimeoutMs,
-      signal,
-    );
+    const deadline = new ProviderStartupDeadline(startupTimeoutMs, signal);
     this.#startupOutcome = undefined;
     this.#startupSignal = deadline.signal;
     const onStartupAbort = (): void => {
@@ -966,7 +993,7 @@ export class HopperClient {
         limit: analysisSettingLimit(
           "hopper.startup_timeout_ms",
           deadline.timeoutMs,
-          undefined,
+          this.#options.readStartupTimeoutSource?.(),
         ),
       },
     );
@@ -1132,8 +1159,9 @@ export class HopperClient {
   }
 
   #attachSocket(socket: Socket): void {
-    socket.setEncoding("utf8");
+    this.#responses.reset();
     socket.on("data", this.#onSocketData);
+    socket.on("end", this.#onSocketEnd);
     socket.on("error", this.#onSocketError);
     socket.on("close", this.#onSocketClose);
   }
@@ -1168,6 +1196,7 @@ export class HopperClient {
 
   #detachSocket(socket: Socket): void {
     socket.off("data", this.#onSocketData);
+    socket.off("end", this.#onSocketEnd);
     socket.off("error", this.#onSocketError);
     socket.off("close", this.#onSocketClose);
   }

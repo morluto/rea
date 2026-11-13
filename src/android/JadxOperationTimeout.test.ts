@@ -36,7 +36,8 @@ it("names REA_JADX_OPERATION_TIMEOUT_MS when the operation deadline elapses", ()
       applies_at: "next_operation",
       agent_editable: true,
       scope: "rea-runtime",
-      rea_restart_required: false,
+      update_mode: "runtime",
+      pending_restart: false,
     },
   });
   expect(projected).toMatchObject({

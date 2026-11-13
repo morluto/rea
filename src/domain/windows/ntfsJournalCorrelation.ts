@@ -1,4 +1,4 @@
-import { FIXUP_SECTOR_BYTES, type MftRecord } from "./ntfsMft.js";
+import { hasVerifiedMftRecordIdentity, type MftRecord } from "./ntfsMft.js";
 import type { UsnRecord } from "./ntfsUsnJournal.js";
 
 type RecordIdentity = Pick<
@@ -40,12 +40,9 @@ export const createUsnMftCorrelator = (
     // logical MFT stream. Extension records do not identify separate files.
     if (
       record.baseRecordReference !== null ||
-      record.sequenceNumber === 0 ||
-      !record.extentValid ||
-      record.fixups.verifiedSectors * FIXUP_SECTOR_BYTES !== record.totalBytes
+      !hasVerifiedMftRecordIdentity(record)
     )
       continue;
-    if (record.recordNumberMatchesSlot === false) continue;
 
     const reference =
       (BigInt(record.sequenceNumber) << 48n) | BigInt(record.index);

@@ -67,6 +67,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { readPngHeaderDimensions } from "../domain/pngHeader.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -83,6 +84,7 @@ import {
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { createEvidence } from "../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   PrivateRuntimeRoot,
   type PrivateRuntimeRootOptions,
@@ -992,15 +994,12 @@ export class AdbProvider {
     const partialObservation =
       execution === undefined
         ? undefined
-        : createEvidence(execution.subject ?? undefined, execution.provider, {
+        : createAnalysisExecutionEvidence(
             operation,
             parameters,
-            result: execution.result,
-            rawResult: execution.rawResult,
-            limitations: execution.limitations,
-            locations: execution.locations,
-            confidence: "observed",
-          });
+            execution,
+            "observed",
+          );
     return new ProviderCleanupError(
       ADB_PROVIDER_IDENTITY.id,
       resources,
@@ -1092,6 +1091,16 @@ export class AdbProvider {
       resource: root.path,
       lease: rootLease,
     });
+    if (signal?.aborted === true) {
+      const failure =
+        primary ??
+        (result !== undefined && !result.ok ? result.error : undefined);
+      if (failure !== undefined)
+        primary = analysisErrorWithCancellation(
+          failure,
+          new AnalysisCancelledError(operation, { cause: signal.reason }),
+        );
+    }
     if (primary === undefined && result?.ok && signal?.aborted === true) {
       const completed = result.value;
       primary = new AnalysisCancelledError(operation, {
@@ -3328,21 +3337,35 @@ export class AdbProvider {
         );
       }
     })();
+    const retainCancellation = (failure: AnalysisError | undefined) =>
+      signal?.aborted === true
+        ? analysisErrorWithCancellation(
+            failure,
+            new AnalysisCancelledError(operation, {
+              cause: signal.reason,
+              partialObservation: retainedObservation,
+            }),
+          )
+        : failure;
     // A completed acquisition becomes caller evidence even if publication fails.
     // Its staging directory must not enter automatic cleanup or cleanup retries.
     if (retainedObservation !== undefined && publishedPath === undefined)
-      return collectedResult;
+      return collectedResult.ok
+        ? collectedResult
+        : err(
+            retainCancellation(collectedResult.error) ?? collectedResult.error,
+          );
     try {
       await removeOwnedOutputDirectory(stagingDirectory, stagingIdentity);
     } catch (cause) {
-      const primary = collectedResult.ok
-        ? signal?.aborted === true
-          ? new AnalysisCancelledError(operation, { cause: signal.reason })
-          : new AnalysisOutputError(
-              operation,
-              "The archive was published, but its staging directory could not be removed",
-            )
-        : collectedResult.error;
+      const primary =
+        retainCancellation(
+          collectedResult.ok ? undefined : collectedResult.error,
+        ) ??
+        new AnalysisOutputError(
+          operation,
+          "The archive was published, but its staging directory could not be removed",
+        );
       if (retainedObservation !== undefined)
         primary.retainPartialObservation(retainedObservation);
       return err(
@@ -3363,6 +3386,9 @@ export class AdbProvider {
         ),
       );
     }
-    return collectedResult;
+    const failure = retainCancellation(
+      collectedResult.ok ? undefined : collectedResult.error,
+    );
+    return failure === undefined ? collectedResult : err(failure);
   }
 }

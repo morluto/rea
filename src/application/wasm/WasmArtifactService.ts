@@ -1,4 +1,5 @@
 import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
+import { selectedAnalysisSetting } from "../../domain/analysisSettingDefinitions.js";
 import { constants as bufferConstants } from "node:buffer";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import {
@@ -78,13 +79,15 @@ export class WasmArtifactService {
           ),
         );
     }
-    const timeout =
-      input.value.command_timeout_ms ??
-      this.settings?.().overrides["wasm.command_timeout_ms"] ??
-      DEFAULT_WASM_COMMAND_TIMEOUT_MS;
+    const timeout = selectedAnalysisSetting(
+      input.value.command_timeout_ms,
+      this.settings?.().overrides["wasm.command_timeout_ms"],
+      DEFAULT_WASM_COMMAND_TIMEOUT_MS,
+    );
     const inspected = await this.provider.inspect(input.value, {
       ...options,
-      commandTimeoutMs: timeout,
+      commandTimeoutMs: timeout.value,
+      commandTimeoutSource: timeout.source,
     });
     if (!inspected.ok) return inspected;
     const execution = inspected.value;
@@ -108,7 +111,7 @@ export class WasmArtifactService {
       !report.success ||
       report.data.artifact.path !== input.value.path ||
       execution.subject.path !== input.value.path ||
-      report.data.tool_profile.timeout_ms !== timeout ||
+      report.data.tool_profile.timeout_ms !== timeout.value ||
       report.data.tool_profile.output_budget_bytes !==
         wasmResourceLimits(input.value).outputBytes ||
       !wasmArtifactMatchesSubject(report.data.artifact, execution.subject) ||

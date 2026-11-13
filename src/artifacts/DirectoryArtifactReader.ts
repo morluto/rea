@@ -169,6 +169,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
         assertContainedDirectory(root, directory, admittedRoot.identity),
       );
     }
+    abortIfNeeded(signal);
     if (unrepresentableNameCount > 0)
       options?.onCoverage?.({
         status: "unknown",
@@ -254,6 +255,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
     };
     try {
       for (;;) {
+        abortIfNeeded(signal);
         await withDirectoryIoContext("inspect directory", directory, () =>
           assertContainedDirectory(root, directory, admittedRoot.identity),
         );
@@ -297,8 +299,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
       await this.#finishDirectory(handle, directory, traversal);
     }
     if (traversal.kind === "failed") throw traversal.cause;
-    childDirectories.reverse();
-    pending.push(...childDirectories);
+    for (const child of childDirectories.reverse()) pending.push(child);
   }
 
   async #finishDirectory(

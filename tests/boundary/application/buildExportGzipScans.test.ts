@@ -1,4 +1,4 @@
-import { chmod, mkdir, readdir, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 
@@ -69,5 +69,5 @@ it("decompresses a gzip seed file once to check it for known secrets and its siz
   expect(
     gunzipped.filter((bytes) => Buffer.from(bytes).equals(compressed)),
   ).toHaveLength(1);
-  expect(await readdir(directory).catch(() => [])).toEqual([]);
+  await expect(lstat(directory)).rejects.toMatchObject({ code: "ENOENT" });
 });

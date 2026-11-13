@@ -37,8 +37,38 @@ information timestamps stay separate from filename timestamps. All 64-bit times
 and sizes use decimal strings. Resident attributes retain value spans;
 nonresident attributes retain sizes, VCN ranges and validated packed mapping
 pairs, including sparse and fragmented runs. Attribute-list entries retain full
-references and IDs. Extension references are not followed, so filename coverage
-remains incomplete when a list may contribute additional names.
+references and IDs.
+
+For a selected base record with attribute lists, `attributeListResolution`
+checks references inside the same acquired MFT. A link requires the exact
+record/sequence identity, verified fixups, matching base reference, and matching
+attribute type, name, ID and lowest VCN. `linkedAttributes` and
+`linkedFileNames` carry additional extension facts with original source offsets;
+local physical-record attributes stay separate. Global counts and
+`fileNameCoverage` describe physical-record walks, without double-counting
+linked facts.
+
+Each detail page shares a budget of 32 additional decoded records (at most
+2 MiB of source record bytes), and each base record delivers at most 32 reference
+results. This bounds decoding and delivery, not total process memory.
+
+- `references` identifies source list entries and reports resolved attribute
+  offsets, ambiguity counts, or concrete unresolved reasons.
+- `knownEntryCount` counts entries discovered in available resident lists.
+  `omittedKnownEntries` counts their undelivered results. Unreadable lists or
+  omitted references may hide further entries; these are not whole-file totals.
+- `unreadListAttributeOffsets` marks list values unavailable from the acquired
+  records. Zero known entries does not prove an empty list when this is nonempty.
+- `incompleteRecordIndices` preserves partial local walks. A valid referenced
+  prefix can remain available while overall link coverage is incomplete.
+
+List graphs are visited by source identity, including cycles. Reused sequences,
+contradictory headers, wrong base ownership and ambiguous attributes remain
+unresolved. If an additional-record budget is exhausted, reduce the detail page
+size or inspect the referenced slot directly with `mft_record_start`. Original
+list entries remain in attribute metadata when reference results are omitted.
+Nonresident list values and file contents require data outside the supplied MFT
+and remain unavailable here.
 
 Journal rows follow acquisition order. V2 records use full 64-bit MFT references,
 including sequence numbers. Reused, inconsistent and unverifiable identities
@@ -68,8 +98,8 @@ Verification covers synthesized paired acquisitions,
 and [paired V2 streams from a public NTFS volume fixture checked against an independent parser](../../verification/ntfs-metadata-2026-11-11.md#paired-volume-fixture-verification)
 through CLI/MCP on Linux. The fixture's original acquisition provenance, real
 V3/V4 captures and Windows-host execution remain unverified. Nonresident payload
-recovery and automatic extension-list assembly are outside the implemented
-coverage.
+recovery is outside implemented scope. Real extension-record captures remain
+unverified.
 
 Format references: [Microsoft USN V3](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v3),
 [USN V4](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v4),

@@ -16,7 +16,6 @@ import {
 import { BrowserObservationError } from "./browserObservationError.js";
 import { EvidenceFileError, EvidenceIntegrityError } from "./evidenceErrors.js";
 import {
-  HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION,
   HOPPER_STARTUP_TIMEOUT_REMEDIATION,
   HopperProcessError,
   HopperRemoteError,
@@ -1512,7 +1511,8 @@ describe("analysis error projection: caller lifetime", () => {
       minimum: limit.minimum,
       maximum: limit.maximum,
       agent_editable: true,
-      rea_restart_required: false,
+      update_mode: "runtime",
+      pending_restart: false,
       applies_at: "next_invocation",
       scope: "rea-invocation",
       environment: "REA_REGEX_MATCHING_DEADLINE_MS",
@@ -1529,11 +1529,25 @@ describe("analysis error projection: caller lifetime", () => {
       expect.objectContaining({
         setting: "wasm.command_timeout_ms",
         source: "request",
+        update_mode: "parameter",
         parameter: "command_timeout_ms",
         applies_at: "next_invocation",
         scope: "rea-invocation",
       }),
     );
+    expect(
+      analysisSettingLimit("wasm.command_timeout_ms", 100, "runtime"),
+    ).toMatchObject({ source: "runtime", update_mode: "runtime" });
+    expect(
+      analysisSettingLimit("javascript.max_heap_mb", 128, "request"),
+    ).toMatchObject({
+      source: "request",
+      update_mode: "parameter",
+      parameter: "max_heap_mb",
+    });
+    expect(
+      analysisSettingLimit("javascript.analysis_timeout_ms", 1, "default"),
+    ).toMatchObject({ source: "default", update_mode: "runtime" });
     expect(
       projectAnalysisError(error, "invocation").details?.limit,
     ).not.toHaveProperty("environment");
@@ -1555,8 +1569,8 @@ describe("analysis error projection: caller lifetime", () => {
         ),
       },
     );
-    expect(projectAnalysisError(error).remediation.action).toBe(
-      HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION,
+    expect(projectAnalysisError(error).remediation.action).toMatch(
+      /update_analysis_settings.*hopper\.startup_timeout_ms.*without restarting REA/u,
     );
     const invocation = projectAnalysisError(error, "invocation");
     expect(invocation.remediation.action).toBe(

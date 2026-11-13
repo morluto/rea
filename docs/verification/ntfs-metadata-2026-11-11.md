@@ -184,3 +184,56 @@ This run covers a paired V2 volume fixture on Linux. It does not establish
 Windows-host behavior, authenticated forensic acquisition provenance, real
 V3/V4 captures, extension-list assembly or nonresident payload recovery. Those
 limits remain explicit alongside the existing synthesized boundary regressions.
+
+## Acquired extension metadata verification
+
+At `b76b9716192db1f2bbfdcbb093bb01c29a7e8d10`, the MFT owner additionally resolves
+resident attribute-list graphs into acquired extension metadata. Physical facts
+and their aggregate counts stay separate from bounded linked facts. Journal
+and extension joins share the producer-owned record identity verdict.
+
+The [source-built extension fixture](https://github.com/morluto/rea/blob/b76b9716192db1f2bbfdcbb093bb01c29a7e8d10/tests/fixtures/ntfsMftExtension.ts)
+contains base slot 0 / sequence 2 and extension slot 1 / sequence 7. The base
+list refers to the extension's FILE_NAME attribute ID 3; the extension declares
+base reference `(0, 2)`. Dissect 3.16 independently verified both physical
+records' fixups and decoded their `local` / `linked` filenames and source facts.
+The byte-level fixture defines the expected ownership relationship. This is
+synthesized extension coverage, not a real extension capture.
+
+| Source-built input | Bytes | SHA-256                                                            |
+| ------------------ | ----: | ------------------------------------------------------------------ |
+| MFT pair           | 2,048 | `b512f7b270679dd5107b76c2787c6ca137b667bae1d3921ea1a0117fb94b5723` |
+| V2 journal         |    64 | `d4356fd78b1407d4e3fe1bf9ef4b55ef4552936334d5bc744db1531a31987b60` |
+
+An 11-file focused run passed 121 tests. Nineteen new domain cases cover exact
+identity and attribute selection, reused sequences, missing/wrong owners,
+contradictory headers, failed fixups, ambiguity, cyclic/self-referential lists,
+malformed list tails, valid target prefixes, unavailable nonresident lists,
+named continuation mapping metadata and both reference/record budgets. Public
+inventory and CLI/MCP tests verify linked facts and retain them as partial
+Evidence when a later journal read fails. After consolidating the shared
+identity verdict, all 24 extension/correlation tests passed again. The complete
+MCP schema suite (16 tests) and format descriptor suite (4 tests) passed after
+integrating main and regenerating the runtime catalog.
+
+The packaged CLI and production stdio MCP server then inspected the
+source-built pair at the revision above. The MCP client validated advertised
+schemas, read one journal page and two separate one-record metadata pages, and
+retrieved the first detailed result through `get_evidence_bundle`. The base's
+linked filename matched the independent extension-record facts exactly, with
+source value offset 1104 and attribute offset 1080. The local filename remained
+separate. CLI event rows and selected metadata matched MCP; input digests were
+unchanged and client/transport cleanup completed.
+
+Re-ran the paired public-volume workflow from the previous section on the same
+runtime revision. All 179 event fields, 49 physical records and 45 filename
+attributes still matched the independent oracle. File/parent reference counts,
+four padding rows, independent metadata paging, retained Evidence, CLI/MCP
+agreement and unchanged input digests were preserved. These checks used the
+same one-CPU / 1 GiB Node heap / bounded-timeout controls described above; no
+guard stopped a task and no performance measurements are claimed.
+
+Extension facts are qualified by page-local capacity and reference coverage.
+Nonresident list values and volume file contents remain unavailable, and no
+full path or complete history is inferred. Real extension captures and
+Windows-host execution remain unverified.

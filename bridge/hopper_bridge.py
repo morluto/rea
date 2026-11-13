@@ -154,13 +154,6 @@ class HopperApiFacade:
             )
 
 
-def _configure_hopper_api(document_provider):
-    """Inject Hopper's document provider or a standalone test facade."""
-    global _hopper_api, _rea_session_document
-    _hopper_api = HopperApiFacade(document_provider)
-    _rea_session_document = None
-
-
 def _api():
     """Resolve Hopper globals lazily so importing this module needs no Hopper."""
     global _hopper_api

@@ -261,14 +261,13 @@ it("records inline layout with compact schemas and canonical path checks", async
       approval: true,
     }),
   ).toBe(false);
-  const response = await client.callTool({
-    name: "inspect_binary_layout",
-    arguments: { path: value.artifact.path },
-  });
+  const response = await client.callTool(
+    { name: "inspect_binary_layout", arguments: { path: value.artifact.path } },
+    { toolDefinition: schemas.toolDefinition },
+  );
   const evidence = assertRecordedMcpEvidence(
     response,
     "inspect_binary_layout",
-    schemas,
     session,
     value,
     "observed",
@@ -326,20 +325,16 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
-  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+  const { ajv, inputSchema, toolDefinition } = await advertisedMcpToolSchemas(
     client,
     "inspect_byte_entropy",
   );
   expect(ajv.validate(inputSchema, { path, surprise: true })).toBe(false);
-  const response = await client.callTool({
-    name: "inspect_byte_entropy",
-    arguments: { path },
-  });
+  const response = await client.callTool(
+    { name: "inspect_byte_entropy", arguments: { path } },
+    { toolDefinition },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const evidence = parseEvidence(response.structuredContent);
   const report = byteEntropySchema.parse(evidence.normalized_result);
   expect(report.runs).toEqual([
@@ -402,10 +397,10 @@ it("records a portable export inventory through MCP without a binary target", as
     "inspect_native_exports",
   );
   expect(schemas.ajv.validate(schemas.inputSchema, { path })).toBe(true);
-  const response = await client.callTool({
-    name: "inspect_native_exports",
-    arguments: { path },
-  });
+  const response = await client.callTool(
+    { name: "inspect_native_exports", arguments: { path } },
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(
     parseEvidence(response.structuredContent).normalized_result,
   ).toMatchObject({
@@ -425,7 +420,6 @@ it("records a portable export inventory through MCP without a binary target", as
   assertRecordedMcpEvidence(
     response,
     "inspect_native_exports",
-    schemas,
     session,
     parseNativeExports(bytes, {
       path,
