@@ -174,9 +174,12 @@ export const inspectLibraryPackages = async (
     {
       resolvePath: async (path) => {
         try {
+          // Admit the full lookup before deriving its ownership leaf: splitting
+          // a regular file's trailing slash or dot component would erase ENOTDIR.
+          if (!(await isHostFile(path))) return undefined;
+          const resolvedPath = await realpath(path);
           const directory = await realpath(posix.dirname(path));
           const selected = posix.join(directory, posix.basename(path));
-          const resolvedPath = await realpath(selected);
           const identity = await stat(resolvedPath, { bigint: true });
           return {
             path: selected,
