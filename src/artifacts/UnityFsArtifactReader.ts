@@ -278,10 +278,9 @@ export class UnityFsArtifactReader implements ArtifactReader {
     const { dataHash, blocks, nodes, dataStart } = await readUnityFsBlocksInfo(
       handle,
       header,
-      initial.size,
       signal,
     );
-    const budget = artifactExpansionBudgetBytes(initial.size);
+    const budget = artifactExpansionBudgetBytes(header.declaredSize);
     let streamBytes = 0n;
     for (const block of blocks) {
       streamBytes += BigInt(block.uncompressedSize);

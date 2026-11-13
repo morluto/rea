@@ -18,6 +18,10 @@ import {
 } from "../config/mcpToolFamilies.js";
 import { isUpdateFailure } from "../application/UpdateFailure.js";
 import {
+  mcpToolCatalogProfileSchema,
+  type McpToolCatalogProfile,
+} from "../config/mcpToolCatalogProfile.js";
+import {
   confirmInteractiveSetup,
   renderSetupDryRun,
   renderInteractiveSetupResult,
@@ -93,6 +97,11 @@ const registerSetupCommand = (
         )
         .describe(
           "Comma-separated tool families this registration advertises; omit to preserve the saved selection, or advertise every tool if none is saved. To restore every tool, remove REA_MCP_TOOL_FAMILIES from the client's registration and restart the client.",
+        ),
+      toolCatalogProfile: mcpToolCatalogProfileSchema
+        .optional()
+        .describe(
+          "MCP catalog: full advertises every in-scope tool; hot-cold loads tools on demand and requires client catalog refresh. Omit to preserve the saved profile, or use full if none is saved. Restart the client after changing it.",
         ),
       allDetected: z
         .boolean()
@@ -232,6 +241,7 @@ interface SetupCommandOptions {
   readonly client: readonly string[];
   readonly skillClient: readonly string[];
   readonly toolFamilies?: string | undefined;
+  readonly toolCatalogProfile?: McpToolCatalogProfile | undefined;
   readonly allDetected: boolean;
   readonly skill?: boolean | undefined;
   readonly dryRun: boolean;
@@ -311,6 +321,9 @@ const setupRunOptions = (
     ...(options.toolFamilies === undefined
       ? {}
       : { toolFamilies: options.toolFamilies }),
+    ...(options.toolCatalogProfile === undefined
+      ? {}
+      : { toolCatalogProfile: options.toolCatalogProfile }),
     ...(interactive ? { onProgress: renderSetupProgress } : {}),
     ...(hasSelectedClients && !options.allDetected
       ? {

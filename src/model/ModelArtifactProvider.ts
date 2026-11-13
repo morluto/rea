@@ -240,8 +240,8 @@ export class ModelArtifactProvider implements ModelArtifactPort {
   async #read(
     file: FileHandle,
     input: ModelArtifactInput,
-    signal?: AbortSignal,
-    retainProgress?: (progress: ModelArtifactPartial) => void,
+    signal: AbortSignal | undefined,
+    retainProgress: (progress: ModelArtifactPartial) => void,
   ): Promise<ModelArtifact> {
     const initial = await file.stat({ bigint: true });
     if (initial.size > BigInt(Number.MAX_SAFE_INTEGER))
@@ -282,7 +282,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         "No model behavior or tensor payload values were interpreted.",
       ],
     };
-    retainProgress?.(partial);
+    retainProgress(partial);
     const parsed =
       format === "gguf"
         ? await new GgufHeader(reader).read({

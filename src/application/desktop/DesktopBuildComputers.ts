@@ -328,7 +328,7 @@ const liveComputer = (
  * message.
  */
 /** The start failure's notice that the bundle seed still holds lock files. */
-export const seededLockStartNotice = (locks: readonly string[]): string =>
+const seededLockStartNotice = (locks: readonly string[]): string =>
   `The bundle's seed holds lock files, which can keep the app from starting when it finds its profile or document in use: ${counted(locks)}. Delete them from the bundle, or export it again, which leaves them out, and start again.`;
 
 const withSeededLocks = async (
