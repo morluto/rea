@@ -73,7 +73,7 @@ cliTest(
       (await call("inspect_playwright_trace", { path: fixture.path, view }))
         .structuredContent,
     ).toEqual(selected);
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const result = await run({
       arguments: ["inspect-playwright-trace", fixture.path, "--json"],
     });
@@ -102,7 +102,7 @@ const checkCliPublication = async ({
   call: McpCall;
 }) => {
   const source = { kind: "retained-evidence", evidence_id: parent.evidence_id };
-  const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+  const run = cli.run.bind(cli);
   const fullCli = await run({
     arguments: ["inspect-playwright-trace", fixture.path, "--json"],
   });
@@ -420,7 +420,7 @@ cliTest(
     expect(
       parseEvidence(full.structuredContent).normalized_result,
     ).toMatchObject({ items: [{ text: message }] });
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const result = await run({
       arguments: ["inspect-playwright-trace", fixture.path, "--json"],
     });

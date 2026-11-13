@@ -132,7 +132,7 @@ cliTest.for([
     const descriptor = join(root, `${variant}.pb`);
     const bytes = toBinary(FileDescriptorSetSchema, definition);
     await writeFile(descriptor, bytes);
-    const output = await cli.sharedCliRun!({
+    const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
         capture,
@@ -222,7 +222,7 @@ cliTest(
     const definition = toBinary(FileDescriptorSetSchema, valid);
     await writeFile(capture, protobufHar(body, "application/x-protobuf"));
     await writeFile(descriptor, definition);
-    const output = await cli.sharedCliRun!({
+    const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
         capture,

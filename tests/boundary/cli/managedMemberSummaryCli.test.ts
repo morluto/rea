@@ -28,11 +28,7 @@ import {
 } from "../../../src/domain/managed/managedArtifact.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  cliTest,
-  runFileCli,
-  type TestCli,
-} from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 const memberFixture = (): Buffer =>
   buildManagedPeFixture({
@@ -86,7 +82,7 @@ const verifyCliSelection = async ({
   parent,
   report,
 }: CliMemberViewContext) => {
-  const selected = await runFileCli(cli, {
+  const selected = await cli.run({
     cwd,
     arguments: [
       "inspect-analysis-view",
@@ -153,8 +149,8 @@ const verifyCliFullPages = async (
     expect(rows.length, collection).toBeGreaterThan(0);
     expect(reportedCounts[collection]).toBe(rows.length);
     const paged: unknown[] = [];
-    for (let offset: number | null = 0; offset !== null;) {
-      const response = await runFileCli(cli, {
+    for (let offset: number | null = 0; offset !== null; ) {
+      const response = await cli.run({
         cwd,
         arguments: [
           "inspect-analysis-view",

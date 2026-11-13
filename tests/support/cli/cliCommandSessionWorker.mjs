@@ -21,6 +21,10 @@ const { default: packageJson } = await import(
   { with: { type: "json" } }
 );
 
+// Present the launcher's entrypoint, as a fresh `rea` process does. The
+// runtime derives the current registration command from it at load time.
+process.argv[1] = resolve(packageRoot, "scripts/rea.mjs");
+
 const runtimeFiles = [
   "dist/cli-runtime/cli.js",
   "dist/cli-runtime/cliOneShot.js",

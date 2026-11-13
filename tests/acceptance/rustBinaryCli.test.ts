@@ -16,7 +16,7 @@ import {
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
@@ -188,7 +188,7 @@ cliTest(
           }),
         );
         if (surface === "cli") {
-          const response = await runFileCli(cli, {
+          const response = await cli.run({
             arguments: ["inspect-rust-binary", path, "--json"],
           });
           expect(response.exitCode, response.stderr).toBe(0);
@@ -213,7 +213,7 @@ cliTest(
       }
 
       if (surface === "cli") {
-        const response = await runFileCli(cli, {
+        const response = await cli.run({
           arguments: ["inspect-rust-binary", malformedPath, "--json"],
         });
         expect(response.exitCode).toBe(1);
@@ -247,7 +247,7 @@ cliTest("returns null metadata when .dep-v0 is absent", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-rust-cli-missing-");
   const path = join(root, "plain");
   await writeFile(path, createRustImage({ format: "elf", omitSection: true }));
-  const result = await runFileCli(cli, {
+  const result = await cli.run({
     arguments: ["inspect-rust-binary", path, "--json"],
   });
   expect(result.exitCode, result.stderr).toBe(0);
@@ -280,7 +280,7 @@ cliTest(
           fixture.type,
         ),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-rust-binary", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -326,7 +326,7 @@ cliTest(
     bytes.writeUInt32LE(0x0200000c, 4);
     await writeFile(path, bytes);
 
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-rust-binary", path, "--json"],
     });
 
@@ -358,7 +358,7 @@ cliTest(
       ],
     });
     await writeFile(path, createRustImage({ format: "elf", payload }));
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -387,7 +387,7 @@ cliTest("rejects malformed dependency JSON", async ({ cli }) => {
       includeRustc: false,
     }),
   );
-  const result = await runFileCli(cli, {
+  const result = await cli.run({
     arguments: ["inspect-rust-binary", path, "--json"],
   });
   expect(result.exitCode).toBe(1);
@@ -412,7 +412,7 @@ cliTest(
       }),
     );
 
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
@@ -445,7 +445,7 @@ cliTest(
     bytes.writeUInt32LE(alignedSize, 264 + 16); // .dep-v0 SizeOfRawData
     await writeFile(path, bytes);
 
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -523,7 +523,7 @@ cliTest(
         reported_limits: { maximum_bytes: compressed.length * 64 },
       },
     };
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
@@ -630,7 +630,7 @@ cliTest(
       }
       const path = join(root, `mixed.${format}`);
       await writeFile(path, bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-rust-binary", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -661,7 +661,7 @@ cliTest(
       const response = await call("inspect_rust_binary", { path });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
-      const go = await runFileCli(cli, {
+      const go = await cli.run({
         arguments: ["inspect-go-binary", path, "--json"],
       });
       expect(go.exitCode).toBe(1);

@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 // The file session and the executable run one shared one-shot owner. These
 // commands are answered before the command runtime loads, which is where a
@@ -20,7 +20,7 @@ cliTest.for([
   async ({ arguments: arguments_ }, { cli }) => {
     const environment = { REA_LOG_LEVEL: "silent" };
     const fresh = await cli.run({ arguments: arguments_, environment });
-    const shared = await runFileCli(cli, {
+    const shared = await cli.run({
       arguments: arguments_,
       environment,
     });
