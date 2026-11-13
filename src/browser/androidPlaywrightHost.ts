@@ -37,9 +37,18 @@ export const androidScenarioTempDirectory = (
  */
 export const publishAndroidPlaywrightBrowsersPath = async (
   directory: string | undefined,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): Promise<void> => {
+  if (process.platform !== "android") return;
+  const selected = nonemptyEnvironmentValue(
+    environment,
+    "PLAYWRIGHT_BROWSERS_PATH",
+  );
+  if (selected !== undefined) {
+    process.env.PLAYWRIGHT_BROWSERS_PATH = selected;
+    return;
+  }
   if (
-    process.platform !== "android" ||
     directory === undefined ||
     nonemptyEnvironmentValue(process.env, "PLAYWRIGHT_BROWSERS_PATH") !==
       undefined
@@ -56,6 +65,7 @@ export const loadPlaywrightCore = async (
 ): Promise<typeof import("playwright-core")> => {
   await publishAndroidPlaywrightBrowsersPath(
     androidScenarioTempDirectory(environment),
+    environment,
   );
   return import("playwright-core");
 };

@@ -939,6 +939,7 @@ export const openPlaywrightScenarioBrowser = async (
   if (scenario.browser.mode === "launch")
     await publishAndroidPlaywrightBrowsersPath(
       androidScenarioTempDirectory(environment),
+      environment,
     );
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
