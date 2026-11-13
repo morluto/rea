@@ -4,8 +4,6 @@ import { describe, expect } from "vitest";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
-
 describe("CLI skill lifecycle boundary", () => {
   workspaceCliTest(
     "does not expose the unmanaged Incur skill generator",
@@ -25,6 +23,5 @@ describe("CLI skill lifecycle boundary", () => {
       expect(result.stdout).toContain("COMMAND_NOT_FOUND");
       await expect(readdir(workspace.home)).resolves.toEqual([]);
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
