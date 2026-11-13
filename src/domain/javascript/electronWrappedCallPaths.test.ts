@@ -2246,6 +2246,13 @@ describe("Webpack harmony export getters", () => {
       },
     ],
     [
+      "the last getter of a repeated key",
+      {
+        exports:
+          "__webpack_require__.d(__webpack_exports__, { handle: () => () => {}, handle: () => (handle) });",
+      },
+    ],
+    [
       "a CommonJS export (control)",
       { exports: "__webpack_exports__.handle = handle;" },
     ],
@@ -2312,6 +2319,13 @@ describe("Webpack harmony export getters", () => {
       "a key defined twice",
       {
         exports: `__webpack_require__.d(__webpack_exports__, { handle: () => () => {} });\n${DEFINE_HANDLE}`,
+      },
+    ],
+    [
+      "a repeated key whose last getter returns another function",
+      {
+        exports:
+          "__webpack_require__.d(__webpack_exports__, { handle: () => (handle), handle: () => () => {} });",
       },
     ],
     ["a conditional definition", { exports: `if (enabled) ${DEFINE_HANDLE}` }],

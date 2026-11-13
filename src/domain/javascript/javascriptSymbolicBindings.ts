@@ -432,23 +432,7 @@ export class JavaScriptSymbolicBindings {
         : symbolicUnknown("unresolved module export");
     }
     if (value.kind === "object") {
-      let index = this.#literalPropertyIndex.get(value.node);
-      if (index === undefined) {
-        const properties = new Map<string, t.ObjectMethod | t.ObjectProperty>();
-        index = properties;
-        for (const property of value.node.properties) {
-          const name = t.isSpreadElement(property)
-            ? null
-            : semanticStaticPropertyKey(property.key, property.computed);
-          if (name === null || t.isSpreadElement(property)) {
-            index = null;
-            break;
-          }
-          if (isObjectPrototypeSetter(property, name)) continue;
-          properties.set(name, property);
-        }
-        this.#literalPropertyIndex.set(value.node, index);
-      }
+      const index = this.#literalProperties(value.node);
       if (index !== null) {
         const property = index.get(key);
         if (property !== undefined)
@@ -498,6 +482,33 @@ export class JavaScriptSymbolicBindings {
       return symbolicUnknown(`${value.kind} members are not modeled`);
     }
     return symbolicUnknown("unresolved property");
+  }
+
+  /**
+   * An object literal's own static properties, keeping the last property of a
+   * repeated key; null when a spread or dynamic key can add any key.
+   */
+  #literalProperties(
+    node: t.ObjectExpression,
+  ): ReadonlyMap<string, t.ObjectMethod | t.ObjectProperty> | null {
+    let index = this.#literalPropertyIndex.get(node);
+    if (index === undefined) {
+      const properties = new Map<string, t.ObjectMethod | t.ObjectProperty>();
+      index = properties;
+      for (const property of node.properties) {
+        const name = t.isSpreadElement(property)
+          ? null
+          : semanticStaticPropertyKey(property.key, property.computed);
+        if (name === null || t.isSpreadElement(property)) {
+          index = null;
+          break;
+        }
+        if (isObjectPrototypeSetter(property, name)) continue;
+        properties.set(name, property);
+      }
+      this.#literalPropertyIndex.set(node, index);
+    }
+    return index;
   }
 
   #objectPropertyValue(
@@ -1481,24 +1492,20 @@ export class JavaScriptSymbolicBindings {
       namespaceId === undefined
     )
       return false;
-    if (rest.length > 0 || !t.isObjectExpression(definitions))
-      this.#mutated.add(namespaceId);
+    // `d` sees the literal's own keys, so a repeated key is one definition.
+    const properties = t.isObjectExpression(definitions)
+      ? this.#literalProperties(definitions)
+      : null;
+    if (rest.length > 0 || properties === null) this.#mutated.add(namespaceId);
     else
-      for (const property of definitions.properties) {
-        const key = t.isSpreadElement(property)
-          ? null
-          : semanticStaticPropertyKey(property.key, property.computed);
-        if (key === null || t.isSpreadElement(property))
-          this.#mutated.add(namespaceId);
-        else if (!isObjectPrototypeSetter(property, key))
-          this.#addWrite(
-            target,
-            [key],
-            exportGetterValue(property) ?? call,
-            call,
-            true,
-          );
-      }
+      for (const [key, property] of properties)
+        this.#addWrite(
+          target,
+          [key],
+          exportGetterValue(property) ?? call,
+          call,
+          true,
+        );
     return true;
   }
 
