@@ -3,9 +3,12 @@ import { runInNewContext } from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
-import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS } from "./javascriptSemanticPrecision.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+
+const SEMANTIC_EXPRESSION_DEPTH_LIMIT =
+  JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS.expression_depth;
 
 const COMMONJS_HEADER = [
   'const path = require("node:path");',

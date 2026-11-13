@@ -6,7 +6,6 @@ import {
   semanticStableInitializer,
   type JavaScriptBindingIndex,
 } from "./javascriptSemanticState.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { evaluateSemanticExpressionProvenance } from "./javascriptSemanticValues.js";
 import {
@@ -73,7 +72,7 @@ export const createStaticPathIntrinsicQuery = (
    * bound, and a refusal keeps the analysis coverage limited.
    */
   const admitConstantSubstitution = (substituted: number): boolean => {
-    if (substituted < SEMANTIC_EXPRESSION_DEPTH_LIMIT) return true;
+    if (substituted < index.bindings.precision.expression_depth) return true;
     index.bindings.valueResourceLimits.add("expression-depth");
     return false;
   };
