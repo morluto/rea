@@ -175,7 +175,7 @@ const evidenceCandidates = (
   if (session === undefined) return [];
   const candidates: string[] = [];
   for (const evidence of session.immutableEvidenceBundle().records)
-    candidates.push(...evidenceValues(kind, evidence));
+    for (const value of evidenceValues(kind, evidence)) candidates.push(value);
   return candidates;
 };
 
