@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
+import { rizinCommandLimitations } from "../../src/rizin/RizinCommand.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -54,7 +55,16 @@ cliTest.skipIf(process.platform === "win32").for(outcomes)(
       command: outcome.command,
     });
     expect(mcp.isError, JSON.stringify(mcp.content)).not.toBe(true);
-    const contract = toolContract("execute_rizin_command");
+    const contract = REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
+      ({ name }) => name === "execute_rizin_command",
+    );
+    if (!contract) throw new Error("Missing execute_rizin_command contract");
+    const limitations = rizinCommandLimitations({
+      path: artifact,
+      command: outcome.command,
+    });
+    // Even unqualified commands must disclose the provider validity gap.
+    expect(limitations).not.toHaveLength(0);
     for (const raw of [response.json, mcp.structuredContent]) {
       const evidence = contract.outputSchema.parse(raw);
       expect(evidence.normalized_result).toMatchObject({
@@ -70,14 +80,10 @@ cliTest.skipIf(process.platform === "win32").for(outcomes)(
         createHash("sha256").update(content).digest("hex"),
       );
       expect(evidence.parameters.command).toBe(outcome.command);
-      expect(evidence.limitations).toContainEqual(
-        expect.stringContaining("Command validity remains unverified"),
-      );
-      expect(evidence.limitations).toContainEqual(
-        expect.stringContaining("stdout and stderr"),
+      expect(evidence.limitations).toEqual(
+        expect.arrayContaining([...limitations]),
       );
     }
-    expect(definition?.description).toContain("process completion");
-    expect(definition?.description).toContain("exit with code 0");
+    expect(definition?.description).toBe(contract.description);
   },
 );

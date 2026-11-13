@@ -404,8 +404,10 @@ it("marks signal-terminated provider commands as unknown completion", async () =
           /files.*network.*outside the selected artifact.*not bound to Evidence/iu,
         ),
       );
-      expect(ordinaryExit.value.limitations).toContainEqual(
-        expect.stringContaining("Command validity remains unverified"),
+      expect(ordinaryExit.value.limitations).toEqual(
+        expect.arrayContaining([
+          ...rizinCommandLimitations({ path, command: "iI" }),
+        ]),
       );
     }
   } finally {
@@ -478,8 +480,10 @@ describe("Rizin command service", () => {
           /files.*network.*outside the selected artifact.*not bound to Evidence/iu,
         ),
       );
-      expect(result.value.limitations).toContainEqual(
-        expect.stringContaining("Command validity remains unverified"),
+      expect(result.value.limitations).toEqual(
+        expect.arrayContaining([
+          ...rizinCommandLimitations({ path: callerPath, command }),
+        ]),
       );
       expect(result.value.parameters).toMatchObject({
         path: callerPath,
@@ -623,9 +627,7 @@ it("passes decoder and map inputs to Rizin before the path and records them", as
     expect(
       rizinCommandLimitations({ path, command: "pi 1", base_address: "0x0" }),
     ).toHaveLength(2);
-    expect(rizinCommandLimitations({ path, command: "pi 1" })).toEqual([
-      expect.stringContaining("Command validity remains unverified"),
-    ]);
+    expect(rizinCommandLimitations({ path, command: "pi 1" })).toHaveLength(1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
