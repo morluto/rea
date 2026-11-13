@@ -10,6 +10,12 @@ export interface LinuxProcessStat {
   readonly parentPid: number;
   readonly processGroupId: number;
   readonly sessionId: number;
+  /**
+   * CF_KTHREAD|PF_KTHREAD (Linux `fs/proc/array.c` task_flags). Kernel threads
+   * are never forked by a provider, never inherit its environment, and cannot
+   * be token-owned; undefined when field 9 could not be parsed.
+   */
+  readonly kernelThread: boolean | undefined;
 }
 
 /**
@@ -70,6 +76,9 @@ export const parseLinuxProcessStat = (
     flagsText !== undefined && /^\d+$/u.test(flagsText)
       ? Number(flagsText)
       : Number.NaN;
+  const kernelThread = Number.isSafeInteger(flags)
+    ? (flags & 0x00200000) !== 0
+    : undefined;
   const lifecycle: ProcessLifecycle | undefined =
     state === "Z"
       ? "zombie"
@@ -89,5 +98,6 @@ export const parseLinuxProcessStat = (
     parentPid,
     processGroupId,
     sessionId,
+    kernelThread,
   };
 };

@@ -110,6 +110,12 @@ export type ProcessIdentityObservation =
        * truncated. It names a process in diagnostics; never identity or lookup.
        */
       readonly name?: string;
+      /**
+       * Linux PF_KTHREAD from the same `/proc/<pid>/stat` record. A kernel
+       * thread is never forked by a provider and cannot carry its run token;
+       * optional because only a Linux stat read can establish it.
+       */
+      readonly kernelThread?: true;
     }
   | {
       readonly state: "absent";
@@ -1911,13 +1917,19 @@ const scanWithOwnershipEvidence = async (
       fact.identityAfter.state === "readable"
         ? fact.identityAfter
         : undefined;
+    // An unrelated kernel thread is forked by the kernel, never by a provider,
+    // so it cannot carry this run's token and cleanup must not act on it. Its
+    // token read typically fails while the thread exits (ESRCH) rather than
+    // because the environment was withheld, which is why environment
+    // withholding alone cannot exonerate it.
     if (
       knownUnrelated &&
-      environmentWithheldFromInspection(
-        fact.token.reason,
-        observed?.effectiveUid,
-        observed?.environmentRestriction,
-      )
+      (observed?.kernelThread === true ||
+        environmentWithheldFromInspection(
+          fact.token.reason,
+          observed?.effectiveUid,
+          observed?.environmentRestriction,
+        ))
     ) {
       unverified.push({
         pid: fact.process.pid,
