@@ -946,6 +946,58 @@ it.each([
     ).toEqual([[null, "direct"], ...substituted]);
   },
 );
+it.each([
+  [
+    "an unknown spread",
+    `function first(value) {
+      return value;
+    }
+    function choose(channel) {
+      return channel;
+    }
+    function register(tag, ...extra) {
+      ipcMain.handle(choose(...extra, "app:ping"), () => tag);
+    }
+    function entry(name) {
+      register(first(...extraArguments));
+    }
+    entry("ping");`,
+    [
+      [null, "direct"],
+      ["app:ping", "wrapper-substitution"],
+    ],
+  ],
+  [
+    "an array of written length",
+    `function choose(first, second) {
+      return second;
+    }
+    function forward(...rest) {
+      return choose(...rest, "app:ping");
+    }
+    function register(...args) {
+      args.length = 0;
+      ipcMain.handle(forward(args[0]), () => "pong");
+    }
+    register("stale");`,
+    [["app:ping", "wrapper-substitution"]],
+  ],
+])(
+  "keeps a channel after an empty rest list when one value is selected from %s",
+  (_name, wrapper, expected) => {
+    const result = analyzeJavaScriptStaticSource(`
+    const { ipcMain } = require("electron");
+    ${wrapper}
+  `);
+    // One value selected from a list is one argument, so the rest list is empty.
+    expect(
+      result.electron.ipc.map(({ channel, resolution_basis }) => [
+        channel,
+        resolution_basis ?? "direct",
+      ]),
+    ).toEqual(expected);
+  },
+);
 it("does not trace a bridge member its wrapper replaces before exposure", () => {
   const result = analyzeJavaScriptStaticSource(`
     const { contextBridge, ipcRenderer } = require("electron");
