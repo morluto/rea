@@ -28,7 +28,10 @@ import {
   createVerifierRun,
   completeVerifierRun,
 } from "./lib/verifier-run.mjs";
-import { committedProvidersEqual } from "../dist/domain/analysisProfile.js";
+import {
+  analysisProfilesEqual,
+  committedProvidersEqual,
+} from "../dist/domain/analysisProfile.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import {
   ANALYSIS_EVIDENCE_PREDICATE,
@@ -71,7 +74,28 @@ const run = createVerifierRun();
 const root = await mkdtemp(join(tmpdir(), "rea-mips-boundaries-"));
 const env = { ...environment, TMPDIR: root, REA_PROCESS_RUN_ID: run.run_id };
 const reports = [];
-async function runControls(cleanup) {
+async function runControls(cleanup, readelf) {
+  const command = process.env.REA_MIPS_READELF ?? "readelf";
+  const readelfOptions = {
+    env: { PATH: env.PATH, LC_ALL: "C" },
+    timeout: 10_000,
+  };
+  const versionOutput = await readelf.exec(
+    command,
+    ["--version"],
+    readelfOptions,
+  );
+  assert.match(
+    versionOutput.stdout,
+    /^GNU readelf\b/u,
+    "This lane requires GNU readelf",
+  );
+  assert.equal(
+    versionOutput.stderr.trim(),
+    "",
+    `readelf diagnostics: ${versionOutput.stderr}`,
+  );
+  const version = versionOutput.stdout.split("\n")[0];
   for (const byteOrder of ["little", "big"]) {
     const original = await buildMips1Fixture(root, byteOrder);
     const initial = await readFile(original.path);
@@ -108,20 +132,17 @@ async function runControls(cleanup) {
     gnu[0x11df] = 3; // Soft float.
     const gnuPath = join(root, `gnu-fp-${byteOrder}.elf`);
     await writeFile(gnuPath, gnu);
-    const readelf = await createVerifierCommands();
-    const { stdout: attributes } = await withVerifierCleanup(
-      () =>
-        readelf.exec(
-          process.env.REA_MIPS_READELF ?? "readelf",
-          ["-A", gnuPath],
-          {
-            env: { PATH: env.PATH, LC_ALL: "C" },
-            timeout: 10_000,
-          },
-        ),
-      [() => readelf.close()],
+    const attributes = await readelf.exec(
+      command,
+      ["-A", gnuPath],
+      readelfOptions,
     );
-    assert.match(attributes, /Tag_GNU_MIPS_ABI_FP.*Soft float/iu);
+    assert.equal(
+      attributes.stderr.trim(),
+      "",
+      `readelf diagnostics: ${attributes.stderr}`,
+    );
+    assert.match(attributes.stdout, /Tag_GNU_MIPS_ABI_FP.*Soft float/iu);
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [cli, "mcp"],
@@ -143,7 +164,7 @@ async function runControls(cleanup) {
       );
       return {
         run: status.analysis_run,
-        provider: status.analysis_provider_binding.provider,
+        binding: status.analysis_provider_binding,
       };
     };
     await withVerifierCleanup(async () => {
@@ -203,7 +224,7 @@ async function runControls(cleanup) {
             "analyze_function",
           ),
         );
-        const { run: activeRun, provider: activeProvider } =
+        const { run: activeRun, binding: activeBinding } =
           await currentGhidraSession();
         assert.equal(activeRun.run_id, providerRunId);
         const providerLineage = activeRun.process_lineage.snapshots?.find(
@@ -246,7 +267,7 @@ async function runControls(cleanup) {
           "MIPS dossier Evidence omitted a concrete Ghidra provider identity",
         );
         assert.ok(
-          committedProvidersEqual(evidence.provider, activeProvider),
+          committedProvidersEqual(evidence.provider, activeBinding.provider),
           "MIPS dossier Evidence provider differs from the active Ghidra session",
         );
         const profile = evidence.analysis_profile;
@@ -266,6 +287,10 @@ async function runControls(cleanup) {
           mips_abi_basis,
           "inferred-o32-assumption-v1",
           "MIPS dossier Evidence reported the wrong ABI basis",
+        );
+        assert.ok(
+          analysisProfilesEqual(profile, activeBinding.analysis_profile),
+          "MIPS dossier Evidence profile differs from the active Ghidra session",
         );
         // The provider's session limitations belong to the public Evidence;
         // the normalized function payload has its own local observations.
@@ -287,6 +312,16 @@ async function runControls(cleanup) {
           );
         const image = await call("inspect_native_load_image");
         assertMipsLoadedImage(image.observations, byteOrder, sourceSha256);
+        const entryBytes = expected.subarray(0x1000, 0x1018);
+        const loaded = await call("read_bytes", {
+          address: original.entry,
+          length: entryBytes.length,
+        });
+        assert.equal(BigInt(loaded.address), BigInt(original.entry));
+        assert.equal(loaded.requested_bytes, entryBytes.length);
+        assert.equal(loaded.returned_bytes, entryBytes.length);
+        assert.equal(loaded.complete, true);
+        assert.equal(loaded.bytes_hex, entryBytes.toString("hex"));
         providerRuns.push({
           control: isMips1 ? "recordless_mips1" : "recordless_mips32",
           run_id: providerRunId,
@@ -294,6 +329,7 @@ async function runControls(cleanup) {
           dossier_evidence_id: evidence.evidence_id,
           dossier_subject: subject,
           dossier_entry: dossier.procedure.address,
+          loaded_bytes: loaded,
           dossier_provider: evidence.provider,
           dossier_profile: {
             digest: profile.digest,
@@ -305,14 +341,6 @@ async function runControls(cleanup) {
             ? { public_lineage: "not_observed" }
             : providerScope),
         });
-        const loaded = await call("read_bytes", {
-          address: original.entry,
-          length: 24,
-        });
-        assert.equal(
-          loaded.bytes_hex,
-          expected.subarray(0x1000, 0x1018).toString("hex"),
-        );
         await call("close_binary");
       }
       assert.deepEqual(await readFile(original.path), initial);
@@ -327,6 +355,7 @@ async function runControls(cleanup) {
           "real Ghidra dossier with decoder limitation, pinned 32-bit import language and exact loaded bytes; load-delay semantics unverified",
         gnu_fp_attributes:
           "independently decoded soft-float declaration; refused by CLI and MCP",
+        readelf: { command, version, raw: attributes.stdout },
         existing_mips32_control:
           "real Ghidra dossier, pinned 32-bit import language and exact loaded bytes",
         hashes: {
@@ -345,23 +374,26 @@ let tokenCleanup;
 let completed;
 try {
   const cleanup = await prepareVerifierTokenCleanup(run);
-  await withVerifierCleanup(
-    () => runControls(cleanup),
-    [
-      async () => {
-        tokenCleanup = await cleanup.verify();
-        if (!tokenCleanup.cleaned)
-          throw new Error(
-            `Token cleanup unverified: ${JSON.stringify(tokenCleanup)}`,
-          );
-      },
-      cleanup.close,
-      async () => {
-        completed = await completeVerifierRun(run);
-        assertVerifierCleanupComplete(completed.process_lineage);
-      },
-    ],
-  );
+  await withVerifierCleanup(async () => {
+    const readelf = await createVerifierCommands();
+    return withVerifierCleanup(
+      () => runControls(cleanup, readelf),
+      [() => readelf.close()],
+    );
+  }, [
+    async () => {
+      tokenCleanup = await cleanup.verify();
+      if (!tokenCleanup.cleaned)
+        throw new Error(
+          `Token cleanup unverified: ${JSON.stringify(tokenCleanup)}`,
+        );
+    },
+    cleanup.close,
+    async () => {
+      completed = await completeVerifierRun(run);
+      assertVerifierCleanupComplete(completed.process_lineage);
+    },
+  ]);
 } catch (cause) {
   throw new Error(
     `MIPS boundary verification failed; retained workspace: ${root}`,
