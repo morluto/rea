@@ -10,8 +10,8 @@ import {
   encodeCliSessionFrame,
 } from "./cliCommandSessionFrames.mjs";
 
-// One-shot command sequence matches scripts/rea.mjs. Output is captured per
-// command so this process can serve the next invocation without restarting.
+// Commands run through the same one-shot owner as scripts/rea.mjs. Output is
+// captured per command so this process can serve the next invocation.
 const packageRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../..",
@@ -23,9 +23,7 @@ const { default: packageJson } = await import(
 
 const runtimeFiles = [
   "dist/cli-runtime/cli.js",
-  "dist/cli-runtime/cliOutput.js",
-  "dist/cli-runtime/cliBuiltinArguments.js",
-  "dist/cli-runtime/cliResultOutput.js",
+  "dist/cli-runtime/cliOneShot.js",
 ];
 
 prepareCliProcessEnvironment(
@@ -40,21 +38,9 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.exit(1);
 }
 
-const { closeCliResources, createCli } =
-  await import("../../../dist/cli-runtime/cli.js");
-const { createCliResultOutput } =
-  await import("../../../dist/cli-runtime/cliResultOutput.js");
-const {
-  cliCompletionShell,
-  normalizeCliArguments,
-  splitIncurBuiltinArguments,
-} = await import("../../../dist/cli-runtime/cliBuiltinArguments.js");
-const {
-  cliConfigurationError,
-  renderCliOutputArgumentError,
-  renderEmptyFilteredCliOutput,
-  parseCliOutputArguments,
-} = await import("../../../dist/cli-runtime/cliOutput.js");
+const { closeCliResources } = await import("../../../dist/cli-runtime/cli.js");
+const { runOneShotCli } =
+  await import("../../../dist/cli-runtime/cliOneShot.js");
 
 const writeFrame = (value) =>
   new Promise((resolveWrite, rejectWrite) => {
@@ -181,57 +167,45 @@ async function runOneShot(args) {
   const previousExitCode = process.exitCode;
   process.exitCode = undefined;
   let explicitExit;
+  let exitOutput;
   try {
-    const isShellCompletion = cliCompletionShell(process.env) !== undefined;
-    const cliArgs = isShellCompletion ? args : normalizeCliArguments(args);
-    const outputOptions = parseCliOutputArguments(
-      isShellCompletion ? [] : cliArgs,
-    );
-    const outputArguments = outputOptions.validation;
-    const configurationError = cliConfigurationError(process.env);
-    if (
-      configurationError !== undefined &&
-      (isShellCompletion ||
-        splitIncurBuiltinArguments(cliArgs).command[0] !== "doctor")
-    ) {
-      process.stderr.write(`${configurationError}\n`);
-      process.exitCode = 1;
-    } else if (!outputArguments.ok) {
-      process.stdout.write(renderCliOutputArgumentError(outputArguments));
-      process.exitCode = 1;
-    } else {
-      let wroteOutput = false;
-      const resultOutput = createCliResultOutput(outputOptions, destination);
-      try {
-        await createCli(process.env, resultOutput).serve(cliArgs, {
-          stdout: (output) => {
-            if (resultOutput?.handled) {
-              if (resultOutput.failed) process.stderr.write(output);
-              return;
-            }
-            if (output.length > 0) wroteOutput = true;
-            if (resultOutput?.captureSdkOutput(output)) return;
-            process.stdout.write(output);
-          },
-          exit: (code) => {
-            explicitExit = code;
-          },
-        });
-      } catch (cause) {
-        if (wroteOutput) throw cause;
-        const recovered = await resultOutput?.recoverFormattingFailure(cause);
-        if (!recovered) throw cause;
-        process.exitCode = 1;
-      }
-      if (!wroteOutput && !resultOutput?.handled) {
-        const empty = renderEmptyFilteredCliOutput(outputOptions);
-        if (empty) process.stdout.write(empty);
-      }
-      await resultOutput?.finishSdkOutput(
-        explicitExit ??
-          (typeof process.exitCode === "number" ? process.exitCode : 0),
-      );
-    }
+    await runOneShotCli(args, {
+      environment: process.env,
+      runtime: {
+        packageName: packageJson.name,
+        packageVersion: packageJson.version,
+        versions: process.versions,
+        platform: process.platform,
+        architecture: process.arch,
+      },
+      stdoutIsTerminal: destination.isTTY,
+      resultDestination: destination,
+      // The session frames own this process's stdout; a command's reader
+      // cannot close it.
+      closedStdoutStatus: 1,
+      writeStdout: (text) => {
+        process.stdout.write(text);
+      },
+      writeStderr: (text) => {
+        process.stderr.write(text);
+      },
+      stdoutClosed: () => false,
+      exitCode: () =>
+        typeof process.exitCode === "number" ? process.exitCode : 0,
+      setExitCode: (code) => {
+        process.exitCode = code;
+      },
+      // The session closes CLI resources once, after its last command.
+      ownCliResources: () => {},
+      exitRequested: () => exitOutput !== undefined,
+      // This process serves the next command; record the status and finish
+      // the pending result in place of exiting.
+      exit: (code, finishOutput) => {
+        explicitExit = code;
+        exitOutput = finishOutput(code);
+      },
+    });
+    await exitOutput;
   } finally {
     process.stdout.write = originalStdoutWrite;
     process.stderr.write = originalStderrWrite;
