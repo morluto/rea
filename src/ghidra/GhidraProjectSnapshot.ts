@@ -30,7 +30,7 @@ import type { GhidraProjectSelection } from "../config/ghidraExistingProject.js"
 import { ghidraProgramNameSchema } from "../config/ghidraExistingProject.js";
 
 /** Reason for a selected project whose content no longer matches its committed profile. */
-export const GHIDRA_PROJECT_PROFILE_MISMATCH =
+const GHIDRA_PROJECT_PROFILE_MISMATCH =
   "Selected Ghidra project content no longer matches the profile committed by open_binary; when it changed is not established";
 
 /** Classify file cancellation/cleanup before the generic provider boundary. */

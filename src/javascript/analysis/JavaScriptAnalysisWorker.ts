@@ -1,3 +1,11 @@
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionCancellationError,
+} from "../../providers/OwnedCommandCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
@@ -116,6 +124,7 @@ type WorkerPrimaryFailure =
 export class JavaScriptAnalysisWorker {
   readonly #runId = `rea-javascript-analysis-${randomUUID()}`;
   readonly #runtime: OwnedWorkerRuntime;
+  readonly #inspectionResources = new ArtifactResourceScope();
   #ready = false;
   #heapLimitBytes = 0;
   #frames: JavaScriptWorkerMessage[] = [];
@@ -190,7 +199,14 @@ export class JavaScriptAnalysisWorker {
     this.#workerCleanup = workerCleanup;
     this.#runtime = new OwnedWorkerRuntime({
       rootPrefix: "rea-javascript-analysis-",
-      launcher,
+      launcher: (options) =>
+        this.#inspectionResources.run(async () => {
+          try {
+            return await launcher(options);
+          } catch (cause: unknown) {
+            throw this.#inspectionFailure(cause, this.#deadline);
+          }
+        }),
       cleanupRegistry: workerCleanup,
       supervisorOptions: {
         captureStdout: false,
@@ -238,6 +254,7 @@ export class JavaScriptAnalysisWorker {
       this.#pending === "" &&
       this.#runtime.inputFailure === undefined &&
       !this.#runtime.hasPendingCleanup &&
+      !this.#inspectionResources.hasPending &&
       this.#runtime.supervisor !== undefined
     );
   }
@@ -321,7 +338,13 @@ export class JavaScriptAnalysisWorker {
           "JavaScript analysis worker requires included JavaScript text",
         );
       // Host ownership preparation is outside the parser execution deadline.
-      await prepareProcessOwnershipInspection(signal);
+      await this.#inspectionResources.run(async () => {
+        try {
+          await prepareProcessOwnershipInspection(signal);
+        } catch (cause: unknown) {
+          throw this.#inspectionFailure(cause);
+        }
+      });
       await this.#workerCleanup.retry();
       deadline = new ProviderStartupDeadline(this.limits.timeoutMs, signal);
       this.#deadline = deadline;
@@ -538,15 +561,22 @@ export class JavaScriptAnalysisWorker {
       if (this.#primaryFailure?.kind === "memory")
         throw this.#projectPrimaryFailure(file.path);
     } catch (cause: unknown) {
-      const error = this.#failure(cause, file.path, deadline, signal);
-      if (
-        this.#primaryFailure !== undefined &&
-        deadline?.interruption === "cancelled"
-      )
-        error.retainSecondaryFailure(
+      const error = this.#failure(cause, file.path, deadline);
+      if (deadline?.interruption === "cancelled")
+        analysisErrorWithCancellation(
+          error,
           new AnalysisCancelledError(OPERATION, {
             cause: deadline.signal.reason,
             capturedOutput: this.#captured(),
+          }),
+        );
+      else if (
+        deadline?.interruption === "timeout" &&
+        !(error instanceof AnalysisTimeoutError)
+      )
+        error.retainSecondaryFailure(
+          new AnalysisTimeoutError(OPERATION, deadline.timeoutMs, {
+            cause: deadline.signal.reason,
           }),
         );
       this.#lastFailure = error;
@@ -646,6 +676,35 @@ export class JavaScriptAnalysisWorker {
 
   /** Verify process cleanup, then release the private runtime; failed close is retryable. */
   async close(): Promise<void> {
+    const [inspection, runtime] = await Promise.allSettled([
+      this.#inspectionResources.close(),
+      this.#closeRuntime(),
+    ]);
+    const inspectionError =
+      inspection.status === "rejected"
+        ? this.#failure(
+            inspection.reason,
+            "process ownership inspection",
+            undefined,
+          )
+        : undefined;
+    if (runtime.status === "rejected") {
+      const runtimeError =
+        runtime.reason instanceof AnalysisError
+          ? runtime.reason
+          : this.#failure(runtime.reason, "worker close", undefined);
+      if (inspectionError !== undefined)
+        throw analysisErrorWithCleanupFailure(
+          runtimeError,
+          inspectionError,
+          OPERATION,
+        ).bindCleanupDependencies([runtimeError, inspectionError]);
+      throw runtimeError;
+    }
+    if (inspectionError !== undefined) throw inspectionError;
+  }
+
+  async #closeRuntime(): Promise<void> {
     try {
       await this.#runtime.close();
       this.#ready = false;
@@ -1142,11 +1201,15 @@ export class JavaScriptAnalysisWorker {
   #interruptionFailure(
     path: string,
     deadline: ProviderStartupDeadline,
+    inspectionFailure?: unknown,
   ): AnalysisError {
     if (this.#primaryFailure !== undefined)
       return this.#projectPrimaryFailure(path);
     return deadline.interruption === "timeout"
       ? new AnalysisTimeoutError(OPERATION, this.limits.timeoutMs, {
+          ...(inspectionFailure === undefined
+            ? {}
+            : { cause: inspectionFailure }),
           limit: analysisSettingLimit(
             "javascript.analysis_timeout_ms",
             this.limits.timeoutMs,
@@ -1272,27 +1335,37 @@ export class JavaScriptAnalysisWorker {
       { capturedOutput: this.#captured() },
     );
   }
+  #inspectionFailure(
+    cause: unknown,
+    deadline?: ProviderStartupDeadline,
+  ): AnalysisError {
+    const failure = this.#failure(
+      cause,
+      "process ownership inspection",
+      undefined,
+    );
+    const primary =
+      failure instanceof AnalysisCancelledError &&
+      deadline?.interruption === "timeout"
+        ? this.#interruptionFailure(
+            "process ownership inspection",
+            deadline,
+            cause,
+          )
+        : failure;
+    return retainProcessInspectionCleanup(
+      cause,
+      primary,
+      this.#inspectionResources,
+      OPERATION,
+    );
+  }
+
   #failure(
     cause: unknown,
     path: string,
     deadline: ProviderStartupDeadline | undefined,
-    signal: AbortSignal | undefined,
   ): AnalysisError {
-    if (
-      this.#phase !== "checkpoint-read" &&
-      deadline?.interruption === "cancelled" &&
-      cause === deadline.signal.reason
-    )
-      return this.#interruptionFailure(path, deadline);
-    if (
-      deadline === undefined &&
-      signal?.aborted === true &&
-      cause === signal.reason
-    )
-      return new AnalysisCancelledError(OPERATION, {
-        cause: signal.reason,
-        capturedOutput: this.#captured(),
-      });
     if (cause instanceof OwnedWorkerRuntimeCleanupError) {
       const error = this.#cleanupError(
         cause.message,
@@ -1303,23 +1376,38 @@ export class JavaScriptAnalysisWorker {
       cause.bindCleanupFailure(error);
       return error;
     }
-    // Checkpoint reads do not receive an AbortSignal. A rejected physical
-    // read or validation owns its failure even if the caller cancelled later.
-    // Ownership preparation remains abortable before the deadline exists.
+    const cancellation = processInspectionCancellationError(cause, OPERATION);
+    if (cancellation !== undefined)
+      return deadline?.interruption === "timeout"
+        ? new AnalysisTimeoutError(OPERATION, deadline.timeoutMs, {
+            cause,
+            capturedOutput: this.#captured(),
+          })
+        : cancellation.capturedOutput === undefined
+          ? cancellation.retainCapturedOutput(this.#captured())
+          : cancellation;
+    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+      const error = new ProviderCleanupError(
+        PROVIDER,
+        cause.cleanup.resources,
+        { reason: cause.cleanup.reason },
+        { operation: OPERATION, cause },
+      );
+      bindArtifactFileCleanup(cause, error);
+      return error;
+    }
+    if (
+      cause instanceof AnalysisError &&
+      (deadline === undefined || this.#phase === "startup")
+    )
+      return cause;
+    // Protocol waits retain the owned deadline; inspection/launch failures were
+    // already normalized at their producing boundary above.
     if (
       this.#phase !== "checkpoint-read" &&
       deadline?.interruption !== undefined
     )
       return this.#interruptionFailure(path, deadline);
-    if (
-      deadline === undefined &&
-      signal?.aborted === true &&
-      !(cause instanceof ProviderCleanupError)
-    )
-      return new AnalysisCancelledError(OPERATION, {
-        cause: signal.reason,
-        capturedOutput: this.#captured(),
-      });
     const inputFailure = this.#runtime.inputFailure;
     if (inputFailure !== undefined)
       return new AnalysisOutputError(

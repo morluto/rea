@@ -1,7 +1,10 @@
 import { lstat, realpath, stat } from "node:fs/promises";
 import fs from "node:fs";
 import { join } from "node:path";
-import { locateReferenceSourceGitDirectory } from "./ReferenceSourceGitDirectory.js";
+import {
+  locateReferenceSourceGitDirectory,
+  ReferenceSourceGitDirectoryCancelled,
+} from "./ReferenceSourceGitDirectory.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
 
 import ignore from "ignore";
@@ -106,11 +109,6 @@ const resolveRoot = async (
       });
     return ok(canonicalRoot);
   } catch (cause: unknown) {
-    if (signal?.aborted === true && cause === signal.reason)
-      return err({
-        ...failure("cancelled", "Reference source import cancelled"),
-        cause: signal.reason,
-      });
     const rootFailure = rootFilesystemFailure(
       cause,
       "Reference source root could not be resolved",
@@ -267,12 +265,14 @@ const readIgnoreCase = async (
     if (readFailure !== undefined) return err(readFailure);
     if (
       isIgnorePolicyCancellation(cause) ||
-      (signal?.aborted === true && cause === signal.reason)
+      cause instanceof ReferenceSourceGitDirectoryCancelled
     )
       return err({
         ...failure("cancelled", "Reference source import cancelled"),
         cause:
-          signal?.aborted === true ? signal.reason : ignorePolicyCause(cause),
+          cause instanceof ReferenceSourceGitDirectoryCancelled
+            ? cause.reason
+            : ignorePolicyCause(cause),
       });
     return err({
       ...failure(

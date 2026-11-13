@@ -6,6 +6,7 @@ import {
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 export const REGEX_WORKER_HEAP_REQUEST_SETTING =
@@ -59,6 +60,10 @@ export const parseRegexWorkerHeapRequest = (
 export const resolveRegexWorkerHeapRequest = (
   environment: Readonly<Record<string, string | undefined>>,
 ): RegexWorkerHeapRequest => {
+  const override = currentAnalysisSettingOverride(
+    "regex.worker_heap_request_mib",
+  );
+  if (override !== undefined) return { heapMiB: override, source: "runtime" };
   const parsed = parseRegexWorkerHeapRequest(
     environment[REGEX_WORKER_HEAP_REQUEST_SETTING],
   );

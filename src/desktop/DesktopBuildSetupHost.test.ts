@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { providerSnapshot } from "../../tests/support/reverseEngineeringCompositionFixtures.js";
+import * as owned from "../process/OwnedCommand.js";
 import { systemDoctorHost } from "../application/Doctor.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { systemDesktopBuildSetupHost } from "./DesktopBuildSetupHost.js";
@@ -45,55 +48,73 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "retains installer output and its command failure when cancelled",
-  async () => {
-    const root = await createTestTempDirectory("rea-setup-cancel-output-");
-    const uv = join(root, "uv");
-    const started = join(root, "started");
-    await writeFile(
-      uv,
-      `#!${process.execPath}\nprocess.stderr.write("installer diagnostic\\n");\nrequire("node:fs").writeFileSync(process.env.REA_SETUP_STARTED, "");\nsetInterval(() => {}, 1000);\n`,
-      { mode: 0o755 },
-    );
-    const resources = new ArtifactResourceScope();
-    const controller = new AbortController();
-    const reason = new Error("cancel installer");
-    const host = systemDesktopBuildSetupHost(
-      { ...process.env, REA_SETUP_STARTED: started },
-      process.platform,
-      undefined,
-      resources,
-    );
-    const pending = host.installAgentenv(uv, controller.signal);
-    void pending.catch(() => undefined);
-    try {
-      await awaitAcknowledgement(
-        vi.waitFor(
-          async () => expect(await readFile(started, "utf8")).toBe(""),
-          {
-            timeout: 10_000,
+it("retains installer cancellation, command outcome and output", async () => {
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = new Error("cancel installer");
+  const entered = createDeferred<void>();
+  const uv = "/recorded/uv";
+  const command = vi
+    .spyOn(owned, "runOwnedCommand")
+    .mockImplementation(async (spawn, _limits, options) => {
+      expect(spawn.command).toBe(uv);
+      const signal = options?.signal;
+      if (signal === undefined)
+        throw new Error("Expected setup cancellation signal");
+      entered.resolve();
+      await new Promise<void>((resolve) => {
+        signal.addEventListener("abort", () => resolve(), { once: true });
+        if (signal.aborted) resolve();
+      });
+      throw new owned.OwnedCommandFailure(
+        "cancelled",
+        "Installer cancelled",
+        providerSnapshot({
+          stderr: {
+            text: "installer diagnostic",
+            bytes: 20,
+            observedBytes: 20,
           },
-        ),
-        pending,
-        "installer output",
-        10_000,
+          signal: "SIGTERM",
+          exitCode: null,
+        }),
+        null,
+        { cancellation: { reason: signal.reason } },
       );
-      controller.abort(reason);
-      const failure: unknown = await pending.catch((cause: unknown) => cause);
-      expect(failure).toBeInstanceOf(AnalysisCancelledError);
-      if (!(failure instanceof AnalysisCancelledError)) throw failure;
-      expect(failure.cause).toBe(reason);
-      expect(failure.capturedOutput?.stderr).toContain("installer diagnostic");
-      expect(failure.secondaryFailures).toHaveLength(1);
-      expect(failure.secondaryFailures[0]?.cause).toBeDefined();
-    } finally {
-      controller.abort();
-      await Promise.allSettled([pending]);
+    });
+  const pending = systemDesktopBuildSetupHost(
+    {},
+    process.platform,
+    undefined,
+    resources,
+  ).installAgentenv(uv, controller.signal);
+  void pending.catch(() => undefined);
+  try {
+    await awaitAcknowledgement(
+      entered.promise,
+      pending,
+      "provider lifecycle boundary",
+    );
+    controller.abort(reason);
+    const failure: unknown = await pending.catch((cause: unknown) => cause);
+    if (!(failure instanceof AnalysisCancelledError)) throw failure;
+    expect(failure.cause).toBe(reason);
+    expect(failure.capturedOutput?.stderr).toContain("installer diagnostic");
+    expect(failure.diagnostics).toMatchObject({
+      command_failure: "cancelled",
+      setup_failure: expect.stringContaining("installer diagnostic"),
+    });
+    expect(failure.secondaryFailures).toEqual([]);
+  } finally {
+    controller.abort();
+    await Promise.allSettled([pending]);
+    try {
       await resources.close();
+    } finally {
+      command.mockRestore();
     }
-  },
-);
+  }
+});
 
 it.skipIf(process.platform === "win32")(
   "runs the requested pinned installer as an owned command",

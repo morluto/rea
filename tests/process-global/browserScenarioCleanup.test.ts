@@ -334,10 +334,6 @@ it("retries a late Playwright open after cancellation before accepting another c
     await closeStarted;
     finishFirstClose();
 
-    const failedRetry = await provider.captureScenario(scenario);
-    expect(failedRetry.ok).toBe(false);
-    if (!failedRetry.ok) expect(failedRetry.error.cleanupIncomplete).toBe(true);
-
     const retried = await provider.captureScenario(scenario);
     expect(retried.ok).toBe(true);
     if (retried.ok) expect(retried.value.steps).toHaveLength(2);

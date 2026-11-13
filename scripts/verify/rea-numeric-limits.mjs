@@ -94,29 +94,36 @@ const stringBindings = (sourceFile, symbols, unresolved) => {
     ts.forEachChild(node, collect);
   };
   collect(sourceFile);
-  const potential = (node) => {
+  const potential = (node, matchesCandidate) => {
     const expression = unwrapExpression(node);
     if (exactLimit(literalText(expression)) !== undefined) return true;
-    if (ts.isIdentifier(expression)) return candidates.has(expression.text);
+    if (ts.isIdentifier(expression)) return matchesCandidate(expression);
     if (ts.isPropertyAccessExpression(expression))
       return (
         exactLimit(expression.name.text) !== undefined ||
-        potential(expression.expression)
+        potential(expression.expression, matchesCandidate)
       );
     if (ts.isElementAccessExpression(expression))
       return (
         expression.argumentExpression !== undefined &&
-        potential(expression.argumentExpression)
+        potential(expression.argumentExpression, matchesCandidate)
       );
     if (ts.isObjectLiteralExpression(expression))
       return expression.properties.some(
         (property) =>
-          ts.isPropertyAssignment(property) && potential(property.initializer),
+          ts.isPropertyAssignment(property) &&
+          potential(property.initializer, matchesCandidate),
       );
     if (ts.isConditionalExpression(expression))
-      return potential(expression.whenTrue) || potential(expression.whenFalse);
+      return (
+        potential(expression.whenTrue, matchesCandidate) ||
+        potential(expression.whenFalse, matchesCandidate)
+      );
     if (ts.isBinaryExpression(expression))
-      return potential(expression.left) || potential(expression.right);
+      return (
+        potential(expression.left, matchesCandidate) ||
+        potential(expression.right, matchesCandidate)
+      );
     return false;
   };
   let changed = true;
@@ -125,9 +132,30 @@ const stringBindings = (sourceFile, symbols, unresolved) => {
     for (const declaration of declarations) {
       if (
         !candidates.has(declaration.name.text) &&
-        potential(declaration.initializer)
+        potential(declaration.initializer, (identifier) =>
+          candidates.has(identifier.text),
+        )
       ) {
         candidates.add(declaration.name.text);
+        changed = true;
+      }
+    }
+  }
+  // Names narrow the search cheaply, but only the lexical declaration can
+  // establish that a particular use is an alias of a limit.
+  const lexicalCandidates = new Set();
+  changed = true;
+  while (changed) {
+    changed = false;
+    for (const declaration of declarations) {
+      if (
+        candidates.has(declaration.name.text) &&
+        !lexicalCandidates.has(declaration) &&
+        potential(declaration.initializer, (identifier) =>
+          lexicalCandidates.has(symbols(identifier)?.valueDeclaration),
+        )
+      ) {
+        lexicalCandidates.add(declaration);
         changed = true;
       }
     }
@@ -152,11 +180,12 @@ const stringBindings = (sourceFile, symbols, unresolved) => {
       declaration === undefined ||
       !ts.isVariableDeclaration(declaration) ||
       !ts.isVariableDeclarationList(declaration.parent) ||
-      declaration.initializer === undefined
+      declaration.initializer === undefined ||
+      !lexicalCandidates.has(declaration)
     )
       return undefined;
     if ((declaration.parent.flags & ts.NodeFlags.Const) === 0) {
-      unknown(identifier, "mutable setting-key or value alias");
+      unknown(declaration.name, "mutable setting-key or value alias");
       return undefined;
     }
     if (declaration.pos >= identifier.pos) {
@@ -857,20 +886,11 @@ export const parseRuntimeSettingEnvironments = (source) => {
   return names;
 };
 
-/** Existing launch-seed migrations. A new per-call policy is rejected. */
-const TEMPORARY_PER_CALL_LIMITS = new Set([
-  "REA_BRIDGE_MAX_REQUEST_BYTES",
-  "REA_DEBUGGER_COMMAND_DEADLINE_MS",
-  "REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
-  "REA_HOPPER_CALLER_SCAN_BUDGET_MS",
-  "REA_JEB_MCP_TIMEOUT_MS",
-  "REA_KUNA_PROJECT_TIMEOUT_MS",
-  "REA_KUNA_TIMEOUT_MS",
-  "REA_PWNTOOLS_MAX_INPUT_BYTES",
-  "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",
-  "REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS",
-  "REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS",
-]);
+/**
+ * Names still registered as per-call while they move into ANALYSIS_SETTINGS.
+ * This branch has moved those limits, so the allowlist is empty.
+ */
+const TEMPORARY_PER_CALL_LIMITS = new Set([]);
 
 /** Temporary exceptions must be removed from both the registry and allowlist. */
 export const perCallLimitFailures = (listed, temporary) => {
@@ -899,7 +919,7 @@ if (direct) {
   const entries = parseNumericLimitRegistry(registry);
   const listed = new Map();
   for (const entry of entries) {
-    const { name, policy, read, reason } = entry;
+    const { name, read, reason } = entry;
     if (listed.has(name)) failures.push(`${name} is listed twice`);
     listed.set(name, entry);
     if (reason.trim().length < 40)
@@ -908,15 +928,7 @@ if (direct) {
       failures.push(
         `${name} is both a runtime setting and on the exception list`,
       );
-    if (policy === "restart-only" && read === "per-call")
-      failures.push(
-        `${name} is restart-only but is recorded as a per-call read`,
-      );
-    if (
-      policy === "restart-only" &&
-      read !== "startup" &&
-      read !== "construction"
-    )
+    if (read !== "startup" && read !== "construction")
       failures.push(`${name} is restart-only but is not read at startup`);
   }
   failures.push(
@@ -1055,7 +1067,7 @@ if (direct) {
     process.exit(1);
   }
   console.log(
-    `Numeric REA_ limits: ${runtime.size} runtime, ${[...listed.values()].filter((entry) => entry.policy === "restart-only").length} restart-only, ${[...listed.values()].filter((entry) => entry.policy === "per-call").length} per-call pending migration, ${discovered.size} discovered.`,
+    `Numeric REA_ limits: ${runtime.size} runtime, ${listed.size} restart-only, ${discovered.size} discovered.`,
   );
   console.log(
     "Read-site kinds describe syntax only; Node lint does not verify reachability, invocation frequency or complete reader coverage.",

@@ -2,6 +2,7 @@ import { realpath, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { stripComments } from "jsonc-parser";
 import { z } from "zod";
+import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -34,8 +35,7 @@ const folderTrustSchema = z
       .optional(),
   })
   .passthrough();
-const trustRulesSchema = z.record(
-  z.string(),
+const trustRulesSchema = jsonRecordSchema(
   z.enum(["TRUST_FOLDER", "TRUST_PARENT", "DO_NOT_TRUST"]),
 );
 const sourceFailure = (
@@ -47,17 +47,17 @@ const sourceFailure = (
   detail: `Gemini settings in ${path} are malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
 });
 
-// Gemini resolves symlinks when possible and compares macOS/Windows paths without case.
-const normalizedPath = async (
-  path: string,
-  platform: NodeJS.Platform,
-): Promise<string> => {
-  const physical = await realpath(path).catch(() => path);
-  const absolute = resolve(physical).replaceAll("\\", "/");
+// Gemini normalizes trust-file keys before replacement and rule precedence.
+const normalizedPath = (path: string, platform: NodeJS.Platform): string => {
+  const absolute = resolve(path).replaceAll("\\", "/");
   return platform === "win32" || platform === "darwin"
     ? absolute.toLowerCase()
     : absolute;
 };
+
+// Applicability additionally resolves symlinks, without changing rule identity.
+const physicalPath = async (path: string, platform: NodeJS.Platform) =>
+  normalizedPath(await realpath(path).catch(() => path), platform);
 
 const workspaceTrusted = async (
   settings: NonNullable<SetupClient["geminiSettings"]>,
@@ -78,21 +78,29 @@ const workspaceTrusted = async (
   );
   if (!text.ok) return text;
   if (text.value === undefined) return ok(false);
-  let rules: z.output<typeof trustRulesSchema>;
+  let rules: ReadonlyMap<string, z.output<typeof trustRulesSchema>[string]>;
   try {
     // Gemini strips comments, but rejects trailing commas, BOMs and invalid trust levels.
-    rules = trustRulesSchema.parse(JSON.parse(stripComments(text.value)));
+    const parsed = trustRulesSchema.parse(
+      JSON.parse(stripComments(text.value)),
+    );
+    rules = new Map(
+      Object.entries(parsed).map(([path, level]) => [
+        normalizedPath(path, settings.platform),
+        level,
+      ]),
+    );
   } catch (cause: unknown) {
     return err(sourceFailure(settings.trustedFoldersPath, cause));
   }
-  const workspace = await normalizedPath(
+  const workspace = await physicalPath(
     settings.workspaceDirectory,
     settings.platform,
   );
   let longest = -1;
   let trusted = false;
-  for (const [path, level] of Object.entries(rules)) {
-    const effective = await normalizedPath(
+  for (const [path, level] of rules) {
+    const effective = await physicalPath(
       level === "TRUST_PARENT" ? dirname(path) : path,
       settings.platform,
     );
@@ -138,11 +146,11 @@ export const readClientPolicyBlock = async (
     if (parsed.value !== undefined)
       sources.push({ path, document: parsed.value });
   }
-  const workspace = await normalizedPath(
+  const workspace = await physicalPath(
     settings.workspaceDirectory,
     settings.platform,
   );
-  const home = await normalizedPath(
+  const home = await physicalPath(
     dirname(dirname(client.configPath)),
     settings.platform,
   );

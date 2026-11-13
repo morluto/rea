@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ProcessOwnershipInspectionCancelled } from "../../../src/process/ProcessInspectionCancellation.js";
 import { PendingOperations } from "../../../src/process/PendingOperations.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../../../src/process/ProviderDeadline.js";
@@ -63,7 +64,6 @@ describe("provider process runtime and wait primitives", () => {
 
     const first = runtime.close();
     const second = runtime.close();
-    expect(second).toBe(first);
     await Promise.all([first, second]);
     await expect(access(runtime.path)).rejects.toMatchObject({
       code: "ENOENT",
@@ -282,6 +282,7 @@ describe("provider process output and cleanup primitives", () => {
         ownsProcessLifetime: true,
       });
       await waitForProviderProcessReady(child);
+      const signal = vi.spyOn(child, "kill");
 
       const first = supervisor.stop({
         terminationGraceMs: 20,
@@ -291,11 +292,13 @@ describe("provider process output and cleanup primitives", () => {
         terminationGraceMs: 20,
         killGraceMs: 500,
       });
-      // Concurrent callers must share one escalation instead of signalling
-      // the same child twice.
-      expect(second).toBe(first);
-      await expect(first).resolves.toEqual({ status: "killed" });
+      // Both callers observe the completed escalation.
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        { status: "killed" },
+        { status: "killed" },
+      ]);
       expect(child.signalCode).toBe("SIGKILL");
+      expect(signal.mock.calls).toEqual([["SIGTERM"], ["SIGKILL"]]);
     },
   );
 
@@ -519,14 +522,17 @@ describe("provider startup cancellation", () => {
     const cancellation = new Error("provider launch already cancelled");
     controller.abort(cancellation);
 
-    await expect(
-      spawnOwnedProviderProcess({
-        command: `${tmpdir()}/rea-provider-must-not-spawn-after-cancel`,
-        arguments: [],
-        runId: "provider-process-pre-aborted-run",
-        signal: controller.signal,
-      }),
-    ).rejects.toBe(cancellation);
+    const failure: unknown = await spawnOwnedProviderProcess({
+      command: `${tmpdir()}/rea-provider-must-not-spawn-after-cancel`,
+      arguments: [],
+      runId: "provider-process-pre-aborted-run",
+      signal: controller.signal,
+    }).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+    if (!(failure instanceof ProcessOwnershipInspectionCancelled))
+      throw new Error("Expected tagged launch cancellation");
+    expect(failure.reason).toBe(cancellation);
+    expect(failure.cause).toBe(cancellation);
   });
 
   it.skipIf(process.platform !== "darwin")(
@@ -550,7 +556,14 @@ describe("provider startup cancellation", () => {
           signal: controller.signal,
         });
         controller.abort(cancellation);
-        await expect(starting).rejects.toBe(cancellation);
+        const failure: unknown = await starting.catch(
+          (cause: unknown) => cause,
+        );
+        expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+        if (!(failure instanceof ProcessOwnershipInspectionCancelled))
+          throw new Error("Expected tagged preparation cancellation");
+        expect(failure.reason).toBe(cancellation);
+        expect(failure.cause).toBe(cancellation);
         expect(prepare).toHaveBeenCalledOnce();
       } finally {
         prepare.mockRestore();

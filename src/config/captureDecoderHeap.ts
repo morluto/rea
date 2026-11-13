@@ -6,6 +6,7 @@ import {
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 export const CAPTURE_DECODER_OLD_GENERATION_SETTING =
@@ -60,6 +61,11 @@ export const parseCaptureDecoderHeap = (
 export const resolveCaptureDecoderHeap = (
   environment: Readonly<Record<string, string | undefined>>,
 ): CaptureDecoderHeap => {
+  const override = currentAnalysisSettingOverride(
+    "capture.decoder_old_generation_mib",
+  );
+  if (override !== undefined)
+    return { oldGenerationMiB: override, source: "runtime" };
   const parsed = parseCaptureDecoderHeap(
     environment[CAPTURE_DECODER_OLD_GENERATION_SETTING],
   );

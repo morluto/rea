@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
@@ -203,20 +204,24 @@ it("joins an already-started release when shutdown begins", async () => {
       await rm(path, { recursive: true });
     }),
   );
-  await entered.promise;
   let closed = false;
-  const closing = scope.close().then(() => {
-    closed = true;
-  });
+  let closing: Promise<void> | undefined;
   try {
+    await awaitAcknowledgement(entered.promise, releasing, "resource release");
+    closing = scope.close().then(() => {
+      closed = true;
+    });
     await setImmediate();
     expect(closed).toBe(false);
     await expect(stat(root)).resolves.toBeDefined();
   } finally {
     unblock.resolve();
-    await Promise.all([releasing, closing]);
+    await Promise.allSettled([releasing, ...(closing ? [closing] : [])]);
+    await scope.close();
     await rm(root, { recursive: true, force: true });
   }
+  await releasing;
+  await closing;
   expect(attempts).toBe(1);
   expect(closed).toBe(true);
   await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });

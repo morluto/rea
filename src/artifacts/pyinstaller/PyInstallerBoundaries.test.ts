@@ -1,4 +1,5 @@
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { dirname, join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { createHash, randomBytes } from "node:crypto";
@@ -392,7 +393,11 @@ it.each([false, true])(
         void consumed.catch(() => undefined);
         let closing: Promise<void> | undefined;
         try {
-          await entered.promise;
+          await awaitAcknowledgement(
+            entered.promise,
+            consumed,
+            "PyInstaller operation",
+          );
           controller.abort(caller);
           let closed = false;
           closing = reader.close().then(() => {
@@ -616,7 +621,11 @@ it("joins a late private-file close and retries its failed owner after cancellat
       .next()
       .catch((cause: unknown) => cause);
     try {
-      await entered.promise;
+      await awaitAcknowledgement(
+        entered.promise,
+        listing,
+        "PyInstaller operation",
+      );
       let settled = false;
       const closing = reader.close().then(() => {
         settled = true;
@@ -690,7 +699,11 @@ for (const cancel of [false, true]) {
           (cause: unknown) => ({ ok: false as const, cause }),
         );
         try {
-          await entered.promise;
+          await awaitAcknowledgement(
+            entered.promise,
+            reading,
+            "PyInstaller operation",
+          );
           expect(output.readableEnded).toBe(false);
           expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
           if (cancel) {
@@ -825,7 +838,11 @@ it.each([false, true])(
           .catch((cause: unknown) => cause);
         let closing: Promise<void> | undefined;
         try {
-          await entered.promise;
+          await awaitAcknowledgement(
+            entered.promise,
+            first,
+            "PyInstaller operation",
+          );
           await setImmediate();
           expect(handles.size).toBe(1);
           caller.abort(reason);
@@ -928,7 +945,11 @@ it.each(
       );
       let second: Promise<ArtifactEntry[]> | undefined;
       try {
-        await entered.promise;
+        await awaitAcknowledgement(
+          entered.promise,
+          first,
+          "PyInstaller operation",
+        );
         expect(reader.formatMetadata()).toBeUndefined();
         if (peer) {
           second = members(reader);
@@ -1031,7 +1052,11 @@ it("keeps a physical parse failure primary despite simultaneous caller cancellat
       );
       let second: Promise<unknown> | undefined;
       try {
-        await entered.promise;
+        await awaitAcknowledgement(
+          entered.promise,
+          first,
+          "PyInstaller operation",
+        );
         second = members(reader).catch((cause: unknown) => cause);
         release.resolve();
         const original = await first;
@@ -1042,8 +1067,7 @@ it("keeps a physical parse failure primary despite simultaneous caller cancellat
         expect(reader.formatMetadata()).toBeUndefined();
       } finally {
         release.resolve();
-        await first;
-        await second;
+        await Promise.allSettled([first, ...(second ? [second] : [])]);
         reads.mockRestore();
       }
     },

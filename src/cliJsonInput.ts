@@ -35,7 +35,6 @@ export const parseCliJsonInput = async (
   options?: {
     readonly snapshot?: boolean;
     readonly stdin?: Readable;
-    readonly maxStdinBytes?: number;
   },
 ): Promise<
   | { readonly ok: true; readonly value: unknown }
@@ -132,13 +131,12 @@ const readCliJsonStdin = async (
   options?: {
     readonly snapshot?: boolean;
     readonly stdin?: Readable;
-    readonly maxStdinBytes?: number;
   },
 ): Promise<
   Result<unknown, AnalysisInputError | AnalysisResourceConstraintError>
 > => {
   const stream = options?.stdin ?? process.stdin;
-  const maxBytes = options?.maxStdinBytes ?? DEFAULT_MAX_STDIN_BYTES;
+  const maxBytes = DEFAULT_MAX_STDIN_BYTES;
   const chunks: Buffer[] = [];
   let totalBytes = 0;
   const requireHeadroom = (): void => {

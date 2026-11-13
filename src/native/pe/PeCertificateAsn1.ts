@@ -52,12 +52,9 @@ const fail = (message: string): never => {
   throw new PeCertificateAsn1Failure(message);
 };
 
-const required = <T>(value: T | undefined, message: string): T =>
-  value === undefined ? fail(message) : value;
-
 // Authenticode signatures with full chains and countersignatures decode to a
 // few thousand nodes; the budget bounds sibling fan-out, which depth does not.
-export const ASN1_NODE_BUDGET = 16_384;
+const ASN1_NODE_BUDGET = 16_384;
 
 /** Decode one bounded ASN.1 TLV, including indefinite constructed BER values. */
 export const readAsn1 = (bytes: Buffer): Asn1BerNode => {
@@ -91,12 +88,12 @@ export const oidName = (oid: string): string | null => OID_NAMES[oid] ?? null;
 
 // One arc grows a BigInt by a shift per byte. Certificate OIDs, including a
 // 2.25 UUID arc, fit under both caps; the caps stop that growth.
-export const MAX_OID_BYTES = 256;
-export const MAX_OID_ARC_BYTES = 32;
+const MAX_OID_BYTES = 256;
+const MAX_OID_ARC_BYTES = 32;
 
 // One PKCS#7 payload shares this ceiling. Real issuer and subject names are
 // far smaller; the cap stops one wide string from occupying the file budget.
-export const MAX_DECODED_NAME_BYTES = 65_536;
+const MAX_DECODED_NAME_BYTES = 65_536;
 
 interface DecodedNameBudget {
   remaining: number;
@@ -113,7 +110,7 @@ const chargeDecodedName = (budget: DecodedNameBudget, bytes: number): void => {
 };
 
 /** Decode an OBJECT IDENTIFIER content buffer as dotted decimal. */
-export const decodeOid = (content: Buffer): string => {
+const decodeOid = (content: Buffer): string => {
   const decoded = decodeAsn1Oid(content, {
     bytes: MAX_OID_BYTES,
     arcBytes: MAX_OID_ARC_BYTES,
@@ -441,6 +438,11 @@ const requireExtensions = (extensions: readonly Asn1BerNode[]): void => {
     )
       return fail(
         "TBSCertificate extension is not an OID, optional BOOLEAN, and OCTET STRING.",
+      );
+    // X.690 11.1 requires DER TRUE=0xff; 11.5 omits DEFAULT FALSE.
+    if (critical !== undefined && critical.content[0] !== 0xff)
+      return fail(
+        "TBSCertificate extension critical must be omitted for FALSE or encoded as DER TRUE (0xff).",
       );
     const oid = decodeOid(extnId.content);
     if (seen.has(oid)) return fail(`TBSCertificate repeats extension ${oid}.`);

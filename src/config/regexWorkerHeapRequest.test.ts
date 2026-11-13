@@ -8,12 +8,14 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { regexWorkerHeapError } from "../process/RegexMatcher.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
+import { runtimeAnalysisConfig } from "./runtimeAnalysisSettings.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   parseRegexWorkerHeapRequest,
+  resolveRegexWorkerHeapRequest,
   REGEX_WORKER_HEAP_REQUEST_SETTING,
   regexWorkerHeapRequestContinuingRecovery,
-  regexWorkerHeapRequestRecovery,
 } from "./regexWorkerHeapRequest.js";
 import {
   MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
@@ -168,18 +170,38 @@ it.each([
   const startup = parseEnvironment({
     REA_REGEX_WORKER_HEAP_REQUEST_MIB: value,
   });
-  if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
-  expect(startup.error.settings).toContainEqual({
-    setting: REGEX_WORKER_HEAP_REQUEST_SETTING,
-    constraint: parsed.error.message,
-  });
+  if (!startup.ok)
+    throw new Error(`Startup rejected a runtime seed ${JSON.stringify(value)}`);
   const config = parseConfig({ REA_REGEX_WORKER_HEAP_REQUEST_MIB: value });
-  if (config.ok)
-    throw new Error(`parseConfig accepted ${JSON.stringify(value)}`);
-  expect(projectAnalysisError(config.error)).toMatchObject({
-    code: "configuration_invalid",
-    message: expect.stringContaining("REA_REGEX_WORKER_HEAP_REQUEST_MIB"),
-  });
+  if (!config.ok)
+    throw new Error(
+      `parseConfig rejected a runtime seed ${JSON.stringify(value)}`,
+    );
+  expect(
+    config.value.invalidRuntimeSeeds?.["regex.worker_heap_request_mib"]
+      ?.settings,
+  ).toEqual([
+    expect.objectContaining({ setting: REGEX_WORKER_HEAP_REQUEST_SETTING }),
+  ]);
+  const live = runtimeAnalysisConfig(config.value);
+  expect(() => live.regexWorkerHeapRequest.heapMiB).toThrow(ConfigurationError);
+  expect(
+    runWithAnalysisOperationSnapshot(
+      {
+        revision: 1,
+        overrides: { "regex.worker_heap_request_mib": 256 },
+      },
+      () => ({
+        heapMiB: live.regexWorkerHeapRequest.heapMiB,
+        source: live.regexWorkerHeapRequest.source,
+      }),
+    ),
+  ).toEqual({ heapMiB: 256, source: "runtime" });
+  expect(() =>
+    resolveRegexWorkerHeapRequest({
+      REA_REGEX_WORKER_HEAP_REQUEST_MIB: value,
+    }),
+  ).toThrow(ConfigurationError);
   expect(
     () => new KunaProvider({ REA_REGEX_WORKER_HEAP_REQUEST_MIB: value }),
   ).toThrow(ConfigurationError);

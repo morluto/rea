@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import {
@@ -41,12 +42,7 @@ import {
   type DesktopStateDifference,
 } from "./stateChanges.js";
 import { pairMembers, pairedAtSeed } from "./memberPairing.js";
-import {
-  escapeToken,
-  isXmlElement,
-  locatePointer,
-  resolvePointer,
-} from "./viewPointer.js";
+import { isXmlElement, locatePointer, resolvePointer } from "./viewPointer.js";
 import {
   ARCHIVE,
   referenceRoots,
@@ -388,13 +384,13 @@ const addedChecks = (
     value.forEach((item, index) =>
       addedChecks(
         collected,
-        `${pointer}/${escapeToken(keys[index] ?? String(index))}`,
+        `${pointer}/${escapeJsonPointerToken(keys[index] ?? String(index))}`,
         item,
       ),
     );
   } else if (isRecord(value) && Object.keys(value).length > 0)
     for (const [key, item] of Object.entries(value))
-      addedChecks(collected, `${pointer}/${escapeToken(key)}`, item);
+      addedChecks(collected, `${pointer}/${escapeJsonPointerToken(key)}`, item);
   // A scalar, or an empty array or object, is checked as it is.
   else equals(collected, pointer, value);
 };
@@ -452,7 +448,7 @@ const renamedFrom = (collected: Collected, pointer: string) => {
     old.includes("][")
   )
     return;
-  const at = `${list}/${escapeToken(`[name=${before.name}][@${key}=${old}]`)}`;
+  const at = `${list}/${escapeJsonPointerToken(`[name=${before.name}][@${key}=${old}]`)}`;
   const seed = locatePointer(ends.baseline, at, "xml");
   if (
     seed.kind === "value" &&

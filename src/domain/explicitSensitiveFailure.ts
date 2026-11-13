@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "./jsonPointer.js";
 import { BrowserObservationError } from "./browserObservationError.js";
 import { EvidenceFileError } from "./evidenceErrors.js";
 import type { AnalysisError } from "./analysisErrorBase.js";
@@ -54,7 +55,7 @@ const redactSensitivePointer = (
 ): string => {
   let parent = "";
   for (const segment of pointer.split("/").slice(1)) {
-    const decoded = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+    const decoded = unescapeJsonPointerToken(segment);
     const child = `${parent}/${segment}`;
     if (text(decoded) !== decoded || text(child) !== child) return parent;
     parent = child;
@@ -239,6 +240,7 @@ const redactFailure = (
       ...(error.remediationAction === undefined
         ? {}
         : { remediationAction: text(error.remediationAction) }),
+      ...(error.limit === undefined ? {} : { limit: error.limit }),
     });
   if (error instanceof AnalysisAccessDeniedError)
     return new AnalysisAccessDeniedError(
@@ -320,7 +322,11 @@ const redactFailure = (
       error.resource,
       text(error.reason),
       error.reportedLimits === null ? null : diagnostics(error.reportedLimits),
-      { ...context, ...resourceConstraintRecovery(error, text) },
+      {
+        ...context,
+        ...resourceConstraintRecovery(error, text),
+        ...(error.limit === undefined ? {} : { limit: error.limit }),
+      },
     );
   if (error instanceof ProviderCleanupError)
     return new ProviderCleanupError(

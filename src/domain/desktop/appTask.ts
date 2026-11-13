@@ -1,6 +1,7 @@
 import { isPortableBundleName } from "../portableBundleName.js";
 import { z } from "zod";
 
+import { jsonRecordSchema } from "../jsonRecord.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { describeValidationFailure } from "../validationFailure.js";
@@ -15,12 +16,10 @@ const line = z
   .refine((value) => !value.includes("\n"), "a line cannot hold a line break");
 const lines = z.array(line).min(1).max(100);
 const count = z.int().min(0);
-const where = z
-  .record(z.string().min(1), jsonValueSchema)
-  .refine(
-    (columns) => Object.keys(columns).length > 0,
-    "name at least one column",
-  );
+const where = jsonRecordSchema(jsonValueSchema, z.string().min(1)).refine(
+  (columns) => Object.keys(columns).length > 0,
+  "name at least one column",
+);
 const comparison = {
   equals: count.optional(),
   at_least: count.optional(),

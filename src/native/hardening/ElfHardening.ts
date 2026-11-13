@@ -279,6 +279,7 @@ export const readElfHardening = (
       symbols,
       (name) =>
         name === "__fortify_fail" ||
+        name === "__chk_fail" ||
         (name.startsWith("__") && name.endsWith("_chk")),
       "No fortify symbol was found in the dynamic symbol table. A static or stripped image can omit those imports while still using FORTIFY.",
       "The dynamic symbol table is absent, so FORTIFY use is unknown.",

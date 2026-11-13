@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { planOutputTree, writeOutputTree } from "./DesktopOutputTree.js";
 
 it("does not create output parents or invoke the writer after cancellation", async () => {
@@ -26,5 +27,9 @@ it("does not create output parents or invoke the writer after cancellation", asy
   ).catch((cause: unknown) => cause);
   expect(written).toBe(false);
   expect(await readdir(root)).toEqual([]);
-  expect(failure).toBe(reason);
+  expect(failure).toBeInstanceOf(AnalysisCancelledError);
+  expect(failure).toMatchObject({
+    operation: refusal.operation,
+    cause: reason,
+  });
 });

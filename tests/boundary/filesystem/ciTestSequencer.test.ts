@@ -11,7 +11,6 @@ import {
   parseTestDurations,
   readTestDurations,
   scheduleWall,
-  seedLoaderOwnershipDurations,
 } from "../../ciTestSequencer.js";
 
 describe("CI test history", () => {
@@ -83,72 +82,6 @@ describe("CI test history", () => {
     ).rejects.toMatchObject({
       code: "EISDIR",
     });
-  });
-});
-
-describe("loader ownership history", () => {
-  const source =
-    "tests/acceptance/applications/javascriptLiteralPercentPaths.test.ts";
-  const consolidated =
-    "tests/acceptance/applications/javascriptLiteralLoaderOwnership.test.ts";
-  const parts = [
-    "tests/acceptance/applications/javascriptLiteralLoaderOwnershipEarly.test.ts",
-    "tests/acceptance/applications/javascriptLiteralLoaderOwnershipMiddle.test.ts",
-    "tests/acceptance/applications/javascriptLiteralLoaderOwnershipLate.test.ts",
-  ];
-
-  it("assigns the pre-split loader share to the consolidated file", () => {
-    const seeded = seedLoaderOwnershipDurations(
-      new Map([
-        [source, 192_000],
-        ["tests/other.test.ts", 10],
-      ]),
-    );
-    expect(seeded.get(source)).toBe(54_000);
-    expect(seeded.get(consolidated)).toBe(138_000);
-    for (const path of parts) expect(seeded.has(path)).toBe(false);
-    expect(seeded.get("tests/other.test.ts")).toBe(10);
-    expect(
-      [...seeded.values()].reduce((sum, duration) => sum + duration, 0),
-    ).toBe(192_000 + 10);
-  });
-
-  it("sums retired shard durations onto the consolidated file", () => {
-    const seeded = seedLoaderOwnershipDurations(
-      new Map([
-        [source, 20_000],
-        [parts[0]!, 30_000],
-        [parts[1]!, 40_000],
-        [parts[2]!, 50_000],
-        ["tests/other.test.ts", 10],
-      ]),
-    );
-    expect(seeded.get(source)).toBe(20_000);
-    expect(seeded.get(consolidated)).toBe(120_000);
-    expect(seeded.get("tests/other.test.ts")).toBe(10);
-  });
-
-  it("scales a partial retired shard as three equal shares", () => {
-    const seeded = seedLoaderOwnershipDurations(
-      new Map([
-        [source, 20_000],
-        [parts[0]!, 30_000],
-      ]),
-    );
-    expect(seeded.get(source)).toBe(20_000);
-    expect(seeded.get(consolidated)).toBe(90_000);
-  });
-
-  it("keeps a published consolidated duration", () => {
-    const recorded = new Map<string, number>([
-      [source, 20_000],
-      [parts[0]!, 30_000],
-      [consolidated, 12_000],
-    ]);
-    expect(seedLoaderOwnershipDurations(recorded)).toEqual(recorded);
-    expect(
-      seedLoaderOwnershipDurations(new Map([["tests/other.test.ts", 10]])),
-    ).toEqual(new Map([["tests/other.test.ts", 10]]));
   });
 });
 

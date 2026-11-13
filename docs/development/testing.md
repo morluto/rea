@@ -238,7 +238,8 @@ broad changes or diagnosing CI, rather than after every edit. Package/install
 changes additionally need package verification; provider changes need actual
 provider evidence.
 
-Vitest projects use up to two workers, bounded by host parallelism.
+Vitest projects use up to two workers, bounded by host parallelism. GitHub
+Actions jobs own their runner and use up to four.
 `process-boundary` runs later with serial files because process-tree sampling
 shares host resources. Acceptance and process-global cases use isolated forks
 without serial scheduling. Pure domain/service, composition, conformance,
@@ -283,7 +284,7 @@ coverage. Ordinary CI also exhausted the former 384 MiB budget after earlier
 files loaded the shared source/contract graph, while later command registration
 and schema/help rendering still needed transient allocation space. This is a
 measured capacity control, not a suite-wide speedup claim. The worker count
-remains bounded at two, and spawned REA processes retain their own heap settings.
+remains bounded, and spawned REA processes retain their own heap settings.
 Coverage enablement still controls instrumentation, test deadlines and coverage
 thresholds; explicitly disabling it or selecting only a provider does not enable
 instrumentation.
@@ -406,6 +407,10 @@ it rejects advanced CodeQL uploads. Then enable the variable and manually run
 relying on the new scope. While the variable is unset, the existing default
 setup continues scanning. Adding the configuration file alone does not change
 default setup in this user-owned repository.
+
+Pull-request scans are cancelled when superseded. Active scans on `main` finish
+so frequent pushes cannot prevent a complete baseline from being uploaded.
+Cancelled runs skip the SARIF artifact upload when no report was produced.
 
 Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
 jobs run one at a time. Complete SARIF reports are retained for seven days.
@@ -738,6 +743,16 @@ materialized source. Exercise descriptor close failure and retry before output
 publication.
 Use explicit abort reasons and assert their identity at admission and after
 provider completion, alongside retained observations and cleanup state.
+Include a physical I/O failure reused as the abort reason and genuine
+cancellation whose reason is already a typed error; neither error names nor
+value equality establishes origin. Assert that cleanup capabilities carried by
+that opaque reason are neither adopted nor released. Verify an owning command's timeout or
+refusal policy when preparation records cancellation but its caller is still
+active. Parallel inspection failures must retain completed observations and
+mixed physical/cancelled request facts after all peers settle, including
+multiple failed closes and partial cleanup retry. For input copying, hold an
+admitted read or write in flight before cancelling; descriptor close and
+workspace retirement must await its settlement.
 
 Electron fuse regressions cover actual descriptor close denial and retry through
 the built CLI, same-connection MCP recovery, mixed descriptor outcomes, and
@@ -1088,7 +1103,8 @@ is separate and grows when more shard jobs compete for runners.
 `process-boundary` stays serial because process-tree sampling shares the host.
 Raising the worker cap from two to four on this four-core host cut a six-file
 acceptance sample from 96–101 seconds to 71 seconds and did not remove the
-single-file floor, so the cap stays two. Full qualification keeps six covered
+single-file floor. Hosted CI jobs use four workers; other hosts stay at two
+because they are shared with other checks. Full qualification keeps six covered
 shards; its longer instrumentation is outside this fast budget.
 
 The separate `CI timings` workflow batches recent completed CI and Release runs

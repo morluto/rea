@@ -661,6 +661,11 @@ export const documentationSections = [
         route: "/reconstruction-coverage",
       },
       {
+        text: "Release exposure",
+        source: "release-exposure.md",
+        route: "/release-exposure",
+      },
+      {
         text: "Reverse-engineering tool integrations",
         source: "reverse-engineering-tools.md",
         route: "/reverse-engineering-tools",
