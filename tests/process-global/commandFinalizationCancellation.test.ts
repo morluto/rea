@@ -15,6 +15,7 @@ import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { CutterBridgeService } from "../../src/cutter/CutterBridgeService.js";
 import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";
+import { cutterDiscoveryLimitations } from "../../src/domain/cutterDiscovery.js";
 import * as analysisView from "../../src/domain/analysisView/analysisView.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
@@ -86,6 +87,7 @@ const cutterDiscoveryFixture = () =>
     bridge_directory: "/caller/Cutter bridge/token=literal%2F/证据",
     discovery_status: "sessions_found",
     bridge_directory_security: "unverified_platform_acl",
+    limitations: cutterDiscoveryLimitations("sessions_found"),
   });
 
 const finalCloseGate = () => {
