@@ -139,11 +139,11 @@ cliTest(
       "rea-electron-template-channel-",
     );
     await writeFixtureFiles(root, {
-      "main.js": `const { ipcMain } = require("electron");
+      "main.cjs": `const { ipcMain } = require("electron");
         function register(channel, handler) { ipcMain.handle(channel, handler); }
         register("app:quoted", () => 1);
         register(\`app:template\`, () => 2);`,
-      "preload.js": `const { contextBridge, ipcRenderer } = require("electron");
+      "preload.cjs": `const { contextBridge, ipcRenderer } = require("electron");
         contextBridge.exposeInMainWorld(\`desktop\`, {
           quoted: () => ipcRenderer.invoke("app:quoted"),
           template: () => ipcRenderer.invoke("app:template"),
