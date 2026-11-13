@@ -524,7 +524,7 @@ const ZIP_FAILURE_REASONS: ReadonlyMap<string, "format" | "unavailable"> =
   ]);
 
 /** Type a zip.js archive fault so consumers do not report it as file I/O. */
-const typedZipFailure = (
+export const typedZipFailure = (
   cause: unknown,
   compressionMethod?: number,
 ): unknown => {

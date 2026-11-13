@@ -20,6 +20,7 @@ import { registerModelCommands } from "./cli/modelCommands.js";
 import { registerIl2cppCommands } from "./cli/il2cppCommands.js";
 import { registerRustCommands } from "./cli/rustCommands.js";
 import { registerPythonPycCommands } from "./cli/pythonPycCommands.js";
+import { registerNugetNupkgCommands } from "./cli/nugetNupkgCommands.js";
 import { registerErlangCommands } from "./cli/erlangCommands.js";
 import { registerV8CodeCacheCommands } from "./cli/v8CodeCacheCommands.js";
 import { registerSqliteCommands } from "./cli/sqliteCommands.js";
@@ -203,6 +204,7 @@ export const createCli = (
       registerGpuCommands(cli, logger);
       registerRustCommands(cli, logger);
       registerPythonPycCommands(cli, logger);
+      registerNugetNupkgCommands(cli, logger);
       registerErlangCommands(cli, logger);
       registerV8CodeCacheCommands(cli, logger);
       registerSqliteCommands(cli, logger, environment);

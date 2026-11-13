@@ -260,6 +260,7 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["audit_release_exposure", { path: nul }],
   ["inspect_binary_hardening", { path: nul }],
   ["inspect_python_pyc", { path: nul }],
+  ["inspect_nuget_nupkg", { path: nul }],
   ["inspect_erlang_beam", { path: nul }],
   ["inspect_binary_layout", { path: nul }],
   ["inspect_recorded_crash", { path: nul }],

@@ -165,6 +165,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   inspect_rust_binary: evidence,
   inspect_apk_signature: evidence,
   inspect_python_pyc: evidence,
+  inspect_nuget_nupkg: evidence,
   inspect_erlang_beam: evidence,
   inspect_sqlite_database: effects({
     mutatesSession: true,
