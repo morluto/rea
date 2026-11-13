@@ -545,6 +545,138 @@ it("does not signal a POSIX debugger when provider detach cannot be verified", a
   expect(signals).toEqual([]);
 });
 
+it("terminates the owned debugger when the provider declares detach unavailable", async () => {
+  const signals: NodeJS.Signals[] = [];
+  const supervisor = {
+    ...createFakeSupervisor(),
+    waitForExit: async () => true,
+  };
+  const result = await stopOwnedDebuggerProcess(
+    {
+      id: "unavailable-detach",
+      exited: false,
+      launched: { process: { kill: (signal) => (signals.push(signal), true) } },
+      detachInferior: async () => ({
+        status: "unavailable",
+        reason: "Rizin did not resynchronize cleanup within 500 ms",
+      }),
+      supervisor,
+    },
+    "Rizin",
+    { platform: "linux" },
+  );
+
+  expect(result).toEqual({
+    status: "stopped_inferior_unknown",
+    reason: "Rizin did not resynchronize cleanup within 500 ms",
+  });
+  expect(signals).toEqual(["SIGTERM"]);
+  expect(supervisor.dispose).toHaveBeenCalledOnce();
+  expect(supervisor.unrefOutputStreams).toHaveBeenCalledOnce();
+});
+
+it("escalates an unavailable-detach termination that ignores SIGTERM", async () => {
+  const signals: NodeJS.Signals[] = [];
+  let waits = 0;
+  const result = await stopOwnedDebuggerProcess(
+    {
+      id: "unavailable-detach-forced",
+      exited: false,
+      launched: { process: { kill: (signal) => (signals.push(signal), true) } },
+      detachInferior: async () => ({
+        status: "unavailable",
+        reason: "transport desynchronized",
+      }),
+      supervisor: {
+        waitForExit: async () => ++waits === 2,
+        limitAdditionalOutputBytes: vi.fn(),
+        waitForOutputClose: async () => true,
+        dispose: vi.fn(),
+        unrefOutputStreams: vi.fn(),
+      },
+    },
+    "Rizin",
+    { platform: "linux" },
+  );
+
+  expect(result).toEqual({
+    status: "stopped_inferior_unknown",
+    reason: "transport desynchronized",
+  });
+  expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+});
+
+it("retains an unavailable-detach session until its output streams settle", async () => {
+  let outputClosed = false;
+  const session = {
+    id: "unavailable-detach-output",
+    exited: false,
+    launched: { process: { kill: vi.fn(() => true) } },
+    detachInferior: async () => ({
+      status: "unavailable" as const,
+      reason: "transport desynchronized",
+    }),
+    supervisor: {
+      waitForExit: async () => true,
+      limitAdditionalOutputBytes: vi.fn(),
+      waitForOutputClose: async () => outputClosed,
+      dispose: vi.fn(),
+      unrefOutputStreams: vi.fn(),
+    },
+  };
+
+  await expect(
+    stopOwnedDebuggerProcess(session, "Rizin", { platform: "linux" }),
+  ).resolves.toMatchObject({ status: "incomplete" });
+  outputClosed = true;
+  await expect(
+    stopOwnedDebuggerProcess(session, "Rizin", { platform: "linux" }),
+  ).resolves.toEqual({
+    status: "stopped_inferior_unknown",
+    reason: "transport desynchronized",
+  });
+});
+
+it("skips inferior-ended proof for a recorded unavailable detach after exit", async () => {
+  let exited = false;
+  let inferiorProofs = 0;
+  const session = {
+    id: "unavailable-detach-exited",
+    get exited() {
+      return exited;
+    },
+    inferiorStateUnknown: () => true,
+    verifyInferiorsEndedAfterExit: async () => {
+      inferiorProofs += 1;
+      return false;
+    },
+    launched: { process: { pid: 101, kill: vi.fn(() => true) } },
+    detachInferior: async () => ({
+      status: "unavailable" as const,
+      reason: "transport desynchronized",
+    }),
+    supervisor: {
+      waitForExit: async () => false,
+      limitAdditionalOutputBytes: vi.fn(),
+      waitForOutputClose: async () => true,
+      dispose: vi.fn(),
+      unrefOutputStreams: vi.fn(),
+    },
+  };
+
+  await expect(
+    stopOwnedDebuggerProcess(session, "Rizin", { platform: "linux" }),
+  ).resolves.toMatchObject({ status: "incomplete" });
+  exited = true;
+  await expect(
+    stopOwnedDebuggerProcess(session, "Rizin", { platform: "linux" }),
+  ).resolves.toEqual({
+    status: "stopped_inferior_unknown",
+    reason: "transport desynchronized",
+  });
+  expect(inferiorProofs).toBe(0);
+});
+
 it("retains an exited debugger after provider detach failed", async () => {
   let exited = false;
   let disposals = 0;
