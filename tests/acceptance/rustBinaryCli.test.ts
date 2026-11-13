@@ -491,13 +491,14 @@ cliTest(
     const path = join(root, "over-ratio.exe");
     const document = Buffer.concat([
       Buffer.from(JSON.stringify({ packages: [] })),
-      Buffer.alloc(24 * 1024, 0x20),
+      Buffer.alloc(40 * 1024, 0x20),
     ]);
     const compressed = deflateSync(document);
     const alignedSize = 512;
     expect(compressed.length).toBeLessThan(alignedSize);
     expect(document.length).toBeGreaterThan(compressed.length * 64);
-    expect(document.length).toBeLessThanOrEqual(alignedSize * 64);
+    // Exercise the padded-storage allocation guard, not just the later ratio check.
+    expect(document.length).toBeGreaterThan(alignedSize * 64);
 
     const bytes = createRustImage({
       format: "pe",
@@ -525,6 +526,52 @@ cliTest(
     expect(result.json).toMatchObject(expectedFailure);
     const response = await call("inspect_rust_binary", { path });
     expect(parseMcpToolError(response).error).toMatchObject(expectedFailure);
+    await client.ping();
+  },
+  30000,
+);
+
+cliTest(
+  "reports an unknown effective inflate limit when the allocation cap fires",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-pe-early-cap-");
+    const path = join(root, "over-allocation.exe");
+    const compressed = deflateSync(Buffer.alloc(8 * 1024 * 1024 + 1));
+    const alignment = 512;
+    const storedBytes = Math.ceil(compressed.length / alignment) * alignment;
+    expect(compressed.length * 64).toBeLessThan(8 * 1024 * 1024);
+    const image = Buffer.alloc(1024 + storedBytes);
+    createRustImage({
+      format: "pe",
+      payload: Buffer.alloc(0),
+      includeRustc: false,
+    }).copy(image);
+    compressed.copy(image, 1024);
+    image.writeUInt32LE(alignment, 152 + 36);
+    image.writeUInt32LE(0, 264 + 8);
+    image.writeUInt32LE(storedBytes, 264 + 16);
+    await writeFile(path, image);
+    const expected = {
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "memory",
+        reported_limits: {
+          maximum_bytes: 8 * 1024 * 1024,
+          limit_basis: "inflate_allocation",
+          effective_maximum_bytes: null,
+        },
+      },
+    };
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject(expected);
+    const { client, call } = await connectLocalToolsMcp();
+    expect(
+      parseMcpToolError(await call("inspect_rust_binary", { path })).error,
+    ).toMatchObject(expected);
     await client.ping();
   },
   30000,

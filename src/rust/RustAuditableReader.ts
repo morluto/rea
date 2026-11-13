@@ -55,7 +55,11 @@ export class RustAuditableFormatFailure extends Error {
 export type RustAuditableConstraint =
   | {
       readonly resource: "memory";
-      readonly reported_limits: { readonly maximum_bytes: number };
+      readonly reported_limits: {
+        readonly maximum_bytes: number;
+        readonly limit_basis?: "inflate_allocation";
+        readonly effective_maximum_bytes?: null;
+      };
     }
   | {
       readonly resource: "transport";
@@ -134,11 +138,13 @@ const inflateSection = (
   readonly compressedBytes: number;
 } => {
   // Keep inflate allocation bounded before consumed input is known. PE storage
-  // can include zero alignment bytes, so the ratio is checked after decoding.
-  const allocationMaximum = Math.min(
-    RUST_UNCOMPRESSED_BYTES,
-    bytes.length * RUST_INFLATE_RATIO,
-  );
+  // can include zero alignment bytes that must not raise the reported ratio
+  // ceiling, so PE-aligned sections admit up to the absolute uncompressed cap
+  // and the consumed-stream ratio is enforced after decoding.
+  const allocationMaximum =
+    peFileAlignment !== undefined && peFileAlignment > 0
+      ? RUST_UNCOMPRESSED_BYTES
+      : Math.min(RUST_UNCOMPRESSED_BYTES, bytes.length * RUST_INFLATE_RATIO);
   let result: ReturnType<typeof nodeCodecResult>;
   try {
     result = nodeCodecResult(
@@ -194,8 +200,15 @@ const inflateFailure = (cause: unknown, maximum: number): Error => {
     cause instanceof Error && "code" in cause ? String(cause.code) : "";
   if (code === "ERR_BUFFER_TOO_LARGE")
     return new RustAuditableResourceFailure(
-      { resource: "memory", reported_limits: { maximum_bytes: maximum } },
-      "Inflated dependency JSON exceeds the size limit",
+      {
+        resource: "memory",
+        reported_limits: {
+          maximum_bytes: maximum,
+          limit_basis: "inflate_allocation",
+          effective_maximum_bytes: null,
+        },
+      },
+      "Inflated dependency JSON exceeds the allocation cap; the consumed-stream ratio limit is unknown",
     );
   if (
     code === "ERR_TRAILING_JUNK_AFTER_STREAM_END" ||

@@ -2,7 +2,9 @@ import { deflateSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { rustAuditableMetadataSchema } from "../domain/rust/rustBinary.js";
 import {
+  RUST_INFLATE_RATIO,
   RUST_SECTION_BYTES,
+  RUST_UNCOMPRESSED_BYTES,
   readAuditableSection,
   RustAuditableFormatFailure,
   RustAuditableResourceFailure,
@@ -223,6 +225,60 @@ it("stops an inflate that exceeds the section ratio", () => {
   expect(() =>
     readAuditableSection(".dep-v0", 0, Buffer.alloc(RUST_SECTION_BYTES + 1)),
   ).toThrow(/1 MiB/);
+});
+
+it("reports the consumed-stream inflate limit when PE padding exceeds that ceiling", () => {
+  const document = Buffer.concat([
+    Buffer.from(JSON.stringify({ packages: [] })),
+    Buffer.alloc(40_000, 0x20),
+  ]);
+  const compressed = deflateSync(document);
+  const fileAlignment = 512;
+  expect(compressed.length).toBeLessThan(fileAlignment);
+  const stored = Buffer.alloc(fileAlignment);
+  compressed.copy(stored);
+  const expectedMaximum = compressed.length * RUST_INFLATE_RATIO;
+  expect(document.length).toBeGreaterThan(expectedMaximum);
+  expect(document.length).toBeGreaterThan(stored.length * RUST_INFLATE_RATIO);
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, stored, {
+      peFileAlignment: fileAlignment,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      message: "Inflated dependency JSON exceeds the size limit",
+      constraint: {
+        resource: "memory",
+        reported_limits: { maximum_bytes: expectedMaximum },
+      },
+    }),
+  );
+});
+
+it("distinguishes an early inflate allocation cap from the unknown effective ratio limit", () => {
+  const compressed = deflateSync(Buffer.alloc(RUST_UNCOMPRESSED_BYTES + 1));
+  const alignment = 512;
+  const stored = Buffer.alloc(
+    Math.ceil(compressed.length / alignment) * alignment,
+  );
+  compressed.copy(stored);
+  expect(compressed.length * RUST_INFLATE_RATIO).toBeLessThan(
+    RUST_UNCOMPRESSED_BYTES,
+  );
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, stored, { peFileAlignment: alignment }),
+  ).toThrow(
+    expect.objectContaining({
+      constraint: {
+        resource: "memory",
+        reported_limits: {
+          maximum_bytes: RUST_UNCOMPRESSED_BYTES,
+          limit_basis: "inflate_allocation",
+          effective_maximum_bytes: null,
+        },
+      },
+    }),
+  );
 });
 
 it("retains the compressed-stream limit for a PE section with padding", () => {
