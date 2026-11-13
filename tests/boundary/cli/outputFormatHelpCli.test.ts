@@ -86,4 +86,31 @@ describe("global --format help", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(FORMAT_LINE);
   });
+
+  it("shows help when a feature flag name is only an argument value", async () => {
+    const result = await serve([
+      "inspect-analysis-view",
+      "--format",
+      "csv",
+      "--filter-output",
+      "rows",
+      "--columns",
+      "--llms",
+      "--help",
+    ]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(FORMAT_LINE);
+  });
+
+  it("ends the help document with a terminated line", async () => {
+    for (const arguments_ of [["--help"], ["mcp", "add", "--help"]]) {
+      const result = await serve(arguments_);
+      expect(result.exitCode, arguments_.join(" ")).toBe(0);
+      expect(result.stdout.endsWith("\n"), arguments_.join(" ")).toBe(true);
+      expect(
+        result.stdout.includes("\n\nCSV and TSV export"),
+        arguments_.join(" "),
+      ).toBe(true);
+    }
+  });
 });

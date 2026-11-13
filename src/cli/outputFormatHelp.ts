@@ -69,8 +69,10 @@ export const describeReaOutputFormats = (help: string): string => {
       `${INDENT}${row.flag}${" ".repeat(width - row.flag.length)}${GAP}${row.description}`,
   );
   const remainder = lines.slice(bounds.end);
-  // The section is followed by a blank separator or the document's end.
-  if (remainder[0]?.trim() === "") remainder.shift();
+  // The section is followed by a blank separator or the document's end. Only a
+  // separator is dropped: a trailing empty entry is the document's own final
+  // newline, and consuming it would glue whatever follows onto the hint.
+  if (remainder.length > 1 && remainder[0]?.trim() === "") remainder.shift();
   return [
     ...lines.slice(0, bounds.start + 1),
     ...rendered,
@@ -93,7 +95,12 @@ const PRECEDING_FEATURE_FLAGS: ReadonlySet<string> = new Set([
 export const requestsHelpText = (arguments_: readonly string[]): boolean => {
   const { flags } = splitIncurBuiltinArguments(arguments_);
   if (!flags.has("--help") && !flags.has("-h")) return false;
-  return !arguments_.some((argument) => PRECEDING_FEATURE_FLAGS.has(argument));
+  // Decide from the parsed flags: a `--llms` inside a valued output argument
+  // is data, not a manifest request, so it must not suppress help.
+  for (const feature of PRECEDING_FEATURE_FLAGS) {
+    if (flags.has(feature)) return false;
+  }
+  return true;
 };
 
 export interface HelpOutputRecorder {
