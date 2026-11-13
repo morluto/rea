@@ -16,6 +16,10 @@ import {
   CHECK_CASES,
   CHECK_VIEWS,
 } from "../../../src/domain/desktop/appTaskChecks.fixture.js";
+import {
+  draftOf,
+  statePath,
+} from "../../../src/domain/desktop/appTaskDraft.fixture.js";
 import { SETTLE_TIMING } from "../../../src/domain/desktop/appSettle.js";
 import { renderTaskVerifier } from "../../../src/domain/desktop/appTaskPython.js";
 import {
@@ -724,3 +728,65 @@ it.each([false, true])(
     }
   },
 );
+
+it("keeps distinct JSON kind/name tuples addressable after regenerated ids and reordering", async () => {
+  const file = "Documents/records.json";
+  const records = (done: boolean) => [
+    {
+      uid: "812403bed9f511f19fc4edd4f1920549",
+      format: "A\0B",
+      name: "C",
+      done,
+    },
+    {
+      uid: "84f27625d9f511f188ededd4f1920549",
+      format: "A",
+      name: "B\0C",
+      done: false,
+    },
+  ];
+  const before = records(false),
+    after = records(true);
+  const [draft] = draftOf({
+    [file]: statePath("document", "json", before, after),
+  });
+  if (draft === undefined) throw new Error("Expected a changed file");
+  const checks = draft.suggested.map((check, index) => ({
+    ...check,
+    id: `c${String(index)}`,
+  }));
+  const saved = after.toReversed().map((record, index) => ({
+    ...record,
+    uid: `${String(index).repeat(32)}`,
+  }));
+  const views = (view: typeof after) => ({
+    [file]: { format: "json", view, truncated: false },
+  });
+  const original = await runVerifier(checks, [[0, views(after)]], [], {
+    exec: false,
+  });
+  expect(original.results.length).toBeGreaterThan(0);
+  expect(original.results.every(({ result }) => result)).toBe(true);
+  const repeated = await runVerifier(checks, [[0, views(saved)]], [], {
+    exec: false,
+  });
+  expect(repeated.results.every(({ result }) => result)).toBe(true);
+  expect(
+    evaluateTaskChecks(checks, new Map([[file, views(saved)[file]]])).every(
+      ({ passed }) => passed,
+    ),
+  ).toBe(true);
+  const wrong = saved.map((record) => ({
+    ...record,
+    done: record.format === "A",
+  }));
+  const refused = await runVerifier(checks, [[0, views(wrong)]], [], {
+    exec: false,
+  });
+  expect(refused.results.some(({ result }) => !result)).toBe(true);
+  expect(
+    evaluateTaskChecks(checks, new Map([[file, views(wrong)[file]]])).some(
+      ({ passed }) => !passed,
+    ),
+  ).toBe(true);
+});

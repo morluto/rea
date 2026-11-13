@@ -1,4 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
+import { compositeKey } from "../unicodeCodePointOrder.js";
 import { isTimestamp } from "./appTask.js";
 import {
   isGeneratedId,
@@ -106,7 +107,7 @@ const tally = (members: readonly JsonValue[]) => {
       const sort = kind === undefined ? "" : stringAt(member, [kind]);
       return name === undefined || sort === undefined
         ? undefined
-        : `${sort}\u0000${name}`;
+        : compositeKey([sort, name]);
     };
     const id = JSON.stringify([kind ?? null, path]);
     let counts = counted.get(id);
