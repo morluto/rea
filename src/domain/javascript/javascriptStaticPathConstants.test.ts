@@ -3,6 +3,7 @@ import { runInNewContext } from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
+import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
@@ -139,6 +140,17 @@ describe("constant path bindings", () => {
     );
   });
 
+  it("classifies a constant named like the source file by its value", () => {
+    // An ES module has no `__filename`, so this is a plain string constant.
+    const analysis = analyze(
+      "main.mjs",
+      `${MODULE_HEADER}\nconst __filename = "service";\n${consumers("__filename")}`,
+    );
+    expect(pathFacts(analysis)).toEqual(
+      resolved("service", "module-specifier"),
+    );
+  });
+
   it("resolves constant renderer files and utility-process service names", () => {
     const analysis = analyze(
       "main.cjs",
@@ -271,6 +283,14 @@ describe("constant substitution bound", () => {
       declarations: 'const PART = "part";',
       expression: "path.join(__dirname, PART, PART)",
     },
+    {
+      declarations: "const DIRECTORY = __dirname;",
+      expression: 'path.join(DIRECTORY, DIRECTORY, "worker.js")',
+    },
+    {
+      declarations: "const ROOT = __dirname; const DIRECTORY = ROOT;",
+      expression: 'path.join(DIRECTORY, ROOT, "worker.js")',
+    },
   ])(
     "reads each constant at most once per expression: $expression",
     ({ declarations, expression }) => {
@@ -297,4 +317,110 @@ describe("constant substitution bound", () => {
     );
     expect(pathFacts(analysis)).toEqual(UNKNOWN);
   });
+});
+
+describe("constant resolution budget", () => {
+  const COMPLETE = {
+    status: "complete",
+    semantic_resource_limits: [],
+    electron_call_paths_limited: false,
+  };
+  const LIMITED = {
+    status: "limited",
+    semantic_resource_limits: ["expression-depth"],
+    electron_call_paths_limited: false,
+  };
+  const alias = (previous: string) => previous;
+  /** `length` constants after `c0`, each defined only by the one before it. */
+  const chain = (length: number, link: (previous: string) => string) => [
+    'const c0 = "./preload.js";',
+    ...Array.from(
+      { length },
+      (_, index) =>
+        `const c${String(index + 1)} = ${link(`c${String(index)}`)};`,
+    ),
+  ];
+  const analyzeChain = (length: number, link = alias) =>
+    analyze(
+      "main.cjs",
+      [
+        COMMONJS_HEADER,
+        ...chain(length, link),
+        consumers(`c${String(length)}`),
+      ].join("\n"),
+    );
+
+  it("resolves the longest alias chain that fits the budget", () => {
+    // `c0` to `c(limit - 1)` are as many constants as one expression may read.
+    const analysis = analyzeChain(SEMANTIC_EXPRESSION_DEPTH_LIMIT - 1);
+    expect(pathFacts(analysis)).toEqual(
+      resolved("./preload.js", "module-specifier"),
+    );
+    expect(analysis.analysis_coverage?.examination).toEqual(COMPLETE);
+  });
+
+  it("keeps an alias chain past the budget unknown and the analysis partial", () => {
+    const analysis = analyzeChain(SEMANTIC_EXPRESSION_DEPTH_LIMIT);
+    expect(pathFacts(analysis)).toEqual(UNKNOWN);
+    expect(analysis.parse_status).toBe("partial");
+    expect(analysis.analysis_coverage?.examination).toEqual(LIMITED);
+  });
+
+  it.each([
+    {
+      aliases: SEMANTIC_EXPRESSION_DEPTH_LIMIT - 1,
+      expected: resolved("preload.js", "filesystem-expression"),
+    },
+    { aliases: SEMANTIC_EXPRESSION_DEPTH_LIMIT, expected: UNKNOWN },
+  ])(
+    "follows at most the budget of aliases to prove a source file: $aliases",
+    ({ aliases, expected }) => {
+      const analysis = analyze(
+        "main.cjs",
+        [
+          COMMONJS_HEADER,
+          "const f0 = __filename;",
+          ...Array.from(
+            { length: aliases },
+            (_, index) => `const f${String(index + 1)} = f${String(index)};`,
+          ),
+          `const DIRECTORY = path.dirname(f${String(aliases)});`,
+          consumers('path.join(DIRECTORY, "preload.js")'),
+        ].join("\n"),
+      );
+      expect(pathFacts(analysis)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    { name: "aliases", length: 4096, link: alias },
+    {
+      name: "concatenations",
+      length: 12_000,
+      link: (previous: string) => `${previous} + "a"`,
+    },
+  ])(
+    "keeps $length chained $name unknown and still resolves a later read",
+    ({ length, link }) => {
+      const analysis = analyze(
+        "main.cjs",
+        [
+          COMMONJS_HEADER,
+          ...chain(length, link),
+          consumers(`c${String(length)}`),
+          'utilityProcess.fork(path.join(__dirname, "later.js"));',
+        ].join("\n"),
+      );
+      const facts = pathFacts(analysis);
+      expect(facts.preloads).toEqual(UNKNOWN.preloads);
+      expect(facts.utilities).toHaveLength(2);
+      expect(facts.utilities).toEqual(
+        expect.arrayContaining([
+          ...UNKNOWN.utilities,
+          { path: "later.js", context: "filesystem-expression" },
+        ]),
+      );
+      expect(analysis.analysis_coverage?.examination).toEqual(LIMITED);
+    },
+  );
 });

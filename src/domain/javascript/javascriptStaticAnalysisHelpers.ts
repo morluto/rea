@@ -184,12 +184,21 @@ export interface JavaScriptStaticPathIntrinsicQuery {
    * every evaluation of this read. Other reads remain unknown.
    */
   readonly constantInitializer?: (read: t.Identifier) => t.Node | undefined;
+  /**
+   * Whether one expression that has substituted `substituted` constants may
+   * substitute another. A refusal is recorded in the analysis coverage.
+   */
+  readonly admitConstantSubstitution?: (substituted: number) => boolean;
 }
 
 /**
- * Substitute each constant at most once while interpreting one expression.
+ * Substitute each constant at most once while interpreting one expression, and
+ * no more than the query admits in all (the semantic expression-depth bound).
  * Repeated reads such as `const twice = once + once` stay unknown, so
- * substitution cannot expand syntax or spelling beyond the source text.
+ * substitution cannot expand syntax or spelling beyond the source text. The
+ * interpreters below recurse once per substituted constant, so the same bound
+ * keeps a long chain of aliases from exhausting the call stack: a read past it
+ * stays unknown.
  */
 const substitutingConstantsOnce = (
   pathIntrinsics: JavaScriptStaticPathIntrinsicQuery | undefined,
@@ -198,16 +207,36 @@ const substitutingConstantsOnce = (
   if (pathIntrinsics === undefined || constantInitializer === undefined)
     return pathIntrinsics;
   const substituted = new Set<t.Node>();
+  const substitute = (initializer: t.Node): boolean => {
+    if (substituted.has(initializer)) return false;
+    if (pathIntrinsics.admitConstantSubstitution?.(substituted.size) === false)
+      return false;
+    substituted.add(initializer);
+    return true;
+  };
+  // The source-directory proof follows aliases itself. Once it holds, spend
+  // those reads from the same bound, so `path.join(DIR, DIR, "x")` stays unknown.
+  const substituteDirectoryAliases = (node: t.Node): boolean => {
+    let read = unwrapJavaScriptExpression(node).node;
+    while (t.isIdentifier(read)) {
+      const initializer = constantInitializer(read);
+      // The proof ended at the ambient `__dirname`, which no constant holds.
+      if (initializer === undefined) return true;
+      if (!substitute(initializer)) return false;
+      read = unwrapJavaScriptExpression(initializer).node;
+    }
+    return true;
+  };
   return Object.assign(
     (node: t.Node, fact?: JavaScriptStaticPathIntrinsicFact) =>
-      pathIntrinsics(node, fact),
+      pathIntrinsics(node, fact) &&
+      (fact !== "source-directory" || substituteDirectoryAliases(node)),
     {
       constantInitializer: (read: t.Identifier) => {
         const initializer = constantInitializer(read);
-        if (initializer === undefined || substituted.has(initializer))
-          return undefined;
-        substituted.add(initializer);
-        return initializer;
+        return initializer !== undefined && substitute(initializer)
+          ? initializer
+          : undefined;
       },
     },
   );
@@ -471,15 +500,15 @@ const isFilesystemPathExpression = (
   node = unwrapJavaScriptExpression(node).node;
   const value = stringValue(node);
   if (value !== undefined) return value.startsWith("/");
+  if (t.isIdentifier(node)) {
+    // A constant is what it holds. The identity checks below only read names,
+    // so a constant that happens to be called `__filename` must not match them.
+    const initializer = pathIntrinsics?.constantInitializer?.(node);
+    if (initializer !== undefined)
+      return isFilesystemPathExpression(initializer, pathIntrinsics);
+  }
   if (isFileIdentity(node) || isDirectoryPath(node, pathIntrinsics))
     return true;
-  if (t.isIdentifier(node)) {
-    const initializer = pathIntrinsics?.constantInitializer?.(node);
-    return (
-      initializer !== undefined &&
-      isFilesystemPathExpression(initializer, pathIntrinsics)
-    );
-  }
   if (t.isBinaryExpression(node, { operator: "+" }))
     return (
       isFilesystemPathExpression(node.left, pathIntrinsics) ||

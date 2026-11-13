@@ -6,6 +6,7 @@ import {
   semanticStableInitializer,
   type JavaScriptBindingIndex,
 } from "./javascriptSemanticState.js";
+import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { evaluateSemanticExpressionProvenance } from "./javascriptSemanticValues.js";
 import {
@@ -66,6 +67,16 @@ export const createStaticPathIntrinsicQuery = (
       ? initializer.node
       : undefined;
   };
+  /**
+   * Whether an expression that has substituted `substituted` constants may
+   * substitute one more. Every alias walk spends the semantic expression-depth
+   * bound, and a refusal keeps the analysis coverage limited.
+   */
+  const admitConstantSubstitution = (substituted: number): boolean => {
+    if (substituted < SEMANTIC_EXPRESSION_DEPTH_LIMIT) return true;
+    index.bindings.valueResourceLimits.add("expression-depth");
+    return false;
+  };
   /** Follow constant aliases to the syntax whose identity is proven. */
   const constantTarget = (input: t.Node): t.Node => {
     let node = unwrapJavaScriptExpression(input).node;
@@ -74,6 +85,9 @@ export const createStaticPathIntrinsicQuery = (
       seen.add(node);
       const initializer = constantInitializer(node);
       if (initializer === undefined) break;
+      // The interpreters' per-expression bound does not reach this proof, so it
+      // needs its own: otherwise every read walks a long chain again in full.
+      if (!admitConstantSubstitution(seen.size - 1)) break;
       node = unwrapJavaScriptExpression(initializer).node;
     }
     return node;
@@ -121,5 +135,8 @@ export const createStaticPathIntrinsicQuery = (
     entry.set(kind, proven);
     return proven;
   };
-  return Object.assign(query, { constantInitializer });
+  return Object.assign(query, {
+    constantInitializer,
+    admitConstantSubstitution,
+  });
 };

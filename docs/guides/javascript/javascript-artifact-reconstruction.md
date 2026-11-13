@@ -540,8 +540,12 @@ their initializers when the shared lexical index proves that the initializer
 runs before every evaluation of the read. The timing rules described below for
 constant options apply. Each constant is read at most once per path
 expression, so repeated reads such as `const twice = once + once` stay
-unknown. `let` and `var` bindings, reassigned or destructured constants, reads
-that may run before initialization, and `URL` objects keep their expressions.
+unknown, and so do repeated reads of a source-directory alias. One expression
+reads at most 256 constants, the semantic expression-depth bound. A longer
+chain of aliases stays unknown and the file's static coverage reports the
+`expression-depth` resource limit. `let` and `var` bindings, reassigned or
+destructured constants, reads that may run before initialization, and `URL`
+objects keep their expressions.
 
 Artifact bytes and AST syntax are observations. Entrypoint resolution, imports,
 loads, calls, and persistence relationships are static inferences and explicitly
