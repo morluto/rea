@@ -155,7 +155,15 @@ it("retains only linked cross-target source closure in a target snapshot", () =>
     createEvidenceBundle([trace, source, leaf, unrelated]),
     targetDigest,
   );
-  expect(selected).toEqual(createEvidenceBundle([trace, source, leaf]));
+  expect(selected.records).toHaveLength(3);
+  expect(selected.records).toEqual(
+    expect.arrayContaining([trace, source, leaf]),
+  );
+  expect(selected.records).not.toContainEqual(unrelated);
+  expect(selected.records.map(({ evidence_id }) => evidence_id)).toEqual(
+    [trace.evidence_id, source.evidence_id, leaf.evidence_id].sort(),
+  );
+  expect(selected.unknowns).toEqual([]);
   expect(evidenceBundleForTarget(selected, targetDigest)).toEqual(selected);
   expect(parseEvidenceBundle(selected)).toEqual(selected);
 });

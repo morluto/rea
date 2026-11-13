@@ -366,18 +366,6 @@ export const parseDenoSection = async (
   };
 };
 
-/** Parse a section that is already in memory. Tests and small fixtures use this. */
-export const parseDenoSectionBytes = (
-  bytes: Buffer,
-  signal?: AbortSignal,
-): Promise<DenoParsedSection> =>
-  parseDenoSection(
-    bytes.length,
-    (offset, length) =>
-      Promise.resolve(bytes.subarray(offset, offset + length)),
-    signal,
-  );
-
 const addRemoteBody = (total: bigint, length: number): bigint => {
   const next = total + BigInt(length);
   if (next > BigInt(MAX_DENO_REMOTE_BODY_BYTES))

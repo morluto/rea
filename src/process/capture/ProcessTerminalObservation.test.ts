@@ -20,7 +20,7 @@ import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import {
   createProcessCaptureObservationBuffer,
   resolveProcessResult,
-  releaseProcessResources,
+  ProcessCaptureResourceScope,
   captureTerminalFrames,
 } from "./ProcessCaptureLifecycle.js";
 import { createProcessTerminalFinalizer } from "./ProcessTerminalObservation.js";
@@ -222,7 +222,7 @@ it.each(["cancelled", "failed"] as const)(
       },
     );
     emitOutput("root 100\r\n");
-    const cleanup = await releaseProcessResources({
+    const cleanup = await new ProcessCaptureResourceScope().release({
       timers: new Set([timer]),
       terminal: { pid: 100 },
       renderer: owner,

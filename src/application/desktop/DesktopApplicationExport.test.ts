@@ -29,16 +29,7 @@ import type {
 } from "../../domain/desktop/desktopCapture.js";
 import { renderBuildBundle } from "../../domain/desktop/appBuild.js";
 import { readDownloadInstall } from "./DesktopExportInstall.js";
-import {
-  NO_LAUNCH_DOCUMENT,
-  launchDocumentNote,
-  seedWording,
-} from "../../domain/desktop/appExport.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
-import {
-  seedLimitation,
-  trashedFilesLimitation,
-} from "./DesktopExportLimitations.js";
 import {
   EDITED_NOTE,
   HOME,
@@ -529,13 +520,9 @@ describe("exportDesktopApplication and the desktop Trash", () => {
         "Documents/today.txt",
       ],
     });
-    const trashPaths = [
-      ".local/share/Trash/files/today.txt",
-      ".local/share/Trash/info/today.txt.trashinfo",
-    ];
-    const notice = trashedFilesLimitation(trashPaths);
-    expect(result.limitations).toContain(notice);
-    for (const path of trashPaths) expect(notice).toContain(`~/${path}`);
+    expect(result.limitations).toContain(
+      "The desktop Trash held 2 file(s) at the seed checkpoint, which are not seeded: ~/.local/share/Trash/files/today.txt, ~/.local/share/Trash/info/today.txt.trashinfo. Restore one the task needs and capture again.",
+    );
   });
 });
 
@@ -1936,7 +1923,9 @@ const exportSeeded = async (
 
 /** The limitations on what the launch opens, found by the lead their formatter gives them. */
 const launchLimitations = (limitations: readonly string[]) =>
-  limitations.filter((line) => line.includes(NO_LAUNCH_DOCUMENT));
+  limitations.filter((line) =>
+    line.includes("The app opens no document at launch"),
+  );
 
 /**
  * The seed-then-end capture of an app whose titles name no file, given the
@@ -2037,9 +2026,7 @@ describe("exportDesktopApplication launch document", () => {
       `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
     );
     expect(readme).toContain(
-      launchDocumentNote({
-        opens: { kind: "seed", document: "Documents/today.txt" },
-      }),
+      "At launch the app opens `~/Documents/today.txt`, the seed's one document.",
     );
     expect(readme).toContain("`~/Documents/today.txt`");
     expect(launchLimitations(result.limitations)).toEqual([]);
@@ -2151,8 +2138,13 @@ describe("exportDesktopApplication launch document", () => {
     const made = await exportSeeded("notes %U", { syntheticSeed: true });
     const captured = await exportSeeded("notes %U");
     const notice = (syntheticSeed: boolean) =>
-      seedWording({ name: "notes", seedCheckpoint: "seed", syntheticSeed })
-        .notice;
+      syntheticSeed
+        ? "The seed was made for this task, not taken from a user's own data; read `envs/notes/seed/` before publishing the bundle."
+        : "The seed is the user's real data. Keep this bundle local; do not publish it.";
+    const limitation = (syntheticSeed: boolean) =>
+      syntheticSeed
+        ? "The seed was made for the task, not taken from a user's own data; read it before publishing the bundle."
+        : "The seed is the user's real state at the seed checkpoint; keep the bundle local.";
 
     expect(made.result.parameters).toMatchObject({ synthetic_seed: true });
     expect(captured.result.parameters).toMatchObject({ synthetic_seed: false });
@@ -2160,10 +2152,8 @@ describe("exportDesktopApplication launch document", () => {
       [made, true],
       [captured, false],
     ] as const) {
-      expect(exported.result.limitations).toContain(seedLimitation(synthetic));
-      expect(exported.result.limitations).not.toContain(
-        seedLimitation(!synthetic),
-      );
+      expect(exported.result.limitations).toContain(limitation(synthetic));
+      expect(exported.result.limitations).not.toContain(limitation(!synthetic));
       expect(exported.readme).toContain(notice(synthetic));
       expect(exported.readme).not.toContain(notice(!synthetic));
     }

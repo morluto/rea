@@ -432,7 +432,7 @@ const catalogBody = (
 /** Admit complete discovery before binding; six bytes per UTF-16 unit covers JSON escaping and UTF-8 expansion. */
 export const environmentToolDefinitions = (
   source: EnvironmentSource,
-  name: string = source.manifest.name,
+  name: string,
   {
     operation = ENVIRONMENT_SERVE_OPERATION,
     dataPlane = "none",

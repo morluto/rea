@@ -34,7 +34,7 @@ export interface ParsedReferenceSourceEntries {
 }
 
 /** Preserve the observed reader failure and add entry-specific recovery guidance. */
-export const projectReferenceSourceEntryFailure = (
+const projectReferenceSourceEntryFailure = (
   entry: Extract<ReferenceSourceEntry, { status: "failed" }>,
 ): string => `${entry.message} ${entryRecoveryGuidance(entry)}`;
 

@@ -101,7 +101,6 @@ import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { GroupingViewKind } from "./analysisViewShape.js";
 import {
-  analysisViewRequestSchema,
   inspectAnalysisViewInputSchema,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
@@ -180,7 +179,6 @@ import {
   type UnsignedAnalysisView,
 } from "./analysisViewResult.js";
 export {
-  analysisViewRequestSchema,
   inspectAnalysisViewInputSchema,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,

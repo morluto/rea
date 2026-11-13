@@ -74,13 +74,10 @@ const XML_REFERENCE_BYTES = 64;
 const estimateXmlPlistExpansion = (
   bytes: Buffer,
   maxBytes: number,
-  xmlText?: string,
-  numberProjection = false,
-  budget = "the property list decode budget",
-  fail: (
-    kind: BinaryPlistExpansionFailure,
-    message: string,
-  ) => Error = propertyListDecodeBudgetFailure,
+  xmlText: string | undefined,
+  numberProjection: boolean,
+  budget: string,
+  fail: (kind: BinaryPlistExpansionFailure, message: string) => Error,
 ): number => {
   const xml = xmlText ?? decodeXmlPlistText(bytes);
   // The decoded text and the DOM's copies of its character data.

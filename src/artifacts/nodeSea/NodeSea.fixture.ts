@@ -1,7 +1,8 @@
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
 
-import { NODE_SEA_MAGIC } from "./NodeSeaBlob.js";
+/** Node 24 SEA blob magic: https://github.com/nodejs/node/blob/v24.12.0/src/node_sea.h */
+export const NODE_SEA_FIXTURE_MAGIC = 0x143da20;
 
 /** Official Node `NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2` hash. */
 export const NODE_SEA_FUSE_HASH = "fce680ab2cc467b6e072b8b5df1996b2";
@@ -62,7 +63,7 @@ export const buildNodeSeaBlob = (
   if (assets.length > 0) flags |= 1 << 3;
   if (execArgv.length > 0) flags |= 1 << 4;
   const header = Buffer.alloc(9);
-  header.writeUInt32LE(NODE_SEA_MAGIC, 0);
+  header.writeUInt32LE(NODE_SEA_FIXTURE_MAGIC, 0);
   header.writeUInt32LE(flags, 4);
   header[8] = options.execArgvExtension ?? 1;
   const parts: Buffer[] = [header, sized(codePath), sized(body)];

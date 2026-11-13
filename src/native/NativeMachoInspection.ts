@@ -78,7 +78,7 @@ interface NativeMachoInspectionContext {
   readonly invocation: (
     capture: NativeCommandCapture,
   ) => NativeCommandInvocation;
-  readonly resolveSlice?: (
+  readonly resolveSlice: (
     selected: LipoArchitecture,
   ) => Promise<ResolvedMachoSlice>;
   /** Borrow binary framing from the same identity-bound target as the tools. */
@@ -230,16 +230,7 @@ export const inspectNativeMacho = async (
   const range =
     format === "thin"
       ? { offset: 0, size: null }
-      : context.resolveSlice !== undefined
-        ? await context.resolveSlice(selected!)
-        : { offset: selected!.file_offset, size: selected!.size };
-  if (range.offset === null || (format === "fat" && range.size === null))
-    return err(
-      new AnalysisOutputError(
-        "inspect_macho",
-        "The selected binary slice range is unavailable",
-      ),
-    );
+      : await context.resolveSlice(selected!);
   if (
     format === "fat" &&
     (selected!.file_offset === null || selected!.size === null)

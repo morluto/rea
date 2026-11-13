@@ -3,12 +3,7 @@ import { expect, it, vi } from "vitest";
 
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
-import {
-  DEFAULT_STATE_INTAKE,
-  fetchStateDocument,
-  partDocument,
-  STATE_FETCH_TIMEOUT_MS,
-} from "./stateIntake.js";
+import { DEFAULT_STATE_INTAKE, partDocument } from "./stateIntake.js";
 
 const inlineDocument = async (bytes: string) => {
   const files = new ArtifactResourceScope();
@@ -67,19 +62,27 @@ it("downloads with redirects refused and the 30 s timeout by default", async () 
   const fetched = vi
     .spyOn(globalThis, "fetch")
     .mockResolvedValue(new Response("{}"));
+  const files = new ArtifactResourceScope();
+  const responses = new ResponseBodyCleanup("state response body");
   try {
-    const url = new URL("https://state.example.test/state.json");
-    const signal = AbortSignal.timeout(STATE_FETCH_TIMEOUT_MS);
-    await fetchStateDocument(url, signal);
-    expect(fetched).toHaveBeenCalledExactlyOnceWith(url, {
-      signal,
+    const uri = "https://state.example.test/state.json";
+    await expect(
+      partDocument(
+        { kind: "file", file: { uri } },
+        DEFAULT_STATE_INTAKE,
+        new AbortController().signal,
+        files,
+        responses,
+      ),
+    ).resolves.toEqual({ ok: true, value: {} });
+    expect(fetched).toHaveBeenCalledExactlyOnceWith(new URL(uri), {
+      signal: expect.any(AbortSignal),
       redirect: "error",
     });
-    expect(DEFAULT_STATE_INTAKE).toEqual({
-      fetchState: fetchStateDocument,
-      timeoutMs: 30_000,
-    });
+    expect(DEFAULT_STATE_INTAKE.timeoutMs).toBe(30_000);
   } finally {
+    await responses.close();
+    await files.close();
     fetched.mockRestore();
   }
 });

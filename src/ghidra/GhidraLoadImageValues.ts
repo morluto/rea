@@ -15,7 +15,7 @@ import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 const sha256 = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 const address = (offset: number): string => `0x${offset.toString(16)}`;
-export const GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION =
+const GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION =
   "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Ghidra relocation symbol names are retained observations, not independently verified. Mapping ends are inclusive.";
 const limitations = [
   GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION,

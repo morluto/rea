@@ -86,17 +86,13 @@ describe("app bundle Info.plist magic", () => {
       const plist = Buffer.from("bplist00");
       plist[0] = (plist[0] ?? 0) | 0x80;
       await writeFile(plistPath, plist);
-      let decoded = false;
-      const result = await resolveAppBundleExecutable(bundle, {
-        readFile: async () => plist,
-        realpath: async (path) => path,
-        decodeBinaryPlist: async () => {
-          decoded = true;
-          return "Fixture";
+      const result = await resolveAppBundleExecutable(bundle);
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          cause: { name: "XmlPlistTextDecodeError", reason: "invalid-bytes" },
         },
       });
-      expect(decoded).toBe(false);
-      expect(result.ok).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
