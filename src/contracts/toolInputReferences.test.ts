@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import { schemaSubschemas } from "./jsonSchemaKeywords.js";
 import { TOOL_CONTRACTS, toolContract } from "./toolContracts.js";
 import {
   toolInputSchemaWithMetadata,
@@ -107,27 +108,27 @@ it.each(["draft-2020-12", "draft-07"] as const)(
 );
 
 it("emits no surrogate-range pattern in any advertised tool input schema", () => {
-  // #10348: `localPathStringSchema` used to emit `^[^\\uD800-\\uDFFF]*$`
-  // in 120 places across 95 tools, and strict validators reject the whole
-  // request when one advertised pattern cannot compile. UTF-16 checks
-  // must stay in `.refine(...)`, never in an emitted `pattern`.
+  // #10348: `localPathStringSchema` used to emit the UTF-16 surrogate range
+  // in 120 places across 95 tools. Scalar-Unicode regex engines cannot
+  // compile that range, so it must stay in runtime `.refine(...)` checks.
   // Lookaround patterns are a separate class and are not covered here.
   const problems: string[] = [];
   const walk = (node: unknown, tool: string, path: string): void => {
-    if (node === null || typeof node !== "object") return;
-    if (Array.isArray(node)) {
-      node.forEach((child, index) => walk(child, tool, `${path}[${index}]`));
+    if (node === null || typeof node !== "object" || Array.isArray(node)) {
       return;
     }
-    for (const [key, value] of Object.entries(node)) {
-      if (
-        key === "pattern" &&
-        typeof value === "string" &&
-        (value.includes("\\uD800") || value.includes("\\uDFFF"))
-      )
-        problems.push(`${tool}: ${path}.pattern = ${value}`);
-      else walk(value, tool, `${path}.${key}`);
-    }
+    const schema = node as Readonly<Record<string, unknown>>;
+    const pattern = schema.pattern;
+    if (
+      typeof pattern === "string" &&
+      (pattern.includes("\\uD800") || pattern.includes("\\uDFFF"))
+    )
+      problems.push(`${tool}: ${path}.pattern = ${pattern}`);
+    // Only schema-valued positions are schemas. examples/default/const/enum
+    // hold instance data and stay opaque, even when they have a pattern key.
+    schemaSubschemas(schema, { includeDefinitions: true }).forEach(
+      (child, index) => walk(child, tool, `${path}.subschemas[${index}]`),
+    );
   };
   for (const contract of TOOL_CONTRACTS) {
     const schema = toolInputSchemaWithMetadata(contract)[
@@ -135,6 +136,19 @@ it("emits no surrogate-range pattern in any advertised tool input schema", () =>
     ].jsonSchema.input({ target: "draft-2020-12" });
     walk(schema, contract.name, contract.name);
   }
+  // These are instance values, not subschemas, despite using a schema keyword
+  // as a property name. A real JSON Schema may carry such literal input data.
+  walk(
+    {
+      type: "object",
+      examples: [{ pattern: "\\uD800" }],
+      default: { pattern: "\\uDFFF" },
+      const: { pattern: "\\uD800" },
+      enum: [{ pattern: "\\uDFFF" }],
+    },
+    "literal-data fixture",
+    "literal-data fixture",
+  );
   expect(problems).toEqual([]);
 });
 
