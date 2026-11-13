@@ -248,7 +248,9 @@ const extensionOf = (path: string | null | undefined): string | null => {
   if (path === undefined || path === null || path.length === 0) return null;
   const normalized = path.replaceAll("/", "\\");
   const slash = normalized.lastIndexOf("\\");
-  const name = slash === -1 ? normalized : normalized.slice(slash + 1);
+  const stored = slash === -1 ? normalized : normalized.slice(slash + 1);
+  // A `\\?\` path skips normalization, so it keeps the periods and spaces it stores.
+  const name = DEVICE_PATH.test(normalized) ? stored : fileNameSegment(stored);
   const dot = name.lastIndexOf(".");
   if (dot <= 0 || dot === name.length - 1) return null;
   return name.slice(dot).toLowerCase();
@@ -261,9 +263,24 @@ const foldPath = (path: string): string =>
 const DEVICE_PATH = /^\\\\[?.]\\/u;
 
 /**
+ * A segment as Win32 normalization leaves it when it names a directory.
+ *
+ * "Trim characters" in Microsoft's path-format documentation: a segment ending in a single period
+ * loses that period, while a segment of two or more periods is not normalized and is a legal name
+ * of its own. A trailing space survives inside a path; only the end of the path loses it.
+ */
+const directorySegment = (part: string): string =>
+  /(?:^|[^.])\.$/u.test(part) ? part.slice(0, -1) : part;
+
+/** A last segment as Win32 normalization leaves it: every trailing period and space goes. */
+const fileNameSegment = (part: string): string => part.replace(/[. ]+$/u, "");
+
+/**
  * Compare form of a full path, from the text alone: no path is ever opened.
  * Folds case and separators, drops repeated separators and `.` segments, and
  * lets `..` remove one segment but never the drive or UNC `\\server\share` root.
+ * Win32 also trims the periods and spaces it trims before it opens a path, so
+ * `C:\Tools\app.exe.` and `C:\Tools\app.exe ` name the file it names.
  */
 const normalizePath = (path: string): string => {
   const folded = foldPath(path);
@@ -276,12 +293,23 @@ const normalizePath = (path: string): string => {
     .split("\\")
     .filter((part) => part !== "");
   const root = parts.slice(0, unc ? 2 : 1);
+  const body = parts.slice(root.length);
+  // A path ending in a separator names a directory, whose trailing space Win32 keeps.
+  const openEnded = !folded.endsWith("\\");
   const segments: string[] = [];
-  for (const part of parts.slice(root.length)) {
-    if (part === ".") continue;
-    if (part === "..") segments.pop();
-    else segments.push(part);
-  }
+  body.forEach((part, index) => {
+    if (part === ".") return;
+    if (part === "..") {
+      segments.pop();
+      return;
+    }
+    const name =
+      openEnded && index === body.length - 1
+        ? fileNameSegment(part)
+        : directorySegment(part);
+    // A name Win32 trims away names the directory that holds it.
+    if (name.length > 0) segments.push(name);
+  });
   return unc
     ? `\\\\${[...root, ...segments].join("\\")}`
     : `${root[0] ?? ""}\\${segments.join("\\")}`;

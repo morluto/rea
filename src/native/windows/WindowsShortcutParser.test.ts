@@ -882,3 +882,54 @@ it("charges the string budget before decoding a LinkInfo string", async () => {
     ),
   ).rejects.toBeInstanceOf(WindowsShortcutResourceFailure);
 });
+
+it("compares an icon with a target that Win32 trims to the same name", async () => {
+  const differsFor = async (localBasePath: string, iconLocation: string) => {
+    const report = await parse(
+      windowsShortcutBytes({ linkInfo: { localBasePath }, iconLocation }),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    );
+    return found?.kind === "icon_location_differs_from_target"
+      ? found.value
+      : undefined;
+  };
+  // Windows drops one period ending a segment, and every trailing period and space of the last
+  // one, before it opens the path, so each of these names the target itself.
+  for (const iconLocation of [
+    "C:\\Tools\\app.exe.",
+    "C:\\Tools\\app.exe ",
+    "C:\\Tools\\app.exe. .",
+    "C:\\Tools.\\app.exe",
+  ] as const)
+    expect(await differsFor("C:\\Tools\\app.exe", iconLocation)).toBe(false);
+  // Two periods ending a segment is a legal name of its own, and a space inside a segment stays.
+  expect(await differsFor("C:\\Tools\\app.exe", "C:\\Tools..\\app.exe")).toBe(
+    true,
+  );
+  expect(await differsFor("C:\\Tools\\app.exe", "C:\\ Tools\\app.exe")).toBe(
+    true,
+  );
+  // A \\?\ path skips normalization, so its trailing period names another file.
+  expect(
+    await differsFor("C:\\Tools\\app.exe", "\\\\?\\C:\\Tools\\app.exe."),
+  ).toBe(true);
+});
+
+it("derives the target extension of a name Win32 trims", async () => {
+  const extensionFor = async (localBasePath: string) => {
+    const report = await parse(
+      windowsShortcutBytes({ iconLocation: "", linkInfo: { localBasePath } }),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "target_extension",
+    );
+    return found?.kind === "target_extension" ? found.extension : undefined;
+  };
+  // The stored name ends in a period or a space, and the file it opens is `app.exe`.
+  expect(await extensionFor("C:\\Tools\\app.exe.")).toBe(".exe");
+  expect(await extensionFor("C:\\Tools\\app.exe ")).toBe(".exe");
+  // Trimmed to `report`, which has no extension.
+  expect(await extensionFor("C:\\Tools\\report.")).toBeNull();
+});
