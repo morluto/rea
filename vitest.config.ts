@@ -10,6 +10,11 @@ import {
 } from "./scripts/lib/test-projects.mjs";
 
 import { CiTestSequencer } from "./tests/ciTestSequencer.js";
+import {
+  COVERAGE_DEADLINE_SCALE,
+  LONG_RUNNING_DEADLINE_MS,
+  TEST_DEADLINE_MS as BASE_TEST_DEADLINE_MS,
+} from "./tests/support/testDeadlines.js";
 
 // Playwright's registry does not derive a cache directory for Termux's
 // `android` platform. Match the production CLI fallback before workers import
@@ -38,10 +43,10 @@ const MAX_TEST_WORKERS = Math.min(2, availableParallelism());
 // performance assertion. Projects own it so tests do not hard-code host speed.
 // Built projects launch compiled CLI, MCP, and provider processes while other
 // lanes share the runner, and coverage instrumentation slows every lane.
-const DEADLINE_SCALE = COVERAGE_ENABLED ? 2 : 1;
+const DEADLINE_SCALE = COVERAGE_ENABLED ? COVERAGE_DEADLINE_SCALE : 1;
 const TEST_DEADLINE_MS = {
-  source: 30_000 * DEADLINE_SCALE,
-  built: 120_000 * DEADLINE_SCALE,
+  source: BASE_TEST_DEADLINE_MS.source * DEADLINE_SCALE,
+  built: BASE_TEST_DEADLINE_MS.built * DEADLINE_SCALE,
 } as const;
 
 const TEST_PROJECTS = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS];
@@ -155,12 +160,14 @@ export default defineConfig({
     runner: "./tests/processOwnershipRunner.ts",
     testTimeout: TEST_DEADLINE_MS.source,
     hookTimeout: TEST_DEADLINE_MS.source,
+    // Deadline probes compare what Vitest applies with the configured policy.
+    provide: { testDeadlineScale: DEADLINE_SCALE },
     tags: [
       {
         name: "long-running",
         description:
           "A bounded workload that needs more than its project's deadline",
-        timeout: 300_000 * DEADLINE_SCALE,
+        timeout: LONG_RUNNING_DEADLINE_MS * DEADLINE_SCALE,
       },
     ],
     coverage: {
@@ -195,3 +202,9 @@ export default defineConfig({
     },
   },
 });
+
+declare module "vitest" {
+  export interface ProvidedContext {
+    readonly testDeadlineScale: number;
+  }
+}
