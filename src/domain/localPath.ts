@@ -1,6 +1,8 @@
 import { isAbsolute, relative, sep } from "node:path";
 import { z } from "zod";
 
+import { rejectUnpairedSurrogates } from "./stringPatterns.js";
+
 /**
  * Reject OS-invalid NUL bytes in a local filesystem name. This is not a path
  * shape check: an empty or relative value is admitted here and narrowed by the
@@ -16,13 +18,15 @@ export const nulFreeStringSchema = z
   .string()
   .regex(/^[^\x00]*$/u, "Local filesystem paths cannot contain NUL");
 
-/** A selected local filesystem path: nonempty, NUL-free, and representable without replacement. */
-export const localPathStringSchema = nulFreeStringSchema
-  .min(1)
-  .regex(
-    /^[^\uD800-\uDFFF]*$/u,
-    "Local filesystem paths must contain well-formed Unicode",
-  );
+/**
+ * A selected local filesystem path: nonempty, NUL-free, and representable
+ * without replacement. The well-formed Unicode rule is enforced but not
+ * advertised; see `rejectUnpairedSurrogates`.
+ */
+export const localPathStringSchema = rejectUnpairedSurrogates(
+  nulFreeStringSchema.min(1),
+  "Local filesystem paths must contain well-formed Unicode",
+);
 
 /**
  * A Windows absolute path: rooted, UNC, or drive-qualified. The classes spell
