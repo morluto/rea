@@ -17,7 +17,10 @@ import {
   PYTHON_HELPERS,
   PYTHON_IMPORTS,
 } from "../../../src/domain/desktop/appExportPython.js";
-import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
+import {
+  execFileOutput,
+  execFileOutputFailure,
+} from "../../../src/process/ExecFileOutput.js";
 
 const available = (command: string, args: string[]) => {
   try {
@@ -167,17 +170,19 @@ for (const name of ["ordinary", "hash#directory", "line\nbreak"]) {
 }
 
 // A command-lookup boundary, independent of the optional system dconf provider.
-for (const searchPath of ["tools", ""]) {
+for (const searchPath of ["tools", "", "denied:tools", "denied"]) {
   cliTest.skipIf(process.platform === "win32" || !hasPython)(
     `capture and exported helper preserve ${JSON.stringify(searchPath)} PATH from a colon-containing cwd`,
     async ({ cli }) => {
       const root = await createTestTempDirectory("dconf-command-selection-");
       const cwd = join(root, "launch:split");
       const selected = searchPath === "" ? cwd : join(cwd, "tools");
+      const denied = join(cwd, "denied");
       const foreign = join(root, "launch");
       const staged = join(root, "staged");
       await Promise.all([
         mkdir(selected, { recursive: true }),
+        mkdir(denied, { recursive: true }),
         mkdir(foreign),
         mkdir(staged),
       ]);
@@ -194,6 +199,9 @@ printf '[org/notes]\\nselected=true\\n'
         "#!/bin/sh\nprintf '[org/notes]\\nforeign=true\\n'\n",
         { mode: 0o755 },
       );
+      await writeFile(join(denied, "dconf"), "#!/bin/sh\nexit 18\n", {
+        mode: 0o600,
+      });
       const path = `${HOME}/.config/dconf/user`;
       const bytes = Buffer.from("GVariant");
       const base = capture();
@@ -220,19 +228,27 @@ printf '[org/notes]\\nselected=true\\n'
       const state = desktopApplicationStateSchema.parse(
         parseEvidence(result.json).normalized_result,
       );
-      expect.soft(state.paths).toEqual([
-        expect.objectContaining({
-          versions: [
-            expect.objectContaining({
-              view: {
-                groups: { "org/notes": { selected: "true" } },
-                other_groups: [],
-              },
-              view_error: null,
-            }),
-          ],
-        }),
-      ]);
+      if (searchPath === "denied") {
+        expect
+          .soft(state.paths[0]?.versions[0]?.view_error)
+          .toContain("EACCES");
+        expect
+          .soft(state.paths[0]?.versions[0]?.view_error)
+          .toContain(join(denied, "dconf"));
+      } else
+        expect.soft(state.paths).toEqual([
+          expect.objectContaining({
+            versions: [
+              expect.objectContaining({
+                view: {
+                  groups: { "org/notes": { selected: "true" } },
+                  other_groups: [],
+                },
+                view_error: null,
+              }),
+            ],
+          }),
+        ]);
       const helper = join(root, "exported.py");
       await writeFile(
         helper,
@@ -244,14 +260,24 @@ printf '[org/notes]\\nselected=true\\n'
           'print(_dconf(["dump", "/"], {}, cwd=Path(sys.argv[1])), end="")',
         ].join("\n"),
       );
-      const exported = await execFileOutput(python, ["-I", helper, staged], {
+      const pending = execFileOutput(python, ["-I", helper, staged], {
         cwd,
         env: { PATH: searchPath },
         timeout: 10_000,
         maxBuffer: 64 * 1024,
       });
-      expect(exported.stderr).toBe("");
-      expect(exported.stdout).toBe("[org/notes]\nselected=true\n");
+      if (searchPath === "denied") {
+        const failure = await pending.then(
+          () => undefined,
+          (cause: unknown) => execFileOutputFailure(cause),
+        );
+        expect(failure?.stderr).toContain("PermissionError");
+        expect(failure?.stderr).toContain(join(denied, "dconf"));
+      } else {
+        const exported = await pending;
+        expect(exported.stderr).toBe("");
+        expect(exported.stdout).toBe("[org/notes]\nselected=true\n");
+      }
     },
   );
 }

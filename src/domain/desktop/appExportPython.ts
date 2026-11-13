@@ -22,6 +22,7 @@ export const PYTHON_IMPORTS = `from __future__ import annotations
 from array import array
 import binascii
 import contextlib
+import errno
 import copy
 import hashlib
 import io
@@ -29,8 +30,8 @@ import json
 import math
 import os
 import re
-import shutil
 import sqlite3
+import stat
 import struct
 import subprocess
 import sys
@@ -179,11 +180,25 @@ def _ensure_state_aliases(home: Path) -> None:
 
 def _dconf(arguments: list, environment: dict, cwd: Path | None = None) -> str:
     child_environment = {**os.environ, **environment}
-    command = shutil.which("dconf", path=child_environment.get("PATH", os.defpath) or os.curdir)
-    if command is None:
-        raise FileNotFoundError("dconf is not installed (dconf-cli)")
-    if not os.path.isabs(command):
-        command = os.path.join(os.getcwd(), command)
+    refusal = None
+    for directory in os.get_exec_path(child_environment):
+        command = os.path.join(directory, "dconf")
+        if not os.path.isabs(command):
+            command = os.path.join(os.getcwd(), command)
+        try:
+            if not stat.S_ISREG(os.stat(command).st_mode) or not os.access(command, os.X_OK):
+                raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), command)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError as error:
+            if refusal is None:
+                refusal = error
+            continue
+        break
+    else:
+        if refusal is not None:
+            raise refusal
+        raise FileNotFoundError(errno.ENOENT, "dconf is not installed (dconf-cli)", "dconf")
     return subprocess.run([command, *arguments], env=child_environment, capture_output=True, text=True,
                           check=True, cwd=cwd).stdout
 

@@ -48,9 +48,9 @@ export const programOnPath = async (
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<string | undefined> => {
   const found = await resolveProgram(program, environment, process.cwd());
-  return found === undefined || found.fromRelativeEntry
+  return !found.ok || found.value.fromRelativeEntry
     ? undefined
-    : found.path;
+    : found.value.path;
 };
 
 /** Resolve a recorded command using the same empty-value fallback as runtime. */

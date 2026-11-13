@@ -53,21 +53,33 @@ export const dumpDconfDatabase = async (
     // Resolve before changing cwd; serializing absolute PATH entries would split
     // an original working directory containing the PATH delimiter.
     const startedIn = process.cwd();
-    const invocation =
-      command.includes("/") || command.includes(sep)
-        ? isAbsolute(command)
-          ? command
-          : `${startedIn}${sep}${command}`
-        : (
-            await resolveProgram(
-              command,
-              { PATH: environment.PATH ?? "" },
-              startedIn,
-            )
-          )?.path;
+    let invocation: string;
+    if (command.includes("/") || command.includes(sep)) {
+      invocation = isAbsolute(command)
+        ? command
+        : `${startedIn}${sep}${command}`;
+    } else {
+      const found = await resolveProgram(
+        command,
+        { PATH: environment.PATH ?? "" },
+        startedIn,
+      );
+      assertArtifactReadActive(signal);
+      if (!found.ok) {
+        const failure = found.error;
+        return {
+          ok: false,
+          error:
+            failure.reason === "not_found"
+              ? DCONF_NOT_INSTALLED
+              : failure.reason === "not_file"
+                ? `dconf command is not a regular executable file: ${failure.path}`
+                : String(failure.cause),
+        };
+      }
+      invocation = found.value.path;
+    }
     assertArtifactReadActive(signal);
-    if (invocation === undefined)
-      return { ok: false, error: DCONF_NOT_INSTALLED };
     const { stdout } = await execFileOutput(invocation, ["dump", "/"], {
       cwd: directory,
       env: { PATH: environment.PATH ?? "", DCONF_PROFILE: profile },
