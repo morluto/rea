@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { selectProcedures } from "./selection.js";
+import { selectProcedures, sortProcedureAddresses } from "./selection.js";
 
 const input = {
   output_directory: "/tmp/decompile-order",
@@ -51,4 +51,27 @@ describe("decompile directory selection", () => {
     expect(selected.collapsedDuplicates).toBe(true);
     expect(selected.excluded).toBe(0);
   });
+});
+
+it("sorts journal records by numeric address without reordering equal coordinates", () => {
+  const records = [
+    { address: "ram:0x4", status: "written" },
+    { address: "0x02", status: "first" },
+    { address: "invalid", status: "unknown" },
+    { address: "0x2", status: "second" },
+    { address: "0x1", status: "entry" },
+    { address: "rom:0x0", status: "rom" },
+  ];
+  expect(sortProcedureAddresses(records).map(({ status }) => status)).toEqual([
+    "entry",
+    "first",
+    "second",
+    "written",
+    "rom",
+    "unknown",
+  ]);
+  expect(sortProcedureAddresses(records.slice(0, 1))).toEqual(
+    records.slice(0, 1),
+  );
+  expect(sortProcedureAddresses([])).toEqual([]);
 });
