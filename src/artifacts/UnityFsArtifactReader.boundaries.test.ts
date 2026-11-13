@@ -335,6 +335,38 @@ it.each([1, 2])(
 );
 
 describe("UnityFS stream ownership and immutable cache", () => {
+  it("preserves a pending read failure when cancellation overlaps it", async () => {
+    const path = await fixture(buildUnityFs([{ path: "x", data: "bytes" }]));
+    const admitted = await openRegularFile(path, { symlinks: "reject" });
+    const reader = new UnityFsArtifactReader(path, admitted);
+    const reached = createDeferred<void>();
+    const release = createDeferred<void>();
+    const failure = new Error("member read failed");
+    const controller = new AbortController();
+    const [entry] = await entries(reader);
+    const reads = vi
+      .spyOn(admitted.handle, "read")
+      .mockImplementation((async () => {
+        reached.resolve();
+        await release.promise;
+        throw failure;
+      }) as typeof admitted.handle.read);
+    let consumed: Promise<Buffer> | undefined;
+    try {
+      consumed = buffer(await reader.open(entry!, controller.signal));
+      await reached.promise;
+      controller.abort(new Error("caller cancelled"));
+      release.resolve();
+      await expect(consumed).rejects.toBe(failure);
+    } finally {
+      release.resolve();
+      await consumed?.catch(() => undefined);
+      reads.mockRestore();
+      await reader.close();
+      await admitted.handle.close();
+    }
+  });
+
   it("retains descriptor ownership after cleanup fails and permits retry", async () => {
     const reader = new UnityFsArtifactReader(
       await fixture(buildUnityFs([{ path: "x", data: "bytes" }])),

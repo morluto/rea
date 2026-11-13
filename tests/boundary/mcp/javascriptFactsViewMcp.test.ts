@@ -38,10 +38,15 @@ const facts = async (
   source: unknown,
   view: unknown,
 ) => {
-  const wire = await harness.client.callTool({
-    name: "inspect_analysis_view",
-    arguments: { source, view },
-  });
+  const matches = (await harness.client.listTools()).tools.filter(
+    (tool) => tool.name === "inspect_analysis_view",
+  );
+  if (matches.length !== 1 || matches[0]?.outputSchema === undefined)
+    throw new Error("Expected one advertised analysis-view output schema");
+  const wire = await harness.client.callTool(
+    { name: "inspect_analysis_view", arguments: { source, view } },
+    { toolDefinition: matches[0] },
+  );
   expect(wire.isError).not.toBe(true);
   const evidence = parseEvidence(wire.structuredContent);
   const page = analysisViewResultSchema.parse(evidence.normalized_result);
@@ -137,7 +142,7 @@ it("pages selected real filesystem observations with shared identities and porta
     property_keys: ["bytes", "parse_status", "operation", "not_present"],
     limit: 64,
   };
-  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+  const { ajv, inputSchema } = await advertisedMcpToolSchemas(
     harness.client,
     "inspect_analysis_view",
   );
@@ -155,7 +160,6 @@ it("pages selected real filesystem observations with shared identities and porta
     error: { code: "invalid_request", category: "invalid_input" },
   });
   const full = await facts(harness, source, query);
-  expect(ajv.validate(outputSchema, full.wire.structuredContent)).toBe(true);
   const portable = await facts(
     harness,
     { kind: "inline", evidence: parent },
@@ -235,10 +239,7 @@ it("pages selected real filesystem observations with shared identities and porta
   expect(ajv.validate(inputSchema, { source, view: discoveryQuery })).toBe(
     true,
   );
-  const discovery = await facts(harness, source, discoveryQuery);
-  expect(ajv.validate(outputSchema, discovery.wire.structuredContent)).toBe(
-    true,
-  );
+  await facts(harness, source, discoveryQuery);
 });
 
 const evidenceWithMixedLocations = () => {

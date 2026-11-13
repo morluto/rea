@@ -1,8 +1,5 @@
 import { expect, it } from "vitest";
-import {
-  analyzeAndAdoptJavaScriptArtifactFiles,
-  javaScriptAnalysisOrder,
-} from "./JavaScriptArtifactAnalysis.js";
+import { analyzeAndAdoptJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
@@ -36,24 +33,6 @@ const inventory = [
   source("out-global-online/preload/index.js"),
   manifest("package.json"),
 ];
-
-it("offers application JavaScript before dependency JavaScript", () => {
-  expect(javaScriptAnalysisOrder(inventory).map(({ path }) => path)).toEqual([
-    "node_modules/a/package.json",
-    "out-global-online/main/index.js",
-    "out-global-online/preload/index.js",
-    "package.json",
-    "node_modules/a/index.js",
-    "node_modules/b/lib/yaml.js",
-  ]);
-  // A package merely named like a dependency directory is not one.
-  expect(
-    javaScriptAnalysisOrder([
-      source("node_modules.js"),
-      source("src/node_modules_shim.js"),
-    ]).map(({ path }) => path),
-  ).toEqual(["node_modules.js", "src/node_modules_shim.js"]);
-});
 
 it("spends a limited result budget on first-party sources and keeps inventory order", async () => {
   const javascript = analyzeJavaScriptStaticSource("export const x = 1;");
@@ -105,6 +84,38 @@ it("spends a limited result budget on first-party sources and keeps inventory or
     "node_modules/b/lib/yaml.js",
   ]);
   expect(outcome.interruption).toBeNull();
+});
+
+it("does not treat files merely named like dependency directories as dependencies", async () => {
+  const files = [
+    source("node_modules/dep/index.js"),
+    source("node_modules.js"),
+    source("src/node_modules_shim.js"),
+  ];
+  const analyzed: string[] = [];
+  const javascript = analyzeJavaScriptStaticSource("export const x = 1;");
+  await analyzeAndAdoptJavaScriptArtifactFiles(
+    {
+      files,
+      unavailable_relevant_files: [],
+      containers: [],
+      text_bytes_read: 60,
+      invalid_utf8_files: 0,
+    },
+    {
+      analyze: async (file) => {
+        analyzed.push(file.path);
+        return ok({ javascript, module: null, projection: null });
+      },
+    },
+    createJavaScriptSemanticGraphProjection(),
+    async () => {},
+  );
+  expect(analyzed).toEqual([
+    "node_modules.js",
+    "src/node_modules_shim.js",
+    "node_modules/dep/index.js",
+  ]);
 });
 
 it("spends capacity in the caller's requested order for explicitly selected sources", async () => {

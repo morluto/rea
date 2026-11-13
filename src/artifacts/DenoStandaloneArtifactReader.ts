@@ -1,5 +1,5 @@
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
-import { Readable, Transform, pipeline } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
@@ -27,6 +27,7 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
 import {
   denoFormatFailure,
@@ -146,6 +147,10 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
       this.#assertOpen(signal);
       if (stored.byteOffset === null || stored.declaredSize === null)
         throw denoFormatFailure("member has no physical byte range");
+      const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>
+        new ArtifactReaderFailure("cancelled", "Deno compile read cancelled", {
+          cause: reason,
+        });
       const source =
         stored.declaredSize === 0
           ? Readable.from([])
@@ -153,64 +158,16 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
               start: stored.byteOffset,
               end: stored.byteOffset + stored.declaredSize - 1,
               signal,
-              cancellationFailure: (reason) =>
-                new ArtifactReaderFailure(
-                  "cancelled",
-                  "Deno compile read cancelled",
-                  {
-                    cause: reason,
-                  },
-                ),
+              cancellationFailure,
             });
       const output = this.#memberStream(stored, signal);
-      output.on("error", () => undefined);
-      this.#streams.add(output);
-      let producerComplete = false;
-      const onAbort = (): void => {
-        // Active I/O and final validation own failure precedence. Buffered
-        // readable bytes remain owned after production finishes.
-        if (!producerComplete || output.destroyed) return;
-        output.destroy(
-          new ArtifactReaderFailure(
-            "cancelled",
-            "Deno compile read cancelled",
-            {
-              cause: signal?.reason,
-            },
-          ),
-        );
-      };
-      const retired = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          this.#streams.delete(output);
-          signal?.removeEventListener("abort", onAbort);
-          resolve();
-        });
+      ownArtifactStream(source, output, {
+        scope: this.#scope,
+        streams: this.#streams,
+        signal,
+        cancellationFailure,
+        label: "Deno compile",
       });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-      void this.#scope
-        .run(async () => {
-          // Writable completion can leave unread bytes buffered. Join both
-          // producer work and retirement before releasing the carrier.
-          await Promise.all([
-            new Promise<void>((resolve) => {
-              pipeline(source, output, () => {
-                producerComplete = true;
-                if (signal?.aborted) onAbort();
-                resolve();
-              });
-            }),
-            retired,
-          ]);
-        })
-        .catch((cause: unknown) =>
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error("Deno compile stream ownership failed", { cause }),
-          ),
-        );
       return output;
     });
   }

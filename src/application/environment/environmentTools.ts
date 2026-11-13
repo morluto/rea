@@ -231,7 +231,7 @@ const toolDescription = (
   `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}; ${describeResponses(tool, source.exchanges)}; ${describe?.(tool) ?? answers} [${describeList(tool.record_ordinals, tool.record_ordinals.length)}]; evidence ${source.evidenceId}`;
 
 /** Captured argument names longer than this are advertised under a short alias; the manifest keeps the name. */
-export const MAX_ARGUMENT_NAME_CHARS = 64;
+const MAX_ARGUMENT_NAME_CHARS = 64;
 
 const bodyDescription = (tool: EnvironmentManifestTool): string => {
   const properties = tool.body_shape?.properties;
@@ -377,7 +377,7 @@ function* environmentToolProperties(
 }
 
 /** Serialization reservation calibrated with 1500 fields and eight concurrent SDK discovery requests. */
-export const ENVIRONMENT_CATALOG_LIMIT_BYTES = 1024 * 1024;
+const ENVIRONMENT_CATALOG_LIMIT_BYTES = 1024 * 1024;
 const EMPTY_PROPERTY_BYTES =
   JSON.stringify({ type: "string", description: "" }).length + 4;
 const EMPTY_TOOL_BYTES = JSON.stringify({
@@ -530,10 +530,10 @@ export const environmentToolDefinitions = (
 export const REA_STATE_FORMAT = "rea-state/v1";
 
 /** The data-plane methods an environment served from a state answers. */
-export const STATE_OPERATIONS = ["data/reset", "data/add", "data/get"] as const;
+const STATE_OPERATIONS = ["data/reset", "data/add", "data/get"] as const;
 
 /** The intake declaration a state-served card carries: what `data/add` loads and `data/get` returns. */
-export const STATE_INTAKE_EXTENSION = {
+const STATE_INTAKE_EXTENSION = {
   uri: "urn:agentenv:intake/v1",
   description: `data/add replaces the whole environment state with one ${REA_STATE_FORMAT} document; data/get returns the current state in the same format.`,
   params: {

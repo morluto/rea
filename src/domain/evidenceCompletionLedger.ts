@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./digests.js";
 import {
   compareAsciiStrings,
   isSortedUniqueAscii,
