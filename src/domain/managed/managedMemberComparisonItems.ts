@@ -81,6 +81,7 @@ const methodDimensions = (
   rightFieldAccessesByCaller: FieldAccessesByCaller,
   leftAssembly: ManagedMemberInspection["assembly"],
   rightAssembly: ManagedMemberInspection["assembly"],
+  sameArtifact: boolean,
 ): {
   readonly dimensions: MethodItem["dimensions"];
   readonly bodyUnknown: boolean;
@@ -137,6 +138,7 @@ const methodDimensions = (
         right,
         leftCallEdgesByCaller.get(left.token) ?? [],
         rightCallEdgesByCaller.get(right.token) ?? [],
+        sameArtifact,
       )
     : { changed: false, unknown: false };
   const sameFieldShape =
@@ -147,6 +149,7 @@ const methodDimensions = (
         right,
         leftFieldAccessesByCaller.get(left.token) ?? [],
         rightFieldAccessesByCaller.get(right.token) ?? [],
+        sameArtifact,
       )
     : { changed: false, unknown: false };
   const sameExceptionShape =
@@ -294,6 +297,7 @@ const compareReferenceTargets = (
   kind: "field" | "method",
   leftTargets: readonly ReferenceTarget[],
   rightTargets: readonly ReferenceTarget[],
+  sameArtifact: boolean,
 ): { readonly changed: boolean; readonly unknown: boolean } => {
   const align = (method: Method, targets: readonly ReferenceTarget[]) => {
     const anchors = method.body.anchors.filter(
@@ -328,10 +332,20 @@ const compareReferenceTargets = (
     index < Math.max(a.aligned.length, b.aligned.length);
     index += 1
   ) {
-    const leftIdentity = a.aligned[index]?.identity;
-    const rightIdentity = b.aligned[index]?.identity;
-    if (leftIdentity == null || rightIdentity == null) unknown = true;
-    else if (leftIdentity !== rightIdentity) changed = true;
+    const leftTarget = a.aligned[index];
+    const rightTarget = b.aligned[index];
+    // The same token of the same authenticated artifact names the same row, so
+    // it needs no nominal identity; a TypeSpec owner has none to give.
+    if (
+      sameArtifact &&
+      leftTarget != null &&
+      rightTarget != null &&
+      leftTarget.token === rightTarget.token
+    )
+      continue;
+    if (leftTarget?.identity == null || rightTarget?.identity == null)
+      unknown = true;
+    else if (leftTarget.identity !== rightTarget.identity) changed = true;
   }
   return { changed, unknown };
 };
@@ -341,6 +355,7 @@ const compareFieldTargets = (
   right: Method,
   leftAccesses: readonly ManagedMemberInspection["field_accesses"][number][],
   rightAccesses: readonly ManagedMemberInspection["field_accesses"][number][],
+  sameArtifact: boolean,
 ) =>
   compareReferenceTargets(
     left,
@@ -358,6 +373,7 @@ const compareFieldTargets = (
       token: edge.field_token,
       identity: edge.target_identity_sha256,
     })),
+    sameArtifact,
   );
 
 const compareCallTargets = (
@@ -365,6 +381,7 @@ const compareCallTargets = (
   right: Method,
   leftEdges: readonly ManagedMemberInspection["call_edges"][number][],
   rightEdges: readonly ManagedMemberInspection["call_edges"][number][],
+  sameArtifact: boolean,
 ) =>
   compareReferenceTargets(
     left,
@@ -382,6 +399,7 @@ const compareCallTargets = (
       token: edge.target_token,
       identity: edge.target_identity_sha256,
     })),
+    sameArtifact,
   );
 
 const callShape = (anchors: Method["body"]["anchors"]): string =>
@@ -760,6 +778,7 @@ export const buildMethodItems = (
       context.rightFieldAccessesByCaller,
       context.leftAssembly,
       context.rightAssembly,
+      context.sameArtifact,
     );
     if (locals.changed && !observedDimensions.includes("metadata"))
       observedDimensions.push("metadata");
