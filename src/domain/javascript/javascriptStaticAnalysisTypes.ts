@@ -1,6 +1,5 @@
 import type { ElectronStaticFindings } from "./electronStaticAnalysisTypes.js";
 import type { JavaScriptRouteSourceFacts } from "./javascriptRouteFacts.js";
-import type { RequireResolveSearchPaths } from "./javascriptSemanticRequireOrigin.js";
 import type { JavaScriptStaticCoverage } from "./javascriptStaticCoverage.js";
 
 /** Token semantics shared by bundle producers and worker admission. */
@@ -30,6 +29,11 @@ export interface JavaScriptSourceRange {
   readonly start: JavaScriptSourcePoint;
   readonly end: JavaScriptSourcePoint;
 }
+
+export type RequireResolveSearchPaths =
+  | "source-file"
+  | "package-scope"
+  | "unknown";
 
 interface JavaScriptStaticReferenceState {
   /** Resolution discovers a target without loading or executing it. */

@@ -41,7 +41,10 @@ import type {
   JavaScriptFindingContext as FindingContext,
   JavaScriptReferenceInput as ReferenceInput,
 } from "./javascriptStaticAnalysisState.js";
-import { VITE_OUTPUT_DEPENDENCY_PREFIX } from "./javascriptStaticAnalysisTypes.js";
+import {
+  VITE_OUTPUT_DEPENDENCY_PREFIX,
+  type RequireResolveSearchPaths,
+} from "./javascriptStaticAnalysisTypes.js";
 import {
   resolveSemanticBindingState,
   semanticBindingLookupAt,
@@ -63,7 +66,6 @@ import {
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   requireResolveSearchBase,
-  type RequireResolveSearchPaths,
   semanticFactoryLoaderMemberAt,
   semanticRequireCallAt,
   semanticRequireLoaderAt,

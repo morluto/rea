@@ -12,6 +12,7 @@ import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
+import type { RequireResolveSearchPaths } from "./javascriptStaticAnalysisTypes.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
@@ -724,11 +725,6 @@ export interface JavaScriptRequireCallFact {
   /** A createRequire filename relative to the current source directory, when proven. */
   readonly sourceRelativePath?: string;
 }
-
-export type RequireResolveSearchPaths =
-  | "source-file"
-  | "package-scope"
-  | "unknown";
 
 /** Valid path arrays can leave disk lookup unknown while preserving package scope. */
 export const requireResolveSearchBase = (

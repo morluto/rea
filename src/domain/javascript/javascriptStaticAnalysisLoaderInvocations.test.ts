@@ -291,17 +291,24 @@ it.each([
   ]);
 });
 
-it("preserves builtin lookups independently of search options", () => {
-  const source = 'require.resolve("node:path", { paths: [] });';
+it.each([
+  ["empty paths", { paths: [] }],
+  ["non-array paths", { paths: 42 }],
+])("preserves builtin lookups with %s", (_name, options) => {
+  const source =
+    'require.resolve("node:path", ' + JSON.stringify(options) + ");";
   expect(
-    createRequire(import.meta.url).resolve("node:path", { paths: [] }),
+    Reflect.apply(createRequire(import.meta.url).resolve, undefined, [
+      "node:path",
+      options,
+    ]),
   ).toBe("node:path");
   const [reference] = analyzeCommonJsStaticFixture(source).references;
   expect(reference).toMatchObject({
     operation: "resolve",
     specifier: "node:path",
   });
-  expect(reference).not.toHaveProperty("resolution_base_path");
+  expect(reference).not.toHaveProperty("resolution_search_paths");
 });
 
 it.each(["require.resolve", "require.resolve?.", "require?.resolve"])(
