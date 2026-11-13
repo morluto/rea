@@ -2409,55 +2409,93 @@ it("rejects a string whose projected text charge exceeds the budget", async () =
   });
 });
 
-it("counts a completed set terminator against the value budget", async () => {
-  const report = await reportForPayload(
-    delphiForm(
-      delphiComponent("TForm1", "Form1", [
-        delphiProperty("Blob", delphiBinary(40000)),
-      ]),
-    ),
+const setBudgetReport = async (itemCount: number) => {
+  const report = await reportWithFormPrefix(0);
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
   );
-  const form = report.delphi_forms[0];
-  if (form === undefined) throw new Error("Missing form");
-  const root = form.root;
-  const name = label("Deep", root.location.offset + 13, form.code_page);
-  const valueOffset = name.location.offset + name.location.bytes + 1;
-  const items = Array.from({ length: 16384 }, (_, item) => ({
-    value_type: "vaSet",
-    marker_location: { offset: valueOffset + item * 2, bytes: 1 },
-    value: {
-      kind: "set" as const,
-      names: [],
-      terminated: true,
-      location: { offset: valueOffset + item * 2 + 1, bytes: 1 },
-    },
+  const resource = report.resources[index]!;
+  resource.code_page = 0;
+  const pages = codePageFields(0);
+  const itemsName = label("I", 8, pages.code_page);
+  const collectionOffset =
+    itemsName.location.offset + itemsName.location.bytes + 1;
+  const items = Array.from({ length: itemCount }, (_, item) => ({
+    position: null,
+    properties: [],
+    location: { offset: collectionOffset + item * 2, bytes: 2 },
   }));
-  const propertyEnd = valueOffset + items.length * 2 + 1;
-  report.delphi_forms = [
+  const collectionEnd = collectionOffset + itemCount * 2 + 1;
+  const properties: Record<string, unknown>[] = [
     {
-      ...form,
-      root: stoppedRoot(report, form, propertyEnd, {
-        properties: [
-          {
-            name,
-            value_type: "vaList",
-            value: {
-              kind: "list",
-              items,
-              terminated: true,
-              location: { offset: valueOffset, bytes: items.length * 2 + 1 },
-            },
-            location: {
-              offset: name.location.offset,
-              bytes: propertyEnd - name.location.offset,
-            },
-          },
-        ],
-        children: [],
-      }),
+      name: itemsName,
+      value_type: "vaCollection",
+      value: {
+        kind: "collection",
+        items,
+        terminated: true,
+        location: {
+          offset: collectionOffset,
+          bytes: collectionEnd - collectionOffset,
+        },
+      },
+      location: { offset: 8, bytes: collectionEnd - 8 },
     },
   ];
-  expect(await inspectReport(report)).toMatchObject({
+  let cursor = collectionEnd;
+  for (let set = 0; set < 4; set += 1) {
+    const name = label("S", cursor, pages.code_page);
+    const valueOffset = name.location.offset + name.location.bytes + 1;
+    properties.push({
+      name,
+      value_type: "vaSet",
+      value: {
+        kind: "set",
+        names: [],
+        terminated: true,
+        location: { offset: valueOffset, bytes: 1 },
+      },
+      location: {
+        offset: name.location.offset,
+        bytes: valueOffset + 1 - name.location.offset,
+      },
+    });
+    cursor = valueOffset + 1;
+  }
+  const rootEnd = cursor + 2;
+  resource.payload.location = { offset: 0, bytes: rootEnd };
+  report.artifact.bytes = rootEnd;
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: { offset: 0, bytes: 4 },
+      prefix: null,
+      ...pages,
+      root: {
+        location: { offset: 4, bytes: rootEnd - 4 },
+        flags: [],
+        child_position: null,
+        class_name: label("A", 4, pages.code_page),
+        component_name: label("B", 6, pages.code_page),
+        properties: properties as never,
+        children: [],
+        unknown: null,
+      },
+    },
+  ];
+  return report;
+};
+
+it("accepts a form at the value budget with set terminators charged", async () => {
+  expect(await inspectReport(await setBudgetReport(32759))).toMatchObject({
+    ok: true,
+  });
+});
+
+it("counts a completed set terminator against the value budget", async () => {
+  expect(await inspectReport(await setBudgetReport(32760))).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisOutputError" },
   });
