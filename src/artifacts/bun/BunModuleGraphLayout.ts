@@ -513,15 +513,14 @@ const machOClaims = async (
     if (!read.ok) break;
     const { command: cmd, offset, size } = read.value;
     if (cmd === LC_SEGMENT_64 || cmd === LC_SEGMENT)
-      claims.push(
-        ...segmentClaims(
-          commands.subarray(offset, offset + size),
-          littleEndian,
-          cmd === LC_SEGMENT_64,
-          imageOffset,
-          Math.min(fileSize, imageOffset + imageLimit),
-        ),
-      );
+      for (const claim of segmentClaims(
+        commands.subarray(offset, offset + size),
+        littleEndian,
+        cmd === LC_SEGMENT_64,
+        imageOffset,
+        Math.min(fileSize, imageOffset + imageLimit),
+      ))
+        claims.push(claim);
   }
   return claims;
 };
