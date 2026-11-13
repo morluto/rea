@@ -18,6 +18,21 @@ it.each([
     ["Current"],
   ],
   [
+    "overwritten Source in an inline spread",
+    '...{locationOffset:{line:1,column:1},body:"query Old { x }"},body:"query Current { x }"',
+    ["Current"],
+  ],
+  [
+    "unknown final body after an inline Source",
+    '...{locationOffset:{line:1,column:1},body:"query Old { x }"},...runtimeOptions',
+    [],
+  ],
+  [
+    "nested inline Sources with an unrelated nested Source",
+    '...{...{locationOffset:{line:1,column:1},body:"query Old { x }"},body:"query Middle { x }"},body:"query Current { x }",metadata:{locationOffset:{line:1,column:1},body:"query Independent { x }"}',
+    ["Current", "Independent"],
+  ],
+  [
     "unknown later body with an owned marker",
     'locationOffset:{line:1,column:1},body:"query Old { x }",...runtimeOptions',
     [],

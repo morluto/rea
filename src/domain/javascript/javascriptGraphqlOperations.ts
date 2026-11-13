@@ -24,15 +24,20 @@ import type {
  * earlier strings still belong to this object and must not become standalone
  * operation findings during the string scan.
  */
-const graphqlSourceBodyLiterals = (
+const graphqlSourceOwnership = (
   node: t.ObjectExpression,
-): readonly t.StringLiteral[] | undefined => {
+):
+  | {
+      readonly bodies: readonly t.StringLiteral[];
+      readonly objects: ReadonlySet<t.ObjectExpression>;
+    }
+  | undefined => {
   const bodies: t.StringLiteral[] = [];
   let hasLocationOffset = false;
   // Own marker presence and body literals through the same inline-spread walk.
   // Unknown spreads cannot remove a known own marker. Ordinary nested objects
   // and non-body strings remain independently scannable.
-  const visited = new WeakSet<t.ObjectExpression>();
+  const visited = new Set<t.ObjectExpression>();
   const pending = [node];
   while (pending.length > 0) {
     const current = pending.pop();
@@ -50,7 +55,9 @@ const graphqlSourceBodyLiterals = (
       }
     }
   }
-  return hasLocationOffset && bodies.length > 0 ? bodies : undefined;
+  return hasLocationOffset && bodies.length > 0
+    ? { bodies, objects: visited }
+    : undefined;
 };
 
 const GRAPHQL_OPERATION_TYPES: ReadonlySet<string> = new Set([
@@ -425,6 +432,7 @@ export const createJavaScriptGraphqlScan = (
   index: JavaScriptBindingIndex,
 ): JavaScriptRpcScan => {
   const bodies = new WeakSet<t.Node>();
+  const ownedSources = new WeakSet<t.ObjectExpression>();
   const copied = new WeakMap<t.ObjectExpression, Set<string>>();
   const copies: GraphqlSourceCopy[] = [];
   const sources: {
@@ -457,9 +465,14 @@ export const createJavaScriptGraphqlScan = (
           copies.push({ ...source, operations });
         }
       }
-      const owned = graphqlSourceBodyLiterals(node);
+      const owned = ownedSources.has(node)
+        ? undefined
+        : graphqlSourceOwnership(node);
       if (owned !== undefined) {
-        for (const body of owned) bodies.add(body);
+        for (const body of owned.bodies) bodies.add(body);
+        // The outer Source owns its inline spread objects too: they cannot
+        // later emit overwritten or unknown bodies as independent Sources.
+        for (const object of owned.objects) ownedSources.add(object);
         const body = semanticFinalObjectProperty(node, "body");
         const recovered = t.isStringLiteral(body)
           ? graphqlOperationFromText(body.value)

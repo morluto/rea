@@ -16,7 +16,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     // admitted source/AST limits. Duplicate properties are valid inert JS.
     const source = `const source = {
       locationOffset: { line: 1, column: 1 },
-      ...{${'body:"query Overwritten { x }",'.repeat(270_000)}},
+      ...{locationOffset: { line: 1, column: 1 },
+        ${'body:"query Overwritten { x }",'.repeat(270_000)}},
       body: "query Active { viewer { id } }",
       note: "query Unrelated { viewer { id } }",
     };`;
