@@ -199,8 +199,6 @@ export class OwnedMcpStdioTransport implements Transport {
     process?.stdout?.off("data", this.#read);
     process?.stdout?.off("error", this.#error);
     process?.stderr?.off("data", this.#countStderr);
-    if (this.settings.onStderr !== undefined)
-      process?.stderr?.off("data", this.settings.onStderr);
     process?.off("error", this.#error);
     process?.off("exit", this.#exit);
     process?.off("close", this.#outputClosed);
@@ -222,6 +220,10 @@ export class OwnedMcpStdioTransport implements Transport {
     input?.destroy();
     await inputClosed;
     input?.off("error", this.#error);
+    // Detach the stderr observer only after bounded cleanup and draining have
+    // settled, so shutdown diagnostics still reach the caller's report.
+    if (this.settings.onStderr !== undefined)
+      process?.stderr?.off("data", this.settings.onStderr);
     this.onclose?.();
     if (stopped?.status === "incomplete") {
       const failure = new ProviderCleanupError(

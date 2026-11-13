@@ -26,6 +26,7 @@ import {
 import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
 import { promptsForToolFamilies } from "./contracts/promptToolFamilyScope.js";
 import { err, ok } from "./domain/result.js";
+import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import {
   parseMcpStartupBudgets,
@@ -120,12 +121,18 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     Math.max(1, Math.ceil(deadline - performance.now())),
   );
   const stderr = captureStderr();
+  // The launcher merges its host base back under the explicit overrides, so the
+  // filtered environment must also be the base; otherwise an ambient target
+  // variable returns and the child opens the target the doctor promised to skip.
+  const targetFree = targetFreeEnvironment(options.environment);
   const transport = new DoctorStdioTransport(
     {
       command: options.command,
       arguments: [...options.args],
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-      env: targetFreeEnvironment(options.environment),
+      hostEnvironment: targetFree,
+      env: targetFree,
+      sweepTokenOwnedProcesses: true,
     },
     stderr.append,
   );
@@ -171,6 +178,9 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       // An interrupted connect can clear the client's transport reference
       // before its startup child is closed. The transport retains that child.
       await transport.close();
+      // The transport reports only after it proved the owned family is gone, so
+      // an earlier SDK close that merely left cleanup to this retry is resolved.
+      cleanupFailure = undefined;
     } catch (cause: unknown) {
       cleanupFailure = {
         cause:
@@ -192,7 +202,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
         {
           name: "cleanup",
           ok: false,
-          detail: `MCP stdio cleanup failed: ${errorMessage(cleanupFailure.cause)}`,
+          detail: cleanupFailureDetail(cleanupFailure.cause),
         },
       ],
     };
@@ -678,6 +688,19 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
+
+/** Keep the typed cleanup ownership facts a generic message would discard. */
+const cleanupFailureDetail = (cause: unknown): string => {
+  const detail = `MCP stdio cleanup failed: ${errorMessage(cause)}`;
+  if (!(cause instanceof AnalysisError) || !cause.cleanupIncomplete) return detail;
+  const resources = cause.cleanupResources;
+  if (resources.length === 0) return detail;
+  const reason =
+    isRecord(cause.diagnostics) && typeof cause.diagnostics.reason === "string"
+      ? ` (${cause.diagnostics.reason})`
+      : "";
+  return `${detail}${reason}; retained resources: ${resources.join(", ")}`;
+};
 
 /**
  * Name the applied doctor deadline when an owned abort or SDK request timeout
