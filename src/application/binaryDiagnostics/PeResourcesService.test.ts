@@ -9,6 +9,7 @@ import {
   RESOURCE_CODE_PAGES,
 } from "../../domain/native/delphiForm.js";
 import {
+  delphiBinary,
   delphiBytes,
   delphiComponent,
   delphiForm,
@@ -451,6 +452,7 @@ const formWithStringValue = async (
               code_page: valueCodePage,
               declared_bytes: 2,
               truncated: false,
+              decode_truncated: false,
               location,
             },
             location,
@@ -678,6 +680,7 @@ it("rejects a child position whose retained bytes disagree", async () => {
       ...codePageFields(resource.code_page),
       root: {
         ...validRoot(location),
+        flags: ["ffChildPos"],
         child_position: {
           kind: "integer",
           text: "1",
@@ -693,6 +696,68 @@ it("rejects a child position whose retained bytes disagree", async () => {
     ok: false,
     error: { _tag: "AnalysisOutputError" },
   });
+});
+
+it("rejects a child position without the ffChildPos flag", async () => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  const location = rootAfterSignature(resource.payload.location);
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signatureAt(resource.payload.location),
+      prefix: null,
+      ...codePageFields(resource.code_page),
+      root: {
+        ...validRoot(location),
+        child_position: {
+          kind: "integer",
+          text: "1",
+          bytes_hex: "01",
+          width: 8,
+          signed: true,
+          location,
+        },
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("publishes a complete value whose hex preview is capped", async () => {
+  const payload = delphiForm(
+    delphiComponent("TForm1", "Form1", [
+      delphiProperty("Blob", delphiBinary(129)),
+    ]),
+  );
+  const { bytes } = peResourceFixture(false, [
+    { type: 10, name: 7, language: 1033, payload },
+  ]);
+  const report = await parsePeResources(
+    bytes,
+    {
+      path: "/fixtures/example.exe",
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    },
+    inspectPeResourcesInputSchema.parse({ path: "/fixtures/example.exe" }),
+  );
+  expect(report.delphi_forms[0]?.root.unknown).toBeNull();
+  expect(report.delphi_forms[0]?.root.properties[0]?.value).toMatchObject({
+    kind: "binary",
+    declared_bytes: 129,
+    truncated: true,
+    decode_truncated: false,
+  });
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
 });
 
 it("rejects a property name range outside its owning property", async () => {

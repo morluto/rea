@@ -86,9 +86,20 @@ describe("Delphi form signature detection", () => {
     expect(decode(Buffer.from("Hello"))).toBeNull();
   });
 
-  it("does not search the whole payload for a signature", () => {
+  it("recognizes a signature at the probe-window boundary", () => {
     const payload = Buffer.concat([
-      Buffer.alloc(64, 0x20),
+      Buffer.alloc(16, 0x20),
+      form(component("TForm1", "Form1")),
+    ]);
+    expect(detectDelphiFormSignature(payload, 0, payload.length)).toMatchObject(
+      { prefix: { location: { offset: 0, bytes: 16 } } },
+    );
+    expect(decode(payload)?.root.class_name?.text).toBe("TForm1");
+  });
+
+  it("does not search beyond the 16-byte probe window", () => {
+    const payload = Buffer.concat([
+      Buffer.alloc(17, 0x20),
       Buffer.from("TPF0", "latin1"),
     ]);
     expect(detectDelphiFormSignature(payload, 0, payload.length)).toBeNull();
@@ -468,6 +479,7 @@ describe("Delphi form truncated length prefixes", () => {
       declared_bytes: 200,
       bytes_hex: "aabb",
       truncated: true,
+      decode_truncated: true,
     });
     expect(value.location).toMatchObject({ bytes: 6 });
   });
@@ -566,6 +578,7 @@ describe("Delphi form binary and container values", () => {
       kind: "binary",
       declared_bytes: 200,
       truncated: true,
+      decode_truncated: false,
     });
     const value = propertyOf(root, "Data").value;
     if (value.kind !== "binary") throw new Error("Expected binary");
@@ -792,6 +805,7 @@ describe("Delphi form retained-value budgets", () => {
       kind: "binary",
       declared_bytes: 3,
       truncated: true,
+      decode_truncated: true,
       bytes_hex: "",
     });
   });

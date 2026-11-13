@@ -247,7 +247,7 @@ const withinRange = (
 const valueHasStop = (value: DelphiFormValue): boolean => {
   if (value.kind === "unknown") return true;
   if (value.kind === "string" || value.kind === "binary")
-    return value.truncated;
+    return value.decode_truncated;
   if (value.kind === "list")
     return value.items.some((entry) => valueHasStop(entry.value));
   if (value.kind === "collection")
@@ -299,7 +299,8 @@ const insideLocations = (
     return false;
   if (
     object.child_position !== null &&
-    !positionMatches(object.child_position, object.location)
+    (!object.flags.includes("ffChildPos") ||
+      !positionMatches(object.child_position, object.location))
   )
     return false;
   return (

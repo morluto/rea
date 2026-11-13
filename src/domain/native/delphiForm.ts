@@ -81,6 +81,8 @@ export type DelphiFormValue =
       readonly code_page: string;
       readonly declared_bytes: number;
       readonly truncated: boolean;
+      /** True only when decoding stopped before the declared bytes completed. */
+      readonly decode_truncated: boolean;
       readonly location: DelphiFormRange;
     }
   | {
@@ -94,6 +96,8 @@ export type DelphiFormValue =
       readonly bytes_hex: string;
       readonly declared_bytes: number;
       readonly truncated: boolean;
+      /** True only when decoding stopped before the declared bytes completed. */
+      readonly decode_truncated: boolean;
       readonly location: DelphiFormRange;
     }
   | {
@@ -355,6 +359,7 @@ const valueSchemaOf = <V extends z.ZodType, C extends z.ZodType>(
       code_page: z.string(),
       declared_bytes: declaredStringBytes,
       truncated: z.boolean(),
+      decode_truncated: z.boolean(),
       location: rangeSchema,
     }),
     z.strictObject({
@@ -368,6 +373,7 @@ const valueSchemaOf = <V extends z.ZodType, C extends z.ZodType>(
       bytes_hex: hexSchema,
       declared_bytes: uint,
       truncated: z.boolean(),
+      decode_truncated: z.boolean(),
       location: rangeSchema,
     }),
     z.strictObject({

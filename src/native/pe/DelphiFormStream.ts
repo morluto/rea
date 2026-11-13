@@ -60,8 +60,11 @@ const FILER_FLAGS: readonly string[] = [
   "ffInline",
 ];
 
-/** Signatures are only searched in a small window so a match stays falsifiable. */
-const SIGNATURE_WINDOW_BYTES = 16;
+/**
+ * Signatures are probed only near the payload start so a match stays
+ * falsifiable; the limit is part of the reported limitations.
+ */
+const MAX_SIGNATURE_PREFIX_BYTES = 16;
 /** Hex projections are capped; the byte count is always reported in full. */
 const HEX_LIMIT_BYTES = 128;
 const MAX_OBJECTS = 1024;
@@ -87,6 +90,7 @@ export const DELPHI_FORM_LIMITATIONS: readonly string[] = [
   "Static TPF0 filer-stream decode over the located resource payload; class semantics, event-handler binding and runtime form state are not resolved.",
   'String bytes are decoded with the recorded code page and retained verbatim; a resource that declares no code page is decoded as windows-1252 and reported as code_page_source: "default".',
   "Undecodable value types and truncated streams are reported as explicit unknowns instead of failing the whole inventory.",
+  `A filer signature is recognized only within the first ${String(MAX_SIGNATURE_PREFIX_BYTES)} bytes of an RT_RCDATA payload; a longer prefix leaves the payload opaque.`,
 ];
 
 /** A read that leaves the payload, or exceeds a decode budget. */
@@ -238,7 +242,7 @@ export const detectDelphiFormSignature = (
   end: number,
 ): DelphiFormSignature | null => {
   const stop = Math.min(end, bytes.length);
-  const window = Math.min(stop, start + SIGNATURE_WINDOW_BYTES + 4);
+  const window = Math.min(stop, start + MAX_SIGNATURE_PREFIX_BYTES + 4);
   for (let at = start; at + 4 <= window; at++) {
     const text = bytes.toString("latin1", at, at + 4);
     if (text !== "TPF0" && text !== "TPF1") continue;
@@ -331,6 +335,7 @@ function readShortStringValue(
       code_page: codePage,
       declared_bytes: declared,
       truncated: true,
+      decode_truncated: true,
       location: range(at, stream.position),
     });
   }
@@ -342,6 +347,7 @@ function readShortStringValue(
     code_page: codePage,
     declared_bytes: declared,
     truncated: available < declared,
+    decode_truncated: available < declared,
     location: range(at, stream.position),
   };
   if (available < declared) throw new StoppedValue(STREAM_END_MESSAGE, value);
@@ -542,6 +548,7 @@ function readValue(
           code_page: page,
           declared_bytes: declared,
           truncated: true,
+          decode_truncated: true,
           location: range(at, stream.position),
         });
       }
@@ -554,6 +561,7 @@ function readValue(
         code_page: page,
         declared_bytes: declared,
         truncated: hex.truncated || available < declared,
+        decode_truncated: available < declared,
         location: range(at, stream.position),
       };
       if (available < declared)
@@ -576,6 +584,7 @@ function readValue(
           code_page: "utf-16le",
           declared_bytes: declared,
           truncated: true,
+          decode_truncated: true,
           location: range(at, stream.position),
         });
       }
@@ -588,6 +597,7 @@ function readValue(
         code_page: "utf-16le",
         declared_bytes: declared,
         truncated: hex.truncated || available < declared,
+        decode_truncated: available < declared,
         location: range(at, stream.position),
       };
       if (available < declared)
@@ -610,6 +620,7 @@ function readValue(
           bytes_hex: "",
           declared_bytes: declared,
           truncated: true,
+          decode_truncated: true,
           location: range(at, stream.position),
         });
       }
@@ -620,6 +631,7 @@ function readValue(
         ...hex,
         declared_bytes: declared,
         truncated: hex.truncated || available < declared,
+        decode_truncated: available < declared,
         location: range(at, stream.position),
       };
       if (available < declared)

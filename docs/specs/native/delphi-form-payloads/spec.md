@@ -15,8 +15,8 @@ alongside the existing resource inventory.
 
 ## Requirements
 
-- Decode RT_RCDATA payloads that begin with `TPF0` or `TPF1`, including any
-  byte prefix before the signature.
+- Decode RT_RCDATA payloads that carry `TPF0` or `TPF1` within the first 16
+  bytes, including the byte prefix before the signature.
 - Retain the signature, source range and prefix bytes; do not assign meaning to
   a prefix.
 - Decode the root component and recursively nested components with their filer
@@ -38,7 +38,8 @@ alongside the existing resource inventory.
   Stop at the first value that cannot be positioned instead of resynchronising
   on guessed bytes.
 - Preserve completed length prefixes when a string or binary payload is
-  truncated or a representation budget stops decoding.
+  truncated or a representation budget stops decoding. Keep a capped hex
+  preview distinct from a stopped decode.
 - Bound retained objects, properties, values, text, structural values and the
   complete result. Charge representation expansion before allocation and share
   the remaining PE metadata allowance with the form decoder.
