@@ -477,7 +477,12 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
       const text = pool.get(index);
       if (text === null || text === undefined)
         return err(formatError(`node comment index ${index} is invalid`));
-      return emit(`\n${"  ".repeat(depth)}<!-- ${sanitizeComment(text)} -->`);
+      // Indentation inserts whitespace text; suppress it inside mixed
+      // content so the parent's character data stays untouched.
+      const parent = stack.at(-1);
+      const lead =
+        parent !== undefined && parent.text ? "" : `\n${"  ".repeat(depth)}`;
+      return emit(`${lead}<!-- ${sanitizeComment(text)} -->`);
     };
 
     /** Optional names: the absent index yields an empty prefix/name. */
@@ -542,17 +547,16 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
         if (uri === ANDROID_NS_URI) return inferAndroidPrefix(forAttribute);
         // The xml: prefix is predefined and needs no declaration.
         if (uri === XML_NS_URI) return ok("xml:");
-        if (forAttribute) {
-          // An attribute in a URI-bound namespace needs a non-empty prefix;
-          // declare a synthesized binding on the current element.
-          const existing = synthAttrNs.get(uri);
-          if (existing !== undefined) return ok(`${existing}:`);
-          const prefix = `ns${++synthNsCount}`;
-          synthAttrNs.set(uri, prefix);
-          pendingNs.push({ prefix, uri });
-          return ok(`${prefix}:`);
-        }
-        return ok("");
+        // A name in a URI-bound namespace with no usable binding needs a
+        // synthesized prefix declared on the current element; attributes
+        // cannot use the default namespace and elements without one would
+        // lose their URI identity.
+        const existing = synthAttrNs.get(uri);
+        if (existing !== undefined) return ok(`${existing}:`);
+        const prefix = `ns${++synthNsCount}`;
+        synthAttrNs.set(uri, prefix);
+        pendingNs.push({ prefix, uri });
+        return ok(`${prefix}:`);
       }
       if (
         nameIndex < resourceMap.length &&
@@ -706,11 +710,11 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
         if (!flushed.ok) return flushed;
         const noted = emitNodeComment(base, stack.length);
         if (!noted.ok) return noted;
-        const elemPrefix = prefixFor(nsIndex, NO_INDEX);
-        if (!elemPrefix.ok) return elemPrefix;
         // Render attributes before the open tag so an inferred android:
         // prefix can still place its declaration inside the same tag.
         synthAttrNs.clear();
+        const elemPrefix = prefixFor(nsIndex, NO_INDEX);
+        if (!elemPrefix.ok) return elemPrefix;
         const attrTexts: string[] = [];
         const seenAttrs = new Set<string>();
         let attrBytes = 0;
@@ -762,8 +766,11 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
             );
           attrTexts.push(attrText);
         }
+        const parent = stack.at(-1);
         const indent =
-          stack.length === 0 ? "" : `\n${"  ".repeat(stack.length)}`;
+          parent === undefined || parent.text
+            ? ""
+            : `\n${"  ".repeat(stack.length)}`;
         const opened = emit(`${indent}<${elemPrefix.value}${nameResult.value}`);
         if (!opened.ok) return opened;
         for (const ns of pendingNs) {
@@ -815,7 +822,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
             open.text = true;
           }
           const wrote = emit(
-            `\n${"  ".repeat(stack.length + 1)}<!-- ${sanitizeComment(text)} -->`,
+            `${open.text ? "" : `\n${"  ".repeat(stack.length + 1)}`}<!-- ${sanitizeComment(text)} -->`,
           );
           if (!wrote.ok) return wrote;
         }

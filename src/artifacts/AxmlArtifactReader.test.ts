@@ -406,6 +406,32 @@ describe("axml attribute namespaces", () => {
     });
   });
 
+  it("synthesizes a prefix for an element in an unbound namespace", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "start", name: "e", ns: "urn:x" },
+      { kind: "end", name: "e" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const xml = await text(await reader.open((await list(reader))[0]!));
+      expect(xml).toContain('<ns1:e xmlns:ns1="urn:x"');
+    });
+  });
+
+  it("does not insert indentation into mixed content", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "start", name: "a" },
+      { kind: "cdata", text: "t" },
+      { kind: "start", name: "b" },
+      { kind: "end", name: "b" },
+      { kind: "end", name: "a" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const xml = await text(await reader.open((await list(reader))[0]!));
+      expect(xml).toContain("<a>t<b/></a>");
+      expect(xml).not.toContain("t\n");
+    });
+  });
+
   it("emits declared node comments at their event positions", async () => {
     const events: readonly AxmlEvent[] = [
       { kind: "start", name: "e", comment: "generated" },
