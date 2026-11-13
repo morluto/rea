@@ -121,17 +121,16 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     Math.max(1, Math.ceil(deadline - performance.now())),
   );
   const stderr = captureStderr();
-  // The launcher merges its host base back under the explicit overrides, so the
-  // filtered environment must also be the base; otherwise an ambient target
-  // variable returns and the child opens the target the doctor promised to skip.
-  const targetFree = targetFreeEnvironment(options.environment);
   const transport = new DoctorStdioTransport(
     {
       command: options.command,
       arguments: [...options.args],
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-      hostEnvironment: targetFree,
-      env: targetFree,
+      // The caller's environment is the child's complete base. The launcher
+      // would otherwise merge the ambient process environment, including the
+      // target selection the doctor removes.
+      hostEnvironment: targetFreeEnvironment(options.environment),
+      // A server can start its own providers in separate process groups.
       sweepTokenOwnedProcesses: true,
     },
     stderr.append,
@@ -169,28 +168,13 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     };
   } finally {
     clearTimeout(timer);
+    // The owned transport is the only cleanup owner; Client.close would only
+    // delegate to it. An interrupted connect can also clear the client's
+    // transport reference before its startup child is closed.
     try {
-      await client.close();
+      await transport.close();
     } catch (cause: unknown) {
       cleanupFailure = { cause };
-    }
-    try {
-      // An interrupted connect can clear the client's transport reference
-      // before its startup child is closed. The transport retains that child.
-      await transport.close();
-      // The transport reports only after it proved the owned family is gone, so
-      // an earlier SDK close that merely left cleanup to this retry is resolved.
-      cleanupFailure = undefined;
-    } catch (cause: unknown) {
-      cleanupFailure = {
-        cause:
-          cleanupFailure === undefined || cleanupFailure.cause === cause
-            ? cause
-            : new AggregateError(
-                [cleanupFailure.cause, cause],
-                `MCP client and transport cleanup failed: ${errorMessage(cleanupFailure.cause)}; ${errorMessage(cause)}`,
-              ),
-      };
     }
   }
   if (cleanupFailure !== undefined)
@@ -206,8 +190,8 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
         },
       ],
     };
-  // The owned transport bounds what it retains; this reporter keeps the exact
-  // prefix semantics the report promises, including a withheld partial character.
+  // This reporter keeps the documented stderr prefix, including a withheld
+  // partial character; the transport's own retention serves cleanup errors.
   return { ...result, diagnostics: stderr.value() };
 };
 
@@ -234,6 +218,7 @@ class DoctorStdioTransport extends OwnedMcpStdioTransport {
   ) {
     super(options, {
       provider: "mcp-doctor",
+      operation: "mcp_doctor",
       label: "MCP doctor",
       maxFrameBytes: 8 * 1024 * 1024,
       maxOperationBytes: 32 * 1024 * 1024,
@@ -689,17 +674,18 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-/** Keep the typed cleanup ownership facts a generic message would discard. */
+/** Report the transport's typed cleanup reason and the resources it retains. */
 const cleanupFailureDetail = (cause: unknown): string => {
   const detail = `MCP stdio cleanup failed: ${errorMessage(cause)}`;
-  if (!(cause instanceof AnalysisError) || !cause.cleanupIncomplete) return detail;
-  const resources = cause.cleanupResources;
-  if (resources.length === 0) return detail;
-  const reason =
-    isRecord(cause.diagnostics) && typeof cause.diagnostics.reason === "string"
-      ? ` (${cause.diagnostics.reason})`
-      : "";
-  return `${detail}${reason}; retained resources: ${resources.join(", ")}`;
+  if (!(cause instanceof AnalysisError) || !cause.cleanupIncomplete)
+    return detail;
+  const reason = cause.diagnostics?.reason;
+  return [
+    typeof reason === "string" ? `${detail} (${reason})` : detail,
+    ...(cause.cleanupResources.length === 0
+      ? []
+      : [`retained resources: ${cause.cleanupResources.join(", ")}`]),
+  ].join("; ");
 };
 
 /**

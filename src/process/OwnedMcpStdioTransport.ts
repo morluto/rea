@@ -59,6 +59,8 @@ export class OwnedMcpStdioTransport implements Transport {
     readonly options: Omit<OwnedProviderProcessSpawnOptions, "runId" | "stdin">,
     readonly settings: {
       readonly provider: string;
+      /** Operation named by cleanup failures; provider sessions keep close_binary. */
+      readonly operation?: string;
       readonly label: string;
       readonly maxFrameBytes: number;
       readonly maxOperationBytes: number;
@@ -233,6 +235,9 @@ export class OwnedMcpStdioTransport implements Transport {
           reason: stopped.reason,
           stderr: this.diagnostics()?.stderr ?? "",
         },
+        this.settings.operation === undefined
+          ? undefined
+          : { operation: this.settings.operation },
       );
       new AnalysisCleanupLeaseGroup(failure, [this.#cleanup]);
       throw failure;
