@@ -226,7 +226,7 @@ describe("SoC catalog selection", () => {
     );
 
     expect(report.detectedPlatforms.map((candidate) => candidate.platform)).toEqual(
-      ["esp32", "esp32c3"],
+      ["esp32", "esp32c3", "esp32c6"],
     );
     expect(
       report.detectedPlatforms.every(
@@ -237,7 +237,26 @@ describe("SoC catalog selection", () => {
     expect(
       report.peripheralBlocks.some((block) => block.socPeripheralName === "UART0"),
     ).toBe(false);
-    expect(report.limitations[0]).toContain("esp32, esp32c3");
+    expect(report.limitations[0]).toContain("esp32, esp32c3, esp32c6");
+  });
+
+  it("names the ESP32-C6 UART when no other catalog owns the window", () => {
+    const report = reconstructHardwareFromReferences(
+      [{ target_address: "0x60001000", read: true }],
+      "riscv",
+    );
+
+    expect(report.detectedPlatforms).toEqual([
+      {
+        platform: "esp32c6",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART1"],
+      },
+    ]);
+    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe("UART1");
+    expect(report.limitations).toEqual([]);
   });
 
   it("names the ESP32-C3 USB serial block when no other catalog owns it", () => {

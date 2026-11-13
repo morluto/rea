@@ -10,6 +10,7 @@ export const SOC_PLATFORMS = [
   "rp2040",
   "esp32",
   "esp32c3",
+  "esp32c6",
 ] as const;
 export type SocPlatform = (typeof SOC_PLATFORMS)[number];
 export const socPlatformSchema = z.enum(SOC_PLATFORMS);
@@ -1378,6 +1379,98 @@ const ESP32C3_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   },
 ];
 
+// ESP32-C6 bases from esp-idf soc/esp32c6/register/soc/reg_base.h.
+// A page already recorded for esp32 or esp32c3 is recorded here too, so that
+// address cannot select only one family. UART1, USB_SERIAL_JTAG, and LP_UART
+// use C6 bases those catalogs do not own. Chip id 0x000D is riscv.
+const ESP32C6_PERIPHERALS: readonly InternalPeripheralEntry[] = [
+  {
+    name: "UART0",
+    base: 0x60000000n,
+    size: 0x1000,
+    bus: "System",
+    description: "UART register block. DR_REG_UART_BASE",
+  },
+  {
+    name: "UART1",
+    base: 0x60001000n,
+    size: 0x1000,
+    bus: "System",
+    description: "UART1 register block. DR_REG_UART1_BASE",
+  },
+  {
+    name: "SPI0",
+    base: 0x60002000n,
+    size: 0x1000,
+    bus: "System",
+    description: "SPI0 register block. DR_REG_SPI0_BASE",
+  },
+  {
+    name: "SPI1",
+    base: 0x60003000n,
+    size: 0x1000,
+    bus: "System",
+    description: "SPI1 register block. DR_REG_SPI1_BASE",
+  },
+  {
+    name: "I2C",
+    base: 0x60004000n,
+    size: 0x1000,
+    bus: "System",
+    description: "I2C register block. DR_REG_I2C_EXT_BASE",
+  },
+  {
+    name: "TIMG0",
+    base: 0x60008000n,
+    size: 0x1000,
+    bus: "System",
+    description: "Timer group 0. DR_REG_TIMERGROUP0_BASE",
+  },
+  {
+    name: "TIMG1",
+    base: 0x60009000n,
+    size: 0x1000,
+    bus: "System",
+    description: "Timer group 1. DR_REG_TIMERGROUP1_BASE",
+  },
+  {
+    name: "USB_SERIAL_JTAG",
+    base: 0x6000f000n,
+    size: 0x1000,
+    bus: "System",
+    description: "USB serial JTAG. DR_REG_USB_SERIAL_JTAG_BASE",
+  },
+  {
+    name: "INTMTX",
+    base: 0x60010000n,
+    size: 0x1000,
+    bus: "System",
+    description: "Interrupt matrix. DR_REG_INTMTX_BASE",
+  },
+  {
+    name: "ETM",
+    base: 0x60013000n,
+    size: 0x1000,
+    bus: "System",
+    description: "Event task matrix. DR_REG_SOC_ETM_BASE",
+  },
+  {
+    name: "LP_UART",
+    base: 0x600b1400n,
+    size: 0x400,
+    bus: "System",
+    description:
+      "Low-power UART. DR_REG_LP_UART_BASE; the next header base is LP_I2C",
+  },
+  {
+    name: "TRACE",
+    base: 0x600c0000n,
+    size: 0x1000,
+    bus: "System",
+    description: "Trace register block. DR_REG_TRACE_BASE",
+  },
+];
+
 const PLATFORM_PERIPHERALS: Record<
   SocPlatform,
   readonly InternalPeripheralEntry[]
@@ -1389,6 +1482,7 @@ const PLATFORM_PERIPHERALS: Record<
   rp2040: RP2040_PERIPHERALS,
   esp32: ESP32_PERIPHERALS,
   esp32c3: ESP32C3_PERIPHERALS,
+  esp32c6: ESP32C6_PERIPHERALS,
 };
 
 /** CPU families whose memory maps can contain each catalog. */
@@ -1400,6 +1494,7 @@ const PLATFORM_CPU: Record<SocPlatform, readonly HardwareArchitecture[]> = {
   rp2040: ["arm", "cortex-m"],
   esp32: ["riscv"],
   esp32c3: ["riscv"],
+  esp32c6: ["riscv"],
 };
 
 const HEX_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{1,16}$/u;

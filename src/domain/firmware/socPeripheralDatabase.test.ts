@@ -165,52 +165,6 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
     expect(detectSocPlatform(["0x12345678", "0x87654321"])).toEqual([]);
   });
 
-  it("scores only addresses that hit a CPU-compatible catalog", () => {
-    const diluted = detectSocPlatform(
-      ["0x60000000", "0x20000040", "0x80001000"],
-      "riscv",
-    );
-    expect(diluted).toEqual([
-      {
-        platform: "esp32",
-        matchedCount: 1,
-        totalAddresses: 1,
-        confidence: 1,
-        matchedPeripherals: ["UART0"],
-      },
-      {
-        platform: "esp32c3",
-        matchedCount: 1,
-        totalAddresses: 1,
-        confidence: 1,
-        matchedPeripherals: ["UART0"],
-      },
-    ]);
-
-    expect(detectSocPlatform(["0x3ff40000"], "x86")).toEqual([]);
-    expect(detectSocPlatform(["0x40011000"], "arm64")).toEqual([]);
-    const sharedClock = detectSocPlatform(["0x40023800"], "arm");
-    const clockLeaders = sharedClock.filter(
-      (candidate) => candidate.matchedCount === sharedClock[0]?.matchedCount,
-    );
-    expect(clockLeaders).toEqual([
-      {
-        platform: "stm32f4",
-        matchedCount: 1,
-        totalAddresses: 1,
-        confidence: 1,
-        matchedPeripherals: ["RCC"],
-      },
-      {
-        platform: "gd32f4",
-        matchedCount: 1,
-        totalAddresses: 1,
-        confidence: 1,
-        matchedPeripherals: ["RCU"],
-      },
-    ]);
-  });
-
   it("does not let a shared STM32F4 window select only one family", () => {
     const tied = detectSocPlatform(
       ["0x40020000", "0x40023800", "0x40026000"],
@@ -274,6 +228,61 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
   });
 });
 
+describe("CPU-compatible catalog scoring", () => {
+  it("scores only addresses that hit a CPU-compatible catalog", () => {
+    const diluted = detectSocPlatform(
+      ["0x60000000", "0x20000040", "0x80001000"],
+      "riscv",
+    );
+    expect(diluted).toEqual([
+      {
+        platform: "esp32",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART0"],
+      },
+      {
+        platform: "esp32c3",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART0"],
+      },
+      {
+        platform: "esp32c6",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART0"],
+      },
+    ]);
+
+    expect(detectSocPlatform(["0x3ff40000"], "x86")).toEqual([]);
+    expect(detectSocPlatform(["0x40011000"], "arm64")).toEqual([]);
+    const sharedClock = detectSocPlatform(["0x40023800"], "arm");
+    const clockLeaders = sharedClock.filter(
+      (candidate) => candidate.matchedCount === sharedClock[0]?.matchedCount,
+    );
+    expect(clockLeaders).toEqual([
+      {
+        platform: "stm32f4",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["RCC"],
+      },
+      {
+        platform: "gd32f4",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["RCU"],
+      },
+    ]);
+  });
+});
+
 describe("RP2040 peripheral windows", () => {
   it("names blocks that sit outside the STM32 and GD32 windows", () => {
     expect(lookupSocPeripheral("0x40034000", "rp2040")).toMatchObject({
@@ -318,6 +327,7 @@ describe("ESP32-C3 peripheral windows", () => {
     expect(leaders.map((candidate) => candidate.platform)).toEqual([
       "esp32",
       "esp32c3",
+      "esp32c6",
     ]);
     expect(detectSocPlatform(["0x60043000"], "riscv")).toEqual([
       {
@@ -329,5 +339,48 @@ describe("ESP32-C3 peripheral windows", () => {
       },
     ]);
     expect(detectSocPlatform(["0x60043000"], "arm")).toEqual([]);
+  });
+});
+
+describe("ESP32-C6 peripheral windows", () => {
+  it("keeps a shared page from selecting only one family", () => {
+    expect(lookupSocPeripheral("0x60002000", "esp32")?.name).toBe("SPI1");
+    expect(lookupSocPeripheral("0x60002000", "esp32c3")?.name).toBe("SPI1");
+    expect(lookupSocPeripheral("0x60002000", "esp32c6")?.name).toBe("SPI0");
+    expect(lookupSocPeripheral("0x60010000", "esp32c3")?.name).toBe("UART1");
+    expect(lookupSocPeripheral("0x60010000", "esp32c6")?.name).toBe("INTMTX");
+    expect(lookupSocPeripheral("0x600c0000", "esp32c3")?.name).toBe("SYSTEM");
+    expect(lookupSocPeripheral("0x600c0000", "esp32c6")?.name).toBe("TRACE");
+    expect(detectSocPlatform(["0x60002000"], "riscv").map((candidate) => candidate.platform)).toEqual([
+      "esp32",
+      "esp32c3",
+      "esp32c6",
+    ]);
+    expect(detectSocPlatform(["0x60010000"], "riscv").map((candidate) => candidate.platform)).toEqual([
+      "esp32c3",
+      "esp32c6",
+    ]);
+  });
+
+  it("lets a C6-only window select that family", () => {
+    expect(lookupSocPeripheral("0x60001000", "esp32")).toBeNull();
+    expect(lookupSocPeripheral("0x60001000", "esp32c3")).toBeNull();
+    expect(lookupSocPeripheral("0x60001000", "esp32c6")?.name).toBe("UART1");
+    expect(lookupSocPeripheral("0x6000f000", "esp32c3")).toBeNull();
+    expect(lookupSocPeripheral("0x6000f000", "esp32c6")?.name).toBe(
+      "USB_SERIAL_JTAG",
+    );
+    expect(lookupSocPeripheral("0x600b1400", "esp32c6")?.name).toBe("LP_UART");
+    expect(lookupSocPeripheral("0x600b1400", "esp32c6")?.sizeBytes).toBe(0x400);
+    expect(detectSocPlatform(["0x60001000"], "riscv")).toEqual([
+      {
+        platform: "esp32c6",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART1"],
+      },
+    ]);
+    expect(detectSocPlatform(["0x6000f000"], "arm")).toEqual([]);
   });
 });
