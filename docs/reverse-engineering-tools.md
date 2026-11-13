@@ -279,12 +279,12 @@ Copy the extracted `package/bridge/cutter/rea_bridge.py` into the `python`
 subdirectory of Cutter's plugin directory, then restart Cutter. Cutter shows that
 directory and the loaded plugins under Edit > Preferences > Plugins. When no
 session in the bridge directory answers, `list_cutter_sessions` reports
-`no_live_bridge_found` with a limitation that names the possible causes. When
-some sessions answer and other published sessions do not, it lists the answering
-sessions with a limitation that counts the others. If Cutter lists the plugin as
-loaded but discovery still finds no session, check that the bridge directory is
-writable and has free space: the bridge does not log a failure to publish its
-session.
+`no_live_bridge_found` with a limitation that names the possible causes. Whether
+or not a session answers, it also counts session descriptors it could not read
+and published sessions that did not answer, because neither is listed. If Cutter
+lists the plugin as loaded but discovery still finds no session, check that the
+bridge directory is writable and has free space: the bridge does not log a
+failure to publish its session.
 
 Official Cutter 2.5.0 builds have been observed to reject Python plugins at
 startup: Cutter's own sample plugin in the Linux AppImage, and this bridge and a

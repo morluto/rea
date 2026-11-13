@@ -246,7 +246,10 @@ it("returns the matching session when the other ceiling descriptor is stale", as
   await writeDescriptor(directory, other, await closedPort(), TOKEN);
   const client = clientFor(directory, "8192");
   // The stale session's failed probe stays visible beside the found session.
-  const limitations = cutterDiscoveryLimitations("sessions_found", 1);
+  const limitations = cutterDiscoveryLimitations("sessions_found", {
+    unreadable: 0,
+    unanswered: 1,
+  });
   expect(limitations).not.toEqual([]);
   await expect(client.listSessions()).resolves.toMatchObject({
     discovery_status: "sessions_found",

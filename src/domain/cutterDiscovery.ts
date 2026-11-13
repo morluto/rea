@@ -31,30 +31,51 @@ export const cutterDiscoverySchema = z.strictObject({
   limitations: z.array(z.string()),
 });
 
+/** Session descriptors in bridge_directory that discovery examined but could not list. */
+export type CutterUnlistedDescriptors = {
+  /** Descriptor files that could not be read as a bridge session. */
+  readonly unreadable: number;
+  /** Readable descriptors whose session did not return a valid status. */
+  readonly unanswered: number;
+};
+
 /**
- * An unanswered discovery cannot name its cause, so the limitation lists the
- * possible ones: nothing published (including a bridge that could not write its
- * descriptor), or a published session whose status probe failed, and the
- * observed Cutter 2.5.0 plugin rejection.
+ * When no session answers, discovery cannot tell why no live session was
+ * published, so the limitation lists the possible causes and the observed
+ * Cutter 2.5.0 plugin rejection. Descriptors that were published but could not
+ * be listed are counted separately.
  */
 const NO_LIVE_BRIDGE_LIMITATION =
-  "No REA bridge session in bridge_directory answered. Discovery cannot tell whether Cutter is not running, did not load the REA Python plugin, loaded it but could not publish a session (for example, an unwritable or full bridge directory), uses another REA_CUTTER_BRIDGE_DIR, or published a session that did not return a valid status (stale after Cutter exited, unresponsive, or an incompatible bridge version). Cutter's startup log shows whether the plugin loaded; the bridge does not log a publication failure. Official Cutter 2.5.0 builds have been observed to reject Python plugins, including this one (rizinorg/cutter#3659).";
+  "No REA bridge session in bridge_directory answered. Discovery cannot tell whether Cutter is not running, did not load the REA Python plugin, loaded it but could not publish a session (for example, an unwritable or full bridge directory), or uses another REA_CUTTER_BRIDGE_DIR. Cutter's startup log shows whether the plugin loaded; the bridge does not log a publication failure. Official Cutter 2.5.0 builds have been observed to reject Python plugins, including this one (rizinorg/cutter#3659).";
+
+const unlistedLimitations = ({
+  unreadable,
+  unanswered,
+}: CutterUnlistedDescriptors): string[] => [
+  ...(unreadable === 0
+    ? []
+    : [
+        `${String(unreadable)} session ${unreadable === 1 ? "descriptor" : "descriptors"} in bridge_directory could not be read (not a private regular file, unreadable, oversized, malformed, or not matching its file name), so ${unreadable === 1 ? "its session is" : "their sessions are"} not listed.`,
+      ]),
+  ...(unanswered === 0
+    ? []
+    : [
+        `${String(unanswered)} published ${unanswered === 1 ? "session" : "sessions"} in bridge_directory did not return a valid status (stale after Cutter exited, unresponsive, or an incompatible bridge version) and ${unanswered === 1 ? "is" : "are"} not listed.`,
+      ]),
+];
 
 /**
  * Limitations owned by each discovery status. A found session does not make
- * discovery complete: published sessions whose status probe failed stay
- * unlisted, and their count remains visible.
+ * discovery complete: descriptors that could not be read or whose status probe
+ * failed stay unlisted, and their counts remain visible.
  */
 export const cutterDiscoveryLimitations = (
   status: z.infer<typeof cutterDiscoverySchema>["discovery_status"],
-  unansweredSessions = 0,
+  unlisted: CutterUnlistedDescriptors = { unreadable: 0, unanswered: 0 },
 ): string[] => {
-  if (status === "no_live_bridge_found") return [NO_LIVE_BRIDGE_LIMITATION];
-  if (status !== "sessions_found" || unansweredSessions === 0) return [];
-  const sessions = unansweredSessions === 1 ? "session" : "sessions";
-  return [
-    `${String(unansweredSessions)} other published ${sessions} in bridge_directory did not return a valid status (stale after Cutter exited, unresponsive, or an incompatible bridge version) and ${unansweredSessions === 1 ? "is" : "are"} not listed.`,
-  ];
+  if (status === "no_live_bridge_found")
+    return [NO_LIVE_BRIDGE_LIMITATION, ...unlistedLimitations(unlisted)];
+  return status === "sessions_found" ? unlistedLimitations(unlisted) : [];
 };
 
 export type CutterBridgeSession = z.infer<typeof cutterSessionSchema>;

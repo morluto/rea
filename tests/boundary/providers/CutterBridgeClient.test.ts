@@ -17,7 +17,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
@@ -571,10 +571,15 @@ describe("CutterBridgeClient: scenario group 2", () => {
     expect(
       (await client.listDescriptors()).map(({ session_id }) => session_id),
     ).toEqual([sessionId]);
+    // Each skipped candidate stays counted by the reason it was not listed.
     const result = await client.listSessions();
     expect(result).toMatchObject({
       discovery_status: "no_live_bridge_found",
       sessions: [],
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found", {
+        unreadable: 3,
+        unanswered: 1,
+      }),
     });
   });
 
@@ -591,14 +596,54 @@ describe("CutterBridgeClient: scenario group 2", () => {
       "synthetic-cutter-bridge-token-for-test",
     );
     // A published session whose status probe fails is a no-live discovery
-    // and carries the same limitation as an empty bridge directory.
+    // that counts the unanswered session.
     await expect(
       createClient({ REA_CUTTER_BRIDGE_DIR: directory }).listSessions(),
     ).resolves.toMatchObject({
       discovery_status: "no_live_bridge_found",
       sessions: [],
-      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found", {
+        unreadable: 0,
+        unanswered: 1,
+      }),
     });
+  });
+});
+
+it("counts unreadable descriptors beside a found session", async () => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "rea-cutter-unreadable-sibling-"),
+  );
+  onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+  const token = "synthetic-cutter-bridge-token-for-test";
+  const server = statusServer(token, "/tmp/sample.bin", 4);
+  onTestFinished(
+    () => new Promise<void>((resolve) => server.close(() => resolve())),
+  );
+  await writeDescriptor(directory, sessionId, await listen(server), token);
+  const sibling = (id: string): string =>
+    join(directory, `cutter-${process.pid}-${id}.json`);
+  await writeFile(sibling("11111111-1111-1111-1111-111111111111"), "{", {
+    mode: 0o600,
+  });
+  // A valid descriptor under another session's file name fails identity.
+  await writeFile(
+    sibling("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+    await readFile(sibling(sessionId)),
+    { mode: 0o600 },
+  );
+  const limitations = cutterDiscoveryLimitations("sessions_found", {
+    unreadable: 2,
+    unanswered: 0,
+  });
+  expect(limitations).not.toEqual([]);
+  await expect(
+    createClient({ REA_CUTTER_BRIDGE_DIR: directory }).listSessions(),
+  ).resolves.toMatchObject({
+    discovery_status: "sessions_found",
+    sessions: [{ session_id: sessionId }],
+    limitations,
   });
 });
 
