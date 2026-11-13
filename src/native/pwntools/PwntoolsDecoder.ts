@@ -78,7 +78,7 @@ import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
 
 /** Names the detected host so a host refusal is not read as a target refusal. */
-export const pwntoolsHostRequirement = (
+const pwntoolsHostRequirement = (
   platform: NodeJS.Platform,
   arch: string,
 ): string =>
@@ -651,7 +651,8 @@ export class PwntoolsDecoder<
               }),
         );
       }
-    } catch (cause: unknown) {
+    } catch (caught: unknown) {
+      let cause = caught;
       if (replyFinalization !== undefined && cause !== replyFinalization) {
         const primary = failure(cause);
         cause = replyFinalization.cleanupIncomplete

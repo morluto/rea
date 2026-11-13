@@ -24,7 +24,6 @@ import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemantic
 import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
 import {
   semanticStaticPropertyKey,
-  semanticStaticPropertyName,
   isNullishJavaScriptSyntax,
   staticObjectProperty,
   staticObjectPropertyNames,

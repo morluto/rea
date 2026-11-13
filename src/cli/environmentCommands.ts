@@ -376,7 +376,7 @@ const inspectBuildHar = async (
     inspected.value,
     ENVIRONMENT_BUILD_OPERATION,
   );
-  return file.ok ? ok(file.value) : err(cliError(file.error));
+  return file.ok ? file : err(cliError(file.error));
 };
 
 /** Read the capture once, then build or plan the bundle from it. */

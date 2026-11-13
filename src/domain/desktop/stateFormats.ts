@@ -392,7 +392,7 @@ const jsonView = (
       rounded = true;
     return value;
   });
-  if (!parsed.ok) return err(parsed.error);
+  if (!parsed.ok) return parsed;
   if (rounded)
     return err(
       "a number in it cannot be read exactly, such as an integer above 2^53",

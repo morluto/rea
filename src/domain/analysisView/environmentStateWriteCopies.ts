@@ -1,7 +1,7 @@
+import { jsonPointerTokens } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   ownMember,
-  pointerTokens,
   scalarText,
   type JsonObject,
   type StateEntity,
@@ -49,7 +49,7 @@ export const storedMembers = (
     rules.flatMap((rule) => {
       if (rule.rule === "echo") return [rule.field];
       if (rule.rule === "reference") return [rule.member];
-      const tokens = rule.rule === "copy" ? pointerTokens(rule.from) : [];
+      const tokens = rule.rule === "copy" ? jsonPointerTokens(rule.from) : [];
       // A member also stored otherwise under its own name is not stored as sent.
       return tokens.length === 1 && !Object.hasOwn(entity, tokens[0]!)
         ? tokens
