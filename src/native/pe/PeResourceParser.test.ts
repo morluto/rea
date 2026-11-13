@@ -460,6 +460,29 @@ describe("Delphi form resource code pages", () => {
       });
     },
   );
+
+  it("keeps ISO-8859-9 byte-preserving because the host aliases it", async () => {
+    const payload = delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty(
+          "Caption",
+          Buffer.concat([delphiBytes(6, 2, 0x80, 0x91)]),
+        ),
+      ]),
+    );
+    const result = peResourcesSchema.parse(
+      await parse(formFixture(28599, payload).bytes),
+    );
+    expect(result.delphi_forms[0]).toMatchObject({
+      code_page: "latin1",
+      code_page_source: "unsupported",
+      declared_code_page: 28599,
+    });
+    expect(result.delphi_forms[0]?.root.properties[0]?.value).toMatchObject({
+      kind: "string",
+      text: "\u0080\u0091",
+    });
+  });
 });
 
 describe("inventory-only PE resource projections", () => {

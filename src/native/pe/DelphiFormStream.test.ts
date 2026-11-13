@@ -504,6 +504,47 @@ describe("Delphi form truncated length prefixes", () => {
       truncated: true,
     });
   });
+
+  it("keeps a completed short-string length when the payload is truncated", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Caption", bytes(6, 10, 0x41, 0x42)),
+      ]),
+    );
+    expect(
+      propertyOf(rootOf(payload.subarray(0, payload.length - 2)), "Caption")
+        .value,
+    ).toMatchObject({
+      kind: "string",
+      text: "AB",
+      bytes_hex: "4142",
+      declared_bytes: 10,
+      truncated: true,
+    });
+  });
+
+  it("keeps a completed short-string length when the text budget stops decoding", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_(
+          "Caption",
+          Buffer.concat([bytes(6, 255), Buffer.alloc(255, 0x41)]),
+        ),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_text_bytes: 1000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      declared_bytes: 255,
+      truncated: true,
+      bytes_hex: "",
+      text: "",
+    });
+  });
 });
 
 describe("Delphi form binary and container values", () => {
@@ -519,67 +560,6 @@ describe("Delphi form binary and container values", () => {
     const value = propertyOf(root, "Data").value;
     if (value.kind !== "binary") throw new Error("Expected binary");
     expect(value.bytes_hex).toHaveLength(256);
-  });
-
-  it("keeps the declared string length when the decode budget is exhausted", () => {
-    const payload = form(
-      component("TForm1", "Form1", [
-        property_("Caption", lString("a".repeat(100_000))),
-      ]),
-    );
-    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
-      max_text_bytes: 1000,
-    });
-    const root = decoded?.root;
-    if (root === null || root === undefined) throw new Error("Missing root");
-    expect(propertyOf(root, "Caption").value).toMatchObject({
-      kind: "string",
-      code_page: "windows-1252",
-      declared_bytes: 100_000,
-      truncated: true,
-      bytes_hex: "",
-      text: "",
-    });
-  });
-
-  it("keeps the declared wide-string length when the decode budget is exhausted", () => {
-    const payload = form(
-      component("TForm1", "Form1", [
-        property_("Caption", wideString("a".repeat(100_000))),
-      ]),
-    );
-    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
-      max_text_bytes: 1000,
-    });
-    const root = decoded?.root;
-    if (root === null || root === undefined) throw new Error("Missing root");
-    expect(propertyOf(root, "Caption").value).toMatchObject({
-      kind: "string",
-      code_page: "utf-16le",
-      declared_bytes: 200_000,
-      truncated: true,
-      bytes_hex: "",
-      text: "",
-    });
-  });
-
-  it("keeps the declared binary length when the decode budget is exhausted", () => {
-    const payload = form(
-      component("TForm1", "Form1", [
-        property_("Data", bytes(10, 3, 0, 0, 0, 1, 2, 3)),
-      ]),
-    );
-    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
-      max_text_bytes: 1000,
-    });
-    const root = decoded?.root;
-    if (root === null || root === undefined) throw new Error("Missing root");
-    expect(propertyOf(root, "Data").value).toMatchObject({
-      kind: "binary",
-      declared_bytes: 3,
-      truncated: true,
-      bytes_hex: "",
-    });
   });
 
   it("decodes lists, sets and collections", () => {
@@ -657,6 +637,90 @@ describe("Delphi form binary and container values", () => {
     );
     expect(propertyOf(root, "Empty").value.kind).toBe("null");
     expect(propertyOf(root, "Pointer").value.kind).toBe("nil");
+  });
+});
+
+describe("Delphi form retained-value budgets", () => {
+  it("keeps the declared string length when the decode budget is exhausted", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Caption", lString("a".repeat(100_000))),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_text_bytes: 1000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      code_page: "windows-1252",
+      declared_bytes: 100_000,
+      truncated: true,
+      bytes_hex: "",
+      text: "",
+    });
+  });
+
+  it("keeps the declared wide-string length when the decode budget is exhausted", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Caption", wideString("a".repeat(100_000))),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_text_bytes: 1000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      code_page: "utf-16le",
+      declared_bytes: 200_000,
+      truncated: true,
+      bytes_hex: "",
+      text: "",
+    });
+  });
+
+  it("keeps the declared binary length when the decode budget is exhausted", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Data", bytes(10, 3, 0, 0, 0, 1, 2, 3)),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_text_bytes: 1000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(propertyOf(root, "Data").value).toMatchObject({
+      kind: "binary",
+      declared_bytes: 3,
+      truncated: true,
+      bytes_hex: "",
+    });
+  });
+
+  it("charges structural values against the retained-byte budget", () => {
+    const items = Buffer.concat(Array.from({ length: 1000 }, () => bytes(8)));
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Flags", Buffer.concat([bytes(1), items, bytes(0)])),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_bytes: 2000,
+      max_text_bytes: 1_000_000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(root.unknown?.reason).toContain("value budget exhausted");
+    const value = propertyOf(root, "Flags").value;
+    expect(value.kind).toBe("list");
+    if (value.kind !== "list") throw new Error("Expected a list");
+    expect(value.items.length).toBeGreaterThan(0);
+    expect(value.items.length).toBeLessThan(1000);
   });
 });
 

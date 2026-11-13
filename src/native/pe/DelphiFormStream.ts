@@ -94,6 +94,12 @@ const MAX_PROPERTIES = 8192;
 const MAX_VALUES = 32768;
 /** Bounds decoded text before allocation; matches the 8 MiB result budget. */
 const MAX_TEXT_BYTES = 8 * 1024 * 1024;
+/** Bounds retained structural values before allocation. */
+const MAX_RETAINED_BYTES = 8 * 1024 * 1024;
+const VALUE_BYTES = 96;
+const OBJECT_BYTES = 192;
+const PROPERTY_BYTES = 160;
+const ITEM_BYTES = 96;
 /** Bounds recursion so a deeply nested value cannot exhaust the call stack. */
 const MAX_DEPTH = 32;
 
@@ -278,12 +284,21 @@ interface Budget {
   properties: number;
   values: number;
   text: number;
+  bytes: number;
 }
+
+/** Charge a retained value or container before allocating it. */
+const spendBytes = (budget: Budget, projectedBytes: number): void => {
+  budget.bytes -= projectedBytes;
+  if (budget.bytes < 0)
+    throw new StreamEnd("Decoded value budget exhausted for this payload.");
+};
 
 /** Charge retained text and its hex/JSON projection before decoding it. */
 const spendText = (budget: Budget, projectedBytes: number): void => {
   budget.text -= projectedBytes;
-  if (budget.text < 0)
+  budget.bytes -= projectedBytes;
+  if (budget.text < 0 || budget.bytes < 0)
     throw new StreamEnd("Decoded string budget exhausted for this payload.");
 };
 
@@ -311,6 +326,43 @@ function readShortString(
     code_page: codePage,
     location: range(at, stream.position),
   };
+}
+
+/** A `vaString` keeps its completed length when the value cannot be decoded. */
+function readShortStringValue(
+  stream: Stream,
+  codePage: string,
+  budget: Budget,
+  at: number,
+): DelphiFormValue {
+  const declared = stream.byte();
+  const available = Math.min(declared, stream.remaining);
+  try {
+    spendText(budget, declared * 10 + 256);
+  } catch (error) {
+    if (!(error instanceof StreamEnd)) throw error;
+    throw new StoppedValue(error.message, {
+      kind: "string",
+      text: "",
+      bytes_hex: "",
+      code_page: codePage,
+      declared_bytes: declared,
+      truncated: true,
+      location: range(at, stream.position),
+    });
+  }
+  const raw = stream.take(available);
+  const value: DelphiFormValue = {
+    kind: "string",
+    text: decodeText(raw, codePage),
+    bytes_hex: raw.toString("hex"),
+    code_page: codePage,
+    declared_bytes: declared,
+    truncated: available < declared,
+    location: range(at, stream.position),
+  };
+  if (available < declared) throw new StoppedValue(STREAM_END_MESSAGE, value);
+  return value;
 }
 
 function readInteger(stream: Stream, width: 8 | 16 | 32 | 64): string {
@@ -441,6 +493,7 @@ function readValue(
   depth: number,
 ): DelphiFormValue {
   spend(budget, "values");
+  spendBytes(budget, VALUE_BYTES);
   const at = stream.position;
   // Nested lists and collections recurse; bound the depth before the call
   // stack does, so a crafted payload reports an unknown instead of failing.
@@ -464,24 +517,15 @@ function readValue(
     case 9:
       return { kind: "boolean", value: true, location: marker };
     case 6:
+      return readShortStringValue(stream, codePage, budget, at);
     case 7: {
       const text = readShortString(stream, codePage, budget);
-      return ordinal === 6
-        ? {
-            kind: "string",
-            text: text.text,
-            bytes_hex: text.bytes_hex,
-            code_page: codePage,
-            declared_bytes: text.location.bytes - 1,
-            truncated: false,
-            location: text.location,
-          }
-        : {
-            kind: "identifier",
-            text: text.text,
-            bytes_hex: text.bytes_hex,
-            location: text.location,
-          };
+      return {
+        kind: "identifier",
+        text: text.text,
+        bytes_hex: text.bytes_hex,
+        location: text.location,
+      };
     }
     case 12:
     case 20: {
@@ -671,6 +715,7 @@ function readValue(
         // before it instead of collapsing the property to one unknown.
         try {
           spend(budget, "values");
+          spendBytes(budget, ITEM_BYTES);
         } catch (error) {
           if (!(error instanceof StreamEnd)) throw error;
           stop(error.message);
@@ -717,6 +762,7 @@ function readValue(
           const propertyAt = stream.position;
           try {
             spend(budget, "properties");
+            spendBytes(budget, PROPERTY_BYTES);
           } catch (error) {
             if (!(error instanceof StreamEnd)) throw error;
             // The item was opened; keep it with the properties decoded so far
@@ -823,6 +869,7 @@ function readObject(
   depth: number,
 ): DelphiFormObject {
   spend(budget, "objects");
+  spendBytes(budget, OBJECT_BYTES);
   // Nested components recurse like values, so bound them before the call stack.
   if (depth > MAX_DEPTH)
     throw new StreamEnd(
@@ -887,6 +934,7 @@ function readObject(
       if (stream.peek() === 0) break;
       const propertyAt = stream.position;
       spend(budget, "properties");
+      spendBytes(budget, PROPERTY_BYTES);
       const name = readShortString(stream, codePage, budget);
       // The type marker can itself be truncated after a complete name; the
       // partial-property path below must still retain the observed name.
@@ -992,6 +1040,7 @@ export const decodeDelphiFormStream = (
   options: {
     readonly code_page?: string;
     readonly max_text_bytes?: number;
+    readonly max_bytes?: number;
   } = {},
 ): DelphiFormDecode | null => {
   if (start < 0 || end > bytes.length || end <= start) return null;
@@ -1005,6 +1054,10 @@ export const decodeDelphiFormStream = (
     text: Math.min(
       MAX_TEXT_BYTES,
       Math.max(0, options.max_text_bytes ?? MAX_TEXT_BYTES),
+    ),
+    bytes: Math.min(
+      MAX_RETAINED_BYTES,
+      Math.max(0, options.max_bytes ?? MAX_RETAINED_BYTES),
     ),
   };
   const stream = new Stream(

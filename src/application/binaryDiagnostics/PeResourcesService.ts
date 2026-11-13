@@ -281,12 +281,70 @@ const valuePageMatchesType = (
   return valueType === "vaUTF8String" && label === "utf-8";
 };
 
+const valueMatchesType = (
+  valueType: string,
+  value: DelphiFormValue,
+  codePage: string,
+): boolean => {
+  if (value.kind === "unknown") return true;
+  switch (valueType) {
+    case "vaNull":
+      return value.kind === "null";
+    case "vaNil":
+      return value.kind === "nil";
+    case "vaFalse":
+    case "vaTrue":
+      return (
+        value.kind === "boolean" && value.value === (valueType === "vaTrue")
+      );
+    case "vaInt8":
+      return value.kind === "integer" && value.width === 8 && value.signed;
+    case "vaInt16":
+      return value.kind === "integer" && value.width === 16 && value.signed;
+    case "vaInt32":
+      return value.kind === "integer" && value.width === 32 && value.signed;
+    case "vaInt64":
+      return value.kind === "integer" && value.width === 64 && value.signed;
+    case "vaQWord":
+      return value.kind === "integer" && value.width === 64 && !value.signed;
+    case "vaExtended":
+    case "vaSingle":
+    case "vaCurrency":
+    case "vaDate":
+    case "vaDouble":
+      return value.kind === "float";
+    case "vaString":
+    case "vaLString":
+    case "vaWString":
+    case "vaUTF8String":
+    case "vaUString":
+      return (
+        value.kind === "string" &&
+        valuePageMatchesType(valueType, value.code_page, codePage)
+      );
+    case "vaIdent":
+      return value.kind === "identifier";
+    case "vaBinary":
+      return value.kind === "binary";
+    case "vaList":
+      return value.kind === "list";
+    case "vaSet":
+      return value.kind === "set";
+    case "vaCollection":
+      return value.kind === "collection";
+    default:
+      return false;
+  }
+};
+
 const insideValue = (
   value: DelphiFormValue,
   within: (range: { offset: number; bytes: number }) => boolean,
   codePage: string,
   valueType: string | null = null,
 ): boolean => {
+  if (valueType !== null && !valueMatchesType(valueType, value, codePage))
+    return false;
   if (value.kind === "string")
     return (
       within(value.location) &&

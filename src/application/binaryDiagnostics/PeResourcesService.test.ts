@@ -477,6 +477,52 @@ it("accepts explicit UTF-8 form text on a non-UTF-8 resource page", async () => 
   ).toMatchObject({ ok: true });
 });
 
+it("rejects a property whose value type contradicts its decoded value", async () => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  const pages = codePageFields(resource.code_page);
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signatureAt(resource.payload.location),
+      prefix: null,
+      ...pages,
+      root: {
+        ...validRoot(rootAfterSignature(resource.payload.location)),
+        properties: [
+          {
+            name: {
+              text: "Tag",
+              bytes_hex: "54",
+              code_page: pages.code_page,
+              location: resource.payload.location,
+            },
+            value_type: "vaInt32",
+            value: {
+              kind: "boolean",
+              value: true,
+              location: resource.payload.location,
+            },
+            location: resource.payload.location,
+          },
+        ],
+      },
+    },
+  ];
+  const service = new PeResourcesService({
+    identity: PE_RESOURCES_PROVIDER,
+    inspect: () => Promise.resolve(ok(report)),
+  });
+  expect(
+    await service.inspect({ path: "/fixtures/example.exe" }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+});
+
 it("rejects a signature-bearing form without a root", async () => {
   const report = await observedReport();
   const index = report.resources.findIndex(

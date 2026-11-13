@@ -458,6 +458,7 @@ const readDelphiForms = (
     const decoded = decodeDelphiFormStream(bytes, offset, offset + size, {
       ...(declared === undefined ? {} : { code_page: declared }),
       max_text_bytes: Math.max(0, remainingCapacity() - 1024),
+      max_bytes: Math.max(0, remainingCapacity() - 1024),
     });
     if (decoded === null) continue;
     const form: DelphiFormResource = {
