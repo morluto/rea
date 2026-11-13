@@ -12,7 +12,7 @@ describe("raw-binary Ghidra language binding", () => {
       defaultAddressSpace: "ram",
     });
   });
-  it("maps the four admitted families to little-endian generic languages", () => {
+  it("maps admitted little-endian families, including Cortex-M", () => {
     expect(ghidraRawBinaryLanguage("x86")).toEqual({
       languageId: "x86:LE:32:default",
       compilerSpecId: "gcc",
@@ -30,6 +30,11 @@ describe("raw-binary Ghidra language binding", () => {
     });
     expect(ghidraRawBinaryLanguage("arm64")).toEqual({
       languageId: "AARCH64:LE:64:v8A",
+      compilerSpecId: "default",
+      defaultAddressSpace: "ram",
+    });
+    expect(ghidraRawBinaryLanguage("cortex-m")).toEqual({
+      languageId: "ARM:LE:32:Cortex",
       compilerSpecId: "default",
       defaultAddressSpace: "ram",
     });
@@ -167,6 +172,11 @@ describe("raw-binary mapped-block state", () => {
           }),
         ]),
       },
+    });
+    expect(ghidraRawBinaryLanguage("cortex-m")).toEqual({
+      languageId: "ARM:LE:32:Cortex",
+      compilerSpecId: "default",
+      defaultAddressSpace: "ram",
     });
   });
 });

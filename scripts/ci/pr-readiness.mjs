@@ -158,6 +158,80 @@ export function evaluateReadiness(pull, template) {
   );
 }
 
+const PULL_RECORD_QUERY = `query ReadinessPullRecord($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      state
+      isDraft
+      body
+      baseRefName
+      headRefOid
+      author { __typename ... on User { databaseId } }
+    }
+  }
+}`;
+
+const diffTooLarge = (cause) =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "status" in cause &&
+  cause.status === 422 &&
+  "response" in cause &&
+  typeof cause.response === "object" &&
+  cause.response !== null &&
+  "data" in cause.response &&
+  typeof cause.response.data === "object" &&
+  cause.response.data !== null &&
+  "message" in cause.response.data &&
+  cause.response.data.message ===
+    "The request could not be processed because too many files changed";
+
+const pullFromRecord = (record) => {
+  const state =
+    record?.state === "OPEN"
+      ? "open"
+      : record?.state === "CLOSED" || record?.state === "MERGED"
+        ? "closed"
+        : undefined;
+  const author = record?.author;
+  const id =
+    author?.__typename === "User" && Number.isSafeInteger(author.databaseId)
+      ? author.databaseId
+      : undefined;
+  if (
+    state === undefined ||
+    typeof record?.isDraft !== "boolean" ||
+    (typeof record.body !== "string" && record.body !== null) ||
+    typeof record.baseRefName !== "string" ||
+    typeof record.headRefOid !== "string"
+  )
+    throw new Error("GitHub returned an incomplete pull request record.");
+  return {
+    state,
+    draft: record.isDraft,
+    body: record.body,
+    base: { ref: record.baseRefName },
+    head: { sha: record.headRefOid },
+    user: id === undefined ? null : { id },
+  };
+};
+
+/** Read the PR fields this check uses. A diff that GitHub refuses is not required. */
+async function readPull(github, repository, number) {
+  try {
+    return (await github.rest.pulls.get({ ...repository, pull_number: number }))
+      .data;
+  } catch (cause) {
+    if (!diffTooLarge(cause)) throw cause;
+    const response = await github.graphql(PULL_RECORD_QUERY, {
+      owner: repository.owner,
+      name: repository.repo,
+      number,
+    });
+    return pullFromRecord(response?.repository?.pullRequest);
+  }
+}
+
 /** Publish readiness on the PR head without running contributor code. */
 export async function runReadinessCheck({ github, context, core }) {
   const number =
@@ -166,8 +240,7 @@ export async function runReadinessCheck({ github, context, core }) {
   if (!Number.isSafeInteger(number) || number <= 0)
     throw new Error("A positive pull request number is required.");
   const repository = context.repo;
-  const getPull = async () =>
-    (await github.rest.pulls.get({ ...repository, pull_number: number })).data;
+  const getPull = () => readPull(github, repository, number);
   const pull = await getPull();
   if (pull.state !== "open" || !/^(?:main|release\/.+)$/u.test(pull.base.ref))
     return;

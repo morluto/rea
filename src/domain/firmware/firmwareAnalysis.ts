@@ -223,3 +223,6 @@ export const firmwareResultSchemas = {
     published_bytes: bytes,
   }),
 } as const;
+
+export * from "./hardwareMemoryMap.js";
+export * from "./hardwarePeripheralAttribution.js";

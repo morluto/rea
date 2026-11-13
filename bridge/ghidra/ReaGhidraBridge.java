@@ -1410,6 +1410,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return item;
     }
 
+    /** MIPS uses ISA_MODE. ARM, including Cortex-M, uses TMode. Other languages have no mode register here. */
+    static String processorContextRegister(String languageId) {
+        if (languageId.startsWith("MIPS:")) return "ISA_MODE";
+        if (languageId.startsWith("ARM:")) return "TMode";
+        return null;
+    }
+
     private JsonObject inspectNativeInstruction(JsonObject params, boolean includeIncoming) throws Exception {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
@@ -1421,11 +1428,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("procedure", function == null ? JsonNull.INSTANCE : GSON.toJsonTree(canonicalAddress(function.getEntryPoint())));
         result.addProperty("architecture", currentProgram.getLanguageID().getIdAsString());
         result.addProperty("mode", currentProgram.getLanguage().getLanguageDescription().getVariant());
-        if (currentProgram.getLanguageID().getIdAsString().startsWith("MIPS:") ||
-            currentProgram.getLanguageID().getIdAsString().startsWith("ARM:")) {
+        String processorRegister = processorContextRegister(
+            currentProgram.getLanguageID().getIdAsString());
+        if (processorRegister != null) {
             JsonArray decoderContext = new JsonArray();
-            String regName = currentProgram.getLanguageID().getIdAsString().startsWith("MIPS:") ? "ISA_MODE" : "TMode";
-            var modeRegister = currentProgram.getRegister(regName);
+            var modeRegister = currentProgram.getRegister(processorRegister);
             if (modeRegister != null) {
                 var modeValue = currentProgram.getProgramContext().getValue(modeRegister, address, false);
                 JsonObject context = new JsonObject();

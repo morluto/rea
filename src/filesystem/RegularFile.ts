@@ -263,6 +263,30 @@ const isUnopenableFileTypeError = (cause: unknown): boolean =>
   typeof cause.errno === "number" &&
   UNOPENABLE_FILE_TYPE_ERRNOS.has(cause.errno);
 
+const deviceIdentity = (value: number | bigint): bigint =>
+  typeof value === "bigint" ? value : BigInt(value);
+
+const windowsDeviceUnreported = (value: bigint): boolean =>
+  process.platform === "win32" && value === 0n;
+
+/**
+ * Volume identity. Windows path stat uses 0 when it did not report a volume.
+ * An unreported device matches nothing, including another unreported device.
+ */
+export const sameDeviceIdentity = (
+  expected: number | bigint,
+  observed: number | bigint,
+): boolean => {
+  const expectedDevice = deviceIdentity(expected);
+  const observedDevice = deviceIdentity(observed);
+  if (
+    windowsDeviceUnreported(expectedDevice) ||
+    windowsDeviceUnreported(observedDevice)
+  )
+    return false;
+  return expectedDevice === observedDevice;
+};
+
 /** Stable content identity; access times are deliberately excluded. */
 export type RegularFileState = Pick<
   Stats,
@@ -278,21 +302,34 @@ export const regularFileState = (stats: Stats): RegularFileState => ({
   ctimeMs: stats.ctimeMs,
 });
 
-/** Compare one regular file's identity and mutable metadata across a read. */
+/**
+ * Compare one regular file's metadata across a read. A Windows path stat that
+ * omits the volume does not by itself show that the file was replaced. Ownership
+ * checks use sameDeviceIdentity and an open handle instead.
+ */
 export const sameRegularFileState = (
   expected: RegularFileState | BigIntStats,
   observed: Stats | BigIntStats,
-): boolean =>
-  observed.isFile() &&
-  expected.dev === observed.dev &&
-  expected.ino === observed.ino &&
-  expected.size === observed.size &&
-  expected.mode === observed.mode &&
-  ("mtimeNs" in expected && "mtimeNs" in observed
-    ? expected.mtimeNs === observed.mtimeNs &&
-      expected.ctimeNs === observed.ctimeNs
-    : expected.mtimeMs === observed.mtimeMs &&
-      expected.ctimeMs === observed.ctimeMs);
+): boolean => {
+  const expectedDevice = deviceIdentity(expected.dev);
+  const observedDevice = deviceIdentity(observed.dev);
+  const deviceAgrees =
+    windowsDeviceUnreported(expectedDevice) ||
+    windowsDeviceUnreported(observedDevice) ||
+    expectedDevice === observedDevice;
+  return (
+    observed.isFile() &&
+    deviceAgrees &&
+    expected.ino === observed.ino &&
+    expected.size === observed.size &&
+    expected.mode === observed.mode &&
+    ("mtimeNs" in expected && "mtimeNs" in observed
+      ? expected.mtimeNs === observed.mtimeNs &&
+        expected.ctimeNs === observed.ctimeNs
+      : expected.mtimeMs === observed.mtimeMs &&
+        expected.ctimeMs === observed.ctimeMs)
+  );
+};
 
 /** Validate an admitted descriptor and selected name at the same precision as admission. */
 export const assertStableRegularFileIdentity = async (

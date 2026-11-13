@@ -1198,9 +1198,9 @@ require Hopper; Windows P0 remains read-only.
 
 Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs,
 [DOS MZ executables](../providers/ghidra-dos.md), plus explicitly
-selected [raw NMOS 6502 images](../providers/raw-binary.md#nmos-6502) with a caller-supplied
+selected [raw NMOS 6502 images](../providers/raw-binary.md#nmos-6502) and Cortex-M flash images with a caller-supplied
 entry at file offset 0, on fixed local NTFS/ReFS volumes. Other raw CPU families remain
-unsupported on Windows.
+unsupported on Windows. Raw-binary sessions stay read-only.
 The npm package bundles native Job Object ownership, protected private runtime
 DACLs, and handle-based path admission; no separate addon installation is needed.
 See the [Windows Ghidra P0 guide](../providers/windows-ghidra-p0.md) for verified scope and

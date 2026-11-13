@@ -128,7 +128,42 @@ describe("raw-binary admission", () => {
       }).ok,
     ).toBe(true);
   });
-  it.each(["arm", "arm64"])(
+});
+
+describe("Cortex-M and caller-input raw-binary admission", () => {
+  it("admits a Cortex-M image at a 4-byte-aligned vector-table base", () => {
+    expect(
+      admitRawBinary({
+        architecture: "cortex-m",
+        entryPoint: "0x08000000",
+        fileBytes: 8,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        architecture: "cortex-m",
+        entryPoint: "0x8000000",
+        entryPointSource: "0x08000000",
+      },
+    });
+  });
+  it("rejects a Cortex-M image that cannot hold the reset vector", () => {
+    expect(
+      admitRawBinary({
+        architecture: "cortex-m",
+        entryPoint: "0x08000000",
+        fileBytes: 4,
+      }),
+    ).toEqual({
+      ok: false,
+      error: {
+        reason:
+          "raw-binary cortex-m requires the 8-byte initial stack pointer and reset vector",
+        constraint: "file_format_rejected",
+      },
+    });
+  });
+  it.each(["arm", "arm64", "cortex-m"])(
     "rejects unaligned %s entries before provider selection",
     (architecture) => {
       for (const entryPoint of ["0x8000001", "0x8000002", "0x8000003"]) {

@@ -104,6 +104,10 @@ export const resolveHopperMachOImage = async (
         cause: options.signal.reason,
       }),
     );
+  if (target.architecture === "cortex-m")
+    return invalid(
+      "Hopper does not admit Cortex-M images. Select the Ghidra raw-binary profile.",
+    );
   if (target.format !== "mach-o" && target.format !== "mach-o-universal")
     return invalid("Hopper image preparation requires a Mach-O target");
   let opened: FileHandle;

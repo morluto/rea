@@ -14,6 +14,7 @@ export const BINARY_ARCHITECTURES = [
   "x86_64",
   "arm",
   "arm64",
+  "cortex-m",
   "6502",
   "m68k",
 ] as const satisfies readonly BinaryArchitecture[];
@@ -80,6 +81,7 @@ const addressWidth = (architecture: BinaryArchitecture): bigint =>
     ? 0xffffn
     : architecture === "x86" ||
         architecture === "arm" ||
+        architecture === "cortex-m" ||
         architecture === "m68k"
       ? 0xffffffffn
       : 0xffffffffffffffffn;
@@ -94,7 +96,7 @@ export const admitRawBinary = (input: {
   if (!architecture.success)
     return err({
       reason:
-        "raw-binary format requires architecture (x86, x86_64, arm, arm64, 6502, or m68k)",
+        "raw-binary format requires architecture (x86, x86_64, arm, arm64, cortex-m, 6502, or m68k)",
       constraint: "load_selection_rejected",
     });
   if (typeof input.entryPoint !== "string")
@@ -110,7 +112,9 @@ export const admitRawBinary = (input: {
       constraint: "load_selection_rejected",
     });
   if (
-    (architecture.data === "arm" || architecture.data === "arm64") &&
+    (architecture.data === "arm" ||
+      architecture.data === "arm64" ||
+      architecture.data === "cortex-m") &&
     entry.value.value % 4n !== 0n
   )
     return err({
@@ -127,6 +131,12 @@ export const admitRawBinary = (input: {
   if (!length.ok)
     return err({
       reason: length.error,
+      constraint: "file_format_rejected",
+    });
+  if (architecture.data === "cortex-m" && input.fileBytes < 8)
+    return err({
+      reason:
+        "raw-binary cortex-m requires the 8-byte initial stack pointer and reset vector",
       constraint: "file_format_rejected",
     });
   const last = entry.value.value + BigInt(input.fileBytes) - 1n;

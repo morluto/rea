@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { analysisSnapshotSchema } from "./analysisSnapshot.js";
-import { BINARY_ARCHITECTURES } from "./binaryTargetTypes.js";
+import {
+  BINARY_ARCHITECTURES,
+  RAW_ONLY_ARCHITECTURES,
+} from "./binaryTargetTypes.js";
 import { evidenceBundleSchema } from "./evidenceBundle.js";
 import { evidenceSchema } from "./evidence.js";
 import { evidenceSubjectFormatSchema } from "./evidenceSubject.js";
@@ -31,12 +34,14 @@ describe("persisted observation subject declarations", () => {
           path: "/tmp/fixture",
           sha256: digest,
         });
+        const rawOnly = (RAW_ONLY_ARCHITECTURES as readonly string[]).includes(
+          String(architecture),
+        );
         const allowed =
           architecture !== "unsupported" &&
           (format === "gamecube-dol"
             ? architecture === "powerpc"
-            : format === "raw-binary" ||
-              (architecture !== "6502" && architecture !== "m68k"));
+            : format === "raw-binary" || !rawOnly);
         expect(evidence.success, JSON.stringify(declaration)).toBe(allowed);
         expect(snapshot.success, JSON.stringify(declaration)).toBe(allowed);
         const manifest = evidenceBundleSchema.shape.artifacts.element.safeParse(
