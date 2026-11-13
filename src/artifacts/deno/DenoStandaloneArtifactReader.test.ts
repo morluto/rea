@@ -19,13 +19,13 @@ import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { ArtifactPathRegistry } from "../ArtifactPaths.js";
 import { DenoStandaloneArtifactReader } from "../DenoStandaloneArtifactReader.js";
 import { cArchiveExecutable } from "../pyinstaller/CArchive.fixture.js";
-import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 import {
   locateDenoStandalone,
   MAX_DENO_INTEL_TRAILER_SENTINELS,
 } from "./DenoStandaloneLocation.js";
 import {
   buildDenoSection,
+  DENO_FIXTURE_SECTION_MAGIC,
   defaultDenoMetadata,
   denoElf,
   denoIntelTrailer,
@@ -249,7 +249,7 @@ it("fails closed when a named section is truncated or lacks the opening marker",
   await expect(
     inventoryOf(
       "truncated",
-      denoMachO(Buffer.concat([DENO_SECTION_MAGIC, Buffer.alloc(4)])),
+      denoMachO(Buffer.concat([DENO_FIXTURE_SECTION_MAGIC, Buffer.alloc(4)])),
     ),
   ).rejects.toMatchObject({ reason: "format" });
   await expect(

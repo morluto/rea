@@ -1014,8 +1014,8 @@ const isInterfaceBuilderArchive = (path: string): boolean => {
 const readEntry = async (
   reader: DirectoryArtifactReader,
   entry: ArtifactEntry,
-  signal?: AbortSignal,
-  maxInputBytes = MAX_AGGREGATE_INPUT_BYTES,
+  signal: AbortSignal | undefined,
+  maxInputBytes: number,
 ): Promise<Buffer> => {
   if (entry.declaredSize !== null && entry.declaredSize > maxInputBytes)
     throw new InterfaceBuilderDecodeBudgetExceeded(

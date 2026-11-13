@@ -9,7 +9,6 @@ import {
 } from "./ProcessHarness.js";
 import {
   settleProcessCaptureJournal,
-  releaseProcessResources,
   ProcessCaptureResourceScope,
   createProcessCaptureObservationBuffer,
   prepareProcessCapture,
@@ -345,7 +344,7 @@ it("keeps empty cleanup exception messages actionable in the report", async () =
       throw new Error("");
     },
   };
-  const outcome = await releaseProcessResources({
+  const outcome = await new ProcessCaptureResourceScope().release({
     timers: new Set(),
     terminal: undefined,
     renderer: undefined,
@@ -451,7 +450,7 @@ it("retains unrelated withheld processes through cleanup, capture, and JSON", as
     }),
     removeTemporaryRoot: async () => undefined,
   };
-  const outcome = await releaseProcessResources({
+  const outcome = await new ProcessCaptureResourceScope().release({
     timers: new Set(),
     terminal: { pid: 321 },
     renderer: undefined,
@@ -506,7 +505,7 @@ it("passes sampled detached groups into cleanup even when their token is unknown
     removeTemporaryRoot: async () => undefined,
   };
 
-  const outcome = await releaseProcessResources({
+  const outcome = await new ProcessCaptureResourceScope().release({
     timers: new Set(),
     terminal: { pid: 321 },
     renderer: undefined,
