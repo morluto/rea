@@ -222,6 +222,22 @@ const mapDiscovery = async <Input, Output>(
 export interface CutterDiscoveryOptions {
   readonly signal?: AbortSignal;
 }
+/**
+ * Keep integer literals that a JavaScript number would round, such as the
+ * unsigned 64-bit addresses Rizin prints in decimal, as their exact digits.
+ */
+const exactIntegerText = (
+  _key: string,
+  value: unknown,
+  context?: { readonly source?: string },
+): unknown =>
+  typeof value === "number" &&
+  !Number.isSafeInteger(value) &&
+  context?.source !== undefined &&
+  /^-?(?:0|[1-9][0-9]*)$/u.test(context.source)
+    ? context.source
+    : value;
+
 export type CutterBridgeExecutionState =
   | "not_started"
   | "complete"
@@ -1152,7 +1168,10 @@ export class CutterBridgeClient {
             ]);
             if (!timingSafeEqual(expected, Buffer.from(frame.proof, "hex")))
               throw new Error("response proof failed");
-            const response: unknown = JSON.parse(frame.response);
+            const response: unknown = JSON.parse(
+              frame.response,
+              exactIntegerText,
+            );
             finish(() => resolve(response));
             return false;
           });

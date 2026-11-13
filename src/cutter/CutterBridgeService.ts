@@ -207,6 +207,11 @@ export class CutterBridgeService {
             "Document identity is partial: the bridge uses a plugin instance UUID and observed generation; a same-path tab switch or reload may not be distinguishable.",
             "Cutter command effects depend on the Rizin command and active plugins.",
             "The local IPC protocol is implemented by REA and is not an upstream Cutter API.",
+            ...(input.json
+              ? [
+                  "JSON integers beyond JavaScript's exact range (magnitude above 2^53 - 1), such as 64-bit addresses, are returned as decimal strings with their exact digits.",
+                ]
+              : []),
             ...(output.executionState === "unknown"
               ? [
                   "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",
