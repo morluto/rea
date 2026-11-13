@@ -1,5 +1,8 @@
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import {
+  parseEvidenceBundle,
+  createEvidenceBundle,
+} from "../../../src/domain/evidenceBundle.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -33,7 +36,6 @@ import {
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
-import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { REA_WORKFLOW_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { workflowAnalysisProfile } from "../../../src/application/WorkflowAnalysisProfile.js";
 import {

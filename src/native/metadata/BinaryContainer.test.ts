@@ -7,6 +7,7 @@ import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  UnrecognizedBinaryFailure,
   BinaryStringReadLimitFailure,
   createFileMappingIndex,
   mappedFileOffset,
@@ -214,15 +215,34 @@ it.each([
   },
 );
 
+it("types the refusal for bytes that match no native format, and only for those", () => {
+  const unknown = (() => {
+    try {
+      readBinaryContainer(Buffer.from("not a binary at all"));
+    } catch (cause) {
+      return cause;
+    }
+    throw new Error("expected a refusal");
+  })();
+  expect(unknown).toBeInstanceOf(UnrecognizedBinaryFailure);
+  expect(unknown).toMatchObject({ kind: "unsupported" });
+  // A zero-count FAT header is recognized, so its refusal is not this type.
+  const fat = Buffer.alloc(8);
+  fat.writeUInt32BE(0xcafebabe);
+  expect(() => readBinaryContainer(fat)).toThrow(BinaryFormatFailure);
+  try {
+    readBinaryContainer(fat);
+  } catch (cause) {
+    expect(cause).not.toBeInstanceOf(UnrecognizedBinaryFailure);
+  }
+});
+
 it("keeps a JVM-sized FAT count unconfirmed while rejecting malformed zero-count FAT", () => {
   const bytes = Buffer.alloc(8);
   bytes.writeUInt32BE(0xcafebabe);
   bytes.writeUInt32BE(0x0000003d, 4); // JVM major version 61; no FAT table follows.
   expect(() => readBinaryContainer(bytes)).toThrow(
-    new BinaryFormatFailure(
-      "unsupported",
-      "Only ELF, PE, and thin Mach-O native images are supported",
-    ),
+    new UnrecognizedBinaryFailure(),
   );
   bytes.writeUInt32BE(0, 4);
   expect(() => readBinaryContainer(bytes)).toThrow(

@@ -811,3 +811,326 @@ export const createGenericRegistrationImage = (
     metadataRegistration: address(registration),
   };
 };
+
+/** Linked rows by metadata method index in the wasm fixture: table slot and function index. */
+export const FIXTURE_WASM_METHODS = [
+  { table_index: 1, function_index: 10 },
+  { table_index: 2, function_index: 20 },
+  { table_index: 3, function_index: 30 },
+  { table_index: 4, function_index: 40 },
+  "no-body",
+] as const;
+
+const leb = (value: number): number[] => {
+  const out: number[] = [];
+  do {
+    let byte = value & 0x7f;
+    value = Math.floor(value / 128);
+    if (value > 0) byte |= 0x80;
+    out.push(byte);
+  } while (value > 0);
+  return out;
+};
+const sleb = (value: number): number[] => {
+  const out: number[] = [];
+  for (;;) {
+    const byte = value & 0x7f;
+    value >>= 7;
+    if ((value === 0 && !(byte & 0x40)) || (value === -1 && byte & 0x40)) {
+      out.push(byte);
+      return out;
+    }
+    out.push(byte | 0x80);
+  }
+};
+const wasmSection = (id: number, body: number[]) => [
+  id,
+  ...leb(body.length),
+  ...body,
+];
+
+/**
+ * Synthetic wasm32 module with the same registration tables as
+ * createIl2cppBinaryFixture, at 4-byte pointer width, as Unity WebGL
+ * (Emscripten) lays them out. Method pointers are funcref table slots that
+ * one element segment maps to distinct function indices. Initialized data is
+ * split into two segments with a zero gap inside mscorlib.dll's method
+ * pointer array, as a release build splits data at zero runs.
+ */
+export const createWasmFixture = (
+  /** Table slots the element segment fills, from slot 1; 4 fills all. */
+  filledSlots = 4,
+): Buffer => {
+  const memory = Buffer.alloc(SIZE);
+  const names = ["Assembly-CSharp.dll", "mscorlib.dll"];
+  const nameAt: number[] = [];
+  let cursor = STRINGS + 1;
+  for (const name of names) {
+    nameAt.push(cursor);
+    cursor += memory.write(`${name}\0`, cursor, "utf8") + 1;
+  }
+  // Slots indexed by token row id - 1, mirroring the native fixture order.
+  const tables = [
+    [2, 1, 3],
+    [4, 0],
+  ];
+  const tableAt: number[] = [];
+  let pointer = POINTERS;
+  for (const table of tables) {
+    tableAt.push(pointer);
+    for (const slot of table) {
+      memory.writeUInt32LE(slot, pointer);
+      pointer += 4;
+    }
+  }
+  const writeModule = (at: number, image: number, count: number) => {
+    memory.writeUInt32LE(nameAt[image]!, at);
+    memory.writeUInt32LE(count, at + 4);
+    memory.writeUInt32LE(tableAt[image]!, at + 8);
+  };
+  writeModule(MODULES, 0, 3);
+  writeModule(MODULES + 0x40, 1, 2);
+  memory.writeUInt32LE(MODULES, MODULE_ARRAY);
+  memory.writeUInt32LE(MODULES + 0x40, MODULE_ARRAY + 4);
+  memory.writeUInt32LE(2, REGISTRATION);
+  memory.writeUInt32LE(MODULE_ARRAY, REGISTRATION + 4);
+  const types: readonly [kind: number, data: number][] = [
+    [0x1d, TYPE_RECORDS + 8],
+    [0x15, GENERIC_CLASS],
+    [0x12, 3],
+    [0x08, 0],
+  ];
+  types.forEach(([kind, data], index) => {
+    const at = TYPE_RECORDS + index * 8;
+    memory.writeUInt32LE(data, at);
+    memory.writeUInt32LE(kind << 16, at + 4);
+    memory.writeUInt32LE(at, TYPE_POINTERS + index * 4);
+  });
+  memory.writeUInt32LE(TYPE_RECORDS + 16, GENERIC_CLASS);
+  memory.writeUInt32LE(GENERIC_INSTANCE, GENERIC_CLASS + 4);
+  memory.writeUInt32LE(1, GENERIC_INSTANCE);
+  memory.writeUInt32LE(GENERIC_ARGUMENTS, GENERIC_INSTANCE + 4);
+  memory.writeUInt32LE(TYPE_RECORDS + 24, GENERIC_ARGUMENTS);
+  const word = (slot: number, value: number) =>
+    memory.writeUInt32LE(value, METADATA_REGISTRATION + slot * 4);
+  word(6, types.length);
+  word(7, TYPE_POINTERS);
+  word(10, 4);
+  word(11, TYPE_POINTERS);
+  word(12, 4);
+  word(13, TYPE_POINTERS);
+  // mscorlib.dll's array is [4, 0] at 0x30c: the first segment ends after
+  // slot 4 and the second starts after the zero slot.
+  const split = tableAt[1]! + 4;
+  const segment = (from: number, to: number) => [
+    0,
+    0x41,
+    ...sleb(from),
+    0x0b,
+    ...leb(to - from),
+    ...memory.subarray(from, to),
+  ];
+  return Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    // One function type, () -> (), shared by every defined function.
+    ...wasmSection(1, [1, 0x60, 0, 0]),
+    // 41 defined functions, so the slots below name existing functions.
+    ...wasmSection(3, [41, ...Array<number>(41).fill(0)]),
+    // One funcref table with five initial slots.
+    ...wasmSection(4, [1, 0x70, 0, 5]),
+    ...wasmSection(5, [1, 0, 1]),
+    // Slots 1 to 4 name functions 10, 20, 30 and 40.
+    ...wasmSection(9, [
+      1,
+      0,
+      0x41,
+      1,
+      0x0b,
+      filledSlots,
+      ...[10, 20, 30, 40].slice(0, filledSlots),
+    ]),
+    // One empty body (no locals, end) per defined function.
+    ...wasmSection(10, [
+      41,
+      ...Array.from({ length: 41 }, () => [2, 0, 0x0b]).flat(),
+    ]),
+    ...wasmSection(11, [
+      2,
+      ...segment(STRINGS, split),
+      ...segment(split + 4, SIZE),
+    ]),
+  ]);
+};
+
+/** Method addresses of the 32-bit ARM fixture by metadata method index; all ARM state. */
+export const ARM_FIXTURE_METHOD_ADDRESSES = [
+  0x204n,
+  0x214n,
+  0x224n,
+  0x234n,
+  "no-body",
+] as const;
+
+export interface ArmElfFixtureOptions {
+  /** How pointer slots reach their link-time value: in place with DT_REL (default) or as DT_RELA addends. */
+  readonly relocations?: "rel" | "rela";
+  /** e_machine; 40 is ARM. */
+  readonly machine?: number;
+  /** Override DT_RELENT. */
+  readonly relEntry?: bigint;
+  /** Omit the CodeRegistration module count and array pointer. */
+  readonly codeRegistration?: boolean;
+  /** Override the first Assembly-CSharp method pointer (default 0x214). */
+  readonly firstCode?: number;
+  /** Store mscorlib's method as a Thumb pointer (bit 0 set). */
+  readonly thumb?: boolean;
+}
+
+/**
+ * The registration tables of createIl2cppBinaryFixture in a 32-bit
+ * little-endian ARM ELF shared object linked at 0, as an armeabi-v7a
+ * libil2cpp.so stores them: 4-byte pointers and pointer-sized MetadataRegistration
+ * words and slots holding their REL addends.
+ */
+export const createArmElfFixture = (
+  options: ArmElfFixtureOptions = {},
+): Buffer => {
+  const body = Buffer.alloc(SIZE);
+  const slots: number[] = [];
+  const pointer = (value: number, at: number) => {
+    body.writeUInt32LE(value, at);
+    slots.push(at);
+  };
+  const names = ["Assembly-CSharp.dll", "mscorlib.dll"];
+  const nameAt: number[] = [];
+  let cursor = STRINGS;
+  for (const name of names) {
+    cursor++;
+    nameAt.push(cursor);
+    cursor += body.write(`${name}\0`, cursor, "utf8");
+  }
+  // Slots are indexed by token row id - 1; 0x235 would be Thumb code at 0x234.
+  const tables = [
+    [options.firstCode ?? 0x214, 0x204, 0x224],
+    [options.thumb === true ? 0x235 : 0x234, null],
+  ];
+  const tableAt: number[] = [];
+  let slot = POINTERS;
+  for (const table of tables) {
+    tableAt.push(slot);
+    for (const code of table) {
+      if (code !== null) pointer(code, slot);
+      slot += 4;
+    }
+  }
+  // Il2CppCodeGenModule: moduleName, methodPointerCount, methodPointers.
+  const writeModule = (at: number, image: number, count: number) => {
+    pointer(nameAt[image]!, at);
+    body.writeUInt32LE(count, at + 4);
+    pointer(tableAt[image]!, at + 8);
+  };
+  writeModule(MODULES, 0, 3);
+  writeModule(MODULES + 0x40, 1, 2);
+  pointer(MODULES, MODULE_ARRAY);
+  pointer(MODULES + 0x40, MODULE_ARRAY + 4);
+  if (options.codeRegistration !== false) {
+    body.writeUInt32LE(2, REGISTRATION);
+    pointer(MODULE_ARRAY, REGISTRATION + 4);
+  }
+  // Il2CppType records: 4-byte data, then attrs:16 and type:8 bits.
+  const types: readonly [kind: number, data: number, isPointer: boolean][] = [
+    [0x1d, TYPE_RECORDS + 8, true],
+    [0x15, GENERIC_CLASS, true],
+    [0x12, 3, false],
+    [0x08, 0, false],
+  ];
+  types.forEach(([kind, data, isPointer], index) => {
+    const at = TYPE_RECORDS + index * 8;
+    if (isPointer) pointer(data, at);
+    else body.writeUInt32LE(data, at);
+    body.writeUInt32LE(kind << 16, at + 4);
+    pointer(at, TYPE_POINTERS + index * 4);
+  });
+  pointer(TYPE_RECORDS + 16, GENERIC_CLASS);
+  pointer(GENERIC_INSTANCE, GENERIC_CLASS + 4);
+  body.writeUInt32LE(1, GENERIC_INSTANCE);
+  pointer(GENERIC_ARGUMENTS, GENERIC_INSTANCE + 4);
+  pointer(TYPE_RECORDS + 24, GENERIC_ARGUMENTS);
+  const word = (index: number) => METADATA_REGISTRATION + index * 4;
+  body.writeUInt32LE(types.length, word(6));
+  pointer(TYPE_POINTERS, word(7));
+  body.writeUInt32LE(4, word(10));
+  pointer(TYPE_POINTERS, word(11));
+  body.writeUInt32LE(4, word(12));
+  pointer(TYPE_POINTERS, word(13));
+
+  const rela = options.relocations === "rela";
+  const entrySize = rela ? 12 : 8;
+  const table = Buffer.alloc(slots.length * entrySize);
+  slots.forEach((at, index) => {
+    const entry = index * entrySize;
+    table.writeUInt32LE(at, entry);
+    table.writeUInt32LE(23, entry + 4); // R_ARM_RELATIVE, no symbol
+    if (rela) {
+      // RELA keeps the addend outside the slot, which stays zero on disk.
+      table.writeInt32LE(body.readInt32LE(at), entry + 8);
+      body.writeUInt32LE(0, at);
+    }
+  });
+  const tags: [number, number][] = rela
+    ? [
+        [7, SIZE],
+        [8, table.length],
+        [9, 12],
+        [0, 0],
+      ]
+    : [
+        [17, SIZE],
+        [18, table.length],
+        [19, Number(options.relEntry ?? 8n)],
+        [0, 0],
+      ];
+  const dynamic = Buffer.alloc(tags.length * 8);
+  tags.forEach(([tag, value], index) => {
+    dynamic.writeInt32LE(tag, index * 8);
+    dynamic.writeUInt32LE(value, index * 8 + 4);
+  });
+  const file = Buffer.concat([body, table, dynamic]);
+  // ELF32 header: little-endian shared object, no section headers.
+  file.write("\x7fELF", 0, "latin1");
+  file.writeUInt8(1, 4);
+  file.writeUInt8(1, 5);
+  file.writeUInt8(1, 6);
+  file.writeUInt16LE(3, 16);
+  file.writeUInt16LE(options.machine ?? 40, 18);
+  file.writeUInt32LE(1, 20);
+  file.writeUInt32LE(52, 28);
+  file.writeUInt16LE(52, 40);
+  file.writeUInt16LE(32, 42);
+  file.writeUInt16LE(2, 44);
+  // PT_LOAD maps the whole file read-write-execute at 0.
+  file.writeUInt32LE(1, 52);
+  file.writeUInt32LE(0, 56);
+  file.writeUInt32LE(0, 60);
+  file.writeUInt32LE(0, 64);
+  file.writeUInt32LE(file.length, 68);
+  file.writeUInt32LE(file.length, 72);
+  file.writeUInt32LE(7, 76);
+  file.writeUInt32LE(0x1000, 80);
+  const at = SIZE + table.length;
+  file.writeUInt32LE(2, 84);
+  file.writeUInt32LE(at, 88);
+  file.writeUInt32LE(at, 92);
+  file.writeUInt32LE(at, 96);
+  file.writeUInt32LE(dynamic.length, 100);
+  file.writeUInt32LE(dynamic.length, 104);
+  file.writeUInt32LE(6, 108);
+  return file;
+};

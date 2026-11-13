@@ -118,7 +118,8 @@ const createTypeRenderer = (
     return parts.join(separator);
   };
   const tick = () => ++work % 256 === 0;
-  const tools = { fail, pointer, u32, guard, join, tick };
+  const step = BigInt(image.pointerSize);
+  const tools = { fail, pointer, u32, guard, join, tick, step };
   const rules = style(tools);
   const byAddress = new Map<bigint, string>();
   const active = new Set<bigint>();
@@ -136,7 +137,7 @@ const createTypeRenderer = (
     try {
       if (tick()) yield;
       const data = pointer(address, "Il2CppType data");
-      const bits = u32(address + 8n, "Il2CppType attributes");
+      const bits = u32(address + step, "Il2CppType attributes");
       const kind = il2cppTypeKind(bits);
       const index = Number(BigInt.asIntN(32, data & 0xffffffffn));
       let result: string;
@@ -150,7 +151,7 @@ const createTypeRenderer = (
           kind === 0x0f ? "*" : "[]",
         ]);
       else if (kind === 0x14) {
-        const rank = u32(data + 8n, "Il2CppArrayType rank") & 0xff;
+        const rank = u32(data + step, "Il2CppArrayType rank") & 0xff;
         if (rank === 0) fail("array rank is zero");
         result = join([
           yield* name(pointer(data, "array element"), depth + 1),
@@ -183,7 +184,7 @@ const createTypeRenderer = (
     depth: number,
   ): Generator<void, string[]> {
     const count = u32(instance, "generic argument count");
-    const argv = pointer(instance + 8n, "generic arguments");
+    const argv = pointer(instance + step, "generic arguments");
     guard(Math.max(count - 1, 0) * 2);
     // The array may span adjacent loader ranges; each slot is read on its own.
     if (!hasPointerArrayCoverage(image, argv, count))
@@ -193,7 +194,7 @@ const createTypeRenderer = (
     for (let slot = 0; slot < count; slot++) {
       if (tick()) yield;
       const argument = yield* name(
-        pointer(argv + BigInt(slot * 8), "generic argument"),
+        pointer(argv + BigInt(slot) * step, "generic argument"),
         depth + 1,
       );
       bytes += Buffer.byteLength(argument);
@@ -218,11 +219,13 @@ type RenderTools = {
   readonly join: (parts: readonly string[], separator?: string) => string;
   /** True on every 256th unit of work, when the caller yields. */
   readonly tick: () => boolean;
+  /** One pointer slot: the offset of a field that follows a pointer. */
+  readonly step: bigint;
 };
 
 /** TypeDefinitionIndex of an Il2CppGenericClass's class or value type definition. */
 const genericClassDefinition = (
-  { fail, pointer, u32 }: RenderTools,
+  { fail, pointer, u32, step }: RenderTools,
   data: bigint,
   version: number,
 ): number => {
@@ -230,7 +233,7 @@ const genericClassDefinition = (
   const definitionType = pointer(data, "generic class type");
   const definitionData = pointer(definitionType, "generic class definition");
   const definitionKind =
-    (u32(definitionType + 8n, "generic class type attributes") >>> 16) & 0xff;
+    (u32(definitionType + step, "generic class type attributes") >>> 16) & 0xff;
   if (definitionKind !== 0x11 && definitionKind !== 0x12)
     fail("generic class type is not a class or value type definition");
   return Number(BigInt.asIntN(32, definitionData & 0xffff_ffffn));
@@ -338,7 +341,7 @@ export const createTypeNamer = (
       *genericClass(data, depth) {
         const definition = genericClassDefinition(tools, data, version);
         const args = yield* renderer.instanceArgumentList(
-          tools.pointer(data + 8n, "generic class instance"),
+          tools.pointer(data + tools.step, "generic class instance"),
           depth,
         );
         return yield* genericDefinitionName(
@@ -434,7 +437,7 @@ export const createMethodSpecNamer = (
       return tools.join([
         yield* nestedName(tools, owner, false),
         yield* renderer.instanceArguments(
-          tools.pointer(data + 8n, "generic class instance"),
+          tools.pointer(data + tools.step, "generic class instance"),
           depth,
         ),
       ]);

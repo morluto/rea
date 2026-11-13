@@ -83,14 +83,25 @@ const failureForPrimary = (
   if (cause instanceof Il2cppBinaryFormatFailure && cause.kind === "capacity")
     return new AnalysisResourceConstraintError(
       OPERATION,
-      cause.reason === "native-type-text-capacity" ? "memory" : "capacity",
+      cause.reason === "native-type-text-capacity" ||
+        cause.reason === "wasm-memory-capacity"
+        ? "memory"
+        : "capacity",
       cause.message,
       {},
       {
         cause,
         ...fixedAllowanceOptions(
-          "The IL2CPP native-link allowance",
-          cause.reason === "native-type-text-capacity" ? "parser" : "count",
+          cause.reason === "wasm-memory-capacity"
+            ? "The wasm32 linear-memory reconstruction allowance"
+            : cause.reason === "wasm-module-capacity"
+              ? "The wasm32 module parser allowance"
+              : "The IL2CPP native-link allowance",
+          cause.reason === "native-type-text-capacity"
+            ? "parser"
+            : cause.reason === "wasm-memory-capacity"
+              ? "bytes"
+              : "count",
         ),
       },
     );
@@ -530,6 +541,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         const decoded = "metadata" in value ? value.metadata : value;
         const link = "metadata" in value ? value.link : undefined;
         const binaryPath = input.binary_path;
+        let linkedFormat: "elf" | "macho" | "pe" | "wasm" | undefined;
         let linked: Pick<
           Il2cppMetadata,
           | "binary"
@@ -578,6 +590,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               assertArtifactReadActive(options?.signal);
               linkStep = linking.next();
             }
+            linkedFormat = linkStep.value.format;
             linked = binaryReport(linkStep.value, {
               path: binaryPath,
               sha256: binary.sha256,
@@ -608,7 +621,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             "Only unencrypted global-metadata.dat versions 24, 27, 29, 31 and 39 are decoded; names, counts and string literals are observed file content, not runtime behavior.",
             binaryPath === undefined
               ? "Native code addresses and IL2CPP binary registration are not recovered without binary_path."
-              : `Method addresses come from the binary's code-generation module methodPointers, matched by module name, method count and metadata token; ${input.generic_instances === true ? "" : "generic method instances (see generic_instances), "}adjustor thunks and invokers are not linked, no-body means an observed zero slot, and unknown means no module claimed the method or its slot has an unresolved relocation.`,
+              : `Method addresses come from the binary's code-generation module methodPointers, matched by module name, method count and metadata token; ${input.generic_instances === true ? "" : "generic method instances (see generic_instances), "}adjustor thunks and invokers are not linked, no-body means an observed zero slot, and unknown means ${linkedFormat === "wasm" ? "no module claimed the method or its table slot names an imported function, which has no body in this module" : "no module claimed the method or its slot has an unresolved relocation"}.`,
             ...(binaryPath !== undefined && input.generic_instances === true
               ? [
                   "Generic method instances come from genericMethodTable, methodSpecs, genericInsts and genericMethodPointers, with names following Il2CppDumper's GetMethodSpecName (namespace on the declaring type, nested types joined with '.', arity cut, IntPtr/UIntPtr, no byref mark). The CodeRegistration layout is the only one of the known 27.0 to 31 layouts whose counts bound every genericMethodTable row; metadata versions 24 and 39 and builds without a static CodeRegistration are refused. A generic row is no-body for an observed zero pointer slot and unknown, with no address, exactly when an issue names its row: a contradicting method spec (its name is then null), a shared method spec, an unmapped or non-executable pointer, or an unresolved relocation.",

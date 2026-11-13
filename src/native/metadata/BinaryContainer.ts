@@ -18,6 +18,18 @@ export class BinaryFormatFailure extends Error {
   }
 }
 
+/** Bytes that match none of the native image formats, as opposed to a recognized one refused. */
+export class UnrecognizedBinaryFailure extends BinaryFormatFailure {
+  constructor() {
+    super("unsupported", UNRECOGNIZED_NATIVE_IMAGE);
+    this.name = "UnrecognizedBinaryFailure";
+  }
+}
+
+/** The refusal text for bytes that match none of the native image formats. */
+export const UNRECOGNIZED_NATIVE_IMAGE =
+  "Only ELF, PE, and thin Mach-O native images are supported";
+
 /** A missing file span is a candidate miss; conflicting owners are malformed. */
 export class BinaryMappingFailure extends BinaryFormatFailure {
   constructor(

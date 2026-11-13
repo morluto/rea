@@ -1,6 +1,11 @@
-import type { Il2cppMethodAddress } from "../domain/il2cpp/il2cppMetadata.js";
+import type { Il2cppLinkedMethod } from "../domain/il2cpp/il2cppMetadata.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
-import { openImageSteps, readSlot, isExecutable } from "./Il2cppBinaryImage.js";
+import {
+  isExecutable,
+  isWasmModule,
+  openImageSteps,
+  readSlot,
+} from "./Il2cppBinaryImage.js";
 import {
   findModules,
   findCodeRegistration,
@@ -25,10 +30,16 @@ export interface Il2cppCodeGenModule {
   readonly method_pointers: bigint;
 }
 
-type Il2cppMethodCode = bigint | "no-body" | "unknown";
+/** A wasm32 method pointer: its table slot and the function that slot holds. */
+interface Il2cppWasmMethodCode {
+  readonly table_index: number;
+  readonly function_index: number;
+}
+
+type Il2cppMethodCode = bigint | Il2cppWasmMethodCode | "no-body" | "unknown";
 
 export interface Il2cppBinaryLink {
-  readonly format: "elf" | "macho" | "pe";
+  readonly format: "elf" | "macho" | "pe" | "wasm";
   readonly architecture: string;
   readonly image_base: bigint;
   /**
@@ -44,7 +55,7 @@ export interface Il2cppBinaryLink {
    * Native code address per metadata method index; "no-body" when its module
    * slot is zero, "unknown" when its owner or relocated pointer is unresolved.
    */
-  readonly method_addresses: Il2cppMethodAddress[];
+  readonly method_addresses: Il2cppLinkedMethod[];
   /**
    * Address of MetadataRegistration's typesCount field, or null when no static
    * registration matched and an executable byte-pattern candidate identified
@@ -88,8 +99,19 @@ export function* linkIl2cppBinarySteps(
   const version = metadata.metadata_version;
   // Refuse an undecoded version before any table is read.
   if (options.genericInstances === true) genericMethodLayouts(version);
+  // The module kind alone refuses this, before its memory is rebuilt.
+  if (options.genericInstances === true && isWasmModule(bytes))
+    throw new Il2cppBinaryFormatFailure(
+      "generic-methods-unsupported",
+      "generic method instances are not decoded for wasm32 modules",
+    );
   yield;
   const image = yield* openImageSteps(bytes, architecture);
+  if (options.genericInstances === true && image.pointerSize !== 8)
+    throw new Il2cppBinaryFormatFailure(
+      "generic-methods-unsupported",
+      "generic method instances are not decoded for 32-bit images",
+    );
   const modules = yield* findModules(image, metadata);
   const registration_ = yield* findCodeRegistration(image, modules);
   const methodImage = new Int32Array(metadata.methods.length).fill(-1);
@@ -136,7 +158,7 @@ export function* linkIl2cppBinarySteps(
       );
     const address = readSlot(
       image,
-      module.method_pointers + BigInt((row - 1) * 8),
+      module.method_pointers + BigInt((row - 1) * image.pointerSize),
     );
     if (address === null || address === undefined)
       throw new Il2cppBinaryFormatFailure(
@@ -145,6 +167,34 @@ export function* linkIl2cppBinarySteps(
       );
     if (address === "unknown") return "unknown";
     if (address === 0n) return "no-body";
+    if (image.wasmTable !== undefined) {
+      // Function pointers are table slots; only a filled slot names code.
+      const slot = Number(address);
+      const fn = image.wasmTable.slots.get(slot);
+      if (fn === undefined)
+        throw new Il2cppBinaryFormatFailure(
+          "invalid-method-pointer",
+          `method ${index} names table slot ${slot}, which no element segment fills`,
+        );
+      // An imported function has no body in this module.
+      if (fn < image.wasmTable.importedFunctionCount) return "unknown";
+      return { table_index: slot, function_index: fn };
+    }
+    if (image.container.architecture === "arm") {
+      // ARM interworking: bit 0 of a code pointer selects Thumb state, which
+      // no checked Unity armeabi-v7a build uses.
+      if ((address & 1n) === 1n)
+        throw new Il2cppBinaryFormatFailure(
+          "unsupported-pointer-encoding",
+          `method ${index} points to Thumb-state code at 0x${address.toString(16)}; only ARM-state methods are linked`,
+        );
+      // An ARM-state instruction is 4-byte aligned; bit 1 contradicts the mode.
+      if ((address & 2n) === 2n)
+        throw new Il2cppBinaryFormatFailure(
+          "invalid-method-pointer",
+          `method ${index} points to ARM-state address 0x${address.toString(16)}, which is not 4-byte aligned`,
+        );
+    }
     if (!isExecutable(image, address))
       throw new Il2cppBinaryFormatFailure(
         "invalid-method-pointer",
@@ -152,7 +202,7 @@ export function* linkIl2cppBinarySteps(
       );
     return address;
   };
-  const method_addresses: Il2cppMethodAddress[] = [];
+  const method_addresses: Il2cppLinkedMethod[] = [];
   for (let index = 0; index < metadata.methods.length; index++) {
     if (index % LINK_BATCH === 0) yield;
     const code = methodAddress(index);
@@ -161,14 +211,22 @@ export function* linkIl2cppBinarySteps(
         "invalid-method-pointer",
         "method address precedes the link image base",
       );
-    const row: Il2cppMethodAddress =
+    const row: Il2cppLinkedMethod =
       typeof code === "bigint"
         ? {
             state: "code",
             address: `0x${code.toString(16)}`,
             rva: `0x${(code - image.imageBase).toString(16)}`,
           }
-        : { state: code, address: null, rva: null };
+        : typeof code === "object"
+          ? {
+              state: "code",
+              address: null,
+              rva: null,
+              table_index: code.table_index,
+              function_index: code.function_index,
+            }
+          : { state: code, address: null, rva: null };
     options.onRow?.(row);
     method_addresses.push(row);
   }
@@ -193,7 +251,10 @@ export function* linkIl2cppBinarySteps(
       );
     // 27.0/27.1 and 27.2 share header version 27 but place byref differently.
     if (version === 27) return { type, name: null };
-    const address = readSlot(image, registration.types + BigInt(type * 8));
+    const address = readSlot(
+      image,
+      registration.types + BigInt(type * image.pointerSize),
+    );
     if (address === "unknown") return { type, name: null };
     if (address === null)
       throw new Il2cppBinaryFormatFailure(
@@ -228,7 +289,9 @@ export function* linkIl2cppBinarySteps(
           facts,
           registration_.field,
           // findMetadataRegistration reports typesCount, word 6.
-          registration.field === null ? null : registration.field - 48n,
+          registration.field === null
+            ? null
+            : registration.field - 6n * BigInt(image.pointerSize),
           options,
         )
       : null;
