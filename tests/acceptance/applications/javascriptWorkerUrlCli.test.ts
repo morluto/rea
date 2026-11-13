@@ -868,6 +868,44 @@ cliTest(
   },
 );
 
+cliTest(
+  "keeps URL and source-directory Worker paths with one spelling distinct through the compiled CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-node-worker-path-base-");
+    // URL resolution decodes `%6F`; a filesystem filename keeps it literally.
+    await writeFixtureFiles(root, {
+      "src/main.mjs": [
+        'import { Worker } from "node:worker_threads";',
+        'import { dirname, join } from "node:path";',
+        'import { fileURLToPath } from "node:url";',
+        'new Worker(new URL("w%6Frker.js", import.meta.url));',
+        'new Worker(join(dirname(fileURLToPath(import.meta.url)), "w%6Frker.js"));',
+      ].join("\n"),
+      "src/worker.js": "self.postMessage('decoded URL target');",
+      "src/w%6Frker.js": "self.postMessage('literal filename target');",
+    });
+
+    const result = await analyzeJavaScriptDirectory("CLI", cli, root);
+    expect(result.statistics.parse_failures).toBe(0);
+    expect(
+      result.graph.nodes.filter(({ kind }) => kind === "worker"),
+    ).toHaveLength(2);
+    const references = workerReferences(result.graph);
+    expect(references).toHaveLength(2);
+    expect(references).toEqual(
+      expect.arrayContaining(
+        ["src/worker.js", "src/w%6Frker.js"].map((resolved) => ({
+          source: "src/main.mjs",
+          declared_specifier: "w%6Frker.js",
+          expression: null,
+          resolved_path: resolved,
+          mapped_paths: [resolved],
+        })),
+      ),
+    );
+  },
+);
+
 // Windows cannot materialize the pipe-named directory needed for this decoy.
 cliTest.skipIf(process.platform === "win32")(
   "keeps file-URL drive letters distinct from encoded POSIX paths through the compiled CLI",

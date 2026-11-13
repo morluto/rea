@@ -239,9 +239,12 @@ const addReference = (
   if (input.value.kind === "worker" || input.value.kind === "service-worker") {
     const worker = context.accumulator.addNode({
       kind: input.value.kind === "worker" ? "worker" : "service-worker",
+      // One spelling can name different files as a URL and as a filename.
       identity: artifactLocalIdentity(
         input.file.sha256,
-        input.value.kind,
+        input.value.path_base === undefined
+          ? input.value.kind
+          : `${input.value.kind}:${input.value.path_base}`,
         input.value.specifier ?? input.value.expression,
       ),
       observations: [
