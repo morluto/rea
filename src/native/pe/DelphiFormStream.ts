@@ -19,10 +19,13 @@
 
 import {
   DEFAULT_CODE_PAGE,
+  DELPHI_FORM_BYTE_CHARGES,
   DELPHI_FORM_FILER_FLAGS,
   DELPHI_FORM_FLOAT_NOTES,
   DELPHI_FORM_VALUE_TYPES,
   decodeDelphiExtended,
+  delphiFormBinaryCharge,
+  delphiFormTextCharge,
   decodeDelphiText,
   formatDelphiCurrency,
   MAX_DELPHI_FORM_DEPTH,
@@ -65,15 +68,6 @@ export interface DelphiFormDecode {
 
 const valueTypeName = (ordinal: number): string =>
   DELPHI_FORM_VALUE_TYPES[ordinal] ?? `unknown_value_type(${String(ordinal)})`;
-
-const VALUE_BYTES = 256;
-const OBJECT_BYTES = 192;
-const PROPERTY_BYTES = 160;
-const ITEM_BYTES = 96;
-/** The list-entry wrapper retains its declared type and tag range. */
-const LIST_ENTRY_BYTES = 128;
-/** Positional integers retain width, source bytes and their own range. */
-const POSITION_BYTES = 128;
 
 /** Reported once per inventory; the decoder itself stays free of policy text. */
 export const DELPHI_FORM_LIMITATIONS: readonly string[] = [
@@ -261,7 +255,7 @@ function readShortString(
   const length = stream.peek();
   // Short strings are capped at 255 bytes, but a form can retain thousands of
   // them; charge each one before decoding.
-  spendText(budget, length * 10 + 256);
+  spendText(budget, delphiFormTextCharge(length));
   // Take the declaration and payload atomically: when the body is truncated,
   // the length byte stays unread for the owner's unknown suffix instead of
   // being claimed by no projection.
@@ -285,7 +279,7 @@ function readShortStringValue(
   const declared = stream.byte();
   const available = Math.min(declared, stream.remaining);
   try {
-    spendText(budget, declared * 10 + 256);
+    spendText(budget, delphiFormTextCharge(declared));
   } catch (error) {
     if (!(error instanceof StreamEnd)) throw error;
     throw new StoppedValue(error.message, {
@@ -325,7 +319,7 @@ function positionValue(
   tag: 2 | 3 | 4,
   budget: Budget,
 ): DelphiFormPosition {
-  spendBytes(budget, POSITION_BYTES);
+  spendBytes(budget, DELPHI_FORM_BYTE_CHARGES.position);
   const at = stream.position;
   const width = tag === 2 ? 8 : tag === 3 ? 16 : 32;
   const raw = stream.take(1 + width / 8);
@@ -457,7 +451,7 @@ function readValue(
   depth: number,
 ): DelphiFormValue {
   spend(budget, "values");
-  spendBytes(budget, VALUE_BYTES);
+  spendBytes(budget, DELPHI_FORM_BYTE_CHARGES.value);
   const at = stream.position;
   // Nested lists and collections recurse; bound the depth before the call
   // stack does, so a crafted payload reports an unknown instead of failing.
@@ -499,7 +493,7 @@ function readValue(
       // value keeps its declaration and the bytes the payload holds.
       const available = Math.min(declared, stream.remaining);
       try {
-        spendText(budget, available * 10 + 256);
+        spendText(budget, delphiFormTextCharge(available));
       } catch (error) {
         if (!(error instanceof StreamEnd)) throw error;
         // The length prefix is already observed; keep it on the stopped value
@@ -537,7 +531,7 @@ function readValue(
       const declared = characters * 2;
       const available = Math.min(declared, stream.remaining) & ~1;
       try {
-        spendText(budget, available * 10 + 256);
+        spendText(budget, delphiFormTextCharge(available));
       } catch (error) {
         if (!(error instanceof StreamEnd)) throw error;
         throw new StoppedValue(error.message, {
@@ -575,10 +569,7 @@ function readValue(
       // A truncated value keeps the declared count with the bytes it holds.
       const available = Math.min(declared, stream.remaining);
       try {
-        spendText(
-          budget,
-          Math.min(available, MAX_DELPHI_FORM_HEX_BYTES) * 2 + 256,
-        );
+        spendText(budget, delphiFormBinaryCharge(available));
       } catch (error) {
         if (!(error instanceof StreamEnd)) throw error;
         throw new StoppedValue(error.message, {
@@ -629,7 +620,7 @@ function readValue(
         try {
           // The wrapper retains the declared type and tag byte; charge it
           // before allocating alongside the value it describes.
-          spendBytes(budget, LIST_ENTRY_BYTES);
+          spendBytes(budget, DELPHI_FORM_BYTE_CHARGES.listEntry);
           const value = readValue(stream, next, budget, codePage, depth + 1);
           items.push({
             value_type: valueTypeName(next),
@@ -732,7 +723,7 @@ function readValue(
         // before it instead of collapsing the property to one unknown.
         try {
           spend(budget, "values");
-          spendBytes(budget, ITEM_BYTES);
+          spendBytes(budget, DELPHI_FORM_BYTE_CHARGES.item);
         } catch (error) {
           if (!(error instanceof StreamEnd)) throw error;
           stop(error.message);
@@ -781,7 +772,7 @@ function readValue(
           const propertyAt = stream.position;
           try {
             spend(budget, "properties");
-            spendBytes(budget, PROPERTY_BYTES);
+            spendBytes(budget, DELPHI_FORM_BYTE_CHARGES.property);
           } catch (error) {
             if (!(error instanceof StreamEnd)) throw error;
             // The item was opened; keep it with the properties decoded so far
@@ -889,7 +880,7 @@ function readObject(
   depth: number,
 ): DelphiFormObject {
   spend(budget, "objects");
-  spendBytes(budget, OBJECT_BYTES);
+  spendBytes(budget, DELPHI_FORM_BYTE_CHARGES.object);
   // Nested components recurse like values, so bound them before the call stack.
   if (depth > MAX_DELPHI_FORM_DEPTH)
     throw new StreamEnd(
@@ -951,7 +942,7 @@ function readObject(
       if (stream.peek() === 0) break;
       const propertyAt = stream.position;
       spend(budget, "properties");
-      spendBytes(budget, PROPERTY_BYTES);
+      spendBytes(budget, DELPHI_FORM_BYTE_CHARGES.property);
       const name = readShortString(stream, codePage, budget);
       // The type marker can itself be truncated after a complete name; the
       // partial-property path below must still retain the observed name.

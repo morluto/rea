@@ -2249,6 +2249,70 @@ it("publishes the decoder value-budget stop", async () => {
   expect(await inspectReport(report)).toMatchObject({ ok: true });
 });
 
+it("rejects a string whose projected text charge exceeds the budget", async () => {
+  const report = await reportWithFormPrefix(0);
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  resource.code_page = 0;
+  const pages = codePageFields(0);
+  const name = label("Long", 8, pages.code_page);
+  const valueOffset = name.location.offset + name.location.bytes + 1;
+  const declared = 1024 * 1024;
+  const rootEnd = valueOffset + 4 + declared;
+  resource.payload.location = { offset: 0, bytes: rootEnd };
+  report.artifact.bytes = rootEnd;
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: { offset: 0, bytes: 4 },
+      prefix: null,
+      ...pages,
+      root: {
+        location: { offset: 4, bytes: rootEnd - 4 },
+        flags: [],
+        child_position: null,
+        class_name: label("A", 4, pages.code_page),
+        component_name: label("B", 6, pages.code_page),
+        properties: [
+          {
+            name,
+            value_type: "vaLString",
+            value: {
+              kind: "string",
+              text: "A".repeat(declared),
+              bytes_hex: "41".repeat(128),
+              code_page: pages.code_page,
+              declared_bytes: declared,
+              truncated: true,
+              decode_truncated: false,
+              location: { offset: valueOffset, bytes: 4 + declared },
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: rootEnd - name.location.offset,
+            },
+          },
+        ],
+        children: [],
+        unknown: {
+          reason: "suffix",
+          bytes_hex: "",
+          truncated: false,
+          location: { offset: rootEnd, bytes: 0 },
+        },
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("rejects a completed suffix root whose ffChildPos position is missing", async () => {
   const report = await reportWithFormPrefix(0);
   const form = report.delphi_forms[0];

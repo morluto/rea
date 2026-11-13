@@ -12,9 +12,12 @@ import {
 import {
   BYTE_PRESERVING_CODE_PAGE,
   DEFAULT_CODE_PAGE,
+  DELPHI_FORM_BYTE_CHARGES,
   DELPHI_FORM_FLOAT_NOTES,
   decodeDelphiExtended,
   decodeDelphiText,
+  delphiFormBinaryCharge,
+  delphiFormTextCharge,
   formatDelphiCurrency,
   isDelphiFormValueType,
   MAX_DELPHI_FORM_DEPTH,
@@ -114,6 +117,7 @@ type FormTreeFrame =
       readonly kind: "object" | "property" | "value" | "collection-item";
       readonly value: unknown;
       readonly depth: number;
+      readonly valueType?: string;
     }
   | { readonly kind: "leave"; readonly value: object };
 
@@ -142,6 +146,7 @@ const terminalStoppedNode = (
 ): boolean => {
   if (frame.kind === "object") {
     const object = node as Record<string, unknown>;
+    const unknown = object.unknown as Record<string, unknown> | undefined;
     return (
       zeroLength(object.location) &&
       arrayItems(node, "children").length === 0 &&
@@ -151,8 +156,11 @@ const terminalStoppedNode = (
       object.child_position === null &&
       object.class_name === null &&
       object.component_name === null &&
-      typeof object.unknown === "object" &&
-      object.unknown !== null
+      typeof unknown === "object" &&
+      unknown !== null &&
+      zeroLength(unknown.location) &&
+      unknown.bytes_hex === "" &&
+      unknown.truncated === false
     );
   }
   if (frame.kind === "property")
@@ -165,22 +173,28 @@ type FormCounters = {
   properties: number;
   values: number;
   text: number;
-  retained: number;
+  bytes: number;
 };
 
+/** `spendText` charges the same projected size to text and bytes. */
+const chargeText = (counters: FormCounters, bytes: number): void => {
+  const charge = delphiFormTextCharge(bytes);
+  counters.text += charge;
+  counters.bytes += charge;
+};
+
+/** A short-string projection retains one length byte plus its body. */
 const addText = (counters: FormCounters, item: unknown): void => {
   if (typeof item !== "object" || item === null) return;
-  const text = (item as Record<string, unknown>).text;
-  if (typeof text === "string") counters.text += text.length;
-};
-
-const addHex = (counters: FormCounters, value: unknown): void => {
-  if (typeof value === "string") counters.retained += value.length / 2;
+  const record = item as Record<string, unknown>;
+  if (typeof record.text !== "string" || typeof record.bytes_hex !== "string")
+    return;
+  chargeText(counters, record.bytes_hex.length / 2);
 };
 
 const addPositionBytes = (counters: FormCounters, item: unknown): void => {
   if (typeof item !== "object" || item === null) return;
-  addHex(counters, (item as Record<string, unknown>).bytes_hex);
+  counters.bytes += DELPHI_FORM_BYTE_CHARGES.position;
 };
 
 /**
@@ -211,7 +225,7 @@ const formTreeWithinDepth = (report: unknown): boolean => {
       properties: 0,
       values: 0,
       text: 0,
-      retained: 0,
+      bytes: 0,
     };
     while (stack.length > 0) {
       const frame = stack.pop()!;
@@ -241,7 +255,11 @@ const formTreeWithinDepth = (report: unknown): boolean => {
       stack.push({ kind: "leave", value: node });
       if (frame.kind === "object") {
         const object = node as Record<string, unknown>;
-        counters.properties += arrayItems(node, "properties").length;
+        const properties = arrayItems(node, "properties").length;
+        counters.properties += properties;
+        counters.bytes +=
+          DELPHI_FORM_BYTE_CHARGES.object +
+          properties * DELPHI_FORM_BYTE_CHARGES.property;
         addText(counters, object.class_name);
         addText(counters, object.component_name);
         addPositionBytes(counters, object.child_position);
@@ -254,17 +272,26 @@ const formTreeWithinDepth = (report: unknown): boolean => {
         continue;
       }
       if (frame.kind === "property") {
-        addText(counters, (node as Record<string, unknown>).name);
+        const property = node as Record<string, unknown>;
+        addText(counters, property.name);
         stack.push({
           kind: "value",
-          value: (node as Record<string, unknown>).value,
+          value: property.value,
           depth: frame.depth,
+          ...(typeof property.value_type === "string"
+            ? { valueType: property.value_type }
+            : {}),
         });
         continue;
       }
       if (frame.kind === "collection-item") {
-        counters.properties += arrayItems(node, "properties").length;
-        addPositionBytes(counters, (node as Record<string, unknown>).position);
+        const item = node as Record<string, unknown>;
+        const properties = arrayItems(node, "properties").length;
+        counters.properties += properties;
+        counters.bytes +=
+          DELPHI_FORM_BYTE_CHARGES.item +
+          properties * DELPHI_FORM_BYTE_CHARGES.property;
+        addPositionBytes(counters, item.position);
         // A collection item's property values are read one level below the
         // collection value.
         for (const property of arrayItems(node, "properties"))
@@ -278,33 +305,43 @@ const formTreeWithinDepth = (report: unknown): boolean => {
       const value = node as Record<string, unknown>;
       counters.values += 1;
       if (stoppedUnknownValue(node)) valueSentinels += 1;
+      else counters.bytes += DELPHI_FORM_BYTE_CHARGES.value;
+      const location = value.location as Record<string, unknown> | undefined;
+      const locationBytes =
+        typeof location?.bytes === "number" ? location.bytes : 0;
       if (value.kind === "string") {
-        addText(counters, value);
-        addHex(counters, value.bytes_hex);
+        // spendText uses the available body bytes, one prefix byte for
+        // vaString and four for the sized string types.
+        const prefix = frame.valueType === "vaString" ? 1 : 4;
+        chargeText(counters, Math.max(0, locationBytes - prefix));
       } else if (value.kind === "identifier") {
         addText(counters, value);
-        addHex(counters, value.bytes_hex);
-      } else if (
-        value.kind === "binary" ||
-        value.kind === "integer" ||
-        value.kind === "float"
-      )
-        addHex(counters, value.bytes_hex);
-      else if (value.kind === "set") {
+      } else if (value.kind === "binary") {
+        const charge = delphiFormBinaryCharge(Math.max(0, locationBytes - 4));
+        counters.text += charge;
+        counters.bytes += charge;
+      } else if (value.kind === "set") {
         const names = arrayItems(value, "names");
         counters.values += names.length;
         for (const name of names) addText(counters, name);
       } else if (value.kind === "collection")
         counters.values += arrayItems(value, "items").length;
-      if (value.kind === "list")
-        for (const entry of arrayItems(value, "items")) {
+      if (value.kind === "list") {
+        const entries = arrayItems(value, "items");
+        counters.bytes += entries.length * DELPHI_FORM_BYTE_CHARGES.listEntry;
+        for (const entry of entries) {
           if (typeof entry !== "object" || entry === null) continue;
+          const record = entry as Record<string, unknown>;
           stack.push({
             kind: "value",
-            value: (entry as Record<string, unknown>).value,
+            value: record.value,
             depth: frame.depth + 1,
+            ...(typeof record.value_type === "string"
+              ? { valueType: record.value_type }
+              : {}),
           });
         }
+      }
       if (value.kind === "collection")
         for (const item of arrayItems(value, "items"))
           stack.push({
@@ -330,7 +367,7 @@ const formTreeWithinDepth = (report: unknown): boolean => {
     if (
       counters.properties > MAX_DELPHI_FORM_PROPERTIES ||
       counters.text > MAX_DELPHI_FORM_TEXT_BYTES ||
-      counters.retained > MAX_DELPHI_FORM_RETAINED_BYTES
+      counters.bytes > MAX_DELPHI_FORM_RETAINED_BYTES
     )
       return false;
   }

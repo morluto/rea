@@ -216,6 +216,23 @@ export const MAX_DELPHI_FORM_VALUES = 32768;
 export const MAX_DELPHI_FORM_TEXT_BYTES = 8 * 1024 * 1024;
 export const MAX_DELPHI_FORM_RETAINED_BYTES = 8 * 1024 * 1024;
 
+/** Per-node bytes the decoder charges before retaining a projection. */
+export const DELPHI_FORM_BYTE_CHARGES = {
+  object: 192,
+  property: 160,
+  item: 96,
+  listEntry: 128,
+  value: 256,
+  position: 128,
+} as const;
+
+/** Projected text charge for a short or sized string body. */
+export const delphiFormTextCharge = (bytes: number): number => bytes * 10 + 256;
+
+/** Projected text and byte charge for a binary preview. */
+export const delphiFormBinaryCharge = (available: number): number =>
+  Math.min(available, MAX_DELPHI_FORM_HEX_BYTES) * 2 + 256;
+
 /**
  * `TFilerFlag` values the decoder can emit. It emits each once, in bit order,
  * and stops on the reserved bit, so no other flag is an observed value.
