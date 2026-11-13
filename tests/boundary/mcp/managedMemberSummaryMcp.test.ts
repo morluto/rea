@@ -25,6 +25,8 @@ import {
   type ApplicationMcpHarness,
 } from "../../fixtures/applicationMcpHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 
 const COLLECTIONS = [
   "types",
@@ -360,3 +362,176 @@ it("keeps collections that historical member Evidence never examined unknown", a
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
 }, 30000);
+
+it("binds managed member views to their recorded token scope", async () => {
+  const original = MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members;
+  const report = managedMemberInspectionSchema.parse(
+    original.normalized_result,
+  );
+  if (report.module?.mvid == null) throw new Error("Fixture requires an MVID");
+  const mismatchedDigest = "f".repeat(64);
+  const mismatchedMvid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const cases = [
+    {
+      name: "digest",
+      result: {
+        ...report,
+        identity_scope: {
+          ...report.identity_scope,
+          requires_artifact_sha256: mismatchedDigest,
+        },
+      },
+      error: "token scope SHA-256",
+    },
+    {
+      name: "MVID",
+      result: {
+        ...report,
+        identity_scope: {
+          ...report.identity_scope,
+          requires_mvid: mismatchedMvid,
+        },
+      },
+      error: "token scope MVID",
+    },
+    {
+      name: "missing module",
+      result: { ...report, module: null },
+      error: "token scope MVID",
+    },
+    {
+      name: "case-insensitive MVID",
+      result: {
+        ...report,
+        module: {
+          ...report.module,
+          mvid: "abcdef12-3456-4abc-8def-123456789abc",
+        },
+        identity_scope: {
+          ...report.identity_scope,
+          requires_mvid: "ABCDEF12-3456-4ABC-8DEF-123456789ABC",
+        },
+      },
+      error: undefined,
+    },
+    {
+      name: "null MVID",
+      result: {
+        ...report,
+        module: null,
+        identity_scope: { ...report.identity_scope, requires_mvid: null },
+      },
+      error: undefined,
+    },
+  ];
+  for (const test of cases) {
+    for (const subject of [true, false]) {
+      const evidence = createEvidence(
+        subject
+          ? {
+              path: report.artifact.path,
+              format: "pe",
+              sha256: report.artifact.sha256,
+            }
+          : undefined,
+        original.provider,
+        {
+          operation: original.operation,
+          parameters: original.parameters,
+          result: test.result,
+        },
+      );
+      for (const view of [
+        { kind: "summary" as const },
+        {
+          kind: "managed-members" as const,
+          collection: "methods" as const,
+          offset: 0,
+          limit: 1,
+        },
+      ]) {
+        const actual = await inspectAnalysisView({
+          source: { kind: "inline", evidence },
+          view,
+        });
+        if (test.error === undefined) {
+          expect(actual.ok, test.name).toBe(true);
+          if (!actual.ok) continue;
+          if (!subject)
+            expect(JSON.stringify(actual.value.normalized_result)).toContain(
+              "no recorded subject",
+            );
+        } else {
+          expect(actual, test.name).toMatchObject({
+            ok: false,
+            error: {
+              _tag: "EvidenceIntegrityError",
+              message: expect.stringContaining(test.error),
+            },
+          });
+        }
+      }
+    }
+  }
+
+  const incompatible = createEvidence(
+    { path: report.artifact.path, format: "pe", sha256: mismatchedDigest },
+    original.provider,
+    {
+      operation: original.operation,
+      parameters: original.parameters,
+      result: {
+        ...report,
+        identity_scope: {
+          ...report.identity_scope,
+          requires_artifact_sha256: mismatchedDigest,
+        },
+      },
+    },
+  );
+  const actual = await inspectAnalysisView({
+    source: { kind: "inline", evidence: incompatible },
+    view: { kind: "summary" },
+  });
+  expect(actual).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "EvidenceIntegrityError",
+      message: expect.stringContaining("Parent subject SHA-256"),
+    },
+  });
+});
+
+it("rejects a contradictory managed token scope through MCP for inline and retained Evidence", async () => {
+  const original = MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members;
+  const report = managedMemberInspectionSchema.parse(
+    original.normalized_result,
+  );
+  const evidence = createEvidence(undefined, original.provider, {
+    operation: original.operation,
+    parameters: original.parameters,
+    result: {
+      ...report,
+      identity_scope: {
+        ...report.identity_scope,
+        requires_artifact_sha256: "f".repeat(64),
+      },
+    },
+  });
+  const { client, session } = await createHarness();
+  expect(session.recordEvidence(evidence).ok).toBe(true);
+  for (const source of [
+    { kind: "inline" as const, evidence },
+    { kind: "retained-evidence" as const, evidence_id: evidence.evidence_id },
+  ]) {
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source, view: { kind: "summary" } },
+    });
+    expect(parseMcpToolError(response).error).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      category: "integrity_mismatch",
+      details: { reason: expect.stringContaining("token scope SHA-256") },
+    });
+  }
+});

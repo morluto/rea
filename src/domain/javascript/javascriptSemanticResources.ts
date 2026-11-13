@@ -95,6 +95,19 @@ export const collectJavaScriptSemanticResources = (
   ];
 };
 
+/** Literal kinds Node rejects for both open flags and modes. */
+const rejectsFlagOrModeLiteral = (value: t.Node): boolean => {
+  return (
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value) ||
+    (t.isUnaryExpression(value) &&
+      t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node))
+  );
+};
+
 /**
  * `fs.open`/`fs.openSync` validate the flag before touching the filesystem, so
  * a flag Node rejects at the call site throws synchronously and no descriptor
@@ -136,15 +149,7 @@ const rejectsOpenFlagLiteral = (
   if (isNonFiniteNumber(value, context)) return true;
   // BigInt, boolean, object and array literals all fail Node's flag check. A
   // unary operator over a BigInt literal is a BigInt too.
-  return (
-    t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value) ||
-    t.isRegExpLiteral(value) ||
-    t.isObjectExpression(value) ||
-    t.isArrayExpression(value) ||
-    (t.isUnaryExpression(value) &&
-      t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node))
-  );
+  return rejectsFlagOrModeLiteral(value);
 };
 
 /**
@@ -325,15 +330,7 @@ const rejectsOpenModeLiteral = (
   // BigInt, boolean, object and array literals all fail Node's mode check. A
   // unary operator over a BigInt literal is a BigInt too, and the range helpers
   // above only price numeric operands.
-  return (
-    t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value) ||
-    t.isRegExpLiteral(value) ||
-    t.isObjectExpression(value) ||
-    t.isArrayExpression(value) ||
-    (t.isUnaryExpression(value) &&
-      t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node))
-  );
+  return rejectsFlagOrModeLiteral(value);
 };
 
 /** `fs.open`, `fs.openSync` and `fs/promises.open` take the flag in slot 1. */

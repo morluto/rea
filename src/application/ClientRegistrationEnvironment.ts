@@ -1,15 +1,9 @@
+import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
 import { clientRegistrationSource } from "./ClientRegistrationSource.js";
 import type { SetupClient } from "./SupportedClients.js";
 
-import {
-  inspectAnalysisSettingSeeds,
-  launchAnalysisSetting,
-} from "../config/analysisSettings.js";
-import {
-  parseEnvironment,
-  parseEnvironmentValues,
-  type Environment,
-} from "../config/environment.js";
+import { launchAnalysisSetting } from "../config/analysisSettings.js";
+import type { Environment } from "../config/environment.js";
 import {
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
@@ -314,34 +308,24 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
 const validatedDetails = (
   environment: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
-  platform: NodeJS.Platform = process.platform,
-  expressionSettings: ReadonlySet<string> = new Set(),
+  platform: NodeJS.Platform,
+  expressionSettings: ReadonlySet<string>,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
-  const runtimeEnvironment = snapshotEnvironment(environment, platform);
-  const unresolved = new Set(
-    Object.keys(
-      snapshotEnvironment(
-        Object.fromEntries([...expressionSettings].map((name) => [name, ""])),
-        platform,
-      ),
-    ),
+  const validated = validateRegistrationEnvironment(
+    environment,
+    expressionSettings,
+    validation,
+    platform,
   );
-  const validated =
-    validation === "fragment"
-      ? parseEnvironmentValues(runtimeEnvironment, unresolved)
-      : parseEnvironment(runtimeEnvironment, unresolved);
-  if (!validated.ok) return validated;
-  const seedIssues = inspectAnalysisSettingSeeds(
-    runtimeEnvironment,
-    unresolved,
-  );
-  if (seedIssues.length > 0)
-    return err(
-      new ConfigurationError("Invalid REA environment configuration", {
-        settings: seedIssues,
-      }),
-    );
-  return ok(environmentDetails(environment, validated.value, unresolved));
+  return validated.ok
+    ? ok(
+        environmentDetails(
+          environment,
+          validated.value.configuration,
+          validated.value.unresolvedSettings,
+        ),
+      )
+    : validated;
 };
 
 const admittedTimeout = (
@@ -397,7 +381,7 @@ const registrationTimeoutInputs = (
 const environmentDetails = (
   environment: Readonly<Record<string, string>>,
   configuration: Environment,
-  unresolvedSettings: ReadonlySet<string> = new Set(),
+  unresolvedSettings: ReadonlySet<string>,
 ): ClientRegistrationEnvironmentDetails => ({
   values: Object.fromEntries(
     Object.entries(environment).sort(([left], [right]) =>
