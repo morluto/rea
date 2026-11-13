@@ -89,7 +89,18 @@ if not defined NODE_EXE (
 )
 
 set "REA_ENTRY="
-if defined NODE_EXE for %%D in ("%APPDATA%\npm\node_modules\rea-agents" "%~dp0..\..") do if not defined REA_ENTRY if exist "%%~D\scripts\rea.mjs" set "REA_ENTRY=%%~D\scripts\rea.mjs"
+REM Outside automation, the launcher-relative checkout/package wins
+REM over the ambient APPDATA copy: an old default-prefix install must
+REM not shadow the package whose launcher the caller selected.
+REM REA_TEST_INLINE reverses the order: the automation harness injects
+REM its rea.mjs stub through APPDATA, so the ambient path must win
+REM there for the injected entry to be exercised.
+if defined REA_TEST_INLINE (
+    if defined NODE_EXE for %%D in ("%APPDATA%\npm\node_modules\rea-agents" "%~dp0..\..") do if not defined REA_ENTRY if exist "%%~D\scripts\rea.mjs" set "REA_ENTRY=%%~D\scripts\rea.mjs"
+) else (
+    if defined NODE_EXE for %%D in ("%~dp0..\.." "%APPDATA%\npm\node_modules\rea-agents") do if not defined REA_ENTRY if exist "%%~D\scripts\rea.mjs" set "REA_ENTRY=%%~D\scripts\rea.mjs"
+)
+
 if not defined REA_ENTRY goto NO_REA
 goto HAVE_REA
 
@@ -183,6 +194,10 @@ if not defined TARGET_INPUT goto MENU
 :: Strip surrounding quotes the user may have pasted; delayed expansion keeps
 :: ampersands and percent signs in the value literal.
 set "TARGET=!TARGET_INPUT:"=!"
+REM Bangs cannot survive delayed expansion end-to-end (a path like
+REM C:\dir!x\a!b.exe is silently mangled on use); fail closed with
+REM the same percent-based compare the install-location guard uses.
+if not "%TARGET_INPUT%"=="%TARGET_INPUT:!=%" goto BANG_TARGET
 if not exist "!TARGET!" goto BAD_TARGET
 REM Normalize to absolute: a relative name that happens to start with
 REM a dash (a file literally named --help) would otherwise arrive at
@@ -193,6 +208,13 @@ goto FILE_DROPPED
 :BAD_TARGET
 echo.
 echo ไม่พบไฟล์: "!TARGET!"
+pause
+goto MENU
+
+:BANG_TARGET
+echo.
+echo Path นี้มีอักขระ ! ซึ่ง launcher ของ Windows รองรับไม่ได้
+echo ให้ย้ายไฟล์ไปโฟลเดอร์ที่ไม่มีอักขระ ! แล้วลองใหม่
 pause
 goto MENU
 
