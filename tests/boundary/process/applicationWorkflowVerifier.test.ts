@@ -57,7 +57,7 @@ describe("local application workflow verifier", () => {
       coverage: { status: expect.any(String) },
       trace: { summary: { matched_seeds: expect.any(Number) } },
     });
-  }, 20_000);
+  });
 
   it("reports an added parser return field", async () => {
     const root = await createTestTempDirectory("rea-shape-verifier-");
@@ -105,7 +105,7 @@ describe("local application workflow verifier", () => {
         }),
       ]),
     });
-  }, 20_000);
+  });
 });
 
 it.each([false, true])(
@@ -167,5 +167,4 @@ registerHooks({ resolve(specifier, context, next) {
         stderr: expect.stringContaining("authored late cleanup failure"),
       });
   },
-  20_000,
 );

@@ -167,5 +167,4 @@ function release() { clearInterval(timer); clearTimeout(deadline); socket.end();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   },
-  15_000,
 );

@@ -20,7 +20,6 @@ cliTest.for([
   { format: "asar", command: "analyze-javascript-application" },
 ])(
   "analyzes selected $format sources through $command with complete artifact identity",
-  { timeout: 60_000 },
   async ({ format, command }, { cli }) => {
     const directory = await createTestTempDirectory("rea-js-source-selection-");
     const files = await writeJavaScriptSourceSelectionFixture(directory);
@@ -202,7 +201,6 @@ cliTest.for([
   },
 ])(
   "appends $source --source-paths-json selections for $format through $command",
-  { timeout: 60_000 },
   async ({ command, source, format }, { cli }) => {
     const directory = await createTestTempDirectory(
       "rea-js-source-paths-json-",
@@ -324,7 +322,6 @@ cliTest(
 
 cliTest(
   "accepts legal ASAR JSON whitespace while preserving selected-source identity",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-js-asar-whitespace-");
     await writeJavaScriptSourceSelectionFixture(root);
