@@ -56,7 +56,11 @@ if not defined GHIDRA_INSTALL_DIR (
     REM No delayed expansion in this scope (it starts at line ~119):
     REM resolve the root with the FOR modifier %%~dp$PATH:I instead of
     REM !VAR! pairs, and chain the marker checks on one line.
-    for %%I in (ghidra.bat ghidraRun.bat ghidra.exe ghidraRun.exe) do if not defined GHIDRA_ON_PATH if exist "%%~dp$PATH:IGhidra\application.properties" if exist "%%~dp$PATH:Isupport\analyzeHeadless.bat" set "GHIDRA_ON_PATH=1"
+    REM %%~dp$PATH:I expands EMPTY when no PATH dir has the launcher,
+    REM which would make the marker paths relative to the CWD; a CWD
+    REM that happens to be a Ghidra root would then fake GHIDRA_ON_PATH.
+    REM Require the launcher itself on PATH first, then its markers.
+    for %%I in (ghidra.bat ghidraRun.bat ghidra.exe ghidraRun.exe) do if not defined GHIDRA_ON_PATH if exist "%%~$PATH:I" if exist "%%~dp$PATH:IGhidra\application.properties" if exist "%%~dp$PATH:Isupport\analyzeHeadless.bat" set "GHIDRA_ON_PATH=1"
     if not defined GHIDRA_ON_PATH if exist "C:\tools\ghidra_12.1.4_PUBLIC\support\analyzeHeadless.bat" set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
 )
 :: No JAVA_HOME guessing here: release identity and java.exe selection
@@ -68,6 +72,12 @@ if not defined GHIDRA_INSTALL_DIR (
 :: to the menu, a child process cannot replace it, and percent signs in
 :: analyst-provided paths survive untouched. The npm rea.cmd shim is NOT used
 :: as a fallback because CALL would re-parse the reconstructed arguments.
+set "NODE_EXE="
+REM An inherited NODE_EXE (from a wrapper) may be stale or not Node;
+REM probe it once and clear it when it cannot run, so discovery below
+REM still finds a working node.exe.
+if defined NODE_EXE if not exist "%NODE_EXE%" set "NODE_EXE="
+if defined NODE_EXE "%NODE_EXE%" --version >nul 2>&1 || set "NODE_EXE="
 REM %%~$PATH:I returns only the FIRST PATH match, and a packaged app
 REM (WindowsApps) can put a node.exe there that cmd cannot exec
 REM (Access denied), hiding a runnable node.exe later on PATH. Probe
@@ -174,6 +184,10 @@ if not defined TARGET_INPUT goto MENU
 :: ampersands and percent signs in the value literal.
 set "TARGET=!TARGET_INPUT:"=!"
 if not exist "!TARGET!" goto BAD_TARGET
+REM Normalize to absolute: a relative name that happens to start with
+REM a dash (a file literally named --help) would otherwise arrive at
+REM the CLI as an option, not a positional target. %%~fA is absolute.
+for %%A in ("!TARGET!") do set "TARGET=%%~fA"
 goto FILE_DROPPED
 
 :BAD_TARGET
