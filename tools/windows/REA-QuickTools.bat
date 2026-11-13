@@ -51,11 +51,10 @@ if not defined GHIDRA_INSTALL_DIR (
     REM support\analyzeHeadless.bat at the resolved root.
     REM One chained line: a parenthesized FOR body inside this
     REM parenthesized block silently mis-parses (verified flat-vs-nested).
-    for %%I in (ghidra.bat ghidraRun.bat ghidra.exe ghidraRun.exe) do if not defined GHIDRA_ON_PATH if exist "%%~$PATH:I" set "GHIDRA_PROBE=%%~$PATH:I"
-    if defined GHIDRA_PROBE for %%R in ("!GHIDRA_PROBE!") do set "GHIDRA_ROOT=%%~dpR"
-    if defined GHIDRA_ROOT if exist "!GHIDRA_ROOT!Ghidra\application.properties" if exist "!GHIDRA_ROOT!support\analyzeHeadless.bat" set "GHIDRA_ON_PATH=1"
-    set "GHIDRA_PROBE="
-    set "GHIDRA_ROOT="
+    REM No delayed expansion in this scope (it starts at line ~119):
+    REM resolve the root with the FOR modifier %%~dp$PATH:I instead of
+    REM !VAR! pairs, and chain the marker checks on one line.
+    for %%I in (ghidra.bat ghidraRun.bat ghidra.exe ghidraRun.exe) do if not defined GHIDRA_ON_PATH if exist "%%~dp$PATH:IGhidra\application.properties" if exist "%%~dp$PATH:Isupport\analyzeHeadless.bat" set "GHIDRA_ON_PATH=1"
     if not defined GHIDRA_ON_PATH if exist "C:\tools\ghidra_12.1.4_PUBLIC\support\analyzeHeadless.bat" set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
 )
 :: No JAVA_HOME guessing here: release identity and java.exe selection
