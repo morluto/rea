@@ -6,11 +6,15 @@
 
 ## เปิด Quick Tools บนเครื่องที่ติดตั้งแล้ว (Windows)
 
-ติดตั้ง REA แบบ global ด้วย `npm install -g rea-agents` แล้ว launcher จะอยู่ที่:
+ติดตั้ง REA แบบ global ด้วย `npm install -g rea-agents` แล้ว launcher จะอยู่ที่
+โฟลเดอร์ global ของ npm (หา path จริงด้วย `npm root -g`):
 
 ```text
-%APPDATA%\npm\node_modules\rea-agents\tools\windows\REA-QuickTools.bat
+<npm global root>\rea-agents\tools\windows\REA-QuickTools.bat
 ```
+
+ค่า default ทั่วไปคือ `%APPDATA%\npm\node_modules\...` แต่ถ้าตั้ง prefix เอง
+(เช่น nvm-windows หรือเครื่องบริษัท) path จะอยู่ใต้ prefix นั้นแทน
 
 เปิดใช้ได้ 3 วิธี:
 
@@ -21,7 +25,9 @@
    ```
 3. **สร้าง Shortcut** ไปวางบน Desktop: คลิกขวาที่ไฟล์ > Show more options > Send to > Desktop (create shortcut)
 
-ลากไฟล์ `.exe` / `.dll` ใส่หน้าต่าง launcher ก็วิเคราะห์ได้ทันที (drag-and-drop) หรือเลือกเมนู 3 เพื่อวาง path เอง
+ลากไฟล์ `.exe` / `.dll` **มาวางบนไฟล์ `REA-QuickTools.bat` ก่อนเปิด** (หรือ shortcut) —
+launcher จะวิเคราะห์ไฟล์นั้นทันที การลากมาวางปล่อยในหน้าต่าง cmd ที่เปิดอยู่แล้ว
+จะแทรก path ไว้ที่ prompt เท่านั้น ให้เลือกเมนู 3 แล้ววาง path เองแทน
 
 ---
 
