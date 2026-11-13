@@ -23,6 +23,7 @@ import {
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
   pathValuesOf,
+  pathParameterKeys,
   type FieldRule,
   type WriteEffect,
 } from "./environmentStateWriteRules.js";
@@ -414,13 +415,9 @@ export const anyLinkedSource = (
   plan.collection !== null &&
   normalizedPath(plan.collection) === plan.target &&
   !segmentsOf(plan.target).some(isParam) &&
-  segmentsOf(template)
-    .filter(isParam)
-    .every((segment) =>
-      plan.rules.some(
-        (rule) => rule.rule === "path" && rule.from === segment.slice(1, -1),
-      ),
-    );
+  [...pathParameterKeys(template).values()].every((name) =>
+    plan.rules.some((rule) => rule.rule === "path" && rule.from === name),
+  );
 
 /**
  * Whether a linked create's call sends the path values its exemplar did, each as recorded or in the

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import type { ProcessLifecycle } from "../process/ProcessLifecycle.js";
 import {
   SessionObservations,
@@ -157,6 +158,29 @@ describe("SessionObservations", () => {
     ]);
   });
 
+  it("does not attribute a reused pid discovered while recording windows", async () => {
+    const table = new Map<number, FakeProcess>([
+      [100, { parentPid: 1, startTime: "10", runId: "run" }],
+      [101, { parentPid: 100, startTime: "11", runId: "run" }],
+    ]);
+    const observations = observe(table);
+    await trackProcess(observations, 100, signal);
+    await sampleProcesses(observations, signal);
+    table.set(101, { parentPid: 1, startTime: "99" });
+
+    expect(
+      await recordWindows(observations, [window("0x8", 101, "Other")], signal),
+    ).toBe(0);
+    expect(
+      await recordWindows(observations, [window("0x8", 101, "Other")], signal),
+    ).toBe(0);
+    expect(observedSession(observations).windows[0]?.application).toBe(false);
+    expect(observations.firstWindowMs).toBeNull();
+    expect(
+      await recordWindows(observations, [window("0x9", 101, "Notes")], signal),
+    ).toBe(1);
+  });
+
   it("does not keep a zombie child alive, whether first seen as one or exiting later", async () => {
     const table = new Map<number, FakeProcess>([
       [100, { parentPid: 1, startTime: "10", runId: "run" }],
@@ -234,4 +258,54 @@ describe("sampleTokenCarriers", () => {
     expect(await sampleTokenCarriers(observations, signal)).toBe(false);
     expect(observations.liveProcessIds()).toEqual([]);
   });
+});
+
+it("keeps a failed optional token-table probe unknown", async () => {
+  const observations = new SessionObservations(
+    performance.now(),
+    { runId: "inert-observation", launchPid: process.pid },
+    { names: new Set(), byPid: true },
+  );
+  const table = vi
+    .spyOn(systemProcessOwnershipHost, "listProcesses")
+    .mockRejectedValue(
+      Object.assign(new Error("table read failed"), { code: "EIO" }),
+    );
+  const environment = vi
+    .spyOn(systemProcessOwnershipHost, "environment")
+    .mockRejectedValue(
+      new Error("no token read is authorized after an unreadable table"),
+    );
+  try {
+    expect(
+      await sampleTokenCarriers(observations, new AbortController().signal),
+    ).toBe(false);
+    expect(table).toHaveBeenCalledTimes(1);
+    expect(environment).not.toHaveBeenCalled();
+  } finally {
+    table.mockRestore();
+    environment.mockRestore();
+  }
+});
+
+it("keeps a failed optional process-token read unknown", async () => {
+  const observations = new SessionObservations(
+    performance.now(),
+    { runId: "inert-observation", launchPid: process.pid },
+    { names: new Set(), byPid: false },
+  );
+  const environment = vi
+    .spyOn(systemProcessOwnershipHost, "environment")
+    .mockRejectedValue(
+      Object.assign(new Error("token read failed"), { code: "EIO" }),
+    );
+  try {
+    await trackProcess(observations, process.pid, new AbortController().signal);
+    expect(environment).toHaveBeenCalledTimes(1);
+    expect(observedSession(observations).processes).toEqual([
+      expect.objectContaining({ pid: process.pid, started_by_capture: true }),
+    ]);
+  } finally {
+    environment.mockRestore();
+  }
 });

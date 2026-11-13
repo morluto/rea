@@ -256,9 +256,7 @@ const hasRelativeSchemaReference = (
 const withAdvertisedJsonSchema = <Schema extends z.ZodType>(
   canonical: Schema,
   io: "input" | "output",
-  advertise: (project: JsonSchemaProjection) => JsonSchemaProjection = (
-    project,
-  ) => project,
+  advertise: (project: JsonSchemaProjection) => JsonSchemaProjection,
 ): Schema => {
   // Zod's input projection drops root metadata when a descendant transforms.
   // Preserve the parser and let the SDK own conversion of everything else.

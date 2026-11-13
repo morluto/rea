@@ -4,7 +4,6 @@ import { createWebRuntimeService } from "../composition/webRuntime.js";
 import { cliDomainInput } from "./domainInput.js";
 import { observeWebExecutionInputSchema } from "../domain/webExecution.js";
 import { inspectWebEventListenersInputSchema } from "../domain/webEventListeners.js";
-import { browserCliError } from "./browserCliError.js";
 import {
   browserScopeOptions,
   selectedCommandTimeout,

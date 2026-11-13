@@ -7,10 +7,10 @@ import {
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import {
-  analysisViewRequestSchema,
   projectAnalysisView,
   type AnalysisViewParent,
 } from "../../domain/analysisView/analysisView.js";
+import { analysisViewRequestSchema } from "../../domain/analysisView/analysisViewRequest.js";
 
 const artifact = {
   path: "/fixtures/exports",

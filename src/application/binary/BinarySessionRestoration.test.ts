@@ -87,6 +87,9 @@ it.each([false, true])(
         analysis_provider_binding: {
           selection_source: "auto-single-candidate",
         },
+        analysis_provider_candidates: [
+          { selected: true, selection_source: "auto-single-candidate" },
+        ],
       });
       expect((await session.execute("list_strings", {})).ok).toBe(true);
       expect(starts).toEqual([0, 1]);

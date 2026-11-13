@@ -17,32 +17,11 @@ export const createManagedConformanceSupport = (context) => {
   const fixture = (name, options) =>
     fixtureBytes(name, buildManagedPeFixture(options));
   const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
-  const appManifestInspectionLimits = {
-    ...context.inspectionLimits,
-    maxMetadataBytes: 64 * 1024 * 1024,
-    maxTableRows: 250_000,
-    maxHeapItemBytes: 16 * 1024 * 1024,
-  };
-  const appManifestMemberLimits = {
-    ...context.memberLimits,
-    typeLimit: 1,
-    methodLimit: 1,
-    fieldLimit: 1,
-    memberRefLimit: 1,
-    edgeLimit: 1,
-    maxMetadataBytes: 64 * 1024 * 1024,
-    maxTableRows: 250_000,
-    maxHeapItemBytes: 16 * 1024 * 1024,
-    maxMethodBodyBytes: 4 * 1024 * 1024,
-    maxMethodInstructions: 20_000,
-  };
   const base = {
     ...context,
     fixture,
     fixtureBytes,
     sha256,
-    appManifestInspectionLimits,
-    appManifestMemberLimits,
   };
   return { ...base, ...createManagedConformanceOracleSupport(base) };
 };

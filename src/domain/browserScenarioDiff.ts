@@ -81,7 +81,7 @@ export const compareBrowserScenarios = (
     input.before_scenario,
     input.after_scenario,
   );
-  const incomparableReason = eventCoverageReason(
+  const incomparableReason = joinIncomparableReasons(
     familyIncomparableReason,
     networkContentCoverageReason(input.before_scenario, input.after_scenario),
     beforeEvents.coverageReason,
@@ -499,20 +499,6 @@ const digestScenarioEvents = (
   );
 };
 
-const eventCoverageReason = (
-  familyReason: string | undefined,
-  networkContentReason: string | undefined,
-  beforeNetworkReason: string | undefined,
-  afterNetworkReason: string | undefined,
-): string | undefined => {
-  return joinIncomparableReasons(
-    familyReason,
-    networkContentReason,
-    beforeNetworkReason,
-    afterNetworkReason,
-  );
-};
-
 interface CompareCapturedValuesInput<Value> {
   readonly artifact: BrowserScenarioArtifactKind;
   readonly before: CaptureState<Value>;
@@ -521,7 +507,6 @@ interface CompareCapturedValuesInput<Value> {
   readonly afterStep: BrowserScenarioStep;
   readonly rules: readonly BrowserScenarioNormalizationRule[];
   readonly project?: (value: Value) => unknown;
-  readonly order?: (normalized: unknown) => unknown;
   readonly beforeState?: BrowserScenarioEvidenceState;
   readonly afterState?: BrowserScenarioEvidenceState;
   readonly incomparableReason?: string | undefined;
@@ -538,7 +523,6 @@ const compareCapturedValues = <Value>(
     afterStep,
     rules,
     project = (value) => value,
-    order,
   } = input;
   const beforeState =
     input.beforeState ?? artifactEvidenceState(artifact, before, beforeStep);
@@ -548,21 +532,11 @@ const compareCapturedValues = <Value>(
     return { artifact, status: "not_compared", diff: null };
   const beforeSha256 =
     beforeState === "captured" && before.state === "captured"
-      ? digestNormalizedScenarioValue(
-          project(before.value),
-          artifact,
-          rules,
-          order,
-        )
+      ? digestNormalizedScenarioValue(project(before.value), artifact, rules)
       : null;
   const afterSha256 =
     afterState === "captured" && after.state === "captured"
-      ? digestNormalizedScenarioValue(
-          project(after.value),
-          artifact,
-          rules,
-          order,
-        )
+      ? digestNormalizedScenarioValue(project(after.value), artifact, rules)
       : null;
   if (
     beforeState !== "captured" ||

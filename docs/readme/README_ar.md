@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · **العربية** · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: هندسة عكسية لأي شيء
 
@@ -84,6 +84,10 @@ npx rea-agents setup
 
 يستخدم MCP مخططات إدخال مختصرة افتراضيًا. للحصول على إرشادات الحقول الكاملة وتفاصيل التحقق المتداخل، اضبط `REA_MCP_INPUT_SCHEMA_PROFILE=full` في تسجيل MCP. يحتفظ الخياران بجميع الأدوات والتحقق القياسي نفسه على الخادم؛ راجع دليل عقود MCP.
 
+يسجّل الإعداد بيئة التشغيل المحددة وملف دخول REA مباشرةً. عند استخدام مشغّل حزم، احتفظ بإدخال ذاكرة التخزين المؤقت وبيئة التشغيل؛ ونفّذ تنزيل الحزمة من دليل موثوق خارج المشروع المستهدف. راجع دليل التثبيت والإعداد.
+
+تُعلن مخططات الإخراج الكاملة افتراضيًا. إذا حدّ عميلك من حجم `tools/list`، فاضبط `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` أو `off` في تسجيل MCP؛ يظل التحقق والخروج المنظّم كاملين على الخادم. راجع قسم مخططات الإخراج في دليل عقود MCP.
+
 ### اطلب من وكيلك
 
 ```text
@@ -157,6 +161,7 @@ npx rea-agents@latest setup
 | بنية ELF دون تشغيل              | الأقسام والمقاطع والرموز ومعلومات إعادة التموضع الأصلية، وآليات الحماية المحتملة المستدلّ عليها بالفحص الثابت | pwntools يوفّره المستدعي على Linux x64؛ [تشخيص الملفات الثنائية](../guides/native/binary-diagnostics.md)                                                      |
 | PE certificates                 | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                               | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                      |
 | PE imports                      | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                 | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                |
+| Windows shortcuts               | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                               | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                    |
 | شيفرة EVM البايتية              | محددات التوجيه، وإزاحات البايتات، والمعاملات المستنتجة، وقابلية تغيير الحالة                                | مدخل محلي يحمل بايتات خامًا أو تمثيلًا سداسيًا عشريًا على Linux x64؛ [دليل EVM دون تشغيل](../guides/evm/evm-bytecode.md)                                          |
 | Rust binaries                   | Embedded cargo-auditable dependency list                                                                   | [Rust binaries](../rust-binaries.md)                                                                                                                         |
 | ELF notes                       | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                            | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                 |
@@ -172,6 +177,7 @@ npx rea-agents@latest setup
 | التقاط الحزم                    | نقاط النهاية وDNS وTLS SNI وتوزيع البروتوكولات وطلبات HTTP                                                  | tshark وcapinfos يوفّرهما المُستدعي؛ [دليل pcap](../guides/data/pcap-analysis.md)                                                                              |
 | تجميعات .NET                    | البيانات الوصفية، وتعليمات CIL، واعتماديات الشيفرة الأصلية المعلنة، ومقارنات البناء                         | فحص ثابت؛ [دليل الشيفرة المُدارة](../guides/managed/managed-code-analysis.md)                                                                                 |
 | PyInstaller                     | CArchive, PYZ, Python bytecode                                                                             | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                        |
+| Deno compile binaries           | Virtual files, entry point, recorded options, npm snapshot length                                          | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                         |
 | حزم Android APK                 | تصريحات ملف manifest، والأصناف، والدوال الناتجة عن فك الترجمة، والمراجع                                     | JADX دون واجهة رسومية وJDK كامل على Linux/macOS/Windows x64؛ [دليل Android](../guides/android/android-analysis.md)                                           |
 | أجهزة Android                   | الأجهزة والحزم والعمليات والسجلات والدامبات ولقطات الشاشة ونقل APK/الملفات                                   | adb يوفّره المُستدعي (محاكي أو جهاز)؛ [دليل ADB](../guides/android/adb-device-analysis.md)                                                                     |
 | مشاريع JEB                      | وحدات المشروع من المحرك وبصمات المصنّفات والكود الزائف للأنواع/الدوال                                        | عميل JEB يبدأه المُستدعي ويقدّم MCP، ويُختار عبر REA_JEB_MCP_URL؛ [دليل JEB](../providers/jeb-analysis.md)                                                      |
@@ -272,6 +278,12 @@ agent-env run ./my-env
 [دليل إنشاء بيئة](https://rea.tools/guides/rl-environments/) ·
 [مرجع البيئات](../agent-environments.md) ·
 [شاهد العرض على X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### بيئات تطبيقات سطح المكتب
+
+يستطيع REA أيضًا إنشاء بيئة لتطبيق سطح مكتب على Linux يستخدمه الوكيل عبر لقطات الشاشة والفأرة ولوحة المفاتيح. من طلب من سطر واحد، مثل "أنشئ لي بيئة Gnote يضيف فيها الوكيل زيت الزيتون إلى ملاحظة قائمة التسوق"، يثبّت وكيلك التطبيق على حاسوب بناء محلي، ويكتب المهمة، ويصدّر البيئة، ثم يتحقق من المهمة على حاسوب جديد. يحتاج الجهاز الذي يبنيها إلى Linux على amd64 أو arm64، وDocker، وإصدار إطار agentenv الذي يحدده الدليل.
+
+[إعداد بيئات تطبيقات سطح المكتب](../desktop-build-computer.md)
 
 ## الأسئلة الشائعة
 

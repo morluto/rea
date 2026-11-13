@@ -1,3 +1,4 @@
+import { javaScriptSemanticPrecisionSchema } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { z } from "zod";
 import { JAVASCRIPT_STATIC_FACT_BYTES } from "../domain/javascript/javascriptAnalysisResourceControls.js";
 import { digestSchema } from "../domain/digests.js";
@@ -35,6 +36,7 @@ export const includedWebScriptSchema = browserScriptSchema
 
 export const webBundleWorkerRequestSchema = z.strictObject({
   kind: z.literal("analyze"),
+  semantic_precision: javaScriptSemanticPrecisionSchema.exactOptional(),
   id: z.uuid(),
   source: z.strictObject({
     bytes: z.number().int().min(0).max(WEB_BUNDLE_WORKER_LIMITS.sourceBytes),

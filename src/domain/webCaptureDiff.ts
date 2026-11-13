@@ -213,9 +213,10 @@ const compareWebCaptureDimensions = (
     resources: compareResources(
       before.resources,
       after.resources,
-      sectionsComplete(before, ["resources"]) &&
-        sectionsComplete(after, ["resources"]),
-      "Resource inventory or content-size evidence was incomplete in at least one observation.",
+      sectionsComplete(before, ["resources"]),
+      sectionsComplete(after, ["resources"]),
+      resourceInventoryReadable(before),
+      resourceInventoryReadable(after),
     ),
     network: networkDimension(before, after),
     metadata: compareAggregate(
@@ -232,12 +233,25 @@ const compareWebCaptureDimensions = (
   };
 };
 
+/** An invalid or unread collection is not a truncated sample of a real inventory. */
+const resourceInventoryReadable = (inspection: WebPageInspection): boolean =>
+  !inspection.completeness.unavailable_sections.includes("resources");
+
 const compareResources = (
   before: WebPageInspection["resources"],
   after: WebPageInspection["resources"],
-  complete: boolean,
-  reason: string,
+  beforeComplete: boolean,
+  afterComplete: boolean,
+  beforeReadable: boolean,
+  afterReadable: boolean,
 ): Dimension => {
+  const reason =
+    "Resource inventory or content-size evidence was incomplete in at least one observation.";
+  // Retained rows from an unavailable collection cannot prove addition,
+  // removal, or equality. Truncation still uses directional coverage.
+  if (!beforeReadable || !afterReadable)
+    return { status: "unknown", total_changes: 0, changes: [], reason };
+  const complete = beforeComplete && afterComplete;
   const left = resourceGroups(before);
   const right = resourceGroups(after);
   const changes: Change[] = [];
@@ -246,12 +260,14 @@ const compareResources = (
     const leftSizes = left.get(identity);
     const rightSizes = right.get(identity);
     if (leftSizes === undefined || rightSizes === undefined) {
-      if (!complete) unresolved = true;
-      else
+      const absenceProven =
+        leftSizes === undefined ? beforeComplete : afterComplete;
+      if (absenceProven)
         changes.push({
           identity,
           change: leftSizes === undefined ? "added" : "removed",
         });
+      else unresolved = true;
       continue;
     }
     // Stable inventories deduplicate identical observations. A null size also
@@ -261,7 +277,12 @@ const compareResources = (
       unresolved = true;
       continue;
     }
-    if (!sameResourceSizes(leftSizes, rightSizes))
+    // A partial set can omit any size variant. Only a complete peer can
+    // contradict a retained variant, including when the other side is partial.
+    if (
+      (beforeComplete && !resourceSizesContained(rightSizes, leftSizes)) ||
+      (afterComplete && !resourceSizesContained(leftSizes, rightSizes))
+    )
       changes.push({ identity, change: "modified" });
   }
   if (changes.length > 0)
@@ -292,11 +313,10 @@ const resourceGroups = (
   return groups;
 };
 
-const sameResourceSizes = (
-  left: ReadonlySet<number | null>,
-  right: ReadonlySet<number | null>,
-): boolean =>
-  left.size === right.size && [...left].every((size) => right.has(size));
+const resourceSizesContained = (
+  observed: ReadonlySet<number | null>,
+  complete: ReadonlySet<number | null>,
+): boolean => [...observed].every((size) => complete.has(size));
 
 type BodyShapeSources = {
   readonly request: boolean;

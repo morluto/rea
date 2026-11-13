@@ -1,3 +1,5 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
+import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import type { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
@@ -25,14 +27,11 @@ export type RpcMethods = (
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const pointerSegment = (segment: string | number): string =>
-  String(segment).replaceAll("~", "~0").replaceAll("/", "~1");
-
 /** The first document problem as `-32602`, located by a JSON pointer into the document. */
 const documentError = (error: AnalysisInputError): RpcError => {
   const issue = error.issues[0];
   const pointer = (issue?.path ?? [])
-    .map((segment) => `/${pointerSegment(segment)}`)
+    .map((segment) => `/${escapeJsonPointerToken(String(segment))}`)
     .join("");
   return invalidParams(
     `${pointer === "" ? "the document" : pointer} ${issue?.message ?? "is not a rea-state/v1 document"}`,
@@ -46,17 +45,24 @@ interface CallContext {
   readonly intake: StateIntake;
   readonly cancel: AbortSignal;
   readonly files: ArtifactResourceScope;
+  readonly responses: ResponseBodyCleanup;
 }
 
 /** `data/add`: exactly one part, whose document replaces the whole state only when it is valid and the call was not cancelled. */
 const addState = async (
-  { store, intake, cancel, files }: CallContext,
+  { store, intake, cancel, files, responses }: CallContext,
   params: unknown,
 ): Promise<RpcOutcome> => {
   const parts = isRecord(params) ? params.parts : undefined;
   if (!Array.isArray(parts) || parts.length !== 1)
     return { error: invalidParams("data/add takes exactly one part") };
-  const document = await partDocument(parts[0], intake, cancel, files);
+  const document = await partDocument(
+    parts[0],
+    intake,
+    cancel,
+    files,
+    responses,
+  );
   if (!document.ok) return { error: document.error };
   // A file read is not interruptible, so a cancellation during it is honoured here, before the state changes.
   if (cancel.aborted) return { error: CANCELLED };
@@ -101,6 +107,9 @@ export const stateDataPlane = (
   intake: StateIntake = DEFAULT_STATE_INTAKE,
   stopped: AbortSignal = new AbortController().signal,
   files: ArtifactResourceScope = new ArtifactResourceScope(),
+  responses: ResponseBodyCleanup = new ResponseBodyCleanup(
+    "state response body",
+  ),
 ): RpcMethods => {
   let previous: Promise<unknown> = Promise.resolve();
   return (method, params, signal) => {
@@ -111,7 +120,7 @@ export const stateDataPlane = (
     const next = previous.then(() =>
       cancel.aborted
         ? { error: CANCELLED }
-        : run({ store, intake, cancel, files }, params),
+        : run({ store, intake, cancel, files, responses }, params),
     );
     previous = next.catch(() => undefined);
     return next;

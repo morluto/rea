@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../domain/jsonPointer.js";
 import { setImmediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import { TextDecoder } from "node:util";
@@ -196,8 +197,6 @@ const exactOffset = (value: bigint): number => {
     );
   return Number(value);
 };
-const pointer = (value: string): string =>
-  value.replaceAll("~", "~0").replaceAll("/", "~1");
 
 export const readSafetensorsHeader = async (
   reader: ModelHeaderReader,
@@ -231,12 +230,7 @@ export const readSafetensorsHeader = async (
     rejectPickle();
   if (brace !== 0x7b)
     rejectModel("File does not contain a GGUF or safetensors header");
-  if (length > BigInt(Number.MAX_SAFE_INTEGER))
-    throw new ModelFormatFailure(
-      "capacity",
-      "Safetensors header length exceeds exact host offset precision",
-      "exact-offset",
-    );
+  reader.requireFileExtent(8, length);
   const size = Number(length);
   reader.guarantee(size - 1);
   // Native UTF-8 decode and the bounded JSON parser both retain header text.
@@ -276,7 +270,7 @@ export const readSafetensorsHeader = async (
         element_count: null,
         preview_complete: true,
         ...source,
-        json_pointer: `/__metadata__/${pointer(key)}`,
+        json_pointer: `/__metadata__/${escapeJsonPointerToken(key)}`,
       });
     }
   }
@@ -304,12 +298,13 @@ export const readSafetensorsHeader = async (
     const offsets = integersOf(entry.data_offsets);
     if (offsets.length !== 2)
       rejectModel(`Safetensors tensor ${name} requires two data offsets`);
-    const start = exactOffset(offsets[0] ?? 0n);
-    const end = exactOffset(offsets[1] ?? 0n);
-    if (end < start || end > reader.size - tensor_data_offset)
-      rejectModel(
-        `Safetensors tensor ${name} range [${String(start)},${String(end)}) is outside the data buffer`,
-      );
+    const rawStart = offsets[0] ?? 0n;
+    const rawEnd = offsets[1] ?? 0n;
+    if (rawStart < 0n || rawEnd < rawStart)
+      rejectModel(`Safetensors tensor ${name} has an invalid data range`);
+    reader.requireFileExtent(tensor_data_offset, rawEnd);
+    const start = exactOffset(rawStart);
+    const end = exactOffset(rawEnd);
     let parameters = 1n;
     for (const dimension of shape) {
       parameters *= dimension;
@@ -340,7 +335,7 @@ export const readSafetensorsHeader = async (
       byte_length_state: "declared",
       storage_validation: bits === undefined ? "unknown" : "consistent",
       ...source,
-      json_pointer: `/${pointer(name)}`,
+      json_pointer: `/${escapeJsonPointerToken(name)}`,
     });
   }
   const ordered = [...tensors].sort(

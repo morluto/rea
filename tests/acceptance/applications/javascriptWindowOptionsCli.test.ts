@@ -12,6 +12,7 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-window-options-");
     await writeFixtureFiles(root, {
+      "package.json": '{"type":"commonjs"}',
       "main.js": [
         'throw new Error("Static input must never execute");',
         'const { BrowserWindow } = require("electron");',

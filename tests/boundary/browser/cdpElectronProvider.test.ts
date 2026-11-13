@@ -44,13 +44,18 @@ it.each(["late", "initial", "destroyed", "final-malformed", "out-of-scope"])(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: mainUrl },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: mainUrl,
+                },
                 childFrames:
                   reads > 1 || kind === "initial"
                     ? [
                         {
                           frame: {
                             id: "child",
+                            loaderId: "loader-child",
                             parentId: "frame-main",
                             url:
                               kind === "out-of-scope"
@@ -66,6 +71,7 @@ it.each(["late", "initial", "destroyed", "final-malformed", "out-of-scope"])(
                         {
                           frame: {
                             id: "child",
+                            loaderId: "loader-child",
                             parentId: "frame-main",
                             url: childUrl,
                           },
@@ -168,17 +174,27 @@ it.each(["reordered", "parent-changed", "path-changed"])(
         const first = {
           frame: {
             id: "first",
+            loaderId: "loader-first",
             parentId:
               reads > 2 && kind === "parent-changed" ? "second" : "frame-main",
             url: reads > 2 && kind === "path-changed" ? app : child,
           },
         };
         const second = {
-          frame: { id: "second", parentId: "frame-main", url: app },
+          frame: {
+            id: "second",
+            loaderId: "loader-second",
+            parentId: "frame-main",
+            url: app,
+          },
         };
         return {
           frameTree: {
-            frame: { id: "frame-main", url: main },
+            frame: {
+              id: "frame-main",
+              loaderId: "loader-frame-main",
+              url: main,
+            },
             childFrames: reads > 2 ? [second, first] : [first, second],
           },
         };
@@ -223,11 +239,16 @@ it.each([
       method === "Page.getFrameTree"
         ? {
             frameTree: {
-              frame: { id: "frame-main", url: main },
+              frame: { id: "frame-main", loaderId: "main", url: main },
               childFrames:
                 reads === 1 || kind === "same-document"
                   ? ["first", "second"].map((id) => ({
-                      frame: { id, parentId: "frame-main", url: child },
+                      frame: {
+                        id,
+                        loaderId: `loader-${id}`,
+                        parentId: "frame-main",
+                        url: child,
+                      },
                     }))
                   : [],
             },
@@ -292,6 +313,7 @@ it.each([
                   : {
                       frame: {
                         id: "first",
+                        loaderId: "loader-first",
                         parentId: "frame-main",
                         url: "https://foreign.test/",
                       },
@@ -365,11 +387,16 @@ it("excludes srcdoc scripts before source reads while retaining declared labels 
       method === "Page.getFrameTree"
         ? {
             frameTree: {
-              frame: { id: "frame-main", url: mainUrl },
+              frame: {
+                id: "frame-main",
+                loaderId: "loader-frame-main",
+                url: mainUrl,
+              },
               childFrames: [
                 {
                   frame: {
                     id: "srcdoc",
+                    loaderId: "loader-srcdoc",
                     parentId: "frame-main",
                     url: "about:srcdoc",
                   },
@@ -730,7 +757,11 @@ describe("CdpElectronProvider frame capture", () => {
           command.method === "Page.getFrameTree"
             ? {
                 frameTree: {
-                  frame: { id: "frame-main", url: main },
+                  frame: {
+                    id: "frame-main",
+                    loaderId: "loader-frame-main",
+                    url: main,
+                  },
                   childFrames: [
                     {
                       frame: {
@@ -951,7 +982,10 @@ describe("CdpElectronProvider malformed inventory replies", () => {
       "resources",
       "Page.getResourceTree",
       (fileUrl: string) => ({
-        frameTree: { frame: { id: "main", url: fileUrl }, resources: null },
+        frameTree: {
+          frame: { id: "main", loaderId: "loader-main", url: fileUrl },
+          resources: null,
+        },
       }),
     ],
     ["workers", "Target.getTargets", () => ({ targetInfos: null })],
@@ -1119,7 +1153,11 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: main },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: main,
+                },
                 childFrames:
                   phase === "refreshed" && reads === 1
                     ? []
@@ -1127,6 +1165,7 @@ it.each(
                         {
                           frame: {
                             id: "child",
+                            loaderId: "loader-child",
                             url: child,
                             ...(parent === "missing"
                               ? {}
@@ -1136,6 +1175,7 @@ it.each(
                             {
                               frame: {
                                 id: "grandchild",
+                                loaderId: "loader-grandchild",
                                 parentId: "child",
                                 url: child,
                               },
@@ -1240,7 +1280,11 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: main },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: main,
+                },
                 childFrames:
                   phase === "refreshed" && reads === 1
                     ? []
@@ -1248,6 +1292,7 @@ it.each(
                         {
                           frame: {
                             id: "parent",
+                            loaderId: "loader-parent",
                             parentId: "frame-main",
                             url: parentUrl,
                           },
@@ -1255,6 +1300,7 @@ it.each(
                             {
                               frame: {
                                 id: "local",
+                                loaderId: "loader-local",
                                 parentId: "parent",
                                 url: child,
                               },
@@ -1356,10 +1402,19 @@ it.each(["about:blank", "https://foreign.invalid/root"])(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: rootUrl },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: rootUrl,
+                },
                 childFrames: [
                   {
-                    frame: { id: "local", parentId: "frame-main", url: local },
+                    frame: {
+                      id: "local",
+                      loaderId: "loader-local",
+                      parentId: "frame-main",
+                      url: local,
+                    },
                   },
                 ],
               },
@@ -1414,7 +1469,7 @@ const replayFrameTree = (
   reads: number,
 ) => ({
   frameTree: {
-    frame: { id: "frame-main", url: main },
+    frame: { id: "frame-main", loaderId: "loader-frame-main", url: main },
     childFrames:
       reads === 1 || (kind === "during-tree" && reads === 2)
         ? [

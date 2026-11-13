@@ -32,7 +32,7 @@ export class DshCordisYaml {
       customTags: [
         { tag: "tag:yaml.org,2002:js", resolve: (source: string) => source },
       ],
-      logLevel: "silent",
+      logLevel: "error",
     });
     if (this.document.errors.length > 0 || this.document.warnings.length > 0)
       throw new ConfigurationError("Invalid or unsupported Cordis YAML", {

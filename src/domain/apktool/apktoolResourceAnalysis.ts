@@ -2,10 +2,11 @@ import { z } from "zod";
 import { localPathStringSchema } from "../localPath.js";
 import { digestSchema } from "../digests.js";
 
-export const MAX_STRINGS = 2_000;
+export const DEFAULT_APKTOOL_STRING_LIMIT = 2_000;
 export const MAX_SELECTED_LOCALES = 20;
-export const MAX_AGGREGATE_STRINGS = 10_000;
-export const AGGREGATE_STRINGS_XML_MAX_BYTES = 32 * 1024 * 1024;
+export const DEFAULT_APKTOOL_TOTAL_STRINGS = 10_000;
+export const DEFAULT_APKTOOL_STRING_TABLE_BYTES = 8 * 1024 * 1024;
+export const DEFAULT_APKTOOL_TOTAL_STRING_TABLE_BYTES = 32 * 1024 * 1024;
 /** Decode wall clock used when decode_timeout_ms is omitted. */
 export const DEFAULT_APKTOOL_DECODE_TIMEOUT_MS = 600_000;
 /** Largest delay supported without overflowing Node timers. */
@@ -27,7 +28,7 @@ const ANDROID_NON_LOCALE_QUALIFIERS = new Set([
 const MAX_ANDROID_LOCALE_SUFFIX = 2 + 3 + (1 + 4) + (1 + 3) + (1 + 8);
 
 /** Locale language tags admitted by Android resource table selection. */
-export const androidLocaleQualifierSchema = z
+const androidLocaleQualifierSchema = z
   .string()
   .min(2)
   .max(MAX_ANDROID_LOCALE_SUFFIX)
@@ -72,7 +73,42 @@ export const apktoolInputSchemas = {
       .boolean()
       .default(true)
       .describe(
-        `Project res/values/strings.xml entries (bounded to ${String(MAX_STRINGS)} entries)`,
+        "Project res/values/strings.xml entries using the selected string page and read budgets",
+      ),
+    string_offset: z
+      .int()
+      .nonnegative()
+      .optional()
+      .describe(
+        "Zero-based offset into valid parsed strings in each selected table, default 0. Retry the same APK and locale with the returned page.next_offset to retrieve later strings; verify target.sha256 across calls.",
+      ),
+    string_limit: z
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        `Maximum strings returned per selected table, default ${String(DEFAULT_APKTOOL_STRING_LIMIT)}. Applies on this decode; no restart. Independent of XML read and aggregate output budgets.`,
+      ),
+    max_total_strings: z
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        `Aggregate returned string copies, default ${String(DEFAULT_APKTOOL_TOTAL_STRINGS)}. The legacy multi-locale shape charges the primary strings twice; string_tables_only avoids that copy. Raise this or select fewer locales when exhausted.`,
+      ),
+    max_string_table_bytes: z
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        `UTF-8 source byte admission for each strings.xml, default ${String(DEFAULT_APKTOOL_STRING_TABLE_BYTES)}. Raise this and, when necessary, max_total_string_table_bytes to retry an oversized table. Applies on the next decode; no restart.`,
+      ),
+    max_total_string_table_bytes: z
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        `Aggregate XML bytes read across distinct physical string tables, default ${String(DEFAULT_APKTOOL_TOTAL_STRING_TABLE_BYTES)}. Raise this or select fewer locales. Does not raise per-table admission or string output budgets.`,
       ),
     string_tables_only: z
       .boolean()
@@ -91,7 +127,7 @@ export const apktoolInputSchemas = {
       .max(MAX_SELECTED_LOCALES)
       .optional()
       .describe(
-        `Project multiple localized string tables from res/values-<locale>/strings.xml alongside the default table (bounded to ${String(MAX_SELECTED_LOCALES)} locales)`,
+        `Project multiple localized string tables from res/values-<locale>/strings.xml alongside the default table (up to ${String(MAX_SELECTED_LOCALES)} locales per call; split larger selections into separate calls and verify target.sha256)`,
       ),
     decode_timeout_ms: z
       .number()
@@ -114,6 +150,27 @@ export type ApktoolRequest = {
     input: z.infer<(typeof apktoolInputSchemas)[Name]>;
   };
 }[ApktoolOperation];
+
+/** Explicit page/budget callers need the examined table's counts and continuation. */
+export const apktoolStringTablesRequested = (
+  input: Pick<
+    Extract<ApktoolRequest, { operation: "decode_android_resources" }>["input"],
+    | "locales"
+    | "string_tables_only"
+    | "string_offset"
+    | "string_limit"
+    | "max_total_strings"
+    | "max_string_table_bytes"
+    | "max_total_string_table_bytes"
+  >,
+): boolean =>
+  input.locales !== undefined ||
+  input.string_tables_only === true ||
+  input.string_offset !== undefined ||
+  input.string_limit !== undefined ||
+  input.max_total_strings !== undefined ||
+  input.max_string_table_bytes !== undefined ||
+  input.max_total_string_table_bytes !== undefined;
 
 /** Validate operation and input together so their types remain correlated. */
 export const apktoolRequestSchema = z.discriminatedUnion("operation", [
@@ -144,7 +201,7 @@ export const stringTableSchema = z.strictObject({
   status: z
     .enum(["present", "missing", "oversized", "malformed", "skipped"])
     .describe(
-      "Table availability: present, missing from APK, oversized, malformed XML, or skipped due to limits",
+      "Table availability in the decoded workspace: present, missing at the selected path, oversized, malformed XML, or skipped due to limits",
     ),
   strings: z.array(
     z.strictObject({
@@ -165,6 +222,17 @@ export const stringTableSchema = z.strictObject({
     .nullable()
     .describe(
       "Entries skipped due to nested markup or missing attributes, or null if the table was not examined or was malformed",
+    ),
+  page: z
+    .strictObject({
+      offset: z.int().nonnegative(),
+      limit: z.int().positive(),
+      returned_count: z.int().nonnegative(),
+      next_offset: z.int().nonnegative().nullable(),
+    })
+    .optional()
+    .describe(
+      "Selected valid-entry page, present for explicit string selection/budgets when the table was examined. next_offset is null at the end; otherwise retry that offset against the same APK digest and locale. If next_offset equals offset, raise max_total_strings or use string_tables_only before retrying. Table coverage still describes the entire table.",
     ),
   coverage: z.enum(["complete", "partial"]),
 });
@@ -212,7 +280,7 @@ export const apktoolResultSchemas = {
       .array(stringTableSchema)
       .optional()
       .describe(
-        "Selected table facts, included when locales is supplied or string_tables_only is true",
+        "Selected decoded table facts, included when locales is supplied, string_tables_only is true, or an explicit string page or budget is requested. Empty when included with include_strings false.",
       ),
     decoded_file_count: z.int().nonnegative(),
     coverage: z.enum(["complete", "partial"]),

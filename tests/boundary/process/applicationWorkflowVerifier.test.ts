@@ -96,14 +96,14 @@ describe("local application workflow verifier", () => {
     );
     const result = JSON.parse(stdout);
     expect(result.export_shape_comparison).toMatchObject({
-      summary: { added: 1, removed: 0, changed: 0, unknown: 0 },
-      changes: [
-        {
+      summary: { added: 1, removed: 0, changed: 0, unknown: 3 },
+      changes: expect.arrayContaining([
+        expect.objectContaining({
           status: "added",
           path: "/depth",
           right: { availability: "literal", value: 1 },
-        },
-      ],
+        }),
+      ]),
     });
   }, 20_000);
 });

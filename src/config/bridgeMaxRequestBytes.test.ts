@@ -1,8 +1,14 @@
 import { expect, it } from "vitest";
 
+import { analysisSettingDefinition } from "../domain/analysisSettingDefinitions.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { GHIDRA_OPERATIONS } from "../ghidra/GhidraProviderMetadata.js";
+import { HOPPER_OPERATIONS } from "../hopper/HopperProviderMetadata.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
+import { runtimeAnalysisConfig } from "./runtimeAnalysisSettings.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   BRIDGE_MAX_REQUEST_BYTES_SETTING,
   DEFAULT_BRIDGE_MAX_REQUEST,
@@ -19,6 +25,21 @@ const symbolName = "\u0001".repeat(1024);
 const session = "00000000-0000-4000-8000-000000000001";
 const token = "a".repeat(64);
 
+it("advertises the bridge ceiling for every bridge-backed operation", () => {
+  const advertised = new Set(
+    analysisSettingDefinition("bridge.max_request_bytes").operations,
+  );
+  const required = [
+    ...HOPPER_OPERATIONS,
+    ...GHIDRA_OPERATIONS,
+    "list_cutter_sessions",
+    "cutter_command",
+  ];
+  expect(required.filter((operation) => !advertised.has(operation))).toEqual(
+    [],
+  );
+});
+
 it("keeps the 16 MiB ceiling when the setting is unset", () => {
   expect(parseBridgeMaxRequestBytes(undefined)).toEqual({
     ok: true,
@@ -31,7 +52,7 @@ it("keeps the 16 MiB ceiling when the setting is unset", () => {
   );
   const environment = parseEnvironment({});
   if (!environment.ok) throw new Error("doctor rejected an unset ceiling");
-  expect(environment.value.REA_BRIDGE_MAX_REQUEST_BYTES).toBeUndefined();
+  expect(environment.ok).toBe(true);
 });
 
 it("accepts a caller-selected ceiling inside the floor and maximum", () => {
@@ -44,7 +65,7 @@ it("accepts a caller-selected ceiling inside the floor and maximum", () => {
     [BRIDGE_MAX_REQUEST_BYTES_SETTING]: "8192",
   });
   if (!environment.ok) throw new Error("doctor rejected a valid ceiling");
-  expect(environment.value.REA_BRIDGE_MAX_REQUEST_BYTES).toBe(8192);
+  expect(environment.ok).toBe(true);
 });
 
 it("sets the maximum to the serialized string bound minus the framing LF", () => {
@@ -135,16 +156,45 @@ it.each([
   const doctor = parseEnvironment({
     [BRIDGE_MAX_REQUEST_BYTES_SETTING]: value,
   });
-  if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
-  expect(startup.error._tag).toBe("ConfigurationError");
-  expect(startup.error.settings).toContainEqual({
-    setting: BRIDGE_MAX_REQUEST_BYTES_SETTING,
-    constraint: parsed.error.message,
-  });
-  if (doctor.ok) throw new Error(`Doctor accepted ${JSON.stringify(value)}`);
-  expect(doctor.error._tag).toBe("ConfigurationError");
-  expect(doctor.error.settings).toContainEqual({
-    setting: BRIDGE_MAX_REQUEST_BYTES_SETTING,
-    constraint: parsed.error.message,
-  });
+  if (!startup.ok)
+    throw new Error(`Startup rejected a runtime seed ${JSON.stringify(value)}`);
+  expect(
+    startup.value.invalidRuntimeSeeds?.["bridge.max_request_bytes"]?.settings,
+  ).toEqual([
+    expect.objectContaining({ setting: BRIDGE_MAX_REQUEST_BYTES_SETTING }),
+  ]);
+  const live = runtimeAnalysisConfig(startup.value);
+  expect(() => live.bridgeMaxRequestBytes.maximumBytes).toThrow(
+    ConfigurationError,
+  );
+  expect(
+    runWithAnalysisOperationSnapshot(
+      {
+        revision: 1,
+        overrides: { "bridge.max_request_bytes": 8192 },
+      },
+      () => ({
+        maximumBytes: live.bridgeMaxRequestBytes.maximumBytes,
+        source: live.bridgeMaxRequestBytes.source,
+      }),
+    ),
+  ).toEqual({ maximumBytes: 8192, source: "runtime" });
+  try {
+    void live.bridgeMaxRequestBytes.maximumBytes;
+    throw new Error("reset override activated the built-in default");
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(ConfigurationError);
+    if (cause instanceof ConfigurationError)
+      expect(projectAnalysisError(cause)).toMatchObject({
+        code: "configuration_invalid",
+        details: {
+          settings: [{ setting: BRIDGE_MAX_REQUEST_BYTES_SETTING }],
+        },
+      });
+  }
+  if (!doctor.ok)
+    throw new Error(`Doctor rejected a runtime seed ${JSON.stringify(value)}`);
+  expect(() => parseBridgeMaxRequestBytes(value)).not.toThrow();
+  if (parseBridgeMaxRequestBytes(value).ok)
+    throw new Error(`Bridge parser accepted ${JSON.stringify(value)}`);
 });

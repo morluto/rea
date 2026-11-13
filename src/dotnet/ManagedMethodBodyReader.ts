@@ -128,10 +128,11 @@ export const methodBody = (
   const native =
     context.implementation.codeType !== "il" ||
     context.implementation.managedKind !== "managed" ||
-    context.implementation.pinvokeFlag;
+    context.implementation.pinvokeFlag ||
+    context.implementation.internalCall;
   if (native) {
     const issue =
-      "CIL decoding is unavailable for native, runtime, unmanaged, or P/Invoke implementations";
+      "CIL decoding is unavailable for native, runtime, InternalCall, unmanaged, or P/Invoke implementations";
     return {
       body: emptyMethodBody(rva, "partial", issue),
       tokenInstructions: [],

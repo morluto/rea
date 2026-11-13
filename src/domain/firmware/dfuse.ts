@@ -212,7 +212,7 @@ const parseDfuSe = (
       ...(overlaps.length === 0
         ? []
         : [
-            `${String(overlaps.length)} DfuSe element(s) overlap an earlier element of the same alternate setting; each stays a separate entry and no bytes were merged: ${named(overlaps)}.`,
+            `${String(overlaps.length)} DfuSe element(s) overlap an element earlier in address order within the same alternate setting; each stays a separate entry and no bytes were merged: ${named(overlaps)}.`,
           ]),
       ...(walk.unlistedCount === 0
         ? []

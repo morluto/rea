@@ -19,9 +19,43 @@ it("stops a bounded representation scan before visiting an over-budget tail", ()
   });
   expect(measured.valueBytes).toBeGreaterThan(512);
 });
+it("checks escaped complete JSON against serialization capacity independently of heap", () => {
+  const value = {
+    normalized_result: { wat: '\0"\\😀'.repeat(30), imports: ["\0"] },
+    raw_result: null,
+  };
+  const encodedLength = JSON.stringify(value).length;
+  const options = {
+    operation: "inspect_wasm_artifact",
+    path: "/module.wasm",
+    description: "Complete WASM Evidence cannot be assembled",
+    availableBytes: Number.MAX_SAFE_INTEGER,
+  };
+  const rejected = requireAuthenticationHeadroom(value, {
+    ...options,
+    serializedCodeUnitLimit: encodedLength - 1,
+  });
+  expect(rejected).toMatchObject({
+    ok: false,
+    error: {
+      retryable: false,
+      reportedLimits: {
+        serialized_json_code_units: encodedLength,
+        maximum_serialized_json_code_units: encodedLength - 1,
+      },
+    },
+  });
+  expect(
+    requireAuthenticationHeadroom(value, {
+      ...options,
+      serializedCodeUnitLimit: encodedLength,
+    }),
+  ).toEqual({ ok: true, value: undefined });
+});
+
 describe("JSON authentication headroom", () => {
   it("measures source IDs without first constructing their array", () => {
-    const values = ["ev_123", null, 'escaped\"\n😀'];
+    const values = ["ev_123", null, 'escaped"\n😀'];
     const empty = estimateJsonStorage({ evidence_links: [] });
     const incremental = values.reduce((total, value, index) => {
       const entry = estimateJsonArrayScalarEntry(value, index > 0);

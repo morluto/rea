@@ -1038,13 +1038,10 @@ itWithCaptureCapability(
     await writeFile(path, "observed\n");
     const controller = new AbortController();
     const { signal } = controller;
-    const throwIfAborted = signal.throwIfAborted.bind(signal);
-    Object.defineProperty(signal, "throwIfAborted", {
-      value: () => {
-        controller.abort();
-        throwIfAborted();
-      },
-    });
+    const captureSnapshot: typeof snapshotRoots = async (...args) => {
+      controller.abort();
+      return snapshotRoots(...args);
+    };
 
     const result = await captureProcessScenario(
       processScenarioSchema.parse({
@@ -1053,6 +1050,9 @@ itWithCaptureCapability(
         filesystem_observation_paths: [path],
       }),
       signal,
+      process.platform,
+      process.env,
+      captureSnapshot,
     );
 
     if (result.ok) throw new Error("expected initial snapshot cancellation");

@@ -1,10 +1,12 @@
 import { once } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 
+import { RuntimeControlUnavailableError } from "../process/RuntimeControlUnavailableError.js";
 import type { WindowsNativeAuthority } from "./WindowsNativeLoader.js";
 import {
   quoteWindowsProcessArgument,
   WindowsNativeControlUnavailableError,
+  WindowsNativeSpawnControlError,
   WindowsOwnedProcess,
 } from "./WindowsOwnedProcess.js";
 
@@ -224,22 +226,6 @@ describe("Windows Job Object memory limits", () => {
     expect(calls).toEqual([]);
   });
 
-  it("keeps the unlimited launch shape and rejects limit fields it did not request", async () => {
-    const { native, calls } = authority({
-      jobMemoryLimit: true,
-      polls: [
-        { ...settledPoll, memoryLimitReached: true, peakJobMemoryBytes: 1 },
-      ],
-    });
-    const child = launch(native);
-    const failure = once(child, "error");
-    expect(calls[0]?.arguments_).toHaveLength(4);
-    const [error] = await failure;
-    expect(error).toBeInstanceOf(Error);
-    expect(child.memoryLimitReached).toBe(false);
-    expect(child.peakJobMemoryBytes).toBeUndefined();
-  });
-
   it("passes the limit, verifies its read-back and reports a reached limit before exit", async () => {
     const { native, calls } = authority({
       jobMemoryLimit: true,
@@ -270,23 +256,102 @@ describe("Windows Job Object memory limits", () => {
     expect(calls.at(-1)?.operation).toBe("process_close");
   });
 
-  it("rejects a limited poll that omits the job's notification state", async () => {
-    const { native } = authority({
-      jobMemoryLimit: true,
-      polls: [settledPoll],
-    });
-    const child = launch(native, LIMIT);
-    const [error] = await once(child, "error");
-    expect(error).toBeInstanceOf(Error);
-    expect(child.memoryLimitReached).toBe(false);
-  });
-
   it("refuses a launch whose applied limit differs from the request", () => {
     const { native } = authority({
       jobMemoryLimit: true,
       appliedLimit: () => LIMIT - 4096,
     });
-    expect(() => launch(native, LIMIT)).toThrow();
+    expect(() => launch(native, LIMIT)).toThrow(WindowsNativeSpawnControlError);
+  });
+});
+
+describe("Windows process_spawn control vs executable classification", () => {
+  it("wraps process_spawn host-control rejections as RuntimeControlUnavailableError while preserving executable launch failures", () => {
+    const { native } = authority();
+    const affinityFailure = Object.assign(
+      new Error(
+        "Caller CPU affinity cannot bound an owned process in another processor group [C:\\runtime\\bun.exe] (Win32 87): The parameter is incorrect.",
+      ),
+      {
+        code: "ERR_REA_WINDOWS_NATIVE",
+        constraint:
+          "Caller CPU affinity cannot bound an owned process in another processor group",
+        requestedPath: "C:\\runtime\\bun.exe",
+        win32Code: 87,
+      },
+    );
+    const affinityAuthority: WindowsNativeAuthority = {
+      ...native,
+      call: (operation) => {
+        if (operation === "process_spawn") throw affinityFailure;
+        throw new Error(`Unmodeled native operation ${operation}`);
+      },
+    };
+    expect(() => launch(affinityAuthority)).toThrow(
+      expect.objectContaining({
+        constructor: WindowsNativeSpawnControlError,
+        code: "windows-native-spawn-control-unavailable",
+        constraint:
+          "Caller CPU affinity cannot bound an owned process in another processor group",
+        win32Code: 87,
+        retryable: true,
+        cause: affinityFailure,
+      }),
+    );
+
+    const jobMembershipFailure = Object.assign(
+      new Error(
+        "Suspended process has no owned Job Object membership [C:\\runtime\\bun.exe] (Win32 5): Access is denied.",
+      ),
+      {
+        code: "EACCES",
+        constraint: "Suspended process has no owned Job Object membership",
+        requestedPath: "C:\\runtime\\bun.exe",
+        win32Code: 5,
+      },
+    );
+    const jobMembershipAuthority: WindowsNativeAuthority = {
+      ...native,
+      call: (operation) => {
+        if (operation === "process_spawn") throw jobMembershipFailure;
+        throw new Error(`Unmodeled native operation ${operation}`);
+      },
+    };
+    let caughtMembership: unknown;
+    try {
+      launch(jobMembershipAuthority);
+    } catch (cause) {
+      caughtMembership = cause;
+    }
+    expect(caughtMembership).toBeInstanceOf(RuntimeControlUnavailableError);
+    expect(caughtMembership).toBeInstanceOf(WindowsNativeSpawnControlError);
+
+    const executableFailure = Object.assign(
+      new Error(
+        "Create process atomically inside owned Job Object failed [C:\\runtime\\bun.exe] (Win32 2): The system cannot find the file specified.",
+      ),
+      {
+        code: "ENOENT",
+        constraint: "Create process atomically inside owned Job Object failed",
+        requestedPath: "C:\\runtime\\bun.exe",
+        win32Code: 2,
+      },
+    );
+    const executableAuthority: WindowsNativeAuthority = {
+      ...native,
+      call: (operation) => {
+        if (operation === "process_spawn") throw executableFailure;
+        throw new Error(`Unmodeled native operation ${operation}`);
+      },
+    };
+    let caughtExecutable: unknown;
+    try {
+      launch(executableAuthority);
+    } catch (cause) {
+      caughtExecutable = cause;
+    }
+    expect(caughtExecutable).toBe(executableFailure);
+    expect(caughtExecutable).not.toBeInstanceOf(RuntimeControlUnavailableError);
   });
 });
 
@@ -558,6 +623,76 @@ describe("Windows output poll failure", () => {
       expect(closed).toBe(true);
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe("Windows Job Object poll shape validation", () => {
+  it("keeps the unlimited launch shape and rejects limit fields it did not request", async () => {
+    vi.useFakeTimers();
+    const { native, calls } = authority({
+      jobMemoryLimit: true,
+      polls: [
+        { ...settledPoll, memoryLimitReached: true, peakJobMemoryBytes: 1 },
+        settledPoll,
+      ],
+    });
+    const child = launch(native);
+    const errors: unknown[] = [];
+    child.on("error", (error) => errors.push(error));
+    const closed = new Promise<void>((resolve) =>
+      child.once("close", () => resolve()),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(25);
+      expect(calls[0]?.arguments_).toHaveLength(4);
+      const error = errors[0];
+      expect(error).toBeInstanceOf(Error);
+      expect(child.memoryLimitReached).toBe(false);
+      expect(child.peakJobMemoryBytes).toBeUndefined();
+    } finally {
+      try {
+        await vi.advanceTimersByTimeAsync(250);
+        await closed;
+        expect(
+          calls.filter(({ operation }) => operation === "process_close"),
+        ).toHaveLength(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  });
+
+  it("rejects a limited poll that omits the job's notification state", async () => {
+    vi.useFakeTimers();
+    const { native, calls } = authority({
+      jobMemoryLimit: true,
+      polls: [
+        settledPoll,
+        { ...settledPoll, memoryLimitReached: false, peakJobMemoryBytes: 0 },
+      ],
+    });
+    const child = launch(native, LIMIT);
+    const errors: unknown[] = [];
+    child.on("error", (error) => errors.push(error));
+    const closed = new Promise<void>((resolve) =>
+      child.once("close", () => resolve()),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(25);
+      const error = errors[0];
+      expect(error).toBeInstanceOf(Error);
+      expect(child.memoryLimitReached).toBe(false);
+    } finally {
+      try {
+        await vi.advanceTimersByTimeAsync(250);
+        await closed;
+        expect(
+          calls.filter(({ operation }) => operation === "process_close"),
+        ).toHaveLength(1);
+      } finally {
+        vi.useRealTimers();
+      }
     }
   });
 });

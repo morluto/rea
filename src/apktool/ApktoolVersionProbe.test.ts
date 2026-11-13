@@ -17,6 +17,7 @@ import { ApktoolProvider } from "./ApktoolProvider.js";
 vi.mock("../process/OwnedCommand.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../process/OwnedCommand.js")>()),
   runOwnedCommand: vi.fn(),
+  prepareOwnedCommand: vi.fn(async () => {}),
 }));
 let commands = new ApktoolCommandCleanup();
 afterEach(async () => {
@@ -110,16 +111,21 @@ it("retains an unresolved probe cleanup owner and reports the cleanup", async ()
   expect((failure as AnalysisTimeoutError).cleanupIncomplete).toBe(false);
 });
 
-it("reports a cancelled version probe as cancelled", async () => {
+it("reports a cancelled version probe with the exact recorded caller reason", async () => {
+  const reason = { caller: "cancel selected version probe" };
   vi.mocked(runOwnedCommand).mockRejectedValueOnce(
-    new OwnedCommandFailure("cancelled", "Command cancelled."),
-  );
-  await expect(
-    inspectApktoolClient(selection, commands, {
-      environment: {},
-      platform: "linux",
+    new OwnedCommandFailure("cancelled", "Command cancelled.", null, null, {
+      cancellation: { reason },
     }),
-  ).rejects.toBeInstanceOf(AnalysisCancelledError);
+  );
+  const failure: unknown = await inspectApktoolClient(selection, commands, {
+    environment: {},
+    platform: "linux",
+  }).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AnalysisCancelledError);
+  if (!(failure instanceof AnalysisCancelledError)) throw failure;
+  expect(failure.cause).toBe(reason);
+  expect(failure.cleanupResources).toEqual([]);
 });
 
 it("keeps unresolved probe cleanup typed when the launcher overflows its output", async () => {

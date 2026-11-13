@@ -17,7 +17,7 @@ import {
   AnalysisCapabilityUnavailableError,
 } from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { validateAnalysisViewSubject } from "../../domain/analysisView/analysisViewParent.js";
 import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import {
   createEvidence,
@@ -249,15 +249,11 @@ const projectResolvedAnalysisView = (
           },
   });
   if (!projected.ok) return projected;
-  if (
-    parent.subject !== null &&
-    parent.subject.digest.sha256 !== projected.value.artifact?.sha256
-  )
-    return err(
-      new EvidenceIntegrityError(
-        `Parent subject SHA-256 ${parent.subject.digest.sha256} differs from analysis artifact SHA-256 ${projected.value.artifact?.sha256 ?? "unknown"}.`,
-      ),
-    );
+  const identity = validateAnalysisViewSubject(
+    parent.subject,
+    projected.value.artifact?.sha256,
+  );
+  if (!identity.ok) return identity;
   return ok(createAnalysisViewEvidence(input, presentation, projected.value));
 };
 
@@ -328,12 +324,14 @@ export const projectRetainedAnalysis = (
   if (!retained.ok) return retained;
   // Duplicate semantic records retain their original ledger metadata. Detail
   // selection changes presentation, not the historical lookup or payload owner.
-  return projectResolvedAnalysisView(
+  const projected = projectResolvedAnalysisView(
     { source, view },
     prepareAnalysisViewProjection(view),
     retained.value,
     evidenceSubjectTarget(evidence.subject),
   );
+  if (!projected.ok) projected.error.retainPartialObservation(source);
+  return projected;
 };
 
 const resolveAnalysisViewSource = (

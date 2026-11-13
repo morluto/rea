@@ -1,6 +1,30 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource as analyzeUnknownHostSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture as analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
+
+it("retains an unknown-host Electron request as a candidate without claiming IPC identity", () => {
+  const analysis = analyzeUnknownHostSource(
+    'const { BrowserWindow } = require("electron"); new BrowserWindow().webContents.ipc.handle("x", () => {});',
+  );
+  expect(analysis.electron.ipc).toEqual([
+    expect.objectContaining({
+      channel: "x",
+      operation: "handle",
+      loader_authority: "candidate",
+    }),
+  ]);
+  expect(analysis.analysis_coverage?.applicability.electron).toBe("unknown");
+  expect(analysis.references).toContainEqual(
+    expect.objectContaining({
+      specifier: "electron",
+      loader_authority: "candidate",
+    }),
+  );
+  expect(
+    analysis.analysis_coverage?.semantics.unknown_findings,
+  ).toBeGreaterThan(0);
+});
 
 it.each([
   ["webContents", "window.webContents.ipc"],
@@ -115,6 +139,112 @@ it.each(["webContents.ipc", "webContents.mainFrame.ipc"])(
       analyzeJavaScriptStaticSource(`const {BrowserWindow} = require("electron");
     const window = new BrowserWindow(); window[${JSON.stringify(key)}].handle("fake", () => {});`)
         .electron.ipc,
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  ["BrowserView", "webContents.ipc", "web-contents"],
+  ["WebContentsView", "webContents.mainFrame.ipc", "main-frame"],
+] as const)(
+  "retains a proven %s %s handler through the view's own contents",
+  (constructor, surface, kind) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+    const { ${constructor} } = require("electron");
+    const owner = new ${constructor}({});
+    owner.${surface}.handle("view-channel", () => {});
+  `);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { window_constructor: constructor, options_status: "object-literal" },
+    ]);
+    expect(analysis.electron.ipc).toMatchObject([
+      {
+        side: "main",
+        operation: "handle",
+        channel: "view-channel",
+        receiver: { kind },
+      },
+    ]);
+  },
+);
+
+it.each(["webContents.ipc", "webContents.mainFrame.ipc", "loadURL"])(
+  "omits a BaseWindow %s receiver that the runtime does not own",
+  (surface) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+    const { BaseWindow } = require("electron");
+    const base = new BaseWindow({ width: 800 });
+    base.${surface}.handle("inert", () => {});
+  `);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.ipc).toEqual([]);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        window_constructor: "BaseWindow",
+        options_status: "object-literal",
+        web_preferences_status: "missing",
+        preload_path: null,
+      },
+    ]);
+  },
+);
+
+it("keeps a lookalike construction unproven for a view constructor", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    const { WebContentsView } = require("electron");
+    function shadow(WebContentsView) {
+      const view = new WebContentsView({ webPreferences: { sandbox: true } });
+      view.webContents.ipc.handle("shadowed", () => {});
+    }
+  `);
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.electron.browser_windows).toEqual([]);
+  expect(analysis.electron.ipc).toEqual([]);
+});
+
+it.each(["BrowserView", "WebContentsView"])(
+  "reads literal webPreferences on a %s construction",
+  (constructor) => {
+    expect(
+      analyzeJavaScriptStaticSource(`
+    const { ${constructor} } = require("electron");
+    const owner = new ${constructor}({ webPreferences: { preload: "./p.js", sandbox: true } });
+  `).electron.browser_windows,
+    ).toMatchObject([
+      {
+        window_constructor: constructor,
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          { name: "preload", value: { status: "literal", value: "./p.js" } },
+          { name: "sandbox", value: { status: "literal", value: true } },
+        ],
+        preload_path: "./p.js",
+        preload_resolution_context: "module-specifier",
+      },
+    ]);
+  },
+);
+
+it.each(["BaseWindow"])(
+  "does not report a webPreferences surface a %s never accepts",
+  (constructor) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+    const { ${constructor} } = require("electron");
+    const owner = new ${constructor}({ webPreferences: { preload: "./p.js", sandbox: true } });
+  `);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        window_constructor: constructor,
+        options_status: "object-literal",
+        web_preferences_status: "missing",
+        web_preferences: [],
+        preload_path: null,
+      },
+    ]);
+    expect(
+      analysis.role_paths.filter(({ role }) => role === "preload"),
     ).toEqual([]);
   },
 );

@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mkdir, writeFile, rm, access, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import type {
   Browser,
   BrowserContext,
@@ -187,6 +188,100 @@ const launchScenario = browserScenarioSchema.parse({
   actions: [{ step_id: "settle", action: "wait_for_timeout", duration_ms: 1 }],
 });
 
+it("does not launch a browser for an already-cancelled opening", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancelled before browser acquisition" };
+  controller.abort(reason);
+  const launch = vi.fn(async () => {
+    throw new Error("unexpected launch after cancellation");
+  });
+  await expect(
+    openPlaywrightScenarioBrowser(
+      launchScenario,
+      {},
+      {
+        signal: controller.signal,
+        launcher: {
+          launchPersistentContext: launch,
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+  expect(launch).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "admits a late launch only while its caller is active (cancelled: %s)",
+  async (cancelled) => {
+    const controller = new AbortController();
+    const reason = { caller: "cancelled during browser launch" };
+    const started = deferred<void>();
+    const launched = deferred<BrowserContext>();
+    let profile = "";
+    const close = vi.fn(async () => undefined);
+    const newPage = vi.fn(async () => ({}) as Page);
+    const opening = openPlaywrightScenarioBrowser(
+      launchScenario,
+      {},
+      {
+        signal: controller.signal,
+        launcher: {
+          launchPersistentContext: (directory) => {
+            profile = directory;
+            started.resolve(undefined);
+            return launched.promise;
+          },
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+        },
+      },
+    ).then(
+      (value) => ({ ok: true as const, value }),
+      (cause: unknown) => ({ ok: false as const, cause }),
+    );
+    const context = {
+      close,
+      browser: () => ({}) as Browser,
+      pages: () => [],
+      newPage,
+    } as unknown as BrowserContext;
+    try {
+      await awaitAcknowledgement(started.promise, opening, "browser launch");
+      if (cancelled) controller.abort(reason);
+      launched.resolve(context);
+      const result = await opening;
+      if (result.ok) {
+        try {
+          expect(cancelled).toBe(false);
+          expect(newPage).toHaveBeenCalledOnce();
+          expect(close).not.toHaveBeenCalled();
+          expect(result.value.profilePath).toBe(profile);
+        } finally {
+          await result.value.cleanup.close();
+        }
+      } else {
+        expect(cancelled).toBe(true);
+        expect(result.cause).toMatchObject({ reason: "cancelled" });
+        if (!(result.cause instanceof AnalysisError))
+          throw new Error("Expected typed cancellation");
+        expect(result.cause.cause).toBe(reason);
+        expect(newPage).not.toHaveBeenCalled();
+      }
+      expect(close).toHaveBeenCalledOnce();
+      await expect(access(profile)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      controller.abort(reason);
+      launched.resolve(context);
+      const outcome = await opening;
+      if (outcome.ok) await outcome.value.cleanup.close();
+    }
+  },
+);
+
 it.each([
   { environment: {}, sandbox: true },
   { environment: { REA_BROWSER_NO_SANDBOX: "false" }, sandbox: true },
@@ -342,16 +437,27 @@ it("does not configure a late attached connection after cancellation", async () 
       signal: controller.signal,
     },
   );
-  await connectionStarted.promise;
-  controller.abort();
-  connection.resolve(connectedBrowser);
+  try {
+    await awaitAcknowledgement(
+      connectionStarted.promise,
+      opening,
+      "CDP connection",
+    );
+    controller.abort();
+    connection.resolve(connectedBrowser);
 
-  await expect(opening).rejects.toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "cancelled",
-  });
-  expect(connectedBrowser.contexts).not.toHaveBeenCalled();
-  expect(connectedBrowser.close).toHaveBeenCalledOnce();
+    await expect(opening).rejects.toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "cancelled",
+    });
+    expect(connectedBrowser.contexts).not.toHaveBeenCalled();
+    expect(connectedBrowser.close).toHaveBeenCalledOnce();
+  } finally {
+    controller.abort();
+    connection.resolve(connectedBrowser);
+    const opened = await opening.catch(() => undefined);
+    await opened?.cleanup.close();
+  }
 });
 
 it("closes an attached connection when cancellation starts target discovery", async () => {
@@ -565,10 +671,19 @@ it("checks a late stop after attached restoration and before transport disconnec
     },
   });
 
-  await restorationStarted.promise;
-  revision += 1;
-  finishRestoration.resolve(undefined);
-  await release;
+  try {
+    await awaitAcknowledgement(
+      restorationStarted.promise,
+      release,
+      "browser restoration",
+    );
+    revision += 1;
+    finishRestoration.resolve(undefined);
+    await release;
+  } finally {
+    finishRestoration.resolve(undefined);
+    await release.catch(() => undefined);
+  }
 
   expect(order).toEqual([
     "restore-started",
@@ -652,25 +767,36 @@ it("waits for a cancelled environment mutation before restoring it", async () =>
   });
   const controller = new AbortController();
   const opening = fixture.open(controller.signal);
-  await localeStarted.promise;
-  const cancelled = expect(opening).rejects.toMatchObject({
-    _tag: "AnalysisCancelledError",
-  });
-  controller.abort();
-  await new Promise((resolve) => setImmediate(resolve));
-  expect(fixture.environmentSession.send).not.toHaveBeenCalledWith(
-    "Emulation.setLocaleOverride",
-    { locale: "" },
-  );
+  try {
+    await awaitAcknowledgement(
+      localeStarted.promise,
+      opening,
+      "locale mutation",
+    );
+    const cancelled = expect(opening).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+    });
+    controller.abort();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(fixture.environmentSession.send).not.toHaveBeenCalledWith(
+      "Emulation.setLocaleOverride",
+      { locale: "" },
+    );
 
-  localeResult.resolve(undefined);
-  await cancelled;
-  expect(fixture.environmentSession.send).toHaveBeenCalledWith(
-    "Emulation.setLocaleOverride",
-    { locale: "" },
-  );
-  expect(fixture.environmentSession.detach).toHaveBeenCalledOnce();
-  expect(fixture.browser.close).toHaveBeenCalledOnce();
+    localeResult.resolve(undefined);
+    await cancelled;
+    expect(fixture.environmentSession.send).toHaveBeenCalledWith(
+      "Emulation.setLocaleOverride",
+      { locale: "" },
+    );
+    expect(fixture.environmentSession.detach).toHaveBeenCalledOnce();
+    expect(fixture.browser.close).toHaveBeenCalledOnce();
+  } finally {
+    controller.abort();
+    localeResult.resolve(undefined);
+    const opened = await opening.catch(() => undefined);
+    await opened?.cleanup.close();
+  }
 });
 
 it("releases cleanup ownership when the attached target is destroyed", async () => {
@@ -969,12 +1095,26 @@ it("rechecks the browser release gate after finalization changes its revision", 
     },
   );
 
-  await eventsStarted.promise;
-  finishEvents.resolve(undefined);
-  await gateStarted.promise;
-  revision += 1;
-  finishGate.resolve(undefined);
-  await release;
+  try {
+    await awaitAcknowledgement(
+      eventsStarted.promise,
+      release,
+      "browser event finalization",
+    );
+    finishEvents.resolve(undefined);
+    await awaitAcknowledgement(
+      gateStarted.promise,
+      release,
+      "browser release gate",
+    );
+    revision += 1;
+    finishGate.resolve(undefined);
+    await release;
+  } finally {
+    finishEvents.resolve(undefined);
+    finishGate.resolve(undefined);
+    await release.catch(() => undefined);
+  }
 
   expect(gateRuns).toEqual([0, 1]);
   expect(closeBrowser).toHaveBeenCalledTimes(1);
@@ -1006,10 +1146,19 @@ it("runs the latest stop gate after attached restoration and before disconnect",
     },
   });
 
-  await restorationStarted.promise;
-  revision += 1;
-  finishRestoration.resolve(undefined);
-  await release;
+  try {
+    await awaitAcknowledgement(
+      restorationStarted.promise,
+      release,
+      "browser restoration",
+    );
+    revision += 1;
+    finishRestoration.resolve(undefined);
+    await release;
+  } finally {
+    finishRestoration.resolve(undefined);
+    await release.catch(() => undefined);
+  }
 
   expect(gateRevisions).toEqual([1]);
   expect(disconnected).toBe(true);
@@ -1057,19 +1206,32 @@ it.each([false, true])(
       () => ({ ok: true as const }),
       (cause: unknown) => ({ ok: false as const, cause }),
     );
-    await gateStarted.promise;
-    if (changeRevision) revision += 1;
-    finishGate.resolve(undefined);
-    await expect(release).resolves.toEqual({ ok: false, cause: failure });
-    expect(closeBrowser).toHaveBeenCalledTimes(1);
-    expect(transportClosed).toBe(false);
-    expect(owner.browserClosed).toBe(false);
-    expect(owner.cleanupResources).toContain("browser_transport");
+    try {
+      await awaitAcknowledgement(
+        gateStarted.promise,
+        release,
+        "browser release gate",
+      );
+      if (changeRevision) revision += 1;
+      finishGate.resolve(undefined);
+      await expect(release).resolves.toEqual({ ok: false, cause: failure });
+      expect(closeBrowser).toHaveBeenCalledTimes(1);
+      expect(transportClosed).toBe(false);
+      expect(owner.browserClosed).toBe(false);
+      expect(owner.cleanupResources).toContain("browser_transport");
 
-    await owner.release(undefined, gate);
-    expect(closeBrowser).toHaveBeenCalledTimes(2);
-    expect(transportClosed).toBe(true);
-    expect(owner.browserClosed).toBe(true);
+      await owner.release(undefined, gate);
+      expect(closeBrowser).toHaveBeenCalledTimes(2);
+      expect(transportClosed).toBe(true);
+      expect(owner.browserClosed).toBe(true);
+    } finally {
+      finishGate.resolve(undefined);
+      try {
+        await release;
+      } finally {
+        await owner.close();
+      }
+    }
   },
 );
 
@@ -1320,8 +1482,17 @@ it("closes a context that launches after its deadline before removing the profil
 });
 
 it("closes a browser that connects after its deadline without waiting to report the timeout", async () => {
-  let closed = false;
-  const started = performance.now();
+  vi.useFakeTimers();
+  let releaseHandshake!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseHandshake = resolve;
+  });
+  let handshakeEntered!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    handshakeEntered = resolve;
+  });
+  const closed = vi.fn(async () => undefined);
+  const leases: AnalysisCleanupLease[] = [];
   const scenario = browserScenarioSchema.parse({
     browser: {
       mode: "connect",
@@ -1333,34 +1504,54 @@ it("closes a browser that connects after its deadline without waiting to report 
     command_timeout_ms: 40,
     actions: scenarioActions,
   });
-  await expect(
-    openPlaywrightScenarioBrowser(
-      scenario,
-      {},
-      {
-        launcher: {
-          connectOverCDP: async () => {
-            await new Promise((resolve) => setTimeout(resolve, 80));
-            return {
-              close: async () => {
-                closed = true;
-              },
-              contexts: () => [],
-              isConnected: () => true,
-              version: () => "late-connect",
-            };
-          },
-          launchPersistentContext: async () => {
-            throw new Error("Unexpected launch");
-          },
+  let settled = false;
+  const opening = openPlaywrightScenarioBrowser(
+    scenario,
+    {},
+    {
+      retainCleanup: (lease) => leases.push(lease),
+      launcher: {
+        connectOverCDP: async () => {
+          handshakeEntered();
+          await held;
+          return {
+            close: closed,
+            contexts: () => [],
+            isConnected: () => true,
+            version: () => "late-connect",
+          };
+        },
+        launchPersistentContext: async () => {
+          throw new Error("Unexpected launch");
         },
       },
-    ),
-  ).rejects.toMatchObject({ reason: "timeout" });
-  expect(performance.now() - started).toBeLessThan(2_000);
-  for (let attempt = 0; attempt < 50 && !closed; attempt += 1)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  expect(closed).toBe(true);
+    },
+  )
+    .catch((error: unknown) => error)
+    .finally(() => {
+      settled = true;
+    });
+  try {
+    await entered;
+    await vi.advanceTimersByTimeAsync(40);
+    expect(settled).toBe(true);
+    expect(closed).not.toHaveBeenCalled();
+    expect(await opening).toMatchObject({ reason: "timeout" });
+    expect(leases).toHaveLength(1);
+    expect(leases[0]?.released).toBe(false);
+    releaseHandshake();
+    await leases[0]!.release();
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(leases[0]?.released).toBe(true);
+  } finally {
+    releaseHandshake();
+    try {
+      await opening;
+      await Promise.all(leases.map((lease) => lease.release()));
+    } finally {
+      vi.useRealTimers();
+    }
+  }
 });
 
 it.each(["media", "focus"] as const)(

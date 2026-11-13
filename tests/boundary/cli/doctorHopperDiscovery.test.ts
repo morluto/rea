@@ -36,7 +36,8 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
         arguments: ["providers", "--json"],
         environment,
       });
-      expect(providers.exitCode).toBe(expectedExit);
+      // Listing providers does not start native analysis or consume its timeout.
+      expect(providers.exitCode).toBe(0);
       const doctor = await cli.run({
         arguments: ["doctor", "--provider", "hopper", "--json"],
         environment,

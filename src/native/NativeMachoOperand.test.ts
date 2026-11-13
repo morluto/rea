@@ -11,7 +11,6 @@ import type { NativeCallTracer } from "./LldbCallTracer.js";
 import { NativeCommandFailure } from "./CommandRunner.js";
 import { inspectMachoSchema } from "../domain/native/nativeInspection.js";
 import { err, ok } from "../domain/result.js";
-import { VTOOL_CONTAINER_REFUSAL_LIMITATION } from "./NativeMachoInspection.js";
 
 const targetDirectories: string[] = [];
 afterEach(async () => {
@@ -158,7 +157,13 @@ describe("private otool operand lifecycle", () => {
         exit: { code: 1, signal: null },
       });
       expect(vtool?.command.at(-1)).toBe(alias);
-      expect(report.limitations).toContain(VTOOL_CONTAINER_REFUSAL_LIMITATION);
+      expect(report.limitations).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(
+            /vtool.*universal container.*build metadata.*binary load commands/iu,
+          ),
+        ]),
+      );
       expect(
         report.provenance.find((entry) => entry.tool === "lipo"),
       ).toMatchObject({ exit: { code: 0, signal: null } });

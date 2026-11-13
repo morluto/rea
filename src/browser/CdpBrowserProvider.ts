@@ -104,14 +104,27 @@ const CLEANUP_DOMAINS = [
 export class CdpBrowserProvider implements BrowserObservationPort {
   readonly #owner = new CdpTargetSessionOwner();
   readonly #bundleAnalyzer: IsolatedWebBundleAnalyzer;
+  #activeOperations = 0;
+  #closing = false;
+  #closePromise: Promise<void> | undefined;
+  readonly #idleWaiters = new Set<() => void>();
 
   constructor(admission?: WebBundleAnalysisAdmission) {
     this.#bundleAnalyzer = new IsolatedWebBundleAnalyzer(undefined, admission);
   }
 
   async close(): Promise<void> {
+    this.#closing = true;
+    this.#closePromise ??= this.#closeResources().catch((cause: unknown) => {
+      this.#closePromise = undefined;
+      throw cause;
+    });
+    return await this.#closePromise;
+  }
+
+  async #closeResources(): Promise<void> {
     const outcomes = await Promise.allSettled([
-      this.#owner.close(),
+      this.#closeTransports(),
       this.#bundleAnalyzer.close(),
     ]);
     const failures = outcomes.flatMap((outcome) =>
@@ -134,6 +147,35 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     }
   }
 
+  async #closeTransports(): Promise<void> {
+    while (this.#activeOperations > 0)
+      await new Promise<void>((resolve) => this.#idleWaiters.add(resolve));
+    await this.#owner.close();
+  }
+
+  async #withAdmission<Value>(
+    operation: BrowserObservationOperation,
+    work: () => Promise<Result<Value, AnalysisError>>,
+  ): Promise<Result<Value, AnalysisError>> {
+    if (this.#closing)
+      return err(
+        new ProviderAdapterError(CDP_BROWSER_PROVIDER_IDENTITY.id, operation, {
+          diagnostics: { reason: "provider_closed" },
+          userMessage: "Browser provider is closed to new observations.",
+        }),
+      );
+    this.#activeOperations += 1;
+    try {
+      return await work();
+    } finally {
+      this.#activeOperations -= 1;
+      if (this.#activeOperations === 0) {
+        for (const resolve of this.#idleWaiters) resolve();
+        this.#idleWaiters.clear();
+      }
+    }
+  }
+
   identity(): ProviderIdentity {
     return CDP_BROWSER_PROVIDER_IDENTITY;
   }
@@ -141,6 +183,15 @@ export class CdpBrowserProvider implements BrowserObservationPort {
   async listTargets(
     input: ListBrowserTargetsInput,
     options: ExecutionOptions = {},
+  ): Promise<Result<BrowserTargetList, AnalysisError>> {
+    return await this.#withAdmission("list_browser_targets", () =>
+      this.#listTargets(input, options),
+    );
+  }
+
+  async #listTargets(
+    input: ListBrowserTargetsInput,
+    options: ExecutionOptions,
   ): Promise<Result<BrowserTargetList, AnalysisError>> {
     try {
       const endpoint = await openCdpEndpoint(
@@ -196,6 +247,15 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     input: InspectWebPageInput,
     options: ExecutionOptions = {},
   ): Promise<Result<WebPageInspection, AnalysisError>> {
+    return await this.#withAdmission("inspect_web_page", () =>
+      this.#inspectPage(input, options),
+    );
+  }
+
+  async #inspectPage(
+    input: InspectWebPageInput,
+    options: ExecutionOptions,
+  ): Promise<Result<WebPageInspection, AnalysisError>> {
     try {
       const captured = await this.#capture(input, options, "inspect_web_page");
       return ok(webPageInspectionSchema.parse(captured.inspection));
@@ -207,6 +267,15 @@ export class CdpBrowserProvider implements BrowserObservationPort {
   async analyzeBundle(
     input: AnalyzeWebBundleInput,
     options: ExecutionOptions = {},
+  ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
+    return await this.#withAdmission("analyze_web_bundle", () =>
+      this.#analyzeBundle(input, options),
+    );
+  }
+
+  async #analyzeBundle(
+    input: AnalyzeWebBundleInput,
+    options: ExecutionOptions,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     const admission = await this.#bundleAnalyzer.reserve();
     if (!admission.ok) return admission;
@@ -283,6 +352,15 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     input: ObserveWebSessionInput,
     options: ExecutionOptions = {},
   ): Promise<Result<WebObservationSession, AnalysisError>> {
+    return await this.#withAdmission("observe_web_session", () =>
+      this.#observeSession(input, options),
+    );
+  }
+
+  async #observeSession(
+    input: ObserveWebSessionInput,
+    options: ExecutionOptions,
+  ): Promise<Result<WebObservationSession, AnalysisError>> {
     try {
       return ok(
         webObservationSessionSchema.parse(
@@ -303,6 +381,15 @@ export class CdpBrowserProvider implements BrowserObservationPort {
   async discoverWebMcpTools(
     input: DiscoverWebMcpToolsInput,
     options: ExecutionOptions = {},
+  ): Promise<Result<WebMcpDiscovery, AnalysisError>> {
+    return await this.#withAdmission("discover_webmcp_tools", () =>
+      this.#discoverWebMcpTools(input, options),
+    );
+  }
+
+  async #discoverWebMcpTools(
+    input: DiscoverWebMcpToolsInput,
+    options: ExecutionOptions,
   ): Promise<Result<WebMcpDiscovery, AnalysisError>> {
     try {
       return ok(
@@ -336,6 +423,15 @@ export class CdpBrowserProvider implements BrowserObservationPort {
   async captureScreenshot(
     input: CaptureWebScreenshotInput,
     options: ExecutionOptions = {},
+  ): Promise<Result<WebScreenshot, AnalysisError>> {
+    return await this.#withAdmission("capture_web_screenshot", () =>
+      this.#captureScreenshot(input, options),
+    );
+  }
+
+  async #captureScreenshot(
+    input: CaptureWebScreenshotInput,
+    options: ExecutionOptions,
   ): Promise<Result<WebScreenshot, AnalysisError>> {
     try {
       return ok(

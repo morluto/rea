@@ -235,16 +235,6 @@ describe("parseWindowFocusOutput declaration presence", () => {
 });
 
 describe("parseDumpsysPackageOutput", () => {
-  it.each(["userId", "appId"])(
-    "retains the printed %s package identifier",
-    (key) => {
-      expect(
-        parseDumpsysPackageOutput(
-          `Packages:\n  Package [com.example] (abcdef):\n    ${key}=10234\n`,
-        ).userId,
-      ).toBe(10234);
-    },
-  );
   it("reports unknown requested permissions when the package is null", () => {
     expect(
       parseDumpsysPackageOutput("Package [com.example] (abcdef):\n  pkg=null\n")

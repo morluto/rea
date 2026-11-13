@@ -23,6 +23,72 @@ import type { Il2cppCodeGenModule } from "./Il2cppBinaryFile.js";
 const TOTAL_NAME_OCCURRENCES = 65536;
 const SCAN_BYTES = 65536;
 
+/** Index candidates by untouched bytes, retaining bounded representation space. */
+const unresolvedPointerMatcher = (
+  image: NativeImage,
+  candidates: Iterable<bigint>,
+  candidateCounts?: (candidate: bigint) => Iterable<number>,
+): ((
+  address: bigint,
+  raw: bigint,
+  count?: number,
+) => number | null | undefined) => {
+  const fixups = image.machoPointerFixups;
+  if (fixups === undefined) return () => undefined;
+  const values = [...candidates];
+  const masks = new Map<
+    bigint,
+    Map<bigint, { counts: Set<number>; minimum: number }> | null
+  >();
+  const maximumEntries = 8 * TOTAL_NAME_OCCURRENCES;
+  let indexedEntries = 0;
+  return (address, raw, count) => {
+    if (!fixups.hasUnresolvedLegacyBytes(address, 8)) return undefined;
+    let knownMask = 0n;
+    for (let byte = 0; byte < 8; byte++)
+      if (!fixups.hasUnresolvedLegacyBytes(address + BigInt(byte), 1))
+        knownMask |= 0xffn << BigInt(byte * 8);
+    let matches = masks.get(knownMask);
+    if (matches === undefined) {
+      // Beyond the retained index budget applicability remains unknown.
+      const index = new Map<bigint, { counts: Set<number>; minimum: number }>();
+      let entries = 0;
+      for (const candidate of values) {
+        const key = candidate & knownMask;
+        let candidateSet = index.get(key);
+        if (candidateSet === undefined) {
+          candidateSet = {
+            counts: new Set(),
+            minimum: Number.POSITIVE_INFINITY,
+          };
+          index.set(key, candidateSet);
+          entries++;
+        }
+        for (const value of candidateCounts?.(candidate) ?? [])
+          if (!candidateSet.counts.has(value)) {
+            candidateSet.counts.add(value);
+            candidateSet.minimum = Math.min(candidateSet.minimum, value);
+            entries++;
+          }
+        if (entries > maximumEntries - indexedEntries) {
+          masks.set(knownMask, null);
+          return null;
+        }
+      }
+      matches = index;
+      indexedEntries += entries;
+      masks.set(knownMask, matches);
+    }
+    if (matches === null) return null;
+    const candidateSet = matches.get(raw & knownMask);
+    if (candidateSet === undefined) return undefined;
+    if (candidateCounts === undefined) return null;
+    if (count !== undefined)
+      return candidateSet.counts.has(count) ? count : undefined;
+    return candidateSet.minimum;
+  };
+};
+
 interface NameTrie {
   readonly next: Map<number, NameTrie>;
   readonly owners: number[];
@@ -90,6 +156,8 @@ function* nameAddresses(
           if (node === undefined) break;
           if (node.owners.length === 0) continue;
           const address = mapping.address + BigInt(at);
+          if (image.elfPointerOverlay?.hasWrites(address, chunk + end - at + 1))
+            continue;
           if (!found.has(address) && found.size >= TOTAL_NAME_OCCURRENCES)
             throw new Il2cppBinaryFormatFailure(
               "native-index-capacity",
@@ -133,18 +201,73 @@ export function* findModules(
     metadata.images.map((entry) => entry.name),
   );
   const counts = yield* imageMethodCounts(metadata);
+  const countSet = new Set(counts);
+  const minimumCount = counts.reduce(
+    (minimum, count) => Math.min(minimum, count),
+    Number.POSITIVE_INFINITY,
+  );
   const candidates = new Map<number, Il2cppCodeGenModule[]>();
+  const unresolvedName = unresolvedPointerMatcher(image, names.keys(), (name) =>
+    (names.get(name) ?? []).map((index) => counts[index]!),
+  );
   for (const mapping of image.container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
     for (let at = start; at + 24 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
       const offset = mapping.offset + at;
-      const target = image.bytes.readBigUInt64LE(offset);
+      const address = mapping.address + BigInt(at);
+      const raw = image.bytes.readBigUInt64LE(offset);
+      const elfSlot =
+        image.elfPointerOverlay === undefined
+          ? undefined
+          : readSlot(image, address);
+      const unresolvedLegacy =
+        image.machoPointerFixups?.hasUnresolvedLegacyBytes(address, 8) === true;
+      if (elfSlot === "unknown" || unresolvedLegacy) {
+        const count = readUInt32(image, address + 8n);
+        let plausibleCount =
+          count === "unknown"
+            ? minimumCount
+            : count !== null && countSet.has(count)
+              ? count
+              : Number.POSITIVE_INFINITY;
+        if (elfSlot !== "unknown" && Number.isFinite(plausibleCount)) {
+          const matched = unresolvedName(
+            address,
+            raw,
+            count === "unknown" || count === null ? undefined : count,
+          );
+          plausibleCount =
+            matched === undefined
+              ? Number.POSITIVE_INFINITY
+              : (matched ?? plausibleCount);
+        }
+        if (Number.isFinite(plausibleCount)) {
+          const pointers = readSlot(image, address + 16n);
+          if (
+            pointers === "unknown" ||
+            (typeof pointers === "bigint" &&
+              hasPointerArrayCoverage(image, pointers, plausibleCount))
+          )
+            throw new Il2cppBinaryFormatFailure(
+              "code-gen-modules-not-found",
+              "A loader-owned module name pointer could match an additional module record",
+            );
+        }
+      }
+      if (unresolvedLegacy) continue;
+      // Non-ELF images retain their stored bytes. Nominate before decoding so
+      // unrelated partial fixups do not invalidate the module search.
+      if (image.elfPointerOverlay === undefined && !names.has(raw)) continue;
+      const target =
+        elfSlot === undefined
+          ? readPointer(image, address)
+          : typeof elfSlot === "bigint"
+            ? elfSlot
+            : null;
+      if (target === null) continue;
       const indices = names.get(target);
       if (indices === undefined) continue;
-      const address = mapping.address + BigInt(at);
-      // Matching stored bytes nominate a candidate, not a resolved pointer.
-      if (readPointer(image, address) !== target) continue;
       let recordOffset: number;
       try {
         recordOffset = mappedFileOffset(
@@ -170,10 +293,20 @@ export function* findModules(
       for (const index of indices) {
         if (++work % 256 === 0) yield;
         const count = readUInt32(image, address + 8n);
-        if (count !== counts[index]) continue;
-        const pointers = readPointer(image, address + 16n);
+        if (count !== "unknown" && count !== counts[index]) continue;
+        const pointers = readSlot(image, address + 16n);
+        if (pointers === "unknown")
+          throw new Il2cppBinaryFormatFailure(
+            "code-gen-modules-not-found",
+            "A matching module record has an unresolved method pointer array",
+          );
         if (pointers === null) continue;
-        if (!hasPointerArrayCoverage(image, pointers, count)) continue;
+        if (!hasPointerArrayCoverage(image, pointers, counts[index]!)) continue;
+        if (count === "unknown")
+          throw new Il2cppBinaryFormatFailure(
+            "code-gen-modules-not-found",
+            "A matching module record has an unresolved method count",
+          );
         const list = candidates.get(index) ?? [];
         if (list.some((candidate) => candidate.address === address)) continue;
         if (list.length !== 0)
@@ -223,22 +356,41 @@ export function* findCodeRegistration(
     const start = Number((8n - (mapping.address % 8n)) % 8n);
     for (let at = start; at + 16 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
-      const offset = mapping.offset + at;
       // The count owns four bytes; the following four only align its pointer.
-      if (image.bytes.readUInt32LE(offset) !== modules.length) continue;
       const field = mapping.address + BigInt(at);
-      if (readUInt32(image, field) !== modules.length) continue;
-      const array = readPointer(image, field + 8n);
+      const count = readUInt32(image, field);
+      if (count !== "unknown" && count !== modules.length) continue;
+      const arraySlot = readSlot(image, field + 8n);
+      if (arraySlot === "unknown")
+        throw new Il2cppBinaryFormatFailure(
+          "code-registration-not-found",
+          "A possible CodeRegistration has an unresolved module array",
+        );
+      const array = arraySlot;
       if (array === null || !isMapped(image, array, modules.length * 8))
         continue;
       const seen = new Set<bigint>();
+      let uncertain = count === "unknown";
+      let viable = true;
       for (let slot = 0; slot < modules.length; slot++) {
         if (slot % 256 === 0) yield;
-        const pointer = readPointer(image, array + BigInt(slot * 8));
-        if (pointer === null || !expected.has(pointer)) break;
+        const pointer = readSlot(image, array + BigInt(slot * 8));
+        if (pointer === "unknown") {
+          uncertain = true;
+          continue;
+        }
+        if (pointer === null || !expected.has(pointer) || seen.has(pointer)) {
+          viable = false;
+          break;
+        }
         seen.add(pointer);
       }
-      if (seen.size === modules.length) {
+      if (viable && uncertain)
+        throw new Il2cppBinaryFormatFailure(
+          "code-registration-not-found",
+          "A possible CodeRegistration has unresolved candidate fields",
+        );
+      if (viable && seen.size === modules.length) {
         // Exact load aliases can visit one virtual registration field twice.
         if (matchedFields.has(field)) continue;
         matchedFields.add(field);
@@ -286,16 +438,83 @@ function* findModuleArrayByCode(
   expected: ReadonlySet<bigint>,
 ): Generator<void, bigint | null> {
   const arrays = new Set<bigint>();
+  const unresolvedModule = unresolvedPointerMatcher(image, expected);
+  let expectedXor = 0n;
+  for (const candidate of expected) expectedXor ^= candidate;
   for (const mapping of image.container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
     let runStart = start;
     const lastPosition = new Map<bigint, number>();
+    const possible = new Map<number, bigint | null>();
+    const occurrences = new Map<bigint, number>();
+    const unknownPositions = new Set<number>();
+    let possibleXor = 0n;
+    let duplicateValues = 0;
     for (let at = start; at + 8 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
       const raw = image.bytes.readBigUInt64LE(mapping.offset + at);
-      const value = expected.has(raw)
-        ? readPointer(image, mapping.address + BigInt(at))
-        : null;
+      const address = mapping.address + BigInt(at);
+      const elfSlot =
+        image.elfPointerOverlay === undefined
+          ? undefined
+          : readSlot(image, address);
+      const unknown =
+        elfSlot === "unknown" || unresolvedModule(address, raw) !== undefined;
+      const value =
+        !unknown && (image.elfPointerOverlay !== undefined || expected.has(raw))
+          ? elfSlot === undefined
+            ? readPointer(image, address)
+            : typeof elfSlot === "bigint"
+              ? elfSlot
+              : null
+          : null;
+      if (!unknown && (value === null || !expected.has(value))) {
+        possible.clear();
+        occurrences.clear();
+        unknownPositions.clear();
+        possibleXor = 0n;
+        duplicateValues = 0;
+      } else {
+        const candidate = unknown ? null : value;
+        possible.set(at, candidate);
+        if (candidate === null) unknownPositions.add(at);
+        else {
+          possibleXor ^= candidate;
+          const count = (occurrences.get(candidate) ?? 0) + 1;
+          occurrences.set(candidate, count);
+          if (count === 2) duplicateValues++;
+        }
+        const expired = at - expected.size * 8;
+        if (possible.has(expired)) {
+          const previous = possible.get(expired)!;
+          possible.delete(expired);
+          if (previous === null) unknownPositions.delete(expired);
+          else {
+            possibleXor ^= previous;
+            const count = occurrences.get(previous)!;
+            if (count === 2) duplicateValues--;
+            if (count === 1) occurrences.delete(previous);
+            else occurrences.set(previous, count - 1);
+          }
+        }
+        if (
+          possible.size === expected.size &&
+          unknownPositions.size > 0 &&
+          duplicateValues === 0
+        ) {
+          if (unknownPositions.size === 1) {
+            const unknownAt = unknownPositions.values().next().value!;
+            if (
+              image.elfPointerOverlay !== undefined ||
+              unresolvedPointerMatcher(image, [expectedXor ^ possibleXor])(
+                mapping.address + BigInt(unknownAt),
+                image.bytes.readBigUInt64LE(mapping.offset + unknownAt),
+              ) !== undefined
+            )
+              return null;
+          } else return null;
+        }
+      }
       if (value === null || !expected.has(value)) {
         runStart = at + 8;
         lastPosition.clear();
@@ -331,16 +550,28 @@ function* ripRelativeReferences(
   const referenced = new Set<bigint>();
   for (const mapping of image.container.executable_mappings ?? []) {
     const bytes = image.bytes;
+    const loaded =
+      image.elfPointerOverlay?.hasWrites(mapping.address, mapping.size) ===
+      true;
     const end = mapping.offset + mapping.size - 7;
     for (let at = mapping.offset; at <= end; at++) {
       if ((at & 0xffff) < 8) yield;
-      const rex = bytes[at]!;
+      const address = mapping.address + BigInt(at - mapping.offset);
+      const prefix = loaded
+        ? readUInt32(image, address)
+        : bytes.readUInt32LE(at);
+      if (typeof prefix !== "number") continue;
+      const rex = prefix & 0xff;
       if ((rex & 0xfb) !== 0x48) continue; // REX.W, optionally REX.R
-      const opcode = bytes[at + 1]!;
+      const opcode = (prefix >>> 8) & 0xff;
       if (opcode !== 0x8d && opcode !== 0x8b) continue;
-      if ((bytes[at + 2]! & 0xc7) !== 0x05) continue; // mod 00, rm 101: RIP + disp32
+      if (((prefix >>> 16) & 0xc7) !== 0x05) continue; // mod 00, rm 101: RIP + disp32
       const next = mapping.address + BigInt(at - mapping.offset + 7);
-      const target = next + BigInt(bytes.readInt32LE(at + 3));
+      const displacement = loaded
+        ? readUInt32(image, address + 3n)
+        : bytes.readUInt32LE(at + 3);
+      if (typeof displacement !== "number") continue;
+      const target = next + BigInt(displacement | 0);
       if (arrays.has(target)) referenced.add(target);
     }
   }
@@ -361,12 +592,22 @@ function* arm64PageReferences(
   const referenced = new Set<bigint>();
   const bytes = image.bytes;
   for (const mapping of image.container.executable_mappings ?? []) {
+    const loaded =
+      image.elfPointerOverlay?.hasWrites(mapping.address, mapping.size) ===
+      true;
     const start = Number((4n - (mapping.address % 4n)) % 4n);
     for (let at = start; at + 8 <= mapping.size; at += 4) {
       if ((at & 0xffff) < 4) yield;
-      const adrp = bytes.readUInt32LE(mapping.offset + at);
+      const address = mapping.address + BigInt(at);
+      const adrp = loaded
+        ? readUInt32(image, address)
+        : bytes.readUInt32LE(mapping.offset + at);
+      if (typeof adrp !== "number") continue;
       if ((adrp & 0x9f000000) >>> 0 !== 0x90000000) continue;
-      const add = bytes.readUInt32LE(mapping.offset + at + 4);
+      const add = loaded
+        ? readUInt32(image, address + 4n)
+        : bytes.readUInt32LE(mapping.offset + at + 4);
+      if (typeof add !== "number") continue;
       if ((add & 0xffc00000) >>> 0 !== 0x91000000) continue;
       const register = adrp & 0x1f;
       // Register 31 is xzr for ADRP and sp for ADD, so no address is formed.
@@ -409,37 +650,49 @@ export function* findMetadataRegistration(
   // A record whose two counts match is static evidence even when its other
   // fields are unusable; code is then not asked to stand in for it.
   let countsMatched = false;
-  const low = (offset: number) => image.bytes.readUInt32LE(offset);
   for (const mapping of image.container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
     // The fields used below end at byte 112. The full 128-byte registration
     // must still have loader coverage, including any declared zero-fill tail.
     for (let at = start; at + 112 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
-      const base = mapping.offset + at;
-      if (low(base + 80) !== typeDefinitions) continue;
-      if (low(base + 96) !== typeDefinitions) continue;
       const address = mapping.address + BigInt(at);
+      const fieldCount = readUInt32(image, address + 80n);
+      if (fieldCount !== "unknown" && fieldCount !== typeDefinitions) continue;
+      const sizeCount = readUInt32(image, address + 96n);
+      if (sizeCount !== "unknown" && sizeCount !== typeDefinitions) continue;
       if (!hasPointerArrayCoverage(image, address, 16)) continue;
-      if (readUInt32(image, address + 80n) !== typeDefinitions) continue;
-      if (readUInt32(image, address + 96n) !== typeDefinitions) continue;
-      countsMatched = true;
+      if (fieldCount !== "unknown" && sizeCount !== "unknown")
+        countsMatched = true;
       const count = readUInt32(image, address + 48n);
-      const types = readPointer(image, address + 56n);
-      const fieldOffsets = readPointer(image, address + 88n);
-      const typeSizes = readPointer(image, address + 104n);
+      const types = readSlot(image, address + 56n);
+      const fieldOffsets = readSlot(image, address + 88n);
+      const typeSizes = readSlot(image, address + 104n);
       if (
-        typeof count !== "number" ||
-        count === 0 ||
-        count > 0x7fffffff ||
+        count === null ||
+        (typeof count === "number" && (count === 0 || count > 0x7fffffff)) ||
         types === null ||
         fieldOffsets === null ||
         typeSizes === null ||
-        !isMapped(image, fieldOffsets, 8) ||
-        !isMapped(image, typeSizes, 8) ||
-        !isMapped(image, types, count * 8)
+        (typeof fieldOffsets === "bigint" &&
+          !isMapped(image, fieldOffsets, 8)) ||
+        (typeof typeSizes === "bigint" && !isMapped(image, typeSizes, 8)) ||
+        (typeof types === "bigint" &&
+          !isMapped(image, types, typeof count === "number" ? count * 8 : 8))
       )
         continue;
+      if (
+        fieldCount === "unknown" ||
+        sizeCount === "unknown" ||
+        count === "unknown" ||
+        types === "unknown" ||
+        fieldOffsets === "unknown" ||
+        typeSizes === "unknown"
+      )
+        throw new Il2cppBinaryFormatFailure(
+          "metadata-registration-not-found",
+          "A possible MetadataRegistration has unresolved candidate fields",
+        );
       const field = mapping.address + BigInt(at + 48);
       // Exact load aliases can visit one virtual registration field twice.
       if (matchedFields.has(field)) continue;
@@ -503,7 +756,7 @@ function* findTypeTableByCode(
   typeDefinitions: number,
   requiredTypes: number,
 ): Generator<void, { readonly count: number; readonly types: bigint } | null> {
-  const { bytes, container } = image;
+  const { container } = image;
   // Nomination and loader-aware confirmation share the image's mapping index.
   // Most words are not record addresses; reject those without the throwing
   // lookup. Starts are sorted, and reach[i] is the furthest end among the
@@ -547,25 +800,15 @@ function* findTypeTableByCode(
       throw cause;
     }
   };
-  const isType = (address: bigint) => {
-    // Records hold an 8-byte pointer first; zero and unaligned words are not types.
-    if (address === 0n || (address & 7n) !== 0n) return false;
-    const offset = recordOffset(address);
-    if (offset < 0) return false;
-    const kind = il2cppTypeKind(bytes.readUInt32LE(offset + 8));
-    if (!isDefinedTypeKind(kind)) return false;
-    if (!isDefinitionTypeKind(kind)) return true;
-    return bytes.readBigUInt64LE(offset) < BigInt(typeDefinitions);
-  };
   // A run that touches either end of its mapping may continue in a
   // neighbouring one, so its length and start are unknown; it still counts as
   // a candidate but cannot be chosen.
   const runs = new Map<bigint, number | null>();
-  // Stored words only nominate slots: a slot the loader binds or leaves
-  // unresolved has no known value, so a run it bounds has an unknown extent
-  // whatever its placeholder holds.
+  // A slot the loader binds or leaves unresolved has no known value, so a
+  // run it bounds has an unknown extent whatever its placeholder holds.
   // The same holds for a record's kind word and its definition index.
   const recordState = (target: bigint): "type" | "other" | "unknown" => {
+    if (target === 0n || (target & 7n) !== 0n) return "other";
     if (recordOffset(target) < 0) return "other";
     const attributes = readUInt32(image, target + 8n);
     if (attributes === "unknown") return "unknown";
@@ -592,24 +835,61 @@ function* findTypeTableByCode(
     const start = Number((8n - (mapping.address % 8n)) % 8n);
     let runStart = -1;
     let startUnknown = false;
+    let possibleLength = 0;
+    let possibleUnknown = false;
     for (let at = start; at <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
       const address = mapping.address + BigInt(at);
       let endUnknown = at + 8 > mapping.size;
       if (!endUnknown) {
-        const raw = bytes.readBigUInt64LE(mapping.offset + at);
-        if (isType(raw)) {
-          const slot = readSlot(image, address);
-          const state = slot === raw ? recordState(slot) : "other";
-          if (state === "type") {
-            if (runStart < 0) {
-              runStart = at;
-              startUnknown = at === start || unresolved(address - 8n);
+        const raw = image.bytes.readBigUInt64LE(mapping.offset + at);
+        let state: "type" | "other" | "unknown";
+        if (image.elfPointerOverlay === undefined) {
+          if (
+            image.machoPointerFixups?.hasUnresolvedLegacyBytes(address, 8) ===
+            true
+          )
+            state = "unknown";
+          else {
+            const rawState = recordState(raw);
+            if (rawState !== "type") state = rawState;
+            else {
+              const slot = readSlot(image, address);
+              state =
+                slot === raw
+                  ? rawState
+                  : typeof slot === "bigint"
+                    ? recordState(slot)
+                    : slot === "unknown"
+                      ? "unknown"
+                      : "other";
             }
-            continue;
           }
-          endUnknown = slot === "unknown" || state === "unknown";
-        } else if (runStart >= 0) endUnknown = unresolved(address);
+        } else {
+          const slot = readSlot(image, address);
+          state =
+            typeof slot === "bigint"
+              ? recordState(slot)
+              : slot === "unknown"
+                ? "unknown"
+                : "other";
+        }
+        if (state === "other") {
+          possibleLength = 0;
+          possibleUnknown = false;
+        } else {
+          possibleLength += 1;
+          possibleUnknown ||= state === "unknown";
+          if (possibleUnknown && possibleLength >= requiredTypes) return null;
+        }
+        if (state === "type") {
+          if (runStart < 0) {
+            runStart = at;
+            startUnknown = at === start || unresolved(address - 8n);
+          }
+          continue;
+        }
+        endUnknown = state === "unknown";
       }
       if (runStart >= 0 && (at - runStart) / 8 >= requiredTypes) {
         runs.set(

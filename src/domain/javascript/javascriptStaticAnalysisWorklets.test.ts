@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const worklets = (source: string) => {
   const analysis = analyzeJavaScriptStaticSource(source);

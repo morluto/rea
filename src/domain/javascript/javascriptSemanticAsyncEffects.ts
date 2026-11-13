@@ -16,7 +16,6 @@ import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
-  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
@@ -24,7 +23,7 @@ import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.j
 import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
-  builtinDataEffectMethod,
+  builtinDataEffectIdentity,
   dataEffectArgumentBindingId,
   dataEffectLiteralString,
   dataEffectMemberCallee,
@@ -92,6 +91,7 @@ interface AsyncEffectAnalysis {
 }
 
 interface TimerCandidate {
+  readonly builtinAuthority?: "candidate";
   readonly node: t.CallExpression | t.OptionalCallExpression;
   readonly method: JavaScriptSemanticTimerOperation["method"];
   readonly kind: JavaScriptSemanticTimerOperation["kind"];
@@ -159,7 +159,10 @@ export const collectJavaScriptSemanticAsyncEffects = (
  *
  * A class expression passes Node's own `typeof` check, so it is kept.
  */
-const rejectsEventListener = (listener: t.Node): boolean => {
+export const rejectsSemanticEventListener = (
+  listener: t.Node | undefined,
+): boolean => {
+  if (listener === undefined) return true;
   if (t.isSpreadElement(listener)) return false;
   const value = unwrapJavaScriptExpression(listener).node;
   if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
@@ -203,9 +206,9 @@ const collectEvent = (
   // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
   // trailing `1`.
   if (
+    EVENT_LISTENER_METHODS.includes(method) &&
     !t.isSpreadElement(eventArgument) &&
-    listenerArgument !== undefined &&
-    rejectsEventListener(listenerArgument)
+    rejectsSemanticEventListener(listenerArgument)
   )
     return;
   const emitter = emitterIdentity(member.object, state);
@@ -306,20 +309,25 @@ const emitterIdentity = (
 };
 
 /**
- * A timer proven to come from the Node `timers` module rather than a bare
- * global. Browser and Electron renderer sources reach this analysis without a
- * Node/browser distinction, and there `setTimeout("refresh()", 0)` is a real
+ * A timer associated with the Node `timers` module, either proven or
+ * conditional, rather than a bare global. Browser and Electron renderer sources
+ * reach this analysis without a Node/browser distinction, and there `setTimeout("refresh()", 0)` is a real
  * timer: the string is evaluated by the host. Node's callback rule therefore
- * applies only when the timer is imported from `node:timers`, where that form
- * cannot exist.
+ * applies when interpreting the call as `node:timers`, where that form
+ * cannot create a Node timer even if the module identity is conditional.
  */
 const nodeBuiltinTimerMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticTimerOperation["method"] | null =>
-  admittedTimerMethod(
-    builtinDataEffectMethod(callee, state, ["timers", "node:timers"]) ?? "",
+): JavaScriptSemanticTimerOperation["method"] | null => {
+  const identity = builtinDataEffectIdentity(callee, state, [
+    "timers",
+    "node:timers",
+  ]);
+  return admittedTimerMethod(
+    identity?.path.length === 1 ? (identity.path[0] ?? "") : "",
   );
+};
 
 /**
  * A schedule imported from Node's `timers` module requires a function in
@@ -370,8 +378,9 @@ const schedulesWithNonFunctionCallback = (
 
 const collectTimer = (input: TimerCollectionInput): void => {
   const { node, ownerCallableId, state, output, ancestors } = input;
-  const method = timerMethod(node.callee, state);
-  if (method === null) return;
+  const identity = timerMethod(node.callee, state);
+  if (identity === null) return;
+  const { method, builtinAuthority } = identity;
   if (
     TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method) &&
     nodeBuiltinTimerMethod(node.callee, state) !== null &&
@@ -421,6 +430,7 @@ const collectTimer = (input: TimerCollectionInput): void => {
   output.push({
     node,
     method,
+    ...(builtinAuthority === undefined ? {} : { builtinAuthority }),
     kind,
     ownerCallableId,
     handleBindingId:
@@ -467,6 +477,10 @@ const resolveTimers = (
       candidate.handleRead !== null &&
       candidate.handleRead.origins.length !== linked.length;
     return {
+      ...(candidate.builtinAuthority === "candidate" ||
+      linked.some((item) => item.builtinAuthority === "candidate")
+        ? { builtinAuthority: "candidate" as const }
+        : {}),
       timerId: timerId(candidate),
       kind: candidate.kind,
       method: candidate.method,
@@ -499,7 +513,10 @@ const resolveTimers = (
 const timerMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticTimerOperation["method"] | null => {
+): {
+  readonly method: JavaScriptSemanticTimerOperation["method"];
+  readonly builtinAuthority?: "candidate";
+} | null => {
   if (t.isIdentifier(callee)) {
     const binding = resolveSemanticBindingState(state, callee, callee.name);
     if (binding === undefined) {
@@ -508,12 +525,24 @@ const timerMethod = (
       return semanticResolutionBlocked(state, callee, callee.name) ||
         !isUnmodifiedGlobalReference(callee, state, callee.name)
         ? null
-        : method;
+        : { method };
     }
   }
-  return admittedTimerMethod(
-    builtinDataEffectMethod(callee, state, ["timers", "node:timers"]) ?? "",
+  const identity = builtinDataEffectIdentity(callee, state, [
+    "timers",
+    "node:timers",
+  ]);
+  const method = admittedTimerMethod(
+    identity?.path.length === 1 ? (identity.path[0] ?? "") : "",
   );
+  return method === null
+    ? null
+    : {
+        method,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
+      };
 };
 const admittedTimerMethod = (
   value: string,

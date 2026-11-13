@@ -62,6 +62,16 @@ runtime presence. For compact CLI output, use
 `inspect-desktop-application PATH --detail summary --evidence_output BUNDLE`.
 See [desktop installations](https://github.com/morluto/rea/blob/main/docs/desktop-applications.md).
 
+## Release exposure
+
+Use `audit_release_exposure` (`rea audit-release-exposure PATH`) when the question is what static analysis of a shipped `.app`, install directory, ASAR, or executable recovers. Each check has a stable id, a status, the observation behind it, and fixed remediation. Unknown and unassessed checks stay in the report. The report does not establish that the application is secure.
+
+`text.credential_markers` reports a rule id and location only. Matched bytes, previews, lengths, and hashes of matched bytes are omitted.
+
+`native.hardening`, `macho.hardened_runtime`, and `android.manifest` are not assessed here. Their next probes are `inspect_binary_hardening`, `inspect_signature`, and `inspect_android_package`.
+
+See [release exposure](https://github.com/morluto/rea/blob/main/docs/release-exposure.md).
+
 ## Go build metadata
 
 Use `inspect_go_binary` for an explicit local ELF, PE or Mach-O (universal
@@ -149,6 +159,20 @@ table or overlay. Bound snapshots, loaded IAT contents, and export-forward
 resolution remain unobserved. See
 [PE import and delay-load tables](https://github.com/morluto/rea/blob/main/docs/pe-imports.md).
 
+## Windows Shell Link shortcuts
+
+Use `inspect_windows_shortcut` for an explicit local `.lnk` file when the
+question concerns the recorded target path, arguments, working directory, icon
+location, volume serial, network share names, ExtraData blocks, or Tracker
+droid identifiers. No `open_binary`, Windows SDK, COM, or target execution is
+required. The CLI equivalent is `inspect-windows-shortcut PATH`. Preserve
+artifact SHA-256, FILETIME raw decimals, IDList type bytes, and ExtraData
+signatures. Unknown IDList items and ExtraData signatures remain raw with
+SHA-256; they are not guessed. Version-1 UUID MAC and timestamp values are
+labelled derived. A missing optional section is observed absence of that
+structure. See
+[Windows Shell Link shortcuts](https://github.com/morluto/rea/blob/main/docs/guides/native/windows-shortcut.md).
+
 ## PE TLS callbacks and load configuration
 
 Use `inspect_pe_load_config` for an explicit local PE32/PE32+ image when the
@@ -185,6 +209,36 @@ absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
 
+## ELF and Mach-O initializer functions
+
+Use `inspect_native_initializers` for an explicit local ELF or Mach-O image
+when the question is which functions run before `main` or at exit: ELF
+`DT_PREINIT_ARRAY`, `DT_INIT`, `DT_INIT_ARRAY`, `DT_FINI`, `DT_FINI_ARRAY` and
+legacy `.ctors`/`.dtors`, or Mach-O `__mod_init_func`, `__init_offsets` and
+`__mod_term_func`. Pass `architecture` for a universal Mach-O. The CLI
+equivalent is `inspect-native-initializers PATH`. PIE slots are resolved
+through RELATIVE, RELR and section relocations, and Mach-O slots through
+chained fixups. Keep each entry's `resolution`: `unresolved` means the value was
+not established, and `unresolved_import` names an external symbol. Page with
+`offset` and `limit`. See
+[ELF and Mach-O initializer functions](https://github.com/morluto/rea/blob/main/docs/guides/native/native-initializers.md).
+
+## ELF unwind function ranges
+
+Use `inspect_elf_unwind_ranges` for an explicit local ELF32/ELF64 image when
+the question concerns function starts and lengths that survive `strip`, which
+functions have an LSDA, or which ranges have no exact symbol. No
+`open_binary` or target execution is required. The CLI equivalent is
+`inspect-elf-unwind-ranges PATH`. Preserve artifact SHA-256, FDE start and
+end, containing section, exact symbol name, CIE index, LSDA, and personality.
+Page later ranges with `offset` and `limit`. A missing `.eh_frame` is
+observed absence of that declaration and of `PT_GNU_EH_FRAME`, not proof the
+image has no functions. Header disagreement is a limitation and does not drop
+decoded ranges. `.debug_frame` is reported present or absent and is not
+decoded. CFA instructions are counted and not evaluated. Indirect EH pointers
+are not dereferenced. See
+[ELF unwind function ranges](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-unwind-ranges.md).
+
 ## Apple IPS crash reports
 
 Use `inspect_apple_ips` for an explicit local Apple `.ips` file when the
@@ -194,7 +248,10 @@ Xcode, atos, or target execution is required. The CLI equivalent is
 `inspect-apple-ips PATH`. Preserve artifact SHA-256, `bug_type` as a string,
 uppercase image UUIDs, and integer literals that exceed IEEE-754 range. Only
 `bug_type` `"309"` yields a crash body; other DiagnosticReports types return
-no crash result. Opened Mach-O and dSYM UUID joins remain unobserved. See
+no crash result. Select `join_path` for one local Mach-O or dSYM to match
+report images to slices by UUID and architecture. Preserve the selected
+artifact identity, slice facts and unjoined reasons; a joined static address
+does not resolve function names or dSYM symbols. See
 [Apple IPS crash reports](https://github.com/morluto/rea/blob/main/docs/apple-ips.md).
 
 ## Linux kernel modules
@@ -215,6 +272,27 @@ container. gzip, xz, and zstd whole-file containers are unsupported and name
 `external_decompression` as the next probe: use an external codec utility to
 decompress into a separate file, then call `inspect_kernel_module` on that file. See
 [Linux kernel modules](https://github.com/morluto/rea/blob/main/docs/kernel-modules.md).
+
+## Linux kernel build config
+
+Use `inspect_kernel_build_config` for an explicit local kernel image (`vmlinux`
+ELF, raw arm64 `Image`, x86 `bzImage`/`zImage`, or `configs.ko`) when the
+question is which kernel version it is or how it was configured. No
+`open_binary`, Linux host, or `extract-ikconfig` is required. The CLI
+equivalent is `inspect-kernel-build-config PATH`; pass `name` for one exact
+`CONFIG_*` option and `offset`/`limit` to page the rest. Preserve the banner
+version, builder, and compiler, the config SHA-256 and option count, and each
+entry's value kind (`y`, `m`, `string`, `number`, `not_set`). A config is
+accepted only when `IKCFG_ST` is immediately followed by a valid gzip member
+and `IKCFG_ED`, so an ordinary `IKCFG_ST` string is not a config. Offsets with
+`space: "inflated_payload"` are positions in an inflated bzImage payload, not
+file offsets. An absent config describes only the searched bytes; the kernel
+may have been built without `CONFIG_IKCONFIG` or with it as a module. Truncated
+payloads are incomplete, not absent. A framed blob that does not decode, has a
+bad CRC, or holds non-config text is `malformed`, not absent. xz, lz4, lzma, zstd, bzip2, and lzo
+payloads are unsupported and name `external_decompression`: decompress with an
+external utility, then call `inspect_kernel_build_config` on the result. See
+[Linux kernel build config](https://github.com/morluto/rea/blob/main/docs/guides/native/kernel-build-config.md).
 
 ## CPython pyc files
 
@@ -471,8 +549,7 @@ the framing LF still fits. Cutter measures, signs, and writes a fitting
 response in bounded chunks. The bridge searches only the newly read bytes
 for the framing LF. The client unescapes each socket chunk into one response
 string before parsing it, so this ceiling does not keep the paged wire frame
-and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. Set the variable in the environment that starts REA, restart REA,
-and start Hopper or Cutter from that same environment. An out-of-band bridge
+and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. `bridge.max_request_bytes` can be changed at runtime with `update_analysis_settings`. The launch seed is `REA_BRIDGE_MAX_REQUEST_BYTES`. Start Hopper or Cutter from that same environment so the bridge keeps the ceiling it started with until that bridge starts again. An out-of-band bridge
 without the setting stays at 16777216 bytes. The client reports that mismatch
 during discovery only after the hello proves a live authenticated bridge, and
 does not send a status request or the command. A stale descriptor is ignored.
@@ -843,3 +920,24 @@ Layout labels describe record shapes, not a detected compiler version; unknown
 or ambiguous layouts are unsupported. Bytecode is retained, not decoded, and the
 executable is never run. See
 [Bun standalone executables](https://github.com/morluto/rea/blob/main/docs/bun-standalone.md).
+
+## Deno compile executables
+
+A `deno compile` executable stores its application in a Mach-O `__SUI,d3n0l4nd`
+section, an Intel Mach-O `<~sui-data~>` trailer, an ELF `SUI` note of type
+`0x53554901`, or a PE `RT_RCDATA` resource named `D3N0L4ND`.
+`open_binary` then `inspect_artifact` reports root format `deno-standalone`
+with the carrier, entry point, recorded options, and one occurrence per virtual
+file, including size and SHA-256. Transpiled output, CJS export analysis, and
+source maps are separate occurrences with the file's `index` and their own
+`role`. They normally use a `.deno-*` suffix on the file path and move to an
+indexed path on a collision, so use the reported `logical_path`. Symlink targets
+stay recorded path parts. A virtual filesystem that cannot be listed leaves
+coverage unknown.
+Environment-file values and CA certificate bytes are retained in local Evidence
+with their counts and byte lengths. The npm snapshot length is reported and not
+decoded. `extract-artifact` writes
+stored files through the safe output tree; route extracted JavaScript to
+`analyze_javascript_application`. Other layouts are unsupported, and the
+executable is never run. See
+[Deno compile executables](https://github.com/morluto/rea/blob/main/docs/deno-standalone.md).

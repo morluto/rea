@@ -9,10 +9,127 @@ import {
   reconstructionCoverageDataFixture,
 } from "../../../src/domain/reconstructionCoverage.fixture.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import {
+  createResidualUnknown,
+  recordUnknownInputSchema,
+  updateResidualUnknown,
+} from "../../../src/domain/residualUnknown.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+
+it("rejects malformed boundary identifiers at the MCP request boundary", async () => {
+  await withCoverageMcp(async ({ client }) => {
+    const result = await client.callTool({
+      name: "evaluate_reconstruction_coverage",
+      arguments: {
+        coverage: currentFixtureCoverage(),
+        boundary_id: "replacement cli",
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [{ path: ["boundary_id"], reason: "invalid_format" }],
+        },
+      },
+    });
+  });
+});
+
+it("uses the latest listed unknown revision when evaluating a boundary", async () => {
+  await withCoverageMcp(async ({ client }) => {
+    const base = currentFixtureCoverage();
+    const [first, second] = base.evidence_bundle.records;
+    if (first === undefined || second === undefined)
+      throw new Error("Missing fixture Evidence");
+    const unknownSource = createEvidence(
+      undefined,
+      { id: "unknown-source", name: "Unknown source", version: "1" },
+      {
+        operation: "observe_unknown",
+        parameters: {},
+        result: { evidence: true },
+      },
+    );
+    const input = recordUnknownInputSchema.parse({
+      question: "Is the route covered?",
+      supporting_evidence_ids: [unknownSource.evidence_id],
+      domain: "fixture",
+      severity: "medium",
+      required_authority: null,
+      required_confidence: "derived",
+      required_environment: null,
+      recommended_probes: [],
+      relationships: [],
+    });
+    const open = createResidualUnknown(input, first.evidence_id, null);
+    const resolved = updateResidualUnknown(
+      open,
+      {
+        ...input,
+        unknown_id: open.unknown_id,
+        expected_revision: 1,
+        status: "resolved",
+        resolution: {
+          disposition: "withdrawn",
+          rationale: "No longer applicable",
+          evidence_ids: [],
+        },
+      },
+      second.evidence_id,
+    );
+    const reopened = updateResidualUnknown(
+      resolved,
+      {
+        ...input,
+        unknown_id: open.unknown_id,
+        expected_revision: 2,
+        status: "investigating",
+        resolution: null,
+      },
+      second.evidence_id,
+    );
+    const coverage = (revisions: (typeof open)[]) => ({
+      ...base,
+      evidence_bundle: createEvidenceBundle(
+        [...base.evidence_bundle.records, unknownSource],
+        revisions,
+      ),
+      residual_unknown_ids: [open.unknown_id, open.unknown_id],
+    });
+    expect(
+      (await evaluate(client, coverage([open]))).structuredContent,
+    ).toMatchObject({
+      status: "unknown",
+      evidence_ids: expect.arrayContaining([unknownSource.evidence_id]),
+      reasons: [
+        expect.objectContaining({
+          code: "active-unknown",
+          subject_id: open.unknown_id,
+        }),
+      ],
+    });
+    expect(
+      (await evaluate(client, coverage([open, resolved]))).structuredContent,
+    ).toMatchObject({ status: "ready", reasons: [] });
+    expect(
+      (await evaluate(client, coverage([open, resolved, reopened])))
+        .structuredContent,
+    ).toMatchObject({
+      status: "unknown",
+      reasons: [
+        expect.objectContaining({
+          code: "active-unknown",
+          subject_id: open.unknown_id,
+        }),
+      ],
+    });
+  });
+});
 
 describe("reconstruction coverage inline Evidence", () => {
   it("evaluates inline fail-closed coverage without retaining request Evidence", async () => {

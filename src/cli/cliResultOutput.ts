@@ -59,6 +59,10 @@ export interface CliResultOutputMetadata {
   readonly duration: string;
   readonly format: string;
   readonly renderOutput?: boolean;
+  /** Render commands that do not have an Incur output fallback. */
+  readonly forceOutput?: boolean;
+  /** The producer owns a failure document whose complete facts must survive filtering. */
+  readonly failure?: boolean;
 }
 
 /** Optional executable-owned result surface for one CLI invocation. */
@@ -426,8 +430,9 @@ export const createCliResultOutput = (
     const filterPaths = options.filterOutput
       ? Filter.parse(options.filterOutput)
       : undefined;
-    const operationFailure =
-      format === "jsonl" || options.fullOutput || filterPaths !== undefined
+    const operationFailure = metadata.failure
+      ? value
+      : format === "jsonl" || options.fullOutput || filterPaths !== undefined
         ? cliOperationFailurePayload(value)
         : undefined;
     const failure = options.fullOutput ? operationFailure : undefined;
@@ -556,28 +561,32 @@ export const createCliResultOutput = (
     const selected = selection.value;
     const refuseUnrepresentableText = async (): Promise<true> => {
       error = projectAnalysisError(
-        new AnalysisInputError(
-          metadata.command,
-          {
-            userMessage:
-              format === "md"
-                ? "Markdown cannot preserve NUL or unpaired UTF-16 surrogates in rendered output."
-                : "TOON cannot preserve unpaired UTF-16 surrogates in UTF-8 output.",
-            remediationAction:
-              "Use --format json or --format yaml to retain the exact code units.",
-            ...(completed?.originalFailure === undefined
-              ? {}
-              : {
-                  diagnostics: { original_failure: completed.originalFailure },
-                }),
-          },
-          [
+        retainCliPublicationOnError(
+          new AnalysisInputError(
+            metadata.command,
             {
-              path: ["--format"],
-              reason: "invalid_value",
-              message: "The selected format cannot preserve this value.",
+              userMessage:
+                format === "md"
+                  ? "Markdown cannot preserve NUL or unpaired UTF-16 surrogates in rendered output."
+                  : "TOON cannot preserve unpaired UTF-16 surrogates in UTF-8 output.",
+              remediationAction:
+                "Use --format json or --format yaml to retain the exact code units.",
+              ...(completed?.originalFailure === undefined
+                ? {}
+                : {
+                    diagnostics: {
+                      original_failure: completed.originalFailure,
+                    },
+                  }),
             },
-          ],
+            [
+              {
+                path: ["--format"],
+                reason: "invalid_value",
+                message: "The selected format cannot preserve this value.",
+              },
+            ],
+          ),
         ),
       );
       const document = options.fullOutput
@@ -625,6 +634,7 @@ export const createCliResultOutput = (
     // Delegate other human formats to Incur. Markdown stays here so admission
     // and emitted table text use the same safe formatter.
     if (
+      !metadata.forceOutput &&
       format !== "md" &&
       format !== "json" &&
       format !== "jsonl" &&
@@ -802,6 +812,7 @@ export const createCliResultOutput = (
     // document from Incur's error formatter.
     const formattedText =
       format === "md" ||
+      (metadata.forceOutput === true && format !== "json") ||
       ((operationFailure !== undefined || ownsFilteredOutput) &&
         format !== "json")
         ? formatCliOutput(document, format)

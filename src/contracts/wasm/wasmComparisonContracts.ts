@@ -1,7 +1,10 @@
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { z } from "zod";
 import { evidenceInputSchema } from "../../domain/evidenceReference.js";
-import { wasmInterfaceSchema } from "../../domain/wasm/wasmInterface.js";
+import {
+  wasmInterfaceSchema,
+  wasmInterfaceByteBudgetSchema,
+} from "../../domain/wasm/wasmInterface.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import type { ToolContract } from "../toolContractTypes.js";
 
@@ -12,6 +15,7 @@ export const compareWasmInterfacesInputSchema = z.strictObject({
   right: evidenceInputSchema.describe(
     "Exact complete inspect_wasm_artifact Evidence or retained session reference",
   ),
+  max_interface_bytes: wasmInterfaceByteBudgetSchema,
   scope: z
     .enum(["imports", "exports", "both"])
     .describe(
@@ -56,7 +60,7 @@ export const COMPARE_WASM_INTERFACES_CONTRACT = {
   ...toolContractMetadata("compare_wasm_interfaces"),
   kind: "application",
   description:
-    "Compare typed core WASM import/export names, kinds and exact signatures from two authenticated inspect_wasm_artifact Evidence records. Select imports, exports or both explicitly. MCP references resolve in the current session; CLI references use an explicitly selected --evidence-bundle. Duplicate names, unsupported types and missing historical interface facets remain unknown. Preserve original module digests and every occurrence; no source acquisition, module execution or runtime-compatibility inference.",
+    "Compare typed core WASM import/export names, kinds and exact signatures from two authenticated inspect_wasm_artifact Evidence records. Select imports, exports or both explicitly. MCP references resolve in the current session; CLI references use an explicitly selected --evidence-bundle. max_interface_bytes selects this comparison's independent representation allowance (default 32MiB); raising it cannot restore omitted producer facts. Duplicate names, unsupported types and missing historical interface facets remain unknown. Preserve original module digests and every occurrence; no source acquisition, module execution or runtime-compatibility inference.",
   inputSchema: compareWasmInterfacesInputSchema,
   outputSchema: evidenceResultOf(wasmInterfaceComparisonSchema),
   examples: [],

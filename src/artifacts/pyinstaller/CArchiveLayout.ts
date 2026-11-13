@@ -8,7 +8,7 @@ import {
 } from "./PyInstallerFailure.js";
 
 /** Magic at the start of a CArchive cookie. */
-export const PYINSTALLER_COOKIE_MAGIC = Buffer.from("MEI\x0c\x0b\x0a\x0b\x0e");
+const PYINSTALLER_COOKIE_MAGIC = Buffer.from("MEI\x0c\x0b\x0a\x0b\x0e");
 
 /** PyInstaller 2.1+ cookie size, including the 64-byte library name. */
 export const PYINSTALLER_COOKIE_V21_BYTES = 88;

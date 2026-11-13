@@ -19,6 +19,8 @@ import {
 
 /** SQLite's generic SQL error, raised while compiling or evaluating an expression. */
 const SQLITE_ERROR = 1;
+/** SQLite refuses statement text or a record above a fixed size with this result code. */
+const SQLITE_TOOBIG = 18;
 
 const natural = z
   .bigint()
@@ -72,8 +74,11 @@ type Inspection = Pick<
 >;
 type SelectedTableFacts = Pick<
   SqliteDatabase["schema"]["tables"][number],
-  "name" | "kind" | "columns"
->;
+  "name" | "kind" | "columns" | "without_rowid"
+> & {
+  /** Absent for a non-ordinary table, whose row facts are never probed. */
+  readonly orderKey?: RowKeyFacts;
+};
 
 class OutputBudget {
   #bytes = 1024;
@@ -284,6 +289,124 @@ const readColumns = (
   return columns.sort((left, right) => left.cid - right.cid);
 };
 
+/**
+ * The facts a row window needs and the caller's projection cannot supply: which
+ * rowid alias spellings the table declares, and the primary key that orders a
+ * WITHOUT ROWID table. Alias detection compares raw name bytes against ASCII, so
+ * an unrelated malformed identifier is never decoded on the way.
+ */
+type RowKeyFacts = {
+  readonly withoutRowid: boolean;
+  readonly primaryKey: readonly {
+    readonly name: string;
+    readonly position: number;
+  }[];
+  readonly shadowedAliases: ReadonlySet<string>;
+};
+
+const ROWID_ALIASES = ["rowid", "_rowid_", "oid"] as const;
+
+/** Name bytes per character for each encoding `asciiLower` accepts. */
+const ASCII_CHARACTER_BYTES: Readonly<Record<DatabaseEncoding, number>> = {
+  "UTF-8": 1,
+  "UTF-16le": 2,
+  "UTF-16be": 2,
+};
+
+const asciiLower = (
+  bytes: Uint8Array,
+  encoding: DatabaseEncoding,
+): string | undefined => {
+  if (encoding === "UTF-8") {
+    let text = "";
+    for (const byte of bytes) {
+      if (byte >= 0x80) return undefined;
+      text += String.fromCharCode(
+        byte >= 0x41 && byte <= 0x5a ? byte + 0x20 : byte,
+      );
+    }
+    return text;
+  }
+  if (bytes.length % 2 !== 0) return undefined;
+  const lowFirst = encoding === "UTF-16le";
+  let text = "";
+  for (let index = 0; index < bytes.length; index += 2) {
+    const unit = lowFirst
+      ? bytes[index]! | (bytes[index + 1]! << 8)
+      : (bytes[index]! << 8) | bytes[index + 1]!;
+    if (unit >= 0x80) return undefined;
+    text += String.fromCharCode(
+      unit >= 0x41 && unit <= 0x5a ? unit + 0x20 : unit,
+    );
+  }
+  return text;
+};
+
+const readRowKeyFacts = (
+  db: DatabaseSync,
+  name: string,
+  encoding: DatabaseEncoding,
+): RowKeyFacts => {
+  // SQLite enables up to 2 KiB names by default, but a rebuilt table can declare
+  // more; an alias test that decodes a name first would turn that into an
+  // unbounded allocation. Alias detection only needs names of alias byte length.
+  const maximumAliasBytes =
+    Math.max(...ROWID_ALIASES.map((alias) => alias.length)) *
+    ASCII_CHARACTER_BYTES[encoding];
+
+  const row = z
+    .object({ wr: z.union([z.bigint(), z.number()]) })
+    .optional()
+    .parse(
+      db
+        .prepare(
+          "SELECT wr FROM temp.pragma_table_list WHERE schema = 'main' AND name = ?",
+        )
+        .get(name) ?? undefined,
+    );
+  const withoutRowid = row !== undefined && row.wr !== 0 && row.wr !== 0n;
+  const shadowed = new Set<string>();
+  const primaryKey: { name: string; position: number }[] = [];
+  for (const raw of db
+    .prepare(
+      "SELECT cid, CAST(name AS BLOB) AS name, pk FROM temp.pragma_table_xinfo(?, 'main') WHERE hidden IN (0, 2, 3) ORDER BY cid",
+    )
+    .iterate(name)) {
+    const value = z
+      .object({
+        cid: z.union([z.bigint(), z.number()]),
+        name: z.instanceof(Uint8Array),
+        pk: z.union([z.bigint(), z.number()]),
+      })
+      .parse(raw);
+    const alias =
+      value.name.length <= maximumAliasBytes
+        ? asciiLower(value.name, encoding)
+        : undefined;
+    if (
+      alias !== undefined &&
+      (ROWID_ALIASES as readonly string[]).includes(alias)
+    )
+      shadowed.add(alias);
+    // A rowid table's ORDER BY names an alias, never a declared key, so only a
+    // WITHOUT ROWID table's key columns are worth decoding — and a malformed
+    // unselected key name must not abort an otherwise readable selection.
+    const pk = Number(value.pk);
+    if (withoutRowid && pk > 0)
+      primaryKey.push({
+        name: decodeSchemaText(value.name, encoding, "primary key column"),
+        position: pk,
+      });
+  }
+  return {
+    withoutRowid,
+    primaryKey: primaryKey.sort(
+      (left, right) => left.position - right.position,
+    ),
+    shadowedAliases: shadowed,
+  };
+};
+
 const readSchema = (
   db: DatabaseSync,
   input: InspectSqliteDatabaseInput,
@@ -430,6 +553,8 @@ const readSchema = (
         encoding,
         selectedColumns: input.columns,
       }),
+      without_rowid: selectedRowSource.wr !== 0n,
+      orderKey: readRowKeyFacts(db, selectedRowSourceName, encoding),
     };
   // NOCASE folds only ASCII letters, as SQLite does when it resolves the
   // table named by an index or trigger. Fold only for an ordinary table whose
@@ -513,8 +638,20 @@ const readSchema = (
           encoding,
           selectedColumns: scope === "inventory" ? input.columns : undefined,
         });
+        // The window's key comes from the table, not the caller's projection:
+        // an inventory request may select columns that omit the primary key,
+        // and the order must still be discoverable. Read only the key columns
+        // so an unrelated malformed name is not decoded on the way.
         if (input.table === value.name)
-          selectedTable = { name: table.name, kind: table.kind, columns };
+          selectedTable = {
+            name: table.name,
+            kind: table.kind,
+            columns,
+            without_rowid: table.without_rowid,
+            ...(table.kind === "table"
+              ? { orderKey: readRowKeyFacts(db, value.name, encoding) }
+              : {}),
+          };
         if (scope !== "inventory") table.columns = columns;
       }
       if (input.table === value.name && selectedTable === undefined)
@@ -522,6 +659,10 @@ const readSchema = (
           name: table.name,
           kind: table.kind,
           columns: table.columns,
+          without_rowid: table.without_rowid,
+          ...(table.kind === "table"
+            ? { orderKey: readRowKeyFacts(db, value.name, encoding) }
+            : {}),
         };
       schema.tables.push(table);
     } else if (value.type === "index") {
@@ -593,7 +734,11 @@ const resultColumnLimitFailure = (
   cause: unknown,
   selectedColumns: number,
 ): SqliteColumnLimitFailure | undefined => {
-  if (sqlitePrimaryResultCode(cause) !== SQLITE_ERROR) return undefined;
+  // A statement wide enough to overflow SQLite's SQL-text length fails as
+  // SQLITE_TOOBIG before it can report the result-column limit, but the
+  // projection is still the reason it did.
+  const code = sqlitePrimaryResultCode(cause);
+  if (code !== SQLITE_ERROR && code !== SQLITE_TOOBIG) return undefined;
   const engineColumnLimit = db.limits.column;
   if (
     !Number.isSafeInteger(engineColumnLimit) ||
@@ -622,11 +767,16 @@ const rowEvaluationFailure = (
     readonly table: SelectedTableFacts;
     readonly columns: readonly string[];
     readonly source: string;
+    readonly clause: string;
     readonly limit: number;
+    readonly offset: number;
     readonly encoding: DatabaseEncoding;
   },
 ): unknown => {
-  const { table, columns, source, limit, encoding } = selection;
+  const { table, columns, source, clause, limit, offset, encoding } = selection;
+  // Probes must evaluate the same window the failed statement asked for, or a
+  // failure confined to a later page is attributed to the wrong rows.
+  const window = `${source}${clause}`;
   const columnLimit = resultColumnLimitFailure(db, cause, columns.length);
   if (columnLimit !== undefined) return columnLimit;
   if (sqlitePrimaryResultCode(cause) !== SQLITE_ERROR) return cause;
@@ -644,9 +794,9 @@ const rowEvaluationFailure = (
     // A WITHOUT ROWID source may require an unavailable application collation
     // even for a constant projection. Do not attribute that failure to every
     // generated column or recommend other columns from the same unreadable source.
-    db.prepare(`SELECT count(*) FROM (SELECT 1 FROM ${source} LIMIT ?)`).get(
-      limit,
-    );
+    db.prepare(
+      `SELECT count(*) FROM (SELECT 1 FROM ${window} LIMIT ? OFFSET ?)`,
+    ).get(limit, offset);
   } catch (failure: unknown) {
     return sqlitePrimaryResultCode(failure) === SQLITE_ERROR
       ? unavailable
@@ -656,8 +806,8 @@ const rowEvaluationFailure = (
   const probe = (name: string): { readonly failure: unknown } | undefined => {
     try {
       db.prepare(
-        `SELECT count(${cellByteLength(name)}) FROM (SELECT ${quoteIdentifier(name)} FROM ${source} LIMIT ?)`,
-      ).get(limit);
+        `SELECT count(${cellByteLength(name)}) FROM (SELECT ${quoteIdentifier(name)} FROM ${window} LIMIT ? OFFSET ?)`,
+      ).get(limit, offset);
       return undefined;
     } catch (failure: unknown) {
       return { failure };
@@ -700,6 +850,84 @@ const rowEvaluationFailure = (
   );
 };
 
+type RowOrder = {
+  readonly order: "rowid" | "primary_key" | "unspecified";
+  readonly clause: string;
+};
+
+const indexKeyRow = z.object({
+  name: z.instanceof(Uint8Array),
+  desc: z.union([z.bigint(), z.number()]),
+  coll: z.instanceof(Uint8Array),
+});
+
+/**
+ * Choose the unique order a window is read in, without accepting caller SQL.
+ * A rowid table exposes an implicit rowid unless all three spellings are
+ * declared columns. A WITHOUT ROWID table orders by its primary key, reusing the
+ * index's own direction and collation so no sorter is introduced.
+ */
+const readRowOrder = (
+  db: DatabaseSync,
+  table: SelectedTableFacts,
+  encoding: DatabaseEncoding,
+): RowOrder => {
+  const facts = table.orderKey;
+  // A non-ordinary table's keys are not probed, and none of its rows are read.
+  if (facts === undefined) return { order: "unspecified", clause: "" };
+  if (!table.without_rowid) {
+    // ORDER BY must name an alias SQLite still binds: a declared `rowid` column
+    // shadows that spelling and would sort by a stored column that need not be
+    // unique. Pick the first spelling the table leaves free.
+    const alias = ROWID_ALIASES.find(
+      (spelling) => !facts.shadowedAliases.has(spelling),
+    );
+    return alias === undefined
+      ? { order: "unspecified", clause: "" }
+      : { order: "rowid", clause: ` ORDER BY ${alias}` };
+  }
+  const key = facts.primaryKey;
+  if (key.length === 0) return { order: "unspecified", clause: "" };
+  const primaryKey = db
+    .prepare(
+      "SELECT CAST(name AS BLOB) AS name FROM temp.pragma_index_list(?) WHERE origin = 'pk'",
+    )
+    .get(table.name) as { readonly name: unknown } | undefined;
+  if (primaryKey === undefined) return { order: "unspecified", clause: "" };
+  // A WITHOUT ROWID key may repeat a column at different collations or
+  // directions — `PRIMARY KEY(a COLLATE BINARY, a COLLATE NOCASE DESC)` is
+  // valid — so the terms must follow the index's own sequence. Keying these
+  // by column name would collapse the repetition and advertise an order the
+  // actual key does not establish.
+  const ordered = new Map<
+    string,
+    { readonly desc: boolean; readonly coll: string }
+  >();
+  const terms: string[] = [];
+  for (const raw of db
+    .prepare(
+      'SELECT CAST(name AS BLOB) AS name, "desc", CAST(coll AS BLOB) AS coll FROM temp.pragma_index_xinfo(CAST(? AS BLOB)) WHERE key = 1 ORDER BY seqno',
+    )
+    .iterate(primaryKey.name as Uint8Array) as Iterable<unknown>) {
+    const { name, desc, coll } = indexKeyRow.parse(raw);
+    const column = decodeSchemaText(name, encoding, "index column");
+    const detail = {
+      desc: desc === 1n || desc === 1,
+      coll: decodeSchemaText(coll, encoding, "collation"),
+    };
+    ordered.set(column, detail);
+    // The declared collation keeps NOCASE/RTRIM keys in index order; spelling
+    // it explicitly also prevents a caller column's own collation from
+    // re-sorting.
+    terms.push(
+      `${quoteIdentifier(column)} COLLATE ${quoteIdentifier(detail.coll)}${detail.desc ? " DESC" : ""}`,
+    );
+  }
+  for (const column of key)
+    if (!ordered.has(column.name)) return { order: "unspecified", clause: "" };
+  return { order: "primary_key", clause: ` ORDER BY ${terms.join(", ")}` };
+};
+
 const readRows = (
   db: DatabaseSync,
   input: InspectSqliteDatabaseInput,
@@ -723,6 +951,7 @@ const readRows = (
       `Rows from ${table.kind} table ${input.table} are outside the ordinary-table inspection profile.`,
     );
   const limit = input.row_limit ?? SQLITE_ROW_LIMIT_DEFAULT;
+  const offset = input.row_offset ?? 0;
   const visibleColumns = table.columns
     .filter((column) => column.hidden !== 1)
     .map((column) => column.name);
@@ -741,6 +970,15 @@ const readRows = (
     })
     .join(", ");
   const source = `main.${quoteIdentifier(input.table)} NOT INDEXED`;
+  const { order, clause } = readRowOrder(db, table, encoding);
+  // An offset needs a stated order to mean anything; refuse instead of skipping
+  // an arbitrary prefix of an order the reply cannot claim.
+  if (offset > 0 && order === "unspecified")
+    throw new SqliteInspectionFailure(
+      "row-offset",
+      `row_offset requires a stated row order, but table ${input.table} shadows rowid, _rowid_ and oid and declares no primary key. Read the table without row_offset.`,
+    );
+  const window = `${source}${clause} LIMIT ? OFFSET ?`;
   const rows: NonNullable<SqliteDatabase["rows"]> = {
     table: input.table,
     columns,
@@ -748,19 +986,21 @@ const readRows = (
     row_limit: limit,
     returned_rows: 0,
     truncated: false,
-    order: "unspecified",
+    order,
+    row_offset: offset,
+    next_row_offset: null,
   };
   // Keep query-source, expression, capacity and malformed-data failures distinct.
   try {
     const lengths = db.prepare(
-      `SELECT ${columns.map(cellByteLength).join(", ")} FROM ${source} LIMIT ?`,
+      `SELECT ${columns.map(cellByteLength).join(", ")} FROM ${window}`,
     );
     lengths.setReturnArrays(true);
-    for (const raw of lengths.iterate(limit))
+    for (const raw of lengths.iterate(limit, offset))
       budget.beforeProjection(cellByteLengths.parse(raw));
-    const statement = db.prepare(`SELECT ${projection} FROM ${source} LIMIT ?`);
+    const statement = db.prepare(`SELECT ${projection} FROM ${window}`);
     statement.setReturnArrays(true);
-    for (const raw of statement.iterate(limit)) {
+    for (const raw of statement.iterate(limit, offset)) {
       const rawRow = arrayRow.parse(raw);
       // Hex expansion already belongs to the retained-output budget, before decoding/copying cells.
       budget.beforeDecode(rawRow);
@@ -769,18 +1009,28 @@ const readRows = (
       rows.values.push(values);
     }
     rows.truncated =
-      db.prepare(`SELECT 1 FROM ${source} LIMIT 1 OFFSET ?`).get(limit) !==
-      undefined;
+      db
+        .prepare(`SELECT 1 FROM ${source}${clause} LIMIT 1 OFFSET ?`)
+        .get(offset + rows.values.length) !== undefined;
   } catch (cause: unknown) {
     throw rowEvaluationFailure(db, cause, {
       table,
       columns,
       source,
+      clause,
       limit,
+      offset,
       encoding,
     });
   }
   rows.returned_rows = rows.values.length;
+  // Only an ordered window with rows beyond it can be continued by another
+  // page, and row_offset refuses any non-zero offset on an unordered table, so
+  // publishing one there would name a request that is always refused.
+  rows.next_row_offset =
+    rows.truncated && order !== "unspecified"
+      ? offset + rows.returned_rows
+      : null;
   return rows;
 };
 
@@ -827,7 +1077,7 @@ export const inspectSqliteDatabaseSnapshot = (
       "The source database and WAL are never opened by SQLite or modified. A private copy may acquire its own WAL-index sidecar and is removed after inspection.",
       "SQLite reports current schema and selected committed rows from its valid database/WAL state. Deleted records, uncommitted or invalid WAL tails, encrypted databases, forensic recovery, and full integrity verification are outside this profile.",
       "Stored CREATE statements preserve index/view/trigger definitions. Views, triggers, and virtual/shadow table rows are not executed; virtual-table column expansion is unsupported.",
-      "Selected rows have unspecified order and are a bounded sample. Text display may replace invalid sequences; bytes_hex and encoding preserve SQLite's text byte representation, not original on-disk page offsets.",
+      "Selected rows are a bounded sample; rows.order names the order they were read in, and rows.next_row_offset is null either when the window reaches the end or when rows.order is unspecified, so a truncated sample with no stated order cannot be paged further. Text display may replace invalid sequences; bytes_hex and encoding preserve SQLite's text byte representation, not original on-disk page offsets.",
       "Resource boundaries: at most two concurrent inspections per provider; combined input 256 MiB per inspection, complete worker JSON 16 MiB, native SQLite value/record and SQL statement lengths 16 MiB, owned-worker JavaScript heap 256 MiB. The parent applies a separate supervised worker deadline, reported in worker_timeout_ms. These are distinct from total resident memory; an overall native SQLite heap cap is not claimed. Failures return no partial success.",
     ];
     const budget = new OutputBudget();

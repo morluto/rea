@@ -18,6 +18,7 @@ import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { cliDecimalField, cliDecimalShape } from "./options.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { producerLimitsOption } from "./producerLimitsOption.js";
 export const registerSignalCommands = (
   cli: CliInstance,
   logger: Logger,
@@ -27,11 +28,16 @@ export const registerSignalCommands = (
     "decode" | "inspectDecoders" | "close"
   > = createSignalRecordingService(environment),
 ): void => {
+  const { producer_limits: discoveryLimits, ...discoveryShape } =
+    inspectSignalDecodersInputSchema.shape;
+  const { producer_limits: selectedLimits, ...selectedShape } =
+    signalRecordingOptionsSchema.shape;
   cli.command(CLI_COMMANDS.inspectSignalDecoders, {
     description: "Search installed sigrok decoders or selected decoder help",
     options: z
       .object({
-        ...cliDecimalShape(inspectSignalDecodersInputSchema.shape),
+        ...cliDecimalShape(discoveryShape),
+        producerLimits: producerLimitsOption(discoveryLimits.unwrap()),
         limit: cliDecimalField(
           z
             .number()
@@ -55,14 +61,26 @@ export const registerSignalCommands = (
             path: ["all"],
             message: "all and limit are mutually exclusive",
           });
+      })
+      .meta({
+        not: {
+          required: ["all", "limit"],
+          properties: { all: { const: true } },
+        },
       }),
-    run: ({ options: { all, ...options } }) =>
+    run: ({ options: { all, producerLimits, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectSignalDecoders, async () =>
           finishAnalysisCommand(
             () =>
               service.inspectDecoders(
-                { ...options, ...(all ? { limit: null } : {}) },
+                {
+                  ...options,
+                  ...(producerLimits === undefined
+                    ? {}
+                    : { producer_limits: producerLimits }),
+                  ...(all ? { limit: null } : {}),
+                },
                 { signal },
               ),
             service,
@@ -81,7 +99,8 @@ export const registerSignalCommands = (
     }),
     options: z
       .object({
-        ...cliDecimalShape(signalRecordingOptionsSchema.shape),
+        ...cliDecimalShape(selectedShape),
+        producerLimits: producerLimitsOption(selectedLimits.unwrap()),
         line_limit: cliDecimalField(
           z
             .number()
@@ -108,8 +127,14 @@ export const registerSignalCommands = (
       .refine(
         withinSignalRecordingSelectorBudget,
         signalRecordingSelectorBudgetIssue,
-      ),
-    run: ({ args, options: { all_lines, ...options } }) =>
+      )
+      .meta({
+        not: {
+          required: ["all_lines", "line_limit"],
+          properties: { all_lines: { const: true } },
+        },
+      }),
+    run: ({ args, options: { all_lines, producerLimits, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.decodeSignalRecording, async () => {
           return finishCliEvidenceCommand(
@@ -118,6 +143,9 @@ export const registerSignalCommands = (
               service.decode(
                 {
                   ...options,
+                  ...(producerLimits === undefined
+                    ? {}
+                    : { producer_limits: producerLimits }),
                   ...(all_lines ? { line_limit: null } : {}),
                   path: absoluteCallerPath(args.path),
                 },
