@@ -17,7 +17,6 @@ export const registerProcessComparisonTool = (
   server: EvidenceMcpServer,
   session: BinarySessionPort,
   contract: ReturnType<typeof toolContract<"compare_process_captures">>,
-  now: () => number = Date.now,
 ): void => {
   const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
@@ -37,7 +36,7 @@ export const registerProcessComparisonTool = (
               const result = compareProcessEvidence(
                 input,
                 session.evidenceForAnalysis.bind(session),
-                { signal: context.mcpReq.signal, now },
+                { signal: context.mcpReq.signal },
               );
               if (!result.ok) throw result.error;
               return result.value;

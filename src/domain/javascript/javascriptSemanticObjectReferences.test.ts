@@ -1,7 +1,7 @@
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import {
   semanticClassPropertyReferences,
   semanticNativePrototypeChain,

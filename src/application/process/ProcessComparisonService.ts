@@ -34,7 +34,6 @@ export const compareProcessEvidence = (
   lookup?: EvidenceLookup,
   options: {
     readonly signal?: AbortSignal;
-    readonly now?: () => number;
   } = {},
 ): Result<ProcessComparisonExecution, AnalysisError> => {
   const selected = resolveEvidenceRequest(
@@ -57,7 +56,6 @@ export const compareProcessEvidence = (
     ...(request.trace_spec === undefined
       ? {}
       : { traceSpecification: request.trace_spec }),
-    ...(options.now === undefined ? {} : { now: options.now }),
   });
 };
 

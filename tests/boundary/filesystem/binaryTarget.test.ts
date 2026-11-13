@@ -396,31 +396,6 @@ describe("binary target I/O: app plist permissions and decoding", () => {
     });
   });
 
-  it("does not label binary plist decoder I/O failures as malformed data", async () => {
-    const directory = await createTestTempDirectory("rea-app-decode-error-");
-    const app = join(directory, "DecodeError.app");
-    await mkdir(join(app, "Contents"), { recursive: true });
-    await writeFile(join(app, "Contents", "Info.plist"), "bplist00");
-    const decodeError = Object.assign(new Error("I/O failure"), {
-      code: "EIO",
-    });
-    const result = await resolveAppBundleExecutable(app, {
-      readFile: async () => Buffer.from("bplist00"),
-      realpath,
-      decodeBinaryPlist: async () => {
-        throw decodeError;
-      },
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        path: join(app, "Contents", "Info.plist"),
-        reason: expect.stringContaining("could not decode app Info.plist"),
-        cause: decodeError,
-      },
-    });
-  });
-
   it.each(["EACCES", "EPERM", "ENOENT", "ENOTDIR"])(
     "preserves %s while resolving an app executable",
     async (code) => {

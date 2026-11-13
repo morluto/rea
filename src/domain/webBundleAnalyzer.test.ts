@@ -1,11 +1,9 @@
-import {
-  projectAnalysisView,
-  analysisViewRequestSchema,
-} from "./analysisView/analysisView.js";
+import { projectAnalysisView } from "./analysisView/analysisView.js";
+import { analysisViewRequestSchema } from "./analysisView/analysisViewRequest.js";
 import { describe, expect, it } from "vitest";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
-import { analyzeJavaScriptStaticSource } from "./javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../tests/fixtures/javascriptStaticAnalysis.js";
 import { analyzeCapturedWebScript } from "./webBundleAnalyzer.js";
 import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
 import { buildCapturedWebBundleAnalysis } from "./webBundleAnalyzerResult.js";

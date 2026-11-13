@@ -73,9 +73,9 @@ const inferredReferenceForm = (architecture: string) =>
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,
   path: string,
-  field: "path" | "binary_path" = "path",
-  maximum = INPUT_BYTES,
-  metadataPath = path,
+  field: "path" | "binary_path",
+  maximum: number,
+  metadataPath: string,
 ): AnalysisError => {
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)

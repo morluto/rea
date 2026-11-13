@@ -17,10 +17,10 @@ import { abortIfNeeded } from "../ArtifactHash.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 
 /** Exact trailer written by Bun's standalone module graph serializer. */
-export const BUN_TRAILER = Buffer.from("\n---- Bun! ----\n");
-export const BUN_TRAILER_BYTES = BUN_TRAILER.length;
-export const BUN_OFFSETS_BYTES = 32;
-export const BUN_GRAPH_SUFFIX_BYTES = BUN_OFFSETS_BYTES + BUN_TRAILER_BYTES;
+const BUN_TRAILER = Buffer.from("\n---- Bun! ----\n");
+const BUN_TRAILER_BYTES = BUN_TRAILER.length;
+const BUN_OFFSETS_BYTES = 32;
+const BUN_GRAPH_SUFFIX_BYTES = BUN_OFFSETS_BYTES + BUN_TRAILER_BYTES;
 /** Current compilers prefix a section with this little-endian payload length. */
 export const BUN_LENGTH_PREFIX_BYTES = 8;
 /** Bun 1.3.3 through 1.3.8 module records. */

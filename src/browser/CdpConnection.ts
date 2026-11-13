@@ -614,8 +614,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const waitForOpen = async (
   socket: WebSocket,
   operation: BrowserObservationOperation,
-  signal?: AbortSignal,
-  commandTimeoutMs: number = DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+  signal: AbortSignal | undefined,
+  handshakeTimeoutMs: number,
 ): Promise<void> =>
   await new Promise((resolve, reject) => {
     const onOpen = (): void => {
@@ -651,7 +651,7 @@ const waitForOpen = async (
     };
     const boundedTimeoutMs = Math.min(
       MAX_BROWSER_DEADLINE_MS,
-      commandTimeoutMs,
+      handshakeTimeoutMs,
     );
     const timer = setTimeout(() => {
       terminateSocket(socket);

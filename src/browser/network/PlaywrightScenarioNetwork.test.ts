@@ -125,7 +125,6 @@ const harness = (
     selection: selected,
     limits: scenario.capture.limits,
     secrets,
-    readTimeoutMs: 50,
     ...(signal === undefined ? {} : { signal }),
     emit: (event) => {
       const sequence = events.length + 1;
@@ -733,7 +732,7 @@ it("starts each queued body's timeout when its read begins", async () => {
     const response = new ResponseFixture(request, "unused");
     response.read = () =>
       new Promise((resolve) => {
-        setTimeout(() => resolve(Buffer.from("captured")), 40);
+        setTimeout(() => resolve(Buffer.from("captured")), 4_000);
       });
     collector.request(request);
     collector.response(response);
@@ -741,8 +740,8 @@ it("starts each queued body's timeout when its read begins", async () => {
   }
 
   const finishing = collector.finish();
-  await vi.advanceTimersByTimeAsync(40);
-  await vi.advanceTimersByTimeAsync(40);
+  await vi.advanceTimersByTimeAsync(4_000);
+  await vi.advanceTimersByTimeAsync(4_000);
   await finishing;
 
   const content = events.filter(
@@ -817,7 +816,7 @@ it("bounds hung completed-body reads and rejects late mutation after finalizatio
   collector.response(response);
   collector.finished(request);
   const finishing = collector.finish();
-  await vi.advanceTimersByTimeAsync(51);
+  await vi.advanceTimersByTimeAsync(5_001);
   await finishing;
   const frozen = JSON.stringify(events);
   expect(events).toContainEqual(

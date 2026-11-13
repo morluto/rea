@@ -15,10 +15,7 @@ import {
   ELECTRON_REFERENCE_KINDS,
 } from "./javascriptElectronMemberWrites.js";
 
-import {
-  completeSemanticSteps,
-  traverseJavaScriptAstSteps,
-} from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
 
 import {
   electronRendererLoadAuthority,
@@ -37,7 +34,6 @@ import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpre
 import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
 import {
   detectVendors,
-  failedJavaScriptStaticAnalysis,
   registrationKey,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
@@ -71,10 +67,7 @@ import {
   indexJavaScriptElectronIdentitySteps,
   indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
-import {
-  parseJavaScriptSource,
-  type ParsedJavaScriptSource,
-} from "./javascriptSourceParser.js";
+import type { ParsedJavaScriptSource } from "./javascriptSourceParser.js";
 
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import {
@@ -86,27 +79,6 @@ import {
   javaScriptStaticParseStatus,
   type JavaScriptStaticCoverage,
 } from "./javascriptStaticCoverage.js";
-
-/** Parse one JavaScript artifact and recover static structure only. */
-export const analyzeJavaScriptStaticSource = (
-  source: string,
-  precision?: JavaScriptSemanticPrecisionInput,
-): JavaScriptStaticAnalysis => {
-  const file = parseJavaScriptSource(source);
-  return file === null
-    ? failedJavaScriptStaticAnalysis()
-    : analyzeParsedJavaScriptStaticSource(source, file, precision);
-};
-
-/** Recover static structure from an already parsed JavaScript artifact. */
-export const analyzeParsedJavaScriptStaticSource = (
-  source: string,
-  file: ParsedJavaScriptSource,
-  precision?: JavaScriptSemanticPrecisionInput,
-): JavaScriptStaticAnalysis =>
-  completeSemanticSteps(
-    analyzeParsedJavaScriptStaticSourceSteps(source, file, precision),
-  );
 
 /** Static analysis that yields during its source traversal; results are unchanged. */
 export function* analyzeParsedJavaScriptStaticSourceSteps(

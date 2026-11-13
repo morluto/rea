@@ -1,4 +1,5 @@
 import type { ClientConfigurationWriteProblem } from "./ClientConfigurationPublication.js";
+import type { McpToolCatalogProfile } from "../config/mcpToolCatalogProfile.js";
 import type { DoctorReport, DoctorScope, runDoctor } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
 import type { HopperRequestFailure } from "./HopperDownload.js";
@@ -254,6 +255,8 @@ export interface SetupOptions {
   readonly installSkill?: boolean;
   /** Comma-separated tool families the MCP registration advertises. */
   readonly toolFamilies?: string;
+  /** Explicit catalog loading policy; omitted preserves the saved selection. */
+  readonly toolCatalogProfile?: McpToolCatalogProfile;
   readonly readinessScope?: DoctorScope;
   readonly dryRun?: boolean;
   readonly allDetectedClients?: boolean;

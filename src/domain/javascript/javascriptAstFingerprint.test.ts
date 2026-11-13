@@ -2,7 +2,7 @@ import { parse } from "@babel/parser";
 import { expect, it } from "vitest";
 
 import { fingerprintJavaScriptAst } from "./javascriptAstFingerprint.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 it.each([
   ["bigint values", "const value = 1n;", "const value = 2n;"],

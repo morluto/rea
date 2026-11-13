@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import {
   analyzeJavaScriptStaticSource,
   analyzeParsedJavaScriptStaticSource,
-} from "../../domain/javascript/javascriptStaticAnalysis.js";
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 
 const analyzeCommonJsSource = (source: string) => {

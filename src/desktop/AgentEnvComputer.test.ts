@@ -66,10 +66,16 @@ it.each(["http", "invalid_json", "readiness"] as const)(
     }
   },
 );
-it.each(["canonical", "missing", "rpc_error"] as const)(
+it.each([
+  "canonical",
+  "missing",
+  "rpc_error",
+  "trailing_base64",
+  "scalar_metadata",
+] as const)(
   "validates recording replies and redacts their errors (%s)",
   async (answer) => {
-    const present = answer === "canonical";
+    const present = answer !== "missing" && answer !== "rpc_error";
     const token = "fake-recording-control-token-123456789";
     const path = "rec-0123/0000.mp4";
     const homePath = `.agentenv-recordings/${path}`;
@@ -95,11 +101,16 @@ it.each(["canonical", "missing", "rpc_error"] as const)(
                   parts: [
                     {
                       kind: "file",
-                      file: { bytes: bytes.toString("base64") },
+                      file: {
+                        bytes:
+                          bytes.toString("base64") +
+                          (answer === "trailing_base64" ? "!ignored" : ""),
+                      },
                       metadata: {
-                        "urn:unrelated": {
-                          path: present ? "wrong-path" : homePath,
-                        },
+                        "urn:unrelated":
+                          answer === "scalar_metadata"
+                            ? "recording label"
+                            : { path: present ? "wrong-path" : homePath },
                         ...(present
                           ? {
                               "urn:agentenv:data-objects/v1": {
@@ -138,7 +149,9 @@ it.each(["canonical", "missing", "rpc_error"] as const)(
           },
         ],
       });
-      if (present) await expect(read).resolves.toEqual([{ path, bytes }]);
+      if (answer === "trailing_base64")
+        await expect(read).rejects.toThrow("Expected canonical padded base64");
+      else if (present) await expect(read).resolves.toEqual([{ path, bytes }]);
       else if (answer === "rpc_error") {
         const failure = await read.catch((cause: unknown) => cause);
         expect(failure).toBeInstanceOf(Error);

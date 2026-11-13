@@ -188,8 +188,9 @@ const edgeSchema = z.strictObject({
   }),
   install_name_matches: z.boolean().nullable(),
   /**
-   * The loader was reached through a conditional edge, so it might not load;
-   * this edge describes what happens only if it does.
+   * The loader's dependency-expansion chain crosses a conditional edge.
+   * This edge applies only if that chain is used, even when another edge
+   * independently loads the same image.
    */
   loader_conditional: z.boolean(),
 });
@@ -253,9 +254,14 @@ export type DylibTrace = Omit<
 
 interface LoadedImage {
   readonly slice: MachoSlice;
-  /** Images from the process root to this image; the rpath stack, outermost first. */
+  /** Some edge that first loaded this image has unresolved facts. */
+  readonly conditional: boolean;
+}
+
+interface DependencyExpansion {
+  readonly image: string;
+  /** Images on this traversal's rpath stack, outermost first. */
   readonly chain: readonly string[];
-  /** Some edge on the chain has unresolved candidate or platform facts. */
   readonly conditional: boolean;
 }
 
@@ -308,6 +314,7 @@ const candidateTemplates = (
   dependency: MachoDependency,
   loader: string,
   context: ProcessContext,
+  chain: readonly string[],
 ): CandidateTemplate[] => {
   const name = dependency.install_name;
   if (!name.startsWith("@rpath/")) {
@@ -322,7 +329,7 @@ const candidateTemplates = (
     ];
   }
   const rest = name.slice("@rpath/".length);
-  const owners = [...(context.loaded.get(loader)?.chain ?? [loader])].reverse();
+  const owners = [...chain].reverse();
   return owners.flatMap((owner) =>
     (context.loaded.get(owner)?.slice.rpaths ?? []).map((rpath) => {
       const base = expandCandidatePath(rpath, directoryOf(owner), context);
@@ -522,11 +529,10 @@ const resolution = (candidates: readonly Candidate[]): Edge["resolution"] => {
 
 const resolveDependency = async (
   dependency: MachoDependency,
-  loader: string,
+  expansion: DependencyExpansion,
   context: ProcessContext,
 ): Promise<Edge> => {
-  const current = context.loaded.get(loader);
-  const chain = current?.chain ?? [loader];
+  const { image: loader, chain, conditional: loaderConditional } = expansion;
   const loaded = dependency.install_name.startsWith("@rpath/")
     ? context.byInstallName.get(dependency.install_name)
     : undefined;
@@ -541,7 +547,12 @@ const resolveDependency = async (
       resolved_path: loaded,
     });
   else
-    for (const template of candidateTemplates(dependency, loader, context)) {
+    for (const template of candidateTemplates(
+      dependency,
+      loader,
+      context,
+      chain,
+    )) {
       const candidate = await evaluateCandidate(template, context);
       candidates.push(candidate);
       // dyld stops at the first loadable candidate.
@@ -590,13 +601,14 @@ const resolveDependency = async (
       slice === undefined || slice.install_name === null
         ? null
         : slice.install_name === dependency.install_name,
-    loader_conditional: current?.conditional ?? false,
+    loader_conditional: loaderConditional,
   };
 };
 
 /**
  * Follow dyld4's dependents-first order: resolve every dependency of one
- * image, then recurse into the images it newly loaded, in load-command order.
+ * image, then recurse into all its dependencies in load-command order. An image
+ * can already be loaded by a sibling before its dependents have been expanded.
  */
 const traceProcess = async (
   context: ProcessContext,
@@ -606,7 +618,6 @@ const traceProcess = async (
   const edges: Edge[] = [];
   context.loaded.set(context.root, {
     slice: rootSlice,
-    chain: [context.root],
     conditional: false,
   });
   if (
@@ -614,23 +625,41 @@ const traceProcess = async (
     rootSlice.install_name.startsWith("@rpath/")
   )
     context.byInstallName.set(rootSlice.install_name, context.root);
-  const pending = [context.root];
+  const expanded = new Set<string>();
+  const pending: DependencyExpansion[] = [
+    { image: context.root, chain: [context.root], conditional: false },
+  ];
   while (pending.length > 0) {
     if (signal?.aborted)
       throw new AnalysisCancelledError("trace_dylib_resolution", {
         cause: signal.reason,
       });
-    const loader = pending.pop() ?? "";
-    const current = context.loaded.get(loader);
-    if (current === undefined) continue;
-    const created: string[] = [];
-    for (const dependency of current.slice.dependencies) {
-      const edge = await resolveDependency(dependency, loader, context);
+    const next = pending.pop();
+    if (next === undefined || expanded.has(next.image)) continue;
+    const loader = next.image;
+    const loaded = context.loaded.get(loader);
+    if (loaded === undefined) continue;
+    expanded.add(loader);
+    const current = {
+      ...next,
+      conditional: loaded.conditional || next.conditional,
+    };
+    const dependents: DependencyExpansion[] = [];
+    for (const dependency of loaded.slice.dependencies) {
+      const edge = await resolveDependency(dependency, current, context);
       edges.push(edge);
       // dyld loads lazy images on first use, not at launch.
       if (isLazyLoadCommand(dependency.command)) continue;
       const image = edge.resolution.image;
-      if (image === null || context.loaded.has(image)) continue;
+      if (image === null || expanded.has(image)) continue;
+      const conditional =
+        current.conditional || edge.resolution.status === "conditional";
+      dependents.push({
+        image,
+        chain: [...next.chain, image],
+        conditional,
+      });
+      if (context.loaded.has(image)) continue;
       const facts = context.images.get(image);
       const selection =
         facts?.status === "parsed"
@@ -640,10 +669,8 @@ const traceProcess = async (
       const { slice } = selection;
       context.loaded.set(image, {
         slice,
-        chain: [...current.chain, image],
         // A modeled earlier search uncertainty can make this image conditional.
-        conditional:
-          current.conditional || edge.resolution.status === "conditional",
+        conditional,
       });
       if (
         slice.install_name !== null &&
@@ -651,9 +678,8 @@ const traceProcess = async (
         !context.byInstallName.has(slice.install_name)
       )
         context.byInstallName.set(slice.install_name, image);
-      created.push(image);
     }
-    pending.push(...created.reverse());
+    for (const dependent of dependents.reverse()) pending.push(dependent);
   }
   return edges;
 };

@@ -1,6 +1,37 @@
 import { expect } from "vitest";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+cliTest.for(["parameter", "return"])(
+  "rejects an overdimensioned JNI descriptor %s before provider work",
+  async (position, { cli }) => {
+    const type = "[".repeat(256) + "I";
+    const result = await cli.run({
+      arguments: [
+        "inspect-android-jni-bindings",
+        "/nonexistent/selected.apk",
+        "--query",
+        JSON.stringify({
+          descriptors: [position === "parameter" ? `(${type})V` : `()${type}`],
+        }),
+        "--json",
+      ],
+      environment: {
+        REA_JADX_MCP_JAR: "/nonexistent/engine.jar",
+        REA_LOG_LEVEL: "silent",
+      },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({ path: ["descriptors", 0] }),
+        ]),
+      },
+    });
+  },
+);
+
 cliTest.for([
   ["inspect-android-class", "selected.Class"],
   ["inspect-android-method", "selected.Class", "chosen"],

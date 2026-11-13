@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createIdaMcpConnection,
   decodeIdaToolResult,
-  decodeIdaJsonResource,
 } from "./IdaMcpConnection.js";
 import { createIdaDiagnosticRedactor } from "./IdaDiagnosticRedactor.js";
 import {
@@ -189,6 +188,7 @@ const mockedHttpBoundary = ({
   serverName,
   tools,
   call,
+  readResource,
 }: {
   readonly serverName: string;
   readonly tools: readonly {
@@ -199,6 +199,7 @@ const mockedHttpBoundary = ({
     request: MockedIdaHttpRequest,
     signal: AbortSignal | null | undefined,
   ) => Response | Promise<Response>;
+  readonly readResource?: (request: MockedIdaHttpRequest) => unknown;
 }): void => {
   vi.stubGlobal(
     "fetch",
@@ -212,7 +213,7 @@ const mockedHttpBoundary = ({
           id: request.id,
           result: {
             protocolVersion: request.params?.protocolVersion,
-            capabilities: { tools: {} },
+            capabilities: { tools: {}, resources: {} },
             serverInfo: { name: serverName, version: "1" },
           },
         });
@@ -228,6 +229,12 @@ const mockedHttpBoundary = ({
           result: { tools },
         });
       if (request.method === "tools/call") return call(request, init?.signal);
+      if (request.method === "resources/read" && readResource !== undefined)
+        return jsonRpcResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: readResource(request),
+        });
       throw new Error(`Unexpected fixture request: ${request.method}`);
     }),
   );
@@ -451,6 +458,37 @@ describe("retained IDA diagnostic errors", () => {
   });
 });
 
+const withIdaResource = async (
+  response: unknown,
+  verify: (
+    connection: ReturnType<typeof createIdaMcpConnection>,
+  ) => Promise<void>,
+): Promise<void> => {
+  mockedHttpBoundary({
+    serverName: "ida-resource-fixture",
+    tools: [],
+    call: () => {
+      throw new Error("Unexpected tool call");
+    },
+    readResource: () => response,
+  });
+  const connection = createIdaMcpConnection(
+    {
+      url: "http://127.0.0.1:12345/mcp",
+      headers: {},
+      mode: "attached",
+      timeoutMs: 1000,
+    },
+    {},
+  );
+  try {
+    await connection.connect();
+    await verify(connection);
+  } finally {
+    await connection.close();
+  }
+};
+
 it.each([
   {
     code: SdkErrorCode.ClientHttpNotImplemented,
@@ -536,29 +574,54 @@ it.each([
   "application/json",
   "Application/JSON",
   "application/json; charset=utf-8",
-])("accepts SDK JSON metadata resources with media type %s", (mimeType) => {
-  expect(
-    decodeIdaJsonResource("ida://idb/metadata", {
-      contents: [
-        {
-          uri: "ida://idb/metadata",
-          ...(mimeType === undefined ? {} : { mimeType }),
-          text: '{"sha256":"recorded"}',
-        },
-      ],
-    }),
-  ).toEqual({ sha256: "recorded" });
-});
-it("keeps JSON resource identity, media type and JSON parsing strict", () => {
+])(
+  "accepts SDK JSON metadata resources with media type %s",
+  async (mimeType) => {
+    await withIdaResource(
+      {
+        contents: [
+          {
+            uri: "ida://idb/metadata",
+            ...(mimeType === undefined ? {} : { mimeType }),
+            text: '{"sha256":"recorded"}',
+          },
+        ],
+      },
+      async (connection) => {
+        if (connection.readResource === undefined)
+          throw new Error("IDA connection does not support resource reads");
+        await expect(
+          connection.readResource("ida://idb/metadata"),
+        ).resolves.toEqual({ sha256: "recorded" });
+      },
+    );
+  },
+);
+it("keeps JSON resource identity, media type and JSON parsing strict", async () => {
   const resource = (uri: string, mimeType: string, text: string) => ({
     contents: [{ uri, mimeType, text }],
   });
-  for (const reply of [
-    resource("wrong://resource", "application/json", "{}"),
-    resource("ida://idb/metadata", "text/plain", "{}"),
-    resource("ida://idb/metadata", "application/json", "not JSON"),
-  ])
-    expect(() => decodeIdaJsonResource("ida://idb/metadata", reply)).toThrow();
+  for (const [reply, message] of [
+    [
+      resource("wrong://resource", "application/json", "{}"),
+      /ida:\/\/idb\/metadata/u,
+    ],
+    [
+      resource("ida://idb/metadata", "text/plain", "{}"),
+      /Expected a JSON resource media type/u,
+    ],
+    [
+      resource("ida://idb/metadata", "application/json", "not JSON"),
+      /IDA MCP returned malformed JSON text/u,
+    ],
+  ] as const)
+    await withIdaResource(reply, async (connection) => {
+      if (connection.readResource === undefined)
+        throw new Error("IDA connection does not support resource reads");
+      await expect(
+        connection.readResource("ida://idb/metadata"),
+      ).rejects.toThrow(message);
+    });
 });
 
 it("uses the actual SDK abort outcome to preserve the caller reason", async () => {
