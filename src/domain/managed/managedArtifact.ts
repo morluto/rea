@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
+import { managedFieldConstantSchema } from "./managedFieldConstant.js";
 
 /** Build-local ECMA-335 metadata token emitted as an eight-digit lowercase hex value. */
 export const managedMetadataTokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
@@ -169,6 +170,12 @@ const managedFieldSchema = z.object({
   name: z.string(),
   flags: z.int().min(0).max(0xffff),
   signature: managedSignatureSchema,
+  constant: managedFieldConstantSchema
+    .nullable()
+    .exactOptional()
+    .describe(
+      "Field-owned ECMA-335 Constant declaration and decoded default. Null means neither a declaration nor HasDefault was observed; omission means historical Evidence without this inspection.",
+    ),
 });
 
 const managedExceptionRegionSchema = z.object({
@@ -514,11 +521,11 @@ export const managedArtifactInspectionSchema = z.object({
 /** Provider-neutral, execution-free metadata/signature/IL member inspection. */
 export const managedMemberInspectionSchema = z.object({
   signature_resolution: z
-    .literal("type-names-v1")
+    .enum(["type-names-v1", "type-names-v2"])
     .nullable()
     .default(null)
     .describe(
-      "Signature type-name resolution was examined, including unresolved operands; null means no attestation, including historical or capacity-limited Evidence.",
+      "Signature type-name resolution was examined, including unresolved operands; v2 also renders readable operand names, v1 retains raw operand text; null means no attestation, including historical or capacity-limited Evidence.",
     ),
   artifact: managedArtifactReferenceSchema,
   module: moduleIdentitySchema.nullable(),

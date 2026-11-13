@@ -7,8 +7,42 @@ import {
   parserPluginsForPath,
   javaScriptRuntimeContext,
   javaScriptProgramStrictness,
+  javaScriptThisOwner,
 } from "./javascriptSourceParser.js";
-import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+
+it.each([
+  ["class C extends (this.marker, Object) {}", true],
+  ["class C { [this.marker]() {} }", true],
+  ["class C { [this.marker] = 1 }", true],
+  ["({[this.marker]() {}})", true],
+  ["class C { value = this.marker }", false],
+  ["class C { static value = this.marker }", false],
+  ["class C { static { this.marker } }", false],
+  ["class C { method() { this.marker } }", false],
+  ["function f() { return class C extends (this.marker, Object) {} }", false],
+  ["class C { value = class D { [this.marker]() {} } }", false],
+  ["(() => class C { [this.marker]() {} })()", true],
+] as const)(
+  "owns definition-time this separately from class bodies: %s",
+  (source, expected) => {
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected parsed fixture");
+    const parents = new WeakMap<t.Node, t.Node>();
+    let selected: t.ThisExpression | undefined;
+    traverseJavaScriptAst(parsed.program, {
+      enter(node, parent) {
+        if (parent !== null) parents.set(node, parent);
+        if (t.isThisExpression(node)) selected = node;
+      },
+    });
+    if (selected === undefined) throw new Error("Missing this fixture");
+    expect(
+      javaScriptThisOwner(selected, parsed.program, parents) === "global",
+    ).toBe(expected);
+  },
+);
 
 it.each([
   ['import type {T} from "example";', "fixture.cts", "commonjs"],
@@ -86,9 +120,17 @@ ipcMain.handle("layout:ready",()=>pick);`;
   for (const path of ["main.js", "main.cjs", "main.mjs", "main.jsx"]) {
     const result = analyze(source, path);
     expect(result?.errors).toBe(0);
-    expect(result?.facts.electron.ipc).toContainEqual(
-      expect.objectContaining({ channel: "layout:ready", operation: "handle" }),
-    );
+    if (path === "main.mjs") {
+      expect(result?.facts.electron.ipc).toEqual([]);
+    } else {
+      expect(result?.facts.electron.ipc).toContainEqual(
+        expect.objectContaining({
+          channel: "layout:ready",
+          operation: "handle",
+          ...(path === "main.cjs" ? {} : { loader_authority: "candidate" }),
+        }),
+      );
+    }
   }
 });
 

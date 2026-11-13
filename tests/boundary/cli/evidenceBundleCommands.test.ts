@@ -1,9 +1,18 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "../../../src/domain/evidenceLegacy.fixture.js";
-import { access, readFile, readdir, writeFile } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { z } from "zod";
 
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -13,8 +22,7 @@ import {
   updateResidualUnknown,
 } from "../../../src/domain/residualUnknown.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const revisionBundle = () => {
   const records = ["open", "investigate"].map((operation) =>
@@ -56,6 +64,164 @@ const revisionBundle = () => {
   return createEvidenceBundle(records, [initial, revised]);
 };
 
+cliTest(
+  "rejects empty Evidence path arguments before filesystem selection",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-empty-evidence-path-");
+    const encoded = JSON.stringify(revisionBundle());
+    await writeFile(join(root, "bundle.json"), encoded);
+    for (const [args, field] of [
+      [["evidence-import", ""], "path"],
+      [["evidence-export", "", "refused.json"], "source"],
+      [["evidence-export", "bundle.json", ""], "output"],
+      [["compare", "", "bundle.json"], "left"],
+      [["compare", "bundle.json", ""], "right"],
+      [["evidence-export", "missing.json", ""], "output"],
+    ] as const) {
+      const result = await runFileCli(cli, {
+        arguments: [...args, "--json"],
+        cwd: root,
+      });
+      expect(result.exitCode, JSON.stringify(args)).toBe(1);
+      expect(result.stderr).toBe("");
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [{ path: field, code: "too_small", missing: false }],
+      });
+      expect(result.json).not.toHaveProperty("details.path");
+      expect(await readdir(root)).toEqual(["bundle.json"]);
+      expect(await readFile(join(root, "bundle.json"), "utf8")).toBe(encoded);
+    }
+  },
+);
+
+cliTest(
+  "preserves whitespace in selected Evidence filenames",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-evidence-spaced-path-");
+    const source = " bundle name.json";
+    const output = " exported bundle.json";
+    const bundle = revisionBundle();
+    const encoded = JSON.stringify(bundle);
+    await writeFile(join(root, source), encoded);
+    const imported = await cli.run({
+      arguments: ["evidence-import", source, "--json"],
+      cwd: root,
+    });
+    expect(imported.exitCode, imported.stderr).toBe(0);
+    expect(imported.json).toEqual({ imported: 2, unknowns_added: 2, total: 2 });
+    const exported = await cli.run({
+      arguments: ["evidence-export", source, output, "--json"],
+      cwd: root,
+    });
+    expect(exported.exitCode, exported.stderr).toBe(0);
+    expect(JSON.parse(await readFile(join(root, output), "utf8"))).toEqual(
+      bundle,
+    );
+    const compared = await cli.run({
+      arguments: ["compare", source, output, "--json"],
+      cwd: root,
+    });
+    expect(compared.exitCode, compared.stderr).toBe(0);
+    expect(compared.json).toMatchObject({ status: "unchanged" });
+    expect(await readFile(join(root, source), "utf8")).toBe(encoded);
+    expect((await readdir(root)).sort()).toEqual([source, output].sort());
+  },
+);
+
+cliTest(
+  "advertises the same nonempty path constraints to schema clients",
+  async ({ cli }) => {
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    for (const [command, valid] of [
+      ["evidence-import", { path: " bundle.json" }],
+      ["evidence-export", { source: " bundle.json", output: " exported.json" }],
+      ["compare", { left: " bundle.json", right: " other.json" }],
+    ] as const) {
+      const result = await runFileCli(cli, {
+        arguments: [command, "--schema", "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stderr).toBe("");
+      const { args } = z
+        .object({ args: z.record(z.string(), z.unknown()) })
+        .parse(result.json);
+      expect(ajv.validateSchema(args), ajv.errorsText()).toBe(true);
+      const validate = ajv.compile(args);
+      expect(validate(valid), command).toBe(true);
+      for (const field of Object.keys(valid))
+        expect(validate({ ...valid, [field]: "" }), `${command}.${field}`).toBe(
+          false,
+        );
+    }
+  },
+);
+
+cliTest(
+  "rejects directory exports with file-path recovery in both overwrite modes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-export-directory-cli-");
+    const source = join(root, "bundle.json");
+    const output = join(root, "output");
+    const sentinel = join(output, "keep.txt");
+    const emptyBundle = createEvidenceBundle([]);
+    const sourceBytes = JSON.stringify(emptyBundle);
+    await writeFile(source, sourceBytes);
+    await mkdir(output);
+    await writeFile(sentinel, "keep\n");
+
+    for (const flags of [[], ["--overwrite"]]) {
+      const result = await cli.run({
+        arguments: ["evidence-export", source, output, ...flags, "--json"],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("");
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: { operation: "write", reason: "not-file", path: output },
+        message: expect.stringContaining("regular file"),
+        remediation: { action: expect.stringContaining("regular file") },
+      });
+      expect((await lstat(output)).isDirectory()).toBe(true);
+      expect(await readdir(output)).toEqual(["keep.txt"]);
+      expect(await readFile(sentinel, "utf8")).toBe("keep\n");
+      expect((await readdir(root)).sort()).toEqual(["bundle.json", "output"]);
+    }
+
+    const file = join(root, "fresh.json");
+    const arguments_ = ["evidence-export", source, file, "--json"];
+    const fresh = await cli.run({ arguments: arguments_ });
+    expect(fresh.exitCode, fresh.stderr).toBe(0);
+    const exported = await readFile(file, "utf8");
+    expect(JSON.parse(exported)).toEqual(emptyBundle);
+
+    const existingBytes = "previous output\n";
+    await writeFile(file, existingBytes);
+    const collision = await cli.run({ arguments: arguments_ });
+    expect(collision.exitCode).toBe(1);
+    expect(collision.json).toMatchObject({
+      code: "invalid_request",
+      details: { operation: "write", reason: "exists", path: file },
+      message: expect.stringContaining("allow overwrite"),
+    });
+    expect(await readFile(file, "utf8")).toBe(existingBytes);
+
+    const replacement = await cli.run({
+      arguments: [...arguments_, "--overwrite"],
+    });
+    expect(replacement.exitCode, replacement.stderr).toBe(0);
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual(emptyBundle);
+    expect(await readFile(source, "utf8")).toBe(sourceBytes);
+    expect((await readdir(root)).sort()).toEqual([
+      "bundle.json",
+      "fresh.json",
+      "output",
+    ]);
+  },
+);
+
 cliTest.for([
   "evidence-import",
   "evidence-export",
@@ -80,15 +246,21 @@ cliTest.for([
           : operation === "compare-left"
             ? ["compare", path, canonical]
             : ["compare", canonical, path];
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: [...arguments_, "--json"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "evidence_integrity_mismatch",
-      message: JSON_BYTE_ORDER_MARK_MESSAGE,
-      remediation: { action: JSON_BYTE_ORDER_MARK_MESSAGE },
+      message: expect.stringMatching(
+        /byte-order mark.*UTF-8 without a byte-order mark/iu,
+      ),
+      remediation: {
+        action: expect.stringMatching(
+          /byte-order mark.*UTF-8 without a byte-order mark/iu,
+        ),
+      },
     });
     expect(await readFile(path, "utf8")).toBe(bom);
     await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -142,6 +314,42 @@ cliTest(
 );
 
 cliTest(
+  "reports exported residual-unknown revision counts",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-evidence-export-counts-");
+    for (const [label, bundle] of [
+      ["empty", createEvidenceBundle([])],
+      ["revisions", revisionBundle()],
+    ] as const) {
+      const source = join(root, `${label}.json`);
+      await writeFile(source, JSON.stringify(bundle));
+      for (const full of [false, true]) {
+        const output = join(root, `${label}-${String(full)}.json`);
+        const result = await runFileCli(cli, {
+          arguments: [
+            "evidence-export",
+            source,
+            output,
+            "--json",
+            ...(full ? ["--full-output"] : []),
+          ],
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        const receipt = full
+          ? (result.json as { data: unknown }).data
+          : result.json;
+        expect(receipt).toMatchObject({
+          path: output,
+          records: bundle.records.length,
+          unknowns: bundle.unknowns.length,
+        });
+        expect(JSON.parse(await readFile(output, "utf8"))).toEqual(bundle);
+      }
+    }
+  },
+);
+
+cliTest(
   "reports a standalone Evidence record as the wrong input file kind",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-evidence-record-input-");
@@ -179,7 +387,7 @@ cliTest(
       { ...bundle, unknowns: bundle.unknowns.slice(1) },
     ]) {
       await writeFile(path, JSON.stringify(invalid));
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["evidence-import", path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -206,7 +414,7 @@ cliTest(
     );
     await writeFile(path, JSON.stringify(createEvidenceBundle([record])));
 
-    const output = await cli.run({
+    const output = await runFileCli(cli, {
       arguments: [
         "inspect-evidence-bundle",
         JSON.stringify({ path, detail: "complete" }),
@@ -258,12 +466,14 @@ cliTest(
       "--filter-output",
       "records.0.normalized_result",
     ];
-    const json = await cli.run({ arguments: [...base, "--json"] });
+    const json = await runFileCli(cli, { arguments: [...base, "--json"] });
     expect(json.exitCode, json.stderr).toBe(0);
     expect(json.stdout).toContain(JSON.stringify(result.text));
     expect(json.stdout).toContain(JSON.stringify(result.type));
     expect(json.stdout).toContain(JSON.stringify(result.literal));
-    const markdown = await cli.run({ arguments: [...base, "--format", "md"] });
+    const markdown = await runFileCli(cli, {
+      arguments: [...base, "--format", "md"],
+    });
     expect(markdown.exitCode, markdown.stderr).toBe(0);
     expect(markdown.stdout).toContain("left\\|right\\\\tail<br>next");
     expect(markdown.stdout).toContain("List&lt;string&gt;");
@@ -272,7 +482,7 @@ cliTest(
 );
 
 cliTest(
-  "diagnoses an obsolete explicit-null Evidence commitment without claiming the file was modified",
+  "diagnoses an obsolete explicit-null Evidence commitment",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-legacy-coverage-identity-");
     const path = join(root, "legacy.json");
@@ -287,7 +497,7 @@ cliTest(
       records: [record],
     };
     await writeFile(path, JSON.stringify(bundle));
-    const imported = await cli.run({
+    const imported = await runFileCli(cli, {
       arguments: ["evidence-import", path, "--json"],
     });
     expect(imported.exitCode).toBe(1);

@@ -1,5 +1,8 @@
 import type { NodeSeaAdmission } from "./nodeSea/NodeSeaAdmission.js";
-import { Readable, Transform, pipeline } from "node:stream";
+import {
+  DEFAULT_NODE_SEA_READER_LIMITS,
+  type NodeSeaReaderLimits,
+} from "../domain/artifactReaderLimits.js";
 import { setImmediate } from "node:timers/promises";
 
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
@@ -8,19 +11,9 @@ import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
 } from "./ArtifactPaths.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import {
-  ArtifactReaderFailure,
-  copyArtifactEntry,
-  sameArtifactEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
-import {
-  NODE_SEA_BLOB_TOO_LARGE,
-  NODE_SEA_MAX_BLOB_BYTES,
   decodeNodeSeaBlob,
   type DecodedNodeSeaBlob,
   type NodeSeaByteRange,
@@ -29,11 +22,13 @@ import {
   locateNodeSea,
   readNodeSeaBlob,
   scanNodeSeaFuse,
-  type NodeSeaLocation,
 } from "./nodeSea/NodeSeaLocation.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
+import {
+  PositionalArtifactReader,
+  type PositionalArtifactEntries,
+  type PositionalArtifactEntry,
+} from "./PositionalArtifactReader.js";
 
 const SNAPSHOT_PATH = "__node_sea__/snapshot";
 const CODE_CACHE_PATH = "__node_sea__/code-cache";
@@ -43,27 +38,25 @@ const ASSET_FALLBACK_PREFIX = "__node_sea__/assets/";
 type NodeSeaRole = "main-script" | "snapshot" | "code-cache" | "asset";
 
 /** Read a Node.js SEA blob out of a Mach-O, ELF, or PE carrier without running it. */
-export class NodeSeaArtifactReader implements ArtifactReader {
-  readonly format = "node-sea" as const;
-  readonly #scope = new ArtifactResourceScope();
-  readonly #entries = new Map<string, ArtifactEntry>();
-  readonly #streams = new Set<Readable>();
-  readonly #source: ArtifactFileSource;
-  #prepared: Promise<void> | undefined;
+export class NodeSeaArtifactReader extends PositionalArtifactReader {
+  override readonly format = "node-sea" as const;
   #header: NodeSeaMetadata | undefined;
   #admission: NodeSeaAdmission | undefined;
-  #closing = false;
 
   constructor(
     path: string,
     admitted?: StableRegularFileDescriptor | NodeSeaAdmission,
+    private readonly limits: NodeSeaReaderLimits = DEFAULT_NODE_SEA_READER_LIMITS,
+    private readonly expandedBytes?: number,
   ) {
-    if (admitted !== undefined && "kind" in admitted) {
-      this.#admission = admitted;
-      this.#source = new ArtifactFileSource(path, "Node SEA", admitted.source);
-    } else {
-      this.#source = new ArtifactFileSource(path, "Node SEA", admitted);
-    }
+    const admission =
+      admitted !== undefined && "kind" in admitted ? admitted : undefined;
+    super(
+      path,
+      "Node SEA",
+      admitted !== undefined && "kind" in admitted ? admitted.source : admitted,
+    );
+    this.#admission = admission;
   }
 
   formatMetadata(): NodeSeaMetadata | undefined {
@@ -71,157 +64,67 @@ export class NodeSeaArtifactReader implements ArtifactReader {
     return { ...this.#header, exec_argv: [...this.#header.exec_argv] };
   }
 
-  async prepareContainer(
-    expectedSha256: string,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    await this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      await this.#source.bindSha256(expectedSha256, signal);
-    });
-  }
-
-  async *entries(
-    signal?: AbortSignal,
-    options?: ArtifactTraversalOptions,
-  ): AsyncIterable<ArtifactEntry> {
-    await this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
-      await this.#source.read(signal);
-    });
-    const contradiction = this.#header?.fuse_contradiction;
-    if (contradiction !== null && contradiction !== undefined)
-      options?.onCoverage?.({
-        status: "complete",
-        limitations: [contradiction],
-      });
-    let index = 0;
-    for (const entry of this.#entries.values()) {
-      if (index % 256 === 0) await setImmediate();
-      index += 1;
-      this.#assertOpen(signal);
-      yield copyArtifactEntry(entry);
-    }
-  }
-
-  async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
-    return this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "Node SEA entry does not match its owning inventory",
-        );
-      const { handle } = await this.#source.read(signal);
-      this.#assertOpen(signal);
-      if (stored.byteOffset === null || stored.declaredSize === null)
-        throw formatFailure("member has no physical byte range");
-      const source =
-        stored.declaredSize === 0
-          ? Readable.from([])
-          : readFileHandleChunks(handle, {
-              start: stored.byteOffset,
-              end: stored.byteOffset + stored.declaredSize - 1,
-              signal,
-              cancellationFailure: (reason) =>
-                new ArtifactReaderFailure(
-                  "cancelled",
-                  "Node SEA read cancelled",
-                  {
-                    cause: reason,
-                  },
-                ),
-            });
-      const output = this.#memberStream(stored, signal);
-      output.on("error", () => undefined);
-      this.#streams.add(output);
-      // A finished producer can leave source bytes buffered for its consumer.
-      // Keep the readable side owned until it closes as well.
-      output.once("close", () => this.#streams.delete(output));
-      void this.#scope
-        .run(
-          () =>
-            new Promise<void>((resolve) => {
-              pipeline(source, output, () => {
-                resolve();
-              });
-            }),
-        )
-        .catch((cause: unknown) =>
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error("Node SEA stream ownership failed", { cause }),
-          ),
-        );
-      return output;
-    });
-  }
-
-  async close(): Promise<void> {
-    this.#closing = true;
-    for (const stream of this.#streams)
-      stream.destroy(
-        new ArtifactReaderFailure("unavailable", "Node SEA reader closed"),
-      );
-    await this.#scope.close();
-    await this.#source.close();
-    this.#entries.clear();
+  /** Also drop the admitted decode, which only a completed preparation releases. */
+  override async close(): Promise<void> {
+    await super.close();
     this.#admission = undefined;
   }
 
-  provenance(): readonly [] {
-    return [];
+  /** Reuse only the decode admitted under this accepted policy. */
+  async #readBlob(
+    source: StableRegularFileDescriptor,
+    signal?: AbortSignal,
+  ): Promise<Pick<NodeSeaAdmission, "location" | "decoded">> {
+    const admittedLimits = this.#admission?.limits;
+    if (
+      this.#admission !== undefined &&
+      admittedLimits !== undefined &&
+      Object.entries(this.limits).every(
+        ([field, value]) => Reflect.get(admittedLimits, field) === value,
+      )
+    )
+      return this.#admission;
+    const location = await locateNodeSea(
+      source.handle,
+      source.initial.size,
+      signal,
+      this.limits,
+    );
+    if (location === undefined) throw formatFailure("blob was not found");
+    const decoded = await decodeNodeSeaBlob(
+      await readNodeSeaBlob(source, location, signal, this.limits),
+      signal,
+      this.limits,
+    );
+    return { location, decoded };
   }
 
-  #assertOpen(signal?: AbortSignal): void {
-    assertArtifactReadActive(signal);
-    if (this.#closing)
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "Node SEA reader is closed",
-      );
-  }
-
-  async #prepare(signal?: AbortSignal): Promise<void> {
-    const { handle, initial } = await this.#source.read(signal);
-    // Freshness remains owned by ArtifactFileSource even when classification
-    // already decoded this exact borrowed descriptor's blob.
-    let location: NodeSeaLocation;
-    let decoded: DecodedNodeSeaBlob;
-    if (this.#admission !== undefined) {
-      ({ location, decoded } = this.#admission);
-    } else {
-      const found = await locateNodeSea(handle, initial.size, signal);
-      if (found === undefined) throw formatFailure("blob was not found");
-      location = found;
-      if (location.blobLength > NODE_SEA_MAX_BLOB_BYTES)
-        throw new ArtifactReaderFailure("limit", NODE_SEA_BLOB_TOO_LARGE, {
-          boundary: "memory",
-        });
-      decoded = await decodeNodeSeaBlob(
-        await readNodeSeaBlob(handle, location, initial.size, signal),
-        signal,
-      );
-    }
+  protected override async prepareEntries(
+    signal?: AbortSignal,
+  ): Promise<PositionalArtifactEntries> {
+    const { handle, initial } = await this.verifyCarrier(signal);
+    const { location, decoded } = await this.#readBlob(
+      { handle, initial },
+      signal,
+    );
     const fuse = await scanNodeSeaFuse(handle, initial.size, signal);
+    const entries: PositionalArtifactEntry[] = [];
     let declaredBytes = 0n;
     const expansionBudget = BigInt(
-      artifactExpansionBudgetBytes(location.blobLength),
+      this.expandedBytes ?? artifactExpansionBudgetBytes(location.blobLength),
     );
     let index = 0;
     for (const member of seaMembers(decoded)) {
       if (index % 256 === 0) await setImmediate();
-      this.#assertOpen(signal);
+      this.assertOpen(signal);
       declaredBytes += BigInt(member.range.length);
       if (declaredBytes > expansionBudget)
-        throw new ArtifactReaderFailure(
-          "limit",
-          `Node SEA readable entries declare ${String(declaredBytes)} bytes, exceeding this blob's ${String(expansionBudget)}-byte expansion budget`,
-          { boundary: "memory" },
+        throw artifactReaderLimitFailure(
+          "artifact_limits.expanded_bytes",
+          Number(expansionBudget),
+          "bytes",
+          declaredBytes,
+          "memory",
         );
       const start = location.blobOffset + member.range.offset;
       if (start > initial.size || member.range.length > initial.size - start)
@@ -245,8 +148,8 @@ export class NodeSeaArtifactReader implements ArtifactReader {
           index,
         },
         sourcePath: member.sourcePath,
-      } satisfies ArtifactEntry;
-      this.#entries.set(entry.adapterKey, entry);
+      } satisfies PositionalArtifactEntry;
+      entries.push(entry);
       index += 1;
     }
     this.#header = {
@@ -268,34 +171,15 @@ export class NodeSeaArtifactReader implements ArtifactReader {
       fuse_sentinel: fuse.fuseSentinel,
       fuse_contradiction: fuse.fuseContradiction,
     };
-    await this.#source.read(signal);
+    await this.verifyCarrier(signal);
     this.#admission = undefined;
-  }
-
-  #memberStream(entry: ArtifactEntry, signal?: AbortSignal): Transform {
-    let bytes = 0;
-    const check = async (): Promise<void> => {
-      if (bytes !== entry.declaredSize)
-        throw formatFailure(`member ended early: ${entry.path}`);
-      await this.#source.read(signal);
+    return {
+      entries,
+      coverage:
+        fuse.fuseContradiction === null
+          ? undefined
+          : { status: "complete", limitations: [fuse.fuseContradiction] },
     };
-    return new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        bytes += chunk.length;
-        callback(null, chunk);
-      },
-      flush(callback) {
-        void check().then(
-          () => callback(),
-          (cause: unknown) =>
-            callback(
-              cause instanceof Error
-                ? cause
-                : new Error("Node SEA read failed", { cause }),
-            ),
-        );
-      },
-    });
   }
 }
 

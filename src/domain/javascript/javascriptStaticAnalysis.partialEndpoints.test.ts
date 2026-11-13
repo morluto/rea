@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const endpoints = (source: string) =>
   analyzeJavaScriptStaticSource(source).endpoints.map((endpoint) => ({
@@ -9,6 +9,68 @@ const endpoints = (source: string) =>
     mechanism: endpoint.mechanism,
     resolution: endpoint.resolution,
   }));
+
+it.each(["window.Request", "globalThis.Request", "self.Request"])(
+  "resolves an inline literal URL from the built-in %s constructor",
+  (constructor) => {
+    expect(
+      endpoints(`fetch(new ${constructor}("/api/chat", { method: "POST" }));`),
+    ).toEqual([
+      {
+        kind: "network",
+        value: "/api/chat",
+        mechanism: "call:fetch",
+        resolution: undefined,
+      },
+    ]);
+  },
+);
+
+it.each(["globalThis.fetch", "self.fetch", "fetch?."])(
+  "resolves an inline Request URL passed to %s",
+  (callee) => {
+    expect(endpoints(`${callee}(new Request(\`/api/chat\`));`)).toEqual([
+      {
+        kind: "network",
+        value: "/api/chat",
+        mechanism: `call:${callee.replace("?.", "")}`,
+        resolution: undefined,
+      },
+    ]);
+  },
+);
+
+it.each([
+  [
+    "const Request = custom;",
+    'fetch(new Request("/api/chat"));',
+    'new Request("/api/chat")',
+  ],
+  [
+    "Request = custom;",
+    'fetch(new Request("/api/chat"));',
+    'new Request("/api/chat")',
+  ],
+  [
+    "globalThis.Request = custom;",
+    'fetch(new Request("/api/chat"));',
+    'new Request("/api/chat")',
+  ],
+  [
+    "const window = custom;",
+    'fetch(new window.Request("/api/chat"));',
+    'new window.Request("/api/chat")',
+  ],
+  ["", "fetch(new Request(target));", "new Request(target)"],
+  ["", "fetch(new Request(...urls));", "new Request(...urls)"],
+])(
+  "retains an unproven Request target: %s %s",
+  (prefix, source, expression) => {
+    expect(endpoints(prefix + source)).toEqual([
+      expect.objectContaining({ value: expression, resolution: "partial" }),
+    ]);
+  },
+);
 
 it("resolves unchanged lexical strings and object properties", () => {
   expect(

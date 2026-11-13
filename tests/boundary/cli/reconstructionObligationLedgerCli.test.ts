@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { reconstructionObligationLedgerSchema } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
@@ -17,11 +17,69 @@ import {
   MIXED_AUTHORITY_SUMMARY,
   mixedAuthorityRequest,
   readyProcessLedgerRequest,
+  readyReviewedLedgerRequest,
 } from "../../../src/application/ReconstructionObligationLedger.fixture.js";
 
 const execute = promisify(execFile);
 
 describe("reconstruction obligation ledger CLI parity", () => {
+  it("withholds readiness for an optional obligation's missing Evidence", async () => {
+    const input = readyReviewedLedgerRequest();
+    const binding = input.manifest.bindings[0]!;
+    const absent = `ev_${"c".repeat(64)}`;
+    const extra = {
+      fixture_id: "fixture.extra",
+      case_kind: "malformed" as const,
+      authority: "unit" as const,
+      evidence_ids: [absent],
+    };
+    for (const evidenceId of [absent, binding.verifier!.result_evidence_id]) {
+      const variant = {
+        ...input,
+        reviewed_obligations: [
+          { ...input.reviewed_obligations[0]!, required: false },
+        ],
+        manifest: {
+          ...input.manifest,
+          bindings: [
+            {
+              ...binding,
+              fixtures: [
+                ...binding.fixtures,
+                { ...extra, evidence_ids: [evidenceId] },
+              ],
+            },
+          ],
+        },
+      };
+      const { stdout } = await execute(
+        process.execPath,
+        [
+          "scripts/rea.mjs",
+          "build-reconstruction-obligation-ledger",
+          JSON.stringify(variant),
+          "--json",
+        ],
+        { cwd: process.cwd(), env: process.env, maxBuffer: 16 * 1_024 * 1_024 },
+      );
+      const ledger = reconstructionObligationLedgerSchema.parse(
+        JSON.parse(stdout).normalized_result,
+      );
+      expect(ledger.status).toBe(evidenceId === absent ? "unknown" : "ready");
+      if (evidenceId === absent) {
+        expect(ledger.evidence_links).toContain(absent);
+        expect(ledger.obligations[0]?.diagnostics).toContainEqual(
+          expect.objectContaining({
+            code: "missing-case",
+            detail: expect.stringContaining(absent),
+          }),
+        );
+      }
+    }
+  }, 20_000);
+});
+
+describe("reconstruction obligation ledger CLI bundle validation", () => {
   it("reports non-canonical authenticated bundles as caller input", async () => {
     const records = ["first", "second"].map((label) =>
       createEvidence(
@@ -318,25 +376,23 @@ describe("reconstruction proof applicability through CLI", () => {
     reason,
     codes,
   } of reconstructionProofApplicabilityCases())
-    it(
+    cliTest(
       name,
-      async () => {
-        const { stdout } = await execute(
-          process.execPath,
-          [
-            "scripts/rea.mjs",
+      async ({ cli }) => {
+        const invocation = {
+          arguments: [
             "build-reconstruction-obligation-ledger",
             JSON.stringify(input),
             "--json",
           ],
-          {
-            cwd: process.cwd(),
-            env: process.env,
-            maxBuffer: 16 * 1_024 * 1_024,
-          },
-        );
+        };
+        const result =
+          name === "matching implementation and revision"
+            ? await cli.run(invocation)
+            : await runFileCli(cli, invocation);
+        expect(result.exitCode, result.stderr).toBe(0);
         const ledger = reconstructionObligationLedgerSchema.parse(
-          JSON.parse(stdout).normalized_result,
+          (result.json as { normalized_result: unknown }).normalized_result,
         );
         expect(ledger.status).toBe(status);
         const obligation = ledger.obligations[0]!;
@@ -346,6 +402,10 @@ describe("reconstruction proof applicability through CLI", () => {
         expect(obligation.diagnostics.map(({ code }) => code).sort()).toEqual(
           [...codes].sort(),
         );
+        expect(ledger.summary.required_open).toBe(status === "ready" ? 0 : 1);
+        for (const fixture of input.manifest.bindings[0]!.fixtures)
+          for (const evidenceId of fixture.evidence_ids)
+            expect(ledger.evidence_links).toContain(evidenceId);
         if (reason === null) expect(obligation.diagnostics).toEqual([]);
         else
           expect(

@@ -3,17 +3,13 @@ import type {
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import {
-  semanticPropertyPathKeyMatches,
-  type JavaScriptSemanticPropertyPath,
-} from "./javascriptSemanticPropertyPaths.js";
+import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
   type JavaScriptSemanticObjectReference,
 } from "./javascriptSemanticObjectReferences.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   semanticBindingAtRead,
   semanticDefiniteEffectPrecedesReference,
@@ -21,11 +17,16 @@ import {
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
-  semanticCopiedReferencePath,
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import { semanticStoredSourceSelection } from "./javascriptSemanticIterationSources.js";
+import {
+  semanticEffectPathCandidates,
+  semanticEffectPathMatches,
+  semanticSomeEffectPathCandidate,
+} from "./javascriptSemanticEffectPathIndex.js";
 import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
@@ -113,7 +114,7 @@ const hasFreshProjectedReceiver = (
     if (paths.has(key)) return false;
     paths.add(key);
     examined.set(node, paths);
-    if (++selections > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+    if (++selections > state.precision.alias_selections) {
       state.valueResourceLimits.add("alias-selections");
       return false;
     }
@@ -136,7 +137,7 @@ const hasFreshProjectedReceiver = (
     if (sources.length === 0) return false;
     if (
       selections + pending.length + sources.length >
-      SEMANTIC_ALIAS_SELECTION_LIMIT
+      state.precision.alias_selections
     ) {
       state.valueResourceLimits.add("alias-selections");
       return false;
@@ -189,6 +190,7 @@ export function semanticProjectedSourceFactsAtRead(
   memberReadAt?: t.Node,
   capturedSelections?: readonly SemanticCapturedSelection[],
   retainEligibility?: boolean,
+  valueEscapesHideSources?: boolean,
 ):
   | {
       readonly sources: readonly (Omit<ProjectedSource, "path"> & {
@@ -218,6 +220,9 @@ const projectedSourceFactsAtRead = (
   memberReadAt: t.Node = reference,
   capturedSelections: readonly SemanticCapturedSelection[] = [],
   retainEligibility = false,
+  // Accessor lookup reads source syntax. A prior value escape does not hide
+  // that syntax; unknown writes and invocations still fail closed.
+  valueEscapesHideSources = true,
 ):
   | {
       readonly sources: readonly ProjectedSource[];
@@ -225,7 +230,7 @@ const projectedSourceFactsAtRead = (
       readonly retainsOrigin: boolean;
     }
   | undefined => {
-  const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
+  const read = semanticBindingAtRead(binding, reference, state);
   const captured = [
     ...read.binding.initializers,
     ...read.binding.referenceInitializers,
@@ -296,9 +301,12 @@ const projectedSourceFactsAtRead = (
         )
       );
     });
+  // Every condition is a pure query. Test the selected path first: it is the
+  // cheapest and rejects most records of a binding with many member paths.
   const matches = (
     effect: JavaScriptSemanticBindingState["memberWrites"][number],
   ) =>
+    semanticEffectPathMatches(effect.path, path) &&
     (effect.receiverInitializers === undefined ||
       effect.receiverInitializers.length === 0 ||
       captured.length === 0 ||
@@ -310,24 +318,13 @@ const projectedSourceFactsAtRead = (
               JSON.stringify(receiver.projection),
         ),
       )) &&
-    path.length > 0 &&
-    effect.path.length <= path.length &&
-    effect.path.every((key, index) => {
-      const selected = path[index];
-      return (
-        selected !== undefined &&
-        semanticAliasSelectionChoices(selected).some(
-          (choice) =>
-            choice === null ||
-            typeof choice === "object" ||
-            semanticPropertyPathKeyMatches(key, String(choice)),
-        )
-      );
-    }) &&
     semanticEffectTiming(selectedAt(effect.path.length), effect.node, state) !==
       "after" &&
     !targetsReplacedPrefix(effect);
-  const writes = binding.memberWrites.filter(matches);
+  const writes = semanticEffectPathCandidates(
+    binding.memberWrites,
+    path,
+  ).filter(matches);
   let replacement:
     | JavaScriptSemanticBindingState["memberWrites"][number]
     | undefined;
@@ -372,7 +369,10 @@ const projectedSourceFactsAtRead = (
           (replacement.assignedSources?.[0]?.target?.start ?? -1)));
   if (
     includeUnknown &&
-    binding.escapedPaths.some(
+    valueEscapesHideSources &&
+    semanticSomeEffectPathCandidate(
+      binding.escapedPaths,
+      path,
       (effect) => matches(effect) && !superseded(effect),
     )
   )

@@ -5,7 +5,11 @@ import {
   contractsForToolFamilies,
   toolFamilyId,
 } from "./toolFamilies.js";
-import { TOOL_FAMILY_IDS } from "./toolFamilyIds.js";
+import {
+  registerToolFamilies,
+  TOOL_FAMILY_IDS,
+  type ToolFamilyId,
+} from "./toolFamilyIds.js";
 import { TOOL_CONTRACTS, toolContract } from "./toolContracts.js";
 import type {
   officialOutputSchemas,
@@ -43,6 +47,20 @@ describe("tool families", () => {
     ]);
   });
 
+  it("runs registrars in published id order", () => {
+    const seen: string[] = [];
+    const registrars = Object.fromEntries(
+      TOOL_FAMILY_IDS.map((id) => [
+        id,
+        (): void => {
+          seen.push(id);
+        },
+      ]),
+    ) as unknown as { readonly [Id in ToolFamilyId]: () => void };
+    registerToolFamilies(registrars);
+    expect(seen).toEqual([...TOOL_FAMILY_IDS]);
+  });
+
   it("covers every contract exactly once", () => {
     const owners = new Map<string, string[]>();
     for (const { id, contracts } of TOOL_FAMILY_DEFINITIONS)
@@ -57,6 +75,12 @@ describe("tool families", () => {
   it("resolves each advertised tool to its owning family", () => {
     for (const { name } of TOOL_CONTRACTS)
       expect(TOOL_FAMILY_IDS).toContain(toolFamilyId(name));
+    for (const name of [
+      "export_web_scripts",
+      "trace_web_module_imports",
+      "trace_web_source_location",
+    ] as const)
+      expect(toolFamilyId(name)).toBe("application");
     expect(toolFamilyId("not_a_tool")).toBeUndefined();
   });
 

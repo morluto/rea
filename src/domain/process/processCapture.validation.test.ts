@@ -7,7 +7,11 @@ import {
   type ProcessCapture,
 } from "./processCaptureParsing.js";
 import type { UnverifiedProcessCapture } from "./processCapture.js";
-import { partialProcessCaptureObservationSchema } from "./processCapture.js";
+import {
+  processCaptureSchema,
+  processFilesystemSnapshotSchema,
+  partialProcessCaptureObservationSchema,
+} from "./processCapture.js";
 import {
   FINALIZED_PROCESS_CAPTURE_EXAMPLE,
   compareUnverifiedProcessCaptures as compareProcessCaptures,
@@ -18,6 +22,39 @@ import { finalizationConsistencyIssue } from "./processCaptureValidation.js";
 import type { FilesystemCoverage } from "./processCaptureCoverage.js";
 
 expectTypeOf<UnverifiedProcessCapture>().not.toExtend<ProcessCapture>();
+
+it.each(["reports", "\ufffd"])(
+  "requires stored target bytes instead of deriving them from symlink text %j",
+  (text) => {
+    const snapshot = {
+      files: [
+        {
+          path: "root_0:link",
+          type: "symlink",
+          mode: 0o120777,
+          size: Buffer.byteLength(text),
+          sha256: null,
+          symlink_target: text,
+        },
+      ],
+      truncated: false,
+      completeRoots: [],
+      coverage: emptyCapture().truncation_details.filesystem_before,
+    };
+    expect(processFilesystemSnapshotSchema.safeParse(snapshot).success).toBe(
+      false,
+    );
+    expect(
+      processFilesystemSnapshotSchema.safeParse({
+        ...snapshot,
+        files: snapshot.files.map((file) => ({
+          ...file,
+          symlink_target_hex: Buffer.from(text).toString("hex"),
+        })),
+      }).success,
+    ).toBe(true);
+  },
+);
 
 /** Name every rejected field reported by the production parser. */
 const rejectedPaths = (input: unknown): readonly string[] => {
@@ -235,6 +272,7 @@ it("binds unfollowed coverage to observed symlink metadata without inventing an 
     size: 7,
     sha256: null,
     symlink_target: "reports",
+    symlink_target_hex: "7265706f727473",
   };
   const effect = {
     path: link.path,
@@ -283,6 +321,75 @@ it("binds unfollowed coverage to observed symlink metadata without inventing an 
       files_after: [{ ...link, type: "directory", symlink_target: null }],
     }),
   ).toThrow("enumeration_omissions");
+});
+
+it("requires top-level filesystem facts to match their checkpoints", () => {
+  const baseline = emptyCapture();
+  const file = {
+    path: "root_0:created.txt",
+    type: "file" as const,
+    mode: 0o100644,
+    size: 4,
+    sha256: "b".repeat(64),
+    symlink_target: null,
+  };
+  const effect = {
+    path: file.path,
+    status: "created" as const,
+    before: null,
+    after: file,
+  };
+  const topLevelOnly = {
+    ...baseline,
+    files_after: [file],
+    filesystem_effects: [effect],
+    truncation_details: {
+      ...baseline.truncation_details,
+      filesystem_after: {
+        ...baseline.truncation_details.filesystem_after,
+        hashed_bytes: 4,
+      },
+    },
+  };
+  const consistent = {
+    ...topLevelOnly,
+    filesystem_checkpoints: baseline.filesystem_checkpoints.map((checkpoint) =>
+      checkpoint.name === "after_settlement"
+        ? { ...checkpoint, files: [file], effects: [effect] }
+        : checkpoint,
+    ),
+  };
+  expect(parseProcessCapture(consistent)).toEqual(consistent);
+  const withCheckpointFiles = (
+    name: string,
+    files: (typeof baseline.files_before)[number][],
+  ) =>
+    consistent.filesystem_checkpoints.map((checkpoint) =>
+      checkpoint.name === name ? { ...checkpoint, files } : checkpoint,
+    );
+  for (const contradictory of [
+    topLevelOnly,
+    { ...consistent, filesystem_effects: [] },
+    // File lists alone disagree; effects still match.
+    {
+      ...consistent,
+      filesystem_checkpoints: withCheckpointFiles("after_settlement", []),
+    },
+    {
+      ...consistent,
+      filesystem_checkpoints: withCheckpointFiles("before", [file]),
+    },
+    {
+      ...baseline,
+      filesystem_checkpoints: baseline.filesystem_checkpoints.map(
+        (checkpoint) =>
+          checkpoint.name === "before"
+            ? { ...checkpoint, effects: [effect] }
+            : checkpoint,
+      ),
+    },
+  ])
+    expect(rejectedPaths(contradictory)).toEqual(["filesystem_checkpoints"]);
 });
 
 it("never considers truncated captures equivalent", () => {
@@ -1207,4 +1314,30 @@ it("requires interaction dispatch times to follow their sequence", () => {
       message: expect.stringContaining("dispatch timestamps must be ordered"),
     },
   ]);
+});
+
+it("validates private interaction fields together while retaining legacy captures", () => {
+  const event = {
+    sequence: 0,
+    scheduled_at_ms: 0,
+    dispatched_at_ms: 0,
+    type: "input",
+    data: "",
+    outcome: "dispatched",
+  };
+  const shape = processCaptureSchema.shape.interaction_events;
+  expect(
+    shape.safeParse([{ ...event, sensitive: true, input_bytes: 6 }]).success,
+  ).toBe(true);
+  expect(
+    shape.safeParse([{ ...event, data: "<redacted-input:6-bytes>" }]).success,
+  ).toBe(true);
+  for (const invalid of [
+    { ...event, sensitive: true },
+    { ...event, input_bytes: 6 },
+    { ...event, sensitive: true, input_bytes: 6, data: "original" },
+    { ...event, sensitive: true, input_bytes: 6, type: "signal" },
+  ])
+    expect(shape.safeParse([invalid]).success).toBe(false);
+  expect(() => parseProcessCapture(emptyCapture())).not.toThrow();
 });

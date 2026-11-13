@@ -1,152 +1,241 @@
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "../managed/managedArtifact.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { z } from "zod";
+import { managedMembersViewRequestSchema } from "./managedMemberViewSchemas.js";
 import { managedViewIdentityUnknowns } from "./managedArtifactView.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 
-const member = managedMemberInspectionSchema.shape;
+import type {
+  ManagedMembersViewRequest,
+  ManagedMemberSummary,
+  ManagedMemberCollection as MemberCollection,
+  ManagedMemberViewRow as Row,
+} from "./managedMemberViewSchemas.js";
 
-/** Original member rows; offsets count entries in the returned parent collection. */
-export const managedMembersViewRequestSchema = z.strictObject({
-  kind: z.literal("managed-members"),
-  collection: z.enum([
-    "types",
-    "exported_types",
-    "fields",
-    "methods",
-    "member_refs",
-    "call_edges",
-    "field_accesses",
-    "user_strings",
-  ]),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-});
+type Selection<C extends MemberCollection, T extends Row, K extends keyof T> = {
+  readonly collection: C;
+  readonly rows: readonly T[] | null | undefined;
+  readonly identity: readonly K[];
+  readonly name?: keyof T;
+  readonly declaringType?: keyof T;
+};
 
-const rowsOf = <C extends string, S extends z.ZodArray>(
-  collection: C,
-  rows: S,
-) => z.strictObject({ collection: z.literal(collection), rows });
-
-/**
- * Rows of one collection, keyed by that collection: several row schemas accept
- * each other's rows after stripping keys, so no union may pick one by order.
- */
-export const managedMembersViewPageSchema = z.discriminatedUnion("collection", [
-  rowsOf("types", member.types),
-  rowsOf("exported_types", member.exported_types.unwrap().unwrap()),
-  rowsOf("fields", member.fields),
-  rowsOf("methods", member.methods),
-  rowsOf("member_refs", member.member_refs),
-  rowsOf("call_edges", member.call_edges),
-  rowsOf("field_accesses", member.field_accesses),
-  rowsOf("user_strings", member.user_strings.unwrap().unwrap().shape.literals),
-]);
-
-type ManagedMembersViewPage = z.infer<typeof managedMembersViewPageSchema>;
-
-const nullableCount = z.int().nonnegative().nullable();
-
-/** Keep identity, selection and coverage; member collections remain retained. */
-export const managedMemberSummarySchema = z.strictObject({
-  signature_resolution: member.signature_resolution,
-  nesting_read: member.nesting_read,
-  artifact: member.artifact,
-  module: member.module,
-  assembly: member.assembly,
-  metadata: member.metadata,
-  identity_scope: member.identity_scope,
-  selection: member.selection.unwrap(),
-  method_rows: member.method_rows,
-  coverage: member.coverage,
-  user_strings: z
-    .strictObject({
-      state: member.user_strings.unwrap().unwrap().shape.state,
-      issues: member.user_strings.unwrap().unwrap().shape.issues,
-    })
-    .nullable(),
-  limitations: member.limitations,
-  reported_counts: z.strictObject({
-    types: z.int().nonnegative(),
-    exported_types: nullableCount,
-    fields: z.int().nonnegative(),
-    methods: z.int().nonnegative(),
-    member_refs: z.int().nonnegative(),
-    call_edges: z.int().nonnegative(),
-    field_accesses: z.int().nonnegative(),
-    user_strings: nullableCount,
-  }),
-});
-
-export const managedMembersViewContextSchema = z.strictObject({
-  signature_resolution: member.signature_resolution,
-  nesting_read: member.nesting_read,
-  identity_scope: member.identity_scope,
-  selection: member.selection.unwrap(),
-  method_rows: member.method_rows,
-  source_metadata_status: member.metadata.shape.status,
-  source_coverage: member.coverage,
-});
-
-type ManagedMembersViewRequest = z.infer<
-  typeof managedMembersViewRequestSchema
->;
-type MemberCollection = ManagedMembersViewRequest["collection"];
-
-const slice = <C extends MemberCollection, T>(
-  collection: C,
-  rows: readonly T[] | null | undefined,
-  { offset, limit }: { readonly offset: number; readonly limit: number },
-) =>
-  rows == null
-    ? null
-    : {
-        page: { collection, rows: rows.slice(offset, offset + limit) },
-        total: rows.length,
-      };
-
-/** One page of a collection, or null when the parent never examined it. */
 const collectionPage = (
   report: ManagedMemberInspection,
   view: ManagedMembersViewRequest,
-): { readonly page: ManagedMembersViewPage; readonly total: number } | null => {
+) => {
   const { collection } = view;
   switch (collection) {
     case "types":
-      return slice(collection, report.types, view);
+      return selectRows(
+        {
+          collection,
+          rows: report.types,
+          identity: ["token", "row_offset"],
+          name: "name",
+        },
+        view,
+      );
     case "exported_types":
-      return slice(collection, report.exported_types, view);
+      return selectRows(
+        {
+          collection,
+          rows: report.exported_types,
+          identity: ["token", "row_offset"],
+          name: "name",
+        },
+        view,
+      );
     case "fields":
-      return slice(collection, report.fields, view);
+      return selectRows(
+        {
+          collection,
+          rows: report.fields,
+          identity: ["token", "row_offset", "declaring_type_token"],
+          name: "name",
+          declaringType: "declaring_type",
+        },
+        view,
+      );
     case "methods":
-      return slice(collection, report.methods, view);
+      return selectRows(
+        {
+          collection,
+          rows: report.methods,
+          identity: ["token", "row_offset", "declaring_type_token"],
+          name: "name",
+          declaringType: "declaring_type",
+        },
+        view,
+      );
     case "member_refs":
-      return slice(collection, report.member_refs, view);
+      return selectRows(
+        {
+          collection,
+          rows: report.member_refs,
+          identity: ["token", "row_offset", "parent_token"],
+          name: "name",
+          declaringType: "parent_name",
+        },
+        view,
+      );
     case "call_edges":
-      return slice(collection, report.call_edges, view);
+      return selectRows(
+        {
+          collection,
+          rows: report.call_edges,
+          identity: ["caller_token", "il_offset", "target_token", "opcode"],
+          name: "target_name",
+          declaringType: "target_declaring_type",
+        },
+        view,
+      );
     case "field_accesses":
-      return slice(collection, report.field_accesses, view);
+      return selectRows(
+        {
+          collection,
+          rows: report.field_accesses,
+          identity: ["method_token", "il_offset", "field_token", "opcode"],
+          name: "field_name",
+          declaringType: "field_declaring_type",
+        },
+        view,
+      );
     case "user_strings":
-      return slice(collection, report.user_strings?.literals, view);
+      return selectRows(
+        {
+          collection,
+          rows: report.user_strings?.literals,
+          identity: ["token", "offset"],
+        },
+        view,
+      );
   }
 };
 
-/** The shared owner proves immutable source identity before retaining normalized facts. */
+/** Keep only one page while counting matches; never copy the matched inventory. */
+const selectRows = <
+  C extends MemberCollection,
+  T extends Row,
+  K extends keyof T,
+>(
+  source: Selection<C, T, K>,
+  view: ManagedMembersViewRequest,
+) => {
+  if (source.rows == null) return null;
+  const names =
+    "names" in view && view.names !== undefined
+      ? new Set(view.names)
+      : undefined;
+  const declaringTypes =
+    "declaring_types" in view && view.declaring_types !== undefined
+      ? new Set(view.declaring_types)
+      : undefined;
+  const fields =
+    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const filtering = names !== undefined || declaringTypes !== undefined;
+  if (!filtering && fields === undefined)
+    return {
+      page: {
+        collection: source.collection,
+        rows: source.rows.slice(view.offset, view.offset + view.limit),
+      },
+      total: source.rows.length,
+    };
+  const selected: (Partial<T> & Pick<T, K> & { source_index: number })[] = [];
+  const start = filtering ? 0 : Math.min(view.offset, source.rows.length);
+  const end = filtering
+    ? source.rows.length
+    : Math.min(view.offset + view.limit, source.rows.length);
+  let total = filtering ? 0 : source.rows.length;
+  let unresolved = 0;
+  for (let index = start; index < end; index++) {
+    const row = source.rows[index];
+    if (row === undefined) continue;
+    const matched = matchRow(row, source, { names, declaringTypes });
+    if (matched === false) continue;
+    if (matched === null) {
+      unresolved++;
+      continue;
+    }
+    const ordinal = filtering ? total++ : index;
+    if (ordinal < view.offset || selected.length >= view.limit) continue;
+    selected.push(projectRow(row, index, fields, source.identity));
+  }
+  return {
+    page: {
+      collection: source.collection,
+      rows: selected,
+      source_count: source.rows.length,
+      unresolved_filter_rows: unresolved,
+    },
+    total,
+  };
+};
+
+const projectRow = <T extends Row, K extends keyof T>(
+  row: T,
+  index: number,
+  fields: ReadonlySet<string> | undefined,
+  identity: readonly K[],
+): Partial<T> & Pick<T, K> & { source_index: number } => {
+  const projected: Partial<T> & { source_index: number } = {
+    ...row,
+    source_index: index,
+  };
+  if (fields !== undefined) {
+    for (const key of Object.keys(row) as (keyof T & string)[])
+      if (!fields.has(key) && !identity.includes(key as K))
+        delete projected[key];
+  }
+  // Keys in identity come from the parsed row and are never removed above.
+  return projected as Partial<T> & Pick<T, K> & { source_index: number };
+};
+
+const matchRow = <T extends Row>(
+  row: T,
+  source: { readonly name?: keyof T; readonly declaringType?: keyof T },
+  filters: {
+    readonly names: ReadonlySet<string> | undefined;
+    readonly declaringTypes: ReadonlySet<string> | undefined;
+  },
+): boolean | null => {
+  const name = matches(
+    filters.names,
+    source.name === undefined ? undefined : row[source.name],
+  );
+  const declaringType = matches(
+    filters.declaringTypes,
+    source.declaringType === undefined ? undefined : row[source.declaringType],
+  );
+  if (name === false || declaringType === false) return false;
+  return name === null || declaringType === null ? null : true;
+};
+
+const matches = (
+  selection: ReadonlySet<string> | undefined,
+  value: unknown,
+): boolean | null => {
+  if (selection === undefined) return true;
+  if (selection.size === 0) return false;
+  return typeof value === "string" ? selection.has(value) : null;
+};
+
 const parseMemberReport = createAnalysisViewResultReader(
   managedMemberInspectionSchema,
 );
@@ -154,7 +243,7 @@ const parseMemberReport = createAnalysisViewResultReader(
 /** Everything but the member collections, which are replaced by their counts. */
 const summarizeMembers = (
   report: ManagedMemberInspection,
-): z.infer<typeof managedMemberSummarySchema> => {
+): ManagedMemberSummary => {
   const {
     types,
     exported_types,
@@ -188,8 +277,8 @@ const summarizeMembers = (
 /** Project authenticated member Evidence without reading a path or invoking a provider. */
 export const projectManagedMemberView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (view.kind !== "summary" && view.kind !== "managed-members")
     return err(
       analysisViewInputError([
@@ -201,6 +290,9 @@ export const projectManagedMemberView = (
         },
       ]),
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof managedMembersViewRequestSchema>
+  >(view, "summary", "managed-members");
   const parsed = parseMemberReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
@@ -230,7 +322,7 @@ export const projectManagedMemberView = (
       0,
     );
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary,
@@ -249,11 +341,20 @@ export const projectManagedMemberView = (
       ]),
     );
   const { page, total } = selected;
+  if (
+    "unresolved_filter_rows" in page &&
+    page.unresolved_filter_rows !== undefined &&
+    page.unresolved_filter_rows > 0
+  )
+    shared.unknowns.push(
+      `${page.unresolved_filter_rows} source rows have unknown requested names or declaring types and may match the filters; the matched total excludes them.`,
+    );
   return ok({
-    kind: "managed-members",
+    kind: "managed-members" as const,
     view,
     page,
     ...shared,
+    module: report.module,
     signature_resolution: report.signature_resolution,
     nesting_read: report.nesting_read,
     identity_scope: report.identity_scope,

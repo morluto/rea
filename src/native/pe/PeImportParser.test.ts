@@ -42,6 +42,49 @@ it("reads named PE32+ imports and a pefile-compatible import hash", async () => 
   expect(report.delay_imports).toEqual([]);
 });
 
+it.each(["standard", "delay"] as const)(
+  "does not read %s descriptors past the declared directory size",
+  async (kind) => {
+    const bytes = peImportImage(
+      kind === "standard"
+        ? {
+            dlls: [
+              { name: "ONE.dll", functions: [{ name: "First" }] },
+              { name: "TWO.dll", functions: [{ name: "Second" }] },
+            ],
+          }
+        : {
+            dlls: [],
+            delayDlls: [
+              { name: "ONE.dll", functions: [{ name: "First" }] },
+              { name: "TWO.dll", functions: [{ name: "Second" }] },
+            ],
+          },
+    );
+    const directoryAt = 152 + 112 + (kind === "standard" ? 1 : 13) * 8;
+    const directoryRva = bytes.readUInt32LE(directoryAt);
+    const descriptorBytes = kind === "standard" ? 20 : 32;
+    bytes.writeUInt32LE(descriptorBytes, directoryAt + 4);
+
+    const report = await parse(bytes);
+    const rows = kind === "standard" ? report.imports : report.delay_imports;
+    const directory =
+      kind === "standard"
+        ? report.import_directory
+        : report.delay_import_directory;
+    expect(rows.map((row) => row.name)).toEqual(["ONE.dll"]);
+    expect(directory?.locations).toHaveLength(1);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_entry",
+        location: `0x${(directoryRva + descriptorBytes).toString(16)}`,
+        message: expect.stringContaining("ends before a null descriptor"),
+      }),
+    );
+  },
+);
+
 const parse = (bytes: Buffer) => parsePeImports(bytes, artifact(bytes), input);
 
 it.each([
@@ -114,8 +157,9 @@ it("does not consume a DLL name past the uint32 RVA end", async () => {
   expect(report.imports[0]?.functions).toHaveLength(2);
   expect(report.coverage).toMatchObject({
     status: "partial",
-    reason:
-      "1 import table issue(s) affect reported rows or metadata; see issues",
+    reason: expect.stringMatching(
+      /1 import table issue.*reported rows or metadata/i,
+    ),
   });
   expect(report.issues).toEqual(
     expect.arrayContaining([
@@ -363,7 +407,11 @@ it.each([
     /invalid/u,
   ],
   ["ordinal 0", { ordinal: 0 }, /ordinal 0/u],
-  ["a name pefile truncates", { name: "A".repeat(512) }, /invalid/u],
+  [
+    "a name reaching pefile's read limit",
+    { name: "A".repeat(512) },
+    /512-byte read limit/u,
+  ],
 ] as const)(
   "withholds the import hash for %s rather than diverge from pefile",
   async (_label, entry, reason) => {
@@ -378,6 +426,44 @@ it.each([
     expect(report.imphash.reason).toMatch(reason);
   },
 );
+
+it.each([511, 512, 513])(
+  "retains a %i-byte function name and explains the pefile read boundary",
+  async (length) => {
+    const name = "A".repeat(length);
+    const report = await parse(
+      peImportImage({
+        sectionBytes: 0x1000,
+        dlls: [{ name: "k.dll", functions: [{ name }] }],
+      }),
+    );
+    expect(report.coverage.status).toBe("complete");
+    expect(report.imports[0]?.functions[0]?.name).toBe(name);
+    if (length === 511) {
+      expect(report.imphash.md5).toBe("897726129e4219bdf7853234ba4eeb69");
+      expect(report.imphash.reason).toBeNull();
+    } else {
+      expect(report.imphash.md5).toBeNull();
+      expect(report.imphash.reason).toContain("512-byte read limit");
+      expect(report.imphash.reason).toContain("truncated name");
+    }
+  },
+);
+
+it("describes the same bounded read for a long DLL name", async () => {
+  const name = `${"A".repeat(513)}.dll`;
+  const report = await parse(
+    peImportImage({
+      sectionBytes: 0x1000,
+      dlls: [{ name, functions: [{ name: "ExitProcess" }] }],
+    }),
+  );
+  expect(report.imports[0]?.name).toBe(name);
+  expect(report.imphash.md5).toBeNull();
+  expect(report.imphash.reason).toContain(
+    "DLL name reaches pefile's 512-byte read limit",
+  );
+});
 
 it("reads delay-load descriptors separately from the import hash", async () => {
   const bytes = peImportImage({

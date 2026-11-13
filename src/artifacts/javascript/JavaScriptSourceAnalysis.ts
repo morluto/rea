@@ -1,9 +1,11 @@
+import { resolveJavaScriptSemanticPrecision } from "../../domain/javascript/javascriptSemanticPrecision.js";
 import type {
   JavaScriptSourceAnalysisLimits,
   JavaScriptSourceAnalysisPort,
 } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import { JavaScriptAnalysisWorker } from "../../javascript/analysis/JavaScriptAnalysisWorker.js";
 import type { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
+import { WorkerCleanupRegistry } from "../../process/OwnedWorkerRuntime.js";
 import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 
 interface RetainedJavaScriptSourceAnalysis {
@@ -17,6 +19,21 @@ const retained = new WeakMap<
   RetainedJavaScriptSourceAnalysis
 >();
 const closeHookRegistered = new WeakSet<ArtifactResourceScope>();
+const workerCleanups = new WeakMap<
+  ArtifactResourceScope,
+  WorkerCleanupRegistry
+>();
+
+const workerCleanupFor = (
+  scope: ArtifactResourceScope,
+): WorkerCleanupRegistry => {
+  let cleanup = workerCleanups.get(scope);
+  if (cleanup === undefined) {
+    cleanup = new WorkerCleanupRegistry();
+    workerCleanups.set(scope, cleanup);
+  }
+  return cleanup;
+};
 
 export interface JavaScriptSourceAnalysisAcquisition {
   /** Keep a healthy worker until this scope closes. */
@@ -82,7 +99,12 @@ const checkoutJavaScriptSourceAnalysis = async (
       throw cause;
     }
   }
-  const worker = new JavaScriptAnalysisWorker(limits, launcher, sourceCount);
+  const worker = new JavaScriptAnalysisWorker(
+    limits,
+    launcher,
+    sourceCount,
+    workerCleanupFor(scope),
+  );
   // A concurrent analysis may have parked another healthy worker while the
   // replaced process was closing. Claim the slot only when it is still empty.
   // This extra process is closed through the port returned below.
@@ -107,8 +129,25 @@ const registerJavaScriptSourceAnalysisClose = (
 const sameLimits = (
   left: JavaScriptSourceAnalysisLimits,
   right: JavaScriptSourceAnalysisLimits,
-): boolean =>
-  left.heapMb === right.heapMb && left.timeoutMs === right.timeoutMs;
+): boolean => {
+  if (
+    left.heapMb !== right.heapMb ||
+    left.timeoutMs !== right.timeoutMs ||
+    left.heapSource !== right.heapSource ||
+    left.timeoutSource !== right.timeoutSource
+  )
+    return false;
+  const leftPrecision = resolveJavaScriptSemanticPrecision(
+    left.semanticPrecision,
+  );
+  const rightPrecision = resolveJavaScriptSemanticPrecision(
+    right.semanticPrecision,
+  );
+  return Object.entries(leftPrecision).every(
+    ([key, value]) =>
+      rightPrecision[key as keyof typeof rightPrecision] === value,
+  );
+};
 
 /**
  * Park a healthy worker on its scope. The next checkout with the same limits

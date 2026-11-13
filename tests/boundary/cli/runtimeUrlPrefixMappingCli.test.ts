@@ -1,3 +1,4 @@
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { execFile } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -106,7 +107,7 @@ const reconcileThroughCli = async (
       observation_ms: 0,
       include_script_sources: false,
     }),
-    inspection,
+    { source: jsonValueSchema.parse(inspection), facts: inspection },
     {
       id: "rea-cdp-browser",
       name: "REA Chrome DevTools Protocol observation provider",
@@ -195,6 +196,31 @@ const mappedLocation = (path: string) => ({
   path,
   observed_as: 1,
 });
+
+it(
+  "matches a source-free webpack script to its containing asset",
+  async () => {
+    const root = await createTestTempDirectory("rea-url-bundler-asset-");
+    temporary.push(root);
+    await mkdir(join(root, "chunks"));
+    await writeFile(
+      join(root, "chunks", "runtime.js"),
+      '(globalThis["webpackChunkfixture"] = globalThis["webpackChunkfixture"] || []).push([["main"],{1:(module)=>{module.exports=1;}},(__webpack_require__)=>{__webpack_require__(1);}]);\n',
+    );
+    const analysis = await analyzeFixture(root);
+    const result = await reconcileThroughCli(root, analysis, [
+      "chunks/runtime.js",
+    ]);
+    expect(result.scripts.get("chunks/runtime.js")).toEqual(
+      mappedLocation("chunks/runtime.js"),
+    );
+    expect(result.loadStates.get("chunks/runtime.js")).toEqual({
+      status: "loaded",
+      reason: "runtime-script-correspondence",
+    });
+  },
+  INTEGRATION_TEST_TIMEOUT_MS,
+);
 
 it(
   "keeps an encoded slash inside one URL segment rather than naming a nested artifact",

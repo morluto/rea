@@ -1,6 +1,9 @@
 import { accessSync, constants, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { normalizeEntrypointPath } from "../process/CurrentEntrypointPath.js";
+import {
+  CURRENT_ENTRYPOINT_PATH,
+  normalizeEntrypointPath,
+} from "../process/CurrentEntrypointPath.js";
 import { valid } from "semver";
 
 import {
@@ -10,8 +13,8 @@ import {
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 
-/** Package runners whose pinned launcher setup can register. */
-export type PackageRunner = "npx" | "bunx";
+/** Package runners recognized for invocation guidance and legacy registrations. */
+type PackageRunner = "npx" | "bunx";
 
 /** Read one variable; Windows variable names are case-insensitive. */
 const environmentValue = (
@@ -57,23 +60,31 @@ export const withoutPackageRunnerIdentity = (
     ),
   );
 
-/** Resolve a pinned package-runner launcher that stdio clients can spawn on the host. */
-export const packageRunnerRegistrationCommand = (
-  runner: PackageRunner,
-  platform: NodeJS.Platform = process.platform,
+/** Bind the selected REA entrypoint to the runtime already executing setup. */
+export const currentClientRegistrationCommand = (
+  selection: {
+    readonly platform?: NodeJS.Platform;
+    readonly entrypointPath?: string | undefined;
+    readonly environment?: Readonly<NodeJS.ProcessEnv>;
+  } = {},
 ): readonly string[] => {
-  const command =
-    runner === "npx"
-      ? ["npx", "-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"]
-      : ["bunx", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"];
-  // Both runners may be .cmd shims on Windows, which clients cannot spawn directly.
-  return platform === "win32" ? ["cmd.exe", "/d", "/c", ...command] : command;
+  const platform = selection.platform ?? process.platform;
+  const environment = selection.environment ?? process.env;
+  const entrypointPath = Object.hasOwn(selection, "entrypointPath")
+    ? selection.entrypointPath
+    : CURRENT_ENTRYPOINT_PATH;
+  if (entrypointPath === undefined || entrypointPath.length === 0) return [];
+  return [
+    registrationRuntimePath(
+      process.execPath,
+      javaScriptRuntime(process.versions).id,
+      environment,
+      platform,
+    ),
+    registrationEntrypointPath(entrypointPath, environment, platform),
+    "mcp",
+  ];
 };
-
-/** Resolve a pinned npx launcher that stdio clients can spawn on the host. */
-export const npxRegistrationCommand = (
-  platform: NodeJS.Platform = process.platform,
-): readonly string[] => packageRunnerRegistrationCommand("npx", platform);
 
 const unwrapCmdCommand = (command: readonly string[]): readonly string[] => {
   const executable = command[0]?.toLowerCase();
@@ -170,7 +181,7 @@ const sameFileExecutableAlias = (
 };
 
 /** Prefer an executable PATH alias that proves the same selected REA file. */
-export const registrationEntrypointPath = (
+const registrationEntrypointPath = (
   entrypoint: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,

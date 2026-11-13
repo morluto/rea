@@ -43,12 +43,16 @@ it.each([
       parseEvidence(JSON.parse(stdout)).normalized_result,
     );
     const graph = result.semantic_graph;
+    const calls = graph.nodes.filter(
+      ({ kind, identity }) =>
+        kind === "call-site" && identity.source_range?.start.line === callLine,
+    );
+    expect(calls).toHaveLength(1);
+    const call = calls[0]!;
     const targets = graph.relations
       .filter(
         ({ relation, source_node_id }) =>
-          relation === "calls" &&
-          graph.nodes.find(({ node_id }) => node_id === source_node_id)
-            ?.identity.source_range?.start.line === callLine,
+          relation === "calls" && source_node_id === call.node_id,
       )
       .map(
         ({ target_node_id }) =>

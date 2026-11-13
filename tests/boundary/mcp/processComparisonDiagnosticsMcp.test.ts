@@ -64,8 +64,19 @@ const connect = async (
   session = createTestBinarySession(() => {
     throw new Error("Process comparison must not launch a provider");
   }),
+  maximumInputElements?: number,
 ) => {
-  const server = createServer({ kind: "session", session });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      environment: {
+        ...process.env,
+        ...(maximumInputElements === undefined
+          ? {}
+          : { REA_MCP_MAX_INPUT_ELEMENTS: String(maximumInputElements) }),
+      },
+    },
+  );
   const client = new Client({ name: "process-comparison-test", version: "1" });
   onTestFinished(async () => {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
@@ -263,9 +274,7 @@ it.each(["left", "right"] as const)(
         issues: [
           {
             path: ["evidence_id"],
-            message: expect.stringContaining(
-              "Evidence semantic identifier does not match its record",
-            ),
+            message: expect.stringMatching(/semantic identifier.*not match/iu),
           },
         ],
       },
@@ -434,7 +443,9 @@ it("rejects a deep trace cycle as an input error through CLI and MCP", async () 
     details: { issues: [issue] },
   });
 
-  const client = await connect();
+  // This 6,000-event graph intentionally exercises cycle validation beyond
+  // ordinary transport admission. Keep a finite explicit fixture allowance.
+  const client = await connect(undefined, 131_072);
   const response = await client.callTool({
     name: "compare_process_captures",
     arguments: { left: capture, right: capture, trace_spec: trace },

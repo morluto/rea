@@ -31,6 +31,8 @@ export interface StateRecordFacts {
     readonly start:
       | { readonly instant: OffsetDateTimeInstant; readonly ms: number }
       | undefined;
+    /** Exact completion, independent of the millisecond chronology policy. */
+    readonly end: OffsetDateTimeInstant | undefined;
     readonly endMs: number | undefined;
   };
 }
@@ -73,6 +75,7 @@ export interface StateBudget {
 
 export type RecordedViewReason =
   | "query-body"
+  | "method-replay"
   | "no-init-recording"
   | "body-unusable"
   | "no-identity"
@@ -155,6 +158,8 @@ export type StateItemView = EntityViewPlan &
   ReplayedReads & {
     readonly shape: "item";
     readonly envelope_ordinal: number;
+    /** The member its reads set `true` on an entity the application soft-deleted and still answers by id. */
+    readonly deleted_flag?: (typeof DELETED_FLAGS)[number] | undefined;
   };
 
 /** A query parameter that asks for some fields only (`fields`, `fields[...]`, `select`, `$select`). */
@@ -189,9 +194,45 @@ export type StateListView = EntityViewPlan &
     /** With recorded membership, the checked lines that each list their whole collection. */
     readonly all_record_ordinals?: number[] | undefined;
     readonly counters: string[];
+    /** Top-level envelope members that hold the listed entities' values of an identity field, in list order. */
+    readonly listed_ids?: ListedIds[] | undefined;
     /** The query the view's other lines follow, when one explains any of them. */
     readonly query?: ListQuery | undefined;
   };
+
+/** Members an application sets `true` on an entity it has soft-deleted but still answers for by id. */
+export const DELETED_FLAGS = ["deleted", "isDeleted", "is_deleted"] as const;
+
+/** The member an item read's object sets `true` to mark the entity soft-deleted, if it does. */
+export const deletedFlag = (
+  object: JsonValue | undefined,
+): (typeof DELETED_FLAGS)[number] | undefined =>
+  isObject(object)
+    ? DELETED_FLAGS.find((name) => ownMember(object, name) === true)
+    : undefined;
+
+/** Whether an item read's object is one the application has soft-deleted, which says the entity is gone. */
+export const markedDeleted = (object: JsonValue | undefined): boolean =>
+  deletedFlag(object) !== undefined;
+
+/** An envelope member listing an identity field of each listed entity, as Paperless's `all` lists ids. */
+export interface ListedIds {
+  readonly member: string;
+  readonly field: string;
+}
+
+/** Whether a value lists the items' values of a field, in their order. */
+export const listsIds = (
+  value: JsonValue | undefined,
+  items: readonly JsonObject[],
+  field: string,
+): boolean =>
+  Array.isArray(value) &&
+  value.length === items.length &&
+  items.every((item, index) => {
+    const id = ownMember(item, field);
+    return id !== undefined && same(value[index], id);
+  });
 
 /** Whether a list view answers on a checked line with every entity of the collection. */
 export const listsAll = (view: StateListView, ordinal: number): boolean =>
@@ -230,6 +271,13 @@ export interface ExtractedState {
 }
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/** HTTP safe methods share read-only classification across state and MCP views. */
+export const isSafeHttpMethod = (method: string): boolean =>
+  method === "GET" ||
+  method === "HEAD" ||
+  method === "OPTIONS" ||
+  method === "TRACE";
 /** A POST whose path names one of these segments queries state rather than changing it. */
 export const QUERY_SEGMENTS = new Set([
   "search",
@@ -584,19 +632,22 @@ export const replaceAt = (
 const matchingKeys = (object: JsonObject, value: string): string[] =>
   Object.keys(object).filter((key) => scalarText(object[key]) === value);
 
-/** The entity object an item response carries with the keys repeating its path value: at the root or in one wrapper member, else as the element of a one-element array there. */
-export const locateItem = (
+/** Candidate entity objects at the first matching envelope tier. A known identity field constrains admission before choosing a tier; multiple candidates remain ambiguous. */
+export const locateItems = (
   body: JsonValue,
   value: string,
-): { readonly pointer: string; readonly keys: string[] } | undefined => {
+  idField?: string,
+): readonly { readonly pointer: string; readonly keys: string[] }[] => {
   const located = (
     object: JsonValue | undefined,
     pointer: string,
     named = false,
   ) => {
     const keys = isObject(object)
-      ? matchingKeys(object, value).filter(
-          (key) => !named || IDENTITY_NAMES.includes(key),
+      ? matchingKeys(object, value).filter((key) =>
+          idField !== undefined
+            ? key === idField
+            : !named || IDENTITY_NAMES.includes(key),
         )
       : [];
     return keys.length > 0 ? [{ pointer, keys }] : [];
@@ -612,8 +663,17 @@ export const locateItem = (
       located(soleElement(item), `${pointerTo(name)}/0`, true),
     ),
   ];
-  const chosen = tiers.find((tier) => tier.length > 0);
-  return chosen?.length === 1 ? chosen[0] : undefined;
+  return tiers.find((tier) => tier.length > 0) ?? [];
+};
+
+/** The unique entity object at the first matching envelope tier; absent or ambiguous otherwise. */
+export const locateItem = (
+  body: JsonValue,
+  value: string,
+  idField?: string,
+): { readonly pointer: string; readonly keys: string[] } | undefined => {
+  const candidates = locateItems(body, value, idField);
+  return candidates.length === 1 ? candidates[0] : undefined;
 };
 
 /** Whether every item carries `name` as a distinct string or number. */
@@ -782,15 +842,18 @@ export const missingRequiredFields = (
 
 /**
  * A list response rendered from `base`: its array replaced by `items`, and set to their number each counter that
- * counted the items `base` listed; one that did not, such as a partial page's total, keeps its recorded value.
+ * counted the items `base` listed; one that did not, such as a partial page's total, keeps its recorded value. Each
+ * member that listed the ids of the items `base` listed lists theirs, unless `items` are a page of more matches.
  */
 export const renderStateList = (
-  view: Pick<StateListView, "pointer" | "counters">,
+  view: Pick<StateListView, "pointer" | "counters" | "listed_ids">,
   base: JsonValue,
   items: readonly JsonObject[],
+  whole = true,
 ): JsonValue => {
-  const listed = listItems(base, view.pointer)?.length;
-  return view.counters.reduce(
+  const shown = listItems(base, view.pointer);
+  const listed = shown?.length;
+  const counted = view.counters.reduce(
     (body, name) => {
       const observed = counterAt(base, name);
       if (listed === undefined || recordedItemCount(observed) !== listed)
@@ -799,4 +862,20 @@ export const renderStateList = (
     },
     replaceAt(base, view.pointer, [...items]),
   );
+  if (!whole || shown === undefined || !isObject(counted)) return counted;
+  const lists = (view.listed_ids ?? []).filter(
+    ({ member, field }) =>
+      isObject(base) &&
+      listsIds(ownMember(base, member), shown, field) &&
+      items.every((item) => ownMember(item, field) !== undefined),
+  );
+  if (lists.length === 0) return counted;
+  const body: JsonObject = { ...counted };
+  for (const { member, field } of lists)
+    setOwnMember(
+      body,
+      member,
+      items.map((item) => ownMember(item, field)!),
+    );
+  return body;
 };

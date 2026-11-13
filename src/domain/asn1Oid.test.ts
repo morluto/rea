@@ -22,7 +22,7 @@ it("distinguishes malformed arcs from each caller-selected capacity bound", () =
     ok: false,
     error: { kind: "empty" },
   });
-  expect(decodeAsn1Oid(Uint8Array.of(0x2a, 0x80), limits)).toEqual({
+  expect(decodeAsn1Oid(Uint8Array.of(0x2a, 0x81), limits)).toEqual({
     ok: false,
     error: { kind: "truncated" },
   });
@@ -38,5 +38,23 @@ it("distinguishes malformed arcs from each caller-selected capacity bound", () =
   expect(decodeAsn1Oid(content, { bytes: 3, arcBytes: 1 })).toEqual({
     ok: false,
     error: { kind: "arc-limit", limit: 1 },
+  });
+});
+
+it.each([
+  [0x80, 0x2a],
+  [0x2a, 0x80, 0x03],
+  [0x2a, 0x80, 0x80, 0x00],
+])("rejects a non-minimal subidentifier: %j", (...bytes) => {
+  expect(decodeAsn1Oid(Uint8Array.from(bytes), limits)).toEqual({
+    ok: false,
+    error: { kind: "non-minimal" },
+  });
+});
+
+it("preserves zero subidentifiers and internal zero base-128 groups", () => {
+  expect(decodeAsn1Oid(Uint8Array.of(0, 0, 0x81, 0x80, 0), limits)).toEqual({
+    ok: true,
+    value: "0.0.0.16384",
   });
 });

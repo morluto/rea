@@ -1,6 +1,6 @@
 import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { Help, z } from "incur";
+import { Help } from "incur";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -8,8 +8,7 @@ import { StringDecoder } from "node:string_decoder";
 import { createCatalogIdentity } from "./catalogIdentity.js";
 import { jsonLinesErrorRecord } from "./cli/jsonLines.js";
 import {
-  CLI_OUTPUT_FORMATS,
-  type CliOutputFormat,
+  CLI_DOCUMENT_OUTPUT_FORMATS,
   missingCliOutputValueMessage,
   renderCliDocument,
 } from "./cliOutput.js";
@@ -19,8 +18,14 @@ import {
 } from "./config/mcpInputSchemaProfile.js";
 import { parseMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
 import { parseMcpToolFamilies } from "./config/mcpToolFamilies.js";
+import { parseMcpToolCatalogProfile } from "./config/mcpToolCatalogProfile.js";
+import {
+  DISCOVER_TOOLS,
+  HOT_TOOL_NAMES,
+  progressiveCatalogIdentity,
+} from "./catalogDiscovery.js";
 import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
-import { promptsForToolFamilies } from "./contracts/promptContracts.js";
+import { promptsForToolFamilies } from "./contracts/promptToolFamilyScope.js";
 import { err, ok } from "./domain/result.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import {
@@ -31,24 +36,10 @@ import {
   MCP_STARTUP_POLICY,
   mcpDoctorDeadlineRecovery,
 } from "./mcpStartupPolicy.js";
+import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
 
-const OUTPUT_FORMATS = CLI_OUTPUT_FORMATS;
-type OutputFormat = CliOutputFormat;
-
-/**
- * Canonical `rea mcp doctor` options. This schema is the single source of
- * truth: the argument parser accepts exactly these options (plus the `-h`
- * alias below) and the help renderer lists them. Keep them in sync by
- * changing this schema, not either consumer.
- */
-const MCP_DOCTOR_OPTIONS = z.object({
-  format: z.enum(OUTPUT_FORMATS).optional().describe("Output format"),
-  json: z.boolean().optional().describe("Emit the report as JSON"),
-  fullOutput: z.boolean().optional().describe("Show the full output envelope"),
-  help: z.boolean().optional().describe("Show help"),
-});
-
-const MCP_DOCTOR_ALIAS = { help: "h" } as const;
+const OUTPUT_FORMATS = CLI_DOCUMENT_OUTPUT_FORMATS;
+type OutputFormat = (typeof OUTPUT_FORMATS)[number];
 
 const MCP_DOCTOR_COMMAND = "rea mcp doctor";
 const MCP_DOCTOR_DESCRIPTION = "Validate MCP adapter startup and tool listing";
@@ -78,7 +69,6 @@ interface McpDoctorOptions {
   readonly args: readonly string[];
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string | undefined>>;
-  readonly deadlineMs?: number;
 }
 
 interface InventoryComparison {
@@ -121,10 +111,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       },
     };
   const expectation = doctorExpectationForEnvironment(options.environment);
-  const budget = appliedDoctorBudget(
-    parsedBudgets.value.doctor,
-    options.deadlineMs,
-  );
+  const budget = parsedBudgets.value.doctor;
   const budgetMs = budget.milliseconds;
   const deadline = performance.now() + budgetMs;
   const controller = new AbortController();
@@ -237,7 +224,7 @@ class OwnedStdioClientTransport extends StdioClientTransport {
 }
 
 /** A valid scope can intentionally omit the target-free session request. */
-export const MCP_DOCTOR_SESSION_SCOPE_DETAIL =
+const MCP_DOCTOR_SESSION_SCOPE_DETAIL =
   "binary_session is outside the selected tool families; include the session family for request-flow and identity checks";
 
 /** Doctor expectations derived from the same environment the child inherits. */
@@ -247,6 +234,14 @@ interface DoctorCatalogExpectation {
   readonly expectedPromptNames: readonly string[];
 }
 
+const listPromptsWhenAdvertised = (
+  client: Client,
+  request: ReturnType<typeof requestOptions>,
+) =>
+  client.getServerCapabilities()?.prompts
+    ? client.listPrompts(undefined, request)
+    : Promise.resolve({ prompts: [] });
+
 const inspectProductionMcpSession = async (
   client: Client,
   deadline: number,
@@ -255,9 +250,13 @@ const inspectProductionMcpSession = async (
   budget: McpPhaseBudget,
 ) => {
   const request = requestOptions(deadline, signal);
+  // The SDK logs to stdout when listPrompts is called without the advertised
+  // capability, which corrupts the doctor's structured output. An absent
+  // capability is an empty prompt inventory for this diagnostic.
+  const promptsRequest = listPromptsWhenAdvertised(client, request);
   const [tools, prompts] = await Promise.all([
     client.listTools(undefined, request),
-    client.listPrompts(undefined, request),
+    promptsRequest,
   ]);
   const sessionTool = tools.tools.find(({ name }) => name === "binary_session");
   // A scope without the session family cannot serve request flow at all;
@@ -407,7 +406,7 @@ export const runProductionMcpDoctorCli = async (
 };
 
 /** Compare exact names while retaining actionable mismatch locations. */
-export const compareInventory = (
+const compareInventory = (
   expectedNames: readonly string[],
   observedNames: readonly string[],
 ): InventoryComparison => {
@@ -603,18 +602,30 @@ const doctorExpectationForEnvironment = (
       : undefined;
   const contracts = contractsForToolFamilies(selection);
   const promptContracts = promptsForToolFamilies(selection);
+  const catalogProfile = parseMcpToolCatalogProfile(
+    environment.REA_MCP_TOOL_CATALOG_PROFILE,
+  );
+  const progressive = catalogProfile.ok && catalogProfile.value === "hot-cold";
+  const catalog = createCatalogIdentity({
+    compactPresentation: compactPresentationForMcpInputSchemaProfile(
+      inputProfile.ok ? inputProfile.value : undefined,
+    ),
+    contracts,
+    outputSchemaProfile: outputProfile.ok
+      ? (outputProfile.value ?? "full")
+      : "full",
+    promptContracts,
+  });
   return {
-    catalog: createCatalogIdentity({
-      compactPresentation: compactPresentationForMcpInputSchemaProfile(
-        inputProfile.ok ? inputProfile.value : undefined,
-      ),
-      contracts,
-      outputSchemaProfile: outputProfile.ok
-        ? (outputProfile.value ?? "full")
-        : "full",
-      promptContracts,
-    }),
-    expectedToolNames: contracts.map(({ name }) => name),
+    catalog: progressive ? progressiveCatalogIdentity(catalog) : catalog,
+    expectedToolNames: progressive
+      ? [
+          ...contracts
+            .map(({ name }) => name)
+            .filter((name) => HOT_TOOL_NAMES.has(name)),
+          DISCOVER_TOOLS.name,
+        ]
+      : contracts.map(({ name }) => name),
     expectedPromptNames: promptContracts.map(({ name }) => name),
   };
 };
@@ -670,23 +681,3 @@ const doctorTransportDetail = (
     (cause instanceof SdkError && cause.code === SdkErrorCode.RequestTimeout);
   return timedOut ? `${message} ${mcpDoctorDeadlineRecovery(budget)}` : message;
 };
-
-/**
- * `deadlineMs` is a caller-selected applied deadline, used by tests. Omitted
- * means the budget resolved from `REA_MCP_DOCTOR_DEADLINE_MS`.
- */
-const appliedDoctorBudget = (
-  resolved: McpPhaseBudget,
-  deadlineMs: number | undefined,
-): McpPhaseBudget =>
-  deadlineMs === undefined
-    ? resolved
-    : {
-        ...resolved,
-        milliseconds: deadlineMs,
-        source:
-          deadlineMs === resolved.defaultMilliseconds &&
-          resolved.source === "default"
-            ? "default"
-            : "setting",
-      };

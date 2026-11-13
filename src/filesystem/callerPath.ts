@@ -22,20 +22,22 @@ export const appendCallerPath = (
  * change the named file; every `..` is kept for the filesystem to resolve, and
  * a trailing `/` or `/.` keeps its directory requirement as one trailing `/`.
  * A relative `cwd` is made absolute the same way. Win32 resolves `..`
- * lexically, so normalizing there is exact.
+ * lexically, so normalizing there is exact. Absolute POSIX paths never need
+ * the ambient cwd, which may already have been removed during cleanup.
  */
 export const absoluteCallerPath = (
   path: string,
   {
-    cwd = process.cwd(),
+    cwd,
     platform = process.platform,
   }: { readonly cwd?: string; readonly platform?: NodeJS.Platform } = {},
 ): string => {
-  if (platform === "win32") return win32.resolve(cwd, path);
+  if (platform === "win32") return win32.resolve(cwd ?? process.cwd(), path);
   if (!posix.isAbsolute(path)) {
-    const base = posix.isAbsolute(cwd)
-      ? cwd
-      : absoluteCallerPath(cwd, { platform });
+    const selectedCwd = cwd ?? process.cwd();
+    const base = posix.isAbsolute(selectedCwd)
+      ? selectedCwd
+      : absoluteCallerPath(selectedCwd, { platform });
     return absoluteCallerPath(`${base}/${path}`, { platform });
   }
   const segments = path

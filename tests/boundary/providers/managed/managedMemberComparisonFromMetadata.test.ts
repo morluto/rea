@@ -36,8 +36,12 @@ it("selects namespace-bearing nested declarations from parsed type facts and com
   expect(selected.result.methods).toHaveLength(2);
   expect(selected.result.fields).toHaveLength(2);
   const comparison = compareManagedMembers(selected, selected);
+  expect(comparison.methods).toHaveLength(2);
+  expect(comparison.fields).toHaveLength(2);
   expect(
-    comparison.methods.every(({ match }) => match.status === "matched"),
+    [...comparison.methods, ...comparison.fields].every(
+      ({ match }) => match.status === "matched",
+    ),
   ).toBe(true);
   expect(comparison.summary).toMatchObject({ added: 0, removed: 0 });
   expect(
@@ -179,8 +183,10 @@ describe("managed comparison selected scope agreement", () => {
     expect(explicit.result.selection).not.toEqual(bare.result.selection);
     const comparison = compareManagedMembers(bare, explicit);
     expect(comparison.coverage.status).toBe("complete-within-inputs");
-    expect(comparison.limitations).toContain(
-      "Both observations cover only the selected declaring types (Fixture.Inner, Inner); member totals and statuses describe those types, not the whole assembly.",
+    expect(comparison.limitations).toContainEqual(
+      expect.stringMatching(
+        /selected declaring types.*Fixture\.Inner.*Inner.*not the whole assembly/iu,
+      ),
     );
   });
 
@@ -216,8 +222,8 @@ describe("managed comparison selected scope agreement", () => {
       unchanged: 0,
     });
     expect(comparison.matching.unmatched).toBe(4);
-    expect(comparison.limitations).toContain(
-      "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
+    expect(comparison.limitations).toContainEqual(
+      expect.stringMatching(/different declaring types.*unknown/iu),
     );
   });
 
@@ -255,8 +261,8 @@ describe("managed comparison selected scope agreement", () => {
           "Selected declaring-type scope agreement is unknown",
         ),
       );
-      expect(comparison.limitations).not.toContain(
-        "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
+      expect(comparison.limitations).not.toContainEqual(
+        expect.stringMatching(/different declaring types/iu),
       );
     },
   );
@@ -1859,8 +1865,8 @@ describe("managed member comparison of selected types", () => {
       right: null,
     });
     expect(result.coverage.status).toBe("partial");
-    expect(result.limitations).toContain(
-      "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/different declaring types.*unknown/iu),
     );
   });
 
@@ -1905,8 +1911,10 @@ describe("managed member comparison of selected types", () => {
 
     expect(result.methods[0]).toMatchObject({ status: "unchanged" });
     expect(result.coverage.status).toBe("complete-within-inputs");
-    expect(result.limitations).toContain(
-      "Both observations cover only the selected declaring types (Fixture.Program); member totals and statuses describe those types, not the whole assembly.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /selected declaring types.*Fixture\.Program.*not the whole assembly/iu,
+      ),
     );
   });
 });
@@ -2272,13 +2280,32 @@ describe("managed member comparison of raw-signature contention", () => {
       ...base,
       result: { ...base.result, methods: [], fields: [field] },
     };
-    for (const result of [
-      compareManagedMembers(withOwnerless, resolvedOnly),
-      compareManagedMembers(resolvedOnly, withOwnerless),
-    ])
+    for (const [result, leftTokens, rightTokens] of [
+      [
+        compareManagedMembers(withOwnerless, resolvedOnly),
+        [field.token, "0x04000002"],
+        [field.token],
+      ],
+      [
+        compareManagedMembers(resolvedOnly, withOwnerless),
+        [field.token],
+        [field.token, "0x04000002"],
+      ],
+    ] as const) {
       expect(
         result.fields.filter(({ match }) => match.status === "matched"),
       ).toEqual([]);
+      expect(result.fields.length).toBeGreaterThan(0);
+      expect(comparedTokens(result, "fields", "left")).toEqual(
+        [...leftTokens].sort(),
+      );
+      expect(comparedTokens(result, "fields", "right")).toEqual(
+        [...rightTokens].sort(),
+      );
+      expect(result.fields.every((item) => item.status === "unknown")).toBe(
+        true,
+      );
+    }
   });
 });
 
@@ -2569,62 +2596,43 @@ describe("managed member comparison of ownerless members", () => {
     }
   });
 
-  it("keeps a resolved copy out of the declared round when an ownerless competitor is on the left, as main does", () => {
-    const base = inspect(buildManagedPeFixture(), "/tmp/ownerless-left.dll");
-    const [method] = base.result.methods;
-    if (method === undefined) throw new Error("Expected a fixture method");
-    const ownerless = {
-      ...method,
-      declaring_type: null,
-      declaring_type_token: null,
-    };
-    // The left holds the resolved Foo and an ownerless Foo with the same CIL
-    // and signature; the right holds only the resolved Foo. The ownerless
-    // Foo's owner may be the resolved one, so the three stay ambiguous.
-    const withOwnerless = {
-      ...base,
-      result: { ...base.result, methods: [method, ownerless], fields: [] },
-    };
-    const resolvedOnly = {
-      ...base,
-      result: { ...base.result, methods: [method], fields: [] },
-    };
+  it.each(["left", "right"] as const)(
+    "keeps a resolved copy out of the declared round when an ownerless competitor is on the %s",
+    (side) => {
+      const base = inspect(
+        buildManagedPeFixture(),
+        `/tmp/ownerless-${side}.dll`,
+      );
+      const [method] = base.result.methods;
+      if (method === undefined) throw new Error("Expected a fixture method");
+      const ownerless = {
+        ...method,
+        declaring_type: null,
+        declaring_type_token: null,
+      };
+      // The ownerless Foo may belong to the same type as the resolved Foo,
+      // so both comparison directions must leave the three members ambiguous.
+      const withOwnerless = {
+        ...base,
+        result: { ...base.result, methods: [method, ownerless], fields: [] },
+      };
+      const resolvedOnly = {
+        ...base,
+        result: { ...base.result, methods: [method], fields: [] },
+      };
 
-    const result = compareManagedMembers(withOwnerless, resolvedOnly);
+      const result =
+        side === "left"
+          ? compareManagedMembers(withOwnerless, resolvedOnly)
+          : compareManagedMembers(resolvedOnly, withOwnerless);
 
-    expect(result.matching.ambiguous).toBe(1);
-    expect(
-      result.methods.filter(({ match }) => match.status === "matched"),
-    ).toEqual([]);
-    expect(result.summary).toMatchObject({ added: 0, removed: 0 });
-  });
-
-  it("keeps a resolved copy out of the declared round when an ownerless competitor is on the right, as main does", () => {
-    const base = inspect(buildManagedPeFixture(), "/tmp/ownerless-right.dll");
-    const [method] = base.result.methods;
-    if (method === undefined) throw new Error("Expected a fixture method");
-    const ownerless = {
-      ...method,
-      declaring_type: null,
-      declaring_type_token: null,
-    };
-    const withOwnerless = {
-      ...base,
-      result: { ...base.result, methods: [method, ownerless], fields: [] },
-    };
-    const resolvedOnly = {
-      ...base,
-      result: { ...base.result, methods: [method], fields: [] },
-    };
-
-    const result = compareManagedMembers(resolvedOnly, withOwnerless);
-
-    expect(result.matching.ambiguous).toBe(1);
-    expect(
-      result.methods.filter(({ match }) => match.status === "matched"),
-    ).toEqual([]);
-    expect(result.summary).toMatchObject({ added: 0, removed: 0 });
-  });
+      expect(result.matching.ambiguous).toBe(1);
+      expect(
+        result.methods.filter(({ match }) => match.status === "matched"),
+      ).toEqual([]);
+      expect(result.summary).toMatchObject({ added: 0, removed: 0 });
+    },
+  );
 
   it("keeps an ownerless method ambiguous beside a resolved method of the same shape", () => {
     const base = inspect(buildManagedPeFixture(), "/tmp/ownerless-shape.dll");
@@ -2679,6 +2687,9 @@ describe("managed member comparison of unresolved owners", () => {
       },
     });
     const result = compareManagedMembers(side("Main"), side("Renamed"));
+    expect(result.methods.length).toBeGreaterThan(0);
+    expect(comparedTokens(result, "methods", "left")).toEqual([method.token]);
+    expect(comparedTokens(result, "methods", "right")).toEqual([method.token]);
 
     for (const item of result.methods)
       expect(item.match.status).not.toBe("matched");
@@ -2797,12 +2808,16 @@ describe("managed member comparison of unresolved owners", () => {
       },
     };
 
-    for (const result of [
-      compareManagedMembers(left, right),
-      compareManagedMembers(right, left),
-    ])
+    for (const [result, leftToken, rightToken] of [
+      [compareManagedMembers(left, right), method.token, "0x06000002"],
+      [compareManagedMembers(right, left), "0x06000002", method.token],
+    ] as const) {
+      expect(result.methods.length).toBeGreaterThan(0);
+      expect(comparedTokens(result, "methods", "left")).toEqual([leftToken]);
+      expect(comparedTokens(result, "methods", "right")).toEqual([rightToken]);
       for (const item of result.methods)
         expect(item.match.status).not.toBe("matched");
+    }
   });
 });
 
@@ -3068,8 +3083,8 @@ describe("managed member comparison of resolved signatures", () => {
     expect(result.fields).toEqual([
       expect.objectContaining({ status: "unchanged" }),
     ]);
-    expect(result.limitations).toContain(
-      "At least one managed member observation does not attest signature type-name resolution, so signatures compare by raw bytes, which name types by build-local metadata row.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/signature type.name resolution.*raw bytes/iu),
     );
   });
 });
@@ -3298,8 +3313,8 @@ describe("managed member comparison limitations for resolved signatures", () => 
     };
     const result = compareManagedMembers(empty, empty);
 
-    expect(result.limitations).not.toContain(
-      "At least one managed member observation does not attest signature type-name resolution, so signatures compare by raw bytes, which name types by build-local metadata row.",
+    expect(result.limitations).not.toContainEqual(
+      expect.stringMatching(/does not attest signature type.name resolution/iu),
     );
   });
 });
@@ -3457,6 +3472,25 @@ const withTwin = (
     },
   };
 };
+
+/** Every retained source token, including unresolved candidates with no selected identity. */
+const comparedTokens = (
+  result: ReturnType<typeof compareManagedMembers>,
+  kind: "methods" | "fields",
+  side: "left" | "right",
+) =>
+  [
+    ...new Set(
+      result[kind]
+        .flatMap((item) => [
+          item[side]?.token,
+          ...(side === "left"
+            ? item.match.candidate_left_tokens
+            : item.match.candidate_right_tokens),
+        ])
+        .filter((token) => token !== undefined),
+    ),
+  ].sort();
 
 const inspect = (bytes: Buffer, path: string, typeNames?: string[]) => {
   const target = managedPeFixtureTarget(bytes, path);

@@ -16,7 +16,10 @@ import {
 } from "./environmentStateWriteAddress.js";
 import { bodyTarget } from "./environmentStateWriteChecks.js";
 import { responseShapeOf } from "./environmentStateWriteExplain.js";
-import { writtenBulkResponse } from "./environmentStateWriteApply.js";
+import {
+  optionalFields,
+  writtenBulkResponse,
+} from "./environmentStateWriteApply.js";
 import { deleteEntity } from "./environmentStateWriteDelete.js";
 import {
   built,
@@ -229,14 +232,29 @@ export const applyBulk = (
           : result?.kind === "applied"
             ? result.responseFields
             : undefined;
-        return fields === undefined ? [] : [{ id: target.id, fields }];
+        return fields === undefined
+          ? []
+          : [
+              {
+                id: target.id,
+                fields,
+                sent: Object.keys(named[index]!.body ?? {}),
+              },
+            ];
       });
       const fits =
         planned.shape === response.shape &&
         planned.pointer === response.pointer &&
         bulkResponseFits(planned, recorded, named);
+      // Replay renders as serving does: optional and later-only fields stay out for entities without them.
       const render = (exemplar: JsonValue | undefined) =>
-        writtenBulkResponse(planned, exemplar, written);
+        writtenBulkResponse(
+          planned,
+          exemplar,
+          written,
+          optionalFields(draft.plan),
+          context.laterFields(draft.plan.target ?? ""),
+        );
       const rendered =
         !fits || written.length !== named.length
           ? undefined

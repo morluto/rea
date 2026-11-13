@@ -32,7 +32,8 @@ const scenarios = [
       "# about rea",
       "[mcp_servers.rea]",
       "# inside the rea table",
-      'command = "old"',
+      'command = "npx"',
+      'args = ["-y", "rea-agents@6.1.0", "mcp"]',
       "",
       "# between rea and its environment",
       "[mcp_servers.rea.env]",
@@ -63,7 +64,8 @@ const scenarios = [
     original: [
       "# about rea",
       "[mcp_servers.rea]",
-      'command = "old"',
+      'command = "npx"',
+      'args = ["-y", "rea-agents@6.1.0", "mcp"]',
       "# trailing note without a line break",
     ].join("\n"),
     comments: ["# about rea", "# trailing note without a line break"],
@@ -121,7 +123,7 @@ for (const scenario of scenarios)
         configured.push(text);
         for (const comment of scenario.comments)
           expect(text, path).toContain(comment);
-        expect(text, path).not.toContain('command = "old"');
+        expect(text, path).not.toContain("rea-agents@6.1.0");
         expect(unrelatedValues(text), path).toEqual(
           unrelatedValues(scenario.original),
         );

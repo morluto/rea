@@ -128,8 +128,8 @@ describe.skipIf(process.platform !== "darwin")(
           code: "capability_unavailable",
           message: expect.stringContaining("(CLI: --relative-path)"),
           remediation: {
-            action: expect.stringContaining(
-              "Select another plist in the target with the path input (CLI: --relative-path).",
+            action: expect.stringMatching(
+              /select another plist.*path input.*--relative-path/iu,
             ),
           },
           details: {
@@ -398,8 +398,9 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action:
-              "The 64 MiB (67108864-byte) native binary plist decode allowance (no runtime override) is a fixed allowance. Worker memory limits, inherited limits, and additional host memory do not raise it. Select another complete input within the allowance when that preserves the needed observation. Repeating the unchanged request fails the same way.",
+            action: expect.stringMatching(
+              /64 MiB.*67108864.byte.*decode allowance.*no runtime override.*do not raise.*complete input.*unchanged request fails/iu,
+            ),
           },
           details: {
             operation: "inspect_plist",
@@ -427,8 +428,8 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action: expect.stringContaining(
-              "Select a suitable complete artifact within the fixed 64 MiB (67108864-byte) native plist input allowance (no runtime override).",
+            action: expect.stringMatching(
+              /complete artifact.*64 MiB.*67108864.byte.*input allowance.*no runtime override/iu,
             ),
           },
           details: {

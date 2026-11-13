@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
-import { setupRegistrationCommand } from "./SetupHost.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { discoverSetupState } from "./SetupPlan.js";
 import type { MsixPackageView } from "./MsixPackageStorage.js";
 import {
+  supportedClientRegistrationProfile,
   registrationWriteBlocker,
+  supportedClients,
   type SetupClient,
 } from "./SupportedClients.js";
 
@@ -32,6 +36,7 @@ const msixClaudeDesktop = (
   processView: MsixPackageView["processView"],
 ): SetupClient => ({
   name: "claude_desktop",
+  registrationProfile: supportedClientRegistrationProfile("claude_desktop"),
   displayName: "Claude Desktop",
   configPath: PRIVATE_CONFIG,
   quitBeforeSetup: true,
@@ -108,7 +113,12 @@ describe("setup workflow", () => {
   it("blocks malformed client configuration before Hopper or file mutation", async () => {
     const host = new FakeSetupHost();
     host.clients = [
-      { name: "codex", displayName: "Codex", configPath: "/codex.toml" },
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        displayName: "Codex",
+        configPath: "/codex.toml",
+      },
     ];
     host.clientInspections.set("codex", {
       status: "invalid",
@@ -134,10 +144,17 @@ describe("setup workflow", () => {
     host.clients = [
       {
         name: "claude_desktop",
+        registrationProfile:
+          supportedClientRegistrationProfile("claude_desktop"),
         displayName: "Claude Desktop",
         configPath: "/claude.json",
       },
-      { name: "cursor", displayName: "Cursor", configPath: "/cursor.json" },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        displayName: "Cursor",
+        configPath: "/cursor.json",
+      },
     ];
     host.clientInspections.set("claude_desktop", {
       status: "invalid",
@@ -160,7 +177,12 @@ describe("setup workflow", () => {
   it("plans a client update when Hopper installation changes its desired environment", async () => {
     const host = new FakeSetupHost();
     host.clients = [
-      { name: "codex", displayName: "Codex", configPath: "/codex.toml" },
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        displayName: "Codex",
+        configPath: "/codex.toml",
+      },
     ];
     host.clientInspections.set("codex", { status: "already_current" });
 
@@ -188,7 +210,13 @@ describe("optional Hopper installation failures", () => {
     // registrations and skill (#5113).
     const host = new FakeSetupHost();
     host.hopperInstallSucceeds = false;
-    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+    host.clients = [
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: "/cursor.json",
+      },
+    ];
     const result = await runSetup(
       {
         ...options(true, true),
@@ -209,14 +237,25 @@ describe("optional Hopper installation failures", () => {
   it("keeps the Hopper failure when a client write also fails", async () => {
     const host = new FakeSetupHost();
     host.hopperInstallSucceeds = false;
-    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+    host.clients = [
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: "/cursor.json",
+      },
+    ];
     host.clientResults.set("cursor", { status: "failed", reason: "write" });
     const result = await runSetup(
       { ...options(true, true), clientIds: ["cursor"] },
       host,
     );
     expect(result.code).toBe("download_failed");
-    expect(result.remediation).toMatch(/^Download failed\. ./);
+    expect(result.remediation).toContain("Download failed.");
+    expect(result.remediation).toContain("could not be updated");
+    expect(result.clients.cursor).toMatchObject({
+      status: "failed",
+      reason: "write",
+    });
     expect(host.configurations).toBe(1);
   });
 
@@ -224,7 +263,13 @@ describe("optional Hopper installation failures", () => {
     const host = new FakeSetupHost();
     host.hopperInstallSucceeds = false;
     host.skill = "failed";
-    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+    host.clients = [
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: "/cursor.json",
+      },
+    ];
     const result = await runSetup(
       {
         ...options(true, true),
@@ -234,8 +279,62 @@ describe("optional Hopper installation failures", () => {
       host,
     );
     expect(result.code).toBe("skill_install_failed");
-    expect(result.remediation).toMatch(/^Download failed\. ./);
+    expect(result.remediation).toContain("Download failed.");
+    expect(result.remediation).toContain("injected skill write failure");
     expect(host.skillInstalls).toBe(1);
+  });
+
+  it("returns the failed Hopper request facts beside its code, including after a later failure", async () => {
+    const download = {
+      request: "package",
+      url: "https://www.hopperapp.com:443/downloader/public/Hopper-demo.dmg",
+      kind: "http_status",
+      httpStatus: 503,
+    } as const;
+    const ready = new FakeSetupHost();
+    ready.hopperInstallSucceeds = false;
+    ready.hopperInstallFailure = {
+      status: "failed",
+      code: "download_failed",
+      remediation: "Package returned HTTP 503.",
+      download,
+    };
+    expect(await runSetup(options(true, true), ready)).toMatchObject({
+      status: "needs_human",
+      code: "download_failed",
+      remediation: "Package returned HTTP 503.",
+      download,
+    });
+
+    const skillFailure = new FakeSetupHost();
+    skillFailure.hopperInstallSucceeds = false;
+    skillFailure.hopperInstallFailure = ready.hopperInstallFailure;
+    skillFailure.skill = "failed";
+    skillFailure.clients = [
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: "/cursor.json",
+      },
+    ];
+    expect(
+      await runSetup(
+        {
+          ...options(true, true),
+          clientIds: ["cursor"],
+          skillClientIds: ["cursor"],
+        },
+        skillFailure,
+      ),
+    ).toMatchObject({ code: "skill_install_failed", download });
+  });
+
+  it("omits request facts when the Hopper failure observed none", async () => {
+    const host = new FakeSetupHost();
+    host.hopperInstallSucceeds = false;
+    expect(await runSetup(options(true, true), host)).not.toHaveProperty(
+      "download",
+    );
   });
 });
 
@@ -289,7 +388,13 @@ describe("configured Linux Hopper selection", () => {
 it("offers shared skill intent when the detected personal copy is current", async () => {
   const host = new FakeSetupHost();
   host.hopper = "/Applications/Hopper";
-  host.clients = [{ name: "claude_code", configPath: "/claude.json" }];
+  host.clients = [
+    {
+      name: "claude_code",
+      registrationProfile: supportedClientRegistrationProfile("claude_code"),
+      configPath: "/claude.json",
+    },
+  ];
   host.skillNeedsInstall = (clients) => Promise.resolve(clients.length === 0);
   const result = await runSetup(
     { ...options(false), structured: false },
@@ -324,8 +429,18 @@ describe("setup workflow action selection", () => {
     host.hopper = "/Applications/Hopper";
     host.skill = "unchanged";
     host.clients = [
-      { name: "codex", displayName: "Codex", configPath: "/codex.toml" },
-      { name: "cursor", displayName: "Cursor", configPath: "/cursor.json" },
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        displayName: "Codex",
+        configPath: "/codex.toml",
+      },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        displayName: "Cursor",
+        configPath: "/cursor.json",
+      },
     ];
 
     const result = await runSetup(
@@ -352,8 +467,18 @@ describe("setup workflow action selection", () => {
     host.skill = "unchanged";
     host.clients = [];
     host.availableClients = [
-      { name: "codex", displayName: "Codex", configPath: "/codex.toml" },
-      { name: "cursor", displayName: "Cursor", configPath: "/cursor.json" },
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        displayName: "Codex",
+        configPath: "/codex.toml",
+      },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        displayName: "Cursor",
+        configPath: "/cursor.json",
+      },
     ];
     host.clientInspections.set("cursor", {
       status: "invalid",
@@ -380,11 +505,18 @@ describe("setup workflow action selection", () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
     host.skill = "unchanged";
-    host.clients = [{ name: "codex", configPath: "/codex.toml" }];
+    host.clients = [
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        configPath: "/codex.toml",
+      },
+    ];
     host.productRegistrations = [
       {
         client: "codex",
         config_path: "/codex.toml",
+        command_identity: "foreign",
         command: ["unrelated-agent", "serve"],
         state: "stale",
         remediation: "Refresh this registration.",
@@ -405,7 +537,13 @@ describe("setup workflow action selection", () => {
     const host = new FakeSetupHost("win32");
     host.scopedDoctorHealthy = true;
     host.skill = "unchanged";
-    host.clients = [{ name: "codex", configPath: "C:\\config\\codex.toml" }];
+    host.clients = [
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        configPath: "C:\\config\\codex.toml",
+      },
+    ];
 
     const result = await runSetup(
       { ...options(true), clientIds: ["codex"], installSkill: false },
@@ -414,13 +552,23 @@ describe("setup workflow action selection", () => {
 
     expect(result.status).toBe("ready");
     expect(host.configuredCommands).toEqual([
-      setupRegistrationCommand("win32", undefined, CURRENT_ENTRYPOINT_PATH),
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: CURRENT_ENTRYPOINT_PATH,
+      }),
     ]);
     expect(
-      setupRegistrationCommand("win32", undefined, CURRENT_ENTRYPOINT_PATH),
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: CURRENT_ENTRYPOINT_PATH,
+      }),
     ).toEqual([process.execPath, CURRENT_ENTRYPOINT_PATH, "mcp"]);
-    expect(setupRegistrationCommand("win32", undefined, undefined)).toEqual([]);
-    expect(setupRegistrationCommand("win32", "npx", undefined)).not.toEqual([]);
+    expect(
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: undefined,
+      }),
+    ).toEqual([]);
   });
 });
 
@@ -445,7 +593,14 @@ describe("setup configuration failure recovery", () => {
   ] as const)("explains %s configuration recovery", async (reason, message) => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
-    host.clients = [{ name: "internal_client_key", configPath: "/agent.json" }];
+    host.clients = [
+      {
+        name: "internal_client_key",
+        // Source-only recovery actor models Cursor JSON registration.
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: "/agent.json",
+      },
+    ];
     host.clientResults.set("internal_client_key", { status: "failed", reason });
     // Exercise registration recovery without selecting a synthetic skill client.
     const result = await runSetup(
@@ -479,7 +634,13 @@ describe("setup configuration failure recovery", () => {
   it("names the recovery backup that holds the restored original after a readback failure", async () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
-    host.clients = [{ name: "cursor", configPath: "/agent.json" }];
+    host.clients = [
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: "/agent.json",
+      },
+    ];
     const backupPath = `/agent.json.rea.backup.${"a".repeat(64)}.recovery`;
     host.clientResults.set("cursor", {
       status: "failed",
@@ -537,9 +698,15 @@ describe("MSIX Claude Desktop setup", () => {
     const vscode = join(ROAMING, "Code", "User", "mcp.json");
     host.clients = [
       msixClaudeDesktop("redirected"),
-      { name: "vscode", displayName: "VS Code", configPath: vscode },
+      {
+        name: "vscode",
+        registrationProfile: supportedClientRegistrationProfile("vscode"),
+        displayName: "VS Code",
+        configPath: vscode,
+      },
       {
         name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
         displayName: "Codex",
         configPath: join(PROFILE, ".codex", "config.toml"),
       },
@@ -563,12 +730,60 @@ describe("MSIX Claude Desktop setup", () => {
     expect(host.configurations).toBe(1);
   });
 
+  it("blocks redirected AppData writes when migrated Claude storage is unresolved", async () => {
+    const home = await createTestTempDirectory("setup-claude-migrated-");
+    const local = join(home, "Local");
+    const roaming = join(home, "Roaming");
+    const family = "Claude_pzs8sxrjxfjjc";
+    const privateRoaming = join(
+      local,
+      "Packages",
+      family,
+      "LocalCache",
+      "Roaming",
+    );
+    const privateClaude = join(privateRoaming, "Claude");
+    await mkdir(privateClaude, { recursive: true });
+    await writeFile(join(privateClaude, "claude_desktop_config.json"), "{}");
+    await mkdir(join(local, "Claude-Data", family.toLowerCase()), {
+      recursive: true,
+    });
+    await symlink(privateRoaming, roaming, "junction");
+
+    const host = new FakeSetupHost("win32");
+    host.hopper = join(home, "Hopper");
+    host.skill = "unchanged";
+    host.clients = supportedClients(home, "win32", {
+      APPDATA: roaming,
+      LOCALAPPDATA: local,
+    });
+    expect(
+      host.clients.find(({ name }) => name === "claude_desktop")
+        ?.configPathError,
+    ).toContain("migrated Claude Desktop storage");
+
+    const blocked = await runSetup(
+      { ...options(true), clientIds: ["vscode"] },
+      host,
+    );
+    expect(blocked.status).toBe("needs_human");
+    expect(blocked.remediation).toContain(
+      `Changes to ${join(roaming, "Code", "User", "mcp.json")} would not reach the files other apps read.`,
+    );
+    expect(host.configurations).toBe(0);
+  });
+
   it("refuses registrations whose launcher only one MSIX package can see", async () => {
     const host = new FakeSetupHost("win32");
     host.hopper = join(PROFILE, "Hopper");
     host.registrationCommandBlocker = "Install REA outside the package.";
     host.clients = [
-      { name: "codex", displayName: "Codex", configPath: "/codex.toml" },
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        displayName: "Codex",
+        configPath: "/codex.toml",
+      },
     ];
 
     const blocked = await runSetup(
@@ -594,7 +809,13 @@ describe("setup tool family scope", () => {
     const host = new FakeSetupHost();
     host.doctorHealthy = true;
     host.skill = "unchanged";
-    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+    host.clients = [
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: "/cursor.json",
+      },
+    ];
 
     const plan = await runSetup(
       {
@@ -626,7 +847,13 @@ describe("setup tool family scope", () => {
     const host = new FakeSetupHost("darwin");
     host.version = "14.5";
     host.skill = "unchanged";
-    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+    host.clients = [
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: "/cursor.json",
+      },
+    ];
 
     const result = await runSetup(
       {
@@ -643,5 +870,34 @@ describe("setup tool family scope", () => {
     expect(result.plannedActions.map(({ kind }) => kind)).toContain(
       "install_hopper",
     );
+  });
+});
+
+it("discloses the selected catalog profile before applying it with the family scope", async () => {
+  const host = new FakeSetupHost();
+  host.doctorHealthy = true;
+  host.skill = "unchanged";
+  host.clients = [
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath: "/cursor.json",
+    },
+  ];
+  const selection = {
+    clientIds: ["cursor"],
+    toolCatalogProfile: "hot-cold" as const,
+    toolFamilies: "session,application",
+  };
+  const plan = await runSetup({ ...options(false), ...selection }, host);
+  expect(plan.plannedActions[0]?.detail).toContain(
+    "REA_MCP_TOOL_CATALOG_PROFILE=hot-cold",
+  );
+  expect(host.configuredProviderEnvironments).toEqual([]);
+  const applied = await runSetup({ ...options(true), ...selection }, host);
+  expect(applied.status).toBe("ready");
+  expect(host.configuredProviderEnvironments).toContainEqual({
+    REA_MCP_TOOL_FAMILIES: "session,application",
+    REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
   });
 });

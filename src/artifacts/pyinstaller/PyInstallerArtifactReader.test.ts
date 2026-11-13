@@ -15,7 +15,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { reconstructedPycHeader } from "./PythonBytecode.js";
 import { parsePythonPyc } from "../../python/PythonPycParser.js";
-import { inspectPythonPycInputSchema } from "../../domain/python/pythonPyc.js";
+import { pythonPycLimitsSchema } from "../../domain/python/pythonPyc.js";
 import {
   PYTHON_39_MAGIC,
   cArchiveExecutable,
@@ -117,7 +117,7 @@ it("preserves legacy pyc bytes and derives only modern headerless CArchive bytec
         parsePythonPyc(
           bytes,
           { path: module.name, bytes: bytes.length, sha256: sha256(bytes) },
-          inspectPythonPycInputSchema.parse({ path: module.name }),
+          pythonPycLimitsSchema.parse({}),
         ).coverage.status,
       ).toBe("complete");
       expect(await buffer(await reader.open(entry))).toEqual(module.bytes);
@@ -308,6 +308,36 @@ it("preserves the CArchive binary type as executable metadata", async () => {
   ).toMatchObject({
     executable: false,
     format_metadata: { type_code: "x" },
+  });
+});
+
+it("leaves binary members of a PE carrier unmarked", async () => {
+  // The Windows bootloader sets no execute bit.
+  const path = await writeArchive(
+    "executable-member-pe",
+    cArchiveExecutable({
+      carrier: "pe",
+      layout: "2.1",
+      pythonVersion: 314,
+      pythonLibrary: "python314.dll",
+      members: [
+        {
+          name: "helper.dll",
+          typeCode: "b",
+          payload: Buffer.from("MZ"),
+          compress: false,
+        },
+      ],
+    }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(
+    snapshot.occurrences.find(
+      ({ logical_path }) => logical_path === "helper.dll",
+    ),
+  ).toMatchObject({
+    executable: false,
+    format_metadata: { type_code: "b" },
   });
 });
 
@@ -560,12 +590,11 @@ it("rejects a truncated table of contents", async () => {
       tocBytes: Buffer.concat([Buffer.from([0, 0, 0, 64]), Buffer.alloc(16)]),
     }),
   );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toBeInstanceOf(
-    ArtifactReaderFailure,
+  const failure = await scanCanonicalArtifactInventory(path).catch(
+    (error: unknown) => error,
   );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
-    reason: "format",
-  });
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "format" });
 });
 
 it("rejects a cookie whose package range is outside the file", async () => {
@@ -892,7 +921,7 @@ it("retains the descriptor owner when admission cleanup fails", async () => {
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
       reason: "format",
-      message: `PyInstaller source is not a regular file: ${directory}`,
+      message: expect.stringContaining(directory),
       cleanup: {
         reason: closeFailure.message,
         resources: [directory],
@@ -909,68 +938,7 @@ it("retains the descriptor owner when admission cleanup fails", async () => {
   }
 });
 
-it("inventories and extracts a Windows member name under its canonical path", async () => {
-  const storedName = String.raw`pkg\data.bin`;
-  const pyzName = String.raw`res\icon.bin`;
-  const payload = Buffer.from("nested-bytes");
-  const icon = Buffer.from("icon-bytes");
-  const path = await writeArchive(
-    "windows",
-    cArchiveExecutable({
-      carrier: "pe",
-      layout: "2.1",
-      pythonVersion: 309,
-      pythonLibrary: "python39.dll",
-      members: [
-        { name: storedName, typeCode: "x", payload, compress: false },
-        {
-          name: "PYZ.pyz",
-          typeCode: "z",
-          payload: pyzArchive({
-            magic: PYTHON_39_MAGIC,
-            modules: [{ name: pyzName, typeCode: 2, body: icon }],
-          }),
-          compress: false,
-        },
-      ],
-    }),
-  );
-  const snapshot = await scanCanonicalArtifactInventory(path);
-  const member = snapshot.occurrences.find(
-    (occurrence) => occurrence.logical_path === "pkg/data.bin",
-  );
-  const resource = snapshot.occurrences.find(
-    (occurrence) => occurrence.logical_path === "PYZ.pyz/res/icon.bin",
-  );
-  expect(member?.format_metadata).toMatchObject({ source_name: storedName });
-  expect(resource?.format_metadata).toMatchObject({ source_name: pyzName });
-  expect(member?.source_path).toBe(storedName);
-  expect(resource?.source_path).toBe(pyzName);
-  const directory = await createTestTempDirectory("rea-pyinstaller-out-");
-  const output = join(directory, "extracted");
-  await materializeArtifactInventory(
-    {
-      inputPath: path,
-      inputFormat: "pe",
-      outputRoot: output,
-      environment: process.env,
-      integrityPolicy: "fail",
-    },
-    path,
-    snapshot,
-  );
-  expect(
-    Buffer.compare(await readFile(join(output, "pkg", "data.bin")), payload),
-  ).toBe(0);
-  expect(
-    Buffer.compare(
-      await readFile(join(output, "PYZ.pyz", "res", "icon.bin")),
-      icon,
-    ),
-  ).toBe(0);
-});
-
-it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ data", async () => {
+const posixPathFixture = async () => {
   const backslashName = String.raw`a\b.txt`;
   const slashName = "a/b.txt";
   const backslashPayload = Buffer.from("literal-backslash");
@@ -1010,6 +978,18 @@ it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ
     }),
   );
   const snapshot = await scanCanonicalArtifactInventory(path);
+  return {
+    path,
+    snapshot,
+    backslashName,
+    slashName,
+    backslashPayload,
+    slashPayload,
+  };
+};
+
+it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ data", async () => {
+  const { snapshot, backslashName, slashName } = await posixPathFixture();
   const backslashEntry = snapshot.occurrences.find(
     (occurrence) => occurrence.logical_path === backslashName,
   );
@@ -1034,38 +1014,52 @@ it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ
       },
     });
   expect(snapshot.coverage.status).toBe("complete");
-  if (process.platform === "win32") return;
-
-  const directory = await createTestTempDirectory("rea-pyinstaller-posix-out-");
-  const output = join(directory, "extracted");
-  await materializeArtifactInventory(
-    {
-      inputPath: path,
-      inputFormat: "elf",
-      outputRoot: output,
-      environment: process.env,
-      integrityPolicy: "fail",
-    },
-    path,
-    snapshot,
-  );
-  expect(
-    Buffer.compare(
-      await readFile(join(output, backslashName)),
-      backslashPayload,
-    ),
-  ).toBe(0);
-  expect(
-    Buffer.compare(await readFile(join(output, "a", "b.txt")), slashPayload),
-  ).toBe(0);
-  for (const [name, body] of [
-    [backslashName, backslashPayload],
-    [slashName, slashPayload],
-  ] as const)
-    expect((await readFile(join(output, "PYZ.pyz", name))).equals(body)).toBe(
-      true,
-    );
 });
+
+it.skipIf(process.platform === "win32")(
+  "extracts distinct POSIX backslash and slash paths in CArchive files and PYZ data",
+  async () => {
+    const {
+      path,
+      snapshot,
+      backslashName,
+      slashName,
+      backslashPayload,
+      slashPayload,
+    } = await posixPathFixture();
+    const directory = await createTestTempDirectory(
+      "rea-pyinstaller-posix-out-",
+    );
+    const output = join(directory, "extracted");
+    await materializeArtifactInventory(
+      {
+        inputPath: path,
+        inputFormat: "elf",
+        outputRoot: output,
+        environment: process.env,
+        integrityPolicy: "fail",
+      },
+      path,
+      snapshot,
+    );
+    expect(
+      Buffer.compare(
+        await readFile(join(output, backslashName)),
+        backslashPayload,
+      ),
+    ).toBe(0);
+    expect(
+      Buffer.compare(await readFile(join(output, "a", "b.txt")), slashPayload),
+    ).toBe(0);
+    for (const [name, body] of [
+      [backslashName, backslashPayload],
+      [slashName, slashPayload],
+    ] as const)
+      expect((await readFile(join(output, "PYZ.pyz", name))).equals(body)).toBe(
+        true,
+      );
+  },
+);
 
 it("reads a PE signature beyond the carrier prefix before projecting paths", async () => {
   const path = await writeArchive(

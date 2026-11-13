@@ -112,6 +112,46 @@ const enhancedFixtureResult = (method) => {
       return [{ address: "0x1000", value: "fixture" }];
     case "procedure_pseudo_code":
       return "return 0;";
+    case "rea_caller_scan_target":
+      return {
+        target: {
+          address: "0x1000",
+          name: "fixture",
+          symbol: null,
+          classification: null,
+          body: {
+            available: false,
+            reason: "The fixture has no function body-extent observation.",
+          },
+        },
+        instructions: ["0x1000"],
+        instructions_complete: true,
+      };
+    case "rea_caller_base":
+      return {
+        target: {
+          address: "0x1000",
+          name: "fixture",
+          symbol: null,
+          classification: null,
+          body: {
+            available: false,
+            reason: "The fixture has no function body-extent observation.",
+          },
+        },
+        instructions: ["0x1000"],
+        instructions_complete: true,
+        callers: [],
+        callers_complete: true,
+      };
+    case "rea_caller_scan_page":
+      return {
+        start: 0,
+        next: 0,
+        total: 0,
+        oversized: false,
+        items: [],
+      };
     case "analyze_function": {
       return {
         procedure: {
@@ -248,6 +288,53 @@ const server = createServer((socket) => {
         process.exit(7);
       } else if (request.method === "malformed") {
         socket.write("{not-json}\n");
+      } else if (
+        ["valid_then_invalid", "valid_then_invalid_split"].includes(
+          request.method,
+        )
+      ) {
+        const valid = Buffer.from(
+          `${JSON.stringify({ id: request.id, result: "completed" })}\n`,
+        );
+        const invalid = Buffer.concat([
+          Buffer.from(`{"id":${request.id + 1},"result":"`),
+          Buffer.from([0xff]),
+          Buffer.from('"}\n'),
+        ]);
+        if (request.method === "valid_then_invalid")
+          socket.write(Buffer.concat([valid, invalid]));
+        else {
+          socket.write(valid);
+          setTimeout(() => socket.write(invalid), 5);
+        }
+      } else if (request.method === "valid_utf8_end") {
+        socket.end(JSON.stringify({ id: request.id, result: "�雪🦊" }));
+      } else if (request.method === "invalid_utf8_end") {
+        socket.end(
+          Buffer.concat([
+            Buffer.from(`{"id":${request.id},"result":"`),
+            Buffer.from([0xe2]),
+          ]),
+        );
+      } else if (request.method === "invalid_utf8_split") {
+        socket.write(
+          Buffer.concat([
+            Buffer.from(`{"id":${request.id},"result":"`),
+            Buffer.from([0xe2]),
+          ]),
+        );
+        setTimeout(
+          () => socket.write(Buffer.from([0x28, 0xa1, 0x22, 0x7d, 0x0a])),
+          5,
+        );
+      } else if (request.method === "invalid_utf8") {
+        socket.write(
+          Buffer.concat([
+            Buffer.from(`{"id":${request.id},"result":"`),
+            Buffer.from([0xff]),
+            Buffer.from('"}\n'),
+          ]),
+        );
       } else if (request.method === "wrong_id") {
         send({ id: request.id + 100, result: {} });
       } else if (bridgeEventMessages !== undefined) {

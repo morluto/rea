@@ -1,3 +1,7 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../domain/virtualFileMapping.js";
 import {
   machoDependencyCommand,
   readMachoDylibCommandFacts,
@@ -15,8 +19,6 @@ import { createHash } from "node:crypto";
 import {
   BinaryFormatFailure,
   createFileMappingIndex,
-  type ZeroFillMapping,
-  type FileMapping,
 } from "./metadata/BinaryContainer.js";
 
 import type { FixupCommands } from "./AppleMachoFixups.js";
@@ -80,10 +82,17 @@ export interface MachoLayout {
 
 const hex = (value: bigint) => `0x${value.toString(16)}`;
 
+/** File range admission already chose. Metadata must not rank slices again. */
+export interface AdmittedMachoSlice {
+  readonly offset: number;
+  readonly size: number;
+}
+
 /** Select the thin Mach-O slice for `architecture` inside a FAT or thin container. */
 export const selectMachoSlice = (
   bytes: Buffer,
   architecture: string,
+  admitted?: AdmittedMachoSlice,
 ): MachoSlice => {
   const header = readFatHeaderPrefix(bytes);
   if (header.state === "unknown")
@@ -109,6 +118,26 @@ export const selectMachoSlice = (
     littleEndian,
   });
   if (declarations.status !== "parsed") throw malformed(declarations.reason);
+  if (admitted !== undefined) {
+    const match = declarations.slices.find(
+      (declaration) =>
+        declaration.offset === admitted.offset &&
+        declaration.size === admitted.size,
+    );
+    if (match === undefined)
+      throw invalid("Admitted FAT slice is not declared");
+    if (match.cpuType !== policy.cpuType)
+      throw invalid(
+        "Admitted FAT slice does not match the requested architecture",
+      );
+    const issue = validateFatSlice(match, bytes.length, headerEnd);
+    if (issue !== null) throw malformed(issue);
+    return {
+      slice: match.offset,
+      sliceEnd: match.offset + match.size,
+      fatDeclaration: { ...match, tableEnd: headerEnd },
+    };
+  }
   let best: FatSliceDeclaration | undefined;
   let bestRank = Number.POSITIVE_INFINITY;
   let ambiguous = false;
@@ -153,9 +182,10 @@ export class UnsupportedMachoMetadataFormatError extends Error {
 export const parseMachoLayout = (
   bytes: Buffer,
   architecture: string,
+  admitted?: AdmittedMachoSlice,
 ): MachoLayout => {
   if (bytes.length < 4) throw new RangeError("Truncated Mach-O header");
-  const selection = selectMachoSlice(bytes, architecture);
+  const selection = selectMachoSlice(bytes, architecture, admitted);
   const { slice, sliceEnd } = selection;
   if (slice + 4 > sliceEnd) throw new RangeError("Truncated Mach-O header");
   const selectedBytes = bytes.subarray(slice, sliceEnd);
@@ -183,7 +213,10 @@ export const parseMachoLayout = (
   }
   if (table.wide && !table.littleEndian) {
     if (cpuType !== 0x01000012)
-      throw new TypeError("Unsupported big-endian Mach-O CPU type");
+      throw new BinaryFormatFailure(
+        "unsupported",
+        "Unsupported big-endian Mach-O CPU type",
+      );
     throw new UnsupportedMachoMetadataFormatError(
       "Unsupported big-endian 64-bit PowerPC Mach-O metadata",
     );
@@ -198,9 +231,8 @@ export const parseMachoLayout = (
     throw new UnsupportedMachoMetadataFormatError(
       `Unsupported 32-bit Mach-O metadata for requested CPU type ${architecture}`,
     );
-  const commands = table.commandCount;
   const commandEnd = slice + table.headerSize + table.commandBytes;
-  if (commands > 4096 || commandEnd > sliceEnd)
+  if (commandEnd > sliceEnd)
     throw new RangeError("Malformed Mach-O command bounds");
   const state: LayoutState = {
     slice,
@@ -225,6 +257,10 @@ export const parseMachoLayout = (
       kind: frame.value.command,
       size: frame.value.size,
     };
+    if (command.kind === 1)
+      throw new RangeError(
+        "Mach-O segment command does not match the header width",
+      );
     if (command.kind === 0x19) collectSegment(bytes, command, state);
     else collectFixupCommand(bytes, command, state);
   }

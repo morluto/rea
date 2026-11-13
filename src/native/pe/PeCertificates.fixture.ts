@@ -67,6 +67,10 @@ export const pkcs7SignedDataFixture = (
   commonName = "REA Fixture",
   organization = "REA Tests",
   signature = octet(Buffer.from("sig")),
+  unsignedAttributes?: readonly (readonly number[])[],
+  fields: Partial<
+    Record<"issuer" | "subject" | "signerIssuer" | "extensions", Buffer>
+  > = {},
 ): Buffer => {
   const serial = Buffer.from([0x11, 0x22, 0x33, 0x44]);
   const subject = name(commonName, organization);
@@ -74,13 +78,14 @@ export const pkcs7SignedDataFixture = (
     context(0, integer(2)),
     integer(serial),
     algorithm(SHA256_RSA),
-    subject,
+    fields.issuer ?? subject,
     seq(utc("250101000000Z"), utc("260101000000Z")),
-    subject,
+    fields.subject ?? subject,
     seq(algorithm(RSA), bitString(Buffer.from("pubkey"))),
     context(
       3,
-      seq(seq(oid([2, 5, 29, 14]), octet(Buffer.from([0x04, 0x01, 0xaa])))),
+      fields.extensions ??
+        seq(seq(oid([2, 5, 29, 14]), octet(Buffer.from([0x04, 0x01, 0xaa])))),
     ),
   );
   const certificate = seq(
@@ -90,10 +95,22 @@ export const pkcs7SignedDataFixture = (
   );
   const signer = seq(
     integer(1),
-    seq(subject, integer(serial)),
+    seq(fields.signerIssuer ?? subject, integer(serial)),
     algorithm(SHA256),
     algorithm(SHA256_RSA),
     signature,
+    ...(unsignedAttributes === undefined
+      ? []
+      : [
+          context(
+            1,
+            concat(
+              ...unsignedAttributes.map((type) =>
+                seq(oid(type), set(octet(Buffer.from([1])))),
+              ),
+            ),
+          ),
+        ]),
   );
   const signedData = seq(
     integer(1),

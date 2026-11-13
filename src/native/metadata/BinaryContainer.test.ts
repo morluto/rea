@@ -1,15 +1,36 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import { readBinaryContainer } from "./readBinaryContainer.js";
 import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryStringReadLimitFailure,
   createFileMappingIndex,
   mappedFileOffset,
   readMappedCString,
   type BinaryContainer,
-  type FileMapping,
-  type ZeroFillMapping,
 } from "./BinaryContainer.js";
+
+it("distinguishes a mapped string read allowance from malformed bytes", () => {
+  const bytes = Buffer.from("long-name\0");
+  const index = createFileMappingIndex([
+    { address: 100n, offset: 0, size: bytes.length },
+  ]);
+  let failure: unknown;
+  try {
+    index.readCString(bytes, 100n, 3);
+  } catch (cause) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(BinaryStringReadLimitFailure);
+  expect(failure).toMatchObject({ maximumBytes: 3 });
+  expect(index.readCString(bytes, 100n, bytes.length).toString()).toBe(
+    "long-name",
+  );
+});
 
 const outcome = (translate: () => number): number | string => {
   try {

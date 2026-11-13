@@ -14,8 +14,12 @@ export const failure = (
   message,
 });
 
-export const cancelled = (): ReferenceSourceReaderError =>
-  failure("cancelled", "Reference source traversal cancelled");
+export const cancelled = (
+  signal?: AbortSignal,
+): ReferenceSourceReaderError => ({
+  ...failure("cancelled", "Reference source traversal cancelled"),
+  ...(signal?.aborted === true ? { cause: signal.reason } : {}),
+});
 
 /** Project resource failures into the reference-source error contract. */
 export const referenceSourceResourceFailure = (
@@ -87,6 +91,7 @@ export const rootFilesystemFailure = (
   | {
       readonly code: "invalid-root" | "io";
       readonly message: string;
+      readonly remediationAction?: string;
     }
   | undefined => {
   if (!(cause instanceof Error)) return undefined;
@@ -94,8 +99,21 @@ export const rootFilesystemFailure = (
   if (typeof code !== "string" || !FILESYSTEM_ERROR_CODES.has(code))
     return undefined;
   return {
-    code: code === "ENOENT" || code === "ENOTDIR" ? "invalid-root" : "io",
+    code: ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(code)
+      ? "invalid-root"
+      : "io",
     message: `${operation}: ${cause.message}`,
+    ...(code === "ELOOP"
+      ? {
+          remediationAction:
+            "Repair the symbolic-link chain or select another reference source directory.",
+        }
+      : code === "ENAMETOOLONG"
+        ? {
+            remediationAction:
+              "Select a reference source path within the operating system's path-length limits.",
+          }
+        : {}),
   };
 };
 

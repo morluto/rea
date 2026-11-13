@@ -23,9 +23,29 @@ const childReferences = new Set([
   "UIContentView",
 ]);
 
-// AppKit declares NSButtonCell : NSActionCell : NSCell : NSObject, not NSView.
-// NSActionCell encodes its control-view backreference as NSControlView.
-const nonViewCellClasses = new Set(["NSCell", "NSActionCell", "NSButtonCell"]);
+// These exact AppKit classes derive from NSCell, not NSView. Do not infer
+// custom class semantics from a suffix: their inheritance is not in the NIB.
+const nonViewCellClasses = new Set([
+  "NSCell",
+  "NSActionCell",
+  "NSButtonCell",
+  "NSComboBoxCell",
+  "NSDatePickerCell",
+  "NSFormCell",
+  "NSLevelIndicatorCell",
+  "NSMenuItemCell",
+  "NSPathCell",
+  "NSPathComponentCell",
+  "NSPopUpButtonCell",
+  "NSSearchFieldCell",
+  "NSSecureTextFieldCell",
+  "NSSegmentedCell",
+  "NSSliderCell",
+  "NSStepperCell",
+  "NSTableHeaderCell",
+  "NSTextFieldCell",
+  "NSTokenFieldCell",
+]);
 const isNonViewCell = (
   object: NibArchiveDocument["objects"][number] | undefined,
 ) =>
@@ -36,9 +56,9 @@ const isNonViewCell = (
 export const projectNibViewHierarchy = (
   objects: NibArchiveDocument["objects"],
   retainedIds: ReadonlySet<number>,
-  reserveNode: () => boolean = () => true,
-  maxNodes = 20_000,
-  reportUnknownRegistry: (description: string) => void = () => {},
+  reserveNode: () => boolean,
+  maxNodes: number,
+  reportUnknownRegistry: (description: string) => void,
 ) => {
   const byId = new Map(objects.map((object) => [object.id, object]));
   const parents = new Map<number, number | null>();

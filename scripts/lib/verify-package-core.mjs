@@ -36,9 +36,16 @@ export const verifyCompleteToolCatalog = async (client, options) => {
         );
     }
   }
+  const sessionDefinition = listed.tools.find(
+    ({ name }) => name === "binary_session",
+  );
+  if (sessionDefinition === undefined)
+    throw new Error("packaged MCP omitted the binary_session definition");
   const status = await client.callTool(
     { name: "binary_session", arguments: {} },
-    options,
+    // The SDK otherwise compiles every listed output schema on the first call.
+    // Keep its default validation for the actual named tool being exercised.
+    { ...options, toolDefinition: sessionDefinition },
   );
   const expanded = requireMcpLifecycleResult(status, "binary_session");
   const availability = expanded.tool_availability;

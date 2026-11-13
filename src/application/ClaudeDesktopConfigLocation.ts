@@ -46,6 +46,7 @@ export interface ClaudeDesktopLocation {
 export interface ClaudeDesktopLocationFailure {
   readonly path: string;
   readonly message: string;
+  readonly msixPackage?: MsixPackageView;
 }
 
 /** Synchronous probes; each throws for failures other than absence. */
@@ -120,14 +121,46 @@ export const resolveWindowsClaudeDesktopLocation = (
       path: join(packagesDirectory, foreign[0] ?? ""),
       message: `MSIX package storage ${foreign.map((name) => join(packagesDirectory, name)).join(", ")} has an unrecognized Claude Desktop package identity or deployment (the supported identity is ${CLAUDE_DESKTOP_PACKAGE_FAMILY}). REA cannot establish which ${CONFIG_FILE} that package reads and does not fall back to ${appDataConfigPath}. Quit Claude Desktop fully and register REA in the configuration the installed app reads.`,
     });
+  const migratedDirectory = join(
+    roots.local,
+    "Claude-Data",
+    CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase(),
+  );
+  const migrated = present(fileSystem, migratedDirectory);
+  const migratedConfigPath = join(migratedDirectory, CONFIG_FILE);
+  const migrationFailure = !migrated.ok
+    ? migrated.error
+    : migrated.value
+      ? {
+          path: migratedConfigPath,
+          message: `Found migrated Claude Desktop storage at ${migratedDirectory}. REA cannot verify which configuration the installed app reads. Quit Claude Desktop fully, verify whether it reads ${migratedConfigPath}, then register REA manually in the active file.`,
+        }
+      : undefined;
   const family = families[0];
   if (family === undefined)
-    return ok({ configPath: appDataConfigPath, markerPath: appDataDirectory });
+    return migrationFailure === undefined
+      ? ok({ configPath: appDataConfigPath, markerPath: appDataDirectory })
+      : err(migrationFailure);
   const container = join(packagesDirectory, family);
   const privateRoaming = join(container, "LocalCache", "Roaming");
   const privateDirectory = join(privateRoaming, "Claude");
   const privateConfigPath = join(privateDirectory, CONFIG_FILE);
   const privateCopy = present(fileSystem, privateConfigPath);
+  const packageView = (): MsixPackageView => ({
+    packageFamilyName: family,
+    privateConfigPath,
+    appDataConfigPath,
+    virtualizedRoots: [roots.roaming, roots.local],
+    processView: processView(
+      fileSystem,
+      privateRoaming,
+      roots.roaming,
+      privateCopy.ok && privateCopy.value,
+    ),
+  });
+  // The current process view matters even when the active Claude config is unknown.
+  if (migrationFailure !== undefined)
+    return err({ ...migrationFailure, msixPackage: packageView() });
   if (!privateCopy.ok) return privateCopy;
   const appDataCopy = privateCopy.value
     ? ok(false)
@@ -139,18 +172,7 @@ export const resolveWindowsClaudeDesktopLocation = (
         ? privateConfigPath
         : appDataConfigPath,
     markerPath: container,
-    msixPackage: {
-      packageFamilyName: family,
-      privateConfigPath,
-      appDataConfigPath,
-      virtualizedRoots: [roots.roaming, roots.local],
-      processView: processView(
-        fileSystem,
-        privateRoaming,
-        roots.roaming,
-        privateCopy.value,
-      ),
-    },
+    msixPackage: packageView(),
   });
 };
 

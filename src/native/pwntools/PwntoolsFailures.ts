@@ -1,8 +1,15 @@
+import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
+import {
+  PWNTOOLS_LIMITS,
+  resolvePwntoolsLimits,
+  type PwntoolsProducerLimits,
+} from "../../domain/native/pwntoolsResourceLimits.js";
 import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
+import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   AnalysisError,
@@ -25,11 +32,10 @@ import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import type { PwntoolsFailureEvidence } from "./PwntoolsResourceLimits.js";
 import { nativeDeadlineRecovery } from "../../domain/native/nativeDeadlines.js";
 import {
-  PWNTOOLS_PROVIDER_IDENTITY,
-  PWNTOOLS_LIMITS,
   PWNTOOLS_MEMORY_FAILURE_EXIT,
   PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 
 /** Operation identity supplied by each adapter sharing the pwntools boundary. */
 export interface PwntoolsFailureContext {
@@ -38,18 +44,62 @@ export interface PwntoolsFailureContext {
   readonly precedingOutput?: AnalysisCapturedOutput;
   readonly configurationKey?: string;
   readonly timeoutMs?: number;
+  readonly producerLimits?: PwntoolsProducerLimits;
+  readonly inputBytesSource?:
+    | "default"
+    | "setting"
+    | "runtime"
+    | "request"
+    | undefined;
 }
 
-const fixedPwntoolsBudgets = `cpuSeconds is ${String(PWNTOOLS_LIMITS.cpuSeconds)}. The output allowance is ${String(PWNTOOLS_LIMITS.outputBytes)} bytes, the diagnostic allowance is ${String(PWNTOOLS_LIMITS.diagnosticBytes)} bytes, and the address-space allowance is ${String(PWNTOOLS_LIMITS.addressSpaceBytes)} bytes. This release has no runtime override for those budgets. pwntools_timeout_ms does not raise them. Artifact admission stays REA_PWNTOOLS_MAX_INPUT_BYTES (default ${String(PWNTOOLS_LIMITS.inputBytes)} bytes).`;
+const pwntoolsInputLimitFact = (
+  bytes: number,
+  source: PwntoolsFailureContext["inputBytesSource"],
+): string => {
+  const effective = String(bytes);
+  if (source === "request")
+    return `Selected producer_limits.input_bytes is ${effective} bytes.`;
+  if (source === "runtime")
+    return `The runtime pwntools.max_input_bytes ceiling is ${effective} bytes.`;
+  if (source === "setting")
+    return `REA_PWNTOOLS_MAX_INPUT_BYTES selected ${effective} bytes.`;
+  return `The launch default pwntools.max_input_bytes ceiling is ${effective} bytes.`;
+};
+
+const pwntoolsInputLimitRecovery = (
+  bytes: number,
+  source: PwntoolsFailureContext["inputBytesSource"],
+): string => {
+  const effective = String(bytes);
+  const shared =
+    "CPU, memory, output and transport allowances remain independent.";
+  if (source === "request")
+    return `producer_limits.input_bytes is ${effective} bytes for this call. Raise it on the next call (CLI --producer-limits JSON). ${shared}`;
+  if (source === "runtime")
+    return `pwntools.max_input_bytes is ${effective} bytes (source runtime) and can be changed with update_analysis_settings. The launch seed is REA_PWNTOOLS_MAX_INPUT_BYTES. producer_limits.input_bytes overrides that ceiling on the next call. ${shared}`;
+  if (source === "setting")
+    return `REA_PWNTOOLS_MAX_INPUT_BYTES is ${effective} bytes (source setting). Change pwntools.max_input_bytes with update_analysis_settings, or set producer_limits.input_bytes on the next call. The built-in default is ${String(PWNTOOLS_LIMITS.input_bytes)} bytes. ${shared}`;
+  return `pwntools.max_input_bytes is the launch default of ${effective} bytes and can be changed with update_analysis_settings. The launch seed is REA_PWNTOOLS_MAX_INPUT_BYTES. producer_limits.input_bytes overrides that default on the next call. ${shared}`;
+};
+
+/** Recovery identifies the selected controls rather than unrelated wall deadlines. */
+export const pwntoolsBudgetRecovery = (
+  limits: PwntoolsProducerLimits = resolvePwntoolsLimits(),
+): string =>
+  `Selected producer_limits: cpu_seconds=${String(limits.cpu_seconds)} seconds, output_bytes=${String(limits.output_bytes)}, diagnostic_bytes=${String(limits.diagnostic_bytes)}, address_space_bytes=${String(limits.address_space_bytes)}, file_bytes=${String(limits.file_bytes)}, input_bytes=${String(limits.input_bytes)} bytes. Increase the exhausted producer_limits field on the next call (CLI --producer-limits JSON); no REA restart is required. Tighter inherited OS limits remain enforced and are not raised by this request. pwntools_timeout_ms changes only the wall deadline.`;
 
 /** Name the file-size cap and any reported effective limit, not address space. */
-const fileSizeAllowance = (reportedBytes: number | undefined): string => {
-  const cap = String(PWNTOOLS_LIMITS.outputBytes);
+const fileSizeAllowance = (
+  reportedBytes: number | undefined,
+  selectedBytes: number,
+): string => {
+  const cap = String(selectedBytes);
   const inherited =
-    "A tighter inherited limit is retained. This release has no runtime override. pwntools_timeout_ms does not raise the file-size allowance.";
+    "A tighter inherited limit is retained. Increase producer_limits.file_bytes on the next call (CLI --producer-limits JSON); no restart is required. pwntools_timeout_ms does not raise the file-size allowance.";
   return reportedBytes === undefined
-    ? `The file-size cap is ${cap} bytes (outputBytes). The effective file_size_bytes limit was not reported. ${inherited}`
-    : `The effective file-size allowance is ${String(reportedBytes)} bytes (file_size_bytes). The file-size cap is ${cap} bytes (outputBytes). ${inherited}`;
+    ? `The file-size cap is ${cap} bytes (producer_limits.file_bytes). The effective file_size_bytes limit was not reported. ${inherited}`
+    : `The effective file-size allowance is ${String(reportedBytes)} bytes (file_size_bytes). The file-size cap is ${cap} bytes (producer_limits.file_bytes). ${inherited}`;
 };
 
 const DEFAULT_CONTEXT = {
@@ -90,6 +140,8 @@ const classifyPwntoolsDecoderFailure = (
   context: PwntoolsFailureContext,
 ): AnalysisError => {
   const limitReport = failureEvidence.limits;
+  const limits = context.producerLimits ?? resolvePwntoolsLimits();
+  const budgetRecovery = pwntoolsBudgetRecovery(limits);
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof OwnedCommandFailure) {
     const currentOutput =
@@ -151,24 +203,24 @@ const classifyPwntoolsDecoderFailure = (
             : cause.cancellation.reason,
       });
     if (cause.reason === "timeout") {
-      const timeoutMs = context.timeoutMs ?? PWNTOOLS_LIMITS.timeoutMs;
+      const timeoutMs = context.timeoutMs ?? PWNTOOLS_LIMITS.command_timeout_ms;
       return new AnalysisTimeoutError(context.operation, timeoutMs, {
         ...outputOptions,
         ...nativeDeadlineRecovery({
           timeoutMs,
           setting: "pwntools_timeout_ms",
           cliFlag: "--pwntools-timeout-ms",
-          defaultMs: PWNTOOLS_LIMITS.timeoutMs,
+          defaultMs: PWNTOOLS_LIMITS.command_timeout_ms,
           phase: "pwntools command deadline",
-          unchanged: fixedPwntoolsBudgets,
+          unchanged: budgetRecovery,
         }),
       });
     }
     if (cause.reason === "output-limit")
       return new AnalysisOutputError(context.operation, cause.message, {
         ...outputOptions,
-        userMessage: `${cause.message} ${fixedPwntoolsBudgets}`,
-        remediationAction: fixedPwntoolsBudgets,
+        userMessage: `${cause.message} ${budgetRecovery}`,
+        remediationAction: budgetRecovery,
       });
     if (
       cause.reason === "process" &&
@@ -177,7 +229,10 @@ const classifyPwntoolsDecoderFailure = (
           cause.snapshot?.exitCode === PWNTOOLS_FILE_SIZE_FAILURE_EXIT &&
           cause.snapshot.signal === null))
     ) {
-      const allowance = fileSizeAllowance(limitReport?.limits?.file_size_bytes);
+      const allowance = fileSizeAllowance(
+        limitReport?.limits?.file_size_bytes,
+        limits.file_bytes,
+      );
       return new AnalysisResourceConstraintError(
         context.operation,
         "file-size",
@@ -203,11 +258,11 @@ const classifyPwntoolsDecoderFailure = (
           (limitReport?.failure === null || limitReport === undefined
             ? ""
             : ` Effective limit report unavailable: ${limitReport.failure}`) +
-          ` cpuSeconds is ${String(PWNTOOLS_LIMITS.cpuSeconds)}. This release has no runtime override.`,
+          ` Selected producer_limits.cpu_seconds is ${String(limits.cpu_seconds)} seconds; inherited tighter limits remain enforced.`,
         limitReport?.limits ?? null,
         {
           ...outputOptions,
-          remediationAction: `Review the reported worker CPU limits and observed signal. cpuSeconds is ${String(PWNTOOLS_LIMITS.cpuSeconds)}. This release has no runtime override. pwntools_timeout_ms does not raise it. Repeating the unchanged request fails the same way.`,
+          remediationAction: `Review the reported worker CPU limit and observed signal; the signal alone does not establish exhaustion. Increase producer_limits.cpu_seconds above ${String(limits.cpu_seconds)} on the next call (CLI --producer-limits JSON) when that policy was limiting. No restart is required; a tighter inherited limit remains enforced. pwntools_timeout_ms does not raise CPU admission.`,
         },
       );
     if (
@@ -223,11 +278,11 @@ const classifyPwntoolsDecoderFailure = (
           (limitReport?.failure === null || limitReport === undefined
             ? ""
             : ` Effective limit report unavailable: ${limitReport.failure}`) +
-          ` The address-space allowance is ${String(PWNTOOLS_LIMITS.addressSpaceBytes)} bytes. This release has no runtime override.`,
+          ` The selected producer_limits.address_space_bytes allowance is ${String(limits.address_space_bytes)} bytes; tighter inherited limits remain enforced.`,
         limitReport?.limits ?? null,
         {
           ...outputOptions,
-          remediationAction: `Review the reported worker memory limits and available host memory. ${fixedPwntoolsBudgets}`,
+          remediationAction: `Review the reported worker memory limits and available host memory. ${budgetRecovery}`,
         },
       );
   }
@@ -274,9 +329,19 @@ const classifyPwntoolsDecoderFailure = (
         context.operation,
         {
           cause,
+          ...stableArtifactInputRecovery(cause),
           ...(cause.reason === "limit"
             ? {
-                userMessage: `${cause.message} Admitted artifact bytes use REA_PWNTOOLS_MAX_INPUT_BYTES (default ${String(PWNTOOLS_LIMITS.inputBytes)} bytes, maximum 1073741824). The 1073741824-byte maximum has no runtime override. Restart REA after changing the environment value. pwntools_timeout_ms does not raise this allowance. ${fixedPwntoolsBudgets}`,
+                userMessage: `${cause.message} ${pwntoolsInputLimitFact(limits.input_bytes, context.inputBytesSource)} ${budgetRecovery}`,
+                remediationAction: pwntoolsInputLimitRecovery(
+                  limits.input_bytes,
+                  context.inputBytesSource,
+                ),
+                limit: analysisSettingLimit(
+                  "pwntools.max_input_bytes",
+                  limits.input_bytes,
+                  context.inputBytesSource,
+                ),
               }
             : {}),
         },
@@ -287,7 +352,7 @@ const classifyPwntoolsDecoderFailure = (
               cause.reason === "limit" ? "out_of_range" : "invalid_format",
             message:
               cause.reason === "limit"
-                ? `${cause.message} REA_PWNTOOLS_MAX_INPUT_BYTES defaults to ${String(PWNTOOLS_LIMITS.inputBytes)} bytes.`
+                ? `${cause.message} REA_PWNTOOLS_MAX_INPUT_BYTES defaults to ${String(PWNTOOLS_LIMITS.input_bytes)} bytes.`
                 : cause.message,
           },
         ],

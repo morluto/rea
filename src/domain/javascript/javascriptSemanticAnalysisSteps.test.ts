@@ -258,7 +258,7 @@ if (globalThis.register) {
 const conditionalAlias = conditional;
 conditionalAlias.handle("conditional-alias:ping", () => "local");
 `;
-  const parsed = parseJavaScriptSource(text, "aliases.js");
+  const parsed = parseJavaScriptSource(text, "aliases.cjs");
   if (parsed === null) throw new Error("Expected parsed source");
 
   const index = completeSemanticSteps(
@@ -267,6 +267,21 @@ conditionalAlias.handle("conditional-alias:ping", () => "local");
   const electron = completeSemanticSteps(
     indexJavaScriptElectronIdentitySteps(parsed.program, index.bindings),
   );
+  const unknown = parseJavaScriptSource(text, "aliases.js");
+  if (unknown === null) throw new Error("Expected unknown-host source");
+  const unknownIndex = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(unknown.program),
+  );
+  const candidates = completeSemanticSteps(
+    indexJavaScriptElectronIdentitySteps(
+      unknown.program,
+      unknownIndex.bindings,
+    ),
+  );
+  expect(candidates.bindings.size).toBe(0);
+  expect(candidates.candidateBindings.get(text.indexOf("Win({"))).toEqual([
+    "BrowserWindow",
+  ]);
   expect([...electron.bindings]).toEqual([
     [text.indexOf("Win({"), ["BrowserWindow"]],
     [text.indexOf("bridge.exposeInMainWorld"), ["contextBridge"]],

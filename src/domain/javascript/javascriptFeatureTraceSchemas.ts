@@ -105,7 +105,18 @@ export const traceApplicationFeatureInputSchema = z
   .strictObject({
     application: evidenceSchema,
     native_observations: z.array(evidenceSchema).default([]),
-    seed: applicationFeatureSeedSchema,
+    seed: applicationFeatureSeedSchema.describe(
+      'Typed literal starting point. kind is one of node-id, route, string, channel, module, native-export, or api; value is the literal text. match defaults to contains for string seeds and exact otherwise; an empty value requires match exact. api seeds may add entry_path. Example: {"kind":"module","value":"search.js","match":"exact"}.',
+    ),
+    semantic_page: z
+      .strictObject({
+        offset: z.int().nonnegative().default(0),
+        limit: z.int().positive().default(64),
+      })
+      .optional()
+      .describe(
+        "Page retained semantic label matches when a string seed has no application match. Defaults to offset 0 and limit 64.",
+      ),
     direction: z.enum(["outgoing", "incoming", "both"]).default("both"),
   })
   .superRefine(validateApplicationTraceIdentities);
@@ -133,7 +144,7 @@ const nativeHandoffSchema = z.strictObject({
   artifact_sha256: digestSchema,
   artifact_path: z.string().min(1).nullable(),
   export_node_ids: z.array(nodeIdSchema),
-  requested_exports: z.array(boundedTextSchema),
+  requested_exports: z.array(z.string()),
   status: z.enum(["evidence-linked", "requires-provider-analysis"]),
   providers: z.array(providerSchema),
   evidence_ids: z.array(evidenceIdSchema),
@@ -156,6 +167,34 @@ export const applicationFeatureTraceResultSchema = z.strictObject({
   seed: applicationFeatureSeedSchema,
   direction: z.enum(["outgoing", "incoming", "both"]),
   seed_matches: z.array(seedMatchSchema),
+  semantic_discovery: z
+    .strictObject({
+      source_graph_id: prefixedDigestSchema("jsrg"),
+      source_coverage: z.enum([
+        "complete",
+        "partial",
+        "unknown",
+        "unavailable",
+      ]),
+      total: z.int().nonnegative(),
+      offset: z.int().nonnegative(),
+      limit: z.int().positive(),
+      next_offset: z.int().nonnegative().nullable(),
+      matches: z.array(
+        z.strictObject({
+          node_id: prefixedDigestSchema("jsrg_node"),
+          kind: z.string().min(1),
+          trace_seed: z.strictObject({
+            kind: z.literal("semantic-node"),
+            node_id: prefixedDigestSchema("jsrg_node"),
+          }),
+        }),
+      ),
+    })
+    .optional()
+    .describe(
+      "On an unmatched string seed, retained semantic labels and direct string call arguments use the requested match mode and case sensitivity. Use a trace_seed with trace_javascript_semantics; source coverage limits absence claims.",
+    ),
   graph: javascriptApplicationGraphSchema.nullable(),
   paths: z.array(tracePathSchema),
   native_handoffs: z.array(nativeHandoffSchema),

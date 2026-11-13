@@ -15,10 +15,11 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 
 it("preserves raw and DOL verification facts and selected DOL sections through the advertised SDK output", async () => {
   const { call } = await connectLocalToolsMcp();
-  for (const report of [
-    nativeRawLoadImageFixture(),
-    nativeDolLoadImageFixture(),
-  ]) {
+  for (const { report, format } of [
+    { report: nativeRawLoadImageFixture(), format: "raw-binary" },
+    { report: nativeDolLoadImageFixture(), format: "gamecube-dol" },
+  ] as const) {
+    expect(report.format).toBe(format);
     const parent = createEvidence(
       {
         path: "/selected/fixture",
@@ -55,11 +56,11 @@ it("preserves raw and DOL verification facts and selected DOL sections through t
         verification,
         counts: {
           checks: checks.length,
-          sections: report.format === "gamecube-dol" ? 2 : null,
+          sections: format === "gamecube-dol" ? 2 : null,
         },
       },
     });
-    if (report.format !== "gamecube-dol") continue;
+    if (format !== "gamecube-dol") continue;
     const page = await call("inspect_analysis_view", {
       source,
       view: {

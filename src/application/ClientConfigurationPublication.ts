@@ -64,6 +64,8 @@ export class ClientConfigurationWriteError extends Error {
 export interface ClientConfigurationSelection {
   readonly requestedPath: string;
   readonly state: Stats | undefined;
+  /** Required by fx's trusted private profile. */
+  readonly requiredMode?: 0o600;
 }
 
 /** The exact staged file retained through publication, verification and recovery. */
@@ -80,7 +82,6 @@ export class ClientConfigurationPublication {
     path: string,
     contents: string,
     previous: string | undefined,
-    mode?: number,
     selection?: ClientConfigurationSelection,
   ): Promise<ClientConfigurationPublication> {
     const parent = await realpath(dirname(path));
@@ -119,7 +120,21 @@ export class ClientConfigurationPublication {
       );
       staging.setFile(owner);
       await owner.handle.writeFile(contents, { encoding: "utf8" });
-      await preserveConfigurationAttributes(owner, input, mode, destination);
+      await preserveConfigurationAttributes(owner, input, destination);
+      if (selection?.requiredMode !== undefined) {
+        await owner.handle.chmod(selection.requiredMode);
+        if (
+          process.platform !== "win32" &&
+          ((await owner.handle.stat()).mode & 0o777) !== selection.requiredMode
+        )
+          throw new ClientConfigurationWriteError(
+            destination,
+            "preserve_mode",
+            new Error(
+              "The required private profile mode could not be verified",
+            ),
+          );
+      }
       await owner.handle.sync();
       if ((await owner.handle.stat()).ino === 0)
         throw new RegularFileChangedError(stagedPath);
@@ -227,7 +242,6 @@ export class ClientConfigurationPublication {
 const preserveConfigurationAttributes = async (
   owner: OwnedFileHandle,
   input: Stats | undefined,
-  mode: number | undefined,
   destination: string,
 ): Promise<void> => {
   const created = await owner.handle.stat();
@@ -250,7 +264,7 @@ const preserveConfigurationAttributes = async (
     }
   }
   try {
-    await owner.handle.chmod(mode ?? (input?.mode ?? 0o600) & 0o7777);
+    await owner.handle.chmod((input?.mode ?? 0o600) & 0o7777);
   } catch (cause: unknown) {
     throw new ClientConfigurationWriteError(
       destination,

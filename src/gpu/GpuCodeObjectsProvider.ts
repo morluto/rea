@@ -1,3 +1,4 @@
+import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
 import type { GpuCodeObjectsPort } from "../application/gpu/GpuCodeObjectsPort.js";
 import {
@@ -46,16 +47,12 @@ import {
 } from "./GpuSource.js";
 import { GpuInventory } from "./GpuInventory.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
   isSelectedRegularFileError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 
-export const GPU_CODE_OBJECTS_PROVIDER_IDENTITY = {
-  id: "gpu-code-objects",
-  name: "REA static GPU code-object reader",
-  version: "1",
-} as const;
 const OPERATION = "inspect_gpu_code_objects";
 
 /** One admitted descriptor and bounded report at a time; retained cleanup blocks new work. */
@@ -173,7 +170,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           { cause: primary },
         );
       else if (isSelectedRegularFileError(primary))
-        error = new BinaryTargetError(input.path, primary.message, { cause });
+        error = selectedFileTargetError(input.path, primary, cause);
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
@@ -258,8 +255,8 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
   async #read(
     file: FileHandle,
     input: GpuCodeObjectsInput,
-    signal?: AbortSignal,
-    retainProgress?: (progress: {
+    signal: AbortSignal | undefined,
+    retainProgress: (progress: {
       inventory: GpuInventory;
       size: number;
     }) => void,
@@ -275,7 +272,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         "GPU source does not match the inventory's selected SHA-256",
       );
     const inventory = new GpuInventory(input, signal);
-    retainProgress?.({ inventory, size });
+    retainProgress({ inventory, size });
     const format = await inventory.inspect(source);
     const after = await file.stat({ bigint: true });
     const named = await lstat(input.path, { bigint: true }).catch(

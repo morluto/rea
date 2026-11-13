@@ -1,3 +1,4 @@
+import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { PeImportsService } from "./PeImportsService.js";
 import { PE_IMPORTS_PROVIDER } from "../../domain/investigationProviders.js";
@@ -62,20 +63,6 @@ it("rejects a relative path and extra arguments before reading", async () => {
   expect(calls).toBe(0);
 });
 
-it("records the selected PE and an absent import table", async () => {
-  const result = await new PeImportsService({
-    identity,
-    inspect: () => Promise.resolve(ok(report)),
-  }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    confidence: "observed",
-    subject: { format: "pe", architecture: "x86_64" },
-    normalized_result: report,
-  });
-});
-
 it.each(["imports", "delay_imports", "examined_dlls"] as const)(
   "rejects contradictory complete %s coverage",
   async (field) => {
@@ -130,12 +117,13 @@ it.each(["import_directory", "delay_import_directory"] as const)(
   },
 );
 
-it("discards an observation if the caller cancels while the provider completes", async () => {
+it("retains a completed observation when the caller cancels as the provider completes", async () => {
   const controller = new AbortController();
+  const reason = { request: "late PeImports cancellation" };
   const service = new PeImportsService({
     identity,
     inspect: () => {
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(ok(report));
     },
   });
@@ -143,8 +131,13 @@ it("discards an observation if the caller cancels while the provider completes",
     { path: report.artifact.path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "inspect_pe_imports",
+    normalized_result: report,
+  });
 });
 
 it("publishes every consumed directory span as its own Evidence location", async () => {

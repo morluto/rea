@@ -59,11 +59,11 @@ const depthContinuation = (
 
 // Use a different analyzer on the actual published child; repeating the same
 // whole-child extraction with unchanged handlers would reproduce this gap.
-const nestedUnknownContinuation = (
+const nestedRegionContinuation = (
   publishedFile: { readonly path: string; readonly size: number } | undefined,
 ): string => {
   const base =
-    "This unknown chunk was carved from a nested extraction, so its range is relative to the published child named by this gap's input_path, not to the original input.";
+    "This region is within a nested extraction, so its range is relative to the published child named by this gap's input_path, not to the original input.";
   return publishedFile !== undefined &&
     publishedFile.size > 0 &&
     publishedFile.size <= FIRMWARE_LIMITS.inputBytes
@@ -141,6 +141,9 @@ export const publishFirmwareExtraction = async (context: {
           relative_path: entry.relativePath,
           kind: entry.kind,
           link_target: entry.linkTarget,
+          ...(entry.linkTargetHex === undefined
+            ? {}
+            : { link_target_hex: entry.linkTargetHex }),
         });
         continue;
       }
@@ -387,7 +390,7 @@ const extractionGaps = (
   );
   const nestedContinuationId = (inputPath: string): string => {
     return continuation(
-      nestedUnknownContinuation(publishedFiles.get(inputPath)),
+      nestedRegionContinuation(publishedFiles.get(inputPath)),
     );
   };
   const chunkGaps = (

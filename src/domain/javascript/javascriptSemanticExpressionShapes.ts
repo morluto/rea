@@ -12,10 +12,11 @@ import {
   isErasedJavaScriptDeclaration,
   isUnmodeledJavaScriptRuntimeScope,
 } from "./javascriptModuleDeclaration.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   isUnshadowedGlobal,
+  semanticBindingAtRead,
+} from "./javascriptSemanticMutationInitializers.js";
+import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
@@ -64,7 +65,7 @@ export const createSemanticExpressionShapeResolver = (
       const unwrapped = unwrapJavaScriptExpression(node);
       node = unwrapped.node;
       depth += unwrapped.depth;
-      if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+      if (depth > state.precision.expression_depth) {
         state.valueResourceLimits.add("expression-depth");
         return "unknown";
       }
@@ -94,7 +95,7 @@ export const createSemanticExpressionShapeResolver = (
       const initializer = semanticStableInitializer(binding, state);
       if (initializer === undefined || initializer.projection.length > 0)
         return "unknown";
-      const read = semanticBindingAtRead(binding, node, state.parentsByNode);
+      const read = semanticBindingAtRead(binding, node, state);
       if (read.status !== "ordered" || !read.hasDefiniteInitializer)
         return "unknown";
       node = initializer.node;

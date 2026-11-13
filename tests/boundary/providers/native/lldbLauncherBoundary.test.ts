@@ -180,13 +180,13 @@ setTimeout(() => process.exit(0), 10000);
       expect(identity?.state).toBe("readable");
       controller.abort(reason);
       const result = await pending;
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected caller cancellation");
       expect(result.error).toMatchObject({
         _tag: "AnalysisCancelledError",
         cause: reason,
         cleanupIncomplete: false,
       });
+      expect(result.error.cause).toBe(reason);
       expect(await observeProcessStartIdentity(started.pid)).toBeUndefined();
       await expect(access(dirname(started.config_path))).rejects.toMatchObject({
         code: "ENOENT",

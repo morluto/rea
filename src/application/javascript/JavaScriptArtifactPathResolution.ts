@@ -58,6 +58,8 @@ interface ArtifactPathResolutionBase {
   readonly limitations: readonly string[];
   readonly conditional_resolutions?: readonly ConditionalModuleResolution[];
   readonly candidate_path?: string;
+  /** An external module can run code whose imports were not inventoried. */
+  readonly unexamined_module_imports?: true;
 }
 
 export interface ConditionalModuleResolution {
@@ -126,17 +128,15 @@ const EXTENSIONS = [
 // A private URL namespace for logical artifact paths, including root packages.
 // Encode inventory segments so filename punctuation remains literal in the base.
 const PACKAGE_ARTIFACT_ROOT_URL = new URL("file:///rea-artifact/");
-const encodePackageMetadataUrl = (path: string): URL =>
-  new URL(
-    path.split("/").map(encodeURIComponent).join("/"),
-    PACKAGE_ARTIFACT_ROOT_URL,
-  );
+const encodeArtifactPathUrl = (path: string, root: URL): URL =>
+  new URL(path.split("/").map(encodeURIComponent).join("/"), root);
 // URL identity cannot represent lone UTF-16 surrogates. Use request-local
 // opaque segments only for structural admission, never inventory lookup. A
 // target cannot spell these identities after URL's tab/newline preprocessing.
-const packageMetadataUrl = (
+const artifactPathUrl = (
   path: string,
   relativeTarget: string,
+  root: URL = PACKAGE_ARTIFACT_ROOT_URL,
 ): Result<
   URL,
   {
@@ -146,7 +146,7 @@ const packageMetadataUrl = (
   }
 > => {
   try {
-    return ok(encodePackageMetadataUrl(path));
+    return ok(encodeArtifactPathUrl(path, root));
   } catch (cause: unknown) {
     if (!(cause instanceof URIError)) throw cause;
     const reserved = new Set(
@@ -173,9 +173,9 @@ const packageMetadataUrl = (
       })
       .join("/");
     return err({
-      structuralUrl: new URL(structuralPath, PACKAGE_ARTIFACT_ROOT_URL),
+      structuralUrl: new URL(structuralPath, root),
       structuralSegments,
-      limitation: `Package metadata path ${JSON.stringify(path)} contains an unpaired UTF-16 surrogate and cannot be represented as a URL.`,
+      limitation: `Artifact path ${JSON.stringify(path)} contains an unpaired UTF-16 surrogate and cannot be represented as a URL.`,
     });
   }
 };
@@ -192,6 +192,7 @@ type CandidateResolution = {
   readonly limitations: readonly string[];
   readonly candidatePath?: string;
   readonly conditionalResolutions?: readonly ConditionalModuleResolution[];
+  readonly unexaminedModuleImports?: true;
 } & (
   | { readonly resolvedPath: string; readonly status: "resolved" }
   | {
@@ -219,6 +220,9 @@ export const resolveArtifactPathByContext = (
       : {}),
     resolution_context: input.context,
     limitations: resolution.limitations,
+    ...(resolution.unexaminedModuleImports === true
+      ? { unexamined_module_imports: true as const }
+      : {}),
     ...(resolution.candidatePath === undefined
       ? {}
       : { candidate_path: resolution.candidatePath }),
@@ -339,6 +343,10 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
     return sameOutcome
       ? {
           ...imported,
+          ...(imported.unexaminedModuleImports === true ||
+          required.unexaminedModuleImports === true
+            ? { unexaminedModuleImports: true as const }
+            : {}),
           limitations: [
             ...new Set([
               ...imported.limitations,
@@ -636,7 +644,11 @@ const contextualCandidate = (
   }
   const hasUrlPathSemantics =
     context === "module-specifier" && input.moduleKind === "import";
-  if (hasUrlPathSemantics) declared = htmlUrlText(declared);
+  if (hasUrlPathSemantics) {
+    declared = htmlUrlText(declared);
+    if (isRelativeJavaScriptModuleSpecifier(input.declaredPath))
+      declared = declared.replaceAll("\\", "/");
+  }
   const rejected = rejectDeclaration(
     declared,
     declaresLiteralPercent(input) || hasUrlPathSemantics,
@@ -666,7 +678,7 @@ const contextualCandidate = (
           return unresolvedCandidate("rejected", [
             "The module URL escapes the selected logical artifact root.",
           ]);
-        const sourceUrl = packageMetadataUrl(input.sourcePath, declared);
+        const sourceUrl = artifactPathUrl(input.sourcePath, declared);
         const base = sourceUrl.ok
           ? sourceUrl.value
           : sourceUrl.error.structuralUrl;
@@ -714,11 +726,15 @@ const contextualCandidate = (
     // after dot segments reach the root. Parse before percent decoding so an
     // encoded drive-like filename stays literal. The synthetic base establishes
     // only this ambiguity; it does not establish the source's runtime scheme.
-    const sourceUrlPath = input.sourcePath
-      .split("/")
-      .map(encodeURIComponent)
-      .join("/");
-    const fileReference = URL.parse(declared, `file:///${sourceUrlPath}`);
+    const sourceUrl = artifactPathUrl(
+      input.sourcePath,
+      declared,
+      new URL("file:///"),
+    );
+    const fileReference = URL.parse(
+      declared,
+      sourceUrl.ok ? sourceUrl.value : sourceUrl.error.structuralUrl,
+    );
     if (fileReference === null)
       return unresolvedCandidate("rejected", [
         "The URL reference cannot be parsed as a URL.",
@@ -732,6 +748,13 @@ const contextualCandidate = (
       return unresolvedCandidate("rejected", [
         "The URL reference path percent-decodes to NUL or to bytes that are not UTF-8.",
       ]);
+    if (
+      !sourceUrl.ok &&
+      fileReference.pathname
+        .split("/")
+        .some((segment) => sourceUrl.error.structuralSegments.has(segment))
+    )
+      return unresolvedCandidate("unavailable", [sourceUrl.error.limitation]);
     const candidate = urlRelativeCandidate(
       posix.dirname(input.sourcePath),
       decoded,
@@ -906,10 +929,21 @@ const bareModuleCandidate = (
       } else return packageResolution;
     }
   }
-  if (nearestNotFound !== null) return nearestNotFound;
-  return unresolvedCandidate("external", [
-    "No matching bare package was inventoried in an enclosing node_modules directory.",
-  ]);
+  if (nearestNotFound !== null)
+    return {
+      ...nearestNotFound,
+      ...(ELECTRON_MODULE.test(input.declaredPath)
+        ? {}
+        : { unexaminedModuleImports: true as const }),
+    };
+  return {
+    ...unresolvedCandidate("external", [
+      "No matching bare package was inventoried in an enclosing node_modules directory.",
+    ]),
+    ...(ELECTRON_MODULE.test(input.declaredPath)
+      ? {}
+      : { unexaminedModuleImports: true as const }),
+  };
 };
 
 function* packageLookupDirectories(
@@ -1100,7 +1134,7 @@ const resolveLegacyEsmSubpath = (
       depth--;
     } else if (segment !== ".") depth++;
   }
-  const metadataUrl = packageMetadataUrl(
+  const metadataUrl = artifactPathUrl(
     posix.join(directory, "package.json"),
     subpath,
   );
@@ -1927,7 +1961,7 @@ const selectStringPackageTarget = (
       `contains forbidden path segment ${JSON.stringify(forbidden)} before URL normalization`,
       mapKind,
     );
-  const metadataUrl = packageMetadataUrl(packagePath, value);
+  const metadataUrl = artifactPathUrl(packagePath, value);
   const packageUrl = metadataUrl.ok
     ? metadataUrl.value
     : metadataUrl.error.structuralUrl;

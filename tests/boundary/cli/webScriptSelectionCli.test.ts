@@ -203,7 +203,7 @@ cliTest(
             {
               path: ["output_directory"],
               reason: "invalid_value",
-              message: "Extraction output root already exists",
+              message: "Output root already exists",
             },
           ],
         },

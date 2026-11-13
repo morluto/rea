@@ -98,9 +98,29 @@ export const comparePngScreenshots = (
   };
 };
 
+/**
+ * Whether every pixel of a PNG has one RGBA value, decoded with the
+ * comparison's checks and encodings within the working-memory budget it
+ * keeps for a pair; undefined when the PNG cannot be decoded so.
+ */
+export const isOneColourPng = (dataBase64: string): boolean | undefined => {
+  let rgba: Buffer;
+  try {
+    const plan = parsePng({ data_base64: dataBase64 }, "image");
+    admitPngPair(plan, plan);
+    rgba = decodePng(plan).rgba;
+  } catch {
+    return undefined;
+  }
+  const first = rgba.readUInt32BE(0);
+  for (let offset = 4; offset < rgba.length; offset += 4)
+    if (rgba.readUInt32BE(offset) !== first) return false;
+  return true;
+};
+
 const parsePng = (
-  artifact: WebScreenshotArtifact,
-  field: "before" | "after",
+  artifact: Pick<WebScreenshotArtifact, "data_base64">,
+  field: "before" | "after" | "image",
 ): ParsedPng => {
   const bytes = decodeCanonicalBase64(artifact.data_base64);
   if (bytes === undefined || !hasPngSignature(bytes))
@@ -142,11 +162,12 @@ const parsePng = (
         throw new TypeError("Invalid PNG transparency order");
       sawTransparency = true;
       if (header.colorType === 2 && data.length === 6) {
+        const sampleMask = (1 << header.bitDepth) - 1;
         transparentColor = [
           data.readUInt16BE(0),
           data.readUInt16BE(2),
           data.readUInt16BE(4),
-        ];
+        ].map((value) => value & sampleMask);
       } else if (
         (header.colorType === 0 && data.length === 2) ||
         (header.colorType === 3 &&
@@ -439,7 +460,6 @@ const expandRgba = (
     rgba[target] = decoded[source] ?? 0;
     rgba[target + 1] = decoded[source + 1] ?? 0;
     rgba[target + 2] = decoded[source + 2] ?? 0;
-    // PNG tRNS keys are 16-bit values; values above 255 cannot match 8-bit samples.
     rgba[target + 3] =
       transparentColor !== undefined &&
       transparentColor.every(

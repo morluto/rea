@@ -88,7 +88,7 @@ def main():
     source = Path(bridge_path).read_text(encoding="utf-8")
     exec(compile(source, bridge_path, "exec"), namespace)
     namespace["REA_TARGET_PATH"] = FakeDocumentProvider.document.getExecutableFilePath()
-    namespace["_configure_hopper_api"](FakeDocumentProvider)
+    namespace["Document"] = FakeDocumentProvider
     namespace["_bind_session_document"]()
     dispatch = namespace["_dispatch"]
     address = "0x401000"

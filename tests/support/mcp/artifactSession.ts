@@ -5,6 +5,17 @@ import { createArtifactBinarySession } from "../../../src/composition/binary.js"
 import { createServer } from "../../../src/server/createServer.js";
 import type { TestMcp } from "./mcpFixture.js";
 
+/** Register session teardown while retaining its owner for a failed-close retry. */
+export const ownArtifactSession = (
+  session: Awaited<ReturnType<typeof createArtifactBinarySession>>,
+  onTestFinished: (handler: OnTestFinishedHandler) => void,
+): void => {
+  onTestFinished(async () => {
+    const result = await session.close();
+    if (!result.ok) throw result.error;
+  });
+};
+
 const openSessionTarget = async (
   mcp: TestMcp,
   onTestFinished: (handler: OnTestFinishedHandler) => void,
@@ -12,10 +23,7 @@ const openSessionTarget = async (
   path: string,
 ): Promise<Client> => {
   const session = await createArtifactBinarySession(process.env);
-  onTestFinished(async () => {
-    const result = await session.close();
-    if (!result.ok) throw result.error;
-  });
+  ownArtifactSession(session, onTestFinished);
   const client = await mcp.connect(createServer({ kind: "session", session }));
   const opened = await client.callTool({
     name: operation,

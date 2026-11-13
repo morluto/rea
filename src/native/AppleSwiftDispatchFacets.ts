@@ -5,6 +5,7 @@ import {
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { PointerResolution } from "./AppleMachoFixups.js";
 import type { Segment, Section } from "./AppleMachoSelection.js";
+import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
 import {
   decodeSwiftConformanceTypeReference,
@@ -233,9 +234,29 @@ export const createSwiftRelativeReader = (input: {
           );
     let fileOffset: number | null = null;
     let reason: string | null = null;
+    const unknownIndirect = (reason: string): SwiftRelativeValue => {
+      if (budget.admit())
+        result.relative_pointers.push({
+          field: read.location(field),
+          target: { address: null, file_offset: null },
+          displacement,
+          indirectable,
+          indirect,
+          decode: { status: "partial", reason },
+          evidence: read.evidence(field, "Swift ABI indirect relative pointer"),
+        });
+      return { kind: "unknown", reason };
+    };
     try {
       if (indirect && target !== null) {
-        const pointer = read.resolvePointer(target);
+        let pointer: PointerResolution;
+        try {
+          pointer = read.resolvePointer(target);
+        } catch (cause) {
+          const failure = expectedSwiftMetadataReadFailure(cause);
+          if (failure === null) throw cause;
+          return unknownIndirect(failure);
+        }
         if (pointer.kind === "bind") {
           if (budget.admit())
             result.relative_pointers.push({
@@ -258,21 +279,7 @@ export const createSwiftRelativeReader = (input: {
           };
         }
         if (pointer.kind === "unknown" || pointer.kind === "unsupported") {
-          const unresolved = pointer.reason;
-          if (budget.admit())
-            result.relative_pointers.push({
-              field: read.location(field),
-              target: { address: null, file_offset: null },
-              displacement,
-              indirectable,
-              indirect,
-              decode: { status: "partial", reason: unresolved },
-              evidence: read.evidence(
-                field,
-                "Swift ABI indirect relative pointer",
-              ),
-            });
-          return { kind: "unknown", reason: unresolved };
+          return unknownIndirect(pointer.reason);
         }
         const indirectTarget = pointer.target;
         target =
@@ -282,7 +289,8 @@ export const createSwiftRelativeReader = (input: {
       }
       if (target !== null) fileOffset = read.offset(target);
     } catch (cause) {
-      reason = cause instanceof Error ? cause.message : String(cause);
+      reason = expectedSwiftMetadataReadFailure(cause);
+      if (reason === null) throw cause;
     }
     if (budget.admit())
       result.relative_pointers.push({
@@ -325,7 +333,10 @@ export const decodeSwiftDispatchFacets = (input: {
     ({ name }) => name === "__swift5_proto",
   )) {
     if (section.size % 4 !== 0)
-      throw new RangeError("Misaligned Swift conformance section");
+      throw new BinaryFormatFailure(
+        "malformed",
+        "Misaligned Swift conformance section",
+      );
     for (let index = 0; index < section.size / 4; index++) {
       if (!budget.admit()) break;
       swiftExamined++;
@@ -549,7 +560,8 @@ export const decodeSwiftDispatchFacets = (input: {
           }
         }
       } catch (cause) {
-        const message = cause instanceof Error ? cause.message : String(cause);
+        const message = expectedSwiftMetadataReadFailure(cause);
+        if (message === null) throw cause;
         issues.push(
           issue(
             "swift_conformances_static_witness_slots",

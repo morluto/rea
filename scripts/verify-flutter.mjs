@@ -104,6 +104,10 @@ await withVerifierCleanup(
     }
     // The same checks apply to the default selection and each remaining ABI.
     const preferred = await run("inspect_dart_aot", { path: apk });
+    assert.ok(
+      abis.some((abi) => abi.abi === preferred.abi),
+      "Default AOT selection must be one of the identified ABIs",
+    );
     for (const abi of abis) {
       const aot =
         abi.abi === preferred.abi

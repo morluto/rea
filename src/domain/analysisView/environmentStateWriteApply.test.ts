@@ -51,6 +51,7 @@ const generator = () => {
     clock: NOW,
     "nested-clock": { at: NOW },
     "held-clock": NOW,
+    "made-object": { at: NOW },
   };
   const generate = (rule: GeneratedRule) => {
     asked.push(rule);
@@ -141,6 +142,8 @@ it.each<[string, JsonValue | undefined]>([
   ["/x~1y/m~0n", true],
   ["/", "blank"],
   ["/a/2/b", undefined],
+  ["/a/01/b", undefined],
+  ["/a/999999999999999999999999/b", undefined],
   ["/a/first", undefined],
   ["/a/0/b/c", undefined],
   ["/missing", undefined],
@@ -784,7 +787,6 @@ it.each(["__proto__", "constructor"])(
       generator().generate,
     );
     for (const result of [created, updated]) {
-      expect(result.ok).toBe(true);
       if (!result.ok) throw new Error(result.error);
       expect(
         Object.getOwnPropertyDescriptor(result.value, field)?.value,

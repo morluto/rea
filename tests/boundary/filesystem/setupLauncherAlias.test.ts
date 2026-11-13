@@ -10,8 +10,8 @@ import {
 import { dirname, join } from "node:path";
 import { expect, it } from "vitest";
 
-import { setupRegistrationCommand } from "../../../src/application/SetupHost.js";
 import {
+  currentClientRegistrationCommand,
   classifyClientRegistrationCommand,
   registrationRuntimePath,
 } from "../../../src/application/ClientRegistrationIdentity.js";
@@ -42,8 +42,10 @@ it.skipIf(process.platform === "win32")(
     await symlink(old, latest, "dir");
     const unstable = join(latest, scriptWithin("old"));
     const alias = join(latest, "bin", "rea");
-    const command = setupRegistrationCommand("linux", undefined, unstable, {
-      PATH: join(latest, "bin"),
+    const command = currentClientRegistrationCommand({
+      platform: "linux",
+      entrypointPath: unstable,
+      environment: { PATH: join(latest, "bin") },
     });
     expect(command).toEqual([process.execPath, alias, "mcp"]);
     expect(classifyClientRegistrationCommand(command, unstable)).toBe("owned");
@@ -138,7 +140,11 @@ it.skipIf(process.platform === "win32")(
       ),
     ).toBe(join(valid, runtime));
     expect(
-      setupRegistrationCommand("linux", undefined, script, { PATH: valid }),
+      currentClientRegistrationCommand({
+        platform: "linux",
+        entrypointPath: script,
+        environment: { PATH: valid },
+      }),
     ).toEqual([join(valid, runtime), script, "mcp"]);
     expect(
       registrationRuntimePath(
@@ -203,16 +209,19 @@ it.skipIf(process.platform === "win32")(
       });
     expect(await inspect()).toContainEqual(
       expect.objectContaining({
-        commandIdentity: "owned",
-        status: expect.objectContaining({ client: "cursor", state: "aligned" }),
+        status: expect.objectContaining({
+          client: "cursor",
+          state: "aligned",
+          command_identity: "owned",
+        }),
       }),
     );
     await rm(executable);
     expect(classifyClientRegistrationCommand(command, script)).toBe("unknown");
     expect(await inspect()).toContainEqual(
       expect.objectContaining({
-        commandIdentity: "unknown",
         status: expect.objectContaining({
+          command_identity: "unknown",
           client: "cursor",
           state: "unknown",
           command,
@@ -242,18 +251,24 @@ it.skipIf(process.platform === "win32")(
     await writeFile(selected, "selected", { mode: 0o600 });
     await symlink(selected, join(unexecutable, "rea"));
     expect(
-      setupRegistrationCommand("linux", undefined, entrypoint, {
-        PATH: `${foreign}:${missing}:relative`,
+      currentClientRegistrationCommand({
+        platform: "linux",
+        entrypointPath: entrypoint,
+        environment: { PATH: `${foreign}:${missing}:relative` },
       }),
     ).toEqual([process.execPath, entrypoint, "mcp"]);
     expect(
-      setupRegistrationCommand("linux", undefined, selected, {
-        PATH: unexecutable,
+      currentClientRegistrationCommand({
+        platform: "linux",
+        entrypointPath: selected,
+        environment: { PATH: unexecutable },
       }),
     ).toEqual([process.execPath, selected, "mcp"]);
     expect(
-      setupRegistrationCommand("win32", undefined, entrypoint, {
-        PATH: foreign,
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: entrypoint,
+        environment: { PATH: foreign },
       }),
     ).toEqual([process.execPath, entrypoint, "mcp"]);
   },

@@ -1,5 +1,9 @@
 # Environment state view from captures
 
+This specification records an implementation increment and its original problem
+statement. For current behavior and limitations, see the
+[current guide](../../../agent-environments.md).
+
 Issue: https://github.com/morluto/rea/issues/4933
 
 ## Outcome
@@ -13,6 +17,9 @@ initial recordings from the state, or a recorded view with the reason it
 cannot. This increment adds the view kind only; serving from the state, loading
 another state through the AgentEnv data plane and modelling write effects are
 later increments.
+
+Safe `HEAD`, `OPTIONS` and `TRACE` tools have recorded views with reason
+`method-replay`; state rendering currently applies only to `GET` reads.
 
 ## Requirements
 

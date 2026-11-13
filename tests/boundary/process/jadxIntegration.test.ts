@@ -1,4 +1,5 @@
 import { SdkErrorCode } from "@modelcontextprotocol/client";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { expect, it as test, onTestFinished, vi } from "vitest";
 import {
   access,
@@ -365,12 +366,15 @@ it("rejects a copied JAR that differs from its admitted session identity", async
         admitted,
         root.path,
         "inspect_android_package",
+        undefined,
+        (_path, owner) => hashOwners.push(owner),
       ),
     ).rejects.toMatchObject({
       _tag: "AnalysisCapabilityUnavailableError",
       reason: expect.stringContaining("bytes changed"),
     });
   } finally {
+    await Promise.all(hashOwners.map((owner) => owner.close()));
     await root.close();
   }
 });
@@ -440,6 +444,8 @@ it("retire sessions when APK bytes, engine bytes or JVM options change", async (
     Buffer.concat([await readFile(apk), Buffer.from("new artifact bytes")]),
   );
   const changed = await inspect();
+  expect(first.subject?.digest.sha256).toEqual(expect.any(String));
+  expect(changed.subject?.digest.sha256).toEqual(expect.any(String));
   expect(changed.subject?.digest.sha256).not.toBe(first.subject?.digest.sha256);
   await verifyCleanup(launches.slice(0, 1));
   await writeJadxJarInventory(jar, ["fixture/NewEngineMarker.class"]);
@@ -520,8 +526,41 @@ it("retires an idle engine and starts a fresh one for a later request", async ()
   await verifyCleanup(launches);
 });
 
+it("keeps idle retirement after refusing a mapping for a loaded engine", async () => {
+  const { service, apk, launches, provider } = await setup();
+  const missing = `${await createTestTempDirectory("rea-jadx-mapping-")}/mapping.txt`;
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const first = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (!first.ok) throw first.error;
+    const refused = await service.execute("inspect_android_class", {
+      path: apk,
+      class_name: "example.Missing",
+      mapping_path: missing,
+    });
+    expect(refused.ok).toBe(false);
+    vi.advanceTimersByTime(60_000);
+  } finally {
+    vi.useRealTimers();
+  }
+  await expect
+    .poll(async () => {
+      try {
+        await verifyCleanup(launches);
+        return true;
+      } catch {
+        return false;
+      }
+    })
+    .toBe(true);
+  expect(launches).toHaveLength(1);
+  await provider.close();
+});
+
 it("completes large class inventories with exact case-sensitive search semantics", async () => {
-  const { service, apk, provider } = await setup("large-inventory");
+  const { service, apk, provider, launches } = await setup("large-inventory");
   const full = await service.execute("search_android_classes", {
     path: apk,
     query: "",
@@ -542,7 +581,22 @@ it("completes large class inventories with exact case-sensitive search semantics
       mixedCase.value.normalized_result,
     ).matches,
   ).toEqual([]);
+  const filtered = await service.execute("search_android_classes", {
+    path: apk,
+    query: "Class",
+  });
+  if (!filtered.ok) throw filtered.error;
+  const matches = androidResultSchemas.search_android_classes.parse(
+    filtered.value.normalized_result,
+  );
+  expect(matches.total_classes).toBe(9001);
+  expect(matches.matches).toHaveLength(9000);
+  expect(matches.matches[0]).toBe("fixture.Class0");
+  expect(matches.matches[4096]).toBe("fixture.Class4096");
+  expect(matches.matches.at(-1)).toBe("fixture.Class8999");
+  expect(launches).toHaveLength(1);
   await provider.close();
+  await verifyCleanup(launches);
 });
 
 it("close cancels active and queued work and prevents later acquisition", async () => {
@@ -600,25 +654,6 @@ it("retains APK identity, original input, raw producer data and normalized obser
       expect.objectContaining({ operation: "get_android_manifest" }),
     ]),
   });
-  await provider.close();
-  await verifyCleanup(launches);
-});
-
-it("pages matching classes independently of the total APK class count", async () => {
-  const { service, apk, launches, provider } = await setup("large-inventory");
-  const outcome = await service.execute("search_android_classes", {
-    path: apk,
-    query: "Class",
-  });
-  if (!outcome.ok) throw outcome.error;
-  const result = androidResultSchemas.search_android_classes.parse(
-    outcome.value.normalized_result,
-  );
-  expect(result.total_classes).toBe(9001);
-  expect(result.matches).toHaveLength(9000);
-  expect(result.matches[0]).toBe("fixture.Class0");
-  expect(result.matches[4096]).toBe("fixture.Class4096");
-  expect(result.matches.at(-1)).toBe("fixture.Class8999");
   await provider.close();
   await verifyCleanup(launches);
 });
@@ -950,6 +985,8 @@ it("bounds each upstream call by the selected deadline instead of a fixed limit"
         bridgeHash: "0".repeat(64),
         signal: new AbortController().signal,
         timeoutMs: 300,
+        resources: new ArtifactResourceScope(),
+        deadline: new AbortController().signal,
       }),
     ).rejects.toMatchObject({
       code: SdkErrorCode.RequestTimeout,

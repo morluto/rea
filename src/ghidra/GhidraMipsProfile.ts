@@ -435,6 +435,7 @@ export const ghidraMipsProfileParameters = (
 export const ghidraMipsProfileMismatchReason = (
   target: BinaryTarget,
   parameters: Readonly<Record<string, unknown>>,
+  existingProject: boolean,
 ): string | null => {
   if (target.architecture !== "mips" || target.mips === undefined) return null;
   const expected = ghidraMipsProfileParameters(target);
@@ -447,6 +448,7 @@ export const ghidraMipsProfileMismatchReason = (
   const expectedBasis =
     committedLane === pspLane ? undefined : expected.mips_abi_basis;
   if (
+    !existingProject &&
     expectedLane !== undefined &&
     (committedLane !== expectedLane ||
       parameters.mips_abi_basis !== expectedBasis)
@@ -458,18 +460,4 @@ export const ghidraMipsProfileMismatchReason = (
   )
     return "The committed MIPS ELF metadata does not match the current target; reopen the target to resolve a new profile.";
   return null;
-};
-
-/** Read the provider-pinned import language back from a resolved legacy profile. */
-export const ghidraPinnedMipsLanguage = (
-  parameters: Readonly<Record<string, unknown>>,
-): GhidraLanguageOverride | undefined => {
-  if (parameters.language_selection !== "provider-pinned-v1") return undefined;
-  const languageId = parameters.language_id;
-  const compilerSpecId = parameters.compiler_spec_id;
-  if (typeof languageId !== "string" || typeof compilerSpecId !== "string")
-    return undefined;
-  return compilerSpecId === "language-default"
-    ? { languageId }
-    : { languageId, compilerSpecId };
 };

@@ -6,6 +6,7 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, onTestFinished } from "vitest";
 
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
+import { zstandardZipFixture } from "../../fixtures/zipZstandard.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -23,6 +24,65 @@ import {
 } from "../../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+
+cliTest(
+  "inventories and extracts method-93 Zstandard ZIP bytes through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-zip-zstd-cli-");
+    const path = join(root, "method93.zip");
+    const content = Buffer.from("Zstandard source evidence: café\n".repeat(7));
+    const archive = zstandardZipFixture(content);
+    await writeFile(path, archive);
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    );
+    const inventory = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence?.normalized_result,
+    );
+    expect(inventory.manifest.root_sha256).toBe(
+      createHash("sha256").update(archive).digest("hex"),
+    );
+    expect(inventory.occurrences).toContainEqual(
+      expect.objectContaining({
+        logical_path: "member.txt",
+        hash_status: "verified",
+      }),
+    );
+    expect(inventory.nodes).toContainEqual(
+      expect.objectContaining({
+        sha256: createHash("sha256").update(content).digest("hex"),
+      }),
+    );
+    const extracted = await cli.run({
+      arguments: ["extract-artifact", path, "--json"],
+    });
+    expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
+    const extraction = artifactExtractionResultSchema.parse(
+      parseEvidence(extracted.json).normalized_result,
+    );
+    try {
+      expect(extraction.artifacts).toContainEqual(
+        expect.objectContaining({
+          relative_path: "member.txt",
+          sha256: createHash("sha256").update(content).digest("hex"),
+        }),
+      );
+      expect(
+        (await readFile(join(extraction.output_root, "member.txt"))).equals(
+          content,
+        ),
+      ).toBe(true);
+      expect((await readFile(path)).equals(archive)).toBe(true);
+      expect(extraction.containment_verified).toBe(true);
+    } finally {
+      await rm(extraction.output_root, { recursive: true, force: true });
+    }
+  },
+);
 
 for (const zip64 of [false, true]) {
   cliTest(
@@ -254,7 +314,7 @@ it("reports unflagged high-byte ZIP names as CP437 readings with their source by
       logical_path: "╟╤▒█.txt",
       hash_status: "verified",
       limitations: [
-        "ZIP name uses CP437 fallback; source encoding unverified; raw hex: c7d1b1db2e747874.",
+        expect.stringMatching(/CP437.*unverified.*c7d1b1db2e747874/iu),
       ],
     }),
   );
@@ -285,9 +345,7 @@ it("falls back to the stored name and reports bytes when a Unicode Path field CR
   expect(inventory.occurrences).toContainEqual(
     expect.objectContaining({
       logical_path: "é.txt",
-      limitations: [
-        "ZIP name uses CP437 fallback; source encoding unverified; raw hex: 822e747874.",
-      ],
+      limitations: [expect.stringMatching(/CP437.*unverified.*822e747874/iu)],
     }),
   );
 });
@@ -572,7 +630,7 @@ it("rejects overlapping ZIP member data ranges through artifact inventory", asyn
   );
 });
 
-it("preserves encrypted-member and corrupt-CRC observations", async () => {
+it("preserves encrypted-member and malformed-compression observations", async () => {
   const root = await createTestTempDirectory("rea-zip-integrity-");
   const encryptedPath = join(root, "encrypted.zip");
   const encryptedWriter = new ZipWriter(new Uint8ArrayWriter());
@@ -614,7 +672,7 @@ it("preserves encrypted-member and corrupt-CRC observations", async () => {
     code: "ENOENT",
   });
 
-  const corruptPath = join(root, "corrupt-crc.zip");
+  const corruptPath = join(root, "corrupt-compression.zip");
   const corruptWriter = new ZipWriter(new Uint8ArrayWriter());
   await corruptWriter.add("data.txt", new TextReader("evidence\n"));
   await writeFile(corruptPath, await corruptWriter.close());
@@ -636,6 +694,31 @@ it("preserves encrypted-member and corrupt-CRC observations", async () => {
     corruptPath,
     "format",
     "ZIP archive is malformed: Invalid compressed data",
+  );
+});
+
+it("rejects a stored ZIP member whose payload disagrees with its CRC", async () => {
+  const root = await createTestTempDirectory("rea-zip-crc-");
+  const path = join(root, "corrupt-crc.zip");
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  await writer.add("data.txt", new TextReader("evidence\n"), { level: 0 });
+  const bytes = Buffer.from(await writer.close());
+  const localHeader = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  if (localHeader < 0) throw new Error("Expected a ZIP local-file header");
+  expect(bytes.readUInt16LE(localHeader + 8)).toBe(0);
+  const dataOffset =
+    localHeader +
+    30 +
+    bytes.readUInt16LE(localHeader + 26) +
+    bytes.readUInt16LE(localHeader + 28);
+  const firstByte = bytes[dataOffset];
+  if (firstByte === undefined) throw new Error("Expected ZIP member bytes");
+  bytes[dataOffset] = firstByte ^ 1;
+  await writeFile(path, bytes);
+  await expectInventoryFailure(
+    path,
+    "format",
+    "ZIP archive is malformed: Invalid CRC32",
   );
 });
 

@@ -7,10 +7,13 @@ import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
+  adbInputSchemas,
   MAX_ADB_ACTIVITY_EXTRAS,
   type AdbOperation,
 } from "../domain/adb/adbDeviceAnalysis.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -38,10 +41,10 @@ export const registerAdbCommands = (
       ),
     );
 
-  const serial = z
-    .string()
-    .min(1)
-    .describe("Device serial exactly as `adb devices` reports it");
+  const serial = adbInputSchemas.inspect_adb_device.shape.serial.describe(
+    "Device serial exactly as `adb devices` reports it",
+  );
+  const packageName = adbInputSchemas.pull_adb_package.shape.package;
 
   cli.command(CLI_COMMANDS.inspectAdbClient, {
     description:
@@ -83,15 +86,12 @@ export const registerAdbCommands = (
       "Pull one installed package's complete APK set with SHA-256 digests",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Installed package name"),
+      package: packageName.describe("Installed package name"),
     }),
     options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .describe(
-          "Local directory for the pulled APK set; a package-named subdirectory is created inside",
-        ),
+      "output-directory": localPathStringSchema.describe(
+        "Local directory for the pulled APK set; a package-named subdirectory is created inside",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.pullAdbPackage, "pull_adb_package", {
@@ -104,23 +104,16 @@ export const registerAdbCommands = (
     description: "Read a bounded dump of the device log for one buffer",
     args: z.object({ serial }),
     options: z.object({
-      count: z
-        .number()
-        .int()
-        .min(1)
-        .max(10_000)
-        .default(500)
-        .describe("Number of most recent lines to read"),
+      count: cliDecimalField(
+        adbInputSchemas.read_adb_logcat.shape.count,
+      ).describe("Number of most recent lines to read"),
       buffer: z
         .enum(["main", "system", "radio", "events", "crash"])
         .default("main")
         .describe("Log buffer to read"),
-      pid: z
-        .number()
-        .int()
-        .positive()
-        .optional()
-        .describe("Restrict to one process id"),
+      pid: cliDecimalField(adbInputSchemas.read_adb_logcat.shape.pid).describe(
+        "Restrict to one process id",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.readAdbLogcat, "read_adb_logcat", {
@@ -133,7 +126,7 @@ export const registerAdbCommands = (
   cli.command(CLI_COMMANDS.inspectAdbPackage, {
     description:
       "Inspect one installed package's version, installer, and flags through dumpsys",
-    args: z.object({ serial, package: z.string().min(1).describe("Package") }),
+    args: z.object({ serial, package: packageName.describe("Package") }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.inspectAdbPackage, "inspect_adb_package", {
         serial: args.serial,
@@ -144,13 +137,12 @@ export const registerAdbCommands = (
     description: "Pull one device file to a local copy with a SHA-256 digest",
     args: z.object({
       serial,
-      "device-path": z.string().min(1).describe("Absolute device path to pull"),
+      "device-path": adbInputSchemas.pull_adb_file.shape.device_path,
     }),
     options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .describe("Local directory for the pulled file"),
+      "output-directory": localPathStringSchema.describe(
+        "Local directory for the pulled file",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.pullAdbFile, "pull_adb_file", {
@@ -164,8 +156,8 @@ export const registerAdbCommands = (
       "Push one local file to the device; refuses existing targets without --overwrite",
     args: z.object({
       serial,
-      "local-path": z.string().min(1).describe("Existing local file"),
-      "device-path": z.string().min(1).describe("Absolute device destination"),
+      "local-path": localPathStringSchema.describe("Existing local file"),
+      "device-path": adbInputSchemas.push_adb_file.shape.device_path,
     }),
     options: z.object({
       overwrite: z
@@ -185,10 +177,9 @@ export const registerAdbCommands = (
     description: "Capture one screen frame as a digested PNG",
     args: z.object({ serial }),
     options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .describe("Local directory for screen.png"),
+      "output-directory": localPathStringSchema.describe(
+        "Local directory for screen.png",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.captureAdbScreen, "capture_adb_screen", {
@@ -206,10 +197,7 @@ export const registerAdbCommands = (
     description: "List one device directory with kinds, permissions, and sizes",
     args: z.object({
       serial,
-      "device-path": z
-        .string()
-        .min(1)
-        .describe("Absolute device directory path to list"),
+      "device-path": adbInputSchemas.list_adb_directory.shape.device_path,
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.listAdbDirectory, "list_adb_directory", {
@@ -245,10 +233,8 @@ export const registerAdbCommands = (
     description: "Read one settings value from system, secure, or global",
     args: z.object({
       serial,
-      namespace: z
-        .enum(["system", "secure", "global"])
-        .describe("Settings namespace to read"),
-      key: z.string().min(1).describe("Setting key to read"),
+      namespace: adbInputSchemas.read_adb_setting.shape.namespace,
+      key: adbInputSchemas.read_adb_setting.shape.key,
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.readAdbSetting, "read_adb_setting", {
@@ -261,10 +247,9 @@ export const registerAdbCommands = (
     description: "Collect and digest one device-generated bugreport archive",
     args: z.object({ serial }),
     options: z.object({
-      "output-directory": z
-        .string()
-        .min(1)
-        .describe("Local directory for the bugreport zip"),
+      "output-directory": localPathStringSchema.describe(
+        "Local directory for the bugreport zip",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.collectAdbBugreport, "collect_adb_bugreport", {
@@ -274,22 +259,16 @@ export const registerAdbCommands = (
   });
   cli.command(CLI_COMMANDS.resolveAdbPackages, {
     description: "Find installed packages by case-insensitive name substring",
-    args: z.object({
-      serial,
-      query: z.string().min(2).describe("Package-name substring to find"),
-    }),
+    args: adbInputSchemas.resolve_adb_packages,
     run: ({ args }) =>
-      execute(CLI_COMMANDS.resolveAdbPackages, "resolve_adb_packages", {
-        serial: args.serial,
-        query: args.query,
-      }),
+      execute(CLI_COMMANDS.resolveAdbPackages, "resolve_adb_packages", args),
   });
   cli.command(CLI_COMMANDS.installAdbPackage, {
     description:
       "Install one local APK; --replace requests reinstall mode to keep existing app data",
     args: z.object({
       serial,
-      "apk-path": z.string().min(1).describe("Local APK file to install"),
+      "apk-path": localPathStringSchema.describe("Local APK file to install"),
     }),
     options: z.object({
       replace: z
@@ -310,7 +289,7 @@ export const registerAdbCommands = (
     description: "Uninstall one package and its data from the device",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Installed package to uninstall"),
+      package: packageName.describe("Installed package to uninstall"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.uninstallAdbPackage, "uninstall_adb_package", {
@@ -323,7 +302,7 @@ export const registerAdbCommands = (
       "Start one installed app by resolving and launching its launcher activity",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Installed package to start"),
+      package: packageName.describe("Installed package to start"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.startAdbApp, "start_adb_app", {
@@ -336,15 +315,17 @@ export const registerAdbCommands = (
       "Start an intent with am start (action, URI, component, extras)",
     args: z.object({
       serial,
-      action: z.string().min(1).describe("Intent action to start"),
+      action: adbInputSchemas.start_adb_activity.shape.action.describe(
+        "Intent action to start",
+      ),
     }),
     options: z.object({
-      "data-uri": z.string().min(1).optional().describe("Intent data URI (-d)"),
-      component: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Explicit component in package/activity form (-n)"),
+      "data-uri": adbInputSchemas.start_adb_activity.shape.data_uri.describe(
+        "Intent data URI (-d)",
+      ),
+      component: adbInputSchemas.start_adb_activity.shape.component.describe(
+        "Explicit component in package/activity form (-n)",
+      ),
       extra: z
         .array(z.string().min(1))
         .max(MAX_ADB_ACTIVITY_EXTRAS)
@@ -405,7 +386,7 @@ export const registerAdbCommands = (
     description: "Force-stop every process of one package",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Package to force-stop"),
+      package: packageName.describe("Package to force-stop"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.stopAdbApp, "stop_adb_app", {

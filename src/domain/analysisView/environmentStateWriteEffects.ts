@@ -28,12 +28,14 @@ import {
   type SimulatedState,
 } from "./environmentStateWriteChecks.js";
 import {
+  compareValues,
   explainUpdate,
   responseShapeOf,
 } from "./environmentStateWriteExplain.js";
 import { otherFields } from "./environmentStateWriteGenerated.js";
 import {
   contradictsEarlierCalls,
+  defaultsDisagree,
   disagreesWithCall,
   keptFields,
   rememberCall,
@@ -42,14 +44,23 @@ import {
   conflictsWithPlan,
   refinedBody,
   reconciledUpdateRule,
+  toggledRules,
 } from "./environmentStateWriteCalls.js";
 import {
   laterObservation,
+  respelledInstant,
   shownBefore,
   viewFields,
   type Observed,
+  type ObservationSearch,
+  type ObservedRead,
 } from "./environmentStateWriteObserve.js";
-import { plannedBody, restampedFields } from "./environmentStateWriteStamps.js";
+import {
+  plannedBody,
+  readSpellsCoarser,
+  readSpelledClocks,
+  restampedFields,
+} from "./environmentStateWriteStamps.js";
 import { readClock } from "./environmentStateWriteValues.js";
 import type { CreateEvidence } from "./environmentStateWriteExplain.js";
 import {
@@ -94,6 +105,12 @@ export interface WriteDraft {
   readonly updates: UpdateCall[];
   /** The last value each sequence took, by field and, for a collection's sequence, collection; the next call must follow it. */
   readonly sequences: Map<string, number>;
+  /** Integers the exemplar showed in fields no rule wrote, above every value its type held, where a later call's sequence may start. */
+  readonly starts: Map<string, number>;
+  /** Collections of accepted create calls, used to check late sequence adoption. */
+  readonly createCollections: string[];
+  /** The largest integer each echoed field held on an accepted create, which a sequence adopted later must count past. */
+  readonly sentLargest: Map<string, number>;
   /** The collection a create writes into when its own path names no state type: the one its returned id was read under. */
   readonly linked?: string | undefined;
   /** Fields an item action's call found already at the value it sets them to. */
@@ -159,10 +176,16 @@ export interface EffectContext {
   readonly io: WriteIo;
   readonly records: readonly StateRecordFacts[];
   readonly chronology: StateRecordChronology;
+  readonly overlapsWrite: (
+    record: StateRecordFacts,
+    exclude?: number,
+  ) => boolean;
   /** Whether a record may change state: a write the capture does not show reading only. */
   readonly isWrite: (record: StateRecordFacts) => boolean;
   readonly viewOf: (ordinal: number) => StateView | undefined;
   readonly idField: (type: string) => string;
+  /** Fields of a type whose values change on their own, which no read checks. */
+  readonly volatileOf: (type: string) => ReadonlySet<string>;
   /** Mark a later read as a create's or update's observation, so it does not check that write. */
   readonly observed: (ordinal: number) => void;
   /** Whether an unmodelled write may have changed the entity since the state last saw it. */
@@ -171,6 +194,8 @@ export interface EffectContext {
   readonly initialDocument: (tool: string) => StateDocument | undefined;
   /** The entities of a type the initial state held, whose values a sequence never reuses. */
   readonly startedWith: (type: string) => readonly StateEntity[];
+  /** Fields the type's item views show that no initial entity holds, which an answer leaves out for an entity without them. */
+  readonly laterFields: (type: string) => ReadonlySet<string>;
   /** Whether another tool's modelled write to the target awaits a check, which a later read must still make. */
   readonly pending: (target: string) => boolean;
 }
@@ -296,6 +321,7 @@ export const searchFrom = (context: EffectContext, step: WriteStep) => ({
   records: context.records,
   from: step.index,
   chronology: context.chronology,
+  overlapsWrite: context.overlapsWrite,
   viewOf: context.viewOf,
   withBody: context.io.withBody,
   queryOf: context.io.queryOf,
@@ -342,11 +368,12 @@ const updatedObservation = (
           step.record.ordinal,
           (body): Observed | undefined => {
             const located =
-              body === undefined ? undefined : locateItem(body, entity.id);
+              body === undefined
+                ? undefined
+                : locateItem(body, entity.id, entity.idField);
             const object =
               located === undefined ? undefined : at(body!, located.pointer);
-            return located?.keys.includes(entity.idField) === true &&
-              isObject(object)
+            return located !== undefined && isObject(object)
               ? {
                   ordinal: step.record.ordinal,
                   pointer: located.pointer,
@@ -479,6 +506,49 @@ const outcomes = (
   return { targets, target, recorded };
 };
 
+/** The item read after an update that spells a clock the update stamped at a coarser precision, which serving stores it as. */
+const spelledReadBack = (
+  context: EffectContext,
+  step: WriteStep,
+  target: {
+    readonly type: string;
+    readonly idField: string;
+    readonly collection: string;
+    readonly id: string;
+  },
+  call: { readonly rules: readonly FieldRule[]; readonly after: JsonObject },
+): ObservedRead | undefined => {
+  const read = laterObservation(
+    searchFrom(context, step),
+    itemReads(context, target),
+  );
+  if (read === undefined || context.viewOf(read.ordinal)?.shape !== "item")
+    return undefined;
+  const respelled = call.rules.some((rule) => {
+    if (rule.rule !== "clock") return false;
+    const [own, shown] = [
+      ownMember(call.after, rule.field),
+      ownMember(read.object, rule.field),
+    ];
+    return respelledInstant(own, shown) && readSpellsCoarser(own, shown);
+  });
+  return respelled
+    ? { ordinal: read.ordinal, pointer: read.pointer, shape: "item" }
+    : undefined;
+};
+
+/** The object the plan's kept read-back shows, which serving spells every update's clocks by. */
+const keptRead = (
+  search: ObservationSearch,
+  read: ObservedRead | undefined,
+): JsonObject | undefined =>
+  read === undefined
+    ? undefined
+    : search.withBody(read.ordinal, (body) => {
+        const object = body === undefined ? undefined : at(body, read.pointer);
+        return isObject(object) ? object : undefined;
+      });
+
 /** Build an update plan from its exemplar, or add what a later call showed. */
 const buildUpdate = (
   context: EffectContext,
@@ -589,6 +659,9 @@ export const updateEntity = (
     return UNKNOWN;
   }
   const { targets, target, recorded } = outcomes(context, entity, after.object);
+  // An unknown baseline cannot establish this call's changes. Keep its outcome
+  // without creating or refining rules from values another write may have changed.
+  if (context.unknown(type, collection, id)) return recorded();
   // Only confirmed absence makes a bodyless action; malformed or unretained content stays unknown.
   const body =
     "body" in named
@@ -602,9 +675,8 @@ export const updateEntity = (
     fail(draft, step, "body-unusable");
     return recorded();
   }
-  const unknown = context.unknown(type, collection, id);
   const call = { ...callOf(step, body), body };
-  const { explained, rules } = fitUpdateClocks(
+  const fitted = fitUpdateClocks(
     draft,
     after.object,
     explainUpdate({
@@ -625,29 +697,68 @@ export const updateEntity = (
       references: draft.plan.rules.filter((rule) => rule.rule === "reference"),
     }),
   );
+  // An action a later call shows flipping back what an earlier one set toggles it.
+  const { rules, later } = toggledRules(
+    fitted.rules,
+    fitted.explained.rules,
+    entity.fields,
+    draft.steady,
+    draft.updates,
+  );
+  const explained = { ...fitted.explained, rules: later };
   for (const member of keptOrders(call.body, after.object))
     draft.kept.add(member);
-  if (explained.unexplained.length > 0 && !unknown) {
+  if (explained.unexplained.length > 0) {
     refuse(draft, step, "unexplained-change");
     return recorded();
   }
-  // Each call must agree with the plan; one on an unknown entity cannot be checked, so it adds nothing to the plan.
+  // What the read after the call showed, for members its answer left out that a default must agree with.
+  const read = laterObservation(
+    searchFrom(context, step),
+    itemReads(context, { type, idField, collection, id }),
+  )?.object;
+  // Each call with a known baseline must agree with the plan.
   if (
     built(draft) &&
-    (unknown ||
-      contradictsPlan(
-        { ...draft, plan: { ...draft.plan, rules } },
-        entity.fields,
-        after.object,
-        explained,
+    (contradictsPlan(
+      { ...draft, plan: { ...draft.plan, rules } },
+      entity.fields,
+      after.object,
+      explained,
+    ) ||
+      // A member calls left out is cleared by every one or by none.
+      // A reference this call or an earlier one showed counts its member as the field's, whichever came first.
+      defaultsDisagree(explained.body.defaults, { earlier: draft.updates }, [
+        ...rules,
+        ...explained.rules,
+      ]) ||
+      defaultsDisagree(
+        draft.plan.body?.defaults,
+        { earlier: [], sent: body, after: { ...read, ...after.object } },
+        [...rules, ...explained.rules],
       ))
   ) {
-    if (!unknown) refuse(draft, step, "unexplained-change");
+    refuse(draft, step, "unexplained-change");
     return recorded();
   }
   draft.plan.rules = rules;
   noteFixedWidths(draft.fixedWidth, after.object);
   buildUpdate(context, draft, step, { after, explained, idField });
+  // Serving stores the clocks it stamps as the read after the update spells them.
+  const readBack = spelledReadBack(
+    context,
+    step,
+    { type, idField, collection, id },
+    { rules: explained.rules, after: after.object },
+  );
+  if (
+    readBack !== undefined &&
+    draft.plan.observation !== null &&
+    draft.plan.observation.read === undefined
+  )
+    Object.assign(draft.plan, {
+      observation: { ...draft.plan.observation, read: readBack },
+    });
   noteAmpersands(draft.ampersands, explained.rules, after.object);
   // Serving reads the plan's observation, so the gate does too; generated values are this call's.
   const written = updatedFields(
@@ -670,21 +781,27 @@ export const updateEntity = (
       after: after.object,
       kept,
     });
-  if (!written.ok || (disagrees && !unknown))
+  if (!written.ok || disagrees) {
     refuse(draft, step, "unexplained-change");
-  if (!written.ok || disagrees || unknown) return recorded();
+    return recorded();
+  }
   rememberCall(
     context.io.retain,
     draft,
-    { before: entity.fields, after: after.object, sent: body, kept },
+    { before: entity.fields, after: after.object, sent: body, kept, read },
     explained.unstamped,
   );
-  // Response reproducibility is established before the read owner adopts a stored clock spelling.
-  const stored = restampedFields(
-    searchFrom(context, step),
-    itemReads(context, { type, idField, collection, id }),
-    written.value,
+  // Response reproducibility is established before the read owner adopts a stored clock spelling; serving spells every update's clocks as the plan's kept read-back does, so replay does too.
+  const search = searchFrom(context, step);
+  const stored = readSpelledClocks(
     draft.plan.rules,
+    restampedFields(
+      search,
+      itemReads(context, { type, idField, collection, id }),
+      written.value,
+      draft.plan.rules,
+    ),
+    keptRead(search, draft.plan.observation?.read),
   );
   context.io.retain(
     64 +
@@ -780,7 +897,7 @@ const contradictsGeneratedClock = (
           candidate.field === rule.field && candidate.rule === "clock",
       ) ||
       next === undefined ||
-      next.ms <= previous.ms
+      compareValues(after[rule.field], ownMember(before, rule.field))! <= 0
     );
   });
 

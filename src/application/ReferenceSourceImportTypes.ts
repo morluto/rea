@@ -4,10 +4,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import {
-  projectAnalysisError,
-  type AnalysisErrorProjection,
-} from "../domain/analysisErrorProjection.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import type {
   AnalysisError,
   AnalysisErrorOptions,
@@ -21,9 +18,11 @@ export interface ReferenceSourceImportError {
   readonly tag: "reference-source-import";
   readonly code: "cancelled" | "invalid-root" | "unsupported" | "io" | "parse";
   readonly message: string;
+  readonly remediationAction?: string;
   readonly cleanup?: AnalysisCleanupObservation;
   readonly partial?: ReferenceSourceRead;
   readonly cause?: unknown;
+  readonly secondaryCancellation?: { readonly cause: unknown };
 }
 
 const IMPORT_FAILURE_GUIDANCE = {
@@ -38,11 +37,12 @@ const IMPORT_FAILURE_GUIDANCE = {
     "Reference source could not be indexed. Check that the source tree is readable, then try again.",
 } satisfies Record<ReferenceSourceImportError["code"], string>;
 
-/** Canonical CLI/MCP projection, retaining source facts under diagnostic details. */
-export const projectReferenceSourceImportError = (
+/** Preserve import failure semantics for shared execution and cleanup owners. */
+export const referenceSourceImportAnalysisError = (
   error: ReferenceSourceImportError,
-): AnalysisErrorProjection => {
-  const guidance = IMPORT_FAILURE_GUIDANCE[error.code];
+): AnalysisError => {
+  const guidance =
+    error.remediationAction ?? IMPORT_FAILURE_GUIDANCE[error.code];
   const message = `${error.message} ${guidance}`;
   const partial = error.partial;
   const options: AnalysisErrorOptions = {
@@ -72,12 +72,21 @@ export const projectReferenceSourceImportError = (
   let primary: AnalysisError;
   switch (error.code) {
     case "cancelled":
-      primary = new AnalysisCancelledError("import_reference_source", options);
+      primary = new AnalysisCancelledError("import_reference_source", {
+        ...options,
+        userMessage: message,
+      });
       break;
     case "invalid-root":
       primary = new AnalysisInputError(
         "import_reference_source",
-        { ...options, userMessage: message },
+        {
+          ...options,
+          userMessage: message,
+          ...(error.remediationAction === undefined
+            ? {}
+            : { remediationAction: error.remediationAction }),
+        },
         [{ path: ["root"], reason: "invalid_value", message: error.message }],
       );
       break;
@@ -94,13 +103,22 @@ export const projectReferenceSourceImportError = (
       primary = new AnalysisOutputError(
         "import_reference_source",
         error.message,
-        { ...options, userMessage: message, remediationAction: guidance },
+        {
+          ...options,
+          userMessage: message,
+          remediationAction: guidance,
+        },
       );
       break;
   }
-  // Cancellation uses a shared fixed message; the producing boundary's reason
-  // is caller evidence and remains useful for every category.
-  return { ...projectAnalysisError(primary), message };
+  return error.secondaryCancellation === undefined
+    ? primary
+    : analysisErrorWithCancellation(
+        primary,
+        new AnalysisCancelledError("import_reference_source", {
+          cause: error.secondaryCancellation.cause,
+        }),
+      );
 };
 
 /** Import a caller-selected local source tree as historical reference. */
@@ -117,6 +135,8 @@ export interface ReferenceSourceImportOptions {
 export const DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS = [
   ".git/",
   ".git/hooks/",
+  // Match pointer files after directory rules to preserve their provenance.
+  ".git",
   "node_modules/",
   "dist/",
   "build/",
