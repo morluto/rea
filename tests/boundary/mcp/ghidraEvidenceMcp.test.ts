@@ -190,7 +190,7 @@ it("retains terminal-call qualifications across live dossiers and snapshot-backe
       expect(evidence.limitations, name).toContain(limitation);
       expect(evidence.analysis_profile?.parameters).toMatchObject({
         function_boundary_observations:
-          "ghidra-function-boundary-limitations-v4",
+          "ghidra-function-boundary-limitations-v5",
       });
       const replay = await harness.session.execute(name, evidence.parameters);
       if (!replay.ok) throw replay.error;
