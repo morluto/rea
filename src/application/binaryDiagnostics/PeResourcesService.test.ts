@@ -12,8 +12,11 @@ import {
   delphiBinary,
   delphiBytes,
   delphiComponent,
+  delphiFloat32,
+  delphiFloat64,
   delphiForm,
   delphiProperty,
+  delphiUtf8String,
 } from "../../native/pe/DelphiForm.fixture.js";
 import { parsePeResources } from "../../native/pe/PeResourceParser.js";
 import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
@@ -37,12 +40,25 @@ const observedReport = () => {
   );
 };
 
-const validRoot = (location: { offset: number; bytes: number }) => ({
+const validRoot = (
+  location: { offset: number; bytes: number },
+  codePage = DEFAULT_CODE_PAGE,
+) => ({
   location,
   flags: [],
   child_position: null,
-  class_name: null,
-  component_name: null,
+  class_name: {
+    text: "TForm1",
+    bytes_hex: "54466f726d31",
+    code_page: codePage,
+    location,
+  },
+  component_name: {
+    text: "Form1",
+    bytes_hex: "466f726d31",
+    code_page: codePage,
+    location,
+  },
   properties: [],
   children: [],
   unknown: null,
@@ -416,46 +432,50 @@ it("rejects nested form text whose code page contradicts the form", async () => 
 const formWithStringValue = async (
   valueType: string,
   valueCodePage: string,
+  options: {
+    declaredBytes?: number;
+    bytesHex?: string;
+    retainedBytes?: number;
+    truncated?: boolean;
+    decodeTruncated?: boolean;
+  } = {},
 ) => {
-  const report = await observedReport();
-  const index = report.resources.findIndex(
-    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  const payload = delphiForm(
+    delphiComponent("TForm1", "Form1", [
+      delphiProperty("Caption", delphiUtf8String("OK")),
+    ]),
   );
-  const resource = report.resources[index]!;
-  resource.code_page = 1251;
-  const location = rootAfterSignature(resource.payload.location);
+  const report = await reportForPayload(payload, 1251);
+  const form = report.delphi_forms[0];
+  const property = form?.root.properties[0];
+  if (form === undefined || property?.value.kind !== "string")
+    throw new Error("Missing UTF-8 string fixture");
+  const retainedBytes =
+    options.retainedBytes ?? property.value.bytes_hex.length / 2;
+  const prefixBytes = valueType === "vaString" ? 1 : 4;
   report.delphi_forms = [
     {
-      resource_index: index,
-      signature: "TPF0",
-      version: "boVersion0",
-      signature_location: signatureAt(resource.payload.location),
-      prefix: null,
-      declared_code_page: 1251,
-      code_page: "windows-1251",
-      code_page_source: "resource",
+      ...form,
       root: {
-        ...validRoot(location),
+        ...form.root,
         properties: [
           {
-            name: {
-              text: "Caption",
-              bytes_hex: "43",
-              code_page: "windows-1251",
-              location,
-            },
+            ...property,
             value_type: valueType,
             value: {
-              kind: "string",
-              text: "OK",
-              bytes_hex: "4f4b",
+              ...property.value,
+              bytes_hex: options.bytesHex ?? property.value.bytes_hex,
               code_page: valueCodePage,
-              declared_bytes: 2,
-              truncated: false,
-              decode_truncated: false,
-              location,
+              declared_bytes:
+                options.declaredBytes ?? property.value.declared_bytes,
+              truncated: options.truncated ?? property.value.truncated,
+              decode_truncated:
+                options.decodeTruncated ?? property.value.decode_truncated,
+              location: {
+                offset: property.value.location.offset,
+                bytes: prefixBytes + retainedBytes,
+              },
             },
-            location,
           },
         ],
       },
@@ -509,7 +529,7 @@ const formWithBuiltProperty = async (
       prefix: null,
       ...pages,
       root: {
-        ...validRoot(location),
+        ...validRoot(location, pages.code_page),
         properties: [
           {
             name: {
@@ -543,6 +563,23 @@ const inspectReport = async (
     inspect: () => Promise.resolve(ok(report)),
   });
   return service.inspect({ path: "/fixtures/example.exe" });
+};
+
+const reportForPayload = async (payload: Buffer, codePage?: number) => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: 7, language: 1033, payload },
+  ]);
+  if (codePage !== undefined)
+    fixture.bytes.writeUInt32LE(codePage, (fixture.dataOffsets[0] ?? 0) + 8);
+  return parsePeResources(
+    fixture.bytes,
+    {
+      path: "/fixtures/example.exe",
+      bytes: fixture.bytes.length,
+      sha256: createHash("sha256").update(fixture.bytes).digest("hex"),
+    },
+    inspectPeResourcesInputSchema.parse({ path: "/fixtures/example.exe" }),
+  );
 };
 
 it("rejects a property whose value type contradicts its decoded value", async () => {
@@ -757,6 +794,109 @@ it("publishes a complete value whose hex preview is capped", async () => {
     truncated: true,
     decode_truncated: false,
   });
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
+it("publishes a signature-only form with a disjoint unknown suffix", async () => {
+  const report = await reportForPayload(Buffer.from("TPF0", "latin1"));
+  expect(report.delphi_forms[0]?.root.location.bytes).toBe(0);
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
+it("rejects a complete object without class and component names", async () => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  const location = rootAfterSignature(resource.payload.location);
+  const pages = codePageFields(resource.code_page);
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signatureAt(resource.payload.location),
+      prefix: null,
+      ...pages,
+      root: {
+        ...validRoot(location, pages.code_page),
+        class_name: null,
+        component_name: null,
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects ffChildPos on a complete object without a child position", async () => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  const location = rootAfterSignature(resource.payload.location);
+  const pages = codePageFields(resource.code_page);
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signatureAt(resource.payload.location),
+      prefix: null,
+      ...pages,
+      root: {
+        ...validRoot(location, pages.code_page),
+        flags: ["ffChildPos"],
+        child_position: null,
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a complete string whose declared bytes are not retained", async () => {
+  const report = await formWithStringValue("vaLString", "windows-1251", {
+    declaredBytes: 100,
+    bytesHex: "",
+    retainedBytes: 0,
+    truncated: false,
+    decodeTruncated: false,
+  });
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a float projection that does not match its retained bytes", async () => {
+  const report = await formWithProperty("vaSingle", {
+    kind: "float",
+    text: "1",
+    bytes_hex: "",
+    note: "anything",
+  });
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("publishes decoded float projections that match their retained bytes", async () => {
+  const report = await reportForPayload(
+    delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty("Ratio", delphiFloat32(1.5)),
+        delphiProperty("Scale", delphiFloat64(2.5)),
+      ]),
+    ),
+  );
   expect(await inspectReport(report)).toMatchObject({ ok: true });
 });
 

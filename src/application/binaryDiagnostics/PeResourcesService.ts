@@ -12,6 +12,9 @@ import {
 import {
   BYTE_PRESERVING_CODE_PAGE,
   DEFAULT_CODE_PAGE,
+  DELPHI_FORM_FLOAT_NOTES,
+  decodeDelphiExtended,
+  formatDelphiCurrency,
   isDelphiFormValueType,
   RESOURCE_CODE_PAGES,
   type DelphiFormObject,
@@ -293,7 +296,10 @@ const insideLocations = (
   // this decoder can produce.
   if (
     object.unknown === null &&
-    (object.properties.some((property) => valueHasStop(property.value)) ||
+    (object.class_name === null ||
+      object.component_name === null ||
+      (object.flags.includes("ffChildPos") && object.child_position === null) ||
+      object.properties.some((property) => valueHasStop(property.value)) ||
       object.children.some(objectHasStop))
   )
     return false;
@@ -395,6 +401,85 @@ const positionMatches = (
   integerMatches(position, position.width, true) &&
   withinRange(position.location, owner);
 
+const FLOAT_WIDTH_BYTES: Readonly<Record<string, number>> = {
+  vaSingle: 4,
+  vaDouble: 8,
+  vaDate: 8,
+  vaCurrency: 8,
+  vaExtended: 10,
+};
+
+const floatMatches = (
+  valueType: string,
+  value: Extract<DelphiFormValue, { kind: "float" }>,
+): boolean => {
+  const width = FLOAT_WIDTH_BYTES[valueType];
+  if (
+    width === undefined ||
+    value.bytes_hex.length !== width * 2 ||
+    value.note !== DELPHI_FORM_FLOAT_NOTES[valueType]
+  )
+    return false;
+  const raw = Buffer.from(value.bytes_hex, "hex");
+  if (valueType === "vaCurrency")
+    return value.text === formatDelphiCurrency(raw);
+  if (valueType === "vaExtended") {
+    const decoded = decodeDelphiExtended(raw);
+    return value.text === (decoded === null ? null : String(decoded));
+  }
+  const decoded =
+    valueType === "vaSingle" ? raw.readFloatLE(0) : raw.readDoubleLE(0);
+  return value.text === (Number.isFinite(decoded) ? String(decoded) : null);
+};
+
+const STRING_PROJECTION: Readonly<
+  Record<string, { prefixBytes: number; previewBytes: number; wide: boolean }>
+> = {
+  vaString: { prefixBytes: 1, previewBytes: 0xff, wide: false },
+  vaLString: { prefixBytes: 4, previewBytes: 128, wide: false },
+  vaUTF8String: { prefixBytes: 4, previewBytes: 128, wide: false },
+  vaWString: { prefixBytes: 4, previewBytes: 128, wide: true },
+  vaUString: { prefixBytes: 4, previewBytes: 128, wide: true },
+};
+
+const stringMatchesType = (
+  valueType: string,
+  value: Extract<DelphiFormValue, { kind: "string" }>,
+): boolean => {
+  const projection = STRING_PROJECTION[valueType];
+  if (projection === undefined) return false;
+  if (projection.wide && value.declared_bytes % 2 !== 0) return false;
+  if (valueType === "vaString" && value.declared_bytes > 0xff) return false;
+  const available = value.location.bytes - projection.prefixBytes;
+  const retained = value.bytes_hex.length / 2;
+  if (
+    available < 0 ||
+    (projection.wide && available % 2 !== 0) ||
+    retained !== Math.min(available, projection.previewBytes)
+  )
+    return false;
+  if (value.decode_truncated)
+    return value.truncated && available < value.declared_bytes;
+  return (
+    available === value.declared_bytes &&
+    value.truncated === value.declared_bytes > projection.previewBytes
+  );
+};
+
+const binaryMatches = (
+  value: Extract<DelphiFormValue, { kind: "binary" }>,
+): boolean => {
+  const available = value.location.bytes - 4;
+  const retained = value.bytes_hex.length / 2;
+  if (available < 0 || retained !== Math.min(available, 128)) return false;
+  if (value.decode_truncated)
+    return value.truncated && available < value.declared_bytes;
+  return (
+    available === value.declared_bytes &&
+    value.truncated === value.declared_bytes > 128
+  );
+};
+
 const valueMatchesType = (
   valueType: string,
   value: DelphiFormValue,
@@ -427,7 +512,7 @@ const valueMatchesType = (
     case "vaCurrency":
     case "vaDate":
     case "vaDouble":
-      return value.kind === "float";
+      return value.kind === "float" && floatMatches(valueType, value);
     case "vaString":
     case "vaLString":
     case "vaWString":
@@ -435,12 +520,13 @@ const valueMatchesType = (
     case "vaUString":
       return (
         value.kind === "string" &&
+        stringMatchesType(valueType, value) &&
         valuePageMatchesType(valueType, value.code_page, codePage)
       );
     case "vaIdent":
       return value.kind === "identifier";
     case "vaBinary":
-      return value.kind === "binary";
+      return value.kind === "binary" && binaryMatches(value);
     case "vaList":
       return value.kind === "list";
     case "vaSet":

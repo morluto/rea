@@ -1074,11 +1074,31 @@ describe("Delphi form truncation and limits", () => {
     expect(root.properties.at(-1)?.name.text).toBe("Future");
     expect(root.properties.at(-1)?.value_type).toBe("unknown");
   });
+});
 
+describe("Delphi form fallback roots", () => {
   it("reports a signature-only payload as truncated", () => {
     const root = rootOf(form(Buffer.alloc(0)));
+    expect(root.location.bytes).toBe(0);
     expect(root.class_name).toBeNull();
     expect(root.unknown?.reason).toContain("without a root component");
+    expect(root.unknown?.location.offset).toBe(root.location.offset);
+  });
+
+  it("keeps a fallback root disjoint from its unknown suffix", () => {
+    const payload = form(
+      component("TForm1", "Form1", [property_("Width", int32(1))]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_bytes: 0,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(root.location.bytes).toBe(0);
+    expect(root.unknown?.location).toMatchObject({
+      offset: root.location.offset,
+      bytes: payload.length - root.location.offset,
+    });
   });
 
   it("reports bytes that follow the root component terminator", () => {

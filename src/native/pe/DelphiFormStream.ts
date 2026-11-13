@@ -19,7 +19,10 @@
 
 import {
   DEFAULT_CODE_PAGE,
+  DELPHI_FORM_FLOAT_NOTES,
   DELPHI_FORM_VALUE_TYPES,
+  decodeDelphiExtended,
+  formatDelphiCurrency,
   type DelphiFormCollectionItem,
   type DelphiFormListEntry,
   type DelphiFormObject,
@@ -211,24 +214,6 @@ const decodeText = (raw: Buffer, codePage: string): string => {
   } catch {
     return raw.toString("latin1");
   }
-};
-
-/**
- * Convert the ten-byte x87 extended value used by `vaExtended` to a double.
- * Precision beyond a double is not retained and is reported to the caller.
- */
-const decodeExtended = (raw: Buffer): number | null => {
-  if (raw.length !== 10) return null;
-  const mantissa = raw.readBigUInt64LE(0);
-  const exponentAndSign = raw.readUInt16LE(8);
-  const exponent = exponentAndSign & 0x7fff;
-  if (exponent === 0x7fff) return null;
-  if (exponent === 0 && mantissa === 0n) return 0;
-  const sign = (exponentAndSign & 0x8000) === 0 ? 1 : -1;
-  // Normalize the mantissa before applying the exponent. Scaling the full
-  // 64-bit mantissa first underflows for values near the smallest double.
-  const value = (Number(mantissa) / 2 ** 63) * 2 ** (exponent - 16383);
-  return Number.isFinite(value) ? sign * value : null;
 };
 
 /**
@@ -425,7 +410,7 @@ function readNumericValue(
         kind: "float",
         text: Number.isFinite(value) ? String(value) : null,
         bytes_hex: raw.toString("hex"),
-        note: "IEEE-754 binary32.",
+        note: DELPHI_FORM_FLOAT_NOTES.vaSingle ?? "",
         location: range(at, stream.position),
       };
     }
@@ -436,7 +421,7 @@ function readNumericValue(
         kind: "float",
         text: Number.isFinite(value) ? String(value) : null,
         bytes_hex: raw.toString("hex"),
-        note: "IEEE-754 binary64.",
+        note: DELPHI_FORM_FLOAT_NOTES.vaDouble ?? "",
         location: range(at, stream.position),
       };
     }
@@ -444,29 +429,22 @@ function readNumericValue(
       return integerValue(stream, 64, false);
     case 5: {
       const raw = stream.take(10);
-      const value = decodeExtended(raw);
+      const value = decodeDelphiExtended(raw);
       return {
         kind: "float",
         text: value === null ? null : String(value),
         bytes_hex: raw.toString("hex"),
-        note: "Ten-byte x87 extended value reduced to a double; extra precision is not retained.",
+        note: DELPHI_FORM_FLOAT_NOTES.vaExtended ?? "",
         location: range(at, stream.position),
       };
     }
     case 16: {
       const raw = stream.take(8);
-      // Currency is a signed 64-bit value scaled by 10000. Format it straight
-      // from the integer: converting to a number first rounds the quotient.
-      const scaled = raw.readBigInt64LE(0);
-      const sign = scaled < 0n ? "-" : "";
-      const digits = (scaled < 0n ? -scaled : scaled)
-        .toString()
-        .padStart(5, "0");
       return {
         kind: "float",
-        text: `${sign}${digits.slice(0, -4)}.${digits.slice(-4)}`,
+        text: formatDelphiCurrency(raw),
         bytes_hex: raw.toString("hex"),
-        note: "Currency: signed 64-bit value scaled by 10000.",
+        note: DELPHI_FORM_FLOAT_NOTES.vaCurrency ?? "",
         location: range(at, stream.position),
       };
     }
@@ -477,7 +455,7 @@ function readNumericValue(
         kind: "float",
         text: Number.isFinite(value) ? String(value) : null,
         bytes_hex: raw.toString("hex"),
-        note: "TDateTime: days since 1899-12-30, not converted to a calendar date.",
+        note: DELPHI_FORM_FLOAT_NOTES.vaDate ?? "",
         location: range(at, stream.position),
       };
     }
@@ -1096,7 +1074,7 @@ export const decodeDelphiFormStream = (
       // A filer stream must contain a root component; report the payload as
       // truncated instead of presenting an intentionally empty form.
       root = {
-        location: range(stream.position, end),
+        location: range(stream.position, stream.position),
         flags: [],
         child_position: null,
         class_name: null,
@@ -1125,7 +1103,7 @@ export const decodeDelphiFormStream = (
     if (error instanceof StoppedForm) root = error.object;
     else if (error instanceof StreamEnd)
       root = {
-        location: range(stream.position, end),
+        location: range(stream.position, stream.position),
         flags: [],
         child_position: null,
         class_name: null,

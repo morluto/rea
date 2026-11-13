@@ -188,6 +188,42 @@ export const isDelphiFormValueType = (value: string): boolean => {
   return ordinal >= 24 && ordinal <= 255 && String(ordinal) === match[1];
 };
 
+/** Notes emitted for each floating-point value type. */
+export const DELPHI_FORM_FLOAT_NOTES: Readonly<Record<string, string>> = {
+  vaSingle: "IEEE-754 binary32.",
+  vaDouble: "IEEE-754 binary64.",
+  vaExtended:
+    "Ten-byte x87 extended value reduced to a double; extra precision is not retained.",
+  vaCurrency: "Currency: signed 64-bit value scaled by 10000.",
+  vaDate: "TDateTime: days since 1899-12-30, not converted to a calendar date.",
+};
+
+/**
+ * Convert the ten-byte x87 extended value used by `vaExtended` to a double.
+ * Precision beyond a double is not retained and is reported to the caller.
+ */
+export const decodeDelphiExtended = (raw: Buffer): number | null => {
+  if (raw.length !== 10) return null;
+  const mantissa = raw.readBigUInt64LE(0);
+  const exponentAndSign = raw.readUInt16LE(8);
+  const exponent = exponentAndSign & 0x7fff;
+  if (exponent === 0x7fff) return null;
+  if (exponent === 0 && mantissa === 0n) return 0;
+  const sign = (exponentAndSign & 0x8000) === 0 ? 1 : -1;
+  // Normalize the mantissa before applying the exponent. Scaling the full
+  // 64-bit mantissa first underflows for values near the smallest double.
+  const value = (Number(mantissa) / 2 ** 63) * 2 ** (exponent - 16383);
+  return Number.isFinite(value) ? sign * value : null;
+};
+
+/** Format a signed 64-bit currency value scaled by 10000. */
+export const formatDelphiCurrency = (raw: Buffer): string => {
+  const scaled = raw.readBigInt64LE(0);
+  const sign = scaled < 0n ? "-" : "";
+  const digits = (scaled < 0n ? -scaled : scaled).toString().padStart(5, "0");
+  return `${sign}${digits.slice(0, -4)}.${digits.slice(-4)}`;
+};
+
 /** Where the code page came from: the resource, a default, or neither. */
 export type DelphiFormCodePageSource = "resource" | "default" | "unsupported";
 
