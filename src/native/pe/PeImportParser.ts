@@ -11,6 +11,7 @@ import {
   BinaryMappingFailure,
   BinaryReader,
   BinaryResourceFailure,
+  isBinaryFormatOrStringLimitFailure,
   createFileMappingIndex,
   imageFileMappings,
 } from "../metadata/BinaryContainer.js";
@@ -103,7 +104,7 @@ const createRetention = () => {
 };
 
 const failureMessage = (cause: unknown): string => {
-  if (cause instanceof BinaryFormatFailure) return cause.message;
+  if (isBinaryFormatOrStringLimitFailure(cause)) return cause.message;
   throw cause;
 };
 

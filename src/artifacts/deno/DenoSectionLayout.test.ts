@@ -1,10 +1,6 @@
 import { expect, it } from "vitest";
 
-import {
-  MAX_DENO_METADATA_JSON_BYTES,
-  MAX_DENO_TABLE_COUNT,
-  parseDenoSection,
-} from "./DenoSectionLayout.js";
+import { parseDenoSection } from "./DenoSectionLayout.js";
 import {
   buildDenoSection,
   defaultDenoMetadata,
@@ -130,7 +126,7 @@ it("treats a missing opening marker as an unsupported layout", async () => {
 });
 
 it("refuses metadata JSON above the named allowance before reading it as JSON", async () => {
-  const claimed = MAX_DENO_METADATA_JSON_BYTES + 1;
+  const claimed = 8 * 1024 * 1024 + 1;
   const bytes = Buffer.alloc(DENO_FIXTURE_SECTION_MAGIC.length + 8 + claimed);
   DENO_FIXTURE_SECTION_MAGIC.copy(bytes, 0);
   bytes.writeBigUInt64LE(BigInt(claimed), DENO_FIXTURE_SECTION_MAGIC.length);
@@ -145,7 +141,7 @@ it("refuses a specifier table above the named record allowance", async () => {
     parseDenoSectionBytes(
       buildDenoSection({
         specifiers: [],
-        specifierCount: MAX_DENO_TABLE_COUNT + 1,
+        specifierCount: 100_001,
       }),
     ),
   ).rejects.toMatchObject({

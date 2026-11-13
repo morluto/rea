@@ -27,7 +27,7 @@ const hasMftFileRecordSignature = (prefix: Uint8Array): boolean =>
     MFT_FILE_RECORD_MAGIC;
 
 /** A record's declared size is a power of two from 512 upward; 1024 is NTFS's default. */
-export const MFT_DEFAULT_RECORD_BYTES = 1024;
+const MFT_DEFAULT_RECORD_BYTES = 1024;
 const MFT_MIN_RECORD_BYTES = 512;
 const MFT_MAX_RECORD_BYTES = 65536;
 /** An update sequence array holds at least the sequence number and one fixup word. */
@@ -39,7 +39,7 @@ export const FIXUP_SECTOR_BYTES = 512;
  * is fetched, so this is deliberately
  * smaller than a volume's MFT can be.
  */
-export const MFT_MAX_FILE_BYTES = 512 * 1024 * 1024;
+const MFT_MAX_FILE_BYTES = 512 * 1024 * 1024;
 /** Limit the inline header sample independently of full stream coverage. */
 export const MFT_INLINE_HEADER_LIMIT = 32;
 

@@ -5,6 +5,7 @@ import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
 import {
@@ -19,10 +20,7 @@ import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { ArtifactPathRegistry } from "../ArtifactPaths.js";
 import { DenoStandaloneArtifactReader } from "../DenoStandaloneArtifactReader.js";
 import { cArchiveExecutable } from "../pyinstaller/CArchive.fixture.js";
-import {
-  locateDenoStandalone,
-  MAX_DENO_INTEL_TRAILER_SENTINELS,
-} from "./DenoStandaloneLocation.js";
+import { locateDenoStandalone } from "./DenoStandaloneLocation.js";
 import {
   buildDenoSection,
   DENO_FIXTURE_SECTION_MAGIC,
@@ -34,8 +32,10 @@ import {
   denoUniversal,
   machOWithSegment,
 } from "./DenoStandalone.fixture.js";
-import { MAX_DENO_PATH_COMPONENT_BYTES } from "./DenoVirtualFs.js";
+
 import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
+
+const MAX_DENO_PATH_COMPONENT_BYTES = 255;
 
 it("keeps a confirmed Deno inventory when another pack recognizer is limited", async () => {
   const original = denoElf();
@@ -1071,7 +1071,7 @@ it("rejects packed Intel sentinels without rereading a chunk per sentinel", asyn
 it("leaves an x64 Mach-O absent when sentinels pass the allowance", async () => {
   const packed = Buffer.concat([
     denoMachO([], { architecture: "x64" }),
-    rejectedIntelSentinels(MAX_DENO_INTEL_TRAILER_SENTINELS + 1),
+    rejectedIntelSentinels(65),
   ]);
   let readBytes = 0;
   const probe = await locateDenoStandalone(
@@ -1307,7 +1307,7 @@ it("accepts side-by-side Intel trailers with identical bytes", async () => {
 it("refuses a confirmed Intel trailer when the allowance ends the outer search", async () => {
   const bytes = Buffer.concat([
     denoMachO([], { architecture: "x64" }),
-    rejectedIntelSentinels(MAX_DENO_INTEL_TRAILER_SENTINELS),
+    rejectedIntelSentinels(64),
     intelTrailerRecord(buildDenoSection()),
   ]);
   await expect(
@@ -1876,7 +1876,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
         (cause: unknown) => cause,
       );
       pending.push(failure);
-      await entered;
+      await awaitAcknowledgement(entered, first, "Deno artifact read");
       const concurrent =
         scenario === "independent caller"
           ? collect(reader.entries())

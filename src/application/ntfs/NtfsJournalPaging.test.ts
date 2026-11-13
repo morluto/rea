@@ -16,6 +16,7 @@ import { parseEvidence } from "../../domain/evidence.js";
 import { ntfsJournalResultSchema } from "../../domain/windows/ntfsJournalQuery.js";
 import { inspectNtfsJournalEvidence } from "./NtfsJournalService.js";
 import { createDeferred } from "../../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 const acquisitions = async () => {
@@ -170,7 +171,11 @@ it("keeps an active acquisition independent of a cancelled peer, bounds concurre
     });
   try {
     const active = inspectNtfsJournalEvidence(fixture.input, resources);
-    await entered.promise;
+    await awaitAcknowledgement(
+      entered.promise,
+      active,
+      "provider lifecycle boundary",
+    );
     const cancelled = new AbortController();
     cancelled.abort("peer cancelled");
     const peer = await inspectNtfsJournalEvidence(

@@ -9,7 +9,6 @@ import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceS
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticBindingState,
-  type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import type { JavaScriptSemanticObjectReference as Reference } from "./javascriptSemanticObjectReference.js";
 import type { JavaScriptSemanticPropertyPath as PropertyPath } from "./javascriptSemanticPropertyPaths.js";

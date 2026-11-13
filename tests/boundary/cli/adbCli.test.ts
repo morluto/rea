@@ -274,6 +274,14 @@ printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
         result,
         `Execution of the selected adb binary was denied (EACCES): ${binary}. Set REA_ADB_PATH to an absolute path to the adb executable file, not a directory`,
       );
+      const { details } = JSON.parse(result.stdout) as {
+        details: { diagnostics: Record<string, unknown> };
+      };
+      expect(details.diagnostics).toMatchObject({
+        selected_binary: binary,
+        path_source: "environment",
+        filesystem_error: "EACCES",
+      });
     }
     // A parent component that is a file, a symlink loop and a missing path
     // fail before any process starts, so no exit code is reported.

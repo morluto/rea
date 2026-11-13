@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import {
@@ -33,7 +34,7 @@ import {
 } from "./desktopState.js";
 import { diffNamedMembers, diffStateViews } from "./stateChanges.js";
 import { DRAFT_VIEW_CHARS } from "./valueCuts.js";
-import { escapeToken, resolvePointer } from "./viewPointer.js";
+import { resolvePointer } from "./viewPointer.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -178,8 +179,8 @@ const keyPointers = (
         isRecord(view) && isRecord(view.groups) ? view.groups : {},
       ).flatMap(([group, keys]) =>
         Object.keys(isRecord(keys) ? keys : {}).map((key): [string, string] => [
-          `${group}/${escapeToken(key)}`,
-          `/groups/${escapeToken(group)}/${escapeToken(key)}`,
+          `${group}/${escapeJsonPointerToken(key)}`,
+          `/groups/${escapeJsonPointerToken(group)}/${escapeJsonPointerToken(key)}`,
         ]),
       ),
     ),
