@@ -13,9 +13,25 @@ describe("JavaScript semantic call result use", () => {
     'consume("unique")!;',
     'consume("unique") as unknown;',
     '(consume("unique") as unknown)!;',
+    'consume("unique") satisfies unknown;',
+    'void consume("unique");',
+    'const value = void consume("unique");',
+    'const value = (consume("unique"), 0);',
+    '(0, consume("unique"));',
+    'void (0, consume("unique"));',
+    'const value = ((0, consume("unique")), 1);',
+    'void ((0, consume("unique")) as unknown)!;',
+    'flag ? consume("unique") : 0;',
+    'flag ? 0 : consume("unique");',
+    'flag && consume("unique");',
+    'flag || consume("unique");',
+    'flag ?? consume("unique");',
+    'void ((flag ? (0, consume("unique")) : 0) as unknown)!;',
+    'const value = ((flag && consume("unique")), 0);',
   ])("does not treat %s as a used call result", (source) => {
     const ir = analyzeJavaScriptSemantics(source);
     expect(ir.callSites[0]?.resultUsed).toBe(false);
+    expect(ir.callResultFlows).toEqual([]);
   });
 
   it("treats an asserted call initializer as a used result", () => {
@@ -23,12 +39,62 @@ describe("JavaScript semantic call result use", () => {
       'const value = consume("unique")!;',
     );
     expect(used.callSites[0]?.resultUsed).toBe(true);
+    expect(used.callResultFlows).toMatchObject([
+      {
+        callSiteId: used.callSites[0]?.callSiteId,
+        bindingId: topLevelBinding(used, "value").bindingId,
+      },
+    ]);
   });
+
+  it.each([
+    'const value = (0, consume("unique"));',
+    'void store(consume("unique"));',
+    'void (holder.value = consume("unique"));',
+    'void consume("unique").value;',
+    'void +consume("unique");',
+    'function run() { return consume("unique"); }',
+    'const run = () => consume("unique");',
+    'async function run() { void await consume("unique"); }',
+    'function* run() { void (yield consume("unique")); }',
+    'for (; consume("unique");) {}',
+    'for (const value of consume("unique")) {}',
+    'for (const value in consume("unique")) {}',
+    'consume("unique") ? 0 : 1;',
+    'consume("unique") && 0;',
+    'const value = flag ? consume("unique") : 0;',
+    'const value = flag && consume("unique");',
+    'void (holder.value = flag ? consume("unique") : 0);',
+    'void store(flag && consume("unique"));',
+    'function run() { return flag ? consume("unique") : 0; }',
+    'async function run() { void await (flag && consume("unique")); }',
+    'function* run() { void (yield (flag ? 0 : consume("unique"))); }',
+  ])("preserves a consumed or unsupported result context: %s", (source) => {
+    const ir = analyzeJavaScriptSemantics(source);
+    const call = ir.callSites.find((site) =>
+      site.arguments.some((argument) => argument.literal === "unique"),
+    );
+    expect(call?.resultUsed).toBe(true);
+  });
+
+  it.each([
+    'const value = flag ? consume("unique") : 0;',
+    'const value = flag && consume("unique");',
+  ])(
+    "does not invent a direct assigned-result flow through alternatives: %s",
+    (source) => {
+      const ir = analyzeJavaScriptSemantics(source);
+      expect(ir.callSites[0]?.resultUsed).toBe(true);
+      expect(ir.callResultFlows).toEqual([]);
+    },
+  );
 
   it.each([
     'for (notify("token"); running;) {}',
     'for (; running; notify("token")) {}',
     'for (notify("token")!; running;) {}',
+    'for ((0, notify("token")); running;) {}',
+    'for (; running; (0, notify("token")!)) {}',
   ])("does not treat %s as a used call result", (source) => {
     const ir = analyzeJavaScriptSemantics(source);
     const call = ir.callSites.find((site) =>

@@ -80,6 +80,7 @@ import {
   semanticBundledRequireOriginCandidate,
 } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
+import { createSemanticArgumentInspectionQuery } from "./javascriptSemanticArgumentInspections.js";
 import {
   semanticBindingAtRead,
   semanticEffectTiming,
@@ -220,7 +221,12 @@ function* indexSemanticAmbientWritesSteps(
       createAmbientPathResolver,
       createSemanticModuleInterop,
     }),
-    (node) => observePossibleCommonJsDelegateWrite(node, state),
+    {
+      observeWriteSite: (node) =>
+        observePossibleCommonJsDelegateWrite(node, state),
+      nativeInspectionReceiver:
+        createSemanticArgumentInspectionQuery(state).receiver,
+    },
   );
   if (state.opaqueEffects.globalSites.length > 0)
     clearSemanticValueCaches(state);
@@ -1172,7 +1178,7 @@ const createState = (
   };
   return {
     precision: resolveJavaScriptSemanticPrecision(precision),
-    arrayIterationUnknown: false,
+    arrayIterationEffects: [],
     memberMutationFactsComplete: false,
     program,
     opaqueEffects: {

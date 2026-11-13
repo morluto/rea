@@ -15,14 +15,29 @@ import {
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
-import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
-import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
+  semanticBindingAtRead,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import {
+  isUnmodifiedGlobalReference,
+  semanticAmbientPathMayHaveChangedAt,
+} from "./javascriptSemanticAmbientWrites.js";
+import {
+  semanticOpaqueNameMayHaveChanged,
+  semanticSharedModuleMayHaveOpaqueEffect,
+} from "./javascriptSemanticOpaqueEffects.js";
+import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
+import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { evaluateSemanticProvenance } from "./javascriptSemanticValues.js";
+import {
+  affectsBuiltinPath,
+  builtinDataEffectCallablePath,
   builtinDataEffectIdentity,
   dataEffectArgumentBindingId,
   dataEffectLiteralString,
@@ -119,6 +134,11 @@ export const collectJavaScriptSemanticAsyncEffects = (
   callables: readonly JavaScriptSemanticCallable[],
 ): AsyncEffectAnalysis => {
   const events: JavaScriptSemanticEventOperation[] = [];
+  // Mutation facts are complete before this collection. Share only matching
+  // records within this pass; every read still decides its own timing.
+  let emitterEffects: EventEmitterSharedEffects | undefined;
+  const sharedEmitterEffects = (): EventEmitterSharedEffects =>
+    (emitterEffects ??= indexEventEmitterSharedEffects(state));
   const timers: TimerCandidate[] = [];
   const callableIds = new Set(callables.map(({ callableId }) => callableId));
   const callableStack = createSemanticCallableIdStack(callableIds);
@@ -128,7 +148,13 @@ export const collectJavaScriptSemanticAsyncEffects = (
       callableStack.enter(node, parent);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const ownerCallableId = callableStack.callables.at(-1) ?? null;
-        collectEvent(node, ownerCallableId, state, events);
+        collectEvent(
+          node,
+          ownerCallableId,
+          state,
+          events,
+          sharedEmitterEffects,
+        );
         collectTimer({
           node,
           ownerCallableId,
@@ -183,11 +209,458 @@ export const rejectsSemanticEventListener = (
   );
 };
 
+/**
+ * Node's `events` module, whose `EventEmitter` validates every listener
+ * argument before it registers or removes anything.
+ */
+const NODE_EVENTS_SPECIFIERS = ["events", "node:events"] as const;
+
+/**
+ * Report whether a value is `new <events>.EventEmitter()`. Named and default
+ * imports, destructured requires, and member requires all denote that class.
+ * The construction is returned so the caller reads `callee` from the unwrapped
+ * `NewExpression` rather than from a wrapper around it.
+ */
+const nodeEventEmitterConstruction = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.NewExpression | null => {
+  const value = unwrapJavaScriptExpression(node).node;
+  if (!t.isNewExpression(value)) return null;
+  const selected = builtinDataEffectCallablePath(
+    value.callee,
+    state,
+    NODE_EVENTS_SPECIFIERS,
+  );
+  if (selected === null) return null;
+  // An empty selected path is the module's default export, which `events`
+  // defines as `EventEmitter`.
+  // A suffix alone cannot prove the class: user-defined nested exports may
+  // end in EventEmitter while selecting an unrelated implementation.
+  return selected.length === 0 ||
+    (selected.length === 1 && selected[0] === "EventEmitter")
+    ? value
+    : null;
+};
+
+/**
+ * Resolve the identifier a construction reads the class through: the class
+ * itself for `new EventEmitter()`, and the module namespace for
+ * `new events.EventEmitter()`.
+ */
+const constructionRootBinding = (
+  callee: t.Expression | t.Super,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticBindingState | undefined => {
+  let node: t.Node = unwrapJavaScriptExpression(callee).node;
+  while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
+    node = unwrapJavaScriptExpression(node.object).node;
+  return t.isIdentifier(node)
+    ? resolveSemanticBindingState(state, node, node.name)
+    : undefined;
+};
+
+/**
+ * Report whether a binding can name the events module or its class, which is
+ * what makes a member write on it reach the class this construction used. An
+ * imported or required binding carries the module origin; a local alias such as
+ * `const EE = EventEmitter` is followed through its initializer.
+ */
+const eventsClassPath = (path: JavaScriptSemanticPropertyPath): boolean => {
+  for (let index = 0; index < path.length; index += 1) {
+    const key = path[index];
+    // An unknown key may select the class again; do not prove absence from it.
+    if (key === null) return true;
+    if (key === "EventEmitter" || key === "default") continue;
+    // The standard back-reference returns from the prototype to this class.
+    if (
+      key === "prototype" &&
+      index + 1 < path.length &&
+      (path[index + 1] === "constructor" || path[index + 1] === null)
+    ) {
+      index += 1;
+      continue;
+    }
+    return false;
+  }
+  return true;
+};
+
+/** A function's default prototype.constructor pair can reach the function again. */
+const constructorBackReferenceEnd = (
+  path: JavaScriptSemanticPropertyPath,
+  start = 0,
+  limit = path.length,
+): number => {
+  let end = start;
+  while (
+    end + 1 < limit &&
+    path[end] === "prototype" &&
+    path[end + 1] === "constructor"
+  )
+    end += 2;
+  return end;
+};
+
+/** The initializer object owns the `.call` slot Node reads during allocation. */
+const eventsInitializerPath = (
+  path: JavaScriptSemanticPropertyPath,
+): boolean => {
+  const initializer = path.indexOf("init");
+  return (
+    initializer >= 0 &&
+    eventsClassPath(path.slice(0, initializer)) &&
+    constructorBackReferenceEnd(path, initializer + 1) === path.length
+  );
+};
+
+const reachesEventsClassSurface = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  binding.directOrigins.some(
+    ({ specifier, importedPath }) =>
+      eventsClassPath(importedPath) &&
+      NODE_EVENTS_SPECIFIERS.some(
+        (candidate) =>
+          candidate.replace(/^node:/u, "") === specifier.replace(/^node:/u, ""),
+      ),
+  ) ||
+  binding.initializers.some(({ node }) => {
+    const path = builtinDataEffectCallablePath(
+      node,
+      state,
+      NODE_EVENTS_SPECIFIERS,
+    );
+    return path !== null && eventsClassPath(path);
+  });
+
+type EventEmitterEffect = t.Node | undefined;
+
+interface EventEmitterClassEffects {
+  readonly writes: readonly EventEmitterEffect[];
+  readonly initializerEscapes: readonly EventEmitterEffect[];
+  readonly escapes: readonly EventEmitterEffect[];
+}
+
+interface EventEmitterSharedEffects extends EventEmitterClassEffects {
+  readonly otherRoots: ReadonlyMap<string, EventEmitterClassEffects>;
+  readonly prototypeWrites: ReadonlyMap<string, readonly EventEmitterEffect[]>;
+  readonly prototypeEscapes: readonly EventEmitterEffect[];
+}
+
+/** Unknown property keys may select any part of the construction surface. */
+const targetsEventsClass = (path: JavaScriptSemanticPropertyPath): boolean =>
+  path.some(
+    (key) =>
+      key === null ||
+      key === "EventEmitter" ||
+      key === "init" ||
+      key === "prototype",
+  );
+
+/** Index shared matching records once, without caching a call's validity. */
+const indexEventEmitterSharedEffects = (
+  state: JavaScriptSemanticAnalysisState,
+): EventEmitterSharedEffects => {
+  const writes: EventEmitterEffect[] = [];
+  const initializerEscapes: EventEmitterEffect[] = [];
+  const escapes: EventEmitterEffect[] = [];
+  const otherRoots = new Map<string, EventEmitterClassEffects>();
+  const prototypeWrites = new Map<string, EventEmitterEffect[]>();
+  const prototypeEscapes: EventEmitterEffect[] = [];
+  const retainPrototypeWrite = (
+    path: JavaScriptSemanticPropertyPath,
+    node: EventEmitterEffect,
+  ): void => {
+    for (const method of EVENT_LISTENER_METHODS) {
+      if (!affectsPrototypeMethod(path, method)) continue;
+      const matching = prototypeWrites.get(method) ?? [];
+      matching.push(node);
+      prototypeWrites.set(method, matching);
+    }
+  };
+  for (const binding of state.bindingsById.values()) {
+    const classWrites = binding.memberWrites
+      .filter(({ path }) => targetsEventsClass(path))
+      .map(({ node }) => node);
+    const classEscapes = binding.escapedPaths
+      .filter(({ path }) => eventsClassPath(path))
+      .map(({ node }) => node);
+    const classInitializerEscapes = binding.escapedPaths
+      .filter(({ path }) => eventsInitializerPath(path))
+      .map(({ node }) => node);
+    if (
+      classWrites.length > 0 ||
+      classEscapes.length > 0 ||
+      classInitializerEscapes.length > 0
+    ) {
+      if (reachesEventsClassSurface(binding, state)) {
+        for (const node of classWrites) writes.push(node);
+        for (const node of classEscapes) escapes.push(node);
+        for (const node of classInitializerEscapes)
+          initializerEscapes.push(node);
+      } else {
+        // A proven construction's root remains relevant even when the general
+        // class-origin predicate cannot establish that binding's surface.
+        otherRoots.set(binding.bindingId, {
+          writes: classWrites,
+          initializerEscapes: classInitializerEscapes,
+          escapes: classEscapes,
+        });
+      }
+    }
+    // A named initializer import owns its own records, rather than paths on a
+    // class binding. Consume the provenance owner's retained origins, including
+    // candidate origins: uncertainty can withdraw this proof, never create it.
+    const initializerWrites = binding.memberWrites.filter(({ path }) => {
+      // A write replaces its last slot, not the value previously stored there.
+      const selected = path.slice(
+        constructorBackReferenceEnd(path, 0, path.length - 1),
+      );
+      return (
+        affectsBuiltinPath(selected, ["call"]) || selected.at(0) === "__proto__"
+      );
+    });
+    const initializerObjectEscapes = binding.escapedPaths.filter(
+      ({ path }) => constructorBackReferenceEnd(path) === path.length,
+    );
+    if (
+      (initializerWrites.length > 0 || initializerObjectEscapes.length > 0) &&
+      evaluateSemanticProvenance(binding, state).origins.some(
+        ({ specifier, importedPath }) =>
+          eventsInitializerPath(importedPath) &&
+          NODE_EVENTS_SPECIFIERS.some(
+            (candidate) =>
+              candidate.replace(/^node:/u, "") ===
+              specifier.replace(/^node:/u, ""),
+          ),
+      )
+    ) {
+      for (const { node } of initializerWrites) writes.push(node);
+      for (const { node } of initializerObjectEscapes)
+        initializerEscapes.push(node);
+    }
+    for (const { path, node } of binding.memberWrites)
+      retainPrototypeWrite(path, node);
+    for (const { path, node } of binding.escapedPaths)
+      if (escapesPrototypeObject(path)) prototypeEscapes.push(node);
+  }
+  for (const specifier of NODE_EVENTS_SPECIFIERS)
+    for (const { kind, path, node } of state.requiredModuleEffects.get(
+      specifier,
+    ) ?? []) {
+      if (kind === "escape") {
+        if (eventsClassPath(path)) escapes.push(node);
+        if (eventsInitializerPath(path)) initializerEscapes.push(node);
+        if (escapesPrototypeObject(path)) prototypeEscapes.push(node);
+      } else {
+        if (targetsEventsClass(path)) writes.push(node);
+        retainPrototypeWrite(path, node);
+      }
+    }
+  return {
+    writes,
+    initializerEscapes,
+    escapes,
+    otherRoots,
+    prototypeWrites,
+    prototypeEscapes,
+  };
+};
+
+/**
+ * Construction-only writes and initializer escapes matter before allocation.
+ * An escaped initializer can gain an own `.call` wrapper without replacement.
+ * Class and namespace escapes can replace the shared prototype until the
+ * listener call.
+ */
+const eventsClassSurfaceTouched = (
+  effects: EventEmitterSharedEffects,
+  construction: t.NewExpression,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  invocation: t.Node,
+): boolean => {
+  const precedes = (read: t.Node, effect: EventEmitterEffect): boolean =>
+    effect !== invocation &&
+    !semanticTopLevelEffectFollowsCapture(read, effect, state.parentsByNode);
+  const touched = (selected: EventEmitterClassEffects): boolean =>
+    selected.escapes.some((node) => precedes(read, node)) ||
+    selected.writes.some((node) => precedes(construction, node)) ||
+    selected.initializerEscapes.some((node) => precedes(construction, node));
+  if (touched(effects)) return true;
+  const root = constructionRootBinding(construction.callee, state);
+  const rootEffects =
+    root === undefined ? undefined : effects.otherRoots.get(root.bindingId);
+  return rootEffects !== undefined && touched(rootEffects);
+};
+
+/**
+ * Report whether a recorded path can select, or replace, `prototype.<method>`.
+ * The path is recorded against whichever object owns the write, so it carries
+ * the owner's own prefix (`EventEmitter.prototype.on`, `events.EventEmitter
+ * .prototype.on`) and only its tail names the slot. An unknown property key
+ * such as `prototype[key]` covers the method as well, so the tail is compared
+ * with the shared builtin-path rule instead of by exact keys.
+ */
+const affectsPrototypeMethod = (
+  path: JavaScriptSemanticPropertyPath,
+  method: string,
+): boolean => {
+  for (let index = 0; index < path.length; index += 1)
+    if (affectsBuiltinPath(path.slice(index), ["prototype", method]))
+      return true;
+  return false;
+};
+
+/**
+ * Report whether any object in this module writes a `prototype.<method>` slot.
+ * A receiver cannot be held to the native contract once the method that answers
+ * the call may have been replaced on a shared prototype. The write is recorded
+ * on whichever binding owns the object, so a scan covers every spelling of it:
+ * the class itself, a namespace import, a member require, or an alias of any of
+ * them. A write through an inline `require(...)` has no binding at all and is
+ * recorded against the module, so those records are scanned too. A file that
+ * reassigns `prototype.<method>` for an unrelated class loses the proof as
+ * well, which keeps the guard narrow instead of guessing which definition
+ * answers the call.
+ */
+const writesPrototypeMethod = (
+  effects: EventEmitterSharedEffects,
+  method: string,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  (effects.prototypeWrites.get(method) ?? []).some(
+    (write) =>
+      !semanticTopLevelEffectFollowsCapture(read, write, state.parentsByNode),
+  );
+
+/**
+ * Report whether an escape hands out the prototype object itself. Reading a
+ * method and passing the function value out (`proto.on`) cannot change the
+ * prototype, but passing the object (`configure(proto)`) lets the call install
+ * a replacement method on it.
+ */
+const escapesPrototypeObject = (
+  path: JavaScriptSemanticPropertyPath,
+): boolean =>
+  path.length > 0 &&
+  (path.at(-1) === "prototype" ||
+    path.at(-1) === "__proto__" ||
+    path.at(-1) === null);
+
+/**
+ * Report whether the shared prototype may have gained a method through a call.
+ * The prototype escapes exactly like an instance does, and the callee can
+ * install a defaulting wrapper on it, so the class no longer answers with the
+ * method it defines.
+ */
+const prototypeObjectEscaped = (
+  effects: EventEmitterSharedEffects,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  effects.prototypeEscapes.some(
+    (escape) =>
+      !semanticTopLevelEffectFollowsCapture(read, escape, state.parentsByNode),
+  );
+
+/**
+ * Report whether the receiver is a value this module constructs from Node's
+ * `EventEmitter` and still calls the native listener method. Only that class is
+ * bound by `checkListener`; other EventEmitter-style APIs define one-argument
+ * forms, such as Socket.IO's `socket.off("x")`, which removes every listener
+ * for the event. Any receiver whose selected method may have been replaced
+ * keeps its operation as an unresolved candidate.
+ */
+const nodeEventEmitterReceiver = (
+  node: t.Expression | t.Super,
+  method: string,
+  state: JavaScriptSemanticAnalysisState,
+  call: t.Node,
+  sharedEffects: () => EventEmitterSharedEffects,
+): boolean => {
+  if (!t.isIdentifier(node)) return false;
+  const binding = resolveSemanticBindingState(state, node, node.name);
+  if (binding === undefined) return false;
+  const initializer = semanticStableInitializer(binding, state);
+  if (initializer === undefined || initializer.projection.length !== 0)
+    return false;
+  const construction = nodeEventEmitterConstruction(initializer.node, state);
+  if (construction === null) return false;
+  // Node allocates through EventEmitter.init.call(this, opts). The inherited
+  // call slot is shared by functions, so its ambient effects belong to the
+  // allocation even when no events binding was written or exposed.
+  if (
+    semanticAmbientPathMayHaveChangedAt(construction, state, [
+      "global",
+      "Function",
+      "prototype",
+      "call",
+    ])
+  )
+    return false;
+  // Reaching the class is not the same as reaching the method: the class object
+  // and the `init` hook Node runs while constructing can both be reshaped, so a
+  // construction whose surface was touched keeps its operation.
+  const effects = sharedEffects();
+  if (eventsClassSurfaceTouched(effects, construction, node, state, call))
+    return false;
+  // The receiver is activation-local, but the events module and its prototype
+  // are shared: opaque code in an outer activation can replace their methods
+  // even when this receiver does not exist yet. Use the opaque-effect owner's
+  // shared-identity query rather than interpreting eval text here.
+  if (semanticSharedModuleMayHaveOpaqueEffect(node, state)) return false;
+  // Constructing the class proves where the receiver came from, not which
+  // definition answers the call. Passing the instance to another call lets that
+  // call replace the method first, so the proof no longer holds. Reading
+  // `emitter.on` in order to call it passes the function value rather than the
+  // instance, and the collector records the operation's own call as one of
+  // these escapes, so that call is not evidence against the receiver. A call
+  // that runs after this one cannot change whether it threw, so it is not
+  // evidence either.
+  if (
+    binding.escapedPaths.some(
+      (escape) =>
+        escape.path.length === 0 &&
+        escape.node !== call &&
+        !semanticTopLevelEffectFollowsCapture(
+          call,
+          escape.node,
+          state.parentsByNode,
+        ),
+    )
+  )
+    return false;
+  // A member write replaces the selected method, so it no longer keeps the
+  // native contract. An unrelated write such as `emitter.tag = 1` leaves the
+  // proof intact. Replacing the receiver's own prototype selects a different
+  // method as well, and is recorded as a `__proto__` write.
+  if (
+    binding.memberWrites.some(
+      ({ path, node: write }) =>
+        (affectsBuiltinPath(path, [method]) || path.at(0) === "__proto__") &&
+        !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
+    )
+  )
+    return false;
+  // Every instance shares the constructor's prototype, so a write there
+  // replaces the method for this receiver as well, and so does handing that
+  // prototype to a call that may install the method itself.
+  return (
+    !writesPrototypeMethod(effects, method, node, state) &&
+    !prototypeObjectEscaped(effects, node, state)
+  );
+};
+
 const collectEvent = (
   node: t.CallExpression | t.OptionalCallExpression,
   ownerCallableId: string | null,
   state: JavaScriptSemanticAnalysisState,
   output: JavaScriptSemanticEventOperation[],
+  sharedEffects: () => EventEmitterSharedEffects,
 ): void => {
   const member = dataEffectMemberCallee(node);
   if (member === null) return;
@@ -199,15 +672,26 @@ const collectEvent = (
   if (method === undefined) return;
   const kind = eventKind(method);
   const eventArgument = node.arguments[0];
-  const listenerArgument = EVENT_LISTENER_METHODS.includes(method)
-    ? node.arguments[1]
-    : undefined;
+  const listenerMethod = EVENT_LISTENER_METHODS.includes(method);
+  const listenerArgument = listenerMethod ? node.arguments[1] : undefined;
+  // A listener method called without a listener argument passes `undefined` to
+  // Node's `checkListener`, which throws before it registers or removes
+  // anything. Only a spread argument can still reach that position, and only a
+  // receiver proven to be Node's `EventEmitter` is held to that contract.
+  if (
+    listenerMethod &&
+    listenerArgument === undefined &&
+    !node.arguments.some((argument) => t.isSpreadElement(argument)) &&
+    nodeEventEmitterReceiver(member.object, method, state, node, sharedEffects)
+  )
+    return;
   // A leading spread shifts the runtime argument positions, so argument 1 is not
   // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
   // trailing `1`.
   if (
     EVENT_LISTENER_METHODS.includes(method) &&
     !t.isSpreadElement(eventArgument) &&
+    listenerArgument !== undefined &&
     rejectsSemanticEventListener(listenerArgument)
   )
     return;

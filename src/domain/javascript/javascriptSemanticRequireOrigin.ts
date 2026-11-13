@@ -8,6 +8,7 @@ import {
 } from "./javascriptSemanticProjectedSources.js";
 import * as t from "@babel/types";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import { evaluateSemanticExpressionProvenance } from "./javascriptSemanticValues.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
@@ -61,6 +62,7 @@ import {
   type JavaScriptRequireOrigin,
 } from "./javascriptSemanticRequireOriginSlot.js";
 import {
+  createAmbientPathResolver,
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
@@ -690,10 +692,10 @@ const loaderInvocationInterops = new WeakMap<
   }
 >();
 
-const loaderInvocationInterop = (state: JavaScriptSemanticAnalysisState) => {
-  const prior = loaderInvocationInterops.get(state);
-  if (prior?.writes === state.ambientWriteEffects.length) return prior.interop;
-  const interop = createSemanticModuleInterop(state);
+const retainAmbientInvocationWrites = (
+  state: JavaScriptSemanticAnalysisState,
+  interop: ReturnType<typeof createSemanticModuleInterop>,
+): void => {
   for (const effect of state.ambientWriteEffects)
     if (effect.path[0] === "global")
       interop.retainWrite(effect.node ?? state.program, [
@@ -704,6 +706,13 @@ const loaderInvocationInterop = (state: JavaScriptSemanticAnalysisState) => {
             key === null || typeof key === "object" ? null : String(key),
           ),
       ]);
+};
+
+const loaderInvocationInterop = (state: JavaScriptSemanticAnalysisState) => {
+  const prior = loaderInvocationInterops.get(state);
+  if (prior?.writes === state.ambientWriteEffects.length) return prior.interop;
+  const interop = createSemanticModuleInterop(state);
+  retainAmbientInvocationWrites(state, interop);
   loaderInvocationInterops.set(state, {
     writes: state.ambientWriteEffects.length,
     interop,
@@ -1716,6 +1725,199 @@ export const semanticGlobalProcessPathOrigin = (
   };
 };
 
+const moduleAcquisitionAmbientReaders = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  ReturnType<typeof createAmbientPathResolver>
+>();
+
+/** Candidate acquisition effects consume existing module and ambient selections. */
+const moduleAcquisitionGetterPath = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): readonly string[] | undefined => {
+  const getterPath = (path: readonly (string | null)[]) =>
+    path[0] === "getBuiltinModule" &&
+    path
+      .slice(1)
+      .every(
+        (member) =>
+          member === "call" || member === "apply" || member === "bind",
+      )
+      ? ["candidate-module", "process", ...(path as readonly string[])]
+      : undefined;
+  const chain = semanticMemberChain(callee);
+  if (chain?.root !== undefined && chain.root !== null) {
+    const origin =
+      semanticGlobalProcessOrigin(chain.root, state) ??
+      semanticGlobalProcessPathOrigin(callee, state);
+    if (origin !== undefined) {
+      const path = getterPath(
+        origin.importedPath.length === 0 ? chain.members : origin.importedPath,
+      );
+      if (path !== undefined) return path;
+    }
+  }
+  for (const origin of evaluateSemanticExpressionProvenance(callee, state)
+    .origins) {
+    if (origin.specifier.replace(/^node:/u, "") !== "process") continue;
+    const path = getterPath(
+      origin.resolutionMode !== "require" &&
+        origin.importedPath[0] === "default"
+        ? origin.importedPath.slice(1)
+        : origin.importedPath,
+    );
+    if (path !== undefined) return path;
+  }
+  const root = chain?.root;
+  if (
+    !t.isIdentifier(root) ||
+    resolveSemanticBindingState(state, root, root.name) === undefined
+  )
+    return undefined;
+  let read = moduleAcquisitionAmbientReaders.get(state);
+  if (read === undefined) {
+    // Possible-effect mode selects aliases at each read without caching across
+    // mutation-index updates. It grants no native loader authority.
+    read = createAmbientPathResolver(state, true);
+    moduleAcquisitionAmbientReaders.set(state, read);
+  }
+  for (const path of read(callee, callee).paths) {
+    if (path[0] !== "global" || path[1] !== "process") continue;
+    const selected = getterPath(path.slice(2));
+    if (selected !== undefined) return selected;
+  }
+  return undefined;
+};
+
+const moduleAcquisitionInvocationInterops = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  {
+    readonly writes: number;
+    readonly processEffects: number;
+    readonly interop: ReturnType<typeof createSemanticModuleInterop>;
+  }
+>();
+
+/** Normalize generic calls and existing bound captures at the invocation owner. */
+const moduleAcquisitionInvocationInterop = (
+  state: JavaScriptSemanticAnalysisState,
+) => {
+  const effects = state.requiredModuleEffects.get("process") ?? [];
+  const prior = moduleAcquisitionInvocationInterops.get(state);
+  if (prior?.writes === state.ambientWriteEffects.length) {
+    let helperWriteAdded = false;
+    for (let index = prior.processEffects; index < effects.length; index += 1)
+      if (effects[index]?.kind === "write") {
+        helperWriteAdded = true;
+        break;
+      }
+    // Ordinary calls append escapes. Do not repeatedly rescan their history or
+    // rebuild the invocation reader when no helper-write facts were added.
+    if (!helperWriteAdded) {
+      moduleAcquisitionInvocationInterops.set(state, {
+        ...prior,
+        processEffects: effects.length,
+      });
+      return prior.interop;
+    }
+  }
+  const intrinsic = loaderInvocationInterop(state);
+  const interop = createSemanticModuleInterop(state, {
+    intrinsicPath: (node) =>
+      moduleAcquisitionGetterPath(node, state) ?? intrinsic.intrinsicPath(node),
+  });
+  retainAmbientInvocationWrites(state, interop);
+  // Replacing the candidate getter does not disprove its possible result.
+  // Only writes below that function affect generic helper argument mapping;
+  // otherwise even an earlier captured getter would lose its candidate path.
+  const retainGetterHelperWrite = (
+    node: t.Node | undefined,
+    path: readonly unknown[],
+  ) => {
+    if (path.length < 2) return;
+    interop.retainWrite(node ?? state.program, [
+      "candidate-module",
+      "process",
+      ...path.map((key) =>
+        key === null || typeof key === "object" ? null : String(key),
+      ),
+    ]);
+  };
+  for (const effect of state.ambientWriteEffects)
+    if (
+      effect.path[0] === "global" &&
+      effect.path[1] !== undefined &&
+      semanticPropertyPathKeyMatches(effect.path[1], "process")
+    )
+      retainGetterHelperWrite(effect.node, effect.path.slice(2));
+  // Imported/default process objects share these existing mutation records.
+  // Invocation escapes are not helper replacements; retain actual writes only.
+  for (const effect of effects)
+    if (effect.kind === "write")
+      retainGetterHelperWrite(effect.node, effect.path);
+  moduleAcquisitionInvocationInterops.set(state, {
+    writes: state.ambientWriteEffects.length,
+    processEffects: effects.length,
+    interop,
+  });
+  return interop;
+};
+
+/**
+ * Retain possible shared-module effects from inline module acquisitions.
+ * This reader is mutation-only: it must not grant loader or constructor proof.
+ */
+export const semanticModuleAcquisitionEffectOrigin = (
+  node: t.Node | null | undefined,
+  state: JavaScriptSemanticAnalysisState,
+  awaitedDirectValue = false,
+): JavaScriptModuleOrigin | undefined => {
+  const chain = semanticMemberChain(node);
+  if (chain === undefined) return undefined;
+  const call = chain.root;
+  const acquisition = t.isAwaitExpression(call)
+    ? unwrapJavaScriptExpression(call.argument).node
+    : awaitedDirectValue && chain.members.length === 0
+      ? call
+      : undefined;
+  if (t.isImportExpression(acquisition)) {
+    const specifier = stringValue(acquisition.source);
+    return specifier === undefined
+      ? undefined
+      : {
+          specifier,
+          importedPath: chain.members,
+          resolutionMode: "import",
+          loaderAuthority: "candidate",
+        };
+  }
+  // An unawaited import is a Promise, not the acquired module namespace.
+  if (!t.isCallExpression(call) && !t.isOptionalCallExpression(call))
+    return undefined;
+  // A direct candidate getter never promised an unchanged native function.
+  // Keep that mutation-only contract; generic helpers additionally need their
+  // invocation semantics to determine which arguments reach the candidate.
+  const directPath = moduleAcquisitionGetterPath(call.callee, state);
+  const invocation =
+    directPath?.length === 3
+      ? { kind: "known", path: directPath, arguments: call.arguments }
+      : moduleAcquisitionInvocationInterop(state).intrinsicInvocation(call);
+  if (
+    invocation?.kind !== "known" ||
+    invocation.path.join(".") !== "candidate-module.process.getBuiltinModule"
+  )
+    return undefined;
+  const specifier = stringValue(invocation.arguments?.[0]);
+  return specifier === undefined
+    ? undefined
+    : {
+        specifier,
+        importedPath: chain.members,
+        resolutionMode: "require",
+        loaderAuthority: "candidate",
+      };
+};
+
 /** Check one unknown-host wrapper candidate at its source-ordered read. */
 const isConditionalRequireAt = (
   root: t.Identifier,
@@ -1853,6 +2055,7 @@ const MUTABLE_BUILTIN_DEFAULTS = new Set([
   "http",
   "https",
   "child_process",
+  "events",
   "timers",
   "process",
   "path",

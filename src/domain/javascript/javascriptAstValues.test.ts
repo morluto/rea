@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
 import {
+  javaScriptExpressionResultIsUsed,
   semanticMemberChain,
   semanticStaticPropertyKey,
   staticObjectProperty,
@@ -9,6 +10,102 @@ import {
   staticObjectCopyPropertyReader,
   staticObjectPropertyNames,
 } from "./javascriptAstValues.js";
+
+it("keeps missing and mismatched result-parent edges conservative", () => {
+  const call = t.callExpression(t.identifier("invoke"), []);
+  const other = t.numericLiteral(0);
+  const parents = new WeakMap<t.Node, t.Node>();
+  expect(javaScriptExpressionResultIsUsed(call, parents)).toBe(true);
+  for (const parent of [
+    t.expressionStatement(other),
+    t.unaryExpression("void", other),
+    t.sequenceExpression([other]),
+    t.parenthesizedExpression(other),
+    t.tsAsExpression(other, t.tsUnknownKeyword()),
+    t.conditionalExpression(other, other, other),
+    t.logicalExpression("&&", other, other),
+    t.forStatement(other, null, other, t.emptyStatement()),
+  ]) {
+    parents.set(call, parent);
+    if (t.isExpression(parent))
+      parents.set(parent, t.expressionStatement(parent));
+    expect(javaScriptExpressionResultIsUsed(call, parents), parent.type).toBe(
+      true,
+    );
+  }
+});
+
+it("follows an explicit grouping wrapper through a final comma operand", () => {
+  const call = t.callExpression(t.identifier("invoke"), []);
+  const wrapper = t.parenthesizedExpression(call);
+  const sequence = t.sequenceExpression([t.numericLiteral(0), wrapper]);
+  const parents = new WeakMap<t.Node, t.Node>([
+    [call, wrapper],
+    [wrapper, sequence],
+  ]);
+  expect(javaScriptExpressionResultIsUsed(call, parents)).toBe(true);
+  parents.set(sequence, t.expressionStatement(sequence));
+  expect(javaScriptExpressionResultIsUsed(call, parents)).toBe(false);
+  parents.set(sequence, t.callExpression(t.identifier("consume"), [sequence]));
+  expect(javaScriptExpressionResultIsUsed(call, parents)).toBe(true);
+  parents.delete(sequence);
+  expect(javaScriptExpressionResultIsUsed(call, parents)).toBe(true);
+});
+
+it.each([128, 256, 512])(
+  "indexes comma membership once for %i sibling calls per parent map",
+  (count) => {
+    const calls = Array.from({ length: count }, () =>
+      t.callExpression(t.identifier("invoke"), []),
+    );
+    const sequence = t.sequenceExpression(calls);
+    let memberReads = 0;
+    sequence.expressions = new Proxy(sequence.expressions, {
+      get(target, key, receiver) {
+        if (typeof key === "string" && /^\d+$/u.test(key)) memberReads += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const parentMap = () =>
+      new WeakMap<t.Node, t.Node>([
+        ...calls.map((call): [t.Node, t.Node] => [call, sequence]),
+        [sequence, t.expressionStatement(sequence)],
+      ]);
+    const parents = parentMap();
+    for (const call of calls)
+      expect(javaScriptExpressionResultIsUsed(call, parents)).toBe(false);
+    expect(memberReads).toBeLessThanOrEqual(count * 2);
+    const firstReads = memberReads;
+    for (const call of calls)
+      expect(javaScriptExpressionResultIsUsed(call, parents)).toBe(false);
+    expect(memberReads - firstReads).toBeLessThanOrEqual(count);
+    const repeatedReads = memberReads;
+    const independentParents = parentMap();
+    for (const call of calls)
+      expect(javaScriptExpressionResultIsUsed(call, independentParents)).toBe(
+        false,
+      );
+    // A different analysis owns its own membership, even for the same AST.
+    expect(memberReads - repeatedReads).toBe(firstReads);
+  },
+);
+
+it("keeps sequence membership isolated and rejects mismatches after indexing", () => {
+  const first = t.callExpression(t.identifier("first"), []);
+  const second = t.callExpression(t.identifier("second"), []);
+  const firstSequence = t.sequenceExpression([first, t.numericLiteral(0)]);
+  const secondSequence = t.sequenceExpression([second, t.numericLiteral(0)]);
+  const parents = new WeakMap<t.Node, t.Node>([
+    [first, firstSequence],
+    [second, secondSequence],
+  ]);
+  expect(javaScriptExpressionResultIsUsed(first, parents)).toBe(false);
+  expect(javaScriptExpressionResultIsUsed(second, parents)).toBe(false);
+  parents.set(first, secondSequence);
+  expect(javaScriptExpressionResultIsUsed(first, parents)).toBe(true);
+  parents.delete(first);
+  expect(javaScriptExpressionResultIsUsed(first, parents)).toBe(true);
+});
 
 it("keeps string spread indices separate from named descriptor fields", () => {
   for (const text of ["", "x", "😀", "x".repeat(1_000_000)]) {

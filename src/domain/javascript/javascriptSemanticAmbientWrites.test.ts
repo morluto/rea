@@ -11,6 +11,9 @@ import {
 import {
   createGlobalPathReader,
   createGlobalReferenceReader,
+  retainSemanticAmbientEffect,
+  semanticAmbientPathMayHaveChangedAt,
+  semanticAmbientObjectMayHaveChangedAt,
 } from "./javascriptSemanticAmbientWrites.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
@@ -385,3 +388,251 @@ it.each([
     expect(statuses).toEqual(expected);
   },
 );
+
+it.each([
+  [
+    "an intact method",
+    "const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');",
+    false,
+  ],
+  [
+    "a current function-local invocation",
+    "function run(){const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');}",
+    false,
+  ],
+  [
+    "an earlier constructor escape",
+    "const xhr=new XMLHttpRequest();mutate(xhr.constructor);xhr.open('GET','/xhr');",
+    true,
+  ],
+  [
+    "a later constructor escape",
+    "const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');mutate(xhr.constructor);",
+    false,
+  ],
+  [
+    "an escaped method value",
+    "const xhr=new XMLHttpRequest();mutate(XMLHttpRequest.prototype.open);xhr.open('GET','/xhr');",
+    false,
+  ],
+  [
+    "a selected method before argument effects",
+    "const xhr=new XMLHttpRequest();xhr.open('GET',(mutate(xhr.constructor),'/xhr'));",
+    false,
+  ],
+  [
+    "a later effect in a possibly repeated activation",
+    "function run(){const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');mutate(xhr.constructor);}",
+    true,
+  ],
+  [
+    "an unlocated ambient escape",
+    "function request(){window.fetch('/other');}fetch=replacement;const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');mutate(xhr.constructor);",
+    true,
+  ],
+])("retains timed ambient path effects for %s", (_label, source, changed) => {
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected ambient-effect fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const results: boolean[] = [];
+  traverseJavaScriptAst(parsed.program, {
+    enter(node) {
+      if (
+        t.isCallExpression(node) &&
+        t.isMemberExpression(node.callee) &&
+        t.isIdentifier(node.callee.property, { name: "open" })
+      )
+        results.push(
+          semanticAmbientPathMayHaveChangedAt(
+            node.callee,
+            index.bindings,
+            ["global", "XMLHttpRequest", "prototype", "open"],
+            node,
+          ),
+        );
+    },
+  });
+  expect(results).toEqual([changed]);
+});
+
+it("shares matching ambient records across reads instead of scanning unrelated effects again", () => {
+  const work = (count: number): number => {
+    const source =
+      Array.from(
+        { length: count },
+        (_value, index) =>
+          "new XMLHttpRequest().open('GET','/xhr');globalThis.unrelated" +
+          index +
+          "=replacement;",
+      ).join("") + "XMLHttpRequest.prototype.open=replacement;";
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected ambient work fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    // Producer proofs can already warm this path. Grow facts once so the
+    // measured reads include one cold lookup followed by shared warm lookups.
+    retainSemanticAmbientEffect(
+      index.bindings,
+      "write",
+      ["global", "addedAfterIndex"],
+      parsed.program,
+    );
+    let reads = 0;
+    for (const effect of [
+      ...index.bindings.ambientWriteEffects,
+      ...index.bindings.ambientEscapeEffects,
+    ]) {
+      const path = effect.path;
+      Object.defineProperty(effect, "path", {
+        configurable: true,
+        get: () => {
+          reads += 1;
+          return path;
+        },
+      });
+    }
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isMemberExpression(node.callee) &&
+          t.isIdentifier(node.callee.property, { name: "open" })
+        )
+          semanticAmbientPathMayHaveChangedAt(
+            node.callee,
+            index.bindings,
+            ["global", "XMLHttpRequest", "prototype", "open"],
+            node,
+          );
+      },
+    });
+    return reads;
+  };
+  const smaller = work(32);
+  expect(smaller).toBeGreaterThan(0);
+  expect(work(64)).toBeLessThan(3 * smaller);
+});
+
+it.each(["write", "escape"] as const)(
+  "refreshes cached ambient records when %s facts grow without caching read answers",
+  (kind) => {
+    const parsed = parseJavaScriptSource(
+      "before();inspect();after();inspect();",
+    );
+    if (parsed === null)
+      throw new Error("Expected growing ambient-effect fixture");
+    const state = completeSemanticSteps(
+      indexJavaScriptBindingsSteps(parsed.program),
+    );
+    const calls: t.CallExpression[] = [];
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (t.isCallExpression(node)) calls.push(node);
+      },
+    });
+    const [before, first, after, second] = calls;
+    if (!before || !first || !after || !second)
+      throw new Error("Expected four call sites");
+    const path = ["global", "XMLHttpRequest", "prototype", "open"];
+    retainSemanticAmbientEffect(state, "write", path, after);
+    expect(semanticAmbientPathMayHaveChangedAt(first.callee, state, path)).toBe(
+      false,
+    );
+    expect(
+      semanticAmbientPathMayHaveChangedAt(second.callee, state, path),
+    ).toBe(true);
+    retainSemanticAmbientEffect(
+      state,
+      kind,
+      kind === "write" ? path : ["global", "XMLHttpRequest"],
+      before,
+    );
+    expect(semanticAmbientPathMayHaveChangedAt(first.callee, state, path)).toBe(
+      true,
+    );
+  },
+);
+
+it("keeps invocation exclusions outside the shared ambient record cache", () => {
+  const parsed = parseJavaScriptSource("function run(){invoke();}");
+  if (parsed === null) throw new Error("Expected invocation-effect fixture");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  let invocation: t.CallExpression | undefined;
+  traverseJavaScriptAst(parsed.program, {
+    enter(node) {
+      if (t.isCallExpression(node)) invocation = node;
+    },
+  });
+  if (invocation === undefined) throw new Error("Expected invocation");
+  const path = ["global", "XMLHttpRequest", "prototype", "open"];
+  retainSemanticAmbientEffect(
+    state,
+    "escape",
+    ["global", "XMLHttpRequest"],
+    invocation,
+  );
+  expect(
+    semanticAmbientPathMayHaveChangedAt(
+      invocation.callee,
+      state,
+      path,
+      invocation,
+    ),
+  ).toBe(false);
+  expect(
+    semanticAmbientPathMayHaveChangedAt(invocation.callee, state, path),
+  ).toBe(true);
+});
+
+it.each([
+  ["Array.prototype[0] = replacement; inspect();", true],
+  ["Array.prototype[key] = replacement; inspect();", true],
+  ["Array.prototype[0].value = replacement; inspect();", true],
+  ["configure(Array.prototype[0]); inspect();", true],
+  ["configure(Array.prototype); inspect();", true],
+  ["configure(Array); inspect();", true],
+  ["inspect(); Array.prototype[0] = replacement;", false],
+  ["function patch() { Array.prototype[0] = replacement; } inspect();", true],
+  ["Map.prototype[0] = replacement; inspect();", false],
+])("queries timed ambient subtree overlap: %s", (source, changed) => {
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected ambient subtree fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexAmbientWritesSteps());
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const results: boolean[] = [];
+  traverseJavaScriptAst(parsed.program, {
+    enter(node) {
+      if (
+        t.isCallExpression(node) &&
+        t.isIdentifier(node.callee, { name: "inspect" })
+      ) {
+        // A path query must not cache a subtree query's matching records or vice versa.
+        semanticAmbientPathMayHaveChangedAt(
+          node,
+          index.bindings,
+          ["global", "Array", "prototype"],
+          node,
+        );
+        results.push(
+          semanticAmbientObjectMayHaveChangedAt(
+            node,
+            index.bindings,
+            ["global", "Array", "prototype"],
+            node,
+          ),
+        );
+      }
+    },
+  });
+  expect(results).toEqual([changed]);
+});

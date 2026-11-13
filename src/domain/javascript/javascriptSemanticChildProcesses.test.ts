@@ -22,7 +22,21 @@ it.each(
     );
     expect(ir.childProcessSpawns).toHaveLength(1);
     expect(ir.childProcessInteractions).toEqual([]);
-    expect(ir.eventOperations).toEqual([]);
+    // Spawn ownership does not prove that the selected listener method is native.
+    // A missing argument keeps a generic candidate, not a known registration.
+    if (listener === "") {
+      expect(ir.eventOperations).toMatchObject([
+        {
+          kind: "register",
+          method,
+          eventName: "exit",
+          listenerBindingId: null,
+          listenerLocation: null,
+        },
+      ]);
+    } else {
+      expect(ir.eventOperations).toEqual([]);
+    }
   },
 );
 

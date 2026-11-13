@@ -165,7 +165,7 @@ const positionPrecedes = (
       left.declaratorIndex >= 0 &&
       left.declaratorIndex < right.declaratorIndex));
 
-/** Statement position of a node evaluated once by the program, outside loops and functions. */
+/** Statement position of a node evaluated once by the program, outside repeated execution. */
 const computeTopLevelStatementPosition = (
   node: t.Node | undefined,
   parents: WeakMap<t.Node, t.Node>,
@@ -178,7 +178,8 @@ const computeTopLevelStatementPosition = (
       (t.isFunction(node) &&
         (child === undefined ||
           !semanticMethodDefinitionExpression(node, child))) ||
-      t.isLoop(node)
+      // The iterable is selected once on entry; an outer loop still repeats it.
+      (t.isLoop(node) && !(t.isForOfStatement(node) && child === node.right))
     )
       return null;
     if (delayedInstanceFieldValue(node, child)) return null;

@@ -112,6 +112,278 @@ it.each([
     "Object.getPrototypeOf = () => Map.prototype; Object.getPrototypeOf({}).get = fetch; new Map().get('/accounts');",
     true,
   ],
+  [
+    "const records = new Map(); records.get('/accounts'); const other = new Map(); consume(other);",
+    false,
+  ],
+  [
+    "const records = new Map(); records.delete('/accounts'); const other = new Map(); consume(other);",
+    false,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); consume(other); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); consume(other); records.delete('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); records.get('/accounts'); Map.prototype.get = fetch;",
+    false,
+  ],
+  [
+    "const records = new Map(); Map.prototype.get = fetch; records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); records.get('/accounts'); consume(Map.prototype);",
+    false,
+  ],
+  [
+    "const records = new Map(); consume(Map.prototype); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map([['x', 1]]); Map.prototype.set = replacement; records.get('/accounts');",
+    false,
+  ],
+  [
+    "Map.prototype.set = replacement; const records = new Map([['x', 1]]); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); function later() { consume(Map.prototype); } records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map((Map.prototype.set = function () { this.get = fetch; return this; }, [['x', 1]])); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); new Map().set('x', 1); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); void new Map().set('x', 1); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const unused = (new Map().set('x', 1), 0); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); (0, new Map().set('x', 1)); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); void (0, new Map().set('x', 1)); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const unused = ((0, new Map().set('x', 1)), 1); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); (new Map().set('x', 1) as unknown)!; records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); for (new Map().set('x', 1); false;) {} records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); for (; false; (0, new Map().set('x', 1))) {} records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); void new Map().keys(); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); flag ? new Map().set('x', 1) : 0; records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); flag ? 0 : new Map().set('x', 1); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); flag && new Map().set('x', 1); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); void ((flag ? (0, new Map().set('x', 1)) : 0) as unknown)!; records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const unused = ((flag && new Map().set('x', 1)), 0); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); new Map().set('x', 1) ? 0 : 1; records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); new Map().set('x', 1) && 0; records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const result = flag ? new Map().set('x', 1) : 0; records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); void consume(flag && new Map().set('x', 1)); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); void consume(new Map().set('x', 1)); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const result = (0, new Map().set('x', 1)); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); Map.prototype.set = patch; void new Map().set('x', 1); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); void new Map().set(records, 1); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); void new Map().set(...expose(records)); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.set('x', 1); records.delete('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); new Map().has('x'); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); consume(other.has('x')); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); new Map().clear(); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); consume(other.clear()); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); Map.prototype.set = patch; new Map().set('x', 1); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); Map.prototype.has = patch; new Map().has('x'); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); Map.prototype.clear = patch; new Map().clear(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.set = patch; other.set('x', 1); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); consume(Map.prototype); new Map().set('x', 1); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); eval('Map.prototype.set = patch'); new Map().set('x', 1); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); consume(new Map().set('x', 1)); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); const result = other.set('x', 1); consume(result); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); new Map().set('x', 1).constructor.prototype.get = fetch; records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); new Map([['x', 1]]).forEach((value, key, map) => { map.constructor.prototype.get = fetch; }); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); new Map().set(records, 1); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); new Map().set(...expose(records)); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); new Map().keys(); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.keys(); records.delete('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); Map.prototype.keys = patch; new Map().keys(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.keys = patch; other.keys(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); consume(new Map().keys()); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); new Map().values(); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.values(); records.delete('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); Map.prototype.values = patch; new Map().values(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.values = patch; other.values(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); consume(new Map().values()); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); new Map().entries(); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.entries(); records.delete('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); Map.prototype.entries = patch; new Map().entries(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.entries = patch; other.entries(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); consume(new Map().entries()); records.get('/accounts');",
+    true,
+  ],
   ["client.get('/accounts');", true],
   ["eval('Map.prototype.get = fetch'); new Map().get('/accounts');", true],
 ] as const)(
@@ -2241,5 +2513,145 @@ it.each([
         ...(observed ? {} : { interpretation: "candidate" }),
       }),
     );
+  },
+);
+
+it.each([
+  [
+    "an unchanged function-local receiver",
+    "function run(){const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');}",
+    true,
+  ],
+  [
+    "an earlier constructor escape",
+    "const xhr=new XMLHttpRequest();mutate(xhr.constructor);xhr.open('GET','/xhr');",
+    false,
+  ],
+  [
+    "an earlier cross-instance escape",
+    "const other=new XMLHttpRequest();const xhr=new XMLHttpRequest();mutate(other);xhr.open('GET','/xhr');",
+    false,
+  ],
+  [
+    "a later constructor escape",
+    "const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');mutate(xhr.constructor);",
+    true,
+  ],
+  [
+    "a later cross-instance escape",
+    "const other=new XMLHttpRequest();const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');mutate(other);",
+    true,
+  ],
+  [
+    "an escaped method value",
+    "const xhr=new XMLHttpRequest();mutate(XMLHttpRequest.prototype.open);xhr.open('GET','/xhr');",
+    true,
+  ],
+  [
+    "a shared escape in a possibly repeated activation",
+    "const other=new XMLHttpRequest();function run(){const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');mutate(other);}",
+    false,
+  ],
+])("orders XHR method selection against %s", (_label, source, observed) => {
+  const result = analyzeWebBundleFixture(inspection(source));
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual(
+    observed ? ["/xhr"] : [],
+  );
+  expect(
+    result.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value),
+  ).toEqual(observed ? [] : ["/xhr"]);
+});
+
+it.each([
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.open('GET', '/a');",
+    false,
+  ],
+  [
+    "const b = new XMLHttpRequest(); new XMLHttpRequest().open('GET', '/a');",
+    false,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); const alias = a; alias.open('GET', '/a');",
+    false,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); const method = 'GET'; a.open(method, '/a', true); a.open('GET', '/again');",
+    false,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.open('GET', '/a'); a.onreadystatechange = handler;",
+    false,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.onreadystatechange = handler; a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.addEventListener('readystatechange', handler); a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.send(); a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.open('GET', { toString() { a.onreadystatechange = handler; return '/a'; } });",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.open('GET', unknownUrl);",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.open(...args);",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.open = custom; a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); XMLHttpRequest.prototype.open = custom; a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); XMLHttpRequest.prototype.onreadystatechange = handler; a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); configure(XMLHttpRequest.prototype); a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); eval('a.onreadystatechange = handler'); a.open('GET', '/a');",
+    true,
+  ],
+] as const)(
+  "keeps pristine XHR calls separate from potentially configured receivers: %s",
+  (setup, candidate) => {
+    const source = `${setup} b.open('GET', '/b');`;
+    const result = analyzeWebBundleFixture(inspection(source));
+    expect(
+      result.observations.endpoints
+        .filter(({ value }) => value === "/b")
+        .map(({ value }) => value),
+    ).toEqual(candidate ? [] : ["/b"]);
+    expect(
+      result.inferences
+        .filter(
+          ({ kind, value }) => kind === "endpoint_candidate" && value === "/b",
+        )
+        .map(({ value }) => value),
+    ).toEqual(candidate ? ["/b"] : []);
+    const endpoint = analyzeJavaScriptStaticSource(source).endpoints.find(
+      ({ value }) => value === "/b",
+    );
+    expect(endpoint?.interpretation ?? null).toBe(
+      candidate ? "candidate" : null,
+    );
+    expect(endpoint).toBeDefined();
   },
 );

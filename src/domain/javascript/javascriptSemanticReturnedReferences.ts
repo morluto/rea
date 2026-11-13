@@ -96,7 +96,7 @@ export const createSemanticReturnedReferences = (
     {
       readonly result: SemanticReturnedReferenceResult;
       readonly invocation: t.Node | undefined;
-      readonly iterationUnknown: boolean;
+      readonly iterationEffects: number;
       readonly ambientWrites: number;
       readonly dependencies: readonly {
         readonly binding: JavaScriptSemanticBindingState;
@@ -110,7 +110,7 @@ export const createSemanticReturnedReferences = (
     if (
       existing !== undefined &&
       existing.invocation === invocation &&
-      existing.iterationUnknown === state.arrayIterationUnknown &&
+      existing.iterationEffects === state.arrayIterationEffects.length &&
       existing.ambientWrites === state.ambientWriteEffects.length &&
       existing.dependencies.every(
         ({ binding, writes, escapes }) =>
@@ -551,6 +551,7 @@ export const createSemanticReturnedReferences = (
                     source.capturedSelectionAt,
                   )?.value,
                   state,
+                  source.capturedSelectionAt,
                 )
               )
                 projection = [null, ...source.path.slice(1)];
@@ -736,7 +737,7 @@ export const createSemanticReturnedReferences = (
     results.set(callee, {
       result,
       invocation,
-      iterationUnknown: state.arrayIterationUnknown,
+      iterationEffects: state.arrayIterationEffects.length,
       ambientWrites: state.ambientWriteEffects.length,
       dependencies: [...dependencies].map(([binding, counts]) => ({
         binding,

@@ -69,6 +69,97 @@ const ambientEffectCovers = (
     semanticPropertyPathKeyMatches(key, target[index]!),
   );
 
+interface AmbientPathEffectCache {
+  readonly writes: number;
+  readonly escapes: number;
+  readonly byPath: Map<
+    string,
+    JavaScriptSemanticAnalysisState["ambientWriteEffects"]
+  >;
+}
+
+const ambientPathEffectCaches = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  AmbientPathEffectCache
+>();
+
+const semanticAmbientEffectsMayHaveChangedAt = (
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly string[],
+  scope: "path" | "subtree",
+  invocation?: t.Node,
+): boolean => {
+  if (
+    scope === "path" &&
+    !state.ambientWrites.covers(path) &&
+    !state.ambientEscapes.covers(path)
+  )
+    return false;
+  let cache = ambientPathEffectCaches.get(state);
+  if (
+    cache?.writes !== state.ambientWriteEffects.length ||
+    cache?.escapes !== state.ambientEscapeEffects.length
+  ) {
+    cache = {
+      writes: state.ambientWriteEffects.length,
+      escapes: state.ambientEscapeEffects.length,
+      byPath: new Map(),
+    };
+    ambientPathEffectCaches.set(state, cache);
+  }
+  const key = JSON.stringify([scope, path]);
+  let effects = cache.byPath.get(key);
+  if (effects === undefined) {
+    const matches = (
+      effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+    ): boolean =>
+      scope === "path"
+        ? ambientEffectCovers(effect, path)
+        : effect.path
+            .slice(0, path.length)
+            .every((key, index) =>
+              semanticPropertyPathKeyMatches(key, path[index]!),
+            );
+    effects = [
+      ...state.ambientWriteEffects.filter(matches),
+      ...state.ambientEscapeEffects.filter(matches),
+    ];
+    cache.byPath.set(key, effects);
+  }
+  // Only matching records are shared. Their timing belongs to each read.
+  return effects.some(
+    (effect) =>
+      // A receiver is exposed by the invocation after its method was selected.
+      (invocation === undefined || effect.node !== invocation) &&
+      semanticEffectTiming(read, effect.node, state) !== "after",
+  );
+};
+
+/** Query retained ambient effects at a selected read, preserving unknown timing. */
+export const semanticAmbientPathMayHaveChangedAt = (
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly string[],
+  invocation?: t.Node,
+): boolean =>
+  semanticAmbientEffectsMayHaveChangedAt(read, state, path, "path", invocation);
+
+/** Check an object's whole surface, including descendant accessors and aliases. */
+export const semanticAmbientObjectMayHaveChangedAt = (
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly string[],
+  invocation?: t.Node,
+): boolean =>
+  semanticAmbientEffectsMayHaveChangedAt(
+    read,
+    state,
+    path,
+    "subtree",
+    invocation,
+  );
+
 const retainedAmbientEffects = new WeakMap<
   JavaScriptSemanticAnalysisState,
   Map<t.Node | undefined, Set<string>>
@@ -605,8 +696,15 @@ export function* indexJavaScriptAmbientWritesSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
   observeOpaqueInvocation?: (node: t.Node) => void,
-  observeWriteSite?: (node: t.Node) => void,
+  options: {
+    readonly observeWriteSite?: (node: t.Node) => void;
+    readonly nativeInspectionReceiver?: (
+      node: t.CallExpression | t.OptionalCallExpression,
+      effectsCollected?: boolean,
+    ) => boolean | undefined;
+  } = {},
 ): Generator<void> {
+  const { observeWriteSite, nativeInspectionReceiver } = options;
   const ambientReads = createAmbientPathResolver(state, false);
   const browserReceiverMethods = new Set<string>();
   const storedSites = new WeakSet<t.Node>();
@@ -617,6 +715,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     node: t.Node;
     target: t.Node;
     browserReceiver: boolean;
+    nativeInspection?: boolean;
     projection?: AmbientProjection;
   }[] = [];
   const stores = new WeakMap<
@@ -685,8 +784,12 @@ export function* indexJavaScriptAmbientWritesSteps(
     (node, invocation) => {
       observeOpaqueInvocation?.(node);
       // Escaping objects can change contents without replacing their identity.
-      const retainEscape = (target: t.Node, browserReceiver = false) => {
-        escapes.push({ target, node, browserReceiver });
+      const retainEscape = (
+        target: t.Node,
+        browserReceiver = false,
+        nativeInspection = false,
+      ) => {
+        escapes.push({ target, node, browserReceiver, nativeInspection });
       };
       for (const argument of t.isTaggedTemplateExpression(node)
         ? node.quasi.expressions
@@ -704,18 +807,27 @@ export function* indexJavaScriptAmbientWritesSteps(
         ["open", "fetch"].includes(invocation.path[1] ?? "")
           ? invocation.path[1]
           : undefined;
+      const inspectionReceiver =
+        nativeInspectionReceiver !== undefined &&
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        nativeInspectionReceiver(node) !== false;
       if (
         !t.isNewExpression(node) &&
         (t.isMemberExpression(callee) ||
           t.isOptionalMemberExpression(callee)) &&
-        !(
-          invocation?.kind === "known" &&
-          ["Object", "Reflect"].includes(invocation.path[1] ?? "")
-        )
+        (inspectionReceiver ||
+          !(
+            invocation?.kind === "known" &&
+            ["Object", "Reflect"].includes(invocation.path[1] ?? "")
+          ))
       ) {
         if (browserMethod !== undefined)
           browserReceiverMethods.add(browserMethod);
-        retainEscape(callee.object, browserMethod !== undefined);
+        retainEscape(
+          callee.object,
+          browserMethod !== undefined,
+          inspectionReceiver,
+        );
       }
     },
   );
@@ -808,7 +920,12 @@ export function* indexJavaScriptAmbientWritesSteps(
   // if no write or opaque escape can replace its native member before this
   // invocation; ambiguous execution order remains conservative.
   const resolverReceivers: typeof escapes = [];
+  const inspectionReceivers = new Set<(typeof escapes)[number]>();
   for (const effect of escapes) {
+    if (effect.nativeInspection) {
+      inspectionReceivers.add(effect);
+      continue;
+    }
     const { node, target } = effect;
     const callee =
       t.isCallExpression(node) || t.isOptionalCallExpression(node)
@@ -885,7 +1002,26 @@ export function* indexJavaScriptAmbientWritesSteps(
       state.ambientWrites.covers(["global", method]),
     )
   )
-    state.ambientEscapes.retain(["global", null]);
+    retainSemanticAmbientEffect(state, "escape", ["global"], undefined);
+  // Do not prove a receiver during traversal: a later-declared activation can
+  // escape its callable first. Settle ordinary effects, then monotonically
+  // replay failed candidates until no remaining native proof can be revoked.
+  while (inspectionReceivers.size > 0) {
+    const effectsBefore = state.ambientEscapeEffects.length;
+    let examined = 0;
+    for (const effect of inspectionReceivers) {
+      if (examined++ % 64 === 0) yield;
+      const { node } = effect;
+      if (
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        nativeInspectionReceiver?.(node, true) === true
+      )
+        continue;
+      inspectionReceivers.delete(effect);
+      retainEscapeEffect(effect);
+    }
+    if (state.ambientEscapeEffects.length === effectsBefore) break;
+  }
 }
 
 export type GlobalReferenceRead =
