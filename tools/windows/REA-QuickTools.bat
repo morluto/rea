@@ -66,14 +66,13 @@ if not defined GHIDRA_INSTALL_DIR (
 :: to the menu, a child process cannot replace it, and percent signs in
 :: analyst-provided paths survive untouched. The npm rea.cmd shim is NOT used
 :: as a fallback because CALL would re-parse the reconstructed arguments.
-set "NODE_EXE="
-REM Validate, not just exist: a packaged app (WindowsApps) can put a
-REM node.exe on PATH that cmd cannot exec (Access denied). Probe each
-REM candidate with --version and take the first that runs -- same
-REM shape as the owning resolver's executablePath() check.
-for %%I in (node.exe) do if not defined NODE_EXE if exist "%%~$PATH:I" (
-    "%%~$PATH:I" --version >nul 2>&1 && set "NODE_EXE=%%~$PATH:I"
-)
+REM %%~$PATH:I returns only the FIRST PATH match, and a packaged app
+REM (WindowsApps) can put a node.exe there that cmd cannot exec
+REM (Access denied), hiding a runnable node.exe later on PATH. Probe
+REM the first match, then fall through explicit well-known fallbacks
+REM before giving up -- bounded work, no PATH enumeration loop:
+for %%I in (node.exe) do if not defined NODE_EXE if exist "%%~$PATH:I" ("%%~$PATH:I" --version >nul 2>&1 && set "NODE_EXE=%%~$PATH:I")
+if not defined NODE_EXE if exist "C:\Program Files\nodejs\node.exe" "C:\Program Files\nodejs\node.exe" --version >nul 2>&1 && set "NODE_EXE=C:\Program Files\nodejs\node.exe"
 set "REA_ENTRY="
 if defined NODE_EXE for %%D in ("%APPDATA%\npm\node_modules\rea-agents" "%~dp0..\..") do if not defined REA_ENTRY if exist "%%~D\scripts\rea.mjs" set "REA_ENTRY=%%~D\scripts\rea.mjs"
 if not defined REA_ENTRY goto NO_REA
