@@ -1,4 +1,7 @@
-import { verifyNoTokenOwnedProcesses } from "../../dist/process/ProcessOwnership.js";
+import {
+  cleanupOwnedProcessGroup,
+  verifyNoTokenOwnedProcesses,
+} from "../../dist/process/ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "../../dist/process/ProcessOwnershipEvidence.js";
 import {
   createSystemProcessOwnershipHost,
@@ -59,6 +62,53 @@ export async function prepareVerifierTokenCleanup(run, suppliedHost) {
         },
       ],
     ]);
+    const discoverProviderScope = async (runId) => {
+      // A token carrier selects candidates; native identity and membership
+      // must agree across the token observation before anchoring a scope.
+      const carriers = await readRunTokenCarriers(host, runId);
+      const facts = (await readProcessOwnershipFacts(carriers, host)).filter(
+        (fact) =>
+          fact.state === "same-generation" &&
+          fact.token.state === "readable" &&
+          fact.token.runId === runId &&
+          fact.identityAfter.state === "readable" &&
+          fact.identityAfter.relation?.state === "observed" &&
+          !baseline.some(
+            ({ pid, identity }) =>
+              pid === fact.process.pid &&
+              identity === fact.identityAfter.identity,
+          ),
+      );
+      const first = facts[0];
+      if (first === undefined) return undefined;
+      return {
+        leaderPid: first.process.pid,
+        processGroupId: first.identityAfter.relation.processGroupId,
+        sampledProcessGroupIds: [
+          ...new Set(
+            facts.map(
+              ({ identityAfter }) => identityAfter.relation.processGroupId,
+            ),
+          ),
+        ],
+      };
+    };
+    const retainRelation = (runId, scope) => {
+      const relation = relations.get(runId) ?? {
+        ...scope,
+        evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+      };
+      relations.set(runId, relation);
+      return relation;
+    };
+    const cleanupHost = {
+      ...host,
+      signalGroup: (groupId, signal) => {
+        if (groupId === launcher.processGroupId)
+          throw new Error("Provider recovery cannot signal the verifier group");
+        host.signalGroup(groupId, signal);
+      },
+    };
     return {
       registerProviderRun: (runId) => {
         if (typeof runId !== "string" || runId.length === 0)
@@ -76,41 +126,12 @@ export async function prepareVerifierTokenCleanup(run, suppliedHost) {
       retainProviderRun: async (runId, providerScope) => {
         if (!relations.has(runId) || runId === run.run_id)
           throw new Error(`Provider run ${runId} was not registered`);
-        if (providerScope === undefined) {
-          // Discovery proves presence only. Identity/token/identity reads then
-          // establish scope anchors; the final canonical sweep proves cleanup.
-          const carriers = await readRunTokenCarriers(host, runId);
-          const facts = (
-            await readProcessOwnershipFacts(carriers, host)
-          ).filter(
-            (fact) =>
-              fact.state === "same-generation" &&
-              fact.token.state === "readable" &&
-              fact.token.runId === runId &&
-              fact.identityAfter.state === "readable" &&
-              fact.identityAfter.relation?.state === "observed",
+        const scope = providerScope ?? (await discoverProviderScope(runId));
+        if (scope === undefined)
+          throw new Error(
+            `No token-verified process ownership for provider run ${runId}`,
           );
-          if (facts.length === 0)
-            throw new Error(
-              `No token-verified process ownership for provider run ${runId}`,
-            );
-          providerScope = {
-            leaderPid: facts[0].process.pid,
-            processGroupId: facts[0].identityAfter.relation.processGroupId,
-            sampledProcessGroupIds: [
-              ...new Set(
-                facts.map(
-                  ({ identityAfter }) => identityAfter.relation.processGroupId,
-                ),
-              ),
-            ],
-          };
-        }
-        const relation = relations.get(runId) ?? {
-          ...providerScope,
-          evidenceOwner: new ProcessOwnershipEvidenceOwner(),
-        };
-        relations.set(runId, relation);
+        const relation = retainRelation(runId, scope);
         const active = await verifyNoTokenOwnedProcesses(
           runId,
           host,
@@ -142,6 +163,67 @@ export async function prepareVerifierTokenCleanup(run, suppliedHost) {
           runs,
         };
       },
+      retryProviderCleanup: async (verification) => {
+        const runs = [];
+        for (const { run_id: runId, result } of verification.runs) {
+          if (result.cleaned || runId === run.run_id || !relations.has(runId))
+            continue;
+          try {
+            const scope =
+              host.processIdentities === undefined
+                ? undefined
+                : (relations.get(runId) ??
+                  (await discoverProviderScope(runId)));
+            const retry =
+              scope === undefined
+                ? await verifyNoTokenOwnedProcesses(runId, host, baseline)
+                : await cleanupOwnedProcessGroup(
+                    {
+                      ...retainRelation(runId, scope),
+                      runId,
+                      captureBaseline: baseline,
+                      sweepTokenOwnedProcesses: true,
+                    },
+                    cleanupHost,
+                  );
+            runs.push({ run_id: runId, result: retry });
+          } catch (cause) {
+            runs.push({
+              run_id: runId,
+              result: {
+                cleaned: false,
+                reason: cause instanceof Error ? cause.message : String(cause),
+              },
+            });
+          }
+        }
+        return { cleaned: runs.every(({ result }) => result.cleaned), runs };
+      },
+      retainedProviderEvidence: () =>
+        [...relations].flatMap(([runId, relation]) =>
+          runId === run.run_id || relation === undefined
+            ? []
+            : [
+                {
+                  run_id: runId,
+                  candidates: relation.evidenceOwner.candidates.map(
+                    ({
+                      pid,
+                      identity,
+                      applicability,
+                      scopeEvidence,
+                      relation,
+                    }) => ({
+                      pid,
+                      identity,
+                      applicability,
+                      scope_evidence: scopeEvidence,
+                      relation,
+                    }),
+                  ),
+                },
+              ],
+        ),
       close,
     };
   } catch (cause) {

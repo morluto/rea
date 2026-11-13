@@ -408,10 +408,35 @@ try {
   }, [
     async () => {
       tokenCleanup = await cleanup.verify();
-      if (!tokenCleanup.cleaned)
-        throw new Error(
-          `Token cleanup unverified: ${JSON.stringify(tokenCleanup)}`,
-        );
+      if (tokenCleanup.cleaned) return;
+      const firstRetry = await cleanup.retryProviderCleanup(tokenCleanup);
+      const retries = [firstRetry];
+      if (!firstRetry.cleaned)
+        retries.push(await cleanup.retryProviderCleanup(firstRetry));
+      const diagnosticPath = join(root, "token-cleanup.json");
+      const failure = Object.assign(
+        new Error(
+          `Token cleanup unverified: ${tokenCleanup.reason}; diagnostic: ${diagnosticPath}`,
+        ),
+        { verification: tokenCleanup, retries },
+      );
+      await withVerifierCleanup(() => {
+        throw failure;
+      }, [
+        () =>
+          writeFile(
+            diagnosticPath,
+            JSON.stringify(
+              {
+                verification: tokenCleanup,
+                retries,
+                retained_provider_evidence: cleanup.retainedProviderEvidence(),
+              },
+              null,
+              2,
+            ),
+          ),
+      ]);
     },
     cleanup.close,
     async () => {

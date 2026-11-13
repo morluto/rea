@@ -30,6 +30,8 @@ independent run-token sweep. The verifier registers each provider run ID from
 `binary_session` before the first analysis call and retains live ownership
 facts after successful analysis. Ghidra uses that session ID as its process
 token, so the sweep can detect a reparented engine even when analysis fails.
+A failed sweep triggers bounded recovery attempts using verified provider
+ownership and retains their outcomes in the diagnostic workspace.
 
 ELF `EM_MIPS` is retained as the provider-neutral `mips` family. The target also
 retains class, byte order, `e_type`, raw `e_flags`, and inspected ABI declarations.
