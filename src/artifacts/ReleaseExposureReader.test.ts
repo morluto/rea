@@ -201,6 +201,8 @@ vi.mock("node:fs/promises", async () => {
 const PLANTED_SOURCE = "release-exposure-planted-secret-7c2e9a";
 const PLANTED_KEY = "AKIAPLANT9EXPOSUREXX";
 const ignoreText = (): void => undefined;
+// Keep the marker separate so Vite does not treat fixture text as this file's source map.
+const INLINE_MAP_PREFIX = "# sourceMappingURL=data:application/json;base64,";
 
 describe("ReleaseExposureReader review regressions", () => {
   it("keeps inline CSS source-map coverage unknown in files and packages", async () => {
@@ -2067,7 +2069,7 @@ const plistObject = (type: number, length: number, body: Buffer): Buffer =>
 
 describe("ReleaseExposureReader text encodings", () => {
   const marker = "-----BEGIN PRIVATE KEY-----\n";
-  const inlineMap = `//# sourceMappingURL=data:application/json;base64,${Buffer.from(
+  const inlineMap = `//${INLINE_MAP_PREFIX}${Buffer.from(
     JSON.stringify({
       version: 3,
       sources: ["src/app.ts"],
@@ -4328,7 +4330,7 @@ describe("ReleaseExposureReader script roles over a .map name", () => {
 });
 
 describe("ReleaseExposureReader HTML script references", () => {
-  const inlineMap = `//# sourceMappingURL=data:application/json;base64,${Buffer.from(
+  const inlineMap = `//${INLINE_MAP_PREFIX}${Buffer.from(
     JSON.stringify({
       version: 3,
       sources: ["src/app.ts"],
@@ -4620,7 +4622,7 @@ describe("ReleaseExposureReader cumulative text allowance", () => {
 
 describe("ReleaseExposureReader unfollowed map links", () => {
   const SCRIPT = "const value = 1;\n//# sourceMappingURL=app.js.map\n";
-  const EMBEDDED_PAYLOAD = `const value = 1;\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(
+  const EMBEDDED_PAYLOAD = `const value = 1;\n//${INLINE_MAP_PREFIX}${Buffer.from(
     JSON.stringify({
       version: 3,
       sources: ["a.ts"],

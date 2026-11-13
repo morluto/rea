@@ -66,12 +66,12 @@ const MAX_ELEMENTS = 4096;
  * Resource admission for signer fan-out, including per-signer X.509 work.
  * This is not an APK format maximum; excess records return a capacity error.
  */
-export const MAX_SIGNERS = 32;
+const MAX_SIGNERS = 32;
 /**
  * Resource admission for lineage fan-out before certificate materialisation.
  * This is not a format maximum; longer declared chains are refused explicitly.
  */
-export const MAX_LINEAGE_NODES = 32;
+const MAX_LINEAGE_NODES = 32;
 /** The only proof-of-rotation lineage encoding version apksig accepts. */
 const LINEAGE_VERSION = 1;
 

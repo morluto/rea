@@ -11,7 +11,7 @@ import {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 
 /** Compressed zlib stream limit. */
-export const RUST_SECTION_BYTES = 1024 * 1024;
+const RUST_SECTION_BYTES = 1024 * 1024;
 /** Inflated JSON may grow by at most this multiple of the compressed stream. */
 export const RUST_INFLATE_RATIO = 64;
 /** Absolute inflated JSON limit, applied together with the ratio. */

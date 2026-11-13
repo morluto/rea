@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import {
   getNavigationContext,
@@ -500,7 +501,16 @@ it("waits for late facet cleanup after cancellation and retains its owner", asyn
     settled = true;
     return result;
   });
-  await started.promise;
+  onTestFinished(async () => {
+    controller.abort();
+    late.resolve(err(failure));
+    try {
+      await pending;
+    } finally {
+      await lease.release();
+    }
+  });
+  await awaitAcknowledgement(started.promise, pending, "facet execution");
   controller.abort();
   await Promise.resolve();
   expect(settled).toBe(false);
@@ -530,7 +540,12 @@ it("reports cancellation after a late successful facet that ignored its signal",
     { address: "0x401000", document: "fixture" },
     controller.signal,
   );
-  await started.promise;
+  onTestFinished(async () => {
+    controller.abort();
+    late.resolve(ok(createAnalysisExecution("finished", provider)));
+    await pending;
+  });
+  await awaitAcknowledgement(started.promise, pending, "facet execution");
   controller.abort();
   late.resolve(ok(createAnalysisExecution("finished", provider)));
   const result = await pending;
@@ -586,7 +601,11 @@ it("preserves a provider's cancellation for the same signal", async () => {
     { address: "0x401000", document: "fixture" },
     controller.signal,
   );
-  await started.promise;
+  onTestFinished(async () => {
+    controller.abort(reason);
+    await pending;
+  });
+  await awaitAcknowledgement(started.promise, pending, "provider execution");
   controller.abort(reason);
   const result = await pending;
   if (result.ok) throw new Error("expected cancellation");

@@ -23,7 +23,6 @@ import {
   DEBUGGER_MAX_PENDING_COMMANDS_SETTING,
   DEBUGGER_MAX_SESSIONS_SETTING,
   parseDebuggerSessionLimits,
-  resolveDebuggerSessionLimits,
 } from "./debuggerSessionLimits.js";
 
 it("uses the shared defaults when the settings are unset", () => {
@@ -302,9 +301,12 @@ it("defers an invalid GDB deadline until a command reads it", () => {
     code: "configuration_invalid",
     details: { settings: parsed.error.settings },
   });
-  expect(
-    resolveDebuggerSessionLimits({
-      [DEBUGGER_COMMAND_DEADLINE_SETTING]: "1500",
-    }).commandDeadline,
-  ).toMatchObject({ value: 1500, source: "setting" });
+  const valid = parseDebuggerSessionLimits({
+    [DEBUGGER_COMMAND_DEADLINE_SETTING]: "1500",
+  });
+  if (!valid.ok) throw valid.error;
+  expect(valid.value.commandDeadline).toMatchObject({
+    value: 1500,
+    source: "setting",
+  });
 });

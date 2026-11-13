@@ -754,6 +754,19 @@ it("includes restored root identity in the compact byte budget", () => {
   expect(result.schema.properties).toEqual({ value: { type: "number" } });
 });
 
+it("bounds an oversized root description while retaining an object input", () => {
+  const budget = 13 * 1024;
+  const result = compactAdvertisedInputSchema(
+    { type: "object", description: "x".repeat(budget + 1), properties: {} },
+    budget,
+  );
+  expect(result.presentation).toBe("reduced");
+  expect(serializedBytes(result.schema)).toBeLessThanOrEqual(budget);
+  const validate = new Ajv2020({ strict: false }).compile(result.schema);
+  expect(validate({ value: "allowed" })).toBe(true);
+  expect(validate("not an object")).toBe(false);
+});
+
 // An untyped primitive enum is gateway-incompatible, so these schemas take
 // the reduced projection independently of the budget.
 const reducedPresentation = (

@@ -15,7 +15,6 @@ export interface InspectArgumentsPreflightOptions {
   readonly signal?: AbortSignal;
   readonly resources?: ArtifactResourceScope;
   readonly readFuseImage?: typeof readElectronFuseImage;
-  readonly resolveFuseTarget?: typeof resolveElectronFuseTarget;
 }
 
 const appBundleDirectoryOf = (executablePath: string): string | null => {
@@ -47,13 +46,15 @@ export const assertNodeCliInspectArgumentsSupported = async (
 ): Promise<void> => {
   assertArtifactReadActive(options?.signal);
   const reader = options?.readFuseImage ?? readElectronFuseImage;
-  const resolver = options?.resolveFuseTarget ?? resolveElectronFuseTarget;
   try {
     let targetPath = executablePath;
     const bundleDir = appBundleDirectoryOf(executablePath);
     if (bundleDir !== null) {
       try {
-        const resolved = await resolver(bundleDir, options?.signal);
+        const resolved = await resolveElectronFuseTarget(
+          bundleDir,
+          options?.signal,
+        );
         targetPath = resolved.file.path;
       } catch (cause: unknown) {
         if (options?.signal?.aborted) throw cause;

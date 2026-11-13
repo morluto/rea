@@ -1,6 +1,5 @@
 import { z } from "zod";
 import {
-  bundleResourceRootSchema,
   bundleResourceBoundResultSchema,
   type BundleResourceRoot,
 } from "./bundleResourceRoot.js";

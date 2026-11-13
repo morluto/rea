@@ -6,7 +6,6 @@ import {
   resolveWindowsChangeTimeSettle,
 } from "../config/windowsChangeTimeSettle.js";
 import { pwntoolsInputBytes } from "../native/pwntools/PwntoolsInputLimit.js";
-import { resolveBridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import { resolveCaptureDecoderHeap } from "../config/captureDecoderHeap.js";
 import { resolveRegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import { resolveRegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
@@ -382,7 +381,6 @@ it("reads an accepted override before an invalid launch seed", () => {
     {
       revision: 1,
       overrides: {
-        "bridge.max_request_bytes": 8192,
         "capture.decoder_old_generation_mib": 64,
         "regex.matching_deadline_ms": 250,
         "regex.worker_heap_request_mib": 128,
@@ -391,9 +389,6 @@ it("reads an accepted override before an invalid launch seed", () => {
       },
     },
     () => ({
-      bridge: resolveBridgeMaxRequestBytes({
-        REA_BRIDGE_MAX_REQUEST_BYTES: "nope",
-      }),
       capture: resolveCaptureDecoderHeap({
         REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "0",
       }),
@@ -409,10 +404,6 @@ it("reads an accepted override before an invalid launch seed", () => {
       }),
     }),
   );
-  expect(resolved.bridge).toMatchObject({
-    maximumBytes: 8192,
-    source: "runtime",
-  });
   expect(resolved.capture).toMatchObject({
     oldGenerationMiB: 64,
     source: "runtime",

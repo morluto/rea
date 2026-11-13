@@ -1434,8 +1434,8 @@ const processOwnershipFailures = async (
   members: readonly ProcessTableEntry[],
   ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost,
-  expectedIdentities: ReadonlyMap<number, string | null> = new Map(),
-  exitSettlement: ProcessExitSettlementBudget = { deadline: undefined },
+  expectedIdentities: ReadonlyMap<number, string | null>,
+  exitSettlement: ProcessExitSettlementBudget,
 ): Promise<{
   readonly failures: readonly ProcessOwnershipValidationFailure[];
   readonly validatedMembers: readonly ProcessTableEntry[];
@@ -1666,9 +1666,9 @@ const scanTokenOwnedProcesses = async (
   processes: readonly ProcessTableEntry[],
   runId: string,
   host: ProcessOwnershipHost,
-  captureBaseline?: ProcessOwnershipBaseline,
-  relation?: OwnershipSweepRelation,
-  exitSettlement: ProcessExitSettlementBudget = { deadline: undefined },
+  captureBaseline: ProcessOwnershipBaseline | undefined,
+  relation: OwnershipSweepRelation | undefined,
+  exitSettlement: ProcessExitSettlementBudget,
 ): Promise<TokenOwnedProcessScan> => {
   if (host.processIdentities !== undefined)
     return scanWithOwnershipEvidence(

@@ -5,7 +5,28 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createTestProcessRegistry } from "../../tests/support/process/processFixture.js";
-import { resolveMcpRegistrationClientId } from "./McpRegistrationCatalog.js";
+import { resolveMcpRegistrationClients } from "./McpRegistrationCatalog.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+
+const selectAgent = async (agent: string) => {
+  const root = await createTestTempDirectory("rea-mcp-alias-");
+  const resources = new ArtifactResourceScope();
+  try {
+    return await resolveMcpRegistrationClients(
+      {
+        agents: [agent],
+        global: true,
+        cwd: root,
+        home: root,
+        platform: process.platform,
+        environment: {},
+      },
+      resources,
+    );
+  } finally {
+    await resources.close();
+  }
+};
 
 it.each([
   ["cline-vscode", "cline"],
@@ -23,15 +44,22 @@ it.each([
   ["kiro", "kiro-cli"],
   ["mastra", "mastracode"],
   ["pi-agent", "pi"],
-])("retains helper alias %s as %s", (alias, expected) => {
-  expect(resolveMcpRegistrationClientId(alias.toUpperCase())).toBe(expected);
+])("resolves registration alias %s as %s", async (alias, expected) => {
+  const result = await selectAgent(alias.toUpperCase());
+  if (!result.ok) throw result.error;
+  expect(result.value.map(({ id }) => id)).toEqual([expected]);
 });
 
-it("does not treat prototype names or unknown strings as client identities", () => {
-  expect(resolveMcpRegistrationClientId("__proto__")).toBeUndefined();
-  expect(resolveMcpRegistrationClientId("constructor")).toBeUndefined();
-  expect(resolveMcpRegistrationClientId("unknown-client")).toBeUndefined();
-});
+it.each(["__proto__", "constructor", "unknown-client"])(
+  "rejects unknown registration identity %s",
+  async (agent) => {
+    const result = await selectAgent(agent);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "ConfigurationError" },
+    });
+  },
+);
 
 const clientSchema = z.object({
   id: z.string(),

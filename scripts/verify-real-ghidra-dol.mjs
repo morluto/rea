@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFile, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +12,6 @@ import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { readGhidraLanguageCatalog } from "../dist/ghidra/GhidraLanguageCatalog.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildGameCubeDolFixture } from "../tests/conformance/ghidra/dol-fixture.mjs";
@@ -95,8 +93,6 @@ async function languageInstalled(languageId) {
     await scope.close();
   }
 }
-
-const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 /** One MCP session plus CLI check. `languageOverride` is set only for the Gekko pass. */
 async function runPass({ fixture, languageOverride, label, layout }) {
