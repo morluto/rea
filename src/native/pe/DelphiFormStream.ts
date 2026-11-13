@@ -259,11 +259,15 @@ function readShortString(
   budget: Budget,
 ): DelphiFormText {
   const at = stream.position;
-  const length = stream.byte();
+  const length = stream.peek();
   // Short strings are capped at 255 bytes, but a form can retain thousands of
   // them; charge each one before decoding.
   spendText(budget, length * 10 + 256);
-  const raw = stream.take(length);
+  // Take the declaration and payload atomically: when the body is truncated,
+  // the length byte stays unread for the owner's unknown suffix instead of
+  // being claimed by no projection.
+  const bytes = stream.take(1 + length);
+  const raw = bytes.subarray(1);
   return {
     text: decodeDelphiText(raw, codePage),
     bytes_hex: raw.toString("hex"),
@@ -727,8 +731,15 @@ function readValue(
             );
         } catch (error) {
           if (!(error instanceof StreamEnd)) throw error;
-          // The next item could not be positioned. Keep every item decoded
-          // before it instead of collapsing the whole property to one unknown.
+          // Keep a completed position (and any bytes already read for this
+          // item) as a partial item instead of leaving them only in the
+          // collection range, then keep every earlier item.
+          if (position !== null || stream.position > itemAt)
+            items.push({
+              position,
+              properties: [],
+              location: range(itemAt, stream.position),
+            });
           stop(error.message);
         }
         const properties: DelphiFormProperty[] = [];

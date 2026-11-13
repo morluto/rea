@@ -1141,19 +1141,36 @@ describe("Delphi form fallback roots", () => {
 });
 
 describe("Delphi form unread object suffix", () => {
+  it("keeps a truncated short-string declaration in the unknown suffix", () => {
+    const payload = form(
+      component("TForm1", "Form1", [property_("Future", int32(7))]),
+    );
+    const declaration = Buffer.from([0x06, ...Buffer.from("Future", "latin1")]);
+    const at = payload.indexOf(declaration);
+    const root = rootOf(payload.subarray(0, at + 1));
+    expect(root.unknown?.reason).toContain("Payload ended");
+    // The length byte is source evidence even though its body is missing.
+    expect(root.unknown?.location.offset).toBe(at);
+    expect(root.unknown?.bytes_hex).toBe("06");
+  });
+
   it("keeps the unread suffix in the object unknown", () => {
-    // The class name and the truncated component-name length are decoded and
-    // covered by object fields; the object unknown must retain the bytes that
-    // actually remain unread instead.
+    // The class name is decoded. The component-name declaration and the body
+    // it can no longer read stay together in the object unknown.
+    const declared = 200;
     const unread = Buffer.from("Form", "latin1");
     const root = rootOf(
-      form(Buffer.concat([shortString("TForm1"), bytes(200), unread])),
+      form(Buffer.concat([shortString("TForm1"), bytes(declared), unread])),
     );
     expect(root.class_name?.text).toBe("TForm1");
-    expect(root.unknown?.bytes_hex).toBe(unread.toString("hex"));
+    expect(root.unknown?.bytes_hex).toBe(
+      Buffer.concat([bytes(declared), unread]).toString("hex"),
+    );
     expect(root.unknown?.bytes_hex).not.toContain("54466f726d31");
     expect(root.unknown?.truncated).toBe(false);
-    expect(root.unknown?.location).toMatchObject({ bytes: unread.length });
+    expect(root.unknown?.location).toMatchObject({
+      bytes: unread.length + 1,
+    });
   });
 
   it("reports a capped unread suffix as truncated", () => {
@@ -1165,11 +1182,34 @@ describe("Delphi form unread object suffix", () => {
     expect(root.class_name?.text).toBe("TForm1");
     expect(root.unknown?.truncated).toBe(true);
     expect(root.unknown?.bytes_hex).toHaveLength(128 * 2);
-    expect(root.unknown?.location).toMatchObject({ bytes: unread.length });
+    expect(root.unknown?.location).toMatchObject({
+      bytes: unread.length + 1,
+    });
   });
 });
 
 describe("Delphi form partial collections", () => {
+  it("keeps a completed collection position when the vaList marker is missing", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Items", Buffer.concat([bytes(14), int8(5)])),
+      ]),
+    );
+    const item = Buffer.from([14, 2, 5]);
+    const at = payload.indexOf(item);
+    const root = rootOf(payload.subarray(0, at + item.length));
+    const value = propertyOf(root, "Items").value;
+    if (value.kind !== "collection") throw new Error("Expected a collection");
+    expect(value.items).toHaveLength(1);
+    expect(value.items[0]?.position).toMatchObject({
+      kind: "integer",
+      text: "5",
+      width: 8,
+    });
+    expect(value.items[0]?.properties).toEqual([]);
+    expect(root.unknown?.reason).toContain("Payload ended");
+  });
+
   it("keeps collection items when a nested list stops", () => {
     // A collection whose second item has a list-valued property that ends
     // mid-value: the item and its partial list must stay on the collection
@@ -1248,8 +1288,12 @@ describe("Delphi form partial collections", () => {
     expect(property?.value.kind).toBe("collection");
     if (property?.value.kind !== "collection")
       throw new Error("Expected a collection");
-    expect(property.value.items).toHaveLength(1);
+    expect(property.value.items).toHaveLength(2);
     expect(property.value.items[0]?.properties[0]?.name.text).toBe("Width");
+    expect(property.value.items[1]).toMatchObject({
+      position: null,
+      properties: [],
+    });
     expect(root.unknown?.reason).toContain("Payload ended");
   });
 
@@ -1271,8 +1315,12 @@ describe("Delphi form partial collections", () => {
     expect(property?.value.kind).toBe("collection");
     if (property?.value.kind !== "collection")
       throw new Error("Expected a collection");
-    expect(property.value.items).toHaveLength(1);
+    expect(property.value.items).toHaveLength(2);
     expect(property.value.items[0]?.properties[0]?.name.text).toBe("Width");
+    expect(property.value.items[1]).toMatchObject({
+      position: { kind: "integer", text: "5", width: 8 },
+      properties: [],
+    });
     expect(root.unknown?.reason).toContain("Payload ended");
   });
 

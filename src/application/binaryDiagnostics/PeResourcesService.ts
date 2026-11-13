@@ -21,6 +21,7 @@ import {
   RESOURCE_CODE_PAGES,
   type DelphiFormObject,
   type DelphiFormPosition,
+  type DelphiFormProperty,
   type DelphiFormResource,
   type DelphiFormText,
   type DelphiFormValue,
@@ -214,7 +215,10 @@ const validReport = (
             // The decoder probes offsets 0 through 16 only; a longer prefix
             // describes a signature the producer can never have matched.
             form.prefix.location.bytes <=
-              MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES;
+              MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES &&
+            // The producer retains the full prefix, so an empty or partial
+            // preview cannot be the source of these bytes.
+            form.prefix.bytes_hex.length === form.prefix.location.bytes * 2;
       const rootEnd = form.root.location.offset + form.root.location.bytes;
       const payloadEnd = payload.offset + payload.bytes;
       // A complete root reaches the payload end; a stopped root records the
@@ -279,10 +283,50 @@ const textMatchesBytes = (item: DelphiFormText, codePage: string): boolean => {
   const raw = Buffer.from(item.bytes_hex, "hex");
   return (
     item.code_page === codePage &&
+    // A short string declares its content with one byte, so 255 is the most
+    // it can retain.
+    raw.length <= 0xff &&
     item.location.bytes === 1 + raw.length &&
     decodeDelphiText(raw, codePage) === item.text
   );
 };
+
+/**
+ * The decoder reads a short name, one type byte, then the value, back to back.
+ * Marker-only values cover the type byte; payload values start after it. A
+ * stopped value records the same end as its owning property.
+ */
+const valueFollowsName = (property: DelphiFormProperty): boolean => {
+  const nameEnd = property.name.location.offset + property.name.location.bytes;
+  const valueEnd =
+    property.value.location.offset + property.value.location.bytes;
+  if (property.location.offset !== property.name.location.offset) return false;
+  if (valueEnd !== property.location.offset + property.location.bytes)
+    return false;
+  const kind = property.value.kind;
+  if (kind === "unknown")
+    return (
+      property.value.location.offset === nameEnd ||
+      property.value.location.offset === nameEnd + 1
+    );
+  if (kind === "null" || kind === "nil" || kind === "boolean")
+    return property.value.location.offset === nameEnd;
+  return property.value.location.offset === nameEnd + 1;
+};
+
+/** Properties are retained in source order with no overlap or gap. */
+const propertiesFollowSource = (
+  properties: readonly DelphiFormProperty[],
+): boolean =>
+  properties.every((property, index) => {
+    const previous = index === 0 ? undefined : properties[index - 1];
+    return (
+      valueFollowsName(property) &&
+      (previous === undefined ||
+        previous.location.offset + previous.location.bytes ===
+          property.location.offset)
+    );
+  });
 
 /** Every nested location of a decoded form must stay inside its owner. */
 const insideLocations = (
@@ -295,10 +339,15 @@ const insideLocations = (
   if (
     object.unknown !== null &&
     // The producer stops an object at the point its unknown starts, so a gap
-    // between them would leave bytes claimed by neither.
+    // between them would leave bytes claimed by neither. The unknown preview
+    // retains the first up-to-128 bytes of that exact range, with `truncated`
+    // marking the cap.
     (!payloadWithin(object.unknown.location) ||
       object.unknown.location.offset !==
-        object.location.offset + object.location.bytes)
+        object.location.offset + object.location.bytes ||
+      object.unknown.bytes_hex.length / 2 !==
+        Math.min(object.unknown.location.bytes, 128) ||
+      object.unknown.truncated !== object.unknown.location.bytes > 128)
   )
     return false;
   const text = (
@@ -330,6 +379,7 @@ const insideLocations = (
       !positionMatches(object.child_position, object.location))
   )
     return false;
+  if (!propertiesFollowSource(object.properties)) return false;
   return (
     object.properties.every(
       (property) =>
@@ -518,6 +568,7 @@ const identifierMatches = (
 ): boolean => {
   const raw = Buffer.from(value.bytes_hex, "hex");
   return (
+    raw.length <= 0xff &&
     value.location.bytes === 1 + raw.length &&
     decodeDelphiText(raw, codePage) === value.text
   );
@@ -628,6 +679,7 @@ const insideValue = (
           withinRange(item.location, value.location) &&
           (item.position === null ||
             positionMatches(item.position, item.location)) &&
+          propertiesFollowSource(item.properties) &&
           item.properties.every(
             (property) =>
               withinRange(property.location, item.location) &&
