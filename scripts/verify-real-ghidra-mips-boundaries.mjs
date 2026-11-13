@@ -317,6 +317,23 @@ async function runControls(cleanup, commands) {
         );
         // The provider's session limitations belong to the public Evidence;
         // the normalized function payload has its own local observations.
+        const inferredO32Limitation = evidence.limitations.find((limitation) =>
+          limitation.includes(
+            "o32 calling conventions are an analysis assumption",
+          ),
+        );
+        assert.ok(
+          inferredO32Limitation,
+          "Recordless MIPS dossier Evidence omitted its inferred o32 limitation",
+        );
+        const floatingPointLimitation = evidence.limitations.find(
+          (limitation) =>
+            limitation.includes("Floating-point ABI semantics are unverified"),
+        );
+        assert.ok(
+          floatingPointLimitation,
+          "Recordless MIPS dossier Evidence omitted its floating-point ABI limitation",
+        );
         const mips1Limitation = evidence.limitations.find((limitation) =>
           /generic 32-bit MIPS language.*conformance to the MIPS-I subset is not established/u.test(
             limitation,
@@ -362,6 +379,10 @@ async function runControls(cleanup, commands) {
             digest: profile.digest,
             mips_support_lane,
             mips_abi_basis,
+          },
+          dossier_abi_limitations: {
+            inferred_o32: inferredO32Limitation,
+            floating_point: floatingPointLimitation,
           },
           ...(isMips1 ? { dossier_evidence_limitation: mips1Limitation } : {}),
           ...(providerScope === undefined

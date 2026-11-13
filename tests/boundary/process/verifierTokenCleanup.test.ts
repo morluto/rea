@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
+import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../../../src/domain/analysisResourceLimits.js";
 import {
   createSystemProcessOwnershipHost,
   observeProcessStartIdentity,
@@ -308,6 +310,14 @@ it("preserves a retryable host and every failure after final verification", asyn
   expect(close.mock.contexts).toEqual([host, host, host]);
 });
 
+// Both the fixture inspector and production launcher can compile a helper.
+// Allow separate compiler discovery as well as the orphan lifecycle.
+const orphanTestTimeout = Math.min(
+  MAX_NODE_TIMER_DELAY_MS,
+  process.platform === "darwin"
+    ? 2 * resolveSwiftcCompileTimeoutMs() + 60_000
+    : 20_000,
+);
 it.runIf(process.platform !== "win32")(
   "detects and recovers a predeclared provider orphan without prior live ownership",
   async () => {
@@ -412,5 +422,5 @@ it.runIf(process.platform !== "win32")(
       }
     }
   },
-  20000,
+  orphanTestTimeout,
 );

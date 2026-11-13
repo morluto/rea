@@ -21,7 +21,8 @@ for each control.
 It checks each public dossier against the exact MIPS ELF fixture digest,
 canonical source path, and entry address. It verifies that its Evidence commits
 the active Ghidra profile and checks the Ghidra version, support lane, and
-inferred o32 ABI basis.
+inferred o32 ABI basis. The receipt preserves both recordless lanes' Evidence
+that o32 is inferred and floating-point ABI semantics remain unverified.
 The MIPS I Evidence must also report the generic decoder's instruction-subset
 limitation. Load-delay semantics remain unverified. Supply existing Ghidra/Java
 and GNU readelf (`REA_MIPS_READELF`). Source hashes are checked after
