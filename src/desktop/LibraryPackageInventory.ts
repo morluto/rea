@@ -3,7 +3,7 @@ import {
   desktopLibraryPolicy,
   type DesktopLibraryPolicy,
 } from "../domain/desktop/libraryPolicy.js";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { posix } from "node:path";
 
 import type { DesktopPackage } from "../domain/desktop/desktopCapture.js";
@@ -176,7 +176,13 @@ export const inspectLibraryPackages = async (
         try {
           const directory = await realpath(posix.dirname(path));
           const selected = posix.join(directory, posix.basename(path));
-          return { path: selected, resolvedPath: await realpath(selected) };
+          const resolvedPath = await realpath(selected);
+          const identity = await stat(resolvedPath, { bigint: true });
+          return {
+            path: selected,
+            resolvedPath,
+            fileIdentity: `${identity.dev}:${identity.ino}`,
+          };
         } catch (cause) {
           if (isRefusedRead(cause)) return undefined;
           throw hostReadFailure(cause);

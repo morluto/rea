@@ -58,6 +58,7 @@ const host = (
   resolvePath: async (path: string) => ({
     path: posix.normalize(path),
     resolvedPath: posix.normalize(path),
+    fileIdentity: posix.normalize(path),
   }),
   dependencies: async (path: string, expected: ElfLibraryIdentity) => {
     const image = images[path];

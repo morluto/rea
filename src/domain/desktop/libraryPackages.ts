@@ -126,6 +126,8 @@ async function* libraryCandidates(
 export interface LibraryPath {
   readonly path: string;
   readonly resolvedPath: string;
+  /** Device and inode identify one loaded object across hard-link names. */
+  readonly fileIdentity: string;
 }
 
 /** Host reads the closure walk needs. */
@@ -192,7 +194,7 @@ export const libraryClosure = async (
   const queue: LoadedObject[] = [{ ...root, loader: undefined }];
   // Every required lookup can have its own package; the same resolved object
   // supplies its dependency declarations only once, through its first load path.
-  const walkedPaths = new Set([root.path]);
+  const walkedObjects = new Set([rootPath.fileIdentity]);
   for (const object of queue) {
     const directories = searchDirectories(object);
     for (const soname of object.dependencies.needed) {
@@ -232,6 +234,7 @@ export const libraryClosure = async (
         | {
             path: string;
             resolvedPath: string;
+            fileIdentity: string;
             lookupPath: string;
             dependencies: Result<ElfDependencies, ElfDependenciesFailure>;
           }
@@ -284,6 +287,7 @@ export const libraryClosure = async (
         selected = {
           path,
           resolvedPath,
+          fileIdentity: resolved.fileIdentity,
           lookupPath: request.startsWith("/") ? expandedRequest : candidate,
           dependencies,
         };
@@ -293,15 +297,16 @@ export const libraryClosure = async (
         if (!unresolved) closure.missing.push(soname);
         continue;
       }
-      const { path, resolvedPath, lookupPath, dependencies } = selected;
+      const { path, resolvedPath, fileIdentity, lookupPath, dependencies } =
+        selected;
       if (
         !isWithinAny(path, [ownFolder]) ||
         !isWithinAny(resolvedPath, [ownFolder])
       )
         closure.libraries.push({ soname, path, resolvedPath });
       if (dependencies.ok) {
-        if (!walkedPaths.has(resolvedPath)) {
-          walkedPaths.add(resolvedPath);
+        if (!walkedObjects.has(fileIdentity)) {
+          walkedObjects.add(fileIdentity);
           queue.push({
             path: lookupPath,
             dependencies: dependencies.value,
