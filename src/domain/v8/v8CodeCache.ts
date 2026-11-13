@@ -31,6 +31,8 @@ export const MAX_INSPECT_V8_CODE_CACHE_MIN_STRING_BYTES = 256;
 export const MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES = 4096;
 /** `vm.compileFunction` sets this bit in the source-length word. */
 export const V8_CODE_CACHE_COMPILE_FUNCTION_BIT = 0x20000000;
+/** Pre-13.4 V8 sets bit 31 for a module cache instead of bit 30. */
+export const V8_CODE_CACHE_LEGACY_MODULE_BIT = 0x80000000;
 
 /**
  * Bit 30 of the source-length word marks `vm.SourceTextModule` output.

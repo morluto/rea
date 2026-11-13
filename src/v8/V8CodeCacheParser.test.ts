@@ -109,6 +109,19 @@ it("reports a module cache as a module rather than a script", () => {
   expect(report.header.source_length).toBe(length);
 });
 
+it("reports a pre-13.4 V8 module cache as a module", () => {
+  // Legacy V8 (Node 20/22, Electron <= 34) uses bit 31 for a module producer.
+  const script = v8CodeCacheFixture();
+  const word = script.readUInt32LE(8);
+  const length = word & 0x1fffffff;
+  expect(
+    parse(withHeaderWord(script, 2, word | 0x80000000)).header.producer,
+  ).toBe("module");
+  expect(
+    parse(withHeaderWord(script, 2, word | 0x80000000)).header.source_length,
+  ).toBe(length);
+});
+
 it("keeps the function and module flags distinct", () => {
   const script = v8CodeCacheFixture("var y = 1;");
   const length = script.readUInt32LE(8) & 0x1fffffff;

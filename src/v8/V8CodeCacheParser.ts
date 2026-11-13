@@ -3,6 +3,7 @@ import {
   MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
   V8_CODE_CACHE_COMPILE_FUNCTION_BIT,
   V8_CODE_CACHE_MODULE_BIT,
+  V8_CODE_CACHE_LEGACY_MODULE_BIT,
   V8_CODE_CACHE_HEADER_BYTES,
   V8_CODE_CACHE_MAGIC_HIGH,
   V8_CODE_CACHE_SOURCE_LENGTH_MASK,
@@ -93,10 +94,10 @@ export const parseV8CodeCache = (
 
   const sourceWord = field(2);
   const sourceLength = sourceWord & V8_CODE_CACHE_SOURCE_LENGTH_MASK;
-  // Bit 30 marks a `vm.SourceTextModule` cache and bit 29 a `vm.compileFunction` one.
-  // Measured on Node 24.22.1, a 19-unit module source reads `0x40000013` while a script of
-  // the same length reads `0x00000013`, so the function bit alone reports a module cache as
-  // a script. Both bits sit outside the source-length mask.
+  // Bit 30 marks a `vm.SourceTextModule` cache and bit 31 is the same marker on pre-13.4 V8.
+  // Bit 29 marks a `vm.compileFunction` cache. Measured on Node 24.22.1, a module cache of
+  // the same length reads `0x40000013` while a script reads `0x00000013`; Node 22 reads
+  // `0x80000013` for its module cache. Both module bits sit outside the source-length mask.
   //
   // The unflagged case is `unknown`, not `script`: whether V8 marks a function cache is a
   // build detail. A `vm.compileFunction` cache reads `0x20000004` on Node 24.22.1 and
@@ -105,7 +106,9 @@ export const parseV8CodeCache = (
   // separates them. `fields` keeps the observed word so a caller can resolve it against a
   // build fingerprint it trusts.
   const producer =
-    (sourceWord & V8_CODE_CACHE_MODULE_BIT) !== 0
+    (sourceWord &
+      (V8_CODE_CACHE_MODULE_BIT | V8_CODE_CACHE_LEGACY_MODULE_BIT)) !==
+    0
       ? ("module" as const)
       : (sourceWord & V8_CODE_CACHE_COMPILE_FUNCTION_BIT) !== 0
         ? ("compile_function" as const)
