@@ -329,6 +329,7 @@ const comparableText = (left: RecordedPath, right: RecordedPath): boolean =>
 const iconDiffersFromTarget = (
   icon: WindowsShortcut["string_data"]["icon_location"],
   targets: readonly RecordedPath[],
+  unreadableTarget: boolean,
 ): boolean | null => {
   if (icon === null) return null;
   const text = icon.value;
@@ -344,7 +345,7 @@ const iconDiffersFromTarget = (
     return false;
   // A variable-bearing target, or one whose ANSI bytes the icon text cannot be
   // compared with, could name the icon's file, so no difference is claimed.
-  if (fullTargets.length > fixedTargets.length) return null;
+  if (unreadableTarget || fullTargets.length > fixedTargets.length) return null;
   return fixedTargets.length === 0 ? null : true;
 };
 
@@ -455,7 +456,14 @@ const observationsOf = (
     {
       kind: "icon_location_differs_from_target",
       evidence_kind: "derived",
-      value: iconDiffersFromTarget(report.string_data.icon_location, targets),
+      value: iconDiffersFromTarget(
+        report.string_data.icon_location,
+        targets,
+        report.extra_data.blocks.some(
+          (block) =>
+            block.signature === 0xa0000001 && block.decoded.kind === "raw",
+        ),
+      ),
     },
   ];
 };

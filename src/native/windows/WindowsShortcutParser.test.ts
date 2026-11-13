@@ -743,6 +743,51 @@ const iconDifference = (
     : undefined;
 };
 
+it.each(["ansi", "unicode"] as const)(
+  "keeps an unreadable %s environment target unknown in icon comparisons",
+  async (field) => {
+    const valid = windowsShortcutBytes({
+      idList: null,
+      linkInfo: { localBasePath: "C:\\Other\\app.exe" },
+      iconLocation: "C:\\Tools\\app.exe",
+      extraData: [
+        {
+          kind: "environment",
+          ansi: "C:\\Tools\\app.exe",
+          unicode: "C:\\Tools\\app.exe",
+        },
+      ],
+    });
+    const control = await parse(valid);
+    expect(iconDifference(control)).toBe(false);
+    const block = control.extra_data.blocks[0];
+    if (block === undefined) throw new Error("Expected environment block");
+    const bytes = Buffer.from(valid);
+    const start = block.offset + (field === "ansi" ? 8 : 268);
+    bytes.fill(0x41, start, start + (field === "ansi" ? 260 : 520));
+    const report = await parse(bytes);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.extra_data.blocks[0]?.decoded.kind).toBe("raw");
+    expect(iconDifference(report)).toBeNull();
+  },
+);
+
+it("keeps a known icon match when an additional environment target is unreadable", async () => {
+  const valid = windowsShortcutBytes({
+    idList: null,
+    linkInfo: { localBasePath: "C:\\Tools\\app.exe" },
+    iconLocation: "C:\\Tools\\app.exe",
+    extraData: [{ kind: "environment" }],
+  });
+  const initial = await parse(valid);
+  const block = initial.extra_data.blocks[0];
+  if (block === undefined) throw new Error("Expected environment block");
+  valid.fill(0x41, block.offset + 8, block.offset + 268);
+  const report = await parse(valid);
+  expect(report.coverage.status).toBe("partial");
+  expect(iconDifference(report)).toBe(false);
+});
+
 it("leaves the icon comparison unknown when only a filename is stored", async () => {
   const report = await parse(
     windowsShortcutBytes({
