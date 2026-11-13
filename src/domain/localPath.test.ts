@@ -79,6 +79,23 @@ it("rejects unpaired surrogates while preserving representable Unicode paths", (
   }
 });
 
+it("reports lone surrogates as an invalid_format regex issue", () => {
+  // The advertised pattern cannot spell the surrogate range, so the check is
+  // not advertised; it must still project to the same correction contract as
+  // the regex form it replaced (reason "invalid_format" plus expected
+  // "regex"), not the invalid_value fallback.
+  const result = absoluteLocalPathStringSchema.safeParse("/tmp/\ud800");
+  expect(result.success).toBe(false);
+  expect(result.error?.issues).toEqual([
+    {
+      code: "invalid_format",
+      format: "regex",
+      message: "Local filesystem paths must contain well-formed Unicode",
+      path: [],
+    },
+  ]);
+});
+
 it("advertises no code-unit escapes that strict schema consumers reject", () => {
   // DeepSeek rejects `\uNNNN` escapes in advertised patterns and fails the
   // whole tool request, so the surrogate check must stay runtime-only.

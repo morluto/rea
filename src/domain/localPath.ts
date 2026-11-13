@@ -20,18 +20,27 @@ export const nulFreeStringSchema = z
  * A selected local filesystem path: nonempty, NUL-free, and representable
  * without replacement.
  *
- * The surrogate check stays a refinement rather than an advertised `.regex()`.
- * ECMA-262 can only spell the surrogate range as `\uD800-\uDFFF`, an escape
- * strict schema consumers reject; losing the compilable pattern keeps the
- * whole tool request acceptable while runtime validation still refuses lone
- * surrogates.
+ * The surrogate check cannot be an advertised `.regex()`: ECMA-262 spells that
+ * range only as `\uD800-\uDFFF`, an escape strict schema consumers reject, and
+ * one uncompilable advertised pattern fails the whole tool request. It is
+ * therefore a check the schema does not advertise, but it still reports
+ * `invalid_format` with `format: "regex"` so the structured correction contract
+ * matches the advertised-pattern form it replaced. A plain `.refine()` reports
+ * `custom`, which `projectInputIssues` projects to `invalid_value` with no
+ * `expected`, changing the CLI/MCP error shape for exactly these malformed
+ * paths.
  */
 export const localPathStringSchema = nulFreeStringSchema
   .min(1)
-  .refine(
-    (value) => !/[\uD800-\uDFFF]/u.test(value),
-    "Local filesystem paths must contain well-formed Unicode",
-  );
+  .superRefine((value, ctx) => {
+    if (/[\uD800-\uDFFF]/u.test(value)) {
+      ctx.addIssue({
+        code: "invalid_format",
+        format: "regex",
+        message: "Local filesystem paths must contain well-formed Unicode",
+      });
+    }
+  });
 
 /**
  * A Windows absolute path: rooted, UNC, or drive-qualified. The classes spell

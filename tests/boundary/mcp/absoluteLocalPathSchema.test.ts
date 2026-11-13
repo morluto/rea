@@ -353,3 +353,43 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
     await close();
   }
 });
+
+it("reports lone surrogates through in-memory MCP handlers", async () => {
+  const firmwareCalls: string[] = [];
+  const { client, close } = await createMcp(firmwareCalls);
+  const absolute = resolve("rea-absolute-input");
+  try {
+    const cases = inputCases(absolute, `${absolute}\ud800`).filter(
+      ({ field }) => field === "path",
+    );
+    const checked: string[] = [];
+    for (const { name, field, invalid, issuePath } of cases) {
+      const result = await client.callTool({ name, arguments: invalid });
+      expect(result.isError, `${name}.${field}`).toBe(true);
+      expect(parseMcpToolError(result).error, `${name}.${field}`).toMatchObject(
+        {
+          code: "invalid_request",
+          details: {
+            operation: name,
+            issues: [
+              expect.objectContaining({
+                path: issuePath,
+                reason: "invalid_format",
+                expected: "regex",
+                message:
+                  "Local filesystem paths must contain well-formed Unicode",
+              }),
+            ],
+          },
+        },
+      );
+      checked.push(`${name}.${field}`);
+    }
+    expect(checked).toEqual(
+      expect.arrayContaining(["open_binary.path", "extract_firmware.path"]),
+    );
+    expect(firmwareCalls).toEqual([]);
+  } finally {
+    await close();
+  }
+});
