@@ -1,4 +1,5 @@
 import type { Evidence } from "../domain/evidence.js";
+import { withEvidenceProviderSelection } from "../domain/evidence.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type {
@@ -369,9 +370,16 @@ const executeEnhancedTool = async (
           return finish(
             registration.delivery.toCallToolResult(delivered, contract),
           );
+        // Recording stamps the active session's provider selection onto the
+        // retained value. Carry that stamp on the copy we deliver so the
+        // response agrees with the ledger and its exports; other retained
+        // display metadata stays as this call built it.
         return finish(
           registration.delivery.toEvidenceToolResult(
-            delivered.value,
+            stampSessionSelection(
+              registration.evidenceById?.(delivered.value.evidence_id),
+              delivered.value,
+            ),
             contract,
             request.detail === "summary"
               ? registration.recordEvidence?.(delivered.value)
@@ -475,17 +483,36 @@ const deliverFunctionAnalysis = async (
     if (!summary.ok)
       return registration.delivery.toCallToolResult(summary, contract);
     return registration.delivery.toEvidenceToolResult(
-      summary.value,
+      stampSessionSelection(
+        registration.evidenceById?.(summary.value.evidence_id),
+        summary.value,
+      ),
       contract,
       registration.recordEvidence?.(summary.value),
     );
   }
   return registration.delivery.toEvidenceToolResult(
-    result.value,
+    stampSessionSelection(
+      registration.evidenceById?.(result.value.evidence_id),
+      result.value,
+    ),
     contract,
     registration.recordEvidence?.(result.value),
   );
 };
+
+/**
+ * Recording stamps the active session's provider selection onto the retained
+ * value under the same semantic ID. Deliver that copy so a response agrees
+ * with the ledger and its exports, falling back when the call was not retained.
+ */
+const stampSessionSelection = (
+  retained: Evidence | undefined,
+  evidence: Evidence,
+): Evidence =>
+  retained?.provider_selection === undefined
+    ? evidence
+    : withEvidenceProviderSelection(evidence, retained.provider_selection);
 
 /**
  * Deliver an analysis failure with any partial Evidence it carries, whether a

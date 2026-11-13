@@ -17,6 +17,7 @@ import { admitCompletedAnalysis } from "../application/investigation/admitComple
 import type { RecoveryAdmission } from "../application/investigation/InvestigationRetention.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
+import { withEvidenceProviderSelection } from "../domain/evidence.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import { mcpProgressReporter } from "./mcpProgress.js";
@@ -143,8 +144,21 @@ export const registerEvidenceTools = (
             if (!projected.ok)
               return server.delivery.toCallToolResult(projected, contract);
             const recorded = options.recordEvidence?.(projected.value);
+            // Recording stamps the active session's provider selection onto the
+            // retained record. Deliver the caller's own copy carrying that
+            // stamp so the response agrees with the ledger and its exports;
+            // other retained display metadata stays as the caller built it.
+            const retained =
+              options.evidenceById?.(evidence.evidence_id) ?? projected.value;
+            const delivered =
+              retained.provider_selection === undefined
+                ? projected.value
+                : withEvidenceProviderSelection(
+                    projected.value,
+                    retained.provider_selection,
+                  );
             return server.delivery.toEvidenceToolResult(
-              projected.value,
+              delivered,
               contract,
               recorded,
             );
