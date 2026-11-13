@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 
 import { expect, it } from "vitest";
 
-import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
+import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 
 it("retains unshadowed optional require dependencies from HTTP source-map originals", async () => {
@@ -31,7 +31,7 @@ it("retains unshadowed optional require dependencies from HTTP source-map origin
       throw new TypeError("Expected a TCP listener address");
     const origin = `http://127.0.0.1:${String(address.port)}`;
     const url = `${origin}/app.js.map`;
-    const result = await fetchWebSourceMaps(
+    const result = await fetchWebSourceMapsOk(
       [{ scriptKey: `scr_${"1".repeat(64)}`, declaredUrl: url, fetchUrl: url }],
       analyzeWebBundleInputSchema.parse({
         cdp_endpoint: origin,

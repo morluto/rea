@@ -42,25 +42,6 @@ export const resourceContentSize = (
     : err({ _tag: "InvalidCdpResourceSize" });
 };
 
-/** Preserve partial script declarations; omitted or invalid fields remain unknown. */
-export const scriptMetadataValues = (
-  value: UnknownRecord | undefined,
-): {
-  readonly hash: string | null;
-  readonly length: number | null;
-  readonly isModule: boolean | null;
-} => {
-  const length = numberValue(value?.length);
-  return {
-    hash: cdpStringValue(value?.hash) ?? null,
-    length:
-      length !== undefined && Number.isSafeInteger(length) && length >= 0
-        ? length
-        : null,
-    isModule: typeof value?.isModule === "boolean" ? value.isModule : null,
-  };
-};
-
 export const requiredRecord = (value: unknown): UnknownRecord => {
   const record = recordValue(value);
   if (record === undefined)

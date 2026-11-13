@@ -15,6 +15,8 @@ export interface Il2cppSeedReceipt {
   readonly folded: number;
   readonly no_body: number;
   readonly unknown: number;
+  /** Seeded or folded generic instance rows; null when they were not linked. */
+  readonly generic_instances: number | null;
 }
 
 /** Shared output workflow; adapters own file format and publication resources. */

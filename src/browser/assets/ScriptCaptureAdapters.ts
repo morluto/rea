@@ -1,5 +1,5 @@
 import { webPageInspectionSchema } from "../../domain/browserObservationSchemas.js";
-import { browserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
+import { retainedBrowserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import type {
   CapturedWebScript,
@@ -41,7 +41,7 @@ export const SCRIPT_CAPTURE_ADAPTERS: readonly ScriptCaptureAdapter[] = [
   {
     operation: "capture_browser_scenario",
     parse: (input) => {
-      const parsed = browserScenarioCaptureSchema.safeParse(input);
+      const parsed = retainedBrowserScenarioCaptureSchema.safeParse(input);
       return parsed.success
         ? {
             kind: "browser-scenario",

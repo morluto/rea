@@ -1,4 +1,11 @@
-import { retainOwnedCommandCleanup } from "../providers/OwnedCommandCleanup.js";
+import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import {
+  retainOwnedCommandCleanup,
+  processInspectionCancellationError,
+  processInspectionFailure,
+  bindProcessInspectionCancellations,
+} from "../providers/OwnedCommandCleanup.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { randomUUID } from "node:crypto";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -54,6 +61,8 @@ export interface GhidraJavaObservation {
 
 /** Expected probe failures retain their producing process facts. */
 export interface GhidraJavaProbeFailure {
+  /** Actual preparation record; retained without changing timeout or fallback policy. */
+  readonly inspectionFailure?: ProcessInspectionFailure;
   readonly _tag: "GhidraJavaProbeFailure";
   readonly code:
     | "runtime_missing"
@@ -184,19 +193,17 @@ const observeGhidraJava = async (
       },
     );
     if (interpreted === undefined)
-      throw new Error("Java command completed without an output observation");
+      throw new GhidraAdmissionError("output_unobserved");
     return interpreted;
   } catch (cause: unknown) {
     const commandFailure =
       cause instanceof OwnedCommandFailure ? cause : undefined;
-    const preparation =
-      commandFailure?.preparationFailure ??
-      (cause instanceof DarwinProcessOwnershipInspectionError
-        ? cause
-        : undefined);
+    const preparation = processInspectionFailure(cause);
     const output =
       commandFailure?.snapshot === undefined || commandFailure.snapshot === null
-        ? preparation?.capturedOutput
+        ? preparation instanceof DarwinProcessOwnershipInspectionError
+          ? preparation.capturedOutput
+          : undefined
         : capturedProbeOutput(commandFailure.snapshot);
     if (
       interpreted !== undefined &&
@@ -206,6 +213,11 @@ const observeGhidraJava = async (
       Object.defineProperty(interpreted.error, "cancellation", {
         value: commandFailure.cancellation,
       });
+    const inspectionCancellation =
+      commandFailure === undefined ||
+      commandFailure.preparationFailure !== undefined
+        ? processInspectionCancellationError(cause, "ghidra:java")
+        : undefined;
     const cleanups = retainOwnedCommandCleanup(
       cause,
       options.resourceOwner,
@@ -221,17 +233,21 @@ const observeGhidraJava = async (
       commandFailure?.reason === "cancelled" &&
       commandFailure.cancellation !== undefined
     ) {
-      primary = new AnalysisCancelledError("ghidra:java", {
-        cause: commandFailure.cancellation.reason,
-        ...(output === undefined ? {} : { capturedOutput: output }),
-        ...(interpreted?.ok === true
-          ? {
-              diagnostics: {
-                java_observation: jsonValueSchema.parse(interpreted.value),
-              },
-            }
-          : {}),
-      });
+      primary =
+        inspectionCancellation ??
+        new AnalysisCancelledError("ghidra:java", {
+          cause: commandFailure.cancellation.reason,
+          ...(output === undefined ? {} : { capturedOutput: output }),
+          ...(interpreted?.ok === true
+            ? {
+                diagnostics: {
+                  java_observation: jsonValueSchema.parse(interpreted.value),
+                },
+              }
+            : {}),
+        });
+    } else if (inspectionCancellation !== undefined) {
+      primary = inspectionCancellation;
     } else if (
       interpreted?.ok === true &&
       commandFailure?.cleanupOwner !== undefined
@@ -247,13 +263,17 @@ const observeGhidraJava = async (
             : { cancellation_observed: true }),
         },
       });
-    } else if (preparation !== undefined) {
+    } else if (
+      preparation !== undefined &&
+      commandFailure?.reason !== "timeout"
+    ) {
       primary = new ProviderAdapterError("ghidra", "ghidra:java", {
         cause,
         ...(output === undefined ? {} : { capturedOutput: output }),
         diagnostics: {
           stage: "ownership_preparation",
-          ...(preparation.compilerOutcome === undefined
+          ...(!(preparation instanceof DarwinProcessOwnershipInspectionError) ||
+          preparation.compilerOutcome === undefined
             ? {}
             : {
                 compiler_outcome: jsonValueSchema.parse(
@@ -279,6 +299,10 @@ const observeGhidraJava = async (
         ...(code === undefined ? {} : { processErrorCode: code }),
         ...(output === undefined ? {} : { output }),
       };
+      if (preparation !== undefined)
+        Object.defineProperty(failed, "inspectionFailure", {
+          value: preparation,
+        });
       if (commandFailure?.cancellation !== undefined)
         Object.defineProperty(failed, "cancellation", {
           value: commandFailure.cancellation,
@@ -292,7 +316,9 @@ const observeGhidraJava = async (
         cleanup,
         "ghidra:java",
       ).bindCleanupDependencies([primary, cleanup]);
-    return err(primary);
+    return err(
+      bindProcessInspectionCancellations(cause, primary, "ghidra:java"),
+    );
   }
 };
 
@@ -373,9 +399,12 @@ export const parseGhidraJavaOutput = (
       : "jre",
   });
 };
+// OpenJDK LauncherHelper prints indentation, the property name, " = ", then
+// the scalar value verbatim. Only the one separator space belongs to framing;
+// further whitespace is part of the value, including for filesystem paths.
 const javaProperty = (output: string, name: string): string | null =>
   new RegExp(
-    `^[ \\t]*${name.replaceAll(".", "\\.")}[ \\t]*=[ \\t]*([^\\r\\n]*?)[ \\t]*\\r?$`,
+    `^[ \\t]*${name.replaceAll(".", "\\.")} = ([^\\r\\n]*)\\r?$`,
     "mu",
   ).exec(output)?.[1] ?? null;
 

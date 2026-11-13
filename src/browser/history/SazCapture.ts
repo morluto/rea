@@ -1,17 +1,30 @@
+import { captureBudgets } from "./CaptureBudgets.js";
 import { ZipArtifactReader } from "../../artifacts/ZipArtifactReader.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
 } from "../../artifacts/ArtifactReader.js";
-import {
-  WEB_NETWORK_CAPTURE_LIMITS,
-  type WebNetworkCaptureRecord,
-} from "../../domain/webNetworkCapture.js";
-import { SAZ_CAPTURE_PROVIDER_IDENTITY } from "./CaptureRelease.js";
+import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
+import { SAZ_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import { decodeSazHttp } from "./SazHttp.js";
 import { decodeSazMetadata } from "./SazMetadata.js";
 import { projectSazRecord, type SazValue } from "./SazProjection.js";
+
+const SESSION_MEMBER_KINDS = {
+  "c.txt": "request",
+  "s.txt": "response",
+  "m.xml": "metadata",
+  "w.txt": "websocket",
+  "g.txt": "grpc",
+} as const;
+type SessionMemberKind =
+  (typeof SESSION_MEMBER_KINDS)[keyof typeof SESSION_MEMBER_KINDS];
+interface SessionMember {
+  readonly entry: ArtifactEntry;
+  readonly sourcePath: string;
+  readonly kind: SessionMemberKind;
+}
 
 /** Decode native SAZ sessions without extracting files, running Fiddler or converting to HAR. */
 export const decodeSazCapture = async (
@@ -21,14 +34,15 @@ export const decodeSazCapture = async (
   const reader = new ZipArtifactReader(
     snapshotPath,
     "zip",
-    WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+    captureBudgets().inputBytes,
   );
   try {
-    const groups = new Map<string, ArtifactEntry[]>();
+    const groups = new Map<string, SessionMember[]>();
     const inventory: SazValue[] = [];
     const paths = new Set<string>();
     let declaredBytes = 0;
     for await (const entry of reader.entries()) {
+      const sourcePath = entry.sourcePath ?? entry.path;
       if (paths.has(entry.path))
         throw new CaptureFormatError(
           "format",
@@ -50,23 +64,35 @@ export const decodeSazCapture = async (
           throw new CaptureFormatError("format", "SAZ member size is invalid.");
         declaredBytes += entry.declaredSize;
       }
-      if (declaredBytes > WEB_NETWORK_CAPTURE_LIMITS.inputBytes)
+      if (declaredBytes > captureBudgets().inputBytes)
         throw new CaptureFormatError(
           "expanded-limit",
-          "SAZ expanded members exceed the 32 MiB complete-evidence budget.",
+          `SAZ expanded members exceed max_input_bytes (${String(captureBudgets().inputBytes)} bytes); raise that per-call allowance and retry.`,
         );
       inventory.push({
-        path: entry.path,
+        path: sourcePath,
+        ...(entry.sourcePath === undefined ? {} : { logical_path: entry.path }),
         kind: entry.kind,
         bytes: entry.declaredSize,
+        ...(entry.limitations.length === 0
+          ? {}
+          : { limitations: [...entry.limitations] }),
       });
       if (entry.kind !== "file") continue;
-      const match = /^raw\/(\d+)_(c\.txt|s\.txt|m\.xml|w\.txt|g\.txt)$/.exec(
-        entry.path,
-      );
-      if (match?.[1] !== undefined) {
+      const match = /^raw\/(\d+)_(.+)$/.exec(entry.path);
+      if (
+        match?.[1] !== undefined &&
+        match[2] !== undefined &&
+        Object.hasOwn(SESSION_MEMBER_KINDS, match[2])
+      ) {
         const group = groups.get(match[1]) ?? [];
-        group.push(entry);
+        group.push({
+          entry,
+          sourcePath,
+          kind: SESSION_MEMBER_KINDS[
+            match[2] as keyof typeof SESSION_MEMBER_KINDS
+          ],
+        });
         groups.set(match[1], group);
       } else if (entry.path.startsWith("raw/")) {
         throw new CaptureFormatError(
@@ -90,7 +116,9 @@ export const decodeSazCapture = async (
         websocket: null,
         grpc: null,
       };
-      for (const entry of entries) {
+      const limitations: string[] = [];
+      for (const { entry, sourcePath, kind } of entries) {
+        limitations.push(...entry.limitations);
         const stream = await reader.open(entry);
         const chunks: Buffer[] = [];
         let length = 0;
@@ -114,24 +142,25 @@ export const decodeSazCapture = async (
             "SAZ member does not match its declared size.",
           );
         const bytes = Buffer.concat(chunks, length);
-        if (entry.path.endsWith("_c.txt"))
-          source.request = {
-            member: entry.path,
-            ...decodeSazHttp(bytes, true),
-          };
-        else if (entry.path.endsWith("_s.txt"))
-          source.response = {
-            member: entry.path,
-            ...decodeSazHttp(bytes, false),
-          };
-        else if (entry.path.endsWith("_m.xml"))
+        if (kind === "request" || kind === "response") {
+          // Fiddler stores a session without this message as a zero-byte member.
+          if (length === 0)
+            limitations.push(
+              `The stored ${kind} member is empty (zero bytes); the ${kind} is reported as null.`,
+            );
+          else
+            source[kind] = {
+              member: sourcePath,
+              ...decodeSazHttp(bytes, kind === "request"),
+            };
+        } else if (kind === "metadata")
           source.metadata = {
-            member: entry.path,
+            member: sourcePath,
             document: decodeSazMetadata(bytes),
           };
         else
-          source[entry.path.endsWith("_w.txt") ? "websocket" : "grpc"] = {
-            member: entry.path,
+          source[kind] = {
+            member: sourcePath,
             messages: bytes,
           };
       }
@@ -139,10 +168,10 @@ export const decodeSazCapture = async (
         ordinal: records.length,
         location: {
           kind: "archive-members",
-          members: entries.map((entry) => entry.path),
+          members: entries.map(({ sourcePath }) => sourcePath),
         },
         ...projectSazRecord(source, sensitiveValues),
-        limitations: [],
+        limitations,
       });
     }
     const container = projectSazRecord({ members: inventory }, sensitiveValues);

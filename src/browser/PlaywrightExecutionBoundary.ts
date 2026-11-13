@@ -3,6 +3,8 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 
+export const PLAYWRIGHT_NETWORK_READ_TIMEOUT_MS = 5_000;
+
 const OPERATION = "capture_browser_scenario" as const;
 
 // Chrome shutdown can take several seconds; expiry bounds the response, not ownership.
@@ -12,9 +14,11 @@ export const withPlaywrightExecutionBoundary = <Value>(
   work: () => Promise<Value>,
   timeoutMs: number | undefined,
   signal?: AbortSignal,
+  timeoutError: () => AnalysisTimeoutError = () =>
+    new AnalysisTimeoutError(OPERATION, timeoutMs ?? 0),
 ): Promise<Value> => {
   if (timeoutMs !== undefined && timeoutMs <= 0)
-    return Promise.reject(new AnalysisTimeoutError(OPERATION, timeoutMs));
+    return Promise.reject(timeoutError());
   if (signal?.aborted === true)
     return Promise.reject(
       new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
@@ -29,7 +33,7 @@ export const withPlaywrightExecutionBoundary = <Value>(
       if (deadline === undefined) return;
       const remaining = deadline - performance.now();
       if (remaining <= 0) {
-        fail(new AnalysisTimeoutError(OPERATION, timeoutMs ?? 0));
+        fail(timeoutError());
         return;
       }
       timer = setTimeout(scheduleTimeout, Math.min(remaining, 2_147_483_647));
@@ -55,11 +59,16 @@ export const withPlaywrightExecutionBoundary = <Value>(
       fail(new AnalysisCancelledError(OPERATION, { cause: signal?.reason }));
     };
     scheduleTimeout();
+    if (settled) return;
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted === true) {
       onAbort();
       return;
     }
-    void work().then(succeed, fail);
+    try {
+      void work().then(succeed, fail);
+    } catch (cause: unknown) {
+      fail(cause);
+    }
   });
 };

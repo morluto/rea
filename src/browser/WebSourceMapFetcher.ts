@@ -1,19 +1,23 @@
 import * as t from "@babel/types";
-import {
-  decodeValidatedSourceMapLeaves,
-  isBeforeSourceMapLeafStop,
-} from "../javascript/sourceMaps/DecodedSourceMap.js";
+import { createHash } from "node:crypto";
+import { decodeValidatedSourceMapLeaves } from "../javascript/sourceMaps/DecodedSourceMap.js";
 
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
-import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
+import {
+  AnalysisError,
+  type AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { isUrlLikeModuleSpecifier } from "../domain/webBundleAnalyzerAst.js";
 import { analyzeParsedJavaScriptReferences } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { traverseJavaScriptAst } from "../domain/javascript/javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import {
-  isTypeOnlyExportDeclaration,
-  isTypeOnlyImportDeclaration,
+  semanticStaticModuleSource,
   semanticImportEqualsSpecifier,
 } from "../domain/javascript/javascriptModuleDeclaration.js";
 import { stringValue } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
@@ -22,18 +26,31 @@ import type {
   WebSourceMapItem,
   WebSourceMaps,
 } from "../domain/webBundleAnalysis.js";
-import { webSourceMapsSchema } from "../domain/webBundleAnalysis.js";
-import { createWebTextArtifact } from "../domain/webContentArtifact.js";
+import {
+  webSourceMapsSchema,
+  DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS,
+} from "../domain/webBundleAnalysis.js";
+import {
+  createWebTextArtifact,
+  type WebTextArtifact,
+} from "../domain/webContentArtifact.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
 import { resolveJavaScriptSourceMapUrl } from "../domain/javascript/javascriptSourceMapPaths.js";
-import { jsonParts } from "../domain/jsonSerialization.js";
+import { jsonByteLength } from "../domain/jsonSerialization.js";
 import {
   inspectSourceMapValue,
   SourceMapFormatFailure,
   type SourceMapLeaf,
 } from "../javascript/sourceMaps/SourceMapFormat.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../domain/webSourceLocation.js";
+import { selectedBrowserDeadlineMs } from "../domain/browserDeadline.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  selectedSourceMapLimits,
+  sourceMapLimitRecovery,
+  type SourceMapLimits,
+} from "../domain/sourceMapLimits.js";
 
 export interface WebSourceMapRequest {
   readonly scriptKey: string;
@@ -43,36 +60,40 @@ export interface WebSourceMapRequest {
 
 interface SourceMapFetchHost {
   readonly fetch: typeof fetch;
-  /** Fetch-operation deadline; injectable so boundary regressions stay fast. */
-  readonly timeoutMs?: number;
-  /** Maximum response bytes retained across this operation. */
-  readonly maxResponseBytes?: number;
 }
 
 // Source maps are normally fetched as a small part of a larger inspection.
 // Bound a stalled server to 30 seconds and bound raw map input retained for
 // parsing to 64 MiB per inspection. Both limits apply at the network boundary;
 // hitting either produces an explicit fetch_failed item, never truncated data.
-const SOURCE_MAP_FETCH_TIMEOUT_MS = 30_000;
-const SOURCE_MAP_RESPONSE_BYTES = 64 * 1024 * 1024;
-const SOURCE_MAP_OUTPUT_BYTES = WEB_SOURCE_MAP_LIMITS.outputBytes;
+const SOURCE_MAP_FETCH_TIMEOUT_MS = DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS;
+
+const sourceMapFetchDeadlineLimitation = (timeoutMs: number): string =>
+  `Source-map fetch exceeded its ${String(timeoutMs)} ms source_map_fetch_timeout_ms deadline (fetch_failed). This is an item limitation, not a thrown analysis timeout, and not the source-map decode deadline. Response, representation and decoder budgets are independent source_map_limits fields.`;
 const SOURCE_MAP_FAILURE_LIMITATION_RESERVE = 512;
 const SOURCE_MAP_COLLECTION_ENVELOPE_RESERVE = 1_024;
 
-type SourceMaps = WebSourceMaps;
-type SourceMapItem = WebSourceMapItem;
 type ParsedSourceMapItem = Extract<
-  SourceMapItem,
+  WebSourceMapItem,
   { status: "included" | "partial" }
 >;
+type ResponseIdentity = {
+  readonly sha256: string;
+  readonly bytes: number;
+  readonly representation: "fetch-response-body-bytes";
+};
+type FailedSourceMapStatus = "fetch_failed" | "invalid" | "policy_filtered";
+interface SourceMapCollectionBudget {
+  records: number;
+  expandedBytes: number;
+  resolvedSourceBytes: number;
+  readonly limits: SourceMapLimits;
+}
 interface SourceMapDecodeContext {
   readonly signal: AbortSignal | undefined;
   readonly deadlineAt: number;
-  readonly budget: {
-    records: number;
-    expandedBytes: number;
-    resolvedSourceBytes: number;
-  };
+  readonly deadlineLimitation: string;
+  readonly budget: SourceMapCollectionBudget;
 }
 
 /** Fetch and validate approved source maps without browser credentials. */
@@ -81,56 +102,104 @@ export const fetchWebSourceMaps = async (
   input: AnalyzeWebBundleInput,
   signal?: AbortSignal,
   host: SourceMapFetchHost = { fetch: globalThis.fetch },
-): Promise<SourceMaps> => {
-  throwIfAborted(signal);
+): Promise<Result<WebSourceMaps, AnalysisError>> => {
+  if (signalIsAborted(signal))
+    return err(
+      new AnalysisCancelledError("analyze_web_bundle", {
+        cause: signal?.reason,
+      }),
+    );
   if (requests.length === 0)
-    return webSourceMapsSchema.parse({
-      status: "not_requested",
-      requested: 0,
-      processed: 0,
-      items: [],
-    });
-  const items: SourceMapItem[] = [];
+    return ok(
+      webSourceMapsSchema.parse({
+        status: "not_requested",
+        requested: 0,
+        processed: 0,
+        items: [],
+      }),
+    );
+  const limits = selectedSourceMapLimits(input.source_map_limits);
+  const items: WebSourceMapItem[] = [];
   const operationController = new AbortController();
-  const timeout = setTimeout(
-    () => operationController.abort(new SourceMapDeadlineError()),
-    host.timeoutMs ?? SOURCE_MAP_FETCH_TIMEOUT_MS,
+  const fetchTimeoutMs = selectedBrowserDeadlineMs(
+    input.source_map_fetch_timeout_ms,
+    SOURCE_MAP_FETCH_TIMEOUT_MS,
   );
-  const abortFromCaller = (): void => operationController.abort(signal?.reason);
+  const fetchDeadlineLimitation =
+    sourceMapFetchDeadlineLimitation(fetchTimeoutMs);
+  const timeout = setTimeout(
+    () =>
+      operationController.abort(
+        new SourceMapDeadlineError(fetchDeadlineLimitation),
+      ),
+    fetchTimeoutMs,
+  );
+  const callerAbort = new SourceMapCallerAbort();
+  const abortFromCaller = (): void => {
+    callerAbort.reason = signal?.reason;
+    operationController.abort(callerAbort);
+  };
   signal?.addEventListener("abort", abortFromCaller, { once: true });
   const operationSignal = operationController.signal;
-  const deadlineAt =
-    performance.now() + (host.timeoutMs ?? SOURCE_MAP_FETCH_TIMEOUT_MS);
+  const deadlineAt = performance.now() + fetchTimeoutMs;
   const budget = {
     retainedBytes: 0,
     deadlineAt,
+    deadlineLimitation: fetchDeadlineLimitation,
     decodedRecords: {
       records: 0,
       expandedBytes: SOURCE_MAP_COLLECTION_ENVELOPE_RESERVE,
       resolvedSourceBytes: 0,
+      limits,
     },
   };
   let limitation: string | undefined;
+  const completedMaps = (): WebSourceMaps => {
+    const unprocessed = requests.length - items.length;
+    const stoppedLimitation =
+      unprocessed === 0
+        ? undefined
+        : `Source-map acquisition stopped with ${String(unprocessed)} requested map${unprocessed === 1 ? "" : "s"} unprocessed; their results are unknown.`;
+    const retainedLimitation = [limitation, stoppedLimitation]
+      .filter((value) => value !== undefined)
+      .join(" ");
+    return webSourceMapsSchema.parse({
+      status: sourceMapsStatus(
+        items,
+        unprocessed > 0 || limitation !== undefined,
+      ),
+      requested: requests.length,
+      processed: items.length,
+      items,
+      ...(retainedLimitation.length === 0
+        ? {}
+        : { limitation: retainedLimitation }),
+    });
+  };
+  const retainCompleted = (error: AnalysisError): AnalysisError =>
+    error.retainPartialObservation({
+      kind: "web-source-map-fetch",
+      source_maps: completedMaps(),
+    });
   try {
     for (const request of requests) {
       if (signal?.aborted === true) throw signal.reason;
       const reservation = sourceMapFailureReservation(request) + 1;
       if (
         reservation >
-        SOURCE_MAP_OUTPUT_BYTES - budget.decodedRecords.expandedBytes
+        limits.outputBytes - budget.decodedRecords.expandedBytes
       ) {
-        limitation = sourceMapOutputLimitation(requests.length - items.length);
+        limitation = sourceMapOutputLimitation(
+          requests.length - items.length,
+          limits,
+        );
         break;
       }
       const expandedBytesBeforeItem = budget.decodedRecords.expandedBytes;
       budget.decodedRecords.expandedBytes += reservation;
       if (operationSignal.aborted || performance.now() >= deadlineAt) {
         items.push(
-          emptySourceMapItem(
-            request,
-            "fetch_failed",
-            "Source-map fetching exceeded its operation deadline.",
-          ),
+          emptySourceMapItem(request, "fetch_failed", fetchDeadlineLimitation),
         );
         continue;
       }
@@ -141,17 +210,12 @@ export const fetchWebSourceMaps = async (
         host,
         budget,
       );
-      if (item.artifact === null) {
-        const failureBytes =
-          sourceMapFailureReservation(
-            request,
-            item.effective_url ?? null,
-            item.limitation,
-            item.status,
-          ) + 1;
-        if (failureBytes > SOURCE_MAP_OUTPUT_BYTES - expandedBytesBeforeItem) {
+      if (item.status !== "included" && item.status !== "partial") {
+        const failureBytes = jsonByteLength(item) + 1;
+        if (failureBytes > limits.outputBytes - expandedBytesBeforeItem) {
           limitation = sourceMapOutputLimitation(
             requests.length - items.length,
+            limits,
           );
           break;
         }
@@ -161,35 +225,85 @@ export const fetchWebSourceMaps = async (
       items.push(item);
     }
   } catch (cause: unknown) {
-    if (signal?.aborted === true) throw cause;
+    if (
+      signal?.aborted === true &&
+      (cause === signal.reason || cause === callerAbort)
+    )
+      return err(
+        retainCompleted(
+          new AnalysisCancelledError("analyze_web_bundle", {
+            cause: signal.reason,
+          }),
+        ),
+      );
+    if (cause instanceof AnalysisError) {
+      if (
+        signal?.aborted === true &&
+        cause.cause !== signal.reason &&
+        !cause.secondaryFailures.some(
+          (failure) =>
+            failure instanceof AnalysisCancelledError &&
+            failure.cause === signal.reason,
+        )
+      )
+        cause.retainSecondaryFailure(
+          new AnalysisCancelledError("analyze_web_bundle", {
+            cause: signal.reason,
+          }),
+        );
+      return err(retainCompleted(cause));
+    }
+    if (signal?.aborted === true)
+      return err(
+        retainCompleted(
+          new ProviderAdapterError("rea-cdp-browser", "analyze_web_bundle", {
+            cause,
+          }).retainSecondaryFailure(
+            new AnalysisCancelledError("analyze_web_bundle", {
+              cause: signal.reason,
+            }),
+          ),
+        ),
+      );
     if (cause instanceof SourceMapFormatFailure && cause.reason === "limit")
-      limitation = sourceMapOutputLimitation(requests.length - items.length);
+      limitation = sourceMapOutputLimitation(
+        requests.length - items.length,
+        limits,
+      );
     else throw cause;
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abortFromCaller);
   }
-  if (signal?.aborted === true) throw signal.reason;
-  return webSourceMapsSchema.parse({
-    status: sourceMapsStatus(items, limitation !== undefined),
-    requested: requests.length,
-    processed: items.length,
-    items,
-    ...(limitation === undefined ? {} : { limitation }),
-  });
+  if (signal?.aborted === true)
+    return err(
+      retainCompleted(
+        new AnalysisCancelledError("analyze_web_bundle", {
+          cause: signal.reason,
+        }),
+      ),
+    );
+  return ok(
+    webSourceMapsSchema.parse({
+      status: sourceMapsStatus(items, limitation !== undefined),
+      requested: requests.length,
+      processed: items.length,
+      items,
+      ...(limitation === undefined ? {} : { limitation }),
+    }),
+  );
 };
 
-const throwIfAborted = (signal?: AbortSignal): void => {
-  if (signal?.aborted === true) throw signal.reason;
-};
-
-const sourceMapOutputLimitation = (unprocessed: number): string =>
-  `source-map output budget could not retain results for ${String(unprocessed)} requested map${unprocessed === 1 ? "" : "s"}. their results are unknown.`;
+const sourceMapOutputLimitation = (
+  unprocessed: number,
+  limits: SourceMapLimits,
+): string =>
+  `source-map output budget could not retain results for ${String(unprocessed)} requested map${unprocessed === 1 ? "" : "s"}. their results are unknown. ${sourceMapLimitRecovery("output_bytes", limits.outputBytes)}`;
 
 const sourceMapsStatus = (
-  items: readonly SourceMapItem[],
+  items: readonly WebSourceMapItem[],
   omitted: boolean,
-): SourceMaps["status"] => {
+): WebSourceMaps["status"] => {
   const retained = items.filter(
     ({ status }) => status === "included" || status === "partial",
   ).length;
@@ -202,21 +316,34 @@ const sourceMapsStatus = (
 };
 
 class SourceMapDeadlineError extends Error {
-  constructor() {
-    super("Source-map fetching exceeded its operation deadline.");
+  constructor(message: string) {
+    super(message);
     this.name = "SourceMapDeadlineError";
   }
 }
 
-class SourceMapSizeLimitError extends Error {
+/** Truthy transport reason prevents Fetch from substituting falsy caller reasons. */
+class SourceMapCallerAbort extends Error {
+  reason: unknown;
   constructor() {
-    super("Source-map response exceeded the retained-byte budget.");
+    super("Source-map fetch cancelled by caller");
+  }
+}
+
+const sourceMapCallerReason = (value: unknown): unknown =>
+  value instanceof SourceMapCallerAbort ? value.reason : value;
+
+class SourceMapSizeLimitError extends Error {
+  constructor(maxBytes: number) {
+    super(
+      `Source-map response exceeded its retained budget. ${sourceMapLimitRecovery("fetch_bytes", maxBytes)}`,
+    );
     this.name = "SourceMapSizeLimitError";
   }
 }
 
 class SourceMapEncodingError extends Error {
-  constructor() {
+  constructor(readonly responseIdentity: ResponseIdentity) {
     super("Source-map response is not valid UTF-8.");
     this.name = "SourceMapEncodingError";
   }
@@ -231,6 +358,225 @@ class SourceMapRedirectLocationError extends Error {
   }
 }
 
+/** Own the original cancellation promise; cancelling a closed reader cannot retry it. */
+class SourceMapResponseCleanup extends Error {
+  readonly failure: AnalysisError;
+  readonly completion: Promise<void>;
+  #resource: { url: string; body: ReadableStream<Uint8Array> } | undefined;
+
+  get cleanupResources(): readonly string[] {
+    return this.#resource === undefined ? [] : [this.#resource.url];
+  }
+
+  constructor(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    body: ReadableStream<Uint8Array>,
+    primary: unknown,
+    resource: string,
+    signal: AbortSignal | undefined,
+    cancelReason: unknown,
+  ) {
+    super("Source-map response cleanup", { cause: primary });
+    this.#resource = { url: resource, body };
+    let reason = "Source-map response cancellation is pending.";
+    const options = {
+      cause: sourceMapCallerReason(primary),
+      cleanup: {
+        get reason() {
+          return reason;
+        },
+        resources: [resource],
+      },
+    };
+    this.failure =
+      signal?.aborted === true &&
+      primary === signal.reason &&
+      !(primary instanceof SourceMapDeadlineError)
+        ? new AnalysisCancelledError("analyze_web_bundle", options)
+        : new ProviderAdapterError("rea-cdp-browser", "analyze_web_bundle", {
+            ...options,
+            userMessage:
+              sourceMapCallerReason(primary) instanceof Error
+                ? (sourceMapCallerReason(primary) as Error).message
+                : String(sourceMapCallerReason(primary)),
+          });
+    this.failure.bindCleanupResourceOwner(this);
+    const failed = (cause: unknown): void => {
+      reason = `Source-map response cancellation failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+      this.failure.retainSecondaryFailure(
+        new ProviderCleanupError(
+          "rea-cdp-browser",
+          [resource],
+          { reason },
+          { operation: "analyze_web_bundle", cause },
+        ),
+        { source_map_response_cleanup: reason },
+      );
+    };
+    const closed = reader.closed.then(
+      () => ({ status: "closed" as const }),
+      (cause: unknown) => ({ status: "errored" as const, cause }),
+    );
+    this.completion = reader
+      .cancel(cancelReason)
+      .catch(async (cause: unknown) => {
+        if (
+          signal?.aborted === true &&
+          primary === signal.reason &&
+          (cause === primary || cause === sourceMapCallerReason(primary))
+        ) {
+          const terminal = await closed;
+          if (terminal.status === "errored" && terminal.cause === cause) return;
+        }
+        throw cause;
+      });
+    void this.completion.then(
+      () => {
+        try {
+          reader.releaseLock();
+          reason = "Source-map response cancellation completed.";
+          this.#resource = undefined;
+          this.failure.resolveCleanup();
+        } catch (cause: unknown) {
+          failed(cause);
+        }
+      },
+      (cause: unknown) => {
+        try {
+          reader.releaseLock();
+        } catch (releaseCause: unknown) {
+          failed(releaseCause);
+        }
+        failed(cause);
+      },
+    );
+  }
+}
+
+/** Retain a response that may arrive after its fetch caller stops waiting. */
+class SourceMapPendingFetch extends Error {
+  readonly failure: AnalysisError;
+  readonly settled: Promise<void>;
+  #resource: { url: string; response?: Response } | undefined;
+
+  get cleanupResources(): readonly string[] {
+    return this.#resource === undefined ? [] : [this.#resource.url];
+  }
+
+  constructor(
+    promise: Promise<Response>,
+    signal: AbortSignal,
+    resource: string,
+  ) {
+    const reason = signal.reason;
+    super("Source-map fetch is settling after cancellation", { cause: reason });
+    this.#resource = { url: resource };
+    const options = {
+      cause: sourceMapCallerReason(reason),
+      cleanup: {
+        reason: "Source-map fetch is still settling after cancellation.",
+        resources: [resource],
+      },
+    };
+    this.failure =
+      reason instanceof SourceMapDeadlineError
+        ? new ProviderAdapterError(
+            "rea-cdp-browser",
+            "analyze_web_bundle",
+            options,
+          )
+        : new AnalysisCancelledError("analyze_web_bundle", options);
+    this.failure.bindCleanupResourceOwner(this);
+    const finished = (): void => {
+      this.#resource = undefined;
+      this.failure.resolveCleanup();
+    };
+    this.settled = promise.then(
+      async (response) => {
+        if (this.#resource !== undefined) this.#resource.response = response;
+        if (response.body === null) {
+          finished();
+          return;
+        }
+        try {
+          const cleanup = new SourceMapResponseCleanup(
+            response.body.getReader(),
+            response.body,
+            reason,
+            resource,
+            signal,
+            sourceMapCallerReason(reason),
+          );
+          this.failure.bindCleanupDependencies([cleanup.failure]);
+          try {
+            await cleanup.completion;
+            finished();
+          } catch {
+            this.failure.retainSecondaryFailure(cleanup.failure);
+          }
+        } catch (cause: unknown) {
+          this.failure.retainSecondaryFailure(
+            new ProviderCleanupError(
+              "rea-cdp-browser",
+              [resource],
+              {
+                reason:
+                  "Late source-map response could not be admitted for cleanup.",
+              },
+              { operation: "analyze_web_bundle", cause },
+            ),
+          );
+        }
+      },
+      (cause: unknown) => {
+        if (cause !== reason)
+          this.failure.retainSecondaryFailure(
+            new ProviderAdapterError("rea-cdp-browser", "analyze_web_bundle", {
+              cause,
+            }),
+          );
+        finished();
+      },
+    );
+  }
+}
+
+// A redirect or refused response still owns its unread body until cancellation
+// completes; the caller may own a tee sibling that keeps cancellation pending.
+const cancelUnreadResponse = async (
+  response: Response,
+  resource: string,
+  primary: unknown,
+  signal: AbortSignal | undefined,
+  cancelReason?: unknown,
+): Promise<void> => {
+  if (response.body === null) return;
+  const cleanup = new SourceMapResponseCleanup(
+    response.body.getReader(),
+    response.body,
+    primary,
+    resource,
+    signal,
+    cancelReason,
+  );
+  try {
+    await awaitWithAbort(() => cleanup.completion, signal);
+  } catch (cause: unknown) {
+    if (
+      signal?.aborted === true &&
+      cause === signal.reason &&
+      !(cause instanceof SourceMapDeadlineError) &&
+      primary !== cause
+    )
+      cleanup.failure.retainSecondaryFailure(
+        new AnalysisCancelledError("analyze_web_bundle", {
+          cause: sourceMapCallerReason(cause),
+        }),
+      );
+    throw cleanup;
+  }
+};
+
 const fetchOne = async (
   request: WebSourceMapRequest,
   input: AnalyzeWebBundleInput,
@@ -239,20 +585,18 @@ const fetchOne = async (
   budget: {
     retainedBytes: number;
     deadlineAt: number;
-    decodedRecords: {
-      records: number;
-      expandedBytes: number;
-      resolvedSourceBytes: number;
-    };
+    deadlineLimitation: string;
+    decodedRecords: SourceMapCollectionBudget;
   },
-): Promise<SourceMapItem> => {
+): Promise<WebSourceMapItem> => {
   if (!approvedUrl(request.fetchUrl, input.allowed_origins))
     return emptySourceMapItem(
       request,
       "policy_filtered",
-      "Declared source-map URL is outside the approved exact origins.",
+      "Declared source-map URL must be a credential-free HTTP(S) URL on an approved exact origin.",
     );
   let effectiveUrl: string | null = null;
+  let completedResponseIdentity: ResponseIdentity | undefined;
   try {
     const fetched = await fetchFollowingApprovedRedirects(
       request.fetchUrl,
@@ -267,35 +611,55 @@ const fetchOne = async (
       return emptySourceMapItem(
         request,
         "policy_filtered",
-        "A source-map redirect left the approved exact origins.",
+        "Each source-map redirect must be a credential-free HTTP(S) URL on an approved exact origin.",
         effectiveUrl,
       );
     const { response, fetchedUrl } = fetched;
     try {
       // Admit the resolution identity before reading or retaining its body.
-      consumeExpandedBytes(budget.decodedRecords, jsonBytes(fetchedUrl) - 4);
+      consumeExpandedBytes(
+        budget.decodedRecords,
+        jsonByteLength(fetchedUrl) - 4,
+      );
     } catch (cause: unknown) {
       try {
-        await response.body?.cancel();
+        await cancelUnreadResponse(response, fetchedUrl, cause, signal);
       } catch (cleanupCause: unknown) {
-        if (cause instanceof SourceMapFormatFailure && cause.reason === "limit")
-          throw sourceMapOutputError(cause, {
-            cause: new AggregateError(
-              [cause, cleanupCause],
-              "Source-map response cleanup failed after its output exceeded capacity.",
-            ),
-            cleanup: {
-              reason:
-                "Source-map response cancellation failed after its output exceeded capacity.",
-              resources: ["source-map-response"],
+        if (
+          cause instanceof SourceMapFormatFailure &&
+          cause.reason === "limit"
+        ) {
+          const error = sourceMapOutputError(
+            cause,
+            budget.decodedRecords.limits,
+            {
+              cause,
+              cleanup: {
+                reason:
+                  "Source-map response cancellation is incomplete after its output exceeded capacity.",
+                resources: [fetchedUrl],
+              },
             },
-          });
+          );
+          if (cleanupCause instanceof SourceMapResponseCleanup) {
+            error.retainSecondaryFailure(cleanupCause.failure);
+            error.bindCleanupDependencies([cleanupCause.failure]);
+          }
+          throw error;
+        }
         throw cause;
       }
       throw cause;
     }
     if (!response.ok) {
-      await response.body?.cancel();
+      await cancelUnreadResponse(
+        response,
+        fetchedUrl,
+        new Error(
+          `Source-map server returned HTTP ${String(response.status)}.`,
+        ),
+        signal,
+      );
       return emptySourceMapItem(
         request,
         "fetch_failed",
@@ -303,24 +667,70 @@ const fetchOne = async (
         fetchedUrl,
       );
     }
-    checkOperation(undefined, signal, budget.deadlineAt);
+    try {
+      checkOperation(
+        undefined,
+        signal,
+        budget.deadlineAt,
+        budget.deadlineLimitation,
+      );
+    } catch (cause: unknown) {
+      // The response is already admitted even if the timer callback has not
+      // run yet; keep its unread body owned through the interrupted boundary.
+      await cancelUnreadResponse(
+        response,
+        fetchedUrl,
+        cause,
+        signal,
+        sourceMapCallerReason(cause),
+      );
+      throw cause;
+    }
+    const body = await readBoundedText(
+      response,
+      budget,
+      budget.decodedRecords.limits.fetchBytes,
+      signal,
+      fetchedUrl,
+    );
+    completedResponseIdentity = body.responseIdentity;
     return normalizeSourceMap(
       request,
-      await readBoundedText(
-        response,
-        budget,
-        host.maxResponseBytes ?? SOURCE_MAP_RESPONSE_BYTES,
-        signal,
-      ),
+      body.text,
+      body.responseIdentity,
       fetchedUrl,
       {
         signal,
         deadlineAt: budget.deadlineAt,
+        deadlineLimitation: budget.deadlineLimitation,
         budget: budget.decodedRecords,
       },
     );
-  } catch (cause: unknown) {
-    if (cause instanceof AnalysisResourceConstraintError) throw cause;
+  } catch (caught: unknown) {
+    if (caught instanceof SourceMapPendingFetch) {
+      if (caught.cause instanceof SourceMapDeadlineError) {
+        // Native fetch reports abort completion asynchronously. Check the next
+        // event-loop turn without waiting for an uncooperative host indefinitely.
+        await Promise.race([
+          caught.settled,
+          new Promise<void>((resolve) => setImmediate(resolve)),
+        ]);
+        if (
+          !caught.failure.cleanupIncomplete &&
+          caught.failure.secondaryFailures.length === 0
+        )
+          caught = caught.cause;
+        else throw caught.failure;
+      } else throw caught.failure;
+    }
+    if (
+      caught instanceof SourceMapResponseCleanup &&
+      caught.failure.cleanupIncomplete
+    )
+      throw caught.failure;
+    const cause =
+      caught instanceof SourceMapResponseCleanup ? caught.cause : caught;
+    if (cause instanceof AnalysisError) throw cause;
     if (cause instanceof SourceMapFormatFailure && cause.reason === "limit")
       throw cause;
     if (
@@ -334,6 +744,7 @@ const fetchOne = async (
         "invalid",
         cause.message,
         effectiveUrl,
+        cause.responseIdentity,
       );
     return emptySourceMapItem(
       request,
@@ -344,6 +755,7 @@ const fetchOne = async (
         ? cause.message
         : "Source-map fetch or validation failed.",
       effectiveUrl,
+      completedResponseIdentity,
     );
   }
 };
@@ -388,10 +800,17 @@ const fetchFollowingApprovedRedirects = async (
         ...(signal === undefined ? {} : { signal }),
       }),
       signal,
+      current,
     );
     observeResponse(current);
     if (signal !== undefined && signalIsAborted(signal)) {
-      await response.body?.cancel(signal.reason).catch(() => undefined);
+      await cancelUnreadResponse(
+        response,
+        current,
+        signal.reason,
+        signal,
+        sourceMapCallerReason(signal.reason),
+      );
       throw signal.reason;
     }
     // `Location` is a redirect target only for Fetch redirect statuses.
@@ -401,7 +820,12 @@ const fetchFollowingApprovedRedirects = async (
       return { response, fetchedUrl: current };
     const location = response.headers.get("location");
     if (location === null) return { response, fetchedUrl: current };
-    await response.body?.cancel();
+    await cancelUnreadResponse(
+      response,
+      current,
+      new Error("Source-map redirect response cleanup failed."),
+      signal,
+    );
     try {
       current = new URL(location, current).href;
     } catch {
@@ -415,28 +839,86 @@ const readBoundedText = async (
   budget: { retainedBytes: number },
   maxBytes: number,
   signal: AbortSignal | undefined,
-): Promise<string> => {
-  if (response.body === null) return "";
+  resource: string,
+): Promise<{ text: string; responseIdentity: ResponseIdentity }> => {
+  if (response.body === null)
+    return {
+      text: "",
+      responseIdentity: {
+        sha256: createHash("sha256").digest("hex"),
+        bytes: 0,
+        representation: "fetch-response-body-bytes",
+      },
+    };
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let bytes = 0;
+  let cleanup: SourceMapResponseCleanup | undefined;
+  let streamFailure: { cause: unknown } | undefined;
+  void reader.closed.catch((cause: unknown) => {
+    streamFailure = { cause };
+  });
   try {
     for (;;) {
       if (signal?.aborted === true) throw signal.reason;
-      const { done, value } = await readWithAbort(reader, signal);
+      const { done, value } = await awaitWithAbort(() => reader.read(), signal);
       if (done) break;
       const nextBytes = value?.byteLength ?? 0;
       if (budget.retainedBytes + bytes + nextBytes > maxBytes) {
-        await reader.cancel(new SourceMapSizeLimitError());
-        throw new SourceMapSizeLimitError();
+        throw new SourceMapSizeLimitError(maxBytes);
       }
       if (value !== undefined) chunks.push(value);
       bytes += nextBytes;
     }
+  } catch (cause: unknown) {
+    // Fetch can error its body with the abort reason before read cancellation.
+    // A confirmed errored stream is already terminal and needs only its lock released.
+    await Promise.resolve();
+    if (
+      signal?.aborted === true &&
+      cause === signal.reason &&
+      streamFailure !== undefined
+    ) {
+      if (
+        streamFailure.cause === cause ||
+        streamFailure.cause === sourceMapCallerReason(cause)
+      )
+        throw cause;
+      // A distinct terminal reader failure is an observed physical failure,
+      // even when the abort notification wins the promise-delivery race.
+      cause = streamFailure.cause;
+    }
+    cleanup = new SourceMapResponseCleanup(
+      reader,
+      response.body,
+      cause,
+      resource,
+      signal,
+      sourceMapCallerReason(cause),
+    );
+    if (cause instanceof SourceMapSizeLimitError) {
+      try {
+        // Preserve the size-limit item's existing finalization boundary.
+        const completion = cleanup.completion;
+        await awaitWithAbort(() => completion, signal);
+      } catch (completionFailure: unknown) {
+        // The original cancellation's rejection is retained by its owner.
+        // A caller abort during that join is a separate observed outcome.
+        if (
+          signal?.aborted === true &&
+          completionFailure === signal.reason &&
+          !(completionFailure instanceof SourceMapDeadlineError)
+        )
+          cleanup.failure.retainSecondaryFailure(
+            new AnalysisCancelledError("analyze_web_bundle", {
+              cause: sourceMapCallerReason(signal.reason),
+            }),
+          );
+      }
+    }
+    throw cleanup;
   } finally {
-    // Aborting cancels the reader in readWithAbort. It owns the pending read
-    // until that cancellation settles, so releasing the lock here can throw.
-    if (signal?.aborted !== true) reader.releaseLock();
+    if (cleanup === undefined) reader.releaseLock();
   }
   budget.retainedBytes += bytes;
   const joined = new Uint8Array(bytes);
@@ -445,20 +927,28 @@ const readBoundedText = async (
     joined.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  const responseIdentity: ResponseIdentity = {
+    sha256: createHash("sha256").update(joined).digest("hex"),
+    bytes,
+    representation: "fetch-response-body-bytes",
+  };
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      joined,
-    );
+    return {
+      text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+        joined,
+      ),
+      responseIdentity,
+    };
   } catch {
-    throw new SourceMapEncodingError();
+    throw new SourceMapEncodingError(responseIdentity);
   }
 };
 
-const readWithAbort = <T>(
-  reader: ReadableStreamDefaultReader<T>,
+const awaitWithAbort = <T>(
+  operation: () => Promise<T>,
   signal: AbortSignal | undefined,
-): Promise<Awaited<ReturnType<ReadableStreamDefaultReader<T>["read"]>>> => {
-  if (signal === undefined) return reader.read();
+): Promise<T> => {
+  if (signal === undefined) return operation();
   if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -467,11 +957,10 @@ const readWithAbort = <T>(
       if (settled) return;
       settled = true;
       cleanup();
-      void reader.cancel(signal.reason).catch(() => undefined);
       reject(signal.reason);
     };
     signal.addEventListener("abort", abort, { once: true });
-    void reader.read().then(
+    void operation().then(
       (value) => {
         if (settled) return;
         settled = true;
@@ -482,7 +971,6 @@ const readWithAbort = <T>(
         if (settled) return;
         settled = true;
         cleanup();
-        void reader.cancel(cause).catch(() => undefined);
         reject(cause);
       },
     );
@@ -495,9 +983,9 @@ const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
 const promiseWithAbort = (
   promise: Promise<Response>,
   signal: AbortSignal | undefined,
+  resource: string,
 ): Promise<Response> => {
   if (signal === undefined) return promise;
-  if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise((resolve, reject) => {
     let settled = false;
     const cleanup = (): void => signal.removeEventListener("abort", abort);
@@ -505,18 +993,22 @@ const promiseWithAbort = (
       if (settled) return;
       settled = true;
       cleanup();
-      reject(signal.reason);
+      reject(new SourceMapPendingFetch(promise, signal, resource));
     };
     signal.addEventListener("abort", abort, { once: true });
     void promise.then(
       (response) => {
-        if (settled || signal.aborted) {
-          void response.body?.cancel(signal.reason).catch(() => undefined);
-          if (!settled) {
-            settled = true;
-            cleanup();
-            reject(signal.reason);
-          }
+        if (settled) return;
+        if (signal.aborted) {
+          settled = true;
+          cleanup();
+          reject(
+            new SourceMapPendingFetch(
+              Promise.resolve(response),
+              signal,
+              resource,
+            ),
+          );
           return;
         }
         settled = true;
@@ -530,15 +1022,37 @@ const promiseWithAbort = (
         reject(cause);
       },
     );
+    if (signal.aborted) abort();
   });
 };
 
 const normalizeSourceMap = (
   request: WebSourceMapRequest,
   text: string,
+  responseIdentity: ResponseIdentity,
   fetchedUrl: string,
   context: SourceMapDecodeContext,
-): SourceMapItem => {
+): WebSourceMapItem => {
+  const retainedBytesBeforeMap = context.budget.expandedBytes;
+  const recordsBeforeMap = context.budget.records;
+  const resolvedSourceBytesBeforeMap = context.budget.resolvedSourceBytes;
+  const textBytes =
+    jsonByteLength(text) +
+    artifactMetadataBytes("application/source-map+json", text) -
+    4;
+  const successBytes =
+    retainedBytesBeforeMap -
+    SOURCE_MAP_FAILURE_ENVELOPE_BYTES +
+    SOURCE_MAP_SUCCESS_ENVELOPE_BYTES +
+    textBytes;
+  if (successBytes > context.budget.limits.outputBytes)
+    return emptySourceMapItem(
+      request,
+      "fetch_failed",
+      `JSON-escaped response text and map metadata exceed the remaining source-map output budget; JSON parsing and decoding were not attempted. ${sourceMapLimitRecovery("output_bytes", context.budget.limits.outputBytes)}`,
+      fetchedUrl,
+      responseIdentity,
+    );
   const parsedJson = safeParseJson(sourceMapJsonText(text));
   if (!parsedJson.ok)
     return emptySourceMapItem(
@@ -546,33 +1060,28 @@ const normalizeSourceMap = (
       "invalid",
       "Source-map JSON is not a version 3 map.",
       fetchedUrl,
+      responseIdentity,
     );
-  const retainedBytesBeforeMap = context.budget.expandedBytes;
+  context.budget.expandedBytes = successBytes;
   try {
     const check = (): void =>
-      checkOperation(undefined, context.signal, context.deadlineAt);
+      checkOperation(
+        undefined,
+        context.signal,
+        context.deadlineAt,
+        context.deadlineLimitation,
+      );
     const inspected = inspectSourceMapValue(parsedJson.value, {
       profile: "browser-collection",
       budget: context.budget,
+      limits: context.budget.limits,
       check,
     });
-    context.budget.expandedBytes =
-      retainedBytesBeforeMap -
-      SOURCE_MAP_FAILURE_ENVELOPE_BYTES +
-      SOURCE_MAP_SUCCESS_ENVELOPE_BYTES;
-    consumeExpandedBytes(
-      context.budget,
-      jsonBytes(text) +
-        artifactMetadataBytes("application/source-map+json", text) -
-        4,
-    );
     const sourcesByRaw = new Map<string, string>();
-    const resolvedByRoot = new Map<string | null, Map<string, string>>();
-    preflightResolvedSourceBytes(
+    const resolvedByRoot = prepareResolvedSources(
       inspected.leaves,
       fetchedUrl,
       context.budget,
-      resolvedByRoot,
       sourcesByRaw,
       check,
     );
@@ -586,14 +1095,16 @@ const normalizeSourceMap = (
     const nameJsonBytes = new Map<string, number>();
     const originalSources: ParsedSourceMapItem["original_sources"] = [];
     let declarationIndex = 0;
-    for (const { leaf, resolvedSources } of decoded) {
+    for (const { leaf } of decoded) {
+      const resolvedSources = resolvedByRoot.get(leaf.map.sourceRoot ?? null);
       for (const [index, rawSource] of leaf.map.sources.entries()) {
         if ((index & 255) === 0) check();
         const resolved =
-          rawSource === null ? null : (resolvedSources[index] ?? null);
+          rawSource === null ? null : (resolvedSources?.get(rawSource) ?? null);
         const sanitized =
           resolved === null ? null : cachedSanitized(sourcesByRaw, resolved);
         const content = leaf.map.sourcesContent?.[index] ?? null;
+        const mediaType = sourceMediaType(resolved ?? rawSource);
         consumeExpandedBytes(
           context.budget,
           (sanitized === null
@@ -603,8 +1114,8 @@ const normalizeSourceMap = (
             (originalSources.length === 0 ? 0 : 1) +
             (content === null
               ? 0
-              : jsonBytes(content) +
-                artifactMetadataBytes(sourceMediaType(rawSource), content) -
+              : jsonByteLength(content) +
+                artifactMetadataBytes(mediaType, content) -
                 4),
         );
         originalSources.push({
@@ -612,26 +1123,26 @@ const normalizeSourceMap = (
           declaration_index: declarationIndex++,
           source: sanitized,
           artifact:
-            content === null
-              ? null
-              : createWebTextArtifact(content, sourceMediaType(rawSource)),
+            content === null ? null : createWebTextArtifact(content, mediaType),
         });
       }
     }
     const mappings: ParsedSourceMapItem["mappings"] = [];
     declarationIndex = 0;
-    for (const { leaf, rows, resolvedSources } of decoded) {
+    for (const { leaf, rows } of decoded) {
+      const resolvedSources = resolvedByRoot.get(leaf.map.sourceRoot ?? null);
       const declarationBase = declarationIndex;
       declarationIndex += leaf.map.sources.length;
       for (const [line, row] of rows.entries()) {
         if ((line & 255) === 0) check();
         for (const segment of row) {
-          if (!isBeforeSourceMapLeafStop(leaf, line, segment[0])) continue;
           if (segment.length === 1) continue;
           const rawSource = leaf.map.sources[segment[1]];
           if (rawSource === undefined) continue;
           const resolved =
-            rawSource === null ? null : (resolvedSources[segment[1]] ?? null);
+            rawSource === null
+              ? null
+              : (resolvedSources?.get(rawSource) ?? null);
           const source =
             resolved === null ? null : cachedSanitized(sourcesByRaw, resolved);
           const name =
@@ -676,13 +1187,13 @@ const normalizeSourceMap = (
     if (modules.incomplete.length > 0)
       consumeExpandedBytes(
         context.budget,
-        jsonBytes(
+        jsonByteLength(
           `Module edges are incomplete: ${modules.incomplete.length} of ${originalSources.filter(({ artifact }) => artifact !== null).length} original sources could not be parsed in full (${modules.incomplete.join(", ")}).`,
         ) - 4,
       );
     const parsed = {
       ...sourceMapContext(request, fetchedUrl),
-      artifact: createWebTextArtifact(text, "application/source-map+json"),
+      artifact: sourceMapTextArtifact(text, responseIdentity),
       original_sources: originalSources,
       original_module_edges: modules.edges,
       mappings,
@@ -696,16 +1207,20 @@ const normalizeSourceMap = (
           limitation: `Module edges are incomplete: ${modules.incomplete.length} of ${originalSources.filter(({ artifact }) => artifact !== null).length} original sources could not be parsed in full (${modules.incomplete.join(", ")}).`,
         };
   } catch (cause: unknown) {
-    // Failed maps publish no artifact or mapping rows. Release their output
-    // reservation while keeping cumulative fetch and decoder-work accounting.
+    // Failed interpretations retain completed body identity without consuming
+    // the collection budget needed for later valid maps.
     context.budget.expandedBytes = retainedBytesBeforeMap;
-    if (cause instanceof SourceMapFormatFailure && cause.reason === "limit")
+    context.budget.records = recordsBeforeMap;
+    context.budget.resolvedSourceBytes = resolvedSourceBytesBeforeMap;
+    if (cause instanceof SourceMapFormatFailure && cause.reason === "limit") {
       return emptySourceMapItem(
         request,
         "fetch_failed",
         cause.message,
         fetchedUrl,
+        responseIdentity,
       );
+    }
     if (
       context.signal?.aborted === true ||
       cause instanceof SourceMapDeadlineError
@@ -714,8 +1229,12 @@ const normalizeSourceMap = (
     return emptySourceMapItem(
       request,
       "invalid",
-      "Source-map JSON mappings could not be decoded safely.",
+      cause instanceof SourceMapFormatFailure &&
+        cause.reason === "section-overlap"
+        ? cause.message
+        : "Source-map JSON mappings could not be decoded safely.",
       fetchedUrl,
+      responseIdentity,
     );
   }
 };
@@ -734,7 +1253,6 @@ const originalModuleEdges = (
   ) => void,
 ): OriginalModuleEdges => {
   const edges: ParsedSourceMapItem["original_module_edges"] = [];
-  const seen = new Set<string>();
   const incomplete: string[] = [];
   for (const source of sources) {
     check();
@@ -748,7 +1266,7 @@ const originalModuleEdges = (
     }
     const parsed = parseJavaScriptSource(
       source.artifact.text,
-      sourceParserPath(sourceName),
+      originalSourcePath(sourceName),
     );
     check();
     if (parsed === null) {
@@ -758,6 +1276,7 @@ const originalModuleEdges = (
     // A recovered program still yields the imports it did parse, but nodes
     // after an unrecoverable point are missing, so the edges are a subset.
     if (parsed.errors.length > 0) incomplete.push(sourceName);
+    const seen = new Set<string>();
     let unboundRequires: ReadonlySet<string> | undefined;
     traverseJavaScriptAst(parsed, {
       enter: (node) => {
@@ -786,10 +1305,11 @@ const originalModuleEdges = (
           )
             return;
         }
-        const key = `${sourceName}\0${kind}\0${specifier}`;
+        const key = `${kind}\0${specifier}`;
         if (seen.has(key)) return;
         seen.add(key);
         const edge = {
+          declaration_index: source.declaration_index,
           from_source: sourceName,
           kind,
           specifier,
@@ -803,14 +1323,15 @@ const originalModuleEdges = (
   return { edges, incomplete };
 };
 
-/** Select parser semantics from the source URL path, excluding query/fragment. */
-const sourceParserPath = (source: string): string => {
+/** Derive a language hint without changing the retained source URL identity. */
+const originalSourcePath = (source: string): string => {
+  const path = URL.parse(source)?.pathname ?? source;
   try {
-    return new URL(source).pathname;
+    return decodeURIComponent(path);
   } catch (cause: unknown) {
-    // Unresolved source identities can still carry a useful relative path.
-    void cause;
-    return source;
+    if (!(cause instanceof URIError)) throw cause;
+    // A literal or malformed escape must not discard an otherwise useful hint.
+    return path;
   }
 };
 
@@ -818,10 +1339,12 @@ const checkOperation = (
   callerSignal: AbortSignal | undefined,
   operationSignal: AbortSignal | undefined,
   deadlineAt: number,
+  deadlineLimitation: string,
 ): void => {
   if (callerSignal?.aborted === true) throw callerSignal.reason;
   if (operationSignal?.aborted === true) throw operationSignal.reason;
-  if (performance.now() >= deadlineAt) throw new SourceMapDeadlineError();
+  if (performance.now() >= deadlineAt)
+    throw new SourceMapDeadlineError(deadlineLimitation);
 };
 
 const approvedUrl = (
@@ -854,17 +1377,42 @@ const sourceMapContext = (
 
 const emptySourceMapItem = (
   request: WebSourceMapRequest,
-  status: Extract<SourceMapItem, { readonly artifact: null }>["status"],
+  status: FailedSourceMapStatus,
   limitation: string,
   effectiveUrl: string | null = null,
-): Extract<SourceMapItem, { readonly artifact: null }> => ({
-  ...sourceMapContext(request, effectiveUrl),
-  status,
-  artifact: null,
-  original_sources: [],
-  original_module_edges: [],
-  mappings: [],
-  limitation,
+  responseIdentity?: ResponseIdentity,
+): WebSourceMapItem => {
+  const base = {
+    ...sourceMapContext(request, effectiveUrl),
+    artifact: null,
+    original_sources: [],
+    original_module_edges: [],
+    mappings: [],
+    limitation:
+      responseIdentity === undefined
+        ? limitation
+        : `${limitation} Response text was not retained; completed response body identity is available.`,
+  };
+  return status === "policy_filtered"
+    ? { ...base, status }
+    : {
+        ...base,
+        status,
+        ...(responseIdentity === undefined
+          ? {}
+          : { response_identity: responseIdentity }),
+      };
+};
+
+const sourceMapTextArtifact = (
+  text: string,
+  responseIdentity: ResponseIdentity,
+): WebTextArtifact => ({
+  sha256: responseIdentity.sha256,
+  bytes: responseIdentity.bytes,
+  media_type: "application/source-map+json",
+  charset: "utf-8",
+  text,
 });
 
 const sanitizeSource = (value: string): string => {
@@ -877,14 +1425,15 @@ const sanitizeSource = (value: string): string => {
   }
 };
 
-const preflightResolvedSourceBytes = (
+/** Resolve and admit source identities once, before allocating public mapping rows. */
+const prepareResolvedSources = (
   leaves: readonly SourceMapLeaf[],
   mapUrl: string,
-  budget: { readonly expandedBytes: number; resolvedSourceBytes: number },
-  resolvedByRoot: Map<string | null, Map<string, string>>,
+  budget: SourceMapCollectionBudget,
   sanitizedByResolved: Map<string, string>,
   check: () => void,
-): void => {
+): ReadonlyMap<string | null, ReadonlyMap<string, string>> => {
+  const resolvedByRoot = new Map<string | null, Map<string, string>>();
   let estimate = budget.expandedBytes;
   let resolvedBytes = budget.resolvedSourceBytes;
   for (const { map } of leaves) {
@@ -898,64 +1447,67 @@ const preflightResolvedSourceBytes = (
       if (source === null) continue;
       const sourceKey = source;
       let resolved = sourcesForRoot.get(sourceKey);
-      if (resolved === undefined)
-        resolved = resolveJavaScriptSourceMapUrl(
+      if (resolved === undefined) {
+        const candidate = resolveJavaScriptSourceMapUrl(
           source,
           map.sourceRoot,
           mapUrl,
         );
+        if (candidate === null) continue;
+        resolved = candidate;
+      }
       const bytes = Buffer.byteLength(resolved, "utf8");
-      if (bytes > SOURCE_MAP_RESPONSE_BYTES - resolvedBytes)
-        throw resolvedSourceLimitFailure();
+      if (bytes > budget.limits.fetchBytes - resolvedBytes)
+        throw resolvedSourceLimitFailure(budget.limits);
       resolvedBytes += bytes;
       sourcesForRoot.set(sourceKey, resolved);
       const sanitized = cachedSanitized(sanitizedByResolved, resolved);
-      estimate += jsonBytes(sanitized);
-      if (estimate > WEB_SOURCE_MAP_LIMITS.outputBytes)
-        throw expandedOutputFailure();
+      estimate += jsonByteLength(sanitized);
+      if (estimate > budget.limits.outputBytes)
+        throw expandedOutputFailure(budget.limits);
     }
   }
   budget.resolvedSourceBytes = resolvedBytes;
+  return resolvedByRoot;
 };
 
 const consumeExpandedBytes = (
-  budget: { expandedBytes: number },
+  budget: SourceMapCollectionBudget,
   bytes: number,
 ): void => {
-  if (bytes > WEB_SOURCE_MAP_LIMITS.outputBytes - budget.expandedBytes)
-    throw expandedOutputFailure();
+  if (bytes > budget.limits.outputBytes - budget.expandedBytes)
+    throw expandedOutputFailure(budget.limits);
   budget.expandedBytes += bytes;
 };
 
-const expandedOutputFailure = (): SourceMapFormatFailure =>
+const expandedOutputFailure = (
+  limits: SourceMapLimits,
+): SourceMapFormatFailure =>
   new SourceMapFormatFailure(
     "limit",
-    `Expanded source-map evidence exceeds the ${WEB_SOURCE_MAP_LIMITS.outputBytes / (1024 * 1024)} MiB public representation budget.`,
+    `Expanded source-map evidence exceeds public representation admission. ${sourceMapLimitRecovery("output_bytes", limits.outputBytes)}`,
   );
 
 const sourceMapOutputError = (
   cause: SourceMapFormatFailure,
+  limits: SourceMapLimits,
   options?: AnalysisErrorOptions,
 ): AnalysisResourceConstraintError =>
   new AnalysisResourceConstraintError(
     "analyze_web_bundle",
     "transport",
     cause.message,
-    { maximum_source_map_output_bytes: SOURCE_MAP_OUTPUT_BYTES },
+    { maximum_source_map_output_bytes: limits.outputBytes },
     { cause, ...options },
   );
 
-const resolvedSourceLimitFailure = (): SourceMapFormatFailure =>
+const resolvedSourceLimitFailure = (
+  limits: SourceMapLimits,
+): SourceMapFormatFailure =>
   new SourceMapFormatFailure(
     "limit",
-    `Resolved source-map identities exceed the ${SOURCE_MAP_RESPONSE_BYTES / (1024 * 1024)} MiB decoder representation budget.`,
+    `Resolved source-map identities exceed decoder representation admission. ${sourceMapLimitRecovery("fetch_bytes", limits.fetchBytes)}`,
   );
-
-const jsonBytes = (value: string): number => {
-  let bytes = 0;
-  for (const part of jsonParts(value)) bytes += Buffer.byteLength(part, "utf8");
-  return bytes;
-};
 
 const artifactMetadataBytes = (mediaType: string, text: string): number =>
   Buffer.byteLength(
@@ -990,23 +1542,20 @@ const sourceMapFailureReservation = (
   request: WebSourceMapRequest,
   effectiveUrl: string | null = null,
   limitation?: string,
-  status: Extract<
-    SourceMapItem,
-    { readonly artifact: null }
-  >["status"] = "fetch_failed",
+  status: FailedSourceMapStatus = "fetch_failed",
 ): number =>
   SOURCE_MAP_FAILURE_ENVELOPE_BYTES +
-  jsonBytes(request.declaredUrl) +
-  jsonBytes(request.scriptKey) +
-  (effectiveUrl === null ? 0 : jsonBytes(effectiveUrl) - 4) +
+  jsonByteLength(request.declaredUrl) +
+  jsonByteLength(request.scriptKey) +
+  (effectiveUrl === null ? 0 : jsonByteLength(effectiveUrl) - 4) +
   Math.max(
     0,
-    (limitation === undefined ? 0 : jsonBytes(limitation)) -
+    (limitation === undefined ? 0 : jsonByteLength(limitation)) -
       SOURCE_MAP_FAILURE_LIMITATION_RESERVE -
       2,
   ) +
-  jsonBytes(status) -
-  jsonBytes("fetch_failed");
+  jsonByteLength(status) -
+  jsonByteLength("fetch_failed");
 
 const sourceEntryOverheadBytes = (
   sourceIndex: number,
@@ -1019,7 +1568,7 @@ const sourceEntryOverheadBytes = (
 const cachedJsonBytes = (cache: Map<string, number>, value: string): number => {
   const cached = cache.get(value);
   if (cached !== undefined) return cached;
-  const bytes = jsonBytes(value);
+  const bytes = jsonByteLength(value);
   cache.set(value, bytes);
   return bytes;
 };
@@ -1058,13 +1607,15 @@ const resolveOriginalSource = (
   }
 };
 
-const sourceMediaType = (source: string | null): string =>
-  source?.endsWith(".ts") ||
-  source?.endsWith(".tsx") ||
-  source?.endsWith(".mts") ||
-  source?.endsWith(".cts")
+const sourceMediaType = (source: string | null): string => {
+  const path = source === null ? null : originalSourcePath(source);
+  return path?.endsWith(".ts") ||
+    path?.endsWith(".tsx") ||
+    path?.endsWith(".mts") ||
+    path?.endsWith(".cts")
     ? "text/typescript"
     : "text/javascript";
+};
 
 const originalDependency = (
   node: t.Node,
@@ -1073,18 +1624,9 @@ const originalDependency = (
   readonly specifier: string;
   readonly requireCallee?: t.Identifier;
 } | null => {
-  if (
-    t.isImportDeclaration(node) ||
-    t.isExportAllDeclaration(node) ||
-    t.isExportNamedDeclaration(node)
-  )
-    return node.source === null ||
-      node.source === undefined ||
-      (t.isImportDeclaration(node)
-        ? isTypeOnlyImportDeclaration(node)
-        : isTypeOnlyExportDeclaration(node))
-      ? null
-      : { kind: "static_import", specifier: node.source.value };
+  const moduleSource = semanticStaticModuleSource(node);
+  if (moduleSource !== null)
+    return { kind: "static_import", specifier: moduleSource.value };
   if (t.isImportExpression(node)) {
     const specifier = stringValue(node.source);
     return specifier === undefined

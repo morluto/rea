@@ -11,7 +11,7 @@ export const javaScriptSourcePathsSchema = z
 /** Caller scope retained independently of analysis success or completeness. */
 export const javaScriptSourceSelectionSchema = z.strictObject({
   requested_paths: javaScriptSourcePathsSchema,
-  unselected_files: z.number().int().min(0),
+  unselected_files: z.int().min(0),
 });
 
 /** Explicit selected-source boundary for an otherwise complete inventory. */

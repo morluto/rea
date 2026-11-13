@@ -205,3 +205,128 @@ it("retains unknown scope facts and reports genuine entity changes", () => {
     removed: 0,
   });
 });
+
+it("does not treat unexamined source metadata as a file change", () => {
+  const asset = (digest: string, selected: boolean, unpacked: boolean) =>
+    createJavaScriptApplicationNode({
+      kind: "javascript-asset",
+      identity: {
+        strategy: "content-digest",
+        stability: "global-exact",
+        sha256: digest,
+      },
+      observations: [
+        {
+          label: "lib.js",
+          properties: {
+            path: "lib.js",
+            file_kind: "javascript",
+            bytes: 5,
+            unpacked,
+            text_status: selected ? "included" : "outside-analysis-scope",
+            parse_status: selected ? "complete" : null,
+            vendor_markers: selected ? ["example"] : [],
+          },
+          evidence: artifactEvidence(digest, "lib.js"),
+        },
+      ],
+    });
+  const left = asset("e".repeat(64), true, false);
+  const right = asset("e".repeat(64), false, false);
+  for (const [before, after] of [
+    [left, right],
+    [right, left],
+  ] as const) {
+    const result = compare([before], [after]);
+    expect(result.items[0]).toMatchObject({
+      status: "unknown",
+      dimensions: ["coverage"],
+      limitations: [
+        expect.stringContaining("Source file analysis was not complete"),
+      ],
+    });
+  }
+  const changed = compare([left], [asset("e".repeat(64), false, true)]);
+  expect(changed.items[0]).toMatchObject({
+    status: "changed",
+    dimensions: ["properties"],
+  });
+});
+
+it("keeps excluded JSON observations unknown without hiding inventoried differences", () => {
+  const json = (
+    state: "included" | "excluded" | "invalid",
+    unpacked: boolean,
+  ) =>
+    createJavaScriptApplicationNode({
+      kind: "artifact",
+      identity: {
+        strategy: "content-digest",
+        stability: "global-exact",
+        sha256: "d".repeat(64),
+      },
+      observations: [
+        {
+          label: "data.json",
+          properties: {
+            path: "data.json",
+            file_kind: "json",
+            unpacked,
+            text_status:
+              state === "excluded" ? "outside-analysis-scope" : "included",
+            json_parse_status: state === "excluded" ? null : state,
+            json_top_level_keys: state === "included" ? ["key"] : [],
+            omitted_json_top_level_keys: state === "excluded" ? null : 0,
+          },
+          evidence: artifactEvidence("d".repeat(64), "data.json"),
+        },
+      ],
+    });
+  expect(
+    compare([json("included", false)], [json("excluded", false)]).items[0],
+  ).toMatchObject({
+    status: "unknown",
+    dimensions: ["coverage"],
+  });
+  expect(
+    compare([json("included", false)], [json("excluded", true)]).items[0],
+  ).toMatchObject({
+    status: "changed",
+    dimensions: ["properties"],
+  });
+  expect(
+    compare([json("included", false)], [json("invalid", false)]).items[0],
+  ).toMatchObject({ status: "unknown", dimensions: ["coverage"] });
+});
+
+it("uses package parsing rather than JSON-module status for package files", () => {
+  const asset = (status: "included" | "invalid" | null) =>
+    createJavaScriptApplicationNode({
+      kind: "artifact",
+      identity: {
+        strategy: "content-digest",
+        stability: "global-exact",
+        sha256: "c".repeat(64),
+      },
+      observations: [
+        {
+          label: "package.json",
+          properties: {
+            path: "package.json",
+            file_kind: "package-json",
+            text_status: "included",
+            json_parse_status: null,
+            package_parse_status: status,
+          },
+          evidence: artifactEvidence("c".repeat(64), "package.json"),
+        },
+      ],
+    });
+  expect(
+    compare([asset("included")], [asset("included")]).items[0],
+  ).toMatchObject({ status: "unchanged" });
+  for (const status of ["invalid", null] as const)
+    expect(
+      compare([asset("included")], [asset(status)]).items[0],
+    ).toMatchObject({ status: "unknown", dimensions: ["coverage"] });
+});

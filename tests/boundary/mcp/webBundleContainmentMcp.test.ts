@@ -79,9 +79,9 @@ it("retains timeout Evidence and recovers on the same MCP server", async () => {
   const timeout = parseMcpToolError(interrupted).error;
   expect(timeout).toMatchObject({
     code: "provider_timeout",
-    message: expect.stringContaining("server/provider deadline"),
+    message: expect.stringContaining("total_analysis_timeout_ms"),
     remediation: {
-      action: expect.stringContaining("provider diagnostics"),
+      action: expect.stringContaining("total_analysis_timeout_ms"),
     },
     recovery: {
       kind: "inspect_timeout_state",

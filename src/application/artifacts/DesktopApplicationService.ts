@@ -1,14 +1,9 @@
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { DesktopApplicationPort } from "./DesktopApplicationPort.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../InvestigationProviders.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-  AnalysisCancelledError,
-} from "../../domain/analysisErrorCore.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createDesktopApplicationEvidence } from "../../domain/desktopApplicationEvidence.js";
 import {
@@ -30,31 +25,17 @@ export class DesktopApplicationService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     const operation = "inspect_desktop_application";
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
-    const parsed = inspectDesktopApplicationInputSchema.safeParse(rawInput);
-    if (!parsed.success)
-      return err(
-        analysisInputErrorFromIssues(operation, parsed.error.issues, rawInput, {
-          cause: parsed.error,
-        }),
-      );
-    if (!isAbsolute(parsed.data.path))
-      return err(
-        new AnalysisInputError(operation, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute directory path on this host.",
-          },
-        ]),
-      );
-    const result = await this.reader.inspect(parsed.data, options);
+    const parsed = parseAnalysisInput(
+      operation,
+      rawInput,
+      inspectDesktopApplicationInputSchema,
+      options?.signal,
+    );
+    if (!parsed.ok) return parsed;
+    const result = await this.reader.inspect(parsed.value, options);
     if (!result.ok) return result;
     const report = desktopApplicationSchema.safeParse(result.value);
-    if (!report.success || report.data.root.path !== parsed.data.path)
+    if (!report.success || report.data.root.path !== parsed.value.path)
       return err(
         new AnalysisOutputError(
           operation,
@@ -63,7 +44,7 @@ export class DesktopApplicationService {
       );
     return completeProviderEvidence(
       createDesktopApplicationEvidence(
-        parsed.data,
+        parsed.value,
         report.data,
         ARTIFACT_GRAPH_PROVIDER,
       ),

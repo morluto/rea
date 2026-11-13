@@ -22,10 +22,13 @@ describe("exact Evidence input resolution", () => {
           actual: null,
         },
       });
-      expect(projected.message).toContain("not retained in this session");
+      expect(projected.message).toContain(
+        "not available from the selected source",
+      );
       expect(projected.remediation.action).toContain(
         "complete inline Evidence",
       );
+      expect(projected.details).not.toHaveProperty("reference_scope");
     }
   });
 

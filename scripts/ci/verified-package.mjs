@@ -1,28 +1,19 @@
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { execFile } from "node:child_process";
-import { copyFile, readFile, writeFile } from "node:fs/promises";
+import { copyFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { valid } from "semver";
+import { releaseNpmTag } from "../release-npm-tag.mjs";
+import {
+  MANIFEST_NAME,
+  TARBALL_NAME,
+  createVerifiedPackageEnvelope,
+  parsePositiveInteger,
+  sha256File,
+  validateVerifiedPackageEnvelope,
+  workflowPackageIdentity,
+} from "./qualified-package-envelope.mjs";
 
-const MANIFEST_NAME = "manifest.json";
-const TARBALL_NAME = "package.tgz";
-const MANIFEST_KEYS = [
-  "schemaVersion",
-  "sourceSha",
-  "runId",
-  "runAttempt",
-  "platform",
-  "architecture",
-  "packageVersion",
-  "nodeVersion",
-  "sha256",
-].sort();
-const execFileAsync = promisify(execFile);
-
-/** Normalize workflow identity and host facts into the manifest-owned fields. */
+/** Qualification owns the exact SemVer and its parsed publication channel. */
 export function createVerifiedPackageMetadata({
   sourceSha,
   runId,
@@ -42,28 +33,38 @@ export function createVerifiedPackageMetadata({
     architecture,
     packageVersion,
     nodeVersion,
+    releaseTag: releaseNpmTag(packageVersion),
   };
 }
 
-/** Build the single supported manifest representation for a verified tarball. */
+function validateReleaseIntent(manifest) {
+  if (valid(manifest.packageVersion) !== manifest.packageVersion)
+    throw new Error("Verified package manifest has an invalid package version");
+  if (
+    manifest.schemaVersion === 2 &&
+    releaseNpmTag(manifest.packageVersion) !== manifest.releaseTag
+  )
+    throw new Error("Verified package release tag mismatch");
+}
+
 function createVerifiedPackageManifest(metadata) {
-  const manifest = { schemaVersion: 1, ...metadata };
-  validateManifestShape(manifest);
+  const manifest = createVerifiedPackageEnvelope(metadata);
+  validateReleaseIntent(manifest);
   return manifest;
 }
 
-/** Write a manifest after the caller has completed qualification and cleanup. */
+/** Write only after qualification and its cleanup have completed. */
 export async function writeVerifiedPackageManifest(directory, metadata) {
   const manifest = createVerifiedPackageManifest(metadata);
   await writeFile(
     join(directory, MANIFEST_NAME),
     `${JSON.stringify(manifest, null, 2)}\n`,
-    { encoding: "utf8" },
+    "utf8",
   );
   return manifest;
 }
 
-/** Copy the qualified archive under its fixed name and prepare its manifest. */
+/** Retain the exact archive without unpacking or rebuilding it. */
 export async function retainVerifiedPackage({
   sourceTarball,
   directory,
@@ -71,174 +72,40 @@ export async function retainVerifiedPackage({
 }) {
   const tarball = join(directory, TARBALL_NAME);
   await copyFile(sourceTarball, tarball);
-  const sha256 = await sha256File(tarball);
   return {
     directory,
-    metadata: createVerifiedPackageManifest({ ...metadata, sha256 }),
+    metadata: createVerifiedPackageManifest({
+      ...metadata,
+      sha256: await sha256File(tarball),
+    }),
   };
 }
 
-/** Validate a retained package against the current checkout and workflow attempt. */
-export async function validateVerifiedPackage({
-  directory,
-  sourceSha,
-  runId,
-  runAttempt,
-  packageVersion,
-  nodeVersion,
-}) {
-  if (!/^[a-f0-9]{40}$/u.test(sourceSha))
-    throw new Error("Expected source SHA must be a full commit SHA");
-  if (!Number.isSafeInteger(runId) || runId <= 0)
-    throw new Error("Expected workflow run ID must be a positive integer");
-  if (!Number.isSafeInteger(runAttempt) || runAttempt <= 0)
-    throw new Error("Expected workflow run attempt must be a positive integer");
-  const manifestPath = join(directory, MANIFEST_NAME);
-  let manifest;
-  try {
-    manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  } catch (cause) {
-    throw new Error(`Could not read verified package manifest: ${cause}`, {
-      cause,
-    });
-  }
-  validateManifestShape(manifest);
-  assertEqual(manifest.sourceSha, sourceSha, "source SHA");
-  assertEqual(manifest.runId, runId, "workflow run ID");
-  // A successful producer may belong to an earlier attempt when only failed
-  // publisher jobs are rerun. The workflow still requires same-run qualification.
-  if (manifest.runAttempt > runAttempt)
-    throw new Error("Verified package workflow run attempt is from the future");
-  assertEqual(manifest.platform, "linux", "verifier platform");
-  assertEqual(manifest.architecture, "x64", "verifier architecture");
-  assertEqual(manifest.packageVersion, packageVersion, "package version");
-  assertEqual(manifest.nodeVersion, nodeVersion, "Node.js version");
-
-  // The artifact format deliberately fixes the name; no manifest value can
-  // redirect validation to another path.
-  const tarball = resolve(directory, TARBALL_NAME);
-  const digest = await sha256File(tarball);
-  assertEqual(manifest.sha256, digest, "tarball SHA-256");
+/** Read-only consumers additionally validate SemVer and its qualified channel. */
+export async function validateVerifiedPackage(options) {
+  const { tarball, manifest } = await validateVerifiedPackageEnvelope(options);
+  validateReleaseIntent(manifest);
   return tarball;
 }
 
-function validateManifestShape(manifest) {
-  if (
-    typeof manifest !== "object" ||
-    manifest === null ||
-    Array.isArray(manifest)
-  )
-    throw new Error("Verified package manifest must be a JSON object");
-  const keys = Object.keys(manifest).sort();
-  if (
-    keys.length !== MANIFEST_KEYS.length ||
-    keys.some((key, index) => key !== MANIFEST_KEYS[index])
-  )
-    throw new Error("Verified package manifest has missing or unknown fields");
-  if (manifest.schemaVersion !== 1)
-    throw new Error("Unsupported verified package manifest schema version");
-  if (
-    typeof manifest.sourceSha !== "string" ||
-    !/^[a-f0-9]{40}$/u.test(manifest.sourceSha)
-  )
-    throw new Error("Verified package manifest has an invalid source SHA");
-  if (!Number.isSafeInteger(manifest.runId) || manifest.runId <= 0)
-    throw new Error("Verified package manifest has an invalid workflow run ID");
-  if (!Number.isSafeInteger(manifest.runAttempt) || manifest.runAttempt <= 0)
-    throw new Error(
-      "Verified package manifest has an invalid workflow run attempt",
-    );
-  for (const key of [
-    "platform",
-    "architecture",
-    "packageVersion",
-    "nodeVersion",
-  ])
-    if (typeof manifest[key] !== "string" || manifest[key].length === 0)
-      throw new Error(`Verified package manifest has an invalid ${key}`);
-  if (valid(manifest.packageVersion) !== manifest.packageVersion)
-    throw new Error("Verified package manifest has an invalid package version");
-  if (
-    typeof manifest.sha256 !== "string" ||
-    !/^[a-f0-9]{64}$/u.test(manifest.sha256)
-  )
-    throw new Error("Verified package manifest has an invalid tarball SHA-256");
-}
-
-function assertEqual(actual, expected, label) {
-  if (actual !== expected)
-    throw new Error(`Verified package ${label} mismatch`);
-}
-
-async function sha256File(path) {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
-}
-
-/** Require the registry to serve the exact archive selected for publication. */
-export async function verifyPublishedPackageIntegrity(tarball, integrity) {
-  const hash = createHash("sha512");
-  for await (const chunk of createReadStream(tarball)) hash.update(chunk);
-  if (integrity !== `sha512-${hash.digest("base64")}`)
-    throw new Error(
-      "Published npm integrity differs from the original qualified package",
-    );
-}
-
 async function validateFromCli(directory) {
-  const sourceSha = process.env.GITHUB_SHA;
-  const runId = parsePositiveInteger(
-    process.env.GITHUB_RUN_ID,
-    "GITHUB_RUN_ID",
-  );
-  const runAttempt = parsePositiveInteger(
-    process.env.GITHUB_RUN_ATTEMPT,
-    "GITHUB_RUN_ATTEMPT",
-  );
-  if (sourceSha === undefined || !/^[a-f0-9]{40}$/u.test(sourceSha))
-    throw new Error("GITHUB_SHA must be a full commit SHA");
-  const checkoutSha = (
-    await execFileAsync("git", ["rev-parse", "HEAD"])
-  ).stdout.trim();
-  assertEqual(checkoutSha, sourceSha, "checked out source SHA");
-  const packageJson = JSON.parse(await readFile("package.json", "utf8"));
-  const tarball = await validateVerifiedPackage({
-    directory,
-    sourceSha,
-    runId,
-    runAttempt,
-    packageVersion: packageJson.version,
-    nodeVersion: process.version,
-  });
+  const expected = await workflowPackageIdentity();
+  const tarball = await validateVerifiedPackage({ directory, ...expected });
   if (process.env.GITHUB_OUTPUT === undefined)
     throw new Error(
       "GITHUB_OUTPUT is required to publish the validated tarball path",
     );
   await writeFile(
     process.env.GITHUB_OUTPUT,
-    `tarball=${tarball}\nversion=${packageJson.version}\n`,
-    {
-      encoding: "utf8",
-      flag: "a",
-    },
+    `tarball=${tarball}\nversion=${expected.packageVersion}\n`,
+    { encoding: "utf8", flag: "a" },
   );
   process.stdout.write(`${tarball}\n`);
 }
 
-function parsePositiveInteger(value, name) {
-  if (value === undefined || !/^[1-9]\d*$/u.test(value))
-    throw new Error(`${name} must be a positive integer`);
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed))
-    throw new Error(`${name} must be a safe positive integer`);
-  return parsed;
-}
-
-const invokedPath = process.argv[1];
 if (
-  invokedPath !== undefined &&
-  resolve(invokedPath) === fileURLToPath(import.meta.url)
+  process.argv[1] !== undefined &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const [command, directory, ...extra] = process.argv.slice(2);
   if (command !== "validate" || directory === undefined || extra.length > 0) {
@@ -246,7 +113,5 @@ if (
       "Usage: node scripts/ci/verified-package.mjs validate <artifact-directory>\n",
     );
     process.exitCode = 2;
-  } else {
-    await validateFromCli(directory);
-  }
+  } else await validateFromCli(directory);
 }

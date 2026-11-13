@@ -36,7 +36,7 @@ const observe = async (path: string) => {
     {
       operation: "inventory_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(inventory),
+      result: inventory,
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -62,7 +62,7 @@ const inspectPages = (
     {
       operation: "inspect_artifact",
       parameters: {},
-      result: jsonValueSchema.parse({
+      result: {
         inspection_id: `ai_${"f".repeat(64)}`,
         subject: {
           manifest_id: inventory.manifest.manifest_id,
@@ -96,7 +96,7 @@ const inspectPages = (
         },
         evidence_links: pages.map(({ evidence_id }) => evidence_id),
         limitations: [],
-      }),
+      },
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -144,7 +144,7 @@ describe("leaf artifact comparison", () => {
       {
         operation: "inventory_artifact",
         parameters: {},
-        result: jsonValueSchema.parse(withoutCoverage),
+        result: withoutCoverage,
         confidence: "observed",
         authority: "shipped-artifact",
       },
@@ -306,11 +306,11 @@ describe("artifact inventory coverage", () => {
       {
         operation: "inventory_artifact",
         parameters: {},
-        result: jsonValueSchema.parse({
+        result: {
           ...graph,
           coverage: { scope: "root", status: "unknown" },
           limitations: ["No extra child entries were observed."],
-        }),
+        },
         confidence: "derived",
         authority: "shipped-artifact",
       },
@@ -348,10 +348,10 @@ describe("artifact inventory coverage", () => {
       {
         operation: "inventory_artifact",
         parameters: fragment.parameters,
-        result: jsonValueSchema.parse({
+        result: {
           ...fragmentGraph,
           coverage: { ...fragmentGraph.coverage, status: "unknown" },
-        }),
+        },
         confidence: "derived",
         authority: "shipped-artifact",
       },
@@ -448,10 +448,10 @@ describe("artifact comparison", () => {
       {
         operation: "inventory_artifact",
         parameters: {},
-        result: jsonValueSchema.parse({
+        result: {
           ...completeInventory,
           nodes: [],
-        }),
+        },
         confidence: "observed",
         authority: "shipped-artifact",
         limitations: ["Inventory node observations are unavailable."],
@@ -496,10 +496,10 @@ describe("artifact comparison completeness", () => {
         {
           operation: "inventory_artifact",
           parameters: {},
-          result: jsonValueSchema.parse({
+          result: {
             ...inventory,
             coverage: { scope: "root", status: "complete" },
-          }),
+          },
           confidence: "derived",
           authority: "shipped-artifact",
         },
@@ -570,15 +570,104 @@ describe("artifact comparison completeness", () => {
   }, 15_000);
 });
 
+it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)(
+  "retains an observed map edge without certifying completeness after an omitted subtree",
+  async () => {
+    const root = await createTestTempDirectory("rea-map-omitted-subtree-");
+    const omitted = join(root, "omitted");
+    await mkdir(omitted);
+    await Promise.all([
+      writeFile(join(root, "main.js"), "source();"),
+      writeFile(join(root, "main.js.map"), "{}"),
+      writeFile(join(omitted, "member.txt"), "unexamined member"),
+    ]);
+    const complete = await observe(root);
+    await chmod(omitted, 0);
+    const partial = await observe(root).finally(() => chmod(omitted, 0o700));
+    const { inventory } = parseArtifactInventoryEvidence(partial);
+    const map = inventory.occurrences.find(
+      ({ logical_path }) => logical_path === "main.js.map",
+    );
+    expect(inventory.coverage.status).toBe("unknown");
+    expect(inventory.occurrences).not.toContainEqual(
+      expect.objectContaining({ logical_path: "omitted/member.txt" }),
+    );
+    expect(inventory.edges).toContainEqual(
+      expect.objectContaining({
+        occurrence_id: map?.occurrence_id,
+        relation: "maps-source",
+      }),
+    );
+    expect(map).toHaveProperty("relationship_coverage", "unknown");
+    expect(compareArtifacts(complete, partial).changes).toContainEqual(
+      expect.objectContaining({
+        logical_path: "main.js.map",
+        classification: "unknown",
+        dimensions: ["availability"],
+      }),
+    );
+  },
+);
+
 describe("artifact source-map relationship coverage", () => {
+  it("reports when an unchanged map points to changed source content", async () => {
+    const root = await createTestTempDirectory("rea-map-target-change-");
+    const leftPath = join(root, "left");
+    const rightPath = join(root, "right");
+    await Promise.all([mkdir(leftPath), mkdir(rightPath)]);
+    await Promise.all([
+      writeFile(join(leftPath, "main.js"), "/* first source */\n"),
+      writeFile(join(rightPath, "main.js"), "/* second source */\n"),
+      writeFile(
+        join(leftPath, "main.js.map"),
+        '{"version":3,"sources":[],"names":[],"mappings":""}',
+      ),
+      writeFile(
+        join(rightPath, "main.js.map"),
+        '{"version":3,"sources":[],"names":[],"mappings":""}',
+      ),
+    ]);
+    const [left, right] = await Promise.all([
+      observe(leftPath),
+      observe(rightPath),
+    ]);
+
+    const comparison = compareArtifacts(left, right);
+    const leftInventory = parseArtifactInventoryEvidence(left).inventory;
+    const rightInventory = parseArtifactInventoryEvidence(right).inventory;
+    const leftMap = leftInventory.occurrences.find(
+      ({ logical_path }) => logical_path === "main.js.map",
+    );
+    const rightMap = rightInventory.occurrences.find(
+      ({ logical_path }) => logical_path === "main.js.map",
+    );
+    expect(leftMap?.artifact_id).toBe(rightMap?.artifact_id);
+    expect(comparison.changes).toContainEqual(
+      expect.objectContaining({
+        logical_path: "main.js.map",
+        classification: "changed",
+        dimensions: ["relations"],
+        left_artifact_id: leftMap?.artifact_id,
+        right_artifact_id: rightMap?.artifact_id,
+      }),
+    );
+  });
+
   it("preserves unknown source-map relationships for duplicate ZIP paths", async () => {
     const root = await createTestTempDirectory("rea-duplicate-source-map-");
     const path = join(root, "duplicate-source-map.zip");
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("main.js", new TextReader("first();"), { level: 0 });
-    await writer.add("your.js", new TextReader("second();"), { level: 0 });
-    await writer.add("main.js.map", new TextReader("{}"), { level: 0 });
-    const bytes = Buffer.from(await writer.close());
+    const uniquePath = join(root, "unique-source-map.zip");
+    const zip = async (otherSource: string) => {
+      const writer = new ZipWriter(new Uint8ArrayWriter());
+      await writer.add("main.js", new TextReader("first();"), { level: 0 });
+      await writer.add("your.js", new TextReader("second();"), { level: 0 });
+      await writer.add("main.js.map", new TextReader("{}"), { level: 0 });
+      await writer.add("other.js", new TextReader(otherSource), { level: 0 });
+      await writer.add("other.js.map", new TextReader("{}"), { level: 0 });
+      return Buffer.from(await writer.close());
+    };
+    const bytes = await zip("before();");
+    await writeFile(uniquePath, await zip("after();"));
     for (const [signature, headerSize] of [
       [Buffer.from([0x50, 0x4b, 0x03, 0x04]), 30],
       [Buffer.from([0x50, 0x4b, 0x01, 0x02]), 46],
@@ -617,6 +706,29 @@ describe("artifact source-map relationship coverage", () => {
         limitation.toLowerCase().includes("integrity"),
       ),
     ).toBe(false);
+    const unique = await observe(uniquePath);
+    for (const [left, right] of [
+      [unique, evidence],
+      [evidence, unique],
+    ] as const) {
+      expect(compareArtifacts(left, right).changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            logical_path: "main.js.map",
+            classification: "unknown",
+            dimensions: ["availability"],
+            left_artifact_id: map.artifact_id,
+            right_artifact_id: map.artifact_id,
+          }),
+          expect.objectContaining({
+            logical_path: "other.js.map",
+            classification: "changed",
+            dimensions: ["relations"],
+          }),
+        ]),
+      );
+    }
+    expect(map).toHaveProperty("relationship_coverage", "unknown");
   });
 });
 
@@ -626,11 +738,15 @@ describe("duplicate archive occurrence ownership", () => {
       "rea-artifact-duplicate-directory-",
     );
     const path = join(root, "duplicate-directories.zip");
+    const uniquePath = join(root, "unique-directories.zip");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("x/", new TextReader(""));
     await writer.add("y/", new TextReader(""));
     await writer.add("x/file.txt", new TextReader("member"));
+    await writer.add("standalone.js", new TextReader("source();"));
+    await writer.add("standalone.js.map", new TextReader("{}"));
     const bytes = Buffer.from(await writer.close());
+    await writeFile(uniquePath, bytes);
     for (const [signature, headerSize] of [
       [Buffer.from([0x50, 0x4b, 0x03, 0x04]), 30],
       [Buffer.from([0x50, 0x4b, 0x01, 0x02]), 46],
@@ -663,6 +779,27 @@ describe("duplicate archive occurrence ownership", () => {
       'The parent occurrence for "x/file.txt" is unknown because multiple observed directory or container occurrences share "x".',
     );
     expect(inventory.coverage.status).toBe("unknown");
+    const unique = await observe(uniquePath);
+    for (const [left, right] of [
+      [unique, evidence],
+      [evidence, unique],
+    ] as const)
+      expect(compareArtifacts(left, right).changes).toContainEqual(
+        expect.objectContaining({
+          logical_path: "x/file.txt",
+          classification: "unknown",
+          dimensions: ["availability"],
+          left_artifact_id: child?.artifact_id,
+          right_artifact_id: child?.artifact_id,
+        }),
+      );
+    expect(child).toHaveProperty("relationship_coverage", "unknown");
+    expect(inventory.occurrences).toContainEqual(
+      expect.objectContaining({
+        logical_path: "standalone.js.map",
+        relationship_coverage: "complete",
+      }),
+    );
   });
 
   it("retains duplicate path occurrences across pages and leaves pairing unknown", async () => {
@@ -819,10 +956,10 @@ describe("artifact comparison fragment integrity", () => {
       {
         operation: "inventory_artifact",
         parameters: {},
-        result: jsonValueSchema.parse({
+        result: {
           ...artifactInventoryResultSchema.parse(fragment.normalized_result),
           coverage: { scope: "root", status: "complete" },
-        }),
+        },
       },
     );
     expect(() =>
@@ -830,7 +967,13 @@ describe("artifact comparison fragment integrity", () => {
         [conflictingScope, ...leftFragments.slice(1)],
         rightFragments,
       ),
-    ).toThrow(/coverage declaration/u);
+    ).toThrowError(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        userMessage: expect.stringContaining("coverage declaration"),
+        issues: [expect.objectContaining({ path: ["left"] })],
+      }),
+    );
   }, 15_000);
 
   it("rejects non-inventory and tampered Evidence", async () => {
@@ -844,8 +987,12 @@ describe("artifact comparison fragment integrity", () => {
       parameters: {},
       result: evidence.normalized_result,
     });
-    expect(() => compareArtifacts(wrongOperation, evidence)).toThrow(
-      /inspect_artifact/u,
+    expect(() => compareArtifacts(wrongOperation, evidence)).toThrowError(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        userMessage: expect.stringContaining("inspect_artifact"),
+        issues: [expect.objectContaining({ path: ["left"] })],
+      }),
     );
     const mismatchedSubject = createEvidence(
       { path: root, sha256: "f".repeat(64), format: "directory" },
@@ -896,7 +1043,7 @@ describe("ZIP non-entry coverage", () => {
       left.normalized_result,
     );
     expect(inventory.limitations).toContain(
-      "ZIP inventory lists central-directory entries only. Non-entry bytes, including an APK Signing Block before the central directory or a ZIP comment after it, are not occurrences.",
+      "ZIP inventory lists central-directory entries only. Non-entry bytes, including leading bytes before the first entry such as a self-extractor stub, an APK Signing Block before the central directory or a ZIP comment after it, are not occurrences.",
     );
     expect(
       inventory.occurrences.map(({ logical_path }) => logical_path).sort(),

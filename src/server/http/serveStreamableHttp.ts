@@ -16,8 +16,12 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { isIPv4, isIPv6, type AddressInfo } from "node:net";
+import { isIPv4, type AddressInfo } from "node:net";
 import type { Logger } from "pino";
+import {
+  normalizeHttpHostname,
+  type HttpHostname,
+} from "../../domain/httpHostname.js";
 
 import {
   toWebRequest,
@@ -25,7 +29,10 @@ import {
   writeWebResponse,
 } from "./nodeHttpBridge.js";
 import { listenHttpServer } from "./listenHttpServer.js";
-import { StreamableHttpListenError } from "./streamableHttpListenError.js";
+import {
+  StreamableHttpHostAllowlistError,
+  StreamableHttpListenError,
+} from "./streamableHttpListenError.js";
 import {
   NodeHttpRequestOwner,
   type HttpAdmissionLifetime,
@@ -47,6 +54,8 @@ export interface StreamableHttpRoute {
 export interface ServeStreamableHttpOptions {
   readonly host: string;
   readonly port: number;
+  /** Operator-declared Host/Origin names; a non-loopback bind refuses to serve without them. */
+  readonly allowedHosts?: readonly HttpHostname[];
   /** Cancellation during listener startup; later shutdown remains owned by close(). */
   readonly signal?: AbortSignal;
   /** Called once; the instance serves every session in turn on a fresh transport. */
@@ -73,14 +82,6 @@ export interface StreamableHttpServer {
   readonly close: () => Promise<void>;
 }
 
-/** The bind host as the SDK compares Host headers: lowercase, IPv6 bracketed and canonical. */
-const normalizedHostname = (host: string): string | undefined => {
-  try {
-    return new URL(`http://${isIPv6(host) ? `[${host}]` : host}`).hostname;
-  } catch {
-    return undefined;
-  }
-};
 const isLoopbackIpv4 = (address: string): boolean =>
   isIPv4(address) && address.startsWith("127.");
 /** Classify the native bound IP; configured DNS names are not binding evidence. */
@@ -100,9 +101,9 @@ export const hostHeaderAllowlist = (
   host: string,
   boundAddress: string,
 ): string[] | undefined => {
-  const bound = normalizedHostname(boundAddress);
+  const bound = normalizeHttpHostname(boundAddress);
   if (bound === undefined || !isLoopbackAddress(bound)) return undefined;
-  const names = [normalizedHostname(host), bound];
+  const names = [normalizeHttpHostname(host), bound];
   const known = names.filter((name): name is string => name !== undefined);
   return [...new Set([...localhostAllowedHostnames(), ...known])];
 };
@@ -198,24 +199,27 @@ const hasStreamablePostHeaders = (request: Request): boolean => {
 };
 
 /** Only a new client's initialize travels without a session id; peek within the SDK body bound. */
-const isInitializePost = async (request: Request): Promise<boolean> => {
+const classifyInitializePost = async (
+  request: Request,
+): Promise<"initialize" | "batch" | undefined> => {
   if (
     request.method !== "POST" ||
     request.headers.has("mcp-session-id") ||
     !hasStreamablePostHeaders(request)
   )
-    return false;
+    return undefined;
   const probe = request.clone();
   try {
     const read = await readRequestBody(probe);
-    if (read.tooLarge) return false;
+    if (read.tooLarge) return undefined;
     const body: unknown = JSON.parse(read.text);
-    // The transport accepts only a lone initialize, so only that may evict a session.
-    return Array.isArray(body)
-      ? body.length === 1 && isInitializeRequest(body[0])
-      : isInitializeRequest(body);
+    // SDK 2.3.1 accepts a one-message array. REA's session handover contract
+    // requires an object, regardless of whether a session is already open.
+    if (Array.isArray(body))
+      return body.some(isInitializeRequest) ? "batch" : undefined;
+    return isInitializeRequest(body) ? "initialize" : undefined;
   } catch {
-    return false;
+    return undefined;
   } finally {
     // The clone is one branch of a tee; awaiting its cancel would wait for the original to drain.
     void probe.body?.cancel().catch(() => undefined);
@@ -336,12 +340,19 @@ export class McpSessionSlot {
 
   async #handle(request: Request): Promise<Response> {
     if (this.#closed) return SHUTTING_DOWN();
+    const initialization = await classifyInitializePost(request);
+    if (initialization === "batch")
+      return jsonError(
+        400,
+        -32600,
+        "Initialize must be a single JSON-RPC object, not a batch",
+      );
     if (this.#draining) await this.#live?.transport.close();
     if (this.#closed) return SHUTTING_DOWN();
     const open = this.#live;
     if (
       open?.transport.sessionId !== undefined &&
-      (await isInitializePost(request)) &&
+      initialization === "initialize" &&
       // A client that left while its initialize was probed would evict the session for nobody.
       !request.signal.aborted
     ) {
@@ -475,7 +486,7 @@ export const serveStreamableHttp = async (
       admissionLifetime: "response" as const,
     });
     if (stopped) return local(jsonError(503, -32000, "Server shutting down"));
-    // One loopback allowlist gates Host (DNS rebinding) and Origin (browser pages); a missing Origin passes.
+    // One resolved allowlist gates Host (DNS rebinding) and Origin (browser pages); a missing Origin passes.
     const refused =
       allowedHosts === undefined
         ? undefined
@@ -540,9 +551,27 @@ export const serveStreamableHttp = async (
   try {
     if (bound === null || typeof bound === "string")
       throw new TypeError("MCP HTTP listener has no TCP address");
-    url = endpointUrl(bound);
-    origin = new URL(url).origin;
-    allowedHosts = hostHeaderAllowlist(host, bound.address);
+    const endpoint = new URL(endpointUrl(bound));
+    const loopbackHosts = hostHeaderAllowlist(host, bound.address);
+    if (loopbackHosts !== undefined) {
+      allowedHosts = loopbackHosts;
+    } else {
+      // Configuration supplies canonical names; the listener does not reinterpret them.
+      if (
+        options.allowedHosts === undefined ||
+        options.allowedHosts.length === 0
+      )
+        throw new StreamableHttpHostAllowlistError(bound.address);
+      allowedHosts = [...options.allowedHosts];
+    }
+    const announcedHost = allowedHosts.includes(endpoint.hostname)
+      ? endpoint.hostname
+      : allowedHosts[0];
+    if (announcedHost === undefined)
+      throw new StreamableHttpHostAllowlistError(bound.address);
+    endpoint.hostname = announcedHost;
+    url = endpoint.href;
+    origin = endpoint.origin;
   } catch (cause: unknown) {
     await prepareTransportShutdown().catch(() => undefined);
     throw new StreamableHttpListenError(cause);
@@ -588,11 +617,6 @@ export const serveStreamableHttp = async (
     await close();
     throw options.signal.reason;
   }
-  if (allowedHosts === undefined)
-    logger?.warn(
-      { host },
-      "MCP HTTP Host header validation relaxed for a non-loopback bind",
-    );
   // The URL is the only way to reach an ephemeral port, so the announcement ignores the log threshold.
   logger
     ?.child({}, { level: "info" })

@@ -1,11 +1,12 @@
 import { z } from "zod";
 
 import {
+  objcImplementationClassName,
   nativeMetadataEvidenceSchema,
   nativeMetadataLocationSchema,
   type ObjcSwiftMetadata,
 } from "./objcSwiftMetadata.js";
-import { jsonValueSchema } from "../jsonValue.js";
+import { jsonObjectSchema } from "../jsonValue.js";
 
 /** Entity kinds shared by decoded Interface Builder archives and native code. */
 export const nativeInvestigationNodeKindSchema = z.enum([
@@ -44,7 +45,7 @@ export const nativeInvestigationNodeSchema = z.strictObject({
   kind: nativeInvestigationNodeKindSchema,
   name: z.string().min(1),
   location: nativeMetadataLocationSchema.nullable(),
-  attributes: z.record(z.string(), jsonValueSchema),
+  attributes: jsonObjectSchema,
   evidence: z.array(nativeMetadataEvidenceSchema),
 });
 
@@ -102,8 +103,8 @@ export const nativeInvestigationCoverageSchema = z.strictObject({
   facet: z.string().min(1),
   status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
   reason: z.string().nullable(),
-  examined: z.number().int().nonnegative(),
-  omitted: z.number().int().nonnegative(),
+  examined: z.int().nonnegative(),
+  omitted: z.int().nonnegative(),
 });
 
 export const nativeInvestigationProviderSchema = z.strictObject({
@@ -131,9 +132,9 @@ export type NativeInvestigationGraph = z.infer<
 
 /** Caller-controlled hard limits for a bounded relationship trace. */
 export const nativeInvestigationTraceLimitsSchema = z.strictObject({
-  max_depth: z.number().int().min(0).max(32).default(8),
-  max_nodes: z.number().int().min(1).max(2000).default(250),
-  max_edges: z.number().int().min(1).max(5000).default(500),
+  max_depth: z.int().min(0).max(32).default(8),
+  max_nodes: z.int().min(1).max(2000).default(250),
+  max_edges: z.int().min(1).max(5000).default(500),
 });
 
 export type NativeInvestigationTraceLimits = z.infer<
@@ -152,9 +153,18 @@ export const nativeInvestigationTraceSchema = z.strictObject({
   nodes: z.array(nativeInvestigationNodeSchema),
   edges: z.array(nativeInvestigationEdgeSchema),
   unresolved: z.array(nativeInvestigationEdgeSchema),
-  reached_depth: z.number().int().nonnegative(),
-  truncated: z.boolean(),
-  reason: z.string().nullable(),
+  reached_depth: z.int().nonnegative(),
+  truncated: z
+    .boolean()
+    .describe(
+      "The supplied graph was truncated or a local trace bound stopped traversal; source omissions remain unknown.",
+    ),
+  reason: z
+    .string()
+    .nullable()
+    .describe(
+      "Local trace cutoff or missing start when observed; source_graph_truncated otherwise identifies an already truncated source. Source truncation is also retained in limitations when a local reason takes precedence.",
+    ),
   coverage: z.array(nativeInvestigationCoverageSchema),
   limitations: z.array(z.string().min(1)),
 });
@@ -172,6 +182,11 @@ export const traceNativeInvestigationGraph = (
     readonly limits?: Partial<NativeInvestigationTraceLimits>;
   },
 ): NativeInvestigationTrace => {
+  const sourceLimitations = graph.truncated
+    ? [
+        "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+      ]
+    : [];
   const start = graph.nodes.find(({ id }) => id === input.start);
   if (start === undefined)
     return {
@@ -183,10 +198,11 @@ export const traceNativeInvestigationGraph = (
       edges: [],
       unresolved: [],
       reached_depth: 0,
-      truncated: false,
+      truncated: graph.truncated,
       reason: "start_node_missing",
       coverage: graph.coverage,
       limitations: [
+        ...sourceLimitations,
         "The requested start node is absent from the supplied graph.",
       ],
     };
@@ -269,10 +285,11 @@ export const traceNativeInvestigationGraph = (
     edges: [...selectedEdges.values()],
     unresolved: [...unresolved.values()],
     reached_depth: reachedDepth,
-    truncated,
-    reason,
+    truncated: truncated || graph.truncated,
+    reason: reason ?? (graph.truncated ? "source_graph_truncated" : null),
     coverage: graph.coverage,
     limitations: [
+      ...sourceLimitations,
       "Static analysis does not prove that an authored UI action is reachable or executed at runtime.",
       "Provider call graphs may omit unresolved indirect dispatch.",
     ],
@@ -306,27 +323,44 @@ export const joinInterfaceBuilderDispatch = (
     if (typeof selector !== "string" || selector.length === 0) continue;
     const selectorNodeId = selectorNodesByAction.get(action.id);
     if (selectorNodeId === undefined) continue;
+    examined += 1;
     const destinationEdge = edges.find(
       (edge) =>
         edge.resolution === "observed" &&
         edge.relation === "target_action" &&
         edge.from === action.id &&
-        ["view_controller", "placeholder", "external_object"].includes(
-          nodes.get(edge.to)?.kind ?? "",
-        ),
+        edge.to !== selectorNodeId &&
+        nodes.has(edge.to),
     );
     if (
       destinationEdge === undefined ||
       destinationEdge.resolution !== "observed"
-    )
+    ) {
+      const edgeId = `dispatch:${selectorNodeId}:${action.id}:receiver`;
+      if (!existingEdgeIds.has(edgeId)) {
+        existingEdgeIds.add(edgeId);
+        edges.push({
+          id: edgeId,
+          from: selectorNodeId,
+          to: null,
+          relation: "objc_dispatch",
+          resolution: "unresolved",
+          reason: "authored_action_receiver_unresolved",
+          evidence: action.evidence,
+          limitations: [
+            "The authored action has no resolved receiver; a selector match alone cannot establish its implementation.",
+          ],
+        });
+      }
       continue;
+    }
     const owner = nodes.get(destinationEdge.to);
-    examined += 1;
     const declaredClass = owner?.attributes.class_name;
     const className =
       typeof declaredClass === "string" &&
       declaredClass.length > 0 &&
-      owner?.kind === "view_controller"
+      owner?.kind !== "placeholder" &&
+      owner?.kind !== "external_object"
         ? declaredClass
         : null;
     const candidates = metadata.objc_dispatch_implementations.filter(
@@ -334,7 +368,7 @@ export const joinInterfaceBuilderDispatch = (
         candidate.method_type === "instance" &&
         candidate.selector === selector &&
         (className === null ||
-          candidate.class_name.replace(/\([^)]*\)$/u, "") === className),
+          objcImplementationClassName(candidate) === className),
     );
     const implementation = candidates.length === 1 ? candidates[0] : undefined;
     const edgeId = `dispatch:${selectorNodeId}:${className ?? owner?.id ?? "unknown"}:${selector}`;
@@ -373,7 +407,8 @@ export const joinInterfaceBuilderDispatch = (
         name: `${implementation.class_name} ${selector}`,
         location: {
           address: implementation.implementation_address,
-          file_offset: implementation.location.file_offset,
+          // The implementation location identifies the method record, not its code.
+          file_offset: null,
         },
         attributes: {
           class_name: implementation.class_name,

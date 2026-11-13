@@ -1,4 +1,5 @@
-import { createServer } from "node:http";
+import { createVerifierHttpServer } from "../../../scripts/lib/verifier-http-server.mjs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { inspect } from "node:util";
 import { ProtocolError } from "@modelcontextprotocol/client";
 import { afterEach, expect, it } from "vitest";
@@ -49,23 +50,90 @@ type IdaTransportFixtureOptions = {
   readonly configurationHeaders?: Readonly<Record<string, string>>;
   readonly connectionDependencies?: IdaMcpConnectionDependencies;
 };
-const fixture = async ({
-  redirectUrl,
-  cycle = false,
-  native = false,
-  toolResult,
-  resourceResponseText,
-  toolRpcError,
-  toolStatus = 200,
-  toolStatusText,
-  toolContentType = "application/json",
-  toolResponseBody,
-  configurationHeaders = { Authorization: "Bearer transport-fixture-secret" },
-  connectionDependencies,
-}: IdaTransportFixtureOptions = {}) => {
+const fixtureResponse = (
+  input: z.infer<typeof requestSchema>,
+  options: IdaTransportFixtureOptions,
+): unknown =>
+  input.method === "initialize"
+    ? {
+        protocolVersion: input.params?.protocolVersion,
+        capabilities: {
+          tools: {},
+          ...(options.native ? { resources: {} } : {}),
+        },
+        serverInfo: {
+          name: "ida-transport-fixture",
+          version: "observed-server-version",
+        },
+      }
+    : input.method === "tools/list"
+      ? {
+          tools: [
+            {
+              name: input.params?.cursor === undefined ? "first" : "second",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+          ...(input.params?.cursor === undefined
+            ? { nextCursor: "next-page" }
+            : options.cycle
+              ? {
+                  nextCursor:
+                    input.params.cursor === "next-page"
+                      ? "other-page"
+                      : "next-page",
+                }
+              : {}),
+        }
+      : input.method === "resources/read"
+        ? {
+            contents: [
+              {
+                uri: "ida://idb/metadata",
+                mimeType: "application/json",
+                text:
+                  options.resourceResponseText ??
+                  JSON.stringify({
+                    path: "/fixture/input.i64",
+                    sha256: "a".repeat(64),
+                    base: "0x1000",
+                    module: "input",
+                  }),
+              },
+            ],
+          }
+        : options.toolResult !== undefined
+          ? options.toolResult
+          : options.native
+            ? {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify([{ observed: true }]),
+                  },
+                ],
+                structuredContent: { result: [], _output_truncated: true },
+              }
+            : { content: [], structuredContent: { observed: true } };
+
+const fixture = async (options: IdaTransportFixtureOptions = {}) => {
+  const {
+    redirectUrl,
+    native = false,
+    toolRpcError,
+    toolStatus = 200,
+    toolStatusText,
+    toolContentType = "application/json",
+    toolResponseBody,
+    configurationHeaders = { Authorization: "Bearer transport-fixture-secret" },
+    connectionDependencies,
+  } = options;
   const methods: string[] = [];
   const headers: (string | undefined)[] = [];
-  const server = createServer(async (request, response) => {
+  const handleRequest = async (
+    request: IncomingMessage,
+    response: ServerResponse,
+  ) => {
     if (redirectUrl !== undefined) {
       response.writeHead(307, { Location: redirectUrl });
       response.end();
@@ -86,65 +154,7 @@ const fixture = async ({
       response.end();
       return;
     }
-    const result =
-      input.method === "initialize"
-        ? {
-            protocolVersion: input.params?.protocolVersion,
-            capabilities: { tools: {}, ...(native ? { resources: {} } : {}) },
-            serverInfo: {
-              name: "ida-transport-fixture",
-              version: "observed-server-version",
-            },
-          }
-        : input.method === "tools/list"
-          ? {
-              tools: [
-                {
-                  name: input.params?.cursor === undefined ? "first" : "second",
-                  inputSchema: { type: "object", properties: {} },
-                },
-              ],
-              ...(input.params?.cursor === undefined
-                ? { nextCursor: "next-page" }
-                : cycle
-                  ? {
-                      nextCursor:
-                        input.params.cursor === "next-page"
-                          ? "other-page"
-                          : "next-page",
-                    }
-                  : {}),
-            }
-          : input.method === "resources/read"
-            ? {
-                contents: [
-                  {
-                    uri: "ida://idb/metadata",
-                    mimeType: "application/json",
-                    text:
-                      resourceResponseText ??
-                      JSON.stringify({
-                        path: "/fixture/input.i64",
-                        sha256: "a".repeat(64),
-                        base: "0x1000",
-                        module: "input",
-                      }),
-                  },
-                ],
-              }
-            : toolResult !== undefined
-              ? toolResult
-              : native
-                ? {
-                    content: [
-                      {
-                        type: "text",
-                        text: JSON.stringify([{ observed: true }]),
-                      },
-                    ],
-                    structuredContent: { result: [], _output_truncated: true },
-                  }
-                : { content: [], structuredContent: { observed: true } };
+    const result = fixtureResponse(input, options);
     if (input.method === "tools/call" && toolStatusText !== undefined)
       response.statusMessage = toolStatusText;
     response.writeHead(input.method === "tools/call" ? toolStatus : 200, {
@@ -162,17 +172,10 @@ const fixture = async ({
               : { result }),
           }),
     );
-  });
+  };
+  const { server, close } = createVerifierHttpServer(handleRequest);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  cleanups.push(
-    () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) =>
-          error === undefined ? resolve() : reject(error),
-        );
-        server.closeAllConnections();
-      }),
-  );
+  cleanups.push(close);
   const address = server.address();
   if (address === null || typeof address === "string")
     throw new Error("Missing HTTP fixture address");
@@ -209,6 +212,20 @@ it("uses the pinned SDK for a local Streamable HTTP handshake, paged discovery, 
   expect(
     headers.every((value) => value === "Bearer transport-fixture-secret"),
   ).toBe(true);
+});
+
+it("retains own structured fields through the SDK before scalar-wrapper selection", async () => {
+  const structuredContent = {
+    ["__proto__"]: { observed: true },
+    result: "ordinary field",
+    nested: [{ ["__proto__"]: "nested fact" }],
+  };
+  const { connection } = await fixture({
+    toolResult: { content: [], structuredContent },
+  });
+  await connection.connect();
+  const result = await connection.call("first", {});
+  expect(JSON.stringify(result)).toBe(JSON.stringify(structuredContent));
 });
 
 it("omits an oversized HTTP error body before retaining or redacting it", async () => {

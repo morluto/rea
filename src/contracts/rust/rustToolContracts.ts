@@ -1,7 +1,10 @@
+import { rustBinarySchema } from "../../domain/rust/rustBinary.js";
+import { inspectRustBinaryRequestSchema } from "../../domain/rust/rustBinaryQuery.js";
+import { z } from "zod";
 import {
-  inspectRustBinaryInputSchema,
-  rustBinarySchema,
-} from "../../domain/rust/rustBinary.js";
+  rustBinarySummaryViewResultSchema,
+  rustBinaryPageViewResultSchema,
+} from "../../domain/analysisView/analysisView.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
@@ -12,10 +15,17 @@ export const RUST_TOOL_CONTRACTS = [
     name: "inspect_rust_binary",
     ...toolContractMetadata("inspect_rust_binary"),
     kind: "artifact-provider",
+    requiresActiveTarget: true,
     description:
-      "Inspect the cargo-auditable crate dependency list embedded in an explicit local ELF, PE or thin Mach-O image. Returns the artifact SHA-256, the .dep-v0 section file offset and size, compressed and uncompressed sizes, format version, packages in their original order, the root package index, and dependency edges by index. Reads zlib-compressed JSON without installing Rust, opening a disassembler, executing the target, writing temporary files or accessing the network. A missing section is null metadata with a limitation and is not proof that the binary has no dependencies. A rustc commit hash is reported only as an inference when a /rustc/<40-hex>/ path is present in read-only data. Resource guards bound files to 256 MiB, dependency sections to 1 MiB, inflated JSON to the smaller of 8 MiB and 64 times the compressed size, and the complete report to 8 MiB. Malformed, unsupported and oversized inputs receive typed failures rather than partial success.",
-    inputSchema: inspectRustBinaryInputSchema,
-    outputSchema: evidenceResultOf(rustBinarySchema),
+      "Read the embedded cargo-auditable crate dependencies of a local ELF, PE or selected Mach-O slice without running it or requiring Rust. Returns artifact identity, source ranges, ordered packages and dependency edges. Missing metadata does not prove no dependencies; a rustc commit from an observed source path is inferred. Default complete returns the report; detail summary retains it for inspect_analysis_view kind rust, collections packages/edges, via parent_evidence_id. Optional view selects a page in this call and cannot accompany explicit complete detail. Original row indices and every matching version survive selection; select dependencies explicitly for package dependency vectors. Runtime dependencies remain unknown; malformed or oversized inputs fail rather than return partial success.",
+    inputSchema: inspectRustBinaryRequestSchema,
+    outputSchema: evidenceResultOf(
+      z.union([
+        rustBinarySchema,
+        rustBinarySummaryViewResultSchema,
+        rustBinaryPageViewResultSchema,
+      ]),
+    ),
     examples: [
       {
         title: "Inspect an embedded Rust dependency list",

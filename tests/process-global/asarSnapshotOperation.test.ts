@@ -40,7 +40,9 @@ it("serializes concurrent ASAR snapshot preparation and cleans its single owned 
       preparingSnapshot,
     ]);
     if (firstEntry.done) throw new Error("Expected an ASAR member");
-    expect(await buffer(snapshot)).toEqual(await readFile(archive));
+    expect(
+      Buffer.compare(await buffer(snapshot), await readFile(archive)),
+    ).toBe(0);
 
     const mismatch = reader.prepareContainer("0".repeat(64));
     const matching = reader.prepareContainer(expectedDigest);

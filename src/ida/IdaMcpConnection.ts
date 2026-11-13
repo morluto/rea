@@ -1,13 +1,26 @@
 import {
+  ArtifactResourceScope,
+  type ArtifactResourceOwner,
+} from "../artifacts/ArtifactResourceScope.js";
+import { ResponseBodyCleanup } from "../providers/ResponseBodyCleanup.js";
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  mcpToolResultSchema,
+  mcpTextBlocks,
+  parseMcpJsonOrText,
+} from "../providers/McpToolResult.js";
+import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
+import {
   createIdaDiagnosticRedactor,
   IDA_DIAGNOSTIC_SOURCE_BYTES,
 } from "./IdaDiagnosticRedactor.js";
 import { IdaDiagnosticResourceError } from "./IdaDiagnosticWriter.js";
+import { MIMEType } from "node:util";
 import { ChildProcess } from "node:child_process";
 import { Socket } from "node:net";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
-  Client,
   ProtocolError,
   SdkError,
   SdkErrorCode,
@@ -19,15 +32,27 @@ import {
   StdioClientTransport,
 } from "@modelcontextprotocol/client/stdio";
 import { z } from "zod";
-import type { IdaConfiguration } from "./IdaConfiguration.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  idaRegistrationTimeoutGuidance,
+  type IdaConfiguration,
+} from "./IdaConfiguration.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   AnalysisTimeoutError,
+  AnalysisCancelledError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import {
+  McpHttpUtf8Error,
+  validateMcpHttpResponse,
+} from "../providers/Utf8McpResponse.js";
 
 /** Injectable MCP boundary used by the provider and transport conformance tests. */
 export interface IdaMcpConnection {
@@ -35,9 +60,15 @@ export interface IdaMcpConnection {
   call(
     name: string,
     args: Readonly<Record<string, JsonValue>>,
-    options?: { readonly timeoutMs?: number | undefined },
+    options?: {
+      readonly timeoutMs?: number | undefined;
+      readonly signal?: AbortSignal | undefined;
+    },
   ): Promise<JsonValue>;
-  readResource?(uri: string): Promise<JsonValue>;
+  readResource?(
+    uri: string,
+    options?: { readonly signal?: AbortSignal | undefined },
+  ): Promise<JsonValue>;
   serverInfo(): JsonValue;
   close(): Promise<void>;
   /**
@@ -52,12 +83,7 @@ export type IdaMcpConnectionDependencies = Readonly<{
   createDiagnosticRedactor?: typeof createIdaDiagnosticRedactor;
 }>;
 
-const toolResultSchema = z.object({
-  isError: z.boolean().optional(),
-  structuredContent: z.record(z.string(), z.unknown()).optional(),
-  content: z.array(
-    z.object({ type: z.string(), text: z.string().optional() }).passthrough(),
-  ),
+const toolResultSchema = mcpToolResultSchema.extend({
   _meta: z
     .object({
       ida_mcp: z
@@ -91,9 +117,7 @@ export const decodeIdaToolResult = (
   diagnostic: IdaDiagnosticRedactor = createIdaDiagnosticRedactor(),
 ): JsonValue => {
   const result = toolResultSchema.parse(input);
-  const blocks = result.content.flatMap((block) =>
-    block.type === "text" && block.text !== undefined ? [block.text] : [],
-  );
+  const blocks = mcpTextBlocks(result.content);
   if (result.isError === true) {
     const reason = diagnostic.blocks(blocks);
     throw new AnalysisProtocolError(
@@ -115,33 +139,25 @@ export const decodeIdaToolResult = (
     );
   // Native MCP retains the complete JSON text while structuredContent may
   // contain a shortened preview. Parse that producer-owned representation once.
+  const text = blocks.length === 1 ? blocks[0] : undefined;
   if (protocol === "native") {
-    if (blocks.length !== 1)
+    if (text === undefined)
       throw new AnalysisProtocolError(
         "Native IDA MCP omitted its complete JSON text result.",
       );
-    return parseIdaJsonText(blocks[0] ?? "");
+    return parseIdaJsonText(text);
   }
   if (result.structuredContent !== undefined) {
-    const value = result.structuredContent;
-    return jsonValueSchema.parse(
-      Object.keys(value).length === 1 && "result" in value
-        ? value.result
-        : value,
-    );
+    const value = jsonObjectSchema.parse(result.structuredContent);
+    return Object.keys(value).length === 1 && Object.hasOwn(value, "result")
+      ? value.result!
+      : value;
   }
-  if (blocks.length !== 1)
+  if (text === undefined)
     throw new AnalysisProtocolError(
       "IDA MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
     );
-  const values = blocks.map((text): JsonValue => {
-    try {
-      return jsonValueSchema.parse(JSON.parse(text));
-    } catch {
-      return text;
-    }
-  });
-  return values[0] ?? null;
+  return parseMcpJsonOrText(text);
 };
 
 // Retain only producer-sanitized JSON diagnostics, never a native parser cause.
@@ -263,65 +279,125 @@ const httpErrorBody = (
 /** Keep error-body materialization within the diagnostic source-byte budget. */
 const readBoundedResponseText = async (
   response: Response,
+  responses: ResponseBodyCleanup,
+  signal: AbortSignal | null | undefined,
 ): Promise<string | undefined> => {
   if (response.body === null) return "";
   const reader = response.body.getReader();
   const chunks: Buffer[] = [];
   let total = 0;
+  let cancellationOwnsReader = false;
+  const cancel = (): void => {
+    if (cancellationOwnsReader) return;
+    cancellationOwnsReader = true;
+    responses.cancel(async () => {
+      try {
+        await reader.cancel(signal?.reason);
+      } finally {
+        reader.releaseLock();
+      }
+    });
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
   try {
     for (;;) {
+      if (signal?.aborted) {
+        cancel();
+        throw signal.reason;
+      }
       const { done, value } = await reader.read();
+      if (signal?.aborted) throw signal.reason;
       if (done) return Buffer.concat(chunks, total).toString("utf8");
       total += value.byteLength;
       if (total > IDA_DIAGNOSTIC_SOURCE_BYTES) {
-        await reader.cancel().catch(() => undefined);
+        cancel();
         return undefined;
       }
       chunks.push(Buffer.from(value));
     }
   } finally {
-    reader.releaseLock();
+    signal?.removeEventListener("abort", cancel);
+    if (!cancellationOwnsReader) reader.releaseLock();
   }
 };
 
 const diagnosticFetch =
-  (redactor: IdaDiagnosticRedactor): typeof fetch =>
+  (
+    redactor: IdaDiagnosticRedactor,
+    responses: ResponseBodyCleanup,
+    acquisitions: ArtifactResourceScope,
+    stopped: () => boolean,
+    rejectTransport: (failure: McpHttpUtf8Error) => void,
+  ): typeof fetch =>
   async (input, init) => {
-    const response = await fetch(input, init);
-    const readText = response.text.bind(response);
-    let safeBody: string | undefined;
-    if (!response.ok) {
-      // Normalize before the SDK can swallow a body-consumer failure or drop
-      // its format metadata. Both consumers use this one owned diagnostic.
-      const sourceBody = await readBoundedResponseText(response);
-      safeBody =
-        sourceBody === undefined
-          ? redactor.text(
-              `IDA MCP response body omitted: exceeds ${IDA_DIAGNOSTIC_SOURCE_BYTES} UTF-8 bytes.`,
-            )
-          : httpErrorBody(response, sourceBody, redactor);
-      const body = safeBody;
-      Object.defineProperty(response, "text", {
-        value: async (): Promise<string> => body,
-      });
-    }
-    // Successful JSON remains lazy, and SSE keeps its original body stream.
-    Object.defineProperty(response, "json", {
-      value: async (): Promise<unknown> => {
-        const text = safeBody ?? (await readText());
-        try {
-          const value: unknown = JSON.parse(text);
-          return value;
-        } catch {
-          // Parsing failure owns diagnostics even when the HTTP status succeeded.
-          throw new IdaHttpJsonError(
-            safeBody ?? httpErrorBody(response, text, redactor),
-            redactor,
-          );
-        }
+    const beganBeforeStop = !stopped();
+    let pending = true;
+    const owner: ArtifactResourceOwner = {
+      kind: "lease",
+      resource: "IDA MCP HTTP response acquisition",
+      lease: {
+        release: async () => {
+          if (pending)
+            throw new Error(
+              "IDA MCP HTTP response acquisition is still pending",
+            );
+        },
       },
-    });
-    return response;
+    };
+    acquisitions.retain(owner);
+    try {
+      const acquired = await fetch(input, init);
+      if (init?.signal?.aborted || (beganBeforeStop && stopped())) {
+        if (acquired.body !== null)
+          responses.cancel(() => acquired.body!.cancel());
+        throw (
+          init?.signal?.reason ??
+          new Error("IDA MCP connection closed before response acquisition")
+        );
+      }
+      const response = validateMcpHttpResponse(acquired, rejectTransport);
+      const readText = response.text.bind(response);
+      let safeBody: string | undefined;
+      if (!response.ok) {
+        // Normalize before the SDK can swallow a body-consumer failure or drop
+        // its format metadata. Both consumers use this one owned diagnostic.
+        const sourceBody = await readBoundedResponseText(
+          response,
+          responses,
+          init?.signal,
+        );
+        safeBody =
+          sourceBody === undefined
+            ? redactor.text(
+                `IDA MCP response body omitted: exceeds ${IDA_DIAGNOSTIC_SOURCE_BYTES} UTF-8 bytes.`,
+              )
+            : httpErrorBody(response, sourceBody, redactor);
+        const body = safeBody;
+        Object.defineProperty(response, "text", {
+          value: async (): Promise<string> => body,
+        });
+      }
+      // Successful JSON remains lazy, and SSE keeps its original body stream.
+      Object.defineProperty(response, "json", {
+        value: async (): Promise<unknown> => {
+          const text = safeBody ?? (await readText());
+          try {
+            const value: unknown = JSON.parse(text);
+            return value;
+          } catch {
+            // Parsing failure owns diagnostics even when the HTTP status succeeded.
+            throw new IdaHttpJsonError(
+              safeBody ?? httpErrorBody(response, text, redactor),
+              redactor,
+            );
+          }
+        },
+      });
+      return response;
+    } finally {
+      pending = false;
+      await acquisitions.release(owner);
+    }
   };
 
 const retainedTransportCause = (cause: unknown, message: string): Error => {
@@ -341,12 +417,62 @@ export const createIdaMcpConnection = (
   environment: Readonly<NodeJS.ProcessEnv>,
   dependencies: IdaMcpConnectionDependencies = {},
 ): IdaMcpConnection => {
-  const client = new Client({ name: "rea-ida-provider", version: "1" });
+  const client = new StructuredContentMcpClient({
+    name: "rea-ida-provider",
+    version: "1",
+  });
   const redactor = (
     dependencies.createDiagnosticRedactor ?? createIdaDiagnosticRedactor
   )(config);
+  const responses = new ResponseBodyCleanup("IDA MCP HTTP response body");
+  const acquisitions = new ArtifactResourceScope();
+  let stopping = false;
+  let transportClosed = false;
+  let closing: Promise<void> | undefined;
   let stderr = Buffer.alloc(0);
   let stderrBytes = 0;
+  let httpUtf8Failure: McpHttpUtf8Error | undefined;
+  const capturedTransportOutput = () => {
+    let start = 0;
+    if (stderrBytes > stderr.length)
+      while (start < stderr.length && (stderr[start]! & 0xc0) === 0x80) start++;
+    return {
+      stdout: "",
+      stderr: redactor.blocks([stderr.subarray(start).toString("utf8")]),
+      truncated: stderrBytes > stderr.length - start,
+      stdout_bytes: 0,
+      stderr_bytes: stderrBytes,
+    };
+  };
+  // SDK 2.3.1 returns an SdkError abort reason by identity. A fresh private
+  // reason distinguishes this caller abort from an already established failure.
+  const requestWithCallerSignal = async <Value>(
+    operation: string,
+    signal: AbortSignal | undefined,
+    request: (requestSignal: AbortSignal | undefined) => Promise<Value>,
+  ): Promise<Value> => {
+    if (signal === undefined) return request(undefined);
+    const controller = new AbortController();
+    const cancellation = new SdkError(
+      SdkErrorCode.RequestTimeout,
+      "REA caller cancelled this IDA MCP request",
+    );
+    const abort = () => controller.abort(cancellation);
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    try {
+      return await request(controller.signal);
+    } catch (cause: unknown) {
+      if (cause === cancellation)
+        throw new AnalysisCancelledError(operation, {
+          cause: signal.reason,
+          capturedOutput: capturedTransportOutput(),
+        });
+      throw cause;
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  };
   const transportFailure = (
     cause: unknown,
     operation = "ida_mcp_response",
@@ -357,6 +483,13 @@ export const createIdaMcpConnection = (
         ? /ReadBuffer exceeded maximum size of (\d+) bytes/u.exec(cause.message)
         : null;
     if (cause instanceof IdaDiagnosticResourceError) throw cause;
+    if (cause instanceof McpHttpUtf8Error) throw cause;
+    if (
+      httpUtf8Failure !== undefined &&
+      cause instanceof SdkError &&
+      cause.code === SdkErrorCode.ConnectionClosed
+    )
+      throw httpUtf8Failure;
     let failure: Error;
     if (cause instanceof IdaHttpJsonError)
       failure = new Error(cause.message, { cause });
@@ -383,20 +516,16 @@ export const createIdaMcpConnection = (
         cause: retainedTransportCause(cause, safeMessage),
       });
     }
-    let start = 0;
-    if (stderrBytes > stderr.length)
-      while (start < stderr.length && (stderr[start]! & 0xc0) === 0x80) start++;
-    const capturedOutput = {
-      stdout: "",
-      stderr: redactor.blocks([stderr.subarray(start).toString("utf8")]),
-      truncated: stderrBytes > stderr.length - start,
-      stdout_bytes: 0,
-      stderr_bytes: stderrBytes,
-    };
+    const capturedOutput = capturedTransportOutput();
     if (cause instanceof SdkError && cause.code === SdkErrorCode.RequestTimeout)
       throw new AnalysisTimeoutError(operation, requestTimeoutMs, {
         cause: failure,
         capturedOutput,
+        ...idaRegistrationTimeoutGuidance(
+          requestTimeoutMs,
+          "request",
+          config.timeoutMs,
+        ),
       });
     if (bufferLimit !== null)
       throw new AnalysisResourceConstraintError(
@@ -413,7 +542,7 @@ export const createIdaMcpConnection = (
       capturedOutput,
     });
   };
-  const transport =
+  const transport: StdioClientTransport | StreamableHTTPClientTransport =
     "command" in config
       ? new StdioClientTransport({
           command: config.command,
@@ -437,7 +566,16 @@ export const createIdaMcpConnection = (
         })
       : new StreamableHTTPClientTransport(new URL(config.url), {
           requestInit: { headers: config.headers, redirect: "error" },
-          fetch: diagnosticFetch(redactor),
+          fetch: diagnosticFetch(
+            redactor,
+            responses,
+            acquisitions,
+            () => stopping,
+            (failure) => {
+              httpUtf8Failure ??= failure;
+              void transport.close().catch(() => undefined);
+            },
+          ),
         });
   // Keep a bounded diagnostic tail for genuine failures; never persist ambient variables.
   if (transport instanceof StdioClientTransport)
@@ -466,38 +604,83 @@ export const createIdaMcpConnection = (
         options?.timeoutMs ?? config.timeoutMs,
       );
       return decodeIdaToolResult(
-        await client
-          .callTool({ name, arguments: args }, { timeout: requestTimeoutMs })
-          .catch((cause: unknown) =>
-            transportFailure(cause, name, requestTimeoutMs),
+        await requestWithCallerSignal(name, options?.signal, (signal) =>
+          client.callTool(
+            { name, arguments: args },
+            {
+              timeout: requestTimeoutMs,
+              ...(signal === undefined ? {} : { signal }),
+            },
           ),
+        ).catch((cause: unknown) => {
+          if (cause instanceof AnalysisCancelledError) throw cause;
+          return transportFailure(cause, name, requestTimeoutMs);
+        }),
         config.protocol,
         redactor,
       );
     },
-    async readResource(uri) {
-      const response = await client
-        .readResource({ uri }, { timeout: config.timeoutMs })
-        .catch((cause: unknown) =>
-          transportFailure(cause, "ida_mcp_read_resource"),
-        );
-      const resource = z
-        .object({
-          contents: z
-            .array(
-              z.object({
-                uri: z.literal(uri),
-                mimeType: z.literal("application/json"),
-                text: z.string(),
-              }),
-            )
-            .length(1),
-        })
-        .parse(response);
-      return parseIdaJsonText(resource.contents[0]?.text ?? "");
+    async readResource(uri, options) {
+      const response = await requestWithCallerSignal(
+        "ida_mcp_read_resource",
+        options?.signal,
+        (signal) =>
+          client.readResource(
+            { uri },
+            {
+              timeout: config.timeoutMs,
+              ...(signal === undefined ? {} : { signal }),
+            },
+          ),
+      ).catch((cause: unknown) => {
+        if (cause instanceof AnalysisCancelledError) throw cause;
+        return transportFailure(cause, "ida_mcp_read_resource");
+      });
+      return decodeIdaJsonResource(uri, response);
     },
     serverInfo: () => jsonValueSchema.parse(client.getServerVersion() ?? null),
-    close: () => client.close().catch(transportFailure),
+    close() {
+      if (closing !== undefined) return closing;
+      stopping = true;
+      const attempt = (async () => {
+        const failures: unknown[] = [];
+        if (!transportClosed) {
+          try {
+            await client.close().catch(transportFailure);
+            transportClosed = true;
+          } catch (cause: unknown) {
+            failures.push(cause);
+          }
+        }
+        for (const resources of [acquisitions, responses]) {
+          try {
+            await resources.close();
+          } catch (cause: unknown) {
+            const failure = new ProviderCleanupError(
+              "ida",
+              resources.cleanupResources,
+              { reason: "IDA MCP HTTP response cleanup remains incomplete." },
+              { cause, operation: "ida_mcp_close" },
+            );
+            bindArtifactFileCleanup(cause, failure);
+            failures.push(failure);
+          }
+        }
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1)
+          throw new AggregateError(
+            failures,
+            "IDA MCP transport and response cleanup failed",
+          );
+      })();
+      closing = attempt;
+      void attempt
+        .finally(() => {
+          if (closing === attempt) closing = undefined;
+        })
+        .catch(() => undefined);
+      return attempt;
+    },
     detach() {
       if (!(transport instanceof StdioClientTransport)) return;
       // The SDK exposes only the child's pid, not the handles it holds.
@@ -508,4 +691,31 @@ export const createIdaMcpConnection = (
         if (stream instanceof Socket) stream.unref();
     },
   };
+};
+
+/** Resource metadata follows the SDK's optional media type; content/identity stay strict. */
+const decodeIdaJsonResource = (uri: string, response: unknown): JsonValue => {
+  const resource = z
+    .object({
+      contents: z
+        .array(
+          z.object({
+            uri: z.literal(uri),
+            mimeType: z
+              .string()
+              .refine((value) => {
+                try {
+                  return new MIMEType(value).essence === "application/json";
+                } catch {
+                  return false;
+                }
+              }, "Expected a JSON resource media type")
+              .optional(),
+            text: z.string(),
+          }),
+        )
+        .length(1),
+    })
+    .parse(response);
+  return parseIdaJsonText(resource.contents[0]!.text);
 };

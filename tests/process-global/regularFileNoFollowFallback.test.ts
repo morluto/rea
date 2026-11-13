@@ -46,9 +46,13 @@ it("rejects a symlink when O_NOFOLLOW is unavailable and still follows when requ
     await linkedReader.close();
   }
 
-  const followed = await openRegularFile(link, { symlinks: "follow" });
+  const { handle: followed } = await openRegularFile(link, {
+    symlinks: "follow",
+  });
   try {
-    await expect(readFile(followed)).resolves.toEqual(await readFile(target));
+    expect(
+      Buffer.compare(await readFile(followed), await readFile(target)),
+    ).toBe(0);
   } finally {
     await followed.close();
   }

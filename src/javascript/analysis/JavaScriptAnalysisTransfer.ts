@@ -3,10 +3,16 @@ import { createReadStream } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import { z } from "zod";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import { safeParseUtf8Json } from "../../domain/safeJson.js";
 
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
-import { JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
+import {
+  JAVASCRIPT_PARENT_HEAP_NODE_OPTIONS,
+  JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
+  JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+} from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import type {
   JavaScriptSemanticFileProjection,
   JavaScriptSemanticProjectionCapacity,
@@ -20,8 +26,7 @@ import {
 } from "./JavaScriptAnalysisWorkerSchemas.js";
 
 // Budgets bound transfer representation, independently of source length.
-/** Record bound whose transient decoding expansion is reserved by the consumer. */
-export const JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES = 8 * 1024 * 1024;
+export { JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 const FRAME_BYTES = JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES;
 const TRANSFER_BYTES = 512 * 1024 * 1024;
 const MAX_TRANSFER_BYTES = 2 * 1024 * 1024 * 1024;
@@ -41,13 +46,13 @@ const recordSchema = z.discriminatedUnion("kind", [
 
 /** Complete-file coordinates authenticated before adopting any worker facts. */
 export const javaScriptAnalysisTransferDescriptorSchema = z.strictObject({
-  bytes: z.number().int().nonnegative().max(MAX_TRANSFER_BYTES),
+  bytes: z.int().nonnegative().max(MAX_TRANSFER_BYTES),
   sha256: digestSchema,
-  records: z.number().int().nonnegative(),
-  module_bytes: z.number().int().nonnegative(),
-  module_records: z.number().int().nonnegative(),
-  graph_bytes: z.number().int().nonnegative(),
-  graph_records: z.number().int().nonnegative(),
+  records: z.int().nonnegative(),
+  module_bytes: z.int().nonnegative(),
+  module_records: z.int().nonnegative(),
+  graph_bytes: z.int().nonnegative(),
+  graph_records: z.int().nonnegative(),
 });
 type Descriptor = z.output<typeof javaScriptAnalysisTransferDescriptorSchema>;
 
@@ -66,6 +71,54 @@ export const javaScriptTransferByteBudget = (
     Math.max(TRANSFER_BYTES, Math.floor(resultBudgetBytes / 8)),
   );
 
+/**
+ * The record ceiling and the 2 GiB file maximum are fixed. The effective file
+ * ceiling follows the parent offered result budget and can rise until that maximum.
+ */
+export const javaScriptTransferCeilingRemediation = (
+  transferFileBytes: number | undefined,
+): string => {
+  const recordBytes = String(JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES);
+  const maximumBytes = String(MAX_TRANSFER_BYTES);
+  const fixed = `The ${recordBytes}-byte transfer record ceiling and the ${maximumBytes}-byte transfer file maximum have no runtime override. Raising max_heap_mb does not raise either fixed ceiling. A request that exceeds the record ceiling or that maximum fails the same way when repeated unchanged.`;
+  const adjustable = `${JAVASCRIPT_PARENT_HEAP_NODE_OPTIONS} to raise the effective file ceiling up to ${maximumBytes} bytes. Selecting fewer source_paths can also raise this effective file allowance, because earlier retained results and the reserve for remaining sources reduce the offered budget. Neither change raises the record ceiling or the maximum.`;
+  if (
+    transferFileBytes !== undefined &&
+    transferFileBytes >= MAX_TRANSFER_BYTES
+  )
+    return `${fixed} The effective transfer file ceiling is the ${maximumBytes}-byte maximum. Selecting fewer source_paths does not raise the record ceiling or that maximum.`;
+  const effective =
+    transferFileBytes === undefined
+      ? "The effective transfer file ceiling follows the parent offered result budget, which follows the CLI/MCP process heap, and can be lower than the maximum."
+      : `The effective transfer file ceiling is ${String(transferFileBytes)} bytes. It follows the parent offered result budget, which follows the CLI/MCP process heap.`;
+  return `${fixed} ${effective} ${adjustable}`;
+};
+
+/** Reattach transfer recovery after a worker protocol frame drops remediation. */
+export const javaScriptForwardedTransferRemediation = (
+  limits: Readonly<Record<string, JsonValue>> | null,
+): string | undefined => {
+  const transferFileBytes = limits?.transfer_file_bytes;
+  if (
+    typeof limits?.transfer_record_bytes !== "number" &&
+    typeof transferFileBytes !== "number"
+  )
+    return undefined;
+  return javaScriptTransferCeilingRemediation(
+    typeof transferFileBytes === "number" ? transferFileBytes : undefined,
+  );
+};
+
+const javaScriptTransferCeilingReason = (
+  recordBytes: number,
+  transferFileBytes: number,
+): string =>
+  recordBytes > FRAME_BYTES
+    ? `A complete JavaScript fact exceeds the ${String(FRAME_BYTES)}-byte transfer record ceiling. This release has no runtime override.`
+    : transferFileBytes >= MAX_TRANSFER_BYTES
+      ? `Complete JavaScript file facts exceed the ${String(MAX_TRANSFER_BYTES)}-byte transfer file maximum. This release has no runtime override.`
+      : `Complete JavaScript file facts exceed the effective transfer file ceiling of ${String(transferFileBytes)} bytes (maximum ${String(MAX_TRANSFER_BYTES)} bytes). That effective ceiling follows the parent offered result budget and can rise until the maximum. The record ceiling and that maximum have no runtime override.`;
+
 const assertTransferByteBudget = (transferBytes: number): void => {
   if (
     !Number.isSafeInteger(transferBytes) ||
@@ -80,7 +133,7 @@ const assertTransferByteBudget = (transferBytes: number): void => {
 const encodeTransferRecord = (
   input: unknown,
   previousBytes: number,
-  transferBytes = TRANSFER_BYTES,
+  transferBytes: number,
 ) => {
   const record = recordSchema.parse(input);
   const line = `${JSON.stringify(record)}\n`;
@@ -89,14 +142,15 @@ const encodeTransferRecord = (
     throw new AnalysisResourceConstraintError(
       "analyze_javascript_application",
       "transport",
-      size > FRAME_BYTES
-        ? "A complete JavaScript fact exceeds the transfer record byte budget"
-        : "Complete JavaScript file facts exceed the transfer byte budget",
+      javaScriptTransferCeilingReason(size, transferBytes),
       {
         transfer_record_bytes: FRAME_BYTES,
         transfer_file_bytes: transferBytes,
         record_bytes: size,
         transfer_bytes_at_least: previousBytes + size,
+      },
+      {
+        remediationAction: javaScriptTransferCeilingRemediation(transferBytes),
       },
     );
   return { line, size, kind: record.kind };
@@ -314,28 +368,38 @@ export async function readJavaScriptAnalysisTransfer(
     ...(signal === undefined ? {} : { signal }),
   });
   let bytes = 0;
-  let pending = "";
-  stream.setEncoding("utf8");
+  let pending: Buffer[] = [];
+  let pendingBytes = 0;
   try {
     for await (const chunk of stream) {
       signal?.throwIfAborted();
-      if (typeof chunk !== "string")
-        throw new TypeError("JavaScript transfer stream is not UTF-8 text");
-      bytes += Buffer.byteLength(chunk);
+      if (!Buffer.isBuffer(chunk))
+        throw new TypeError("JavaScript transfer stream is not bytes");
+      bytes += chunk.length;
       if (bytes > expected.bytes)
         throw new RangeError("JavaScript transfer grew while being read");
       digest.update(chunk);
-      pending += chunk;
+      let start = 0;
       let newline: number;
-      while ((newline = pending.indexOf("\n")) >= 0) {
-        const line = pending.slice(0, newline);
-        pending = pending.slice(newline + 1);
-        if (Buffer.byteLength(line) + 1 > FRAME_BYTES)
+      while ((newline = chunk.indexOf(0x0a, start)) >= 0) {
+        const fragment = chunk.subarray(start, newline);
+        const lineBytes = pendingBytes + fragment.length;
+        if (lineBytes + 1 > FRAME_BYTES)
           throw new RangeError(
             "JavaScript transfer record exceeds its byte budget",
           );
-        const input: unknown = JSON.parse(line);
-        const record = recordSchema.parse(input);
+        // Authenticate physical bytes and frame before decoding. Borrow read
+        // windows until one bounded record is complete, then copy it once.
+        const line =
+          pending.length === 0
+            ? fragment
+            : Buffer.concat([...pending, fragment], lineBytes);
+        pending = [];
+        pendingBytes = 0;
+        start = newline + 1;
+        const decoded = safeParseUtf8Json(line);
+        if (!decoded.ok) throw decoded.cause;
+        const record = recordSchema.parse(decoded.value);
         if (
           [
             "module-header",
@@ -345,10 +409,10 @@ export async function readJavaScriptAnalysisTransfer(
             "module-link",
           ].includes(record.kind)
         ) {
-          moduleBytes += Buffer.byteLength(line) + 1;
+          moduleBytes += lineBytes + 1;
           moduleRecords += 1;
         } else {
-          graphBytes += Buffer.byteLength(line) + 1;
+          graphBytes += lineBytes + 1;
           graphRecords += 1;
         }
         if (record.kind === "projection-header") {
@@ -443,16 +507,19 @@ export async function readJavaScriptAnalysisTransfer(
         }
         records += 1;
       }
-      if (Buffer.byteLength(pending) + 1 > FRAME_BYTES)
+      const tail = chunk.subarray(start);
+      pendingBytes += tail.length;
+      if (pendingBytes + 1 > FRAME_BYTES)
         throw new RangeError(
           "Unterminated JavaScript transfer record exceeds its byte budget",
         );
+      if (tail.length > 0) pending.push(tail);
     }
   } finally {
     stream.destroy();
   }
   if (
-    pending !== "" ||
+    pendingBytes !== 0 ||
     records !== expected.records ||
     bytes !== expected.bytes ||
     moduleBytes !== expected.module_bytes ||

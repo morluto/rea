@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
-import { onlyCallable } from "./javascriptSemanticAnalysis.fixture.js";
+import {
+  onlyBinding,
+  onlyCallable,
+} from "./javascriptSemanticAnalysis.fixture.js";
 const returned = (body: string) =>
   onlyCallable(analyzeJavaScriptSemantics(body), "run").returnSites[0]?.value;
 
@@ -19,6 +22,23 @@ it.each([
 ])("does not retain stale exact values after direct eval: %s", (source) => {
   expect(returned(source)).toMatchObject({ status: "unknown" });
 });
+
+it("retains uncertainty for outer function declarations across eval-bearing calls", () => {
+  const ir = analyzeJavaScriptSemantics(
+    'function value(){} function run(){const saved=value;eval("value=2");return saved;} run();run();',
+  );
+  expect(onlyBinding(ir, "saved").provenance.status).toBe("ambiguous");
+});
+
+it.each(["||=", "??="])(
+  "does not treat %s as a fresh reset before eval",
+  (operator) => {
+    const ir = analyzeJavaScriptSemantics(
+      `let value; function run(){value ${operator} 1;const saved=(0,value);eval('value=require("node:fs")');return saved;}run();run();`,
+    );
+    expect(onlyBinding(ir, "saved").provenance.status).toBe("ambiguous");
+  },
+);
 
 it.each([
   'eval("var value=2"); function run(){const value=1;return value;}',

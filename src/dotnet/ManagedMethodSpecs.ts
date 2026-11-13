@@ -1,18 +1,57 @@
+import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
+import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
+import { createHash } from "node:crypto";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
   methodGenericArity,
-  specSignature,
-  type ManagedMethod,
+  specSignatureFacts,
+  type SignatureTypeName,
+  type DecodedMethod,
   type MemberCore,
 } from "./ManagedMemberInspectorCore.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
-  metadataCodedToken,
-  metadataCodedTokenInvalidReason,
+  MANAGED_CODED_INDEXES,
+  type ManagedMetadataLayout,
+} from "./ManagedMetadataLayout.js";
+import {
+  decodeMetadataCodedIndex,
+  type MetadataTokenFact,
   metadataRowCursor,
   readMetadataBlob,
 } from "./ManagedMetadataHeaps.js";
 import { managedFailure, readManagedValue } from "./ManagedReaderFailure.js";
+
+/**
+ * A MethodSpec row's Method column and instantiation blob: the generic
+ * method it instantiates and the row's byte offset. Shared by the edge
+ * naming below and by callers that resolve a referenced spec before the
+ * edge pass, so both use the same coded-index interpretation.
+ */
+export const methodSpecMethod = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  row: number,
+): {
+  readonly method: ReturnType<typeof decodeMetadataCodedIndex>;
+  readonly methodRaw: number;
+  readonly instantiation: number;
+  readonly offset: number;
+} => {
+  const cursor = metadataRowCursor(bytes, layout, 0x2b, row);
+  const methodRaw = cursor.readIndex(layout.codedIndexSize("MethodDefOrRef"));
+  const instantiation = cursor.readIndex(layout.blobIndexSize);
+  return {
+    method: decodeMetadataCodedIndex(
+      methodRaw,
+      MANAGED_CODED_INDEXES.MethodDefOrRef.bits,
+      MANAGED_CODED_INDEXES.MethodDefOrRef.tables,
+      layout.rowCounts,
+    ),
+    methodRaw,
+    instantiation,
+    offset: cursor.start,
+  };
+};
 
 /**
  * Index fields, member references, and methods by token, then name each
@@ -22,8 +61,9 @@ import { managedFailure, readManagedValue } from "./ManagedReaderFailure.js";
 export const edgeTargets = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  methods: readonly ManagedMethod[],
+  methods: readonly DecodedMethod[],
   cores: readonly ReadonlyMap<string, MemberCore>[],
+  signatureTypeName: SignatureTypeName,
 ): {
   readonly members: ReadonlyMap<string, MemberCore>;
   readonly issues: readonly ManagedParseIssue[];
@@ -33,13 +73,16 @@ export const edgeTargets = (
   const seen = new Set<string>();
   // Generic arity by method token, so instantiations of one method decode it once.
   const arities = new Map<string, number | null>();
-  for (const method of methods)
-    for (const { operand } of method.body.anchors) {
-      if (operand?.startsWith("0x2b") !== true || seen.has(operand)) continue;
-      seen.add(operand);
+  for (const { tokenInstructions } of methods)
+    for (const { reference } of tokenInstructions) {
+      if (reference.table !== 0x2b || seen.has(reference.token)) continue;
+      seen.add(reference.token);
       readManagedValue(
         () =>
-          readMethodSpec({ bytes, layout, members, issues, arities }, operand),
+          readMethodSpec(
+            { bytes, layout, members, issues, arities, signatureTypeName },
+            reference,
+          ),
         issues,
       );
     }
@@ -58,58 +101,59 @@ const readMethodSpec = (
     members,
     issues,
     arities,
+    signatureTypeName,
   }: {
     readonly bytes: Buffer;
     readonly layout: ManagedMetadataLayout;
     readonly members: Map<string, MemberCore>;
     readonly issues: ManagedParseIssue[];
     readonly arities: Map<string, number | null>;
+    readonly signatureTypeName: SignatureTypeName;
   },
-  token: string,
+  reference: MetadataTokenFact,
 ): void => {
+  const { token, row } = reference;
   const scope = `metadata.MethodSpec:${token}`;
-  const cursor = metadataRowCursor(
+  const { method, methodRaw, instantiation, offset } = methodSpecMethod(
     bytes,
     layout,
-    0x2b,
-    Number.parseInt(token.slice(4), 16),
+    row,
   );
-  const methodRaw = cursor.readIndex(layout.codedIndexSize("MethodDefOrRef"));
-  const instantiation = cursor.readIndex(layout.blobIndexSize);
-  const methodReason = metadataCodedTokenInvalidReason(
-    methodRaw,
-    1,
-    [6, 10],
-    layout.rowCounts,
-  );
-  if (methodReason !== null || methodRaw === 0)
+  if (method.kind !== "valid")
     issues.push({
       code: "invalid-row",
       scope,
-      offset: cursor.start,
+      offset,
       detail:
-        methodReason === null
+        method.kind === "null"
           ? "MethodSpec method coded index 0x0 is null, but the Method column must reference a row"
-          : `MethodSpec method coded index 0x${methodRaw.toString(16)} is invalid: ${methodReason}`,
+          : `MethodSpec method coded index 0x${methodRaw.toString(16)} is invalid: ${method.reason}`,
     });
-  const generic = metadataCodedToken(methodRaw, 1, [6, 10], layout.rowCounts);
-  const target = generic === null ? undefined : members.get(generic);
+  const methodReference = method.kind === "valid" ? method : null;
+  const target =
+    methodReference === null ? undefined : members.get(methodReference.token);
   // A MethodSpec instantiates a method, so a field target never lends it a
   // name, even to a field operand.
   if (target !== undefined && target.kind !== "field")
-    members.set(token, { ...target, token });
-  const types = specSignature(
+    members.set(token, { ...target, token, identitySha256: null });
+  const instantiationFacts = specSignatureFacts(
     layout,
-    readMetadataBlob(bytes, layout, instantiation, layout.blob.size),
-    { form: "instantiation", scope, offset: cursor.start },
+    readMetadataBlob(bytes, layout, instantiation, layout.blob?.size ?? 0),
+    { form: "instantiation", scope, offset },
+    signatureTypeName,
   );
-  if (generic === null) return;
+  const { types } = instantiationFacts;
+  if (methodReference === null) return;
+  const generic = methodReference.token;
   // Prefer the arity the target's owner decoded; read the raw signature only
   // for a target nothing decoded, such as a MethodDef outside the selection.
   if (target?.genericArity === undefined && !arities.has(generic))
     arities.set(
       generic,
-      methodGenericArity(layout, methodSignatureBlob(bytes, layout, generic)),
+      methodGenericArity(
+        layout,
+        methodSignatureBlob(bytes, layout, methodReference),
+      ),
     );
   const arity =
     target?.genericArity === undefined
@@ -122,33 +166,45 @@ const readMethodSpec = (
       arity === null
         ? "MethodSpec method does not have a decodable method signature"
         : `MethodSpec supplies ${String(types.length)} type argument(s), but its method declares ${String(arity)} generic parameter(s)`,
-      cursor.start,
+      offset,
     );
+  if (
+    target !== undefined &&
+    target.kind === "method" &&
+    target.identitySha256 != null &&
+    instantiationFacts.resolvedSha256 !== null
+  )
+    members.set(token, {
+      ...target,
+      token,
+      identitySha256: createHash("sha256")
+        .update("managed-method-instantiation-v1\0")
+        .update(Buffer.from(target.identitySha256, "hex"))
+        .update(Buffer.from(instantiationFacts.resolvedSha256, "hex"))
+        .digest("hex"),
+    });
 };
 
 /** The Signature column of a MethodDef or MemberRef row. */
 const methodSignatureBlob = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  token: string,
+  { table, row }: Pick<MetadataTokenFact, "table" | "row">,
 ): Buffer => {
-  const table = Number.parseInt(token.slice(2, 4), 16);
-  const cursor = metadataRowCursor(
-    bytes,
-    layout,
-    table,
-    Number.parseInt(token.slice(4), 16),
-  );
+  let signatureIndex: number;
   if (table === 6) {
-    cursor.readUInt32();
-    cursor.readUInt16();
-    cursor.readUInt16();
-  } else cursor.readIndex(layout.codedIndexSize("MemberRefParent"));
-  cursor.readIndex(layout.stringIndexSize);
+    signatureIndex = readMethodDefinitionRow(bytes, layout, row).signatureIndex;
+  } else {
+    signatureIndex = readMemberReferenceRowFacts(
+      bytes,
+      layout,
+      row,
+    ).signatureIndex;
+  }
   return readMetadataBlob(
     bytes,
     layout,
-    cursor.readIndex(layout.blobIndexSize),
-    layout.blob.size,
+    signatureIndex,
+    layout.blob?.size ?? 0,
   );
 };

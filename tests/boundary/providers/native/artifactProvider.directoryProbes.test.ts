@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../../src/cli/projectCliAnalysisResult.js";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -32,7 +33,9 @@ const writeTree = async (
 
 const probeOperations = async (path: string): Promise<string[]> => {
   const evidence = parseEvidence(
-    await runProviderAnalysis(path, "inspect_artifact", {}),
+    await runProviderAnalysis(path, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
   );
   const inspection = artifactInspectionResultSchema.parse(
     evidence.normalized_result,

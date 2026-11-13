@@ -124,6 +124,7 @@ it.each([null, { caller: "already aborted" }, undefined])(
     const inspect = vi.fn();
     const service = new ElectronFuseService({
       identity: { id: "not-invoked", name: "not invoked", version: "1" },
+      close: async () => {},
       inspect,
     });
     const result = await service.inspect(

@@ -8,6 +8,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 
 const identity = { id: "pcap", name: "Packet capture analysis", version: null };
 
@@ -15,9 +16,15 @@ const clientIdentity = {
   tshark_command: "/usr/bin/tshark",
   tshark_source: "path",
   tshark_version: "TShark (Wireshark) 4.6.6",
+  tshark_resolved_path: null,
+  tshark_sha256: null,
+  tshark_identity_status: "unresolved",
   capinfos_command: "/usr/bin/capinfos",
   capinfos_source: "path",
   capinfos_version: "Capinfos (Wireshark) 4.6.6",
+  capinfos_resolved_path: null,
+  capinfos_sha256: null,
+  capinfos_identity_status: "unresolved",
 };
 
 it("advertises exact valid pcap schemas and records inline evidence through MCP", async () => {
@@ -110,6 +117,12 @@ it("advertises exact valid pcap schemas and records inline evidence through MCP"
     .map((part) => part.text ?? "")
     .join("");
   const evidence = parseEvidence(JSON.parse(text));
+  const bundle = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  expect(bundle.isError).not.toBe(true);
+  expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(evidence);
   expect(evidence.normalized_result).toMatchObject({
     packet_count: 50,
     capture_start: "2026-10-11T14:13:40.608505Z",

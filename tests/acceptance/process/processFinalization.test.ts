@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -14,15 +15,19 @@ import {
   type ProcessCapture,
 } from "../../../src/domain/process/processCaptureParsing.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { runCliJson } from "../../fixtures/cliJsonProcess.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { itWithCaptureCapability as captureTest } from "../../boundary/process/processCaptureCapability.js";
+import {
+  CAPTURE_SKIP_REASON,
+  itWithCaptureCapability as captureTest,
+} from "../../boundary/process/processCaptureCapability.js";
 import { expectSerializedUnverifiedHostCleanup } from "../../support/hostCleanup.js";
 
 const finalizationFixture = fileURLToPath(
   new URL("../../fixtures/processFinalization.mjs", import.meta.url),
 );
+const cliCaptureTest = cliTest.skipIf(CAPTURE_SKIP_REASON);
 
 type CaptureScenario = Record<string, unknown>;
 type CaptureOutcome =
@@ -49,31 +54,35 @@ const captureScenario = (
 });
 
 const captureViaCli = async (
+  cli: TestCli,
   root: string,
   scenario: CaptureScenario,
 ): Promise<CaptureOutcome> => {
   const scenarioPath = join(root, "scenario.json");
   await writeFile(scenarioPath, JSON.stringify(scenario));
-  const document = await runCliJson([
-    "capture-process",
-    scenarioPath,
-    "--format",
-    "json",
-  ]);
+  const result = await cli.run({
+    arguments: ["capture-process", scenarioPath, "--format", "json"],
+    environment: process.env,
+  });
+  expect(result.signal, result.stderr).toBeNull();
+  const document = result.json;
   if (
     typeof document === "object" &&
     document !== null &&
     "code" in document &&
     document.code === "cleanup_incomplete"
-  )
+  ) {
+    expect(result.exitCode, result.stderr).toBe(1);
     return {
       kind: "partial",
       partial: expectSerializedUnverifiedHostCleanup({ error: document }),
     };
+  }
   if (typeof document === "object" && document !== null && "code" in document)
     throw new Error(
       `CLI capture returned an unexpected error: ${JSON.stringify(document).slice(0, 1_000)}`,
     );
+  expect(result.exitCode, result.stderr).toBe(0);
   return {
     kind: "capture",
     capture: parseProcessCapture(parseEvidence(document).normalized_result),
@@ -180,10 +189,11 @@ const completedCaptureFromOutcome = (outcome: CaptureOutcome) => {
   return partial.capture;
 };
 
-const expectCooperativeFinalization = (
+const expectCooperativeFinalization = async (
   outcome: CaptureOutcome,
+  root: string,
   expectedExitCode = 0,
-): void => {
+): Promise<void> => {
   const capture = completedCaptureFromOutcome(outcome);
   expect(capture.exit.reason, "the deadline remains the exit reason").toBe(
     "timeout",
@@ -212,10 +222,13 @@ const expectCooperativeFinalization = (
     capture.frames.map(({ data }) => data).join(""),
     "finalization output is captured",
   ).toContain("finalized");
+  const reportBytes = await readFile(join(root, "final.json"));
+  expect(JSON.parse(reportBytes.toString("utf8"))).toEqual({ phase: "final" });
   expect(
-    capture.files_after.find(({ path }) => path.endsWith("final.json"))?.sha256,
+    capture.files_after.find(({ path }) => path.endsWith(":final.json"))
+      ?.sha256,
     "the final filesystem snapshot hashes the final report",
-  ).toMatch(/^[0-9a-f]{64}$/u);
+  ).toBe(createHash("sha256").update(reportBytes).digest("hex"));
   expect(
     capture.manifest.scenario.finalization_ms,
     "the scenario commitment retains finalization_ms",
@@ -261,9 +274,10 @@ const expectIgnoringFinalization = (outcome: CaptureOutcome): void => {
   ).toBeUndefined();
 };
 
-captureTest.each(["CLI", "MCP"] as const)(
+cliCaptureTest.for(["CLI", "MCP"] as const)(
   "captures a cooperative finalizer through the compiled %s workflow",
-  async (adapter) => {
+  { timeout: 20_000 },
+  async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-accept-");
     const scenario = captureScenario("cooperative", root, {
       timeout_ms: 1_500,
@@ -271,16 +285,16 @@ captureTest.each(["CLI", "MCP"] as const)(
     });
     const outcome =
       adapter === "CLI"
-        ? await captureViaCli(root, scenario)
+        ? await captureViaCli(cli, root, scenario)
         : await captureViaMcp(scenario);
-    expectCooperativeFinalization(outcome);
+    await expectCooperativeFinalization(outcome, root);
   },
-  20_000,
 );
 
-captureTest.each(["CLI", "MCP"] as const)(
+cliCaptureTest.for(["CLI", "MCP"] as const)(
   "records the non-zero exit code of a finalizer through the compiled %s workflow",
-  async (adapter) => {
+  { timeout: 20_000 },
+  async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-accept-");
     const scenario = captureScenario(
       "cooperative",
@@ -290,16 +304,16 @@ captureTest.each(["CLI", "MCP"] as const)(
     );
     const outcome =
       adapter === "CLI"
-        ? await captureViaCli(root, scenario)
+        ? await captureViaCli(cli, root, scenario)
         : await captureViaMcp(scenario);
-    expectCooperativeFinalization(outcome, 3);
+    await expectCooperativeFinalization(outcome, root, 3);
   },
-  20_000,
 );
 
-captureTest.each(["CLI", "MCP"] as const)(
+cliCaptureTest.for(["CLI", "MCP"] as const)(
   "forces SIGKILL after the finalization interval through the compiled %s workflow",
-  async (adapter) => {
+  { timeout: 20_000 },
+  async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-accept-");
     const scenario = captureScenario("ignoring", root, {
       timeout_ms: 1_500,
@@ -307,11 +321,10 @@ captureTest.each(["CLI", "MCP"] as const)(
     });
     const outcome =
       adapter === "CLI"
-        ? await captureViaCli(root, scenario)
+        ? await captureViaCli(cli, root, scenario)
         : await captureViaMcp(scenario);
     expectIgnoringFinalization(outcome);
   },
-  20_000,
 );
 
 captureTest(
@@ -376,41 +389,35 @@ captureTest(
   20_000,
 );
 
-captureTest.each(["CLI", "MCP"] as const)(
+cliCaptureTest.for(["CLI", "MCP"] as const)(
   "keeps the default identity through the compiled %s workflow without finalization_ms",
-  async (adapter) => {
+  { timeout: 20_000 },
+  async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-default-");
     const scenario = captureScenario("ignoring", root, { timeout_ms: 500 });
     const outcome =
       adapter === "CLI"
-        ? await captureViaCli(root, scenario)
+        ? await captureViaCli(cli, root, scenario)
         : await captureViaMcp(scenario);
-    if (outcome.kind === "partial") {
-      expect(
-        finalizationFromPartial(outcome.partial),
-        "the cleanup-flake partial observation has no default finalization",
-      ).toBeUndefined();
-      return;
-    }
+    const capture = completedCaptureFromOutcome(outcome);
     expect(
-      outcome.capture.exit,
+      capture.exit,
       "default captures have no finalization evidence",
     ).not.toHaveProperty("finalization");
     expect(
-      outcome.capture.manifest.scenario,
+      capture.manifest.scenario,
       "the committed scenario keeps its legacy identity",
     ).not.toHaveProperty("finalization_ms");
     expect(
-      outcome.capture.manifest.comparison_contract,
+      capture.manifest.comparison_contract,
       "the comparison contract keeps its legacy identity",
     ).not.toHaveProperty("finalization_ms");
   },
-  20_000,
 );
 
-captureTest.each(["CLI", "MCP"] as const)(
+cliCaptureTest.for(["CLI", "MCP"] as const)(
   "rejects an unrepresentable combined capture budget through the compiled %s workflow",
-  async (adapter) => {
+  async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-budget-");
     const scenario = captureScenario("cooperative", root, {
       timeout_ms: Number.MAX_SAFE_INTEGER,
@@ -420,14 +427,14 @@ captureTest.each(["CLI", "MCP"] as const)(
     if (adapter === "CLI") {
       const scenarioPath = join(root, "scenario.json");
       await writeFile(scenarioPath, JSON.stringify(scenario));
-      const response = await runCliJson([
-        "capture-process",
-        scenarioPath,
-        "--format",
-        "json",
-      ]);
+      const response = await cli.run({
+        arguments: ["capture-process", scenarioPath, "--format", "json"],
+        environment: process.env,
+      });
+      expect(response.exitCode, response.stderr).toBe(1);
+      expect(response.signal, response.stderr).toBeNull();
       expect(
-        JSON.stringify(response),
+        JSON.stringify(response.json),
         "CLI rejects the combined budget",
       ).toContain("timeout_ms + finalization_ms + settle_ms");
     } else {

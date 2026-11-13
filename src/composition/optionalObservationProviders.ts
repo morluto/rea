@@ -1,3 +1,4 @@
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type {
   OptionalObservationProviders,
@@ -11,6 +12,8 @@ import {
   PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY,
 } from "../browser/providerIdentities.js";
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../inspector/providerIdentity.js";
+import type { V8InspectorAdmission } from "../inspector/V8InspectorProvider.js";
+import type { WebBundleAnalysisAdmission } from "../browser/IsolatedWebBundleAnalyzer.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Precisely typed startup factories for the five existing observation ports. */
@@ -23,13 +26,19 @@ export type OptionalObservationFactories = {
 /** Bind optional provider construction to one caller-selected process environment. */
 export const createOptionalObservationFactories = (
   selectedEnvironment: Readonly<Record<string, string | undefined>>,
+  settings?: AnalysisSettingsReader,
 ): OptionalObservationFactories => {
   const environment = snapshotEnvironment(selectedEnvironment);
+  let runtimeAdmission: V8InspectorAdmission | undefined;
+  let webBundleAdmission: WebBundleAnalysisAdmission | undefined;
   return {
-    browserObservation: async () =>
-      (
-        await import("./browserObservation.js")
-      ).createBrowserObservationProvider(),
+    browserObservation: async () => {
+      const browser = await import("./browserObservation.js");
+      const { WebBundleAnalysisAdmission: Admission } =
+        await import("../browser/IsolatedWebBundleAnalyzer.js");
+      webBundleAdmission ??= new Admission();
+      return browser.createBrowserObservationProvider(webBundleAdmission);
+    },
     browserScenarioCapture: async () =>
       (await import("./browserScenario.js")).createBrowserScenarioProvider(
         environment,
@@ -37,15 +46,20 @@ export const createOptionalObservationFactories = (
     electronObservation: async () =>
       (
         await import("./electronObservation.js")
-      ).createElectronObservationProvider(),
+      ).createElectronObservationProvider(environment, settings),
     electronActiveObservation: async () =>
       (await import("./electronScenario.js")).createElectronScenarioProvider(
         environment,
       ),
-    javascriptRuntimeObservation: async () =>
-      (
-        await import("./javascriptRuntimeObservation.js")
-      ).createJavaScriptRuntimeObservationProvider(),
+    javascriptRuntimeObservation: async () => {
+      const runtime = await import("./javascriptRuntimeObservation.js");
+      runtimeAdmission ??= new runtime.V8InspectorAdmission();
+      return runtime.createJavaScriptRuntimeObservationProvider(
+        environment,
+        settings,
+        runtimeAdmission,
+      );
+    },
   };
 };
 

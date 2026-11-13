@@ -2,6 +2,7 @@ import {
   parseBridgeMessageLine,
   type HopperBridgeMessage,
 } from "./protocol.js";
+import { Utf8NdjsonLineBuffer } from "../process/Utf8NdjsonLineBuffer.js";
 
 export interface HopperResponseStreamOptions {
   readonly accept: (message: HopperBridgeMessage) => boolean;
@@ -12,28 +13,21 @@ export interface HopperResponseStreamOptions {
 
 /** Incrementally validates Hopper NDJSON response frames. */
 export class HopperResponseStream {
-  #buffer = "";
-  #fragments: string[] = [];
+  readonly #lines = new Utf8NdjsonLineBuffer();
 
   constructor(readonly options: HopperResponseStreamOptions) {}
 
-  push(chunk: string): void {
-    this.#fragments.push(chunk);
-    if (!chunk.includes("\n")) return;
-    this.#buffer += this.#fragments.join("");
-    this.#fragments = [];
-    let newline = this.#buffer.indexOf("\n");
-    while (newline >= 0) {
-      const line = this.#buffer.slice(0, newline).trim();
-      this.#buffer = this.#buffer.slice(newline + 1);
-      if (line.length > 0 && !this.#acceptLine(line)) return;
-      newline = this.#buffer.indexOf("\n");
-    }
+  push(chunk: Buffer): void {
+    for (const line of this.#lines.push(chunk))
+      if (!this.#acceptLine(line)) break;
+  }
+
+  finish(): void {
+    this.#lines.finish();
   }
 
   reset(): void {
-    this.#buffer = "";
-    this.#fragments = [];
+    this.#lines.reset();
   }
 
   #acceptLine(line: string): boolean {

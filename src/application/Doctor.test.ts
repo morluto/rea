@@ -1,11 +1,26 @@
+import { mkdir } from "node:fs/promises";
+import { join, posix } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { defaultHopperLauncherPath } from "../config/parseConfig.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
 import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 import { err } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
+import { MAC_HOPPER_SYSTEM_LAUNCHER } from "./MacHopperPaths.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+
+const configurationHost = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+): DoctorHost => ({
+  ...systemDoctorHost({ environment: { ...environment } }),
+  ...host({
+    installationPaths: () => Promise.resolve([]),
+    clientRegistrations: () => Promise.resolve([]),
+  }),
+});
 
 describe("doctor Hopper startup timeout", () => {
   const timeoutHost = (
@@ -152,18 +167,16 @@ describe("doctor Hopper startup timeout", () => {
 });
 
 describe("doctor native analysis configuration", () => {
-  const configurationHost = (
-    environment: Readonly<NodeJS.ProcessEnv>,
-  ): DoctorHost => ({
-    ...systemDoctorHost({ environment: { ...environment } }),
-    ...host({
-      installationPaths: () => Promise.resolve([]),
-      clientRegistrations: () => Promise.resolve([]),
-    }),
-  });
-
   it.each([
     ["REA_ANALYSIS_PROVIDER", "Hopper"],
+    ["REA_REGEX_MATCHING_DEADLINE_MS", "0"],
+    ["REA_BRIDGE_MAX_REQUEST_BYTES", "7463"],
+    ["REA_CAPTURE_DECODER_OLD_GENERATION_MIB", "7"],
+    ["REA_REGEX_WORKER_HEAP_REQUEST_MIB", "6"],
+    ["REA_MCP_INITIALIZE_BUDGET_MS", "0"],
+    ["REA_MCP_TOOLS_LIST_BUDGET_MS", "0"],
+    ["REA_MCP_FIRST_CATALOG_BUDGET_MS", "0"],
+    ["REA_MCP_DOCTOR_DEADLINE_MS", "0"],
     ["REA_GHIDRA_STARTUP_TIMEOUT_MS", "abc"],
     ["REA_SWIFTC_COMPILE_TIMEOUT_MS", "0"],
     ["REA_LOG_LEVEL", "verbose"],
@@ -189,8 +202,78 @@ describe("doctor native analysis configuration", () => {
           details: { setting },
         }),
       );
+      expect(
+        result.checks.some(({ name }) => name === "hopper-startup-timeout"),
+      ).toBe(false);
     },
   );
+
+  it.each([
+    ["REA_GHIDRA_STARTUP_TIMEOUT_MS", "abc"],
+    ["HOPPER_LOADER_ARGS_JSON", "{"],
+    ["REA_GHIDRA_COMPILER_SPEC_ID", "gcc"],
+    ["CALLER_SETTING", "private\0value"],
+  ] as const)(
+    "keeps a valid supplied Hopper timeout when %s rejects native admission",
+    async (setting, value) => {
+      const result = await runDoctor(
+        undefined,
+        configurationHost({
+          [setting]: value,
+          REA_HOPPER_STARTUP_TIMEOUT_MS: "120001",
+        }),
+        { providers: ["hopper"] },
+      );
+      expect(result.healthy).toBe(false);
+      expect(result.scope_checks).toContainEqual(
+        expect.objectContaining({
+          name: "hopper-startup-timeout",
+          ok: true,
+          detail: "REA_HOPPER_STARTUP_TIMEOUT_MS=120001",
+        }),
+      );
+      expect(result.scope_checks).toContainEqual(
+        expect.objectContaining({
+          name: `runtime-configuration:${setting}`,
+          ok: false,
+        }),
+      );
+    },
+  );
+
+  it("reports an invalid Hopper timeout alongside an unrelated NUL admission refusal", async () => {
+    const result = await runDoctor(
+      undefined,
+      configurationHost({
+        CALLER_SETTING: "private\0value",
+        REA_HOPPER_STARTUP_TIMEOUT_MS: "0",
+      }),
+      { providers: ["hopper"] },
+    );
+    expect(result.healthy).toBe(false);
+    expect(result.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "hopper-startup-timeout",
+        ok: false,
+        detail: expect.stringMatching(
+          /REA_HOPPER_STARTUP_TIMEOUT_MS.*positive decimal integer/i,
+        ),
+      }),
+    );
+    expect(result.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "runtime-configuration:CALLER_SETTING",
+        ok: false,
+        detail: expect.stringContaining("NUL"),
+      }),
+    );
+    expect(
+      result.scope_checks.filter(
+        ({ name }) => name === "hopper-startup-timeout",
+      ),
+    ).toHaveLength(1);
+    expect(JSON.stringify(result.checks)).not.toContain("private");
+  });
 
   it("keeps a lowercase provider preference ready for the selected engine", async () => {
     const result = await runDoctor(
@@ -244,18 +327,10 @@ describe("doctor native analysis configuration", () => {
 });
 
 describe("doctor MCP startup readiness", () => {
-  const configurationHost = (
-    environment: Readonly<NodeJS.ProcessEnv>,
-  ): DoctorHost => ({
-    ...systemDoctorHost({ environment: { ...environment } }),
-    ...host({
-      installationPaths: () => Promise.resolve([]),
-      clientRegistrations: () => Promise.resolve([]),
-    }),
-  });
   const alignedCodex: ClientRegistrationStatus = {
     client: "codex",
     config_path: "/home/user/.codex/config.toml",
+    command_identity: "owned",
     command: ["/current/rea", "mcp"],
     state: "aligned",
     remediation: null,
@@ -389,7 +464,8 @@ describe("doctor runtime check", () => {
   });
 
   it.each([
-    { compatibility: "26.3.0", ok: true },
+    { compatibility: "26.12.1", ok: true },
+    { compatibility: "26.12.0", ok: false },
     { compatibility: "25.1.0", ok: false },
   ])(
     "identifies Bun and admits it by Node.js compatibility $compatibility",
@@ -421,6 +497,43 @@ describe("doctor runtime check", () => {
   );
 });
 
+it.each([
+  undefined,
+  "",
+  "not-a-version",
+  "14garbage",
+  "14.garbage",
+  "14.",
+  "14.0\n",
+  "99999999999999999",
+])("retains unknown host support for macOS probe value %s", async (version) => {
+  const result = await runDoctor(
+    undefined,
+    host({ macosVersion: () => Promise.resolve(version) }),
+  );
+  expect(result.checks).toContainEqual(
+    expect.objectContaining({
+      name: "host",
+      ok: false,
+      classification: "unknown",
+    }),
+  );
+});
+
+it.skipIf(process.platform !== "darwin")(
+  "reads the macOS version without PATH utilities",
+  async () => {
+    const system = systemDoctorHost({
+      environment: { PATH: "/nonexistent" },
+    });
+    try {
+      expect(await system.macosVersion()).toMatch(/^\d+(?:\.\d+)*$/u);
+    } finally {
+      await system.close?.();
+    }
+  },
+);
+
 describe("doctor", () => {
   it("returns exact recovery for every failed diagnostic", async () => {
     const result = await runDoctor(
@@ -438,28 +551,25 @@ describe("doctor", () => {
       ),
     ).toEqual({
       node: `Install ${SUPPORTED_NODE_VERSION_PROSE}.`,
-      host: "REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup additionally requires Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, or Omarchy.",
+      host: "REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup on Linux additionally requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy.",
       hopper: "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH.",
       target: "Supply a readable local app or program path.",
     });
   });
 
-  it.each(["11.7", undefined])(
-    "rejects unsupported macOS version %s",
-    async (version) => {
-      const result = await runDoctor(
-        undefined,
-        host({ macosVersion: () => Promise.resolve(version) }),
-      );
-      expect(result.checks).toContainEqual(
-        expect.objectContaining({
-          name: "host",
-          ok: false,
-          classification: "unsupported_host",
-        }),
-      );
-    },
-  );
+  it.each(["11.7"])("rejects unsupported macOS version %s", async (version) => {
+    const result = await runDoctor(
+      undefined,
+      host({ macosVersion: () => Promise.resolve(version) }),
+    );
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: "host",
+        ok: false,
+        classification: "unsupported_host",
+      }),
+    );
+  });
 
   it("admits only the experimental Windows x64 host boundary", async () => {
     const windows = await runDoctor(
@@ -542,8 +652,9 @@ describe("doctor", () => {
       ok: false,
       classification: "config_drift",
       detail: "/missing/ilspycmd",
-      remediation:
-        "Unset REA_ILSPY_CMD_PATH or point it at a runnable ilspycmd executable.",
+      remediation: expect.stringMatching(
+        /REA_ILSPY_CMD_PATH.*runnable ilspycmd/i,
+      ),
     });
   });
 
@@ -561,13 +672,55 @@ describe("doctor", () => {
       ok: false,
       classification: "config_drift",
       detail: configuredPath,
-      remediation:
-        "Unset or update HOPPER_LAUNCHER_PATH to an executable Hopper launcher.",
+      remediation: expect.stringMatching(
+        /HOPPER_LAUNCHER_PATH.*executable Hopper launcher/i,
+      ),
     });
   });
 });
 
 describe("doctor installation identity", () => {
+  it("names each stale or missing skill destination and its exact repair selection", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        installedSkillIdentity: () =>
+          Promise.resolve({
+            version: "current-first-copy",
+            toolCount: 0,
+            canonical: false,
+            issues: [
+              {
+                client: "claude_code",
+                path: "/home/.claude/skills/rea",
+                kind: "stale",
+                detail: "Selected skill copy is stale",
+              },
+              {
+                client: "shared",
+                path: "/home/.agents/skills/rea",
+                kind: "missing",
+                detail: "Selected skill copy is missing",
+              },
+            ],
+          }),
+      }),
+    );
+    expect(result.identity?.skill).toMatchObject({ state: "stale" });
+    expect(result.identity?.skill.remediation).toContain(
+      "rea setup --skill-client claude_code --skill",
+    );
+    expect(result.identity?.skill.remediation).toContain(
+      "rea setup --skill-client shared --skill",
+    );
+    expect(result.identity?.skill.remediation).toContain(
+      "/home/.claude/skills/rea",
+    );
+    expect(result.identity?.skill.remediation).toContain(
+      "/home/.agents/skills/rea",
+    );
+  });
+
   it("distinguishes stale skills, path shadowing, and unobservable live state", async () => {
     const result = await runDoctor(
       undefined,
@@ -589,7 +742,7 @@ describe("doctor installation identity", () => {
       skill: {
         installed_version: "10",
         state: "stale",
-        remediation: "Run rea setup to update the installed REA skill.",
+        remediation: expect.stringMatching(/rea setup.*update.*skill/i),
       },
     });
   });
@@ -602,15 +755,45 @@ describe("doctor installation identity", () => {
     expect(result.healthy).toBe(false);
     expect(result.identity?.skill).toMatchObject({
       state: "missing",
-      remediation: "Run rea setup to update the installed REA skill.",
+      remediation: expect.stringMatching(/rea setup.*update.*skill/i),
     });
     expect(result.checks).toContainEqual({
       name: "skill:identity",
       ok: false,
       classification: "config_drift",
-      detail: "Installed REA skill identity is missing.",
-      remediation: "Run rea setup to update the installed REA skill.",
+      detail: expect.stringMatching(/skill identity.*missing/i),
+      remediation: result.identity?.skill.remediation,
     });
+  });
+  it("classifies an unreadable installed skill as unknown, not drift", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        installedSkillIdentity: () =>
+          Promise.resolve({
+            version: null,
+            toolCount: null,
+            canonical: false,
+            issues: [
+              {
+                client: "shared",
+                path: "/home/.agents/skills/rea",
+                kind: "unreadable",
+                detail: "Selected skill copy could not be read",
+              },
+            ],
+          }),
+      }),
+    );
+
+    expect(result.identity?.skill).toMatchObject({ state: "unknown" });
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: "skill:identity",
+        ok: false,
+        classification: "unknown",
+      }),
+    );
   });
   it("reports stale client registration paths without claiming live state", async () => {
     const result = await runDoctor(
@@ -621,6 +804,7 @@ describe("doctor installation identity", () => {
             {
               client: "codex",
               config_path: "/home/user/.codex/config.toml",
+              command_identity: "owned",
               command: ["/old/rea", "mcp"],
               state: "stale",
               remediation:
@@ -686,6 +870,7 @@ describe("doctor scoped readiness", () => {
       {
         client: "codex",
         config_path: "/home/user/.codex/config.toml",
+        command_identity: "owned",
         command: ["/current/rea", "mcp"],
         state: "aligned",
         remediation: null,
@@ -693,6 +878,7 @@ describe("doctor scoped readiness", () => {
       {
         client: "cursor",
         config_path: "/home/user/.cursor/mcp.json",
+        command_identity: "unknown",
         command: ["/old/rea", "mcp"],
         state: "unknown",
         remediation: "Run rea setup to refresh this registration.",
@@ -737,6 +923,7 @@ describe("doctor scoped readiness", () => {
             {
               client: "kimi",
               config_path: "/home/user/.kimi-code/mcp.json",
+              command_identity: "owned",
               command: ["/current/rea", "mcp"],
               state: "aligned",
               remediation: null,
@@ -767,6 +954,7 @@ describe("Grok Bot readiness", () => {
       {
         client: "grok_bot",
         config_path: "/home/user/.grokbot",
+        command_identity: "unknown",
         command: [],
         state: "manual",
         remediation: "Add the connector from the Grok Bot chat.",
@@ -827,6 +1015,7 @@ describe("doctor scoped readiness", () => {
             {
               client: "codex",
               config_path: "/home/user/.codex/config.toml",
+              command_identity: "owned",
               command: ["rea", "mcp"],
               state: "aligned",
               remediation: null,
@@ -1033,18 +1222,87 @@ describe("doctor installed Hopper discovery", () => {
     );
     expect(result.hopperPath).toBe(path);
   });
+});
 
-  it("detects a manually installed Hopper application", async () => {
-    const path = "/Applications/Hopper v6.app/Contents/MacOS/hopper";
-    const result = await runDoctor(
-      undefined,
-      host({
-        executable: (candidate) => Promise.resolve(candidate === path),
-        manualHopperPaths: () => Promise.resolve([path]),
-      }),
-    );
-    expect(result.hopperPath).toBe(path);
+describe("doctor Hopper discovery matches runtime selection", () => {
+  // Model launchers with runtime's POSIX joins; filesystem work stays native.
+  const launchers = (home: string) => ({
+    macSystem: MAC_HOPPER_SYSTEM_LAUNCHER,
+    renamed: posix.join(
+      home,
+      "Applications/Hopper 5.app/Contents/MacOS/hopper",
+    ),
+    linuxSystem: "/opt/hopper-v4/bin/hopper",
   });
+  type Launcher = keyof ReturnType<typeof launchers>;
+
+  it.each<[NodeJS.Platform, readonly Launcher[], Launcher | undefined]>([
+    ["darwin", ["linuxSystem"], undefined],
+    ["darwin", ["linuxSystem", "renamed"], "renamed"],
+    ["darwin", ["linuxSystem", "macSystem"], "macSystem"],
+    ["darwin", ["renamed", "macSystem"], "macSystem"],
+    ["linux", ["macSystem", "renamed"], undefined],
+    ["linux", ["macSystem", "linuxSystem"], "linuxSystem"],
+    ["win32", ["macSystem", "linuxSystem", "renamed"], undefined],
+  ])(
+    "on %s with %j executable, selects %s",
+    async (platform, executable, expected) => {
+      // Runtime enumerates renamed bundles from disk; doctor reads its host scan.
+      const home = await createTestTempDirectory("rea-doctor-hopper-");
+      await mkdir(join(home, "Applications/Hopper 5.app"), { recursive: true });
+      const paths = launchers(home);
+      const executables = new Set(executable.map((name) => paths[name]));
+      const probed: string[] = [];
+      let renamedScans = 0;
+      let brewProbes = 0;
+      const result = await runDoctor(
+        undefined,
+        host({
+          platform,
+          homeDirectory: home,
+          executable: (path) => {
+            probed.push(path);
+            return Promise.resolve(executables.has(path));
+          },
+          manualHopperPaths: () => {
+            renamedScans += 1;
+            return Promise.resolve([paths.renamed]);
+          },
+          brewHopperPath: () => {
+            brewProbes += 1;
+            return Promise.resolve(undefined);
+          },
+        }),
+      );
+      const runtime = defaultHopperLauncherPath(platform, home, (path) =>
+        executables.has(path),
+      );
+
+      expect(result.hopperPath).toBe(
+        expected === undefined ? undefined : paths[expected],
+      );
+      // Hopper has no automatic launcher on other platforms; runtime's fixed
+      // fallback there is never probed.
+      if (platform === "win32") expect(probed).toEqual([]);
+      else
+        expect(result.hopperPath).toBe(
+          executables.has(runtime) ? runtime : undefined,
+        );
+      expect(renamedScans).toBe(
+        platform === "darwin" && expected !== "macSystem" ? 1 : 0,
+      );
+      expect(brewProbes).toBe(
+        platform === "darwin" && expected === undefined ? 1 : 0,
+      );
+      if (expected === undefined)
+        expect(
+          result.checks.find(({ name }) => name === "hopper"),
+        ).toMatchObject({
+          ok: false,
+          classification: "missing_analysis_engine",
+        });
+    },
+  );
 });
 
 describe("doctor target admission on Linux", () => {

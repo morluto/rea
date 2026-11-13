@@ -1,17 +1,16 @@
+import { analysisOperationInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import type { PcapAnalysisPort } from "./PcapAnalysisPort.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import {
   pcapRequestSchema,
   type PcapOperation,
 } from "../../domain/pcap/pcapAnalysis.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createPcapEvidence } from "../../domain/pcap/pcapEvidence.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
+import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 /** Shared CLI/MCP admission, execution, and Evidence composition for pcap. */
 export class PcapAnalysisService {
@@ -31,10 +30,19 @@ export class PcapAnalysisService {
       );
     const request = pcapRequestSchema.safeParse({ operation, input });
     if (!request.success)
-      return err(new AnalysisInputError(operation, { cause: request.error }));
+      return err(
+        analysisOperationInputErrorFromIssues(
+          operation,
+          request.error.issues,
+          input,
+          request.error,
+        ),
+      );
     const executed = await this.provider.execute(request.data, options);
     if (!executed.ok) return executed;
-    const execution = executed.value;
-    return ok(createPcapEvidence(request.data, execution));
+    return completeProviderEvidence(
+      createPcapEvidence(request.data, executed.value),
+      options?.signal,
+    );
   }
 }

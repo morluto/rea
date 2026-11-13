@@ -4,6 +4,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { isOwnedTestTemporaryName } from "./lib/test-temporary-ownership.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -28,7 +29,7 @@ const isolatedTemporaryRoot = await mkdtemp(
   join(canonicalTemporaryRoot, "rea-test-hygiene-"),
 );
 
-try {
+await withVerifierCleanup(async () => {
   const result = spawnSync(
     process.execPath,
     [vitestPath, "run", "--coverage.enabled=false", ...process.argv.slice(2)],
@@ -60,14 +61,15 @@ try {
   }
 
   if (failures.length > 0) throw new Error(failures.join("\n\n"));
-} finally {
-  await rm(isolatedTemporaryRoot, {
-    recursive: true,
-    force: true,
-    maxRetries: 3,
-    retryDelay: 25,
-  });
-}
+}, [
+  () =>
+    rm(isolatedTemporaryRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 25,
+    }),
+]);
 process.stdout.write(
   "Test temporary-directory hygiene verified: no owned residues remain.\n",
 );

@@ -8,6 +8,7 @@ import {
   registryPackageSource,
 } from "../../../src/application/environment/environmentBundle.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+import { supportsNodeVersion } from "../../../src/domain/runtimeVersion.js";
 
 /**
  * The exported Dockerfile installs the CLI that produced the bundle, so the
@@ -15,6 +16,18 @@ import { PRODUCT_IDENTITY } from "../../../src/identity.js";
  * manifest rather than restated anywhere in source.
  */
 describe("environment bundle package pin", () => {
+  it("exports the pinned supported Node runtime in the Dockerfile", async () => {
+    const pinned = (
+      await readFile(new URL("../../../.nvmrc", import.meta.url), "utf8")
+    ).trim();
+    const dockerfile = bundleDockerfile(registryPackageSource());
+    const nodeVersion = /^FROM node:(\d+\.\d+\.\d+)(?:[-@][^\s]+)?$/u.exec(
+      dockerfile.split("\n")[0] ?? "",
+    )?.[1];
+    expect(nodeVersion).toBe(pinned);
+    expect(supportsNodeVersion(nodeVersion ?? "")).toBe(true);
+  });
+
   it("pins the registry install to the package.json version", async () => {
     const manifest = z
       .object({ name: z.literal("rea-agents"), version: z.string().min(1) })

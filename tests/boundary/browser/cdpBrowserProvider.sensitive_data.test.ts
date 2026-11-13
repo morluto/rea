@@ -224,6 +224,7 @@ describe("CdpBrowserProvider: explicitly requested text and payload shapes", () 
     const browser = await startFakeCdpBrowser({
       sensitiveShapes: true,
       binaryWebSocketEvent: true,
+      nullConsoleArgument: true,
       eventsBeforeReply: ["Network.enable"],
     });
     trackBrowser(browser);
@@ -240,6 +241,12 @@ describe("CdpBrowserProvider: explicitly requested text and payload shapes", () 
     );
 
     if (!result.ok) throw result.error;
+    expect(result.value.console.events[0]?.argument_types).toEqual([
+      "string",
+      "number",
+      "object",
+      "object",
+    ]);
     expect(result.value.console.events[0]?.text_capture).toEqual({
       status: "included",
       values: [
@@ -249,10 +256,12 @@ describe("CdpBrowserProvider: explicitly requested text and payload shapes", () 
           text: "authorization=Bearer console-secret",
         },
         { argument_index: 1, type: "number", text: "42" },
+        { argument_index: 3, type: "object", text: "null" },
       ],
       retained_bytes:
         Buffer.byteLength("authorization=Bearer console-secret") +
-        Buffer.byteLength("42"),
+        Buffer.byteLength("42") +
+        Buffer.byteLength("null"),
     });
     expect(result.value.network.requests[0]?.body_shapes).toMatchObject({
       status: "included",

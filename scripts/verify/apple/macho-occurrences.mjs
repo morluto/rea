@@ -5,6 +5,7 @@ import { relative, sep } from "node:path";
 import { parseArtifactInventoryEvidence } from "../../../dist/domain/artifactInventoryEvidence.js";
 import {
   artifactCliEvidence,
+  artifactMcpCall,
   withArtifactMcp,
 } from "../../lib/artifact-e2e.mjs";
 
@@ -53,7 +54,7 @@ export async function verifyMachOOccurrences(app, executable) {
       assert.equal(node.sha256, direct.manifest.root_sha256);
       assert.equal(node.format, root.artifact_format);
       await withArtifactMcp(app, async (client) => {
-        const reply = await client.callTool({
+        const reply = await artifactMcpCall(client, {
           name: "inspect_artifact",
           arguments: {},
         });

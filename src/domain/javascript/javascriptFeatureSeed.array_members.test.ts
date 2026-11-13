@@ -15,7 +15,7 @@ import {
   applicationFeatureSeedSchema,
   type ApplicationFeatureSeed,
 } from "./javascriptFeatureTraceSchemas.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import type { JsonValue } from "../jsonValue.js";
 
 const memberFields = [
@@ -293,34 +293,8 @@ describe("feature seed selection controls", () => {
   );
 });
 
-describe("public feature trace from contextBridge source members", () => {
-  it.each(["openProject", "missingProject"])(
-    "normalizes optional seed defaults before deriving trace identity for %s",
-    (value) => {
-      const input = {
-        sourceEvidenceId,
-        graph: contextBridgeGraph(),
-        nativeEvidence: [],
-        direction: "both" as const,
-      };
-      const omitted = traceApplicationFeature({
-        ...input,
-        seed: { kind: "api", value },
-      });
-      const explicit = traceApplicationFeature({
-        ...input,
-        seed: {
-          kind: "api",
-          value,
-          match: null,
-          case_sensitive: false,
-        },
-      });
-      expect(omitted).toEqual(explicit);
-    },
-  );
-
-  it("traces one exact member seed through the public feature workflow", () => {
+describe("feature trace projection from contextBridge source members", () => {
+  it("traces one exact member seed while preserving projection facts", () => {
     const mode = {
       value: "openProject",
       match: "exact" as const,
@@ -390,8 +364,10 @@ describe("public feature trace from contextBridge source members", () => {
       total_seed_matches: 0,
     });
     expect(result.evidence_links).toEqual([sourceEvidenceId]);
-    expect(result.limitations).toContain(
-      "No graph entity matched the literal seed; this is not evidence that the feature is absent.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /no application graph entity matched.*not evidence.*feature is absent/iu,
+      ),
     );
   });
 
@@ -422,8 +398,10 @@ describe("public feature trace from contextBridge source members", () => {
     });
     expect(result.graph?.coverage).toEqual(partialGraph.coverage);
     expect(result.graph?.nodes).toEqual(partialGraph.nodes);
-    expect(result.limitations).toContain(
-      "The source application graph is incomplete; unmatched seeds and frontiers remain unknown.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /source application graph.*incomplete.*unmatched seeds and frontiers.*unknown/iu,
+      ),
     );
   });
 });
@@ -477,7 +455,7 @@ const propertyMatch = (node: ApplicationNode, field: string) => ({
 });
 
 const contextBridgeGraph = () => {
-  const analysis = analyzeJavaScriptStaticSource(
+  const analysis = analyzeCommonJsStaticFixture(
     "const { contextBridge } = require('electron');\ncontextBridge.exposeInMainWorld('desktopApi', { openProject() {}, closeProject() {} });",
   );
   expect(analysis.parse_status).toBe("complete");

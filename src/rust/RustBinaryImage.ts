@@ -1,13 +1,16 @@
 import {
-  GoBinaryFormatFailure,
-  GoBinaryResourceFailure,
-  type GoImageSection,
-} from "../go/GoBinaryContainer.js";
-import { readGoBinaryContainer } from "../go/GoBinaryImage.js";
+  BinaryFormatFailure,
+  BinaryResourceFailure,
+  type BinaryContainer,
+  type ImageSection,
+} from "../native/metadata/BinaryContainer.js";
+import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
   RustBinary,
 } from "../domain/rust/rustBinary.js";
+import { DEFAULT_RUSTC_HASH_LIMIT } from "../domain/rust/rustBinary.js";
+import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
   readAuditableSection,
   RustAuditableFormatFailure,
@@ -16,8 +19,6 @@ import {
 
 const RUSTC_PREFIX = Buffer.from("/rustc/");
 const HASH_BYTES = 40;
-/** One toolchain normally leaves one hash; a small cap bounds retained output. */
-const MAX_RUSTC_HASHES = 64;
 
 /** Container identity plus optional dependency metadata and inferred rustc commits. */
 export interface RustBinaryImage {
@@ -27,10 +28,15 @@ export interface RustBinaryImage {
   readonly byte_order: RustBinary["byte_order"];
   readonly auditable_metadata: RustAuditableMetadata | null;
   readonly rustc_commit: RustBinary["rustc_commit"];
+  readonly section_names_limitation?: string;
 }
 
 /** Read dependency metadata from container sections without executing the image. */
-export const readRustBinaryImage = (bytes: Buffer): RustBinaryImage => {
+export const readRustBinaryImage = (
+  bytes: Buffer,
+  maxRustcHashes = DEFAULT_RUSTC_HASH_LIMIT,
+  maxOutputBytes: number = RUST_PRODUCER_DEFAULTS.output_bytes,
+): RustBinaryImage => {
   const container = readContainer(bytes);
   const dependency = dependencySection(container.format, container.sections);
   return {
@@ -41,20 +47,23 @@ export const readRustBinaryImage = (bytes: Buffer): RustBinaryImage => {
     auditable_metadata:
       dependency === null
         ? null
-        : readDependency(bytes, container.format, dependency),
-    rustc_commit: rustcCommit(bytes, container.sections),
+        : readDependency(bytes, container.format, dependency, maxOutputBytes),
+    rustc_commit: rustcCommit(bytes, container, maxRustcHashes, maxOutputBytes),
+    ...(container.section_names_limitation === undefined
+      ? {}
+      : { section_names_limitation: container.section_names_limitation }),
   };
 };
 
 const readContainer = (bytes: Buffer) => {
   try {
-    return readGoBinaryContainer(bytes);
+    return readBinaryContainer(bytes);
   } catch (cause) {
-    if (cause instanceof GoBinaryFormatFailure)
+    if (cause instanceof BinaryFormatFailure)
       throw new RustAuditableFormatFailure(cause.kind, cause.message, {
         cause,
       });
-    if (cause instanceof GoBinaryResourceFailure)
+    if (cause instanceof BinaryResourceFailure)
       throw new RustAuditableResourceFailure(
         {
           resource: "memory",
@@ -71,8 +80,8 @@ const readContainer = (bytes: Buffer) => {
 
 const dependencySection = (
   format: RustBinaryImage["format"],
-  sections: readonly GoImageSection[],
-): GoImageSection | null => {
+  sections: readonly ImageSection[],
+): ImageSection | null => {
   const expected = format === "macho" ? "__DATA,.dep-v0" : ".dep-v0";
   const matches = sections.filter((section) => section.name === expected);
   if (matches.length > 1)
@@ -86,6 +95,7 @@ const dependencySection = (
     throw new RustAuditableFormatFailure(
       "unsupported",
       "Compressed dependency sections are unsupported",
+      { undecodedContent: true },
     );
   if (!section.file_backed)
     throw new RustAuditableFormatFailure(
@@ -98,39 +108,93 @@ const dependencySection = (
 const readDependency = (
   bytes: Buffer,
   format: RustBinaryImage["format"],
-  section: GoImageSection,
+  section: ImageSection,
+  maxOutputBytes: number,
 ): RustAuditableMetadata =>
   readAuditableSection(
     format === "macho" ? "__DATA,.dep-v0" : ".dep-v0",
     section.offset,
     bytes.subarray(section.offset, section.offset + section.size),
+    {
+      maxOutputBytes,
+      peFileAlignment:
+        section.format === "pe" &&
+        section.virtual_size === 0 &&
+        section.file_alignment > 0 &&
+        section.raw_size % section.file_alignment === 0
+          ? section.file_alignment
+          : undefined,
+    },
   );
 
 const rustcCommit = (
   bytes: Buffer,
-  sections: readonly GoImageSection[],
+  container: BinaryContainer,
+  maxHashes: number,
+  maxOutputBytes: number,
 ): RustBinaryImage["rustc_commit"] => {
-  const hashes: { hash: string; file_offset: number }[] = [];
-  const seen = new Set<string>();
-  // Overlapping declared sections are scanned once, so total work stays
-  // bounded by the file size however many sections reference a range.
-  for (const range of mergedReadOnlyRanges(sections))
-    collectHashes(bytes, range, seen, hashes);
-  return hashes.length === 0 ? null : { evidence_kind: "inferred", hashes };
+  const retention: RustcPathRetention = {
+    hashes: [],
+    seen: new Set(),
+    maxHashes,
+    maxBytes: maxOutputBytes,
+    bytes: 2,
+    reason: undefined,
+  };
+  const sections = container.sections
+    .filter((section) => section.read_only)
+    .map(({ offset, size }) => ({ offset, size }));
+  const loadRegions =
+    container.format === "elf"
+      ? (container.load_regions ?? [])
+          .filter((region) => region.read && !region.write && !region.execute)
+          .map(({ mapping }) => mapping)
+      : [];
+  // Overlapping section and ELF load ranges are scanned once, so total work
+  // stays bounded by the file size however many mappings reference a range.
+  for (const range of mergedReadOnlyFileRanges([...sections, ...loadRegions])) {
+    collectHashes(bytes, range, retention);
+    if (retention.reason !== undefined) break;
+  }
+  return retention.hashes.length === 0
+    ? null
+    : {
+        evidence_kind: "inferred",
+        hashes: retention.hashes,
+        ...(retention.reason !== undefined
+          ? {
+              coverage: {
+                status: "partial" as const,
+                reason: retention.reason,
+                effective_limit:
+                  retention.reason === "report_bytes"
+                    ? maxOutputBytes
+                    : maxHashes,
+              },
+            }
+          : {}),
+      };
 };
 
-const mergedReadOnlyRanges = (
-  sections: readonly GoImageSection[],
+/** One owner for compiler-path uniqueness, retained output and exhaustion. */
+interface RustcPathRetention {
+  readonly hashes: { hash: string; file_offset: number }[];
+  readonly seen: Set<string>;
+  readonly maxHashes: number;
+  readonly maxBytes: number;
+  bytes: number;
+  reason: "max_rustc_hashes" | "report_bytes" | undefined;
+}
+
+const mergedReadOnlyFileRanges = (
+  ranges: readonly { readonly offset: number; readonly size: number }[],
 ): { readonly offset: number; readonly end: number }[] => {
-  const ranges = sections
-    .filter((section) => section.read_only && section.size > 0)
-    .map((section) => ({
-      offset: section.offset,
-      end: section.offset + section.size,
-    }))
+  const sorted = ranges
+    .filter(({ size }) => size > 0)
+    .map(({ offset, size }) => ({ offset, end: offset + size }))
     .sort((left, right) => left.offset - right.offset);
   const merged: { offset: number; end: number }[] = [];
-  for (const range of ranges) {
+  for (const range of sorted) {
     const last = merged.at(-1);
     if (last !== undefined && range.offset <= last.end)
       last.end = Math.max(last.end, range.end);
@@ -142,8 +206,7 @@ const mergedReadOnlyRanges = (
 const collectHashes = (
   bytes: Buffer,
   range: { readonly offset: number; readonly end: number },
-  seen: Set<string>,
-  hashes: { hash: string; file_offset: number }[],
+  retention: RustcPathRetention,
 ): void => {
   const region = bytes.subarray(range.offset, range.end);
   let cursor = 0;
@@ -152,17 +215,20 @@ const collectHashes = (
     if (at < 0) return;
     const start = at + RUSTC_PREFIX.length;
     const hash = hashAt(region, start);
-    if (hash !== null && !seen.has(hash)) {
-      if (seen.size >= MAX_RUSTC_HASHES)
-        throw new RustAuditableResourceFailure(
-          {
-            resource: "capacity",
-            reported_limits: { maximum_rustc_hashes: MAX_RUSTC_HASHES },
-          },
-          `Read-only data contains more than ${MAX_RUSTC_HASHES} distinct rustc commit paths.`,
-        );
-      seen.add(hash);
-      hashes.push({ hash, file_offset: range.offset + at });
+    if (hash !== null && !retention.seen.has(hash)) {
+      if (retention.seen.size >= retention.maxHashes) {
+        retention.reason = "max_rustc_hashes";
+        return;
+      }
+      const entry = { hash, file_offset: range.offset + at };
+      const entryBytes = Buffer.byteLength(JSON.stringify(entry)) + 1;
+      if (entryBytes > retention.maxBytes - retention.bytes) {
+        retention.reason = "report_bytes";
+        return;
+      }
+      retention.bytes += entryBytes;
+      retention.seen.add(hash);
+      retention.hashes.push(entry);
     }
     cursor = at + 1;
   }
@@ -170,7 +236,9 @@ const collectHashes = (
 
 const hashAt = (region: Buffer, start: number): string | null => {
   const end = start + HASH_BYTES;
-  if (end >= region.length || region[end] !== 0x2f) return null;
+  // Windows builds join the remapped `/rustc/<hash>` prefix with `\`.
+  if (end >= region.length || (region[end] !== 0x2f && region[end] !== 0x5c))
+    return null;
   for (let index = start; index < end; index += 1) {
     const byte = region[index] ?? 0;
     const hex =

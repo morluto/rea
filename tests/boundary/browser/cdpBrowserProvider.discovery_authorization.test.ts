@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   inspectWebPageInputSchema,
   listBrowserTargetsInputSchema,
 } from "../../../src/domain/browserObservation.js";
+import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
+import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
+import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
+import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreenshot.js";
 import {
   startFakeCdpBrowser,
   type FakeOptions,
@@ -359,5 +364,89 @@ describe("CdpBrowserProvider: discovery authorization 2", () => {
       ok: false,
       error: { _tag: "BrowserObservationError", reason: "disconnected" },
     });
+  });
+});
+
+describe("CdpBrowserProvider: target selection detail", () => {
+  it("keeps target selection detail for every target operation", async () => {
+    const browser = await startFakeCdpBrowser();
+    trackBrowser(browser);
+    const provider = new CdpBrowserProvider();
+    const operations = [
+      [
+        "inspect_web_page",
+        (input) =>
+          provider.inspectPage(
+            inspectWebPageInputSchema.parse({ ...input, observation_ms: 0 }),
+          ),
+      ],
+      [
+        "analyze_web_bundle",
+        (input) =>
+          provider.analyzeBundle(
+            analyzeWebBundleInputSchema.parse({ ...input, observation_ms: 0 }),
+          ),
+      ],
+      [
+        "observe_web_session",
+        (input) =>
+          provider.observeSession(observeWebSessionInputSchema.parse(input)),
+      ],
+      [
+        "discover_webmcp_tools",
+        (input) =>
+          provider.discoverWebMcpTools(
+            discoverWebMcpToolsInputSchema.parse(input),
+          ),
+      ],
+      [
+        "capture_web_screenshot",
+        (input) =>
+          provider.captureScreenshot(
+            captureWebScreenshotInputSchema.parse(input),
+          ),
+      ],
+    ] as const satisfies readonly (readonly [
+      string,
+      (input: Record<string, unknown>) => Promise<{ readonly ok: boolean }>,
+    ])[];
+    const selections = [
+      [
+        "missing",
+        "target_not_found",
+        "Target missing was not found at the selected endpoint.",
+        "Refresh target discovery for that endpoint and retry with a returned target ID.",
+      ],
+      [
+        "disallowed-page",
+        "target_not_allowed",
+        "Target disallowed-page must be an HTTP(S) page in the selected origin scope.",
+        "Target disallowed-page must be an HTTP(S) page in the selected origin scope.",
+      ],
+    ] as const;
+    const inspected = new Map<string, unknown>();
+    for (const [operation, run] of operations)
+      for (const [targetId, reason, detail, remediation] of selections) {
+        const result = await run({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: targetId,
+        });
+        if (result.ok) throw new Error(`${operation} accepted ${targetId}`);
+        expect(result.error).toMatchObject({ operation, reason });
+        const { details, ...projected } = projectAnalysisError(result.error);
+        expect(details).toEqual({ operation, reason });
+        expect(projected).toMatchObject({
+          code: "target_unavailable",
+          message: detail,
+          remediation: { action: remediation },
+        });
+        // Only the attributed operation differs from the inspect projection.
+        if (operation === "inspect_web_page")
+          inspected.set(targetId, projected);
+        else expect(projected).toEqual(inspected.get(targetId));
+      }
+    expect(browser.commands).toHaveLength(0);
+    expect(browser.openedConnectionCount()).toBe(0);
   });
 });

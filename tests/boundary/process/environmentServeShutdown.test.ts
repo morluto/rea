@@ -4,7 +4,14 @@ import { join } from "node:path";
 
 import { describe, expect } from "vitest";
 
-import { writeEnvironmentServeFiles } from "../../fixtures/environmentServe.js";
+import {
+  scenarioHeaderOnlyCaptureEvidence,
+  scenarioServeFixture,
+} from "../../fixtures/browserScenarioCapture.js";
+import {
+  environmentServeFixture,
+  writeEnvironmentServeFiles,
+} from "../../fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { rawHttpRequest } from "../../support/http/rawRequest.js";
 import { startListeningProcess } from "../../support/mcp/streamableHttpProcess.js";
@@ -12,46 +19,103 @@ import { processTest } from "../../support/process/processFixture.js";
 
 const SHUTDOWN_TIMEOUT_MS = 90_000;
 
+/** How each case is served and what its stopped document reports about the state. */
+const MODES = [
+  {
+    mode: "from the state it derives",
+    fixture: environmentServeFixture,
+    flags: [],
+    environment: "grafana-example",
+    // The manifest's 19 tools less its 5 write tools.
+    tools: 14,
+    state: { served: true, evidence_id: expect.stringMatching(/^ev_/u) },
+  },
+  {
+    mode: "as pure replay with --replay-only",
+    fixture: environmentServeFixture,
+    flags: ["--replay-only"],
+    environment: "grafana-example",
+    tools: 19,
+    state: { served: false, reason: "replay-only" },
+  },
+  {
+    mode: "as replay when the capture yields no state",
+    fixture: () => scenarioServeFixture(scenarioHeaderOnlyCaptureEvidence()),
+    flags: [],
+    environment: expect.any(String),
+    tools: 5,
+    state: {
+      served: false,
+      reason: "unavailable",
+      code: "unsupported_target",
+      message: expect.stringContaining("response_body"),
+    },
+  },
+] as const;
+
 describe("rea environment-serve shutdown", () => {
   // On Windows, Node's child.kill() terminates the child outright for SIGTERM and SIGINT alike,
   // so no signal handler runs and there is no graceful shutdown to observe.
-  processTest.skipIf(process.platform === "win32")(
-    "closes the listener on SIGTERM, prints one stopped document and exits 143",
-    async ({ processes }) => {
-      const root = await createTestTempDirectory("rea-environment-serve-stop-");
-      const files = await writeEnvironmentServeFiles(root);
-      const started = await startListeningProcess(processes, [
-        "environment-serve",
-        files.manifestPath,
-        "--evidence",
-        files.capturePath,
-        "--port",
-        "0",
-        "--json",
-      ]);
-      let stdout = "";
-      started.child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString("utf8");
-      });
-      const card = await rawHttpRequest(
-        new URL("/.well-known/agent-env.json", started.url.origin),
-      );
-      expect(card.status).toBe(200);
-      started.child.kill("SIGTERM");
-      const [code, signalCode] = await once(started.child, "close");
-      expect(code).toBe(143);
-      expect(signalCode).toBeNull();
-      expect(JSON.parse(stdout)).toMatchObject({
-        status: "stopped",
-        url: started.url.href,
-        environment: "grafana-example",
-      });
-      await expect(rawHttpRequest(started.url)).rejects.toMatchObject({
-        code: "ECONNREFUSED",
-      });
-    },
-    SHUTDOWN_TIMEOUT_MS,
-  );
+  for (const { mode, fixture, flags, environment, tools, state } of MODES)
+    processTest.skipIf(process.platform === "win32")(
+      `closes the listener on SIGTERM, prints one stopped document and exits 143 when serving ${mode}`,
+      async ({ processes }) => {
+        const root = await createTestTempDirectory(
+          "rea-environment-serve-stop-",
+        );
+        const files = await writeEnvironmentServeFiles(root, fixture());
+        const started = await startListeningProcess(processes, [
+          "environment-serve",
+          files.manifestPath,
+          "--evidence",
+          files.capturePath,
+          ...flags,
+          "--port",
+          "0",
+          "--json",
+        ]);
+        let stdout = "";
+        started.child.stdout.on("data", (chunk: Buffer) => {
+          stdout += chunk.toString("utf8");
+        });
+        const card = await rawHttpRequest(
+          new URL("/.well-known/agent-env.json", started.url.origin),
+        );
+        expect(card.status).toBe(200);
+        started.child.kill("SIGTERM");
+        const [code, signalCode] = await once(started.child, "close");
+        expect(code).toBe(143);
+        expect(signalCode).toBeNull();
+        expect(JSON.parse(stdout)).toEqual({
+          status: "stopped",
+          url: started.url.href,
+          environment,
+          tools,
+          evidence_id: expect.stringMatching(/^ev_/u),
+          manifest_evidence_id: expect.stringMatching(/^ev_/u),
+          state,
+        });
+        // A state that cannot be derived is logged as a warning naming its code, before the listener binds.
+        const warning = started
+          .stderr()
+          .split("\n")
+          .find((line) => line.includes("Environment state unavailable"));
+        if ("code" in state) {
+          expect(JSON.parse(warning ?? "{}")).toMatchObject({
+            level: 40,
+            code: state.code,
+            error: state.message,
+          });
+          expect(started.stderr().indexOf(warning ?? "")).toBeLessThan(
+            started.stderr().indexOf("MCP transport listening"),
+          );
+        } else expect(warning).toBeUndefined();
+        await expect(rawHttpRequest(started.url)).rejects.toMatchObject({
+          code: "ECONNREFUSED",
+        });
+      },
+      SHUTDOWN_TIMEOUT_MS,
+    );
 });
 
 describe.skipIf(process.platform === "win32")(

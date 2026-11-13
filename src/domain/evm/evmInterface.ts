@@ -1,20 +1,74 @@
 import { z } from "zod";
 
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { solidityMetadataSchema } from "./solidityMetadata.js";
+import {
+  producerResourceLimitsSchema,
+  resolveProducerLimits,
+} from "../producerResourceLimits.js";
 
-const byteOffset = z.number().int().nonnegative();
+/** EVM advertises only producer controls it actually enforces. */
+export const evmProducerLimitsSchema = producerResourceLimitsSchema.omit({
+  command_timeout_ms: true,
+});
+export const EVM_PRODUCER_LIMIT_DEFAULTS = {
+  input_bytes: 4 * 1024 * 1024,
+  output_bytes: 16 * 1024 * 1024,
+  diagnostic_bytes: 1024 * 1024,
+  address_space_bytes: 3 * 1024 * 1024 * 1024,
+  file_bytes: 16 * 1024 * 1024,
+  cpu_seconds: 30,
+} as const;
+export const selectedEvmProducerLimits = (
+  selected: z.output<typeof evmProducerLimitsSchema> | undefined,
+) =>
+  resolveProducerLimits(
+    {
+      ...EVM_PRODUCER_LIMIT_DEFAULTS,
+      file_bytes:
+        selected?.output_bytes ?? EVM_PRODUCER_LIMIT_DEFAULTS.file_bytes,
+    },
+    selected,
+  );
+export type EvmProducerLimits = ReturnType<typeof selectedEvmProducerLimits>;
+
+/** Recover the exact producer budget; inherited OS restrictions remain external. */
+export const evmProducerLimitRecovery = (
+  limits: EvmProducerLimits,
+  field: keyof EvmProducerLimits,
+): string =>
+  `Increase producer_limits.${field} above ${String(limits[field])} on the next inspect_evm_interface call; no REA restart is needed. Defaults are ${String(EVM_PRODUCER_LIMIT_DEFAULTS[field])}; the field accepts positive safe integers. Tighter inherited Linux soft/hard limits remain enforced and cannot be raised by this request. timeout_ms, the 256 MiB worker heap and client transport limits are separate. Resolve incomplete cleanup before retrying; do not repeat the unchanged failed request.`;
+
+const byteOffset = z.int().nonnegative();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
+/** Owned EVMole worker deadline. Omission keeps this value. */
+export const DEFAULT_EVM_TIMEOUT_MS = 30_000;
+/** Largest delay supported without overflowing Node timers. */
+export const MAX_EVM_TIMEOUT_MS = 2_147_483_647;
 
 /** Select the carrier representation explicitly; no RPC or deployed-contract lookup is implied. */
 export const inspectEvmInterfaceInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute path to caller-selected local bytecode carrier",
   ),
   encoding: z
     .enum(["raw", "hex"])
     .describe(
       "Raw bytes or UTF-8 hex with optional 0x prefix and outer ASCII whitespace",
+    ),
+  producer_limits: evmProducerLimitsSchema
+    .optional()
+    .describe(
+      "Per-call carrier/reply/diagnostic bytes, address-space/file bytes and CPU seconds. Omission preserves documented defaults; omitted file_bytes follows selected output_bytes. Tighter inherited Linux limits remain enforced. timeout_ms and the 256 MiB worker heap are independent.",
+    ),
+  timeout_ms: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_EVM_TIMEOUT_MS)
+    .optional()
+    .describe(
+      `Deadline in milliseconds for the owned EVMole worker command (default ${String(DEFAULT_EVM_TIMEOUT_MS)}), not carrier acquisition or final reply reads. An integer from 1 to ${String(MAX_EVM_TIMEOUT_MS)} applies on the next call. Does not raise the separately selected producer_limits or the 256 MiB worker heap.`,
     ),
 });
 

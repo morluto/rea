@@ -11,6 +11,7 @@ import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComp
 import {
   FUNCTION_COMPARISON_EVIDENCE,
   INVESTIGATION_EXAMPLES,
+  PROCESS_COMPARISON_EVIDENCE,
 } from "../../../src/contracts/investigationExamples.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { findChangedBehavior } from "../../../src/domain/changedBehavior.js";
@@ -169,6 +170,30 @@ it("feeds the exact public CLI/MCP process comparison into all three MCP consume
   await expectConsumerResults(client, comparison);
 });
 
+it("compares exact retained capture Evidence without resending its payloads", async () => {
+  const { client, left, right, comparison } = await connectedComparison();
+  const response = await client.callTool({
+    name: "compare_process_captures",
+    arguments: {
+      left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+      right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+    },
+  });
+
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(inlineEvidence(response)).toEqual(comparison);
+});
+
+it("advertises the same process comparison Evidence that its example inputs produce", async () => {
+  const { client } = await connectedComparison();
+  const response = await client.callTool({
+    name: "compare_process_captures",
+    arguments: INVESTIGATION_EXAMPLES.compare_process_captures.input,
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(inlineEvidence(response)).toEqual(PROCESS_COMPARISON_EVIDENCE);
+});
+
 type IdentityChange = Partial<
   Pick<
     Evidence,
@@ -229,49 +254,151 @@ it.each(providerNames)(
   },
 );
 
+const DIGEST_MISMATCH_REASON =
+  /evidence_id.*semantic identifier.*does not match/i;
+
+const identityMismatchReason = (tool: string): RegExp => {
+  switch (tool) {
+    case "find_changed_behavior":
+      return /comparison Evidence.*operation.*predicate.*provider.*disagree/i;
+    case "correlate_static_and_runtime":
+      return /comparison Evidence.*operation.*predicate.*provider.*citations.*disagree/i;
+    case "verify_reconstruction":
+      return /comparison Evidence.*identity.*authority.*disagrees/i;
+    default:
+      throw new Error(`Unexpected comparison consumer ${tool}`);
+  }
+};
+
+const unsupportedOperationIssue = (
+  tool: string,
+): {
+  readonly path: readonly (string | number)[];
+  readonly message: RegExp;
+} => {
+  switch (tool) {
+    case "find_changed_behavior":
+      return {
+        path: ["comparisons", 0],
+        message:
+          /changed.behavior.*requires.*process.*artifact.*function comparison Evidence/i,
+      };
+    case "correlate_static_and_runtime":
+      return {
+        path: ["runtime_comparisons", 0],
+        message:
+          /static\/runtime correlation.*requires.*process comparison Evidence/i,
+      };
+    case "verify_reconstruction":
+      return {
+        path: ["claims", 0, "comparison_evidence_id"],
+        message:
+          /terminal-output.*requires compare_process_captures Evidence.*fixture_comparison/i,
+      };
+    default:
+      throw new Error(`Unexpected comparison consumer ${tool}`);
+  }
+};
+
+const expectComparisonRejection = (
+  response: Parameters<typeof parseMcpToolError>[0],
+  tool: string,
+  kind: "identity" | "operation" | "digest",
+) => {
+  if (kind === "operation") {
+    const issue = unsupportedOperationIssue(tool);
+    const parsed = parseMcpToolError(response);
+    expect(parsed.error.message).toMatch(issue.message);
+    expect(parsed, tool).toMatchObject({
+      error: {
+        code: "invalid_request",
+        category: "invalid_input",
+        message: parsed.error.message,
+        recovery: { kind: "inspect_input_contract", operation: tool },
+        details: {
+          operation: tool,
+          issues: [
+            {
+              path: [...issue.path],
+              reason: "invalid_value",
+              message: parsed.error.message,
+            },
+          ],
+        },
+      },
+    });
+    return;
+  }
+  const reason =
+    kind === "digest" ? DIGEST_MISMATCH_REASON : identityMismatchReason(tool);
+  const parsed = parseMcpToolError(response);
+  expect(parsed.error.message).toMatch(reason);
+  expect(parsed, tool).toMatchObject({
+    error: {
+      code: "evidence_integrity_mismatch",
+      category: "integrity_mismatch",
+      details: { reason: parsed.error.message },
+    },
+  });
+};
+
 const invalidIdentities: ReadonlyArray<{
   label: string;
+  kind: "identity" | "operation";
   change: (base: Evidence) => IdentityChange;
 }> = [
   {
     label: "wrong name",
+    kind: "identity",
     change: ({ provider }) => ({
       provider: { ...provider, name: `${provider.name} extra` },
     }),
   },
   {
     label: "wrong id",
+    kind: "identity",
     change: ({ provider }) => ({
       provider: { ...provider, id: "fixture-process" },
     }),
   },
   {
     label: "old version",
+    kind: "identity",
     change: ({ provider }) => ({ provider: { ...provider, version: "2" } }),
   },
   {
     label: "future version",
+    kind: "identity",
     change: ({ provider }) => ({ provider: { ...provider, version: "4" } }),
   },
   {
     label: "missing version",
+    kind: "identity",
     change: ({ provider }) => ({ provider: { ...provider, version: null } }),
   },
   {
     label: "wrong predicate",
+    kind: "identity",
     change: () => ({ predicate_type: "fixture.comparison" }),
   },
   {
     label: "wrong operation",
+    kind: "operation",
     change: () => ({ operation: "fixture_comparison" }),
   },
   {
     label: "non-null subject",
+    kind: "identity",
     change: () => ({ subject: FUNCTION_COMPARISON_EXAMPLE.left.subject }),
   },
-  { label: "wrong confidence", change: () => ({ confidence: "observed" }) },
+  {
+    label: "wrong confidence",
+    kind: "identity",
+    change: () => ({ confidence: "observed" }),
+  },
   {
     label: "wrong authority",
+    kind: "identity",
     change: () => ({ authority: "controlled-replay" }),
   },
 ];
@@ -279,7 +406,7 @@ const invalidIdentities: ReadonlyArray<{
 for (const name of providerNames)
   it.each(invalidIdentities)(
     `rejects independently rehashed $label for ${name} in every MCP consumer`,
-    async ({ change }) => {
+    async ({ change, kind }) => {
       const { session, client, comparison } = await connectedComparison();
       const named = rehashedComparison(comparison, {
         provider: { ...comparison.provider, name },
@@ -291,9 +418,7 @@ for (const name of providerNames)
       for (const { expected: _expected, ...call } of consumerCalls(invalid)) {
         const response = await client.callTool(call);
         expect(response.isError, call.name).toBe(true);
-        expect(parseMcpToolError(response), call.name).toMatchObject({
-          error: { code: "invalid_request" },
-        });
+        expectComparisonRejection(response, call.name, kind);
       }
     },
   );
@@ -332,13 +457,11 @@ it("separately rejects a tampered digest before admission to any consumer or ses
   )) {
     const response = await client.callTool(call);
     expect(response.isError, call.name).toBe(true);
-    expect(parseMcpToolError(response)).toMatchObject({
-      error: { code: "invalid_request" },
-    });
+    expectComparisonRejection(response, call.name, "digest");
   }
 });
 
-it("maps malformed changed-behavior Evidence to an invalid request before closure lookup", async () => {
+it("maps malformed changed-behavior Evidence to an integrity mismatch before closure lookup", async () => {
   const { client, comparison } = await connectedComparison();
   const malformed = { ...comparison, evidence_links: undefined } as unknown;
   const response = await client.callTool({
@@ -346,8 +469,15 @@ it("maps malformed changed-behavior Evidence to an invalid request before closur
     arguments: { comparisons: [malformed] },
   });
   expect(response.isError).toBe(true);
+  const reason =
+    "Evidence validation failed at evidence_links: Invalid input: expected array, received undefined";
   expect(parseMcpToolError(response)).toMatchObject({
-    error: { code: "invalid_request" },
+    error: {
+      code: "evidence_integrity_mismatch",
+      category: "integrity_mismatch",
+      message: reason,
+      details: { reason },
+    },
   });
 });
 

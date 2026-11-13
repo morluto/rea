@@ -1,16 +1,24 @@
 import {
+  isAlias,
   isMap,
-  isNode,
   isScalar,
   isSeq,
   parseDocument,
   Document,
   Schema,
   type ParsedNode,
-  type Node,
   type ScalarTag,
   type Tags,
 } from "yaml";
+import {
+  preserveYamlAliasValues,
+  copyYamlAliasSource,
+} from "./YamlConfigurationAliases.js";
+import {
+  retainYamlConfigurationSource,
+  retainYamlScalarSource,
+  yamlNumericValuesEqual,
+} from "./YamlConfigurationSource.js";
 
 const SOURCE_SCALAR_TAGS = new Set([
   "tag:yaml.org,2002:int",
@@ -159,65 +167,6 @@ const numericValue = (value: unknown): bigint | number | undefined => {
   return undefined;
 };
 
-const numericValuesEqual = (
-  left: bigint | number,
-  right: bigint | number,
-): boolean => {
-  if (typeof left === "bigint" && typeof right === "bigint")
-    return left === right;
-  if (typeof left === "number" && typeof right === "number")
-    return left === right || (Number.isNaN(left) && Number.isNaN(right));
-  const integer = typeof left === "bigint" ? left : right;
-  const number = typeof left === "number" ? left : right;
-  return (
-    Number.isFinite(number) &&
-    Number.isInteger(number) &&
-    BigInt(number) === integer
-  );
-};
-
-const sameResolvedScalarValue = (left: unknown, right: unknown): boolean =>
-  Object.is(left, right) ||
-  (left instanceof Date &&
-    right instanceof Date &&
-    left.getTime() === right.getTime());
-
-/**
- * Write a parsed scalar with its source spelling while that spelling still
- * reads as the node's value. Hermes reads config.yaml as YAML 1.1 with exact
- * integers, so re-printing a JavaScript number changes what it reads: a
- * Discord channel ID loses its low digits, `0600` (octal) becomes `600`, and
- * `0.0000001` becomes `1e-7`, which YAML 1.1 does not define as a float.
- * Timestamp source also retains precision and offsets absent from JS Dates.
- */
-const keepScalarSource = (tag: Tags[number]): Tags[number] => {
-  if (typeof tag === "string" || tag.collection !== undefined) return tag;
-  const { stringify } = tag;
-  if (!SOURCE_SCALAR_TAGS.has(tag.tag) || stringify === undefined) return tag;
-  return {
-    ...tag,
-    stringify: (item, context, ...rest) => {
-      const { source } = item;
-      if (source === undefined) return stringify(item, context, ...rest);
-      const reader = context.doc.schema.tags.find(
-        (candidate): candidate is ScalarTag =>
-          candidate.default === true && candidate.test?.test(source) === true,
-      );
-      const read = reader?.resolve(
-        source,
-        () => undefined,
-        context.doc.options,
-      );
-      return sameResolvedScalarValue(
-        isScalar(read) ? read.value : read,
-        item.value,
-      )
-        ? source
-        : stringify(item, context, ...rest);
-    },
-  };
-};
-
 const createHermesYamlOptions = () => {
   const timestamps = new Map<string, HermesTimestampFacts | undefined>();
   const timestampFacts = (source: string): HermesTimestampFacts | undefined => {
@@ -265,15 +214,15 @@ const createHermesYamlOptions = () => {
     const right = hermesKey(rightNode);
     if (left.kind !== right.kind) return false;
     if (left.kind === "numeric" && right.kind === "numeric")
-      return numericValuesEqual(left.value, right.value);
+      return yamlNumericValuesEqual(left.value, right.value);
     return left.value === right.value;
   };
   return {
     // Hermes defaults to YAML 1.1; an explicit document directive still wins.
     // Use the same schema to interpret existing values and quote new strings.
     version: "1.1" as const,
-    // Keep integer key identity exact; parseHermesConfigurationYaml's reviver
-    // restores the existing number-valued consumer contract.
+    // Keep integer identity exact; the consumer projection converts only
+    // safely representable integers to numbers.
     intAsBigInt: true,
     customTags: (tags: Tags) => {
       const hasTimestamp = tags.some(
@@ -286,7 +235,11 @@ const createHermesYamlOptions = () => {
               : tag,
           )
         : [...tags, hermesTimestampTag];
-      return withHermesTimestamp.map(keepScalarSource);
+      return withHermesTimestamp.map((tag) =>
+        typeof tag !== "string" && SOURCE_SCALAR_TAGS.has(tag.tag)
+          ? retainYamlScalarSource(tag)
+          : tag,
+      );
     },
     uniqueKeys: hermesKeysEqual,
   };
@@ -322,38 +275,10 @@ export const parseHermesConfigurationYaml = (text: string): unknown => {
     ? {}
     : document.toJS({
         reviver: (_key, value) =>
-          typeof value === "bigint" ? Number(value) : value,
+          typeof value === "bigint" && Number.isSafeInteger(Number(value))
+            ? Number(value)
+            : value,
       });
-};
-
-/** Keep unchanged scalar nodes, including their quoting and explicit tags. */
-const retainHermesScalarSource = (previous: unknown, next: Node): Node => {
-  if (isScalar(previous) && isScalar(next) && previous.value === next.value)
-    return previous;
-  if (isMap(previous) && isMap(next)) {
-    const entries = new Map(
-      previous.items.flatMap((pair) =>
-        isScalar(pair.key) && typeof pair.key.value === "string"
-          ? [[pair.key.value, pair] as const]
-          : [],
-      ),
-    );
-    for (const pair of next.items) {
-      const key = isScalar(pair.key) ? pair.key.value : undefined;
-      const prior = typeof key === "string" ? entries.get(key) : undefined;
-      if (prior === undefined) continue;
-      pair.key = prior.key;
-      if (isNode(pair.value))
-        pair.value = retainHermesScalarSource(prior.value, pair.value);
-    }
-  } else if (isSeq(previous) && isSeq(next)) {
-    next.items = next.items.map((item, index) =>
-      isNode(item)
-        ? retainHermesScalarSource(previous.items[index], item)
-        : item,
-    );
-  }
-  return next;
 };
 
 /** Set or delete one value in a Hermes `config.yaml`, keeping the rest as written. */
@@ -373,22 +298,46 @@ export const editHermesConfigurationYaml = (
         .join("\n");
     document.contents = map;
   }
-  if (value === undefined) document.deleteIn(path);
-  else {
-    // setIn's implicit JS Map parents serialize as !!omap in YAML 1.1.
-    // Config settings are ordinary mappings, including absent server tables.
-    for (let length = 1; length < path.length; length++) {
-      const parent = path.slice(0, length);
-      if (!document.hasIn(parent))
-        document.setIn(parent, document.createNode({}));
+  for (let length = 1; length < path.length; length++) {
+    const parent = path.slice(0, length);
+    const previous = document.getIn(parent, true);
+    if (isAlias(previous)) {
+      const copied = copyYamlAliasSource(previous, document);
+      if (isMap(copied)) {
+        // Edit a private mapping, keeping the alias source and its consumers.
+        document.setIn(parent, copied);
+      }
+    } else if (value !== undefined && !document.hasIn(parent)) {
+      // Implicit JS Map parents serialize as !!omap in YAML 1.1.
+      document.setIn(parent, document.createNode({}));
     }
-    const previous = document.getIn(path, true);
+  }
+  const previous = document.getIn(path, true);
+  // Deletion removes the pair's key too; replacement retains that key node.
+  const parent =
+    value === undefined ? document.getIn(path.slice(0, -1), true) : undefined;
+  const removedKey = isMap(parent)
+    ? parent.items.find(
+        (pair) => isScalar(pair.key) && pair.key.value === path.at(-1),
+      )?.key
+    : undefined;
+  const retainedSources = preserveYamlAliasValues(document, [
+    previous,
+    removedKey,
+  ]);
+  if (value === undefined) {
+    if (!document.deleteIn(path)) return text;
+  } else {
     // Let YAML's scalar update preserve numeric formats for a direct edit.
     // Replacing containers needs explicit retention of unchanged child nodes.
     document.setIn(
       path,
       isMap(previous) || isSeq(previous)
-        ? retainHermesScalarSource(previous, document.createNode(value))
+        ? retainYamlConfigurationSource(
+            previous,
+            document.createNode(value),
+            retainedSources,
+          )
         : value,
     );
   }

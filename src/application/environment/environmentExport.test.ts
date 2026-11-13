@@ -1,8 +1,14 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join, sep } from "node:path";
-import * as v8 from "node:v8";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   environmentServeFixture,
@@ -12,16 +18,10 @@ import {
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
-import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
-import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
-import * as regularFileRead from "../RegularFileRead.js";
 import {
   exportEnvironmentBundle,
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
-
-vi.mock("node:v8", { spy: true });
-vi.mock("../RegularFileRead.js", { spy: true });
 
 const listFiles = async (root: string): Promise<string[]> =>
   (await readdir(root, { recursive: true, withFileTypes: true }))
@@ -52,41 +52,6 @@ const prepare = async (prefix: string) => {
 };
 
 describe("readEnvironmentExportInputs", () => {
-  it.each(["manifest", "evidence"] as const)(
-    "returns a tagged input error when the %s snapshot changes",
-    async (role) => {
-      const root = await createTestTempDirectory(
-        "rea-environment-input-changed-",
-      );
-      const files = await writeEnvironmentServeFiles(root);
-      const changedPath =
-        role === "manifest" ? files.manifestPath : files.capturePath;
-      const actual = await vi.importActual<typeof regularFileRead>(
-        "../RegularFileRead.js",
-      );
-      const reader = vi.mocked(regularFileRead.readRegularFile);
-      reader.mockImplementation(async (path, options) => {
-        if (path === changedPath) throw new RegularFileChangedError(path);
-        return actual.readRegularFile(path, options);
-      });
-      try {
-        const result = await readEnvironmentExportInputs(
-          files.manifestPath,
-          files.capturePath,
-        );
-        if (result.ok) throw new Error("Expected changed input refusal");
-        expect(projectAnalysisError(result.error)).toMatchObject({
-          code: "invalid_request",
-          details: {
-            operation: "environment-export",
-            issues: [{ path: [role], reason: "invalid_value" }],
-          },
-        });
-      } finally {
-        reader.mockImplementation(actual.readRegularFile);
-      }
-    },
-  );
   it("reads each file once as the bytes on disk and the value they parse to", async () => {
     const root = await createTestTempDirectory("rea-environment-inputs-");
     const fixture = environmentServeFixture();
@@ -97,40 +62,20 @@ describe("readEnvironmentExportInputs", () => {
     );
     if (!inputs.ok) throw inputs.error;
     expect(inputs.value.manifest.path).toBe(files.manifestPath);
-    expect(inputs.value.manifest.bytes).toEqual(
-      await readFile(files.manifestPath),
-    );
+    expect(
+      Buffer.compare(
+        inputs.value.manifest.bytes,
+        await readFile(files.manifestPath),
+      ),
+    ).toBe(0);
     expect(inputs.value.manifest.value).toEqual(fixture.manifest);
-    expect(inputs.value.evidence.bytes).toEqual(
-      await readFile(files.capturePath),
-    );
+    expect(
+      Buffer.compare(
+        inputs.value.evidence.bytes,
+        await readFile(files.capturePath),
+      ),
+    ).toBe(0);
     expect(inputs.value.evidence.value).toEqual(fixture.capture);
-  });
-
-  it("refuses an input whose whole read and parse would not fit live heap headroom, before reading it", async () => {
-    const root = await createTestTempDirectory("rea-environment-export-heap-");
-    const files = await writeEnvironmentServeFiles(
-      root,
-      environmentServeFixture(),
-    );
-    vi.mocked(v8.getHeapStatistics).mockReturnValueOnce({
-      ...v8.getHeapStatistics(),
-      total_available_size: 1024,
-    });
-    const refused = await readEnvironmentExportInputs(
-      files.manifestPath,
-      files.capturePath,
-    );
-    expect(refused.ok).toBe(false);
-    if (refused.ok) return;
-    expect(refused.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "memory",
-      reportedLimits: {
-        input_path: files.manifestPath,
-        available_heap_bytes: 1024,
-      },
-    });
   });
 
   it("refuses inline JSON, a directory and a file that is not JSON by role", async () => {
@@ -175,7 +120,7 @@ describe("readEnvironmentExportInputs", () => {
   });
 });
 
-describe("exportEnvironmentBundle", () => {
+const registerBundlePublicationCases = () => {
   it("writes the bundle into an absent directory with the read bytes copied unchanged", async () => {
     const { root, files, input, directory } = await prepare(
       "rea-environment-export-",
@@ -186,9 +131,11 @@ describe("exportEnvironmentBundle", () => {
       status: "exported",
       directory,
       name: "grafana-example",
-      tool_count: 19,
+      // The bundle serves the state the export derived: the manifest's read tools.
+      tool_count: 14,
       evidence_id: input.source.evidenceId,
       manifest_evidence_id: input.source.manifestEvidenceId,
+      state: { served: true, evidence_id: expect.stringMatching(/^ev_/u) },
       package_source: {
         kind: "registry",
         specifier: `rea-agents@${PACKAGE_METADATA.version}`,
@@ -210,11 +157,17 @@ describe("exportEnvironmentBundle", () => {
         (await readFile(join(directory, file.path))).length,
       );
     expect(
-      await readFile(join(directory, "envs/grafana-example/manifest.json")),
-    ).toEqual(await readFile(files.manifestPath));
+      Buffer.compare(
+        await readFile(join(directory, "envs/grafana-example/manifest.json")),
+        await readFile(files.manifestPath),
+      ),
+    ).toBe(0);
     expect(
-      await readFile(join(directory, "envs/grafana-example/evidence.json")),
-    ).toEqual(input.evidence.bytes);
+      Buffer.compare(
+        await readFile(join(directory, "envs/grafana-example/evidence.json")),
+        input.evidence.bytes,
+      ),
+    ).toBe(0);
     expect(await listFiles(root)).toEqual(
       expect.arrayContaining(["capture.json", "manifest.json"]),
     );
@@ -242,13 +195,18 @@ describe("exportEnvironmentBundle", () => {
       bytes: 7,
     });
     expect(
-      await readFile(join(directory, "envs/replay-copy/rea-agents.tgz")),
-    ).toEqual(await readFile(tarball));
+      Buffer.compare(
+        await readFile(join(directory, "envs/replay-copy/rea-agents.tgz")),
+        await readFile(tarball),
+      ),
+    ).toBe(0);
     expect(
       await readFile(join(directory, "envs/replay-copy/Dockerfile"), "utf8"),
     ).toContain("COPY rea-agents.tgz /tmp/");
   });
+};
 
+const registerBundleDestinationAdmissionCases = () => {
   it("refuses a non-empty directory, a file path and a missing tarball before writing anything", async () => {
     const { root, input, directory } = await prepare(
       "rea-environment-export-refusals-",
@@ -275,6 +233,15 @@ describe("exportEnvironmentBundle", () => {
     expect(projectAnalysisError(asFile.error).details?.issues).toEqual([
       expect.objectContaining({ path: ["directory"] }),
     ]);
+    const fileRefusal = projectAnalysisError(asFile.error);
+    expect(fileRefusal.message).toContain("must be a directory");
+    expect(fileRefusal.message).not.toContain("identity changed");
+    expect(fileRefusal.details?.issues).toEqual([
+      expect.objectContaining({ message: fileRefusal.message }),
+    ]);
+    expect(await readFile(join(directory, "keep.txt"), "utf8")).toBe(
+      "existing",
+    );
     const missingTarball = await exportEnvironmentBundle({
       ...input,
       directory: join(root, "fresh"),
@@ -287,6 +254,54 @@ describe("exportEnvironmentBundle", () => {
     expect(await listFiles(root)).not.toContain("fresh/README.md");
   });
 
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "distinguishes denied output writing from denied input reading and recovers with the same inputs",
+    async () => {
+      const { input, directory, files } = await prepare(
+        "rea-environment-export-denied-",
+      );
+      await mkdir(directory, { mode: 0o500 });
+      try {
+        const denied = await exportEnvironmentBundle({ ...input, directory });
+        if (denied.ok) throw new Error("Expected write denial");
+        expect(projectAnalysisError(denied.error)).toMatchObject({
+          message: expect.stringContaining("denied writing"),
+          remediation: {
+            action: expect.stringContaining("writable destination"),
+          },
+          details: {
+            diagnostics: {
+              boundary: "filesystem-write",
+              system_code: "EACCES",
+            },
+          },
+        });
+        expect(await readdir(directory)).toEqual([]);
+        await chmod(files.manifestPath, 0);
+        const readDenied = await readEnvironmentExportInputs(
+          files.manifestPath,
+          files.capturePath,
+        );
+        if (readDenied.ok) throw new Error("Expected read denial");
+        expect(readDenied.error).toMatchObject({
+          _tag: "AnalysisAccessDeniedError",
+          path: files.manifestPath,
+          cause: { code: "EACCES", path: files.manifestPath },
+        });
+        expect(projectAnalysisError(readDenied.error)).toMatchObject({
+          code: "access_denied",
+          details: { boundary: "filesystem-read" },
+        });
+      } finally {
+        await chmod(directory, 0o700);
+        await chmod(files.manifestPath, 0o600);
+      }
+      expect((await exportEnvironmentBundle({ ...input, directory })).ok).toBe(
+        true,
+      );
+    },
+  );
+
   it("accepts an existing empty directory", async () => {
     const { input, directory } = await prepare("rea-environment-export-empty-");
     await mkdir(directory);
@@ -294,6 +309,11 @@ describe("exportEnvironmentBundle", () => {
     expect(exported.ok).toBe(true);
     expect(await listFiles(directory)).toHaveLength(7);
   });
+};
+
+describe("exportEnvironmentBundle", () => {
+  registerBundlePublicationCases();
+  registerBundleDestinationAdmissionCases();
 });
 
 describe("exportEnvironmentBundle file modes", () => {
@@ -313,35 +333,4 @@ describe("exportEnvironmentBundle file modes", () => {
       }
     },
   );
-});
-
-describe("readEnvironmentExportInputs heap admission", () => {
-  it("reserves headroom for snapshot sealing after the native parse", async () => {
-    const root = await createTestTempDirectory(
-      "rea-environment-export-copies-",
-    );
-    const files = await writeEnvironmentServeFiles(
-      root,
-      environmentServeFixture(),
-    );
-    const { size } = await stat(files.manifestPath);
-    // Room for parsing, but not for the owned snapshot traversal that follows it.
-    vi.mocked(v8.getHeapStatistics).mockReturnValueOnce({
-      ...v8.getHeapStatistics(),
-      total_available_size: nativeJsonParseRequiredBytes(size) * 1.5,
-    });
-    const refused = await readEnvironmentExportInputs(
-      files.manifestPath,
-      files.capturePath,
-    );
-    expect(refused.ok).toBe(false);
-    if (refused.ok) return;
-    expect(refused.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      reportedLimits: {
-        input_path: files.manifestPath,
-        required_heap_bytes: nativeJsonParseRequiredBytes(size, true),
-      },
-    });
-  });
 });

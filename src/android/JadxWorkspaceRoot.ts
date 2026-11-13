@@ -105,8 +105,9 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
       },
     });
     let diagnostics = "";
-    child.stderr.on("data", (chunk: Buffer) => {
-      diagnostics = (diagnostics + chunk.toString()).slice(-8192);
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      diagnostics = (diagnostics + chunk).slice(-8192);
     });
     const exit = new Promise<GuardianExit>((resolve) => {
       child.once("error", (error: Error) =>
@@ -116,8 +117,9 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
     });
     const ready = new Promise<string>((resolve, reject) => {
       let frame = "";
-      child.stdout.on("data", (chunk: Buffer) => {
-        frame += chunk.toString();
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        frame += chunk;
         if (frame.length > 4096) {
           reject(
             new Error("Android workspace guardian readiness exceeded 4 KiB"),

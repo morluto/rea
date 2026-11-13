@@ -6,25 +6,21 @@ import {
 import type { CapturedResource } from "./CdpCaptureDocuments.js";
 import type { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import type { CapturedScript } from "./CdpCaptureEventTypes.js";
-import {
-  requiredScriptSource,
-  sourceExcluded,
-  sourceResult,
-} from "./CdpCaptureValues.js";
+import { sourceExcluded } from "./CdpCaptureValues.js";
+import { capturePassiveCdpScriptSource } from "./CdpScriptSourceCapture.js";
 import type { CaptureContext } from "./CdpPageCapture.js";
 import type { WebSourceMapRequest } from "./WebSourceMapFetcher.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
-import {
-  CDP_SCRIPT_SOURCE_BYTES_OMISSION_REASON,
-  CDP_SCRIPT_SOURCE_DEADLINE_OMISSION_REASON,
-  CdpScriptSourceBudget,
-} from "./CdpScriptSourceBudget.js";
+import { selectedCdpCommandTimeoutMs } from "../domain/browserDeadline.js";
+import { CdpScriptSourceBudget } from "./CdpScriptSourceBudget.js";
 
 export interface CapturedScripts {
   readonly inventory: WebPageInspection["scripts"];
   readonly sourceMapRequests: readonly WebSourceMapRequest[];
+}
+
+export interface CapturedScriptSnapshot extends CapturedScripts {
+  readonly scriptIds: ReadonlySet<string>;
 }
 
 export interface CaptureScriptsOptions {
@@ -51,20 +47,23 @@ type ScriptDraftItem = Omit<
 
 export const captureScripts = async (
   options: CaptureScriptsOptions,
-): Promise<CapturedScripts> => {
+): Promise<CapturedScriptSnapshot> => {
   const { context, events, rawResources, resources, frameIds } = options;
   let state: ScriptDraftState | undefined;
   const drafts: {
     readonly item: ScriptDraftItem;
     readonly sourceMapRawUrl: string | null;
   }[] = [];
-  const scripts = [...events.scripts.values()];
+  const scripts = new Map(events.scripts);
+  const commandTimeoutMs = selectedCdpCommandTimeoutMs(
+    context.input.command_timeout_ms,
+  );
   const sourceBudget =
-    context.input.include_script_sources && scripts.length > 0
-      ? new CdpScriptSourceBudget(context.signal)
+    context.input.include_script_sources && scripts.size > 0
+      ? new CdpScriptSourceBudget(context.signal, commandTimeoutMs)
       : undefined;
   try {
-    for (const script of scripts) {
+    for (const script of scripts.values()) {
       state ??= {
         context,
         events,
@@ -74,46 +73,41 @@ export const captureScripts = async (
           resources,
         ),
       };
-      let source: WebPageInspection["scripts"]["items"][number]["source"] =
-        context.input.include_script_sources
-          ? sourceExcluded(CDP_SCRIPT_SOURCE_DEADLINE_OMISSION_REASON)
-          : sourceExcluded("source capture was not selected");
-      if (
-        context.input.include_script_sources &&
-        isSourceDeadlineExpired(sourceBudget)
-      ) {
-        events.completeness.exclude(
-          "script_sources",
-          "resource_budget_exhausted",
-        );
-      } else if (
-        context.input.include_script_sources &&
-        sourceBudget !== undefined
-      ) {
-        try {
-          source = await captureScriptSource(script, state, sourceBudget);
-        } catch (cause: unknown) {
-          throwIfCallerCancelled(context.signal, context.operation);
-          if (isSourceDeadlineExpired(sourceBudget))
-            events.completeness.exclude(
-              "script_sources",
-              "resource_budget_exhausted",
-            );
-          else throw cause;
-        }
-      }
+      const source =
+        sourceBudget === undefined
+          ? sourceExcluded("source capture was not selected")
+          : await capturePassiveCdpScriptSource({
+              connection: context.connection,
+              sessionId: context.sessionId,
+              signal: context.signal,
+              operation: context.operation,
+              scriptId: script.scriptId,
+              sourceBudget,
+              completeness: events.completeness,
+            });
       drafts.push(buildScriptDraft(script, state, source));
     }
   } finally {
     sourceBudget?.dispose();
   }
   if (!context.input.include_script_sources)
-    events.completeness.exclude(
-      "script_sources",
-      "not_approved",
-      events.scripts.size,
-    );
-  return keyAndBuildInventory(drafts, events.scripts.size);
+    events.completeness.exclude("script_sources", "not_approved", scripts.size);
+  return {
+    ...keyAndBuildInventory(drafts, scripts.size),
+    scriptIds: new Set(scripts.keys()),
+  };
+};
+
+/** Settle once after the last CDP read, before normalizing completeness. */
+export const finalizeScriptInventory = (
+  snapshot: CapturedScriptSnapshot,
+  events: CdpCaptureEvents,
+): WebPageInspection["scripts"] => {
+  let lateCount = 0;
+  for (const scriptId of events.scripts.keys())
+    if (!snapshot.scriptIds.has(scriptId)) lateCount += 1;
+  if (lateCount > 0) events.completeness.drop("scripts", lateCount);
+  return { ...snapshot.inventory, total: snapshot.inventory.total + lateCount };
 };
 
 const buildScriptDraft = (
@@ -146,49 +140,6 @@ const buildScriptDraft = (
     sourceMapRawUrl: script.sourceMapRawUrl,
   };
 };
-
-const captureScriptSource = async (
-  script: CapturedScript,
-  state: ScriptDraftState,
-  sourceBudget: CdpScriptSourceBudget,
-): Promise<WebPageInspection["scripts"]["items"][number]["source"]> => {
-  const { context } = state;
-  const response = await context.connection.send(
-    "Debugger.getScriptSource",
-    { scriptId: script.scriptId },
-    context.sessionId,
-    sourceBudget.signal,
-  );
-  throwIfCallerCancelled(context.signal, context.operation);
-  const content = requiredScriptSource(response, context.operation);
-  if (sourceBudget.timedOut) {
-    state.events.completeness.exclude(
-      "script_sources",
-      "resource_budget_exhausted",
-    );
-    return sourceExcluded(CDP_SCRIPT_SOURCE_DEADLINE_OMISSION_REASON);
-  }
-  if (!sourceBudget.admit(content)) {
-    state.events.completeness.exclude(
-      "script_sources",
-      "resource_budget_exhausted",
-    );
-    return sourceExcluded(CDP_SCRIPT_SOURCE_BYTES_OMISSION_REASON);
-  }
-  return sourceResult(content);
-};
-
-const throwIfCallerCancelled = (
-  signal: AbortSignal | undefined,
-  operation: BrowserObservationOperation,
-): void => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
-};
-
-const isSourceDeadlineExpired = (
-  sourceBudget: CdpScriptSourceBudget | undefined,
-): boolean => sourceBudget?.timedOut === true;
 
 const keyAndBuildInventory = (
   drafts: readonly {

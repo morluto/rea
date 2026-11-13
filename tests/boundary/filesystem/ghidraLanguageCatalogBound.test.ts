@@ -1,7 +1,9 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { readGhidraLanguageCatalog } from "../../../src/ghidra/GhidraLanguageCatalog.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -61,9 +63,9 @@ it("skips an oversized definition without buffering it beyond the catalog limit"
     '<language_definitions><language id="x86:LE:32:default"/></language_definitions>',
   );
 
-  expect(await readGhidraLanguageCatalog(root)).toEqual([
-    { id: "x86:LE:32:default", compilerSpecIds: [] },
-  ]);
+  expect(
+    await readGhidraLanguageCatalog(root, new ArtifactResourceScope()),
+  ).toEqual([{ id: "x86:LE:32:default", compilerSpecIds: [] }]);
   expect(readBytes.value).toBeGreaterThan(0);
   expect(readBytes.value).toBeLessThanOrEqual(LIMIT + 1);
 });
@@ -80,7 +82,37 @@ it("keeps a definition at exactly the catalog limit", async () => {
     Buffer.concat([document, Buffer.alloc(LIMIT - document.length, 0x20)]),
   );
 
-  expect(await readGhidraLanguageCatalog(root)).toEqual([
-    { id: "edge:LE:32:default", compilerSpecIds: [] },
-  ]);
+  expect(
+    await readGhidraLanguageCatalog(root, new ArtifactResourceScope()),
+  ).toEqual([{ id: "edge:LE:32:default", compilerSpecIds: [] }]);
 });
+
+it("follows a symlinked definition file", async () => {
+  const root = await createTestTempDirectory("rea-ghidra-ldefs-symlink-");
+  const languages = join(root, "Ghidra/Processors/link/data/languages");
+  await mkdir(languages, { recursive: true });
+  const source = join(root, "source.xml");
+  await writeFile(
+    source,
+    '<language_definitions><language id="link:LE:32:default"/></language_definitions>',
+  );
+  await symlink(source, join(languages, "link.ldefs"));
+  expect(
+    await readGhidraLanguageCatalog(root, new ArtifactResourceScope()),
+  ).toEqual([{ id: "link:LE:32:default", compilerSpecIds: [] }]);
+});
+
+it.skipIf(process.platform === "win32")(
+  "refuses a non-regular definition without waiting for a writer",
+  async () => {
+    const root = await createTestTempDirectory("rea-ghidra-ldefs-fifo-");
+    const languages = join(root, "Ghidra/Processors/pipe/data/languages");
+    await mkdir(languages, { recursive: true });
+    execFileSync("mkfifo", [join(languages, "pipe.ldefs")]);
+    const resources = new ArtifactResourceScope();
+    await expect(
+      readGhidraLanguageCatalog(root, resources),
+    ).rejects.toMatchObject({ code: "ENOTFILE" });
+    expect(resources.hasPending).toBe(false);
+  },
+);

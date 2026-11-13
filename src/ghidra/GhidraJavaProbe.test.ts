@@ -1,3 +1,14 @@
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { ghidraProfileInstallationHost } from "./GhidraInstallation.fixture.js";
+import { inspectGhidraInstallation } from "./GhidraInstallation.js";
+import { projectGhidraDoctorInspection } from "./GhidraDoctor.js";
 import { describe, expect, it, afterEach } from "vitest";
 import { probeGhidraJava, parseGhidraJavaOutput } from "./GhidraJavaProbe.js";
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
@@ -127,6 +138,8 @@ describe("Ghidra Java prerequisite process facts", () => {
 });
 
 it.each([
+  "21 ",
+  " 21",
   "21garbage",
   "garbage",
   "21.foo",
@@ -165,4 +178,174 @@ it.each([
       ),
     }),
   ).toMatchObject({ ok: true, value: { version, major } });
+});
+
+// This inert JVM stand-in exercises the real probe process boundary and doctor
+// projection. Its scalar format matches OpenJDK LauncherHelper.printPropertyValue.
+it.skipIf(process.platform === "win32").each([
+  { suffix: "", newline: "\n" },
+  { suffix: " ", newline: "\n" },
+  { suffix: "\t", newline: "\n" },
+  { suffix: " \t", newline: "\n" },
+  { suffix: " ", newline: "\r\n" },
+])(
+  "preserves JDK home and doctor registration with property framing %j",
+  async ({ suffix, newline }) => {
+    const directory = await createTestTempDirectory("rea-java-home-");
+    const home = join(directory, `jdk${suffix}`);
+    await mkdir(join(home, "bin"), { recursive: true });
+    const command = join(home, "bin", "java");
+    const properties = [
+      "Property settings:",
+      `    java.home = ${home}`,
+      "    java.version = 21.0.11",
+      "    java.vm.name = OpenJDK 64-Bit Server VM",
+      `    os.arch = ${process.arch === "arm64" ? "aarch64" : "amd64"}`,
+      `    os.name = ${process.platform === "darwin" ? "Mac OS X" : "Linux"}`,
+      "    sun.arch.data.model = 64",
+      "",
+    ].join(newline);
+    await writeFile(
+      command,
+      `#!${process.execPath}\nprocess.stderr.write(${JSON.stringify(properties)});\n`,
+      { mode: 0o755 },
+    );
+    await writeFile(join(home, "bin", "javac"), "", { mode: 0o755 });
+    const inspection = await inspectGhidraInstallation(
+      {
+        resourceOwner: resources.owner,
+        environment: process.env,
+        installDir: "/selected/ghidra",
+        javaHome: home,
+        platform: process.platform,
+        architecture: process.arch,
+      },
+      { ...ghidraProfileInstallationHost, probeJava: probeGhidraJava },
+    );
+    expect(inspection).toMatchObject({ status: "available", javaHome: home });
+    expect(projectGhidraDoctorInspection(inspection)).toMatchObject({
+      available: true,
+      registrationEnvironment: { JAVA_HOME: home },
+    });
+  },
+);
+
+it.each(["java.home=/selected/jdk", "java.home =\t/selected/jdk"])(
+  "keeps nonstandard property framing unresolved: %s",
+  (line) => {
+    expect(
+      probe({ stdout: Buffer.from(`${line}\n    java.version = 21\n`) }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        code: "version_unresolved",
+        properties: { home: null, version: "21" },
+      },
+    });
+  },
+);
+
+it("preserves scalar whitespace for architecture and bitness validation", () => {
+  expect(
+    probe({
+      stdout: Buffer.from(
+        [
+          "    java.home = /selected/jdk",
+          "    java.version = 21",
+          "    java.vm.name = OpenJDK 64-Bit Server VM ",
+          "    os.arch = amd64 ",
+          "    os.name = Linux\t",
+          "    sun.arch.data.model = 64 ",
+          "",
+        ].join("\r\n"),
+      ),
+    }),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      vmName: "OpenJDK 64-Bit Server VM ",
+      osArch: "amd64 ",
+      osName: "Linux\t",
+      bits: null,
+      unparsedBits: "64 ",
+    },
+  });
+});
+
+it("preserves each prerequisite cleanup retry outcome until the same owner releases", async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    stdin: null,
+    exitCode: null as number | null,
+    signalCode: null,
+    kill: () => false,
+  });
+  let attempt = 0;
+  const outcomes = [
+    { cleaned: false as const, reason: "initial observation denied" },
+    { cleaned: false as const, reason: "retry permission denied" },
+    { cleaned: false as const, reason: "retry identity unreadable" },
+    { cleaned: true as const, signaled: false },
+  ];
+  const retained: Parameters<RetainedResourceScope["retain"]>[0][] = [];
+  const result = await probeGhidraJava(
+    "/selected/bin/java",
+    {},
+    {
+      resourceOwner: {
+        retain: (owner) => {
+          retained.push(owner);
+        },
+        run: (work) => work(),
+      },
+      launcher: async () => {
+        setImmediate(() => {
+          child.stderr.end("java.version = 21\njava.home = /selected/jdk\n");
+          child.stdout.end();
+          child.exitCode = 0;
+          child.emit("exit", 0, null);
+          child.emit("close", 0, null);
+        });
+        return {
+          process: child,
+          ownership: {
+            runId: "probe-retry",
+            leaderPid: 12345,
+            processGroupId: 12345,
+          },
+          cleanup: async () => outcomes[attempt++]!,
+        };
+      },
+    },
+  );
+  if (result.ok || !(result.error instanceof AnalysisError))
+    throw new Error("Expected the probe cleanup failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(retained).toHaveLength(1);
+  const failures: ProviderCleanupError[] = [];
+  for (const reason of [
+    "retry permission denied",
+    "retry identity unreadable",
+  ]) {
+    const failure: unknown = await retained[0]!
+      .close()
+      .catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ProviderCleanupError);
+    if (!(failure instanceof ProviderCleanupError)) throw failure;
+    expect(failure.diagnostics).toMatchObject({
+      reason,
+      process_cleanup: { reason },
+    });
+    expect(failure.cause).toHaveProperty(
+      "cleanupFailure",
+      "initial observation denied",
+    );
+    expect(failure.cleanupIncomplete).toBe(true);
+    failures.push(failure);
+  }
+  await retained[0]!.close();
+  expect(attempt).toBe(4);
+  expect(failures.every((failure) => !failure.cleanupIncomplete)).toBe(true);
+  expect(result.error.cleanupIncomplete).toBe(false);
 });

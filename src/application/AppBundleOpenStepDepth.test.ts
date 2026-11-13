@@ -33,7 +33,7 @@ describe("OpenStep Info.plist nesting during app target resolution", () => {
           error: {
             path: join(app, "Contents", "Info.plist"),
             cause: expect.objectContaining({
-              message: "Plist exceeds 128 nesting levels",
+              message: expect.stringMatching(/128 nesting levels/iu),
             }),
           },
         });

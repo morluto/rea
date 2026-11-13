@@ -13,7 +13,7 @@ import { evmInterfaceSummaryViewResultSchema } from "../../domain/analysisView/a
 /** Delivery selection leaves the existing provider input and original Evidence unchanged. */
 const evmInterfaceInspectionInputSchema = inspectEvmInterfaceInputSchema.extend(
   {
-    detail: analysisDetailSchema.unwrap().optional(),
+    detail: analysisDetailSchema,
   },
 );
 
@@ -22,8 +22,9 @@ export const INSPECT_EVM_INTERFACE_CONTRACT = {
   name: "inspect_evm_interface",
   ...toolContractMetadata("inspect_evm_interface"),
   kind: "artifact-provider",
+  requiresActiveTarget: true,
   description:
-    'Inspect explicit local flat EVM bytecode without target execution or chain/RPC access. Select raw or hex encoding explicitly. Omitted or complete detail returns original carrier and decoded identities, full bytecode and all inferred interface candidates inline. For all inferred selectors/offsets/arguments/mutability and identities without bytecode hex or duplicated stdout, select detail: "summary" on this first call: it retains unchanged complete Evidence and returns a distinct linked inspect_analysis_view summary. Read original function rows or bytecode_hex/stdout/stderr text pages using view kind evm and normalized_result.parent_evidence_id; original complete Evidence remains accessible. Bytecode kind, hardfork, deployed authenticity and discovery completeness stay unknown; summary coverage covers only producer-returned candidates. Unchanged bundled EVMole 0.9.3/WASM in an owned bounded worker is initially real-verified on Linux x64; EOF-style EF00 containers are unsupported. No signature lookup, wallet action or transaction broadcast.',
+    "Infer interface candidates from explicit local flat EVM bytecode using bundled EVMole 0.9.3/WASM; select raw or hex encoding. Linux x64 profile; EOF-style EF00 containers are unsupported. Returns selectors, offsets, arguments and mutability candidates, not verified deployment or runtime behavior. Bytecode kind, hardfork and discovery completeness stay unknown. Default complete includes bytecode/full Evidence; detail summary retains it for inspect_analysis_view kind evm, facets functions/bytecode_hex/stdout/stderr, via parent_evidence_id. timeout_ms and producer_limits are independent of each other and worker heap; tighter inherited limits still apply. No target execution, chain/RPC access, signature lookup, wallet action or broadcast.",
   inputSchema: evmInterfaceInspectionInputSchema,
   outputSchema: analysisDetailOutputSchemaOf(
     evmInterfaceSchema,

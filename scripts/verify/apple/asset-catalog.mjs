@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import {
   artifactCli,
   artifactMcpResult,
+  artifactMcpCall,
   withArtifactMcp,
   withBundleResourcesMcp,
 } from "../../lib/artifact-e2e.mjs";
@@ -97,7 +98,7 @@ try {
       offset: first.next_offset,
     });
     assert.deepEqual([...first.records, ...next.records], cli.records);
-    const invalid = await client.callTool({
+    const invalid = await artifactMcpCall(client, {
       name: "inspect_asset_catalog",
       arguments: { offset: -1 },
     });

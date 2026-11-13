@@ -49,6 +49,7 @@ export const lazyUrl = import.meta.url;`,
         "dist/generatedPackageMetadata.js":
           'export const generatedPackageMetadata = { version: "1.0.0" };',
         "dist/cli.js": 'export { facts, run } from "./main.js";',
+        "dist/cliBuiltinArguments.js": "export {};\n",
         "dist/cliOutput.js": 'export { facts } from "./provider/probe λ.js";',
         "dist/cli/cliResultOutput.js":
           'export { facts } from "../provider/probe λ.js";',
@@ -135,6 +136,7 @@ export const run = async () => {
       await workspace.mkdir("dist/cli");
       await workspace.write("package.json", '{"type":"module"}');
       for (const path of [
+        "dist/cliBuiltinArguments.js",
         "dist/cliOutput.js",
         "dist/cli/cliResultOutput.js",
         "dist/mcpDoctor.js",

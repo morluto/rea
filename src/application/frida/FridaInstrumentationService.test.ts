@@ -12,6 +12,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
 
@@ -67,6 +68,49 @@ const createProvider = (
   ...overrides,
 });
 
+it.each(["startSession", "instrument"] as const)(
+  "retains cancellation beside a physical failed %s handshake",
+  async (method) => {
+    const controller = new AbortController();
+    const reason = { caller: "cancelled during failed start" };
+    const primary = new AnalysisCapabilityUnavailableError(
+      "frida",
+      "start_frida_session",
+      "native attach failed",
+    );
+    let closes = 0;
+    const service = new FridaInstrumentationService(
+      createProvider({
+        async startSession() {
+          controller.abort(reason);
+          return { ok: false, error: primary };
+        },
+        async closeSession() {
+          closes++;
+          return { ok: true, value: { targetResumeObserved: false } };
+        },
+      }),
+    );
+    const input = { mode: "attach" as const, deviceId: "local", pid: 10 };
+    const result =
+      method === "startSession"
+        ? await service.startSession(input, controller.signal)
+        : await service.instrument(
+            {
+              ...input,
+              source: { sourceKind: "inline", source: "unused" },
+              durationMs: 0,
+            },
+            controller.signal,
+          );
+    if (result.ok) throw new Error("Expected failed start");
+    expect(result.error).toBe(primary);
+    expect(primary.secondaryFailures).toHaveLength(1);
+    expect(primary.secondaryFailures[0]?.cause).toBe(reason);
+    expect(closes).toBe(0);
+  },
+);
+
 it("keeps default Frida status identity and messages and refreshes every summary", () => {
   let reads = 0;
   const provider = createProvider({
@@ -99,6 +143,10 @@ it("keeps default Frida status identity and messages and refreshes every summary
     messages: [{ observed: 1 }],
     messages_truncated: false,
   });
+  expect(complete.value.normalized_result).not.toHaveProperty("capture_limits");
+  expect(complete.value.limitations.join("\n")).not.toContain(
+    "no runtime override",
+  );
   const summary = service.inspectStatus(
     { ...input, detail: "summary" },
     retention,
@@ -116,14 +164,54 @@ it("keeps default Frida status identity and messages and refreshes every summary
     },
   });
   expect(JSON.stringify(summary.value)).not.toContain('"messages":');
+  expect(JSON.stringify(summary.value)).not.toContain('"capture_limits":');
   expect(reads).toBe(2);
   const parent = [...records.values()][0];
   expect(parent?.normalized_result).toMatchObject({
     messages: [{ observed: 2 }],
   });
+  expect(parent?.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("selected value is unknown"),
+      expect.stringContaining(
+        "Already discarded observations cannot be recovered",
+      ),
+    ]),
+  );
   expect(parent?.authority).toBe("external-service");
   expect(parent?.environment).toBeNull();
   expect(parent?.raw_result).toBeNull();
+});
+
+it("names the Frida field cap and ignores flags inside a caller payload", () => {
+  const service = new FridaInstrumentationService(
+    createProvider({
+      status() {
+        return {
+          ...createSession(),
+          targetResumeObserved: false,
+          scripts: [],
+          messages: [
+            {
+              description_truncated: true,
+              payload: { messages_truncated: true, type_truncated: true },
+            },
+          ],
+          messagesTruncated: false,
+        };
+      },
+    }),
+  );
+  const result = service.inspectStatus({
+    session_id: createSession().sessionId,
+  });
+  if (!result.ok) throw result.error;
+  const text = result.value.limitations.join("\n");
+  expect(text).toContain("capture_limits.message_text_bytes");
+  expect(text).toContain("selected value is unknown");
+  expect(text).not.toContain("32768");
+  expect(text).not.toContain("16777216");
+  expect(text).not.toContain("4096");
 });
 
 it.each([
@@ -417,10 +505,16 @@ it.each([false, true])(
           return cleanupFails
             ? {
                 ok: false,
-                error: new AnalysisCapabilityUnavailableError(
+                error: new ProviderAdapterError(
                   "frida",
                   "close_frida_session",
-                  "session cleanup failed",
+                  {
+                    userMessage: "session cleanup failed",
+                    cleanup: {
+                      reason: "session cleanup failed",
+                      resources: [createSession().sessionId],
+                    },
+                  },
                 ),
               }
             : { ok: true, value: { targetResumeObserved: false } };
@@ -447,10 +541,14 @@ it.each([false, true])(
     if (result.ok) return;
     expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
     if (cleanupFails) {
-      expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
-      expect(result.error.cause).toBe(primary);
-      expect(result.error.diagnostics).toEqual({
-        native_status: "resume_rejected",
+      expect(result.error).toBeInstanceOf(ProviderAdapterError);
+      expect(result.error.cleanupPrimary).toBe(primary);
+      expect(result.error.cause).toBeInstanceOf(AggregateError);
+      expect((result.error.cause as AggregateError).errors[0]).toBe(primary);
+      expect(result.error.diagnostics).toMatchObject({
+        primary_error: {
+          details: { diagnostics: { native_status: "resume_rejected" } },
+        },
       });
       expect(result.error.cleanup).toMatchObject({
         reason: expect.stringContaining("session cleanup failed"),
@@ -459,6 +557,8 @@ it.each([false, true])(
     } else {
       expect(result.error).toBe(primary);
     }
+    expect(primary.secondaryFailures).toHaveLength(1);
+    expect(primary.secondaryFailures[0]?.cause).toBe(abortReason);
     expect(closes).toBe(1);
   },
 );
@@ -868,39 +968,56 @@ it("records target selection in Evidence without remote authentication values", 
   expect(parameters).not.toContain(certificate);
 });
 
-it("reports completed cleanup when closing the parent session releases a failed script", async () => {
-  const service = new FridaInstrumentationService(
-    createProvider({
-      async loadScript() {
-        return {
-          ok: false,
-          error: new AnalysisCapabilityUnavailableError(
-            "frida",
-            "load_frida_script",
-            "script load failed",
-            {
-              cleanup: {
-                reason: "script unload failed",
-                resources: ["script-1"],
-              },
-            },
-          ),
-        };
+it.each([false, true])(
+  "tracks the failed script owner after parent close (released=%s)",
+  async (released) => {
+    const scriptOwner = { cleanupResources: ["script-1"] };
+    const failure = new AnalysisCapabilityUnavailableError(
+      "frida",
+      "load_frida_script",
+      "script load failed",
+      {
+        cleanup: {
+          reason: "script unload failed",
+          resources: ["script-1"],
+        },
       },
-    }),
-  );
+    );
+    failure.bindCleanupResourceOwner(scriptOwner);
+    const service = new FridaInstrumentationService(
+      createProvider({
+        async loadScript() {
+          return { ok: false, error: failure };
+        },
+        async closeSession() {
+          // The parent provider owns the script and confirms its release.
+          if (released) {
+            scriptOwner.cleanupResources = [];
+            failure.resolveCleanup();
+          }
+          return { ok: true, value: { targetResumeObserved: false } };
+        },
+      }),
+    );
 
-  const result = await service.instrument({
-    mode: "spawn",
-    deviceId: "local",
-    program: "/tmp/fixture",
-    source: { sourceKind: "inline", source: "send('ready');" },
-    durationMs: 1,
-  });
+    const result = await service.instrument({
+      mode: "spawn",
+      deviceId: "local",
+      program: "/tmp/fixture",
+      source: { sourceKind: "inline", source: "send('ready');" },
+      durationMs: 1,
+    });
 
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error.cleanupIncomplete).toBe(false);
-});
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe(failure);
+      expect(result.error.cleanupIncomplete).toBe(!released);
+      expect(result.error.cleanupResources).toEqual(
+        released ? [] : ["script-1"],
+      );
+    }
+  },
+);
 
 it("cleans up a session and returns typed cancellation after a pending start", async () => {
   let finishStart: (() => void) | undefined;
@@ -1042,10 +1159,16 @@ it.each([
           return cleanupFails
             ? {
                 ok: false,
-                error: new AnalysisCapabilityUnavailableError(
+                error: new ProviderAdapterError(
                   "frida",
                   "close_frida_session",
-                  "session cleanup failed",
+                  {
+                    userMessage: "session cleanup failed",
+                    cleanup: {
+                      reason: "session cleanup failed",
+                      resources: [createSession().sessionId],
+                    },
+                  },
                 ),
               }
             : { ok: true, value: { targetResumeObserved: false } };
@@ -1068,10 +1191,14 @@ it.each([
     expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
     expect(controller.signal.reason).toBe(abortReason);
     if (cleanupFails) {
-      expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
-      expect(result.error.cause).toBe(primary);
-      expect(result.error.diagnostics).toEqual({
-        native_status: "compile_rejected",
+      expect(result.error).toBeInstanceOf(ProviderAdapterError);
+      expect(result.error.cleanupPrimary).toBe(primary);
+      expect(result.error.cause).toBeInstanceOf(AggregateError);
+      expect((result.error.cause as AggregateError).errors[0]).toBe(primary);
+      expect(result.error.diagnostics).toMatchObject({
+        primary_error: {
+          details: { diagnostics: { native_status: "compile_rejected" } },
+        },
       });
       expect(result.error.cleanup).toMatchObject({
         reason: expect.stringContaining("session cleanup failed"),
@@ -1080,6 +1207,8 @@ it.each([
     } else {
       expect(result.error).toBe(primary);
     }
+    expect(primary.secondaryFailures).toHaveLength(1);
+    expect(primary.secondaryFailures[0]?.cause).toBe(abortReason);
     expect(closes).toBe(1);
   },
 );

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -17,10 +17,19 @@ async function fixture(eol = "\n") {
   for (const path of [
     "scripts/generate-skill-metadata.mjs",
     "scripts/lib/generated-file.mjs",
+    "scripts/lib/verifier-source-loader.mjs",
+    "src/domain/skillManifest.ts",
+    "src/domain/result.ts",
   ]) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await copyFile(join(repositoryRoot, path), join(root, path));
   }
+  await mkdir(join(root, "node_modules"));
+  await cp(
+    join(repositoryRoot, "node_modules/yaml"),
+    join(root, "node_modules/yaml"),
+    { recursive: true },
+  );
   const sourceRoot = join(root, ".agents/skills/reverse-engineer-anything");
   const outputRoot = join(root, "skills/reverse-engineer-anything");
   await mkdir(join(sourceRoot, "references"), { recursive: true });
@@ -38,7 +47,7 @@ async function fixture(eol = "\n") {
   const identity = async (count: number, digest: string) =>
     writeFile(
       join(root, "dist/catalogIdentity.js"),
-      `export const CATALOG_IDENTITY = ${JSON.stringify({ counts: { mcp_tools: count }, digests: { combined_sha256: digest } })};\n`,
+      `export const FULL_CATALOG_IDENTITY = ${JSON.stringify({ counts: { mcp_tools: count }, digests: { combined_sha256: digest } })};\n`,
     );
   await identity(139, "a".repeat(64));
   const generate = (...args: string[]) =>
@@ -81,7 +90,13 @@ it.each(["\n", "\r\n"])(
     expect(
       await readFile(join(f.sourceRoot, "references/guide.md"), "utf8"),
     ).toBe(`# Guide${eol}Preserve evidence.${eol}`);
-    await expect(f.generate("--check")).resolves.toMatchObject({ stderr: "" });
+    const checked = await f.generate("--check");
+    expect(
+      checked.stderr.replace(
+        /^\(node:\d+\) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time\r?\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n$/u,
+        "",
+      ),
+    ).toBe("");
   },
 );
 
@@ -141,5 +156,32 @@ it("rejects catalog-dependent metadata in the authored source", async () => {
     stderr: expect.stringContaining(
       "Catalog metadata belongs in the generated skill",
     ),
+  });
+});
+
+it("generates metadata from quoted frontmatter while preserving body metadata examples", async () => {
+  const f = await fixture();
+  const body =
+    '\n# Instructions\n\n```yaml\nmetadata:\n  version: "body-only"\n  tool_count: 99\n  catalog_digest: example\n```\n';
+  await writeFile(
+    join(f.sourceRoot, "SKILL.md"),
+    "---\nname: reverse-engineer-anything\nmetadata:\n  version: '33'\n---\n" +
+      body,
+  );
+  await f.generate();
+  const generated = await readFile(join(f.outputRoot, "SKILL.md"), "utf8");
+  expect(generated.endsWith(body)).toBe(true);
+  expect(generated).toContain("version: '33'");
+  expect(generated).toContain("tool_count: 139");
+});
+
+it("rejects body-only versions instead of generating metadata inside examples", async () => {
+  const f = await fixture();
+  await writeFile(
+    join(f.sourceRoot, "SKILL.md"),
+    '---\nname: reverse-engineer-anything\n---\n\n```yaml\nmetadata:\n  version: "body-only"\n```\n',
+  );
+  await expect(f.generate()).rejects.toMatchObject({
+    stderr: expect.stringContaining("Missing authored skill version"),
   });
 });

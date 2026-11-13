@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import * as t from "@babel/types";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
@@ -168,7 +168,14 @@ it("retains a finite shared callable alias graph", () => {
     index.bindings,
     "direct-call",
   )(call.callee, call);
+  const declaration = parsed.program.body[0];
+  if (!t.isVariableDeclaration(declaration))
+    throw new Error("Expected root callable declaration");
+  const callable = declaration.declarations[0]?.init;
+  if (!t.isArrowFunctionExpression(callable))
+    throw new Error("Expected root arrow callable");
   expect(result).toEqual({
+    callables: new Set([callable]),
     references: [
       {
         node: expect.objectContaining({ type: "Identifier", name: "module" }),

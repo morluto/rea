@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { createHash } from "node:crypto";
 import { lstat, opendir, realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
@@ -19,7 +20,7 @@ import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import {
   assertArtifactReadActive,
   artifactFileCancellationCause,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -70,17 +71,15 @@ const fingerprint = async (
 ): Promise<GhidraPspExtension> => {
   assertArtifactReadActive(signal);
   if (!isAbsolute(root) || (await realpath(root)) !== root)
-    throw new Error(
-      "The installed Allegrex directory must be a canonical non-symlink path.",
-    );
+    throw new GhidraAdmissionError("canonical_path");
   const files: string[] = [];
   let entries = 1; // The root itself consumes one inventory entry.
   const visit = async (relative: string, depth: number): Promise<void> => {
     assertArtifactReadActive(signal);
     if (depth > MAX_DEPTH)
-      throw new Error(
-        "Allegrex extension directory nesting exceeds the inspection limit.",
-      );
+      throw new GhidraAdmissionError("nesting_exceeds_limit", {
+        max_depth: MAX_DEPTH,
+      });
     const path = join(root, relative);
     const metadata = await lstat(path);
     if (metadata.isDirectory()) {
@@ -99,75 +98,74 @@ const fingerprint = async (
         );
     } else if (metadata.isFile()) {
       files.push(relative);
-    } else
-      throw new Error(
-        `Allegrex extension entries must be regular files or directories: ${relative}`,
-      );
+    } else throw new GhidraAdmissionError("entry_kind", { relative });
   };
   await visit("", 0);
   for (const required of REQUIRED)
     if (!files.includes(required))
-      throw new Error(`Missing installed Allegrex component: ${required}`);
+      throw new GhidraAdmissionError("component_missing", {
+        component: required,
+      });
   if (!files.some((path) => path.startsWith("lib/") && path.endsWith(".jar")))
-    throw new Error("The installed Allegrex extension has no loader JAR.");
+    throw new GhidraAdmissionError("loader_jar_missing");
   const hash = createHash("sha256");
   let bytesRead = 0;
   let properties = Buffer.alloc(0);
   for (const relative of files) {
     assertArtifactReadActive(signal);
     const path = join(root, relative);
-    await withArtifactRegularFile(path, resources, signal, async (handle) => {
-      const before = await handle.stat();
-      if (
-        !Number.isSafeInteger(before.size) ||
-        before.size > MAX_BYTES - bytesRead
-      )
-        throw new Error(
-          "Allegrex extension bytes exceed the inspection limit.",
-        );
-      if (relative === "extension.properties" && before.size > 65536)
-        throw new Error(
-          "Allegrex extension properties exceed the inspection limit.",
-        );
-      hash.update(JSON.stringify([relative, before.size]));
-      const buffer = Buffer.alloc(Math.min(65536, before.size + 1));
-      let offset = 0;
-      const chunks: Buffer[] = [];
-      // Serial reads keep final close behind every native read. One extra byte
-      // detects growth without a stream's read-ahead or unbounded allocation.
-      while (offset <= before.size) {
-        assertArtifactReadActive(signal);
-        const { bytesRead } = await handle.read(
-          buffer,
-          0,
-          Math.min(buffer.length, before.size - offset + 1),
-          offset,
-        );
-        assertArtifactReadActive(signal);
-        if (bytesRead === 0) break;
-        offset += bytesRead;
-        if (offset > before.size)
-          throw new Error(
-            `Allegrex component changed during inspection: ${relative}`,
+    await withArtifactRegularFile(
+      path,
+      resources,
+      signal,
+      async ({ handle, initial: before }) => {
+        if (
+          !Number.isSafeInteger(before.size) ||
+          before.size > MAX_BYTES - bytesRead
+        )
+          throw new GhidraAdmissionError("bytes_exceed_limit", {
+            max_bytes: MAX_BYTES,
+          });
+        if (relative === "extension.properties" && before.size > 65536)
+          throw new GhidraAdmissionError("properties_exceed_limit", {
+            max_bytes: 65536,
+          });
+        hash.update(JSON.stringify([relative, before.size]));
+        const buffer = Buffer.alloc(Math.min(65536, before.size + 1));
+        let offset = 0;
+        const chunks: Buffer[] = [];
+        // Serial reads keep final close behind every native read. One extra byte
+        // detects growth without a stream's read-ahead or unbounded allocation.
+        while (offset <= before.size) {
+          assertArtifactReadActive(signal);
+          const { bytesRead } = await handle.read(
+            buffer,
+            0,
+            Math.min(buffer.length, before.size - offset + 1),
+            offset,
           );
-        const chunk = buffer.subarray(0, bytesRead);
-        hash.update(chunk);
+          assertArtifactReadActive(signal);
+          if (bytesRead === 0) break;
+          offset += bytesRead;
+          if (offset > before.size)
+            throw new GhidraAdmissionError("component_changed", { relative });
+          const chunk = buffer.subarray(0, bytesRead);
+          hash.update(chunk);
+          if (relative === "extension.properties")
+            chunks.push(Buffer.from(chunk));
+        }
+        if (offset !== before.size)
+          throw new GhidraAdmissionError("component_truncated", { relative });
+        if (
+          !sameRegularFileState(before, await handle.stat()) ||
+          !sameRegularFileState(before, await lstat(path))
+        )
+          throw new GhidraAdmissionError("component_changed", { relative });
+        bytesRead += before.size;
         if (relative === "extension.properties")
-          chunks.push(Buffer.from(chunk));
-      }
-      if (offset !== before.size)
-        throw new Error(`Truncated Allegrex component: ${relative}`);
-      if (
-        !sameRegularFileState(before, await handle.stat()) ||
-        !sameRegularFileState(before, await lstat(path))
-      )
-        throw new Error(
-          `Allegrex component changed during inspection: ${relative}`,
-        );
-      bytesRead += before.size;
-      if (relative === "extension.properties")
-        properties = Buffer.concat(chunks);
-    });
+          properties = Buffer.concat(chunks);
+      },
+    );
   }
   // Ghidra's extension.properties version is the compatible Ghidra version,
   // not the extension release (e.g. v21.4); content identity supplies the latter.
@@ -175,18 +173,18 @@ const fingerprint = async (
     properties.toString("latin1"),
   );
   if (!parsedProperties.ok)
-    throw new Error(
-      `Invalid Allegrex extension properties: ${parsedProperties.error}`,
-    );
+    throw new GhidraAdmissionError("properties_invalid", {
+      parser_code: parsedProperties.error,
+    });
   const property = (name: string): string | undefined =>
     parsedProperties.value.get(name);
   if (
     property("name") !== "ghidra-allegrex" ||
     property("version") !== ghidraVersion
   )
-    throw new Error(
-      `Allegrex extension metadata does not match the selected Ghidra ${ghidraVersion}; install or rebuild a compatible extension.`,
-    );
+    throw new GhidraAdmissionError("metadata_mismatch", {
+      ghidra_version: ghidraVersion,
+    });
   assertArtifactReadActive(signal);
   return {
     id: "ghidra-allegrex",
@@ -209,9 +207,10 @@ export const resolveGhidraPspExtension = async (
       installation.platform !== "linux" ||
       installation.architecture !== "x64"
     )
-      throw new Error(
-        "The initial PSP profile requires a supported Linux x64 Ghidra installation.",
-      );
+      throw new GhidraAdmissionError("host_unsupported", {
+        platform: installation.platform,
+        architecture: installation.architecture,
+      });
     const root = join(
       await realpath(installation.installDir),
       "Ghidra",
@@ -236,8 +235,17 @@ const ghidraPspInspectionError = (cause: unknown): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   const cleanup =
     cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
-  const primary = artifactFilePrimaryFailure(cause);
-  const reason = `PSP_EXTENSION_UNAVAILABLE: ${primary instanceof Error ? primary.message : String(primary)} Use a compatible caller-installed ghidra-allegrex under GHIDRA_INSTALL_DIR/Ghidra/Extensions; REA does not install it.`;
+  const { cause: primary } = artifactFilePrimaryFacts(cause);
+  const admission =
+    primary instanceof GhidraAdmissionError ? primary : undefined;
+  const identity =
+    admission?.code ??
+    (primary instanceof Error ? primary.message : String(primary));
+  const reason = `PSP_EXTENSION_UNAVAILABLE: ${identity} Use a compatible caller-installed ghidra-allegrex under GHIDRA_INSTALL_DIR/Ghidra/Extensions; REA does not install it.`;
+  const diagnostics =
+    admission === undefined
+      ? undefined
+      : { code: admission.code, ...admission.detail };
   const error =
     cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
       ? new AnalysisCancelledError("resolve_analysis_profile", {
@@ -252,6 +260,7 @@ const ghidraPspInspectionError = (cause: unknown): AnalysisError => {
             cause,
             userMessage: reason,
             cleanup,
+            ...(diagnostics === undefined ? {} : { diagnostics }),
           },
         );
   bindArtifactFileCleanup(cause, error);
@@ -278,9 +287,9 @@ const readChildren = async (
       assertArtifactReadActive(signal);
       if (child === null) break;
       if (names.length >= remainingEntries)
-        throw new Error(
-          "Allegrex extension inventory exceeds the inspection limit.",
-        );
+        throw new GhidraAdmissionError("inventory_exceeds_limit", {
+          max_entries: MAX_ENTRIES,
+        });
       names.push(child.name);
     }
     outcome = { kind: "completed", names };

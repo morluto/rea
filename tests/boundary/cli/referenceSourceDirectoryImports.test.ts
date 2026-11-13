@@ -37,10 +37,14 @@ const prepareReferenceSourceDirectoryFixture =
       ["legacy-order.cjs", "./dep", "dep/index.js"],
       ["bare-index.cjs", "./bare", "bare.js"],
       ["package-main.cjs", "./pkg", "pkg/actual.js"],
+      ["package-main-slash-specifier.cjs", "./pkg/", "pkg/actual.js"],
+      ["package-main-newline-slash.cjs", "./pkg\n/", "pkg\n/actual.js"],
       ["package-main-no-index.cjs", "./no-index-pkg", "no-index-pkg/actual.js"],
       ["package-main-fallback.cjs", "./stale", "stale/index.js"],
+      ["package-main-fallback-slash.cjs", "./stale/", "stale/index.js"],
       ["typed-index-collision.cjs", "./typed", "typed.js"],
       ["package-main-slash.cjs", "./slashed", "slashed/lib.js"],
+      ["package-main-manifest-newline-slash.cjs", "./nlpkg/", "nlpkg/lib\n.js"],
       ["json.cjs", "./data", "data.json"],
       ["json-explicit.cjs", "./data.json", "data.json"],
       ["json-before-index.cjs", "./conf", "conf.json"],
@@ -49,10 +53,10 @@ const prepareReferenceSourceDirectoryFixture =
       ["json-main.cjs", "./jpkg", "jpkg/config.json"],
     ] as const satisfies readonly ResolutionCase[];
     const unresolved = [
-      ["missing.cjs", "./missing/", "missing/"],
-      ["escape.cjs", "../outside/", "../outside/"],
-      ["main.ts", "./folder.js/.", "folder.js"],
-      ["only-bare.cjs", "./only/", "only/"],
+      ["missing.cjs", "./missing/", "missing"],
+      ["escape.cjs", "../outside/", "../outside"],
+      ["main.cts", "./folder.js/.", "folder.js"],
+      ["only-bare.cjs", "./only/", "only"],
       ["invalid-manifest.cjs", "./broken", "broken"],
       ["absolute-main.cjs", "./absolute", outside],
     ] as const satisfies readonly ResolutionCase[];
@@ -70,6 +74,12 @@ const prepareReferenceSourceDirectoryFixture =
       ["bare/index", 'module.exports = "extensionless index";\n'],
       ["only/index", 'module.exports = "extensionless index";\n'],
       ["pkg/package.json", '{"main":"actual.js"}\n'],
+      ["pkg\n/package.json", '{"main":"actual.js"}\n'],
+      [
+        "pkg\n/actual.js",
+        'module.exports = "declared main behind line terminator";\n',
+      ],
+      ["pkg\n/index.js", 'module.exports = "index not selected";\n'],
       ["pkg/actual.js", 'module.exports = "declared main";\n'],
       ["pkg/index.js", 'module.exports = "ignored index";\n'],
       ["no-index-pkg/package.json", '{"main":"actual.js"}\n'],
@@ -87,6 +97,13 @@ const prepareReferenceSourceDirectoryFixture =
       ["slashed/lib.js", 'module.exports = "file main";\n'],
       ["slashed/lib/index.js", 'module.exports = "not selected";\n'],
       ["slashed/index.js", 'module.exports = "not selected";\n'],
+      ["nlpkg/package.json", '{"main":"lib\\n/"}\n'],
+      [
+        "nlpkg/lib\n.js",
+        'module.exports = "file main behind line terminator";\n',
+      ],
+      ["nlpkg/lib\n/index.js", 'module.exports = "not selected";\n'],
+      ["nlpkg/index.js", 'module.exports = "entry index";\n'],
       ["absolute/package.json", `${JSON.stringify({ main: outside })}\n`],
       ["absolute/index.js", 'module.exports = "not selected";\n'],
       ["data.json", '{"value":1}\n'],
@@ -127,7 +144,7 @@ const assertNodeResolutionControls = (
     createRequire(join(root, "missing.cjs")).resolve("./missing/"),
   ).toThrow();
   expect(() =>
-    createRequire(join(root, "main.ts")).resolve("./folder.js/."),
+    createRequire(join(root, "main.cts")).resolve("./folder.js/."),
   ).toThrow();
   expect(() =>
     createRequire(join(root, "only-bare.cjs")).resolve("./only/"),

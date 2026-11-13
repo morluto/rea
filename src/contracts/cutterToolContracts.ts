@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import { cutterDiscoverySchema } from "../domain/cutterDiscovery.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "./toolEffects.js";
@@ -10,7 +11,7 @@ export const cutterListInputSchema = z.strictObject({});
 /** Execute a command in a selected live Cutter instance and observed document generation. */
 export const cutterCommandInputSchema = z.strictObject({
   session_id: z.string().uuid(),
-  expected_generation: z.number().int().nonnegative(),
+  expected_generation: z.int().nonnegative(),
   command: z
     .string()
     .min(1)
@@ -19,15 +20,6 @@ export const cutterCommandInputSchema = z.strictObject({
       "A single Rizin command line is required",
     ),
   json: z.boolean().default(false),
-});
-
-export const cutterSessionSchema = z.strictObject({
-  session_id: z.string().uuid(),
-  pid: z.number().int().positive(),
-  document_generation: z.number().int().nonnegative(),
-  current_file: z.string().nullable(),
-  cutter_version: z.string().nullable(),
-  identity_status: z.literal("partial"),
 });
 
 export const cutterCommandResultSchema = z.strictObject({
@@ -39,26 +31,8 @@ export const cutterCommandResultSchema = z.strictObject({
   output_truncated: z.boolean(),
   cutter_version: z.string().nullable(),
   current_file: z.string().nullable(),
-  document_generation: z.number().int().nonnegative(),
+  document_generation: z.int().nonnegative(),
   identity_status: z.literal("partial"),
-});
-
-export const cutterDiscoverySchema = z.strictObject({
-  sessions: z.array(cutterSessionSchema),
-  bridge_directory: z.string(),
-  discovery_status: z.enum([
-    "sessions_found",
-    "no_live_bridge_found",
-    "bridge_directory_unavailable",
-    "bridge_directory_insecure",
-    "bridge_directory_capacity_exceeded",
-  ]),
-  bridge_directory_security: z.enum([
-    "private_verified",
-    "not_private",
-    "unverified_platform_acl",
-    "not_checked",
-  ]),
 });
 
 /** Live Cutter discovery and arbitrary Rizin command contracts. */
@@ -68,7 +42,7 @@ export const CUTTER_TOOL_CONTRACTS = [
     ...toolContractMetadata("list_cutter_sessions"),
     kind: "native-provider",
     description:
-      "List live REA bridge sessions hosted by upstream Cutter instances, including observed document identity and bridge-directory security status. Discovery admits at most 256 descriptor candidates (16 MiB at the descriptor byte limit), reads and probes at most eight concurrently, and reports bridge_directory_capacity_exceeded rather than claiming no sessions when that budget is exceeded.",
+      "Find live REA bridge sessions in Cutter and return document identity and bridge-directory security status. Examines at most 256 descriptors with up to eight concurrent probes; excess capacity returns bridge_directory_capacity_exceeded, not an empty session list. The fixed discovery budget is separate from REA_BRIDGE_MAX_REQUEST_BYTES and cannot be raised at runtime.",
     inputSchema: cutterListInputSchema,
     outputSchema: cutterDiscoverySchema,
     examples: [{ title: "List open Cutter instances", input: {} }],
@@ -78,7 +52,7 @@ export const CUTTER_TOOL_CONTRACTS = [
     ...toolContractMetadata("cutter_command"),
     kind: "native-provider",
     description:
-      "Run one arbitrary Rizin command in a selected live Cutter session. Commands may edit and persist analysis state or execute plugin-provided effects; completion uncertainty is returned as Evidence and must not be retried automatically. In a shared MCP server, this admitted command closes any active binary-analysis session; after its effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
+      "Run one arbitrary Rizin command in a selected Cutter session; it may persist edits or execute plugin effects. Reports completion uncertainty as Evidence; do not retry automatically. An admitted command retires shared binary analysis: close active Ghidra explicitly first, then reopen with open_binary after command effects settle. Supply session_id and expected_generation from discovery. REA_BRIDGE_MAX_REQUEST_BYTES bounds authenticated request/response payloads excluding LF (default 16777216, range 7464..536870887); mismatched client/Cutter budgets refuse dispatch. An out-of-band Cutter without this setting uses the default.",
     inputSchema: cutterCommandInputSchema,
     outputSchema: evidenceResultOf(cutterCommandResultSchema),
     examples: [

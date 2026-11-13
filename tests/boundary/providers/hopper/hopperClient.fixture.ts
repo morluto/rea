@@ -41,6 +41,7 @@ export class HopperFixtureLauncher implements BridgeLauncher {
       | "none"
       | "capability_unavailable"
       | "bridge_exception" = "none",
+    readonly advertisedRequestBytes?: number,
   ) {}
 
   launch(session: BridgeSession) {
@@ -59,6 +60,9 @@ export class HopperFixtureLauncher implements BridgeLauncher {
         this.diagnosticMode,
         this.healthMode,
         this.inventoryFailure,
+        ...(this.advertisedRequestBytes === undefined
+          ? []
+          : [String(this.advertisedRequestBytes)]),
       ],
       { stdio: ["ignore", "pipe", "pipe", "ipc"] },
     );

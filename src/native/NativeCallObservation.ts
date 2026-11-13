@@ -1,3 +1,4 @@
+import { nativeCallCaptureLimits } from "../domain/native/nativeCallCaptureLimits.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
@@ -36,9 +37,15 @@ export const NATIVE_CALL_OBSERVATION_LIMITATIONS = [
   "Registers are the raw integer argument registers at entry. For Objective-C methods the first two hold the receiver and the selector.",
   "Receiver classes come from LLDB's Objective-C runtime reader without running target code; they are null for class methods and for receivers LLDB cannot classify.",
   "Calls that never reach a symbol's entry, such as inlined code or objc_direct methods called directly, are not observed.",
+  "Source locations come from LLDB line-table metadata; REA does not read or verify the named source-file contents.",
   "The target is launched directly under LLDB, not through LaunchServices; LLDB disables ASLR for it, so load addresses can equal file addresses.",
   "The observation window is checked about once a second, and recording pauses the process at every entry, which slows it.",
 ] as const;
+
+export const NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION =
+  "The breakpoint location list is incomplete; location_count gives the full matching count.";
+const breakpointLocationBudgetLimitation = (bytes: number): string =>
+  `Resolved breakpoint locations exceeded capture_limits.breakpoint_location_bytes (${String(bytes)} bytes); omitted locations are counted in location_count. This metadata limit does not change the process outcome. Select a larger budget before a new authorized observation; earlier omitted facts cannot be recovered.`;
 
 /** Launch the active Mach-O under LLDB, record requested call entries, then stop it. */
 export const observeNativeCalls = async (
@@ -116,11 +123,24 @@ const nativeCallFacts = (
   trace: NativeCallReadback,
 ) => {
   const { run } = trace;
+  const limits = nativeCallCaptureLimits(input.capture_limits);
+  const terminated = run.terminated && trace.terminated;
+  const terminationSummary = terminated
+    ? "the process was killed"
+    : "termination was requested but could not be confirmed";
   const unresolved = run.breakpoints
     .filter(({ location_count: count }) => count === 0)
     .map(({ index }) => index);
   const eventLimit = run.outcome === "event-limit";
   const resourceLimit = run.outcome === "resource-limit";
+  const traceByteBudget = `capture_limits.trace_bytes (${String(limits.trace_bytes)} bytes)`;
+  const traceFrameBudget = `capture_limits.trace_frames (${String(limits.trace_frames)} frames)`;
+  const exhaustedTraceBudget =
+    run.resource_limit === "trace_bytes"
+      ? traceByteBudget
+      : run.resource_limit === "trace_frames"
+        ? traceFrameBudget
+        : `${traceByteBudget} or ${traceFrameBudget}`;
   const breakpointLocationLimit = run.breakpoint_locations_truncated === true;
   const partial =
     eventLimit ||
@@ -130,6 +150,7 @@ const nativeCallFacts = (
     run.outcome === "stop-limit" ||
     unresolved.length > 0;
   return {
+    capture_limits: limits,
     target: {
       path: target.path,
       sha256: target.sha256,
@@ -153,7 +174,7 @@ const nativeCallFacts = (
       outcome: run.outcome,
       exit_status: run.exit_status,
       exit_description: run.exit_description,
-      terminated: run.terminated && trace.terminated,
+      terminated,
       elapsed_ms: run.elapsed_ms,
       stdout: trace.stdout,
       stderr: trace.stderr,
@@ -173,6 +194,9 @@ const nativeCallFacts = (
       status: partial ? "partial" : "complete",
       event_limit_reached: eventLimit,
       resource_limit_reached: resourceLimit,
+      ...(run.resource_limit == null
+        ? {}
+        : { capture_limit: run.resource_limit }),
       ...(breakpointLocationLimit
         ? { breakpoint_locations_truncated: true }
         : {}),
@@ -183,17 +207,17 @@ const nativeCallFacts = (
       "The selected pathname digest and LLDB module identity are checked around launch. No immutable executable snapshot is used; concurrent in-place mutation or replacement and restoration cannot be ruled out, so the loaded-image digest remains unknown.",
       ...(eventLimit
         ? [
-            `Observation stopped at max_events (${input.max_events}); later calls were not recorded and the process was killed.`,
+            `Observation stopped at max_events (${input.max_events}); later calls were not recorded and ${terminationSummary}.`,
           ]
         : []),
       ...(resourceLimit
         ? [
-            "Observation stopped before retaining the next complete event because the estimated 8 MiB trace-payload or 65,536-frame aggregate budget was reached; the process was killed.",
+            `Observation stopped before retaining the next complete event because ${exhaustedTraceBudget} was reached; ${terminationSummary}. Select a larger corresponding budget before a new authorized observation; earlier omitted calls cannot be recovered.`,
           ]
         : []),
       ...(run.outcome === "duration-elapsed"
         ? [
-            `The process was still running after duration_ms (${input.duration_ms}) and was killed.`,
+            `The process was still running after duration_ms (${input.duration_ms}); ${terminationSummary}.`,
           ]
         : []),
       ...(run.target_identity.stable
@@ -203,7 +227,7 @@ const nativeCallFacts = (
           ]),
       ...(run.outcome === "stop-limit"
         ? [
-            "Observation stopped after repeated signal or exception stops; the process was killed.",
+            `Observation stopped at capture_limits.other_stops (${String(limits.other_stops)} signal or exception stops); ${terminationSummary}. Select a larger budget before a new authorized observation; earlier omitted stops cannot be recovered.`,
           ]
         : []),
       ...(unresolved.length === 0
@@ -212,22 +236,21 @@ const nativeCallFacts = (
             `Breakpoints ${unresolved.join(", ")} matched no code in any image loaded while observing; their calls could not be observed.`,
           ]),
       ...(run.breakpoints.some(
-        ({ location_count: count, locations }) => locations.length < count,
+        ({ location_count: count, locations }) =>
+          locations.length < count && !breakpointLocationLimit,
       )
-        ? [
-            "Breakpoints with many matching locations list only the first 64; location_count gives the total.",
-          ]
+        ? [NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION]
         : []),
       ...(breakpointLocationLimit
-        ? [
-            "Resolved breakpoint locations exceeded the aggregate 8 MiB metadata budget; omitted locations are counted in location_count. This metadata limit does not change the process outcome.",
-          ]
+        ? [breakpointLocationBudgetLimitation(limits.breakpoint_location_bytes)]
         : []),
       ...(trace.stdout === null || trace.stderr === null
         ? ["One or more target output captures were unavailable."]
         : []),
       ...(trace.stdout?.truncated === true || trace.stderr?.truncated === true
-        ? ["Target output beyond 1 MiB per stream is counted but not kept."]
+        ? [
+            `Target output beyond capture_limits.output_bytes (${String(limits.output_bytes)} bytes per stream) is counted but not kept. Select a larger budget before a new authorized observation; earlier omitted output cannot be recovered.`,
+          ]
         : []),
       ...(trace.stdout?.complete === false || trace.stderr?.complete === false
         ? [

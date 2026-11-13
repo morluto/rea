@@ -439,12 +439,12 @@ it("keeps a foreign file-cleanup abort reason opaque at the session checkpoint",
   const caller = new AbortController();
   const handle = await open(f.apk, "r");
   const owner = new OwnedFileHandle(handle);
-  const reason = new RegularFileCleanupFailure(
-    f.apk,
+  const reason = new RegularFileCleanupFailure({
+    path: f.apk,
     owner,
-    { kind: "failed", cause: new Error("foreign read failed") },
-    new Error("foreign close failed"),
-  );
+    outcome: { kind: "failed", cause: new Error("foreign read failed") },
+    cleanupCause: new Error("foreign close failed"),
+  });
   const execute = JadxSession.prototype.execute;
   const checkpoint = vi
     .spyOn(JadxSession.prototype, "execute")

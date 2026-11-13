@@ -15,6 +15,7 @@ import { spawnOwnedProviderProcess } from "../../src/process/ProviderProcess.js"
 import { cleanupOwnedProcessGroup } from "../../src/process/ProcessOwnership.js";
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";
 import { stopProviderProcessFixture } from "../fixtures/providerProcess.js";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
@@ -113,14 +114,30 @@ it.runIf(supportedHost)(
       throw new Error("Expected output overflow and failed cleanup");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,
+      capturedOutput: { truncated: true },
       diagnostics: {
         primary_error: {
           code: "unreadable_output",
-          details: { captured_output: { truncated: true } },
         },
         cleanup_error: { code: "cleanup_incomplete" },
       },
     });
+    const projected = projectAnalysisError(result.error);
+    expect(projected.details?.captured_output).toEqual(
+      result.error.capturedOutput,
+    );
+    expect(projected).not.toHaveProperty(
+      "details.diagnostics.primary_error.details.captured_output",
+    );
+    const output = result.error.capturedOutput?.stdout;
+    if (!output) throw new Error("Expected retained truncated worker output");
+    // The cleanup owner also retains a bounded worker snapshot for its own
+    // failed-close receipt. Generic primary history must not add a third copy.
+    expect(projected).toHaveProperty(
+      "details.diagnostics.cleanup_error.details.diagnostics.captured_output.stdout",
+      output,
+    );
+    expect(JSON.stringify(projected).split(output)).toHaveLength(3);
     if (pid === undefined)
       throw new Error("The fixture did not acquire a process");
     const workerPid = pid;

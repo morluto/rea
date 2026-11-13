@@ -54,7 +54,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { parseProcessScenario } from "../../src/domain/process/processScenario.js";
+import { processScenarioSchema } from "../../src/domain/process/processScenario.js";
 import {
   hashFile,
   snapshotRoots,
@@ -94,7 +94,7 @@ it.each(["hash", "snapshot"] as const)(
       operation === "hash"
         ? hashFile(path, expected, 1_000, controller.signal)
         : snapshotRoots(
-            parseProcessScenario({
+            processScenarioSchema.parse({
               executable: process.execPath,
               working_directory: directory,
               filesystem_observation_paths: [path],
@@ -112,7 +112,14 @@ it.each(["hash", "snapshot"] as const)(
       const read = failure as ProcessCaptureReadFailure;
       expect(read.cause).toBe(reason);
       expect(read.userCategory).toBe("cancelled");
-      expect(read.outcome).toMatchObject({ kind: "failed", cause: reason });
+      expect(read.outcome).toMatchObject({
+        kind: "failed",
+        cause: {
+          _tag: "ProcessCaptureError",
+          reason: "cancelled",
+          cause: reason,
+        },
+      });
       expect(read.cleanupLeases).toEqual([]);
       expect(read.cleanupIncomplete).toBe(false);
     } else {

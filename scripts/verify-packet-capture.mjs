@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import {
+  requireMcpEvidenceBundle,
+  requireMcpOutput,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import { estimateTokenCount } from "tokenx";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -12,7 +17,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 if (process.platform !== "linux")
@@ -107,8 +112,7 @@ const expectedAddressSpace = Math.min(
     .map((value) => (value === "unlimited" ? Infinity : Number(value))),
 );
 
-let primaryError;
-try {
+await withVerifierCleanup(async () => {
   await writeFile(path, source);
   await writeFile(bluetooth, bluetoothSource);
   await client.connect(transport);
@@ -124,12 +128,13 @@ try {
       name: tool.name,
       arguments: input,
     });
-    assert.notEqual(response.isError, true, JSON.stringify(response));
     assert.ok(
       ajv.validate(tool.outputSchema, response.structuredContent),
       JSON.stringify(ajv.errors),
     );
-    const evidence = parseEvidence(response.structuredContent);
+    const evidence = parseEvidence(
+      requireMcpOutput(response, "inspect_packet_capture"),
+    );
     const report = evidence.normalized_result;
     assert.equal(
       report.artifact.sha256,
@@ -178,12 +183,22 @@ try {
         )
       ).stdout,
     );
-    assert.deepEqual(parseEvidence(cli), evidence);
-    const bundle = await client.callTool({
-      name: "get_evidence_bundle",
-      arguments: {},
-    });
-    assert.ok(JSON.stringify(bundle).includes(evidence.evidence_id));
+    const { caller_input_path: callerInputPath, ...cliShared } =
+      parseEvidence(cli);
+    assert.equal(callerInputPath, input.path);
+    assert.equal(Object.hasOwn(evidence, "caller_input_path"), false);
+    assert.deepEqual(cliShared, evidence);
+    const bundle = requireMcpEvidenceBundle(
+      await client.callTool({
+        name: "get_evidence_bundle",
+        arguments: {},
+      }),
+    );
+    assert.ok(
+      bundle.records.some(
+        (record) => record.evidence_id === evidence.evidence_id,
+      ),
+    );
     cases++;
     return report;
   };
@@ -299,12 +314,13 @@ try {
       name: pcapTool.name,
       arguments: { path: capturePath, detail: "summary" },
     });
-    assert.notEqual(response.isError, true, JSON.stringify(response));
     assert.ok(
       pcapAjv.validate(pcapTool.outputSchema, response.structuredContent),
       pcapAjv.errorsText(),
     );
-    const summary = parseEvidence(response.structuredContent).normalized_result;
+    const summary = parseEvidence(
+      requireMcpOutput(response, "inspect_pcap_capture"),
+    ).normalized_result;
     assert.equal(summary.summary.capture_start, expectedCaptureStart);
     assert.equal(summary.summary.capture_end, expectedCaptureEnd);
     assert.equal(
@@ -337,10 +353,9 @@ try {
         view: { kind: "pcap", facet: "protocols", limit: 10 },
       },
     });
-    assert.notEqual(page.isError, true, JSON.stringify(page));
     assert.equal(
-      parseEvidence(page.structuredContent).normalized_result
-        .parent_evidence_id,
+      parseEvidence(requireMcpOutput(page, "inspect_analysis_view"))
+        .normalized_result.parent_evidence_id,
       source.evidence_id,
     );
     cases++;
@@ -362,19 +377,16 @@ try {
       name: tool.name,
       arguments: input,
     });
-    assert.equal(response.isError, true);
+    requireMcpToolError(response);
     await client.ping();
     cases++;
   }
   await writeFile(path, "not a capture");
-  assert.equal(
-    (
-      await client.callTool({
-        name: tool.name,
-        arguments: { path, fields: ["frame.number"] },
-      })
-    ).isError,
-    true,
+  requireMcpToolError(
+    await client.callTool({
+      name: tool.name,
+      arguments: { path, fields: ["frame.number"] },
+    }),
   );
   cases++;
   const discovery = (await client.listTools()).tools.find(
@@ -408,12 +420,13 @@ try {
       name: discovery.name,
       arguments: input,
     });
-    assert.notEqual(response.isError, true, JSON.stringify(response));
     assert.ok(
       ajv.validate(discovery.outputSchema, response.structuredContent),
       JSON.stringify(ajv.errors),
     );
-    const evidence = parseEvidence(response.structuredContent);
+    const evidence = parseEvidence(
+      requireMcpOutput(response, "inspect_packet_fields"),
+    );
     const report = evidence.normalized_result;
     const kind = input.kind ?? "protocols";
     const query = (input.query ?? "").toLowerCase();
@@ -510,15 +523,7 @@ try {
     "network with spaces.pcap",
     "paged.pcap",
   ]);
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [() => client.close(), () => transport.close(), () => root.close()],
-    primaryError,
-  );
-}
+}, [() => client.close(), () => transport.close(), () => root.close()]);
 console.log(
   JSON.stringify(
     {

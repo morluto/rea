@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -145,7 +145,6 @@ it("closes an Electron inspection session when cleanup is cancelled", async () =
   });
   onTestFinished(async () => {
     await browser.close();
-    await rm(root, { recursive: true, force: true });
   });
   const controller = new AbortController();
   const pending = new CdpElectronProvider().inspectPage(
@@ -204,7 +203,6 @@ it("classifies cancellation that arrives during final Electron detach", async ()
   });
   onTestFinished(async () => {
     await browser.close();
-    await rm(root, { recursive: true, force: true });
   });
 
   const result = await new CdpElectronProvider().inspectPage(
@@ -283,7 +281,6 @@ it.each(
       closing.mockRestore();
       await provider.close();
       await browser.close();
-      await rm(root, { recursive: true, force: true });
     });
     const result =
       provider instanceof CdpBrowserProvider

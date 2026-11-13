@@ -32,8 +32,8 @@ it.each([
     const root = await createTestTempDirectory("rea-js-module-provenance-");
     await Promise.all([
       writeFile(
-        join(root, "app.js"),
-        `const selected = ${expression};\nexport { selected };\n`,
+        join(root, "app.cjs"),
+        `const selected = ${expression};\nexports.selected = selected;\n`,
       ),
       writeFile(join(root, "dependency.js"), "exports.value = 1;\n"),
     ]);

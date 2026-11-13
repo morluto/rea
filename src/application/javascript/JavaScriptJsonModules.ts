@@ -1,25 +1,23 @@
-import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { JavaScriptJsonModuleObservation } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 
 /** Parse one approved JSON module without evaluating JavaScript or resolving imports. */
 export const analyzeJavaScriptJsonModule = (
   file: JavaScriptArtifactFile,
+  documents: JavaScriptJsonDocuments,
 ): JavaScriptJsonModuleObservation => {
-  if (!file.text.included)
+  const document = documents.read(file);
+  if (document.status === "unavailable")
     return {
       path: file.path,
       sha256: file.sha256,
       status: "unavailable",
       top_level_keys: [],
       omitted_top_level_keys: null,
-      limitation: `JSON module text was unavailable: ${file.text.reason}.`,
+      limitation: `JSON module text was unavailable: ${document.reason}.`,
     };
-  let value: unknown;
-  try {
-    value = JSON.parse(file.text.value);
-  } catch (cause: unknown) {
-    void cause;
+  if (document.status === "invalid")
     return {
       path: file.path,
       sha256: file.sha256,
@@ -28,17 +26,11 @@ export const analyzeJavaScriptJsonModule = (
       omitted_top_level_keys: 0,
       limitation: "JSON module is not valid JSON.",
     };
-  }
-  const keys =
-    typeof value === "object" && value !== null && !Array.isArray(value)
-      ? Object.keys(value).sort(compareUnicodeCodePoints)
-      : [];
-  const retained = keys;
   return {
     path: file.path,
     sha256: file.sha256,
     status: "included",
-    top_level_keys: retained,
+    top_level_keys: document.topLevelKeys,
     omitted_top_level_keys: 0,
     limitation: null,
   };

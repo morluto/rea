@@ -18,6 +18,8 @@ it.each([
   { path: "/selected", encoding: "auto" },
   { path: "/selected" },
   { path: "/selected", encoding: "raw", approval: true },
+  { path: "/selected", encoding: "hex", timeout_ms: 0 },
+  { path: "/selected", encoding: "hex", timeout_ms: 2_147_483_648 },
 ])("rejects invalid selection before effects: %j", async (input) => {
   const service = new EvmInterfaceService({
     inspect: () => {
@@ -138,6 +140,42 @@ it("keeps malformed interface output ahead of a late cancellation", async () => 
   );
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+});
+
+it("keeps an omitted timeout at the default and records a selected one", async () => {
+  const value = evmInterfaceFixture();
+  let seen: unknown;
+  const service = new EvmInterfaceService({
+    inspect: (input) => {
+      seen = input;
+      return Promise.resolve(ok(evmInterfaceExecution(value)));
+    },
+  });
+  const omitted = await service.inspect({
+    path: value.artifact.path,
+    encoding: "hex",
+  });
+  expect(seen).toEqual({ path: value.artifact.path, encoding: "hex" });
+  expect(omitted.ok).toBe(true);
+  if (omitted.ok)
+    expect(parseEvidence(omitted.value).parameters).not.toHaveProperty(
+      "timeout_ms",
+    );
+  const selected = await service.inspect({
+    path: value.artifact.path,
+    encoding: "hex",
+    timeout_ms: 45_000,
+  });
+  expect(seen).toEqual({
+    path: value.artifact.path,
+    encoding: "hex",
+    timeout_ms: 45_000,
+  });
+  expect(selected.ok).toBe(true);
+  if (selected.ok)
+    expect(parseEvidence(selected.value).parameters).toMatchObject({
+      timeout_ms: 45_000,
+    });
 });
 
 it.each([null, "caller stopped", { requested: "stop" }])(

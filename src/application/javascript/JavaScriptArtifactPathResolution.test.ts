@@ -4,10 +4,77 @@ import {
   resolveArtifactPathByContext,
   type ResolveArtifactPathInput,
 } from "./JavaScriptArtifactPathResolution.js";
+import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { artifactLocalIdentity } from "./JavaScriptArtifactGraphContext.js";
 import { applicationNodeIdentitySchema } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
-import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+
+const completeInventoryCoverage = {
+  scope: "container-entries",
+  status: "complete",
+} as const;
+
+describe("incomplete inventory lookups", () => {
+  it.each(["complete", "unknown"] as const)(
+    "qualifies missing candidates before extension fallbacks under %s traversal",
+    (status) => {
+      const files = fileMap([
+        file("app/main.cjs", "root"),
+        file("app/target.js", "root"),
+      ]);
+      const unanalyzedFiles = {
+        coverage: { scope: "container-entries" as const, status },
+        get: () => undefined,
+        hasDirectory: () => false,
+      };
+      expect(
+        resolve({
+          declaredPath: "./target",
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files,
+          unanalyzedFiles,
+        }),
+      ).toMatchObject(
+        status === "complete"
+          ? { resolution_status: "resolved", resolved_path: "app/target.js" }
+          : {
+              resolution_status: "unavailable",
+              resolved_path: null,
+              candidate_path: "app/target",
+            },
+      );
+      expect(
+        resolve({
+          declaredPath: "./target.js",
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files,
+          unanalyzedFiles,
+        }),
+      ).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: "app/target.js",
+      });
+      expect(
+        resolve({
+          declaredPath: "./missing.js",
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files,
+          unanalyzedFiles,
+        }),
+      ).toMatchObject({
+        resolution_status: status === "complete" ? "not-found" : "unavailable",
+        resolved_path: null,
+      });
+    },
+  );
+});
 
 describe("Windows CommonJS request classification", () => {
   it.each([
@@ -87,7 +154,69 @@ describe("Windows CommonJS request classification", () => {
   });
 });
 
+describe("relative ESM URL separators", () => {
+  it.each([
+    ["./dir\\dep.mjs", "resolved", "app/dir/dep.mjs"],
+    ["../shared\\dep.mjs", "resolved", "shared/dep.mjs"],
+    ["./unused\\..\\dir\\dep.mjs", "resolved", "app/dir/dep.mjs"],
+    ["./..\\..\\outside.mjs", "rejected", null],
+    ["./dir%5cdep.mjs", "rejected", null],
+    ["./dir%2fdep.mjs", "rejected", null],
+    ["./dir\\dep%00.mjs", "rejected", null],
+    [".\\dir\\dep.mjs", "rejected", null],
+  ] as const)(
+    "resolves %s with module URL rules",
+    (declaredPath, status, target) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.mjs",
+          context: "module-specifier",
+          moduleKind: "import",
+          files: fileMap([
+            file("app/main.mjs", "root"),
+            file("app/dir/dep.mjs", "root"),
+            file("shared/dep.mjs", "root"),
+            file("outside.mjs", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: status,
+        resolved_path: target,
+      });
+    },
+  );
+});
+
 describe("literal POSIX inventory base segments", () => {
+  it.each([
+    ["app/\ud800/main.js", "./dep.js", null],
+    ["app/\udfff/main.js", "./dep.js", null],
+    ["app/\ud800/main.js", "../dep.js", "app/dep.js"],
+    ["app/\ud800.js", "./dep.js", "app/dep.js"],
+    ["app/😀%literal/main.js", "./dep.js", "app/😀%literal/dep.js"],
+    ["app/%2F/main.js", "./dep.js", "app/%2F/dep.js"],
+  ] as const)(
+    "preserves URL-reference base uncertainty for %j with %s",
+    (sourcePath, declaredPath, target) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath,
+          context: "url-reference",
+          files: fileMap([
+            file(sourcePath, "root"),
+            file(target ?? "app/�/dep.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolved_path: target,
+        resolution_status: target === null ? "unavailable" : "resolved",
+      });
+    },
+  );
   it("validates the final URL after a parent reference removes the encoded base segment", () => {
     expect(
       resolve({
@@ -452,7 +581,10 @@ describe("artifact-local graph identity", () => {
 
     expect(applicationNodeIdentitySchema.parse(first)).toEqual(first);
     expect(applicationNodeIdentitySchema.parse(second)).toEqual(second);
-    expect(first).not.toEqual(second);
+    expect(first.namespace).toBe(`${namespacePrefix}a`);
+    expect(first.key).toBe(`${keyPrefix}a`);
+    expect(second.namespace).toBe(`${namespacePrefix}b`);
+    expect(second.key).toBe(`${keyPrefix}b`);
   });
 });
 
@@ -577,6 +709,7 @@ describe("loader-specific module suffix lookup", () => {
     const files = fileMap([file("app/entry.cjs", "root")]);
     const unanalyzedFiles = {
       get: (path: string) => opaque.get(path),
+      coverage: completeInventoryCoverage,
       hasDirectory: () => false,
     };
     expect(
@@ -649,6 +782,7 @@ describe("unavailable inventoried native add-ons", () => {
       files: fileMap([file("app/entry.cjs", "root")]),
       unanalyzedFiles: {
         get: (path) => (path === unavailable.path ? unavailable : undefined),
+        coverage: completeInventoryCoverage,
         hasDirectory: () => false,
       },
     });
@@ -688,6 +822,7 @@ describe("unavailable package metadata", () => {
         requestedPaths.push(path);
         return path === manifest.path ? manifest : undefined;
       },
+      coverage: completeInventoryCoverage,
       hasDirectory: () => false,
     };
     const relativeRequire = resolve({
@@ -756,6 +891,7 @@ describe("unavailable package metadata", () => {
     ]);
     const lookup = {
       get: (path: string) => (path === manifest.path ? manifest : undefined),
+      coverage: completeInventoryCoverage,
       hasDirectory: () => false,
     };
     for (const [sourcePath, moduleKind] of [
@@ -2936,7 +3072,7 @@ describe("contextual JavaScript module identity", () => {
         new BrowserWindow({ webPreferences: {
           preload: new URL("./remote-base.js", location.href)
         }});
-        window.loadURL("file:///renderer/index.html");
+        new BrowserWindow().loadURL("file:///renderer/index.html");
       `,
     );
 
@@ -3184,18 +3320,20 @@ describe("url-reference directory and empty-segment semantics", () => {
     "/dist/worker.js/.",
     "./worker.js/.?cache=1#entry",
   ])("keeps directory-form URLs distinct from files: %s", (declaredPath) => {
-    expect(
-      resolve({
-        declaredPath,
-        sourcePath: "dist/app.mjs",
-        context: "url-reference",
-        files: fileMap([file("dist/worker.js", "root")]),
-      }),
-    ).toMatchObject({
-      declared_path: declaredPath,
-      resolution_status: "not-found",
-      resolved_path: null,
-    });
+    for (const context of ["url-reference", "html-reference"] as const)
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "dist/app.mjs",
+          context,
+          files: fileMap([file("dist/worker.js", "root")]),
+        }),
+        context,
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "not-found",
+        resolved_path: null,
+      });
   });
 
   it.each([
@@ -3563,8 +3701,9 @@ describe("module-backed package main host paths", () => {
   );
 });
 
-const resolve = (input: ResolveArtifactPathInput) =>
-  resolveArtifactPathByContext(input);
+const jsonDocuments = new JavaScriptJsonDocuments();
+const resolve = (input: Omit<ResolveArtifactPathInput, "jsonDocuments">) =>
+  resolveArtifactPathByContext({ ...input, jsonDocuments });
 
 const fileMap = (files: readonly JavaScriptArtifactFile[]) =>
   new Map(files.map((value) => [value.path, value]));
@@ -4124,6 +4263,7 @@ describe("Node launch package main ownership", () => {
                   limitations: ["main readback unavailable"],
                 }
               : undefined,
+          coverage: completeInventoryCoverage,
           hasDirectory: () => false,
         },
       }),
@@ -4372,6 +4512,7 @@ describe("package metadata at archive module boundaries", () => {
             unanalyzedFiles: {
               get: (requested) =>
                 opaque && requested === path ? target : undefined,
+              coverage: completeInventoryCoverage,
               hasDirectory: () => false,
             },
           }),
@@ -4382,4 +4523,29 @@ describe("package metadata at archive module boundaries", () => {
       }
     },
   );
+});
+
+it("distinguishes an unobserved bare package from builtins and blocked aliases", () => {
+  const files = aliasFiles({
+    "package.json": JSON.stringify({
+      imports: { "#blocked": null, "#builtin": "node:path" },
+    }),
+    "main.js": "",
+  });
+  const resolveName = (declaredPath: string) =>
+    resolve({
+      declaredPath,
+      sourcePath: "main.js",
+      context: "module-specifier",
+      moduleKind: "require",
+      files,
+    });
+  expect(resolveName("outside-package")).toMatchObject({
+    resolution_status: "external",
+    unexamined_module_imports: true,
+  });
+  for (const name of ["node:path", "electron", "#blocked", "#builtin"])
+    expect(resolveName(name), name).not.toHaveProperty(
+      "unexamined_module_imports",
+    );
 });

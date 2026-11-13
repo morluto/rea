@@ -2,6 +2,8 @@ import { win32 } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { z } from "zod";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
 
 import {
@@ -62,7 +64,12 @@ export class WindowsPrivateRuntime {
   // replaced, so aborting a rejected request cannot cancel the accepted copy.
   #pending: Promise<unknown> | undefined;
   #closed = false;
+  #closing = false;
   #closePromise: Promise<void> | undefined;
+  // Admitted files whose close failed. Removal retries these wrappers before
+  // the native tree walk. Dropping them leaves ancestor handles until GC, and
+  // those handles can make runtime_close fail with a sharing violation.
+  #unreleasedFiles: AnalysisCleanupLease[] = [];
   private constructor(
     readonly observation: z.infer<typeof runtimeSchema>,
     private readonly authority: WindowsNativeAuthority,
@@ -93,6 +100,7 @@ export class WindowsPrivateRuntime {
 
   /** Open a private child directory through retained, verified parent handles. */
   mkdir(relativePath: string): void {
+    this.#assertOpen();
     this.authority.call("runtime_mkdir", [
       this.observation.handle,
       relativePath,
@@ -101,7 +109,22 @@ export class WindowsPrivateRuntime {
 
   /** Write a new private file once and retain its immutable handle. */
   writeFile(relativePath: string, content: string): void {
+    this.#assertOpen();
     this.authority.call("runtime_write", [
+      this.observation.handle,
+      relativePath,
+      Buffer.from(content),
+    ]);
+  }
+
+  /**
+   * Write a new private file once, flush, and close the writer without retaining
+   * it in `immutableFiles`. Use for staged job inputs that a child must read and
+   * the parent must later `rm` while the runtime lease stays open.
+   */
+  writeTransientFile(relativePath: string, content: string): void {
+    this.#assertOpen();
+    this.authority.call("runtime_write_transient", [
       this.observation.handle,
       relativePath,
       Buffer.from(content),
@@ -114,6 +137,7 @@ export class WindowsPrivateRuntime {
     relativePath: string,
     signal?: AbortSignal,
   ): Promise<z.infer<typeof snapshotSchema>> {
+    this.#assertOpen();
     // Admission is synchronous; record ownership only after native acceptance.
     const pending = Promise.resolve(
       this.authority.call("runtime_snapshot", [
@@ -144,14 +168,25 @@ export class WindowsPrivateRuntime {
   }
 
   /** Read a private endpoint from an opened file, without re-opening its path. */
-  readFile(relativePath: string): string {
+  readFile(relativePath: string, maximumBytes: number): string {
+    this.#assertOpen();
     const file = fileSchema.parse(
       this.authority.call("runtime_open", [
         this.observation.handle,
         relativePath,
       ]),
     );
+    let text: string | undefined;
+    let primary: { readonly cause: unknown } | undefined;
+    let closeFailure:
+      | { readonly cause: unknown; readonly lease: AnalysisCleanupLease }
+      | undefined;
     try {
+      if (file.size > maximumBytes)
+        throw new ArtifactReaderFailure(
+          "limit",
+          `Private runtime file exceeds its ${String(maximumBytes)}-byte bound`,
+        );
       const chunks: Buffer[] = [];
       for (let offset = 0; offset < file.size;) {
         const value = z
@@ -170,19 +205,54 @@ export class WindowsPrivateRuntime {
         offset += value.length;
         chunks.push(value);
       }
-      return Buffer.concat(chunks).toString("utf8");
+      text = Buffer.concat(chunks).toString("utf8");
+    } catch (cause: unknown) {
+      primary = { cause };
     } finally {
-      this.authority.call("close", [file.handle]);
+      try {
+        this.authority.call("close", [file.handle]);
+      } catch (cause: unknown) {
+        const lease = new AnalysisCleanupLease(async () => {
+          this.authority.call("close", [file.handle]);
+        }, [file.requestedPath]);
+        this.#unreleasedFiles.push(lease);
+        closeFailure = { cause, lease };
+      }
     }
+    if (closeFailure !== undefined)
+      throw ArtifactReaderFailure.withCleanup(
+        primary === undefined ? closeFailure.cause : primary.cause,
+        {
+          reason:
+            closeFailure.cause instanceof Error
+              ? closeFailure.cause.message
+              : String(closeFailure.cause),
+          resources: [file.requestedPath],
+        },
+        undefined,
+        [closeFailure.lease],
+      );
+    if (primary !== undefined) throw primary.cause;
+    if (text === undefined)
+      throw new Error("Private runtime read completed without text");
+    return text;
   }
 
   /** Remove owned objects by handle, unlinking reparse entries without traversal. */
   close(): Promise<void> {
+    this.#closing = true;
     this.#closePromise ??= this.#remove().catch((cause: unknown) => {
       this.#closePromise = undefined;
       throw cause;
     });
     return this.#closePromise;
+  }
+
+  #assertOpen(): void {
+    if (this.#closing)
+      throw new Error(
+        "Windows private runtime cleanup is in progress or complete",
+      );
   }
 
   async #remove(): Promise<void> {
@@ -195,9 +265,25 @@ export class WindowsPrivateRuntime {
     runtimes.delete(windowsRuntimeIdentityKey(this.observation));
   }
 
+  /** Close admitted files that survived readFile before walking the tree. */
+  async #releaseAdmittedFiles(): Promise<void> {
+    const pending = this.#unreleasedFiles.splice(0);
+    let failure: unknown;
+    for (const lease of pending) {
+      try {
+        await lease.release();
+      } catch (cause: unknown) {
+        this.#unreleasedFiles.push(lease);
+        failure ??= cause;
+      }
+    }
+    if (failure !== undefined) throw failure;
+  }
+
   async #closeRuntime(): Promise<void> {
     for (let attempt = 1; ; attempt++) {
       try {
+        await this.#releaseAdmittedFiles();
         this.authority.call("runtime_close", [this.observation.handle]);
         return;
       } catch (cause: unknown) {
@@ -240,7 +326,13 @@ export const windowsPrivateRuntime = (
 };
 
 /** Read a runtime endpoint using the lease that owns its parent directory. */
-export const readWindowsPrivateRuntimeFile = (path: string): string => {
+export const readWindowsPrivateRuntimeFile = (
+  path: string,
+  maximumBytes: number,
+): string => {
   const parent = win32.dirname(path);
-  return windowsPrivateRuntime(parent).readFile(win32.basename(path));
+  return windowsPrivateRuntime(parent).readFile(
+    win32.basename(path),
+    maximumBytes,
+  );
 };

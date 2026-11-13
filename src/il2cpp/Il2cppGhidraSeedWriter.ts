@@ -69,6 +69,13 @@ export class Il2cppGhidraSeedWriter implements Il2cppSeedWriterPort {
     } catch (cause) {
       if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
         return ok(undefined);
+      if (cause instanceof Error && "code" in cause && cause.code === "ENOTDIR")
+        return err(
+          invalid(
+            "ghidra_seeds",
+            `--ghidra-seeds ${output.path} has a parent path component that is not a directory; choose an output path inside an existing directory.`,
+          ),
+        );
       return err(
         new EvidenceFileError("write", "io", { path: output.path, cause }),
       );
@@ -138,6 +145,7 @@ export class Il2cppGhidraSeedWriter implements Il2cppSeedWriterPort {
       folded: seeds.folded,
       no_body: seeds.no_body,
       unknown: seeds.unknown,
+      generic_instances: seeds.generic_instances,
     });
   }
   async close(): Promise<void> {

@@ -1,6 +1,7 @@
 import { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import {
   EvmoleInterfaceProvider,
+  evmHostSupported,
   evmLimiterAvailability,
 } from "../evm/EvmoleInterfaceProvider.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -12,7 +13,7 @@ export const createEvmInterfaceService = (
 ): EvmInterfaceService =>
   new EvmInterfaceService(new EvmoleInterfaceProvider(environment));
 
-export { evmLimiterAvailability };
+export { evmHostSupported, evmLimiterAvailability };
 
 /**
  * Static binding of the existing operation, command and fresh service factory.

@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { access } from "node:fs/promises";
+import { access, chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -14,6 +14,7 @@ import {
 } from "../../fixtures/binarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
+import type { ProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -21,6 +22,15 @@ const processFixture = fileURLToPath(
   new URL("../../fixtures/processFidelity.mjs", import.meta.url),
 );
 const resources: Array<{ close(): Promise<unknown> }> = [];
+
+const captureOutput = (value: unknown): ProcessCapture => {
+  const normalized = toolContract(
+    "capture_process_scenario",
+  ).outputSchema.parse(value).normalized_result;
+  if ("status" in normalized && normalized.status === "planned")
+    throw new Error("expected process capture output");
+  return normalized as ProcessCapture;
+};
 
 afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
@@ -71,6 +81,53 @@ it("rejects oversized initial and resize terminal buffers through MCP before lau
 });
 
 itWithCaptureCapability(
+  "returns a planned scenario without launching the target",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-plan-");
+    const marker = join(root, "launched");
+    const session = createTestBinarySession(() => {
+      throw new Error("A dry run must not launch a binary provider");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      { logger: silentLogger },
+    );
+    const client = new Client({ name: "process-plan", version: "1" });
+    resources.push(client, server, session);
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const result = await client.callTool({
+      name: "capture_process_scenario",
+      arguments: {
+        executable: process.execPath,
+        working_directory: root,
+        arguments: [
+          "-e",
+          "require('node:fs').writeFileSync(process.argv[1], 'launched')",
+          marker,
+        ],
+        dry_run: true,
+      },
+    });
+
+    expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
+    await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    const parsed = toolContract("capture_process_scenario").outputSchema.parse(
+      result.structuredContent,
+    );
+    expect(parsed.predicate_type).toBe("rea.process-scenario-plan");
+    expect(parsed.normalized_result).toMatchObject({
+      status: "planned",
+      ambient_environment: "inherited-at-run",
+      scenario: { executable: process.execPath },
+    });
+  },
+);
+
+itWithCaptureCapability(
   "bounds normalized PTY text and preserves equal-size output through MCP",
   async () => {
     const root = await createTestTempDirectory(
@@ -109,17 +166,24 @@ itWithCaptureCapability(
         },
       });
       expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
-      return toolContract("capture_process_scenario").outputSchema.parse(
-        result.structuredContent,
-      ).normalized_result;
+      return captureOutput(result.structuredContent);
     };
 
     const expanded = await capture("x".repeat(500));
-    expect(expanded.frames).toHaveLength(0);
     expect(expanded.truncated).toBe(true);
+    const retainedNormalized = expanded.frames.map(({ data }) => data).join("");
+    const retainedRaw = expanded.frames
+      .map(({ raw_data, data }) => raw_data ?? data)
+      .join("");
+    // PTY read boundaries need not match the child's write. A small chunk can
+    // fit even after another chunk was omitted for exceeding the budget.
+    expect(retainedNormalized).toBe(
+      retainedRaw.replaceAll("a", "x".repeat(500)),
+    );
+    expect(Buffer.byteLength(retainedNormalized)).toBeLessThanOrEqual(1_000);
     expect(expanded.truncation_details.normalized_terminal).toMatchObject({
       budget_bytes: 1_000,
-      retained_bytes: 0,
+      retained_bytes: Buffer.byteLength(retainedNormalized),
       omitted_frames: expect.any(Number),
     });
     expect(
@@ -128,9 +192,9 @@ itWithCaptureCapability(
     expect(expanded.truncation_details.raw_terminal).toMatchObject({
       budget_bytes: 1_000,
       observed_bytes: expect.any(Number),
-      retained_bytes: 0,
+      retained_bytes: Buffer.byteLength(retainedRaw),
       observed_frames: expect.any(Number),
-      retained_frames: 0,
+      retained_frames: expanded.frames.length,
     });
     expect(
       expanded.limitations.some((limitation) =>
@@ -230,6 +294,56 @@ itWithCaptureCapability(
         question: `Was network behavior fully observed during capture? (Evidence ${evidence.evidence_id})`,
         domain: "process-network",
       }),
+    );
+  },
+);
+
+itWithCaptureCapability(
+  "resolves and inherits the server's selected environment through MCP",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-mcp-env-");
+    const bin = join(root, "bin");
+    const executable = join(bin, "rea-injected-process-probe");
+    await mkdir(bin);
+    await writeFile(
+      executable,
+      [
+        "#!/bin/sh",
+        'printf "%s|%s\\n" "$REA_CAPTURE_INJECTED_MARKER" "$REA_CAPTURE_SCENARIO_OVERRIDE"',
+      ].join("\n"),
+    );
+    await chmod(executable, 0o755);
+    const session = createTestBinarySession(createCacheProvider([]));
+    const server = createServer(
+      { kind: "session", session },
+      {
+        logger: silentLogger,
+        environment: {
+          PATH: bin,
+          REA_CAPTURE_INJECTED_MARKER: "injected-value",
+          REA_CAPTURE_SCENARIO_OVERRIDE: "host-value",
+        },
+      },
+    );
+    const client = new Client({ name: "process-mcp-env", version: "1" });
+    resources.push(client, server, session);
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const result = await client.callTool({
+      name: "capture_process_scenario",
+      arguments: {
+        executable: "rea-injected-process-probe",
+        working_directory: root,
+        environment: { REA_CAPTURE_SCENARIO_OVERRIDE: "scenario-value" },
+      },
+    });
+    expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
+    const capture = captureOutput(result.structuredContent);
+    expect(capture.frames.map(({ data }) => data).join("")).toContain(
+      "injected-value|scenario-value",
     );
   },
 );

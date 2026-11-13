@@ -1,11 +1,16 @@
+import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import * as firmwareFiles from "../../src/firmware/FirmwareFiles.js";
 import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
-import { FIRMWARE_LIMITS } from "../../src/firmware/FirmwareRelease.js";
+import { DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS } from "../../src/domain/firmware/firmwareAnalysis.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { ProviderProcessSupervisor } from "../../src/process/ProviderProcess.js";
+import { finishAnalysisCommand } from "../../src/cli/finishAnalysisCommand.js";
+import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";
+import { FIRMWARE_LIMITS } from "../../src/firmware/FirmwareRelease.js";
 import {
   firmwareFixture,
   assertFirmwareCleanup,
@@ -36,13 +41,16 @@ test("preserves an already aborted caller reason without launching firmware work
   await fixture.close();
 });
 
-const phases = (publicationMs: number = FIRMWARE_LIMITS.timeoutMs) => {
+const phases = (
+  publicationMs: number = DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,
+  analysisMs: number = DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,
+) => {
   const analysis = new AbortController();
   const publication = new AbortController();
   const budgets: number[] = [];
   const timeout = AbortSignal.timeout;
   vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
-    if (budgets.length === 0 && ms === FIRMWARE_LIMITS.timeoutMs) {
+    if (budgets.length === 0 && ms === analysisMs) {
       budgets.push(ms);
       return analysis.signal;
     }
@@ -63,6 +71,43 @@ const phaseClock = () => {
     offset += elapsedMs;
   };
 };
+
+test("charges inspection workspace cleanup to its selectable analysis budget, without a hidden publication phase", async () => {
+  const phase = phases(120_000, 1234);
+  const advance = phaseClock();
+  const fixture = await firmwareFixture();
+  const close = PrivateRuntimeRoot.prototype.close;
+  vi.spyOn(PrivateRuntimeRoot.prototype, "close").mockImplementation(
+    async function (this: PrivateRuntimeRoot) {
+      await close.call(this);
+      advance(1235);
+    },
+  );
+  const result = await fixture.service.execute("inspect_firmware_regions", {
+    path: fixture.path,
+    analysis_timeout_ms: 1234,
+  });
+  if (result.ok)
+    throw new Error(
+      "Expected inspection cleanup to exceed its analysis budget",
+    );
+  expect(phase.budgets).toEqual([1234]);
+  expect(phase.analysis.signal.aborted).toBe(false);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "provider_timeout",
+    details: {
+      timeout_ms: 1234,
+      diagnostics: { phase: "analysis" },
+      partial_observation: {
+        kind: "firmware",
+        result: { analysis_timeout_ms: 1234, coverage: "signature_scan" },
+      },
+    },
+    remediation: { action: expect.stringContaining("analysis_timeout_ms") },
+  });
+  await fixture.close();
+  await assertFirmwareCleanup(fixture.launches);
+});
 
 test("allows publication after the analysis phase expires", async () => {
   const phase = phases();
@@ -136,7 +181,7 @@ test.each(["signal", "clock"] as const)(
   },
 );
 
-test("keeps each queued request's publication budget", async () => {
+test("keeps each queued request's independent analysis and publication budgets", async () => {
   const fixture = await firmwareFixture();
   const budgets: number[] = [];
   const timeout = AbortSignal.timeout;
@@ -172,6 +217,7 @@ test("keeps each queued request's publication budget", async () => {
     path: fixture.path,
     output_directory: fixture.output,
     publication_timeout_ms: 123_456,
+    analysis_timeout_ms: 234_567,
   });
   try {
     await entered;
@@ -179,8 +225,9 @@ test("keeps each queued request's publication budget", async () => {
       path: fixture.path,
       output_directory: join(fixture.root, "second-output"),
       publication_timeout_ms: 654_321,
+      analysis_timeout_ms: 765_432,
     });
-    expect(budgets).toEqual([120_000, 123_456]);
+    expect(budgets).toEqual([234_567, 123_456]);
     release();
     const results = await Promise.all([pending, queued]);
     expect(
@@ -190,13 +237,221 @@ test("keeps each queued request's publication budget", async () => {
           : result.error.message,
       ),
     ).toEqual([123_456, 654_321]);
-    expect(budgets).toEqual([120_000, 123_456, 120_000, 654_321]);
+    expect(
+      results.map((result) => result.ok && result.value.normalized_result),
+    ).toMatchObject([
+      { analysis_timeout_ms: 234_567 },
+      { analysis_timeout_ms: 765_432 },
+    ]);
+    expect(budgets).toEqual([234_567, 123_456, 765_432, 654_321]);
   } finally {
     release();
   }
   await fixture.close();
   await assertFirmwareCleanup(fixture.launches);
 });
+
+test("uses the selected phase deadline inside an owned command beyond the former 120-second cap", async () => {
+  const fixture = await firmwareFixture();
+  const advance = phaseClock();
+  const wait = ProviderProcessSupervisor.prototype.waitForOutputClose;
+  let advanced = false;
+  vi.spyOn(
+    ProviderProcessSupervisor.prototype,
+    "waitForOutputClose",
+  ).mockImplementation(async function (
+    this: ProviderProcessSupervisor,
+    ...args
+  ) {
+    const closed = await wait.apply(this, args);
+    if (!advanced) {
+      advanced = true;
+      advance(120_001);
+      return false;
+    }
+    return closed;
+  });
+  const result = await fixture.service.execute("inspect_firmware_regions", {
+    path: fixture.path,
+    analysis_timeout_ms: 240_000,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toMatchObject({
+    analysis_timeout_ms: 240_000,
+  });
+  expect(fixture.launches).toHaveLength(2);
+  expect(
+    fixture.launches.every((launch) =>
+      launch.args.includes(
+        `--cpu=${String(FIRMWARE_LIMITS.cpuSeconds)}:${String(FIRMWARE_LIMITS.cpuSeconds)}`,
+      ),
+    ),
+  ).toBe(true);
+  await fixture.close();
+  await assertFirmwareCleanup(fixture.launches);
+});
+
+test.each([false, true])(
+  "retains typed analysis timeout recovery through failed command cleanup (one-shot close: %s)",
+  async (oneShot) => {
+    const fixture = await firmwareFixture("cleanup-failure");
+    const analysis = new AbortController();
+    const timeout = AbortSignal.timeout;
+    const timer = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation((ms) =>
+        ms === 1234 ? analysis.signal : timeout(ms),
+      );
+    const wait = ProviderProcessSupervisor.prototype.waitForOutputClose;
+    const waiter = vi
+      .spyOn(ProviderProcessSupervisor.prototype, "waitForOutputClose")
+      .mockImplementation(async function (
+        this: ProviderProcessSupervisor,
+        ...args
+      ) {
+        const closed = await wait.apply(this, args);
+        if (closed)
+          analysis.abort(
+            new DOMException("controlled analysis expiry", "TimeoutError"),
+          );
+        return closed;
+      });
+    const result = await fixture.service.execute("inspect_firmware_regions", {
+      path: fixture.path,
+      analysis_timeout_ms: 1234,
+    });
+    if (result.ok) throw new Error("Expected timeout with retained cleanup");
+    expect(result.error.cleanupPrimary).toMatchObject({
+      _tag: "AnalysisTimeoutError",
+      timeoutMs: 1234,
+    });
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        diagnostics: {
+          previous_error: {
+            code: "provider_timeout",
+            details: { timeout_ms: 1234 },
+          },
+        },
+        captured_output: { stdout: expect.stringContaining("binwalk 3.1.0") },
+      },
+    });
+    expect(JSON.stringify(projected).split("binwalk 3.1.0")).toHaveLength(2);
+    timer.mockRestore();
+    waiter.mockRestore();
+    if (oneShot) {
+      const delivered = await finishAnalysisCommand(
+        async () => result,
+        fixture.service,
+        "binwalk",
+        "inspect_firmware_regions",
+        new AbortController().signal,
+      ).then(projectCliAnalysisResult);
+      expect(delivered).toMatchObject({ code: "cleanup_incomplete" });
+      expect(JSON.stringify(delivered).split("binwalk 3.1.0")).toHaveLength(2);
+    }
+    fixture.restoreCleanup();
+    if (oneShot) await fixture.close();
+    else {
+      const retried = await fixture.service.execute(
+        "inspect_firmware_regions",
+        {
+          path: fixture.path,
+        },
+      );
+      if (!retried.ok) throw retried.error;
+    }
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "provider_timeout",
+      details: { timeout_ms: 1234 },
+    });
+    await fixture.close();
+    await assertFirmwareCleanup(fixture.launches);
+  },
+);
+
+test.each(["analysis", "clock", "caller", "prior-failure"] as const)(
+  "retains an interruption observed during incomplete command cleanup: %s",
+  async (interruption) => {
+    const phase = phases(120_000, 54_321);
+    const advance = phaseClock();
+    const fixture = await firmwareFixture("cleanup-failure");
+    const caller = new AbortController();
+    const reason = { caller: "during owned command cleanup" };
+    const original = new AnalysisOutputError(
+      "inspect_firmware_regions",
+      "earlier command failure",
+    );
+    const stop = ProviderProcessSupervisor.prototype.stop;
+    const stopper = vi
+      .spyOn(ProviderProcessSupervisor.prototype, "stop")
+      .mockImplementation(async function (
+        this: ProviderProcessSupervisor,
+        ...args
+      ) {
+        const stopped = await stop.apply(this, args);
+        if (interruption === "clock") advance(54_322);
+        else if (interruption === "caller") caller.abort(reason);
+        else
+          phase.analysis.abort(
+            new DOMException("during owned command cleanup", "TimeoutError"),
+          );
+        return stopped;
+      });
+    if (interruption === "prior-failure")
+      vi.spyOn(
+        ProviderProcessSupervisor.prototype,
+        "waitForOutputClose",
+      ).mockRejectedValueOnce(original);
+    const result = await fixture.service.execute(
+      "inspect_firmware_regions",
+      {
+        path: fixture.path,
+        analysis_timeout_ms: 54_321,
+      },
+      { signal: caller.signal },
+    );
+    if (result.ok) throw new Error("Expected retained command cleanup");
+    const expected =
+      interruption === "caller"
+        ? "cancelled"
+        : interruption === "prior-failure"
+          ? "unreadable_output"
+          : "provider_timeout";
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { diagnostics: { previous_error: { code: expected } } },
+    });
+    const primary = result.error.cleanupPrimary;
+    if (primary === undefined)
+      throw new Error("Expected typed cleanup primary");
+    if (interruption === "prior-failure") expect(primary).toBe(original);
+    else {
+      expect(primary._tag).toBe(
+        interruption === "caller"
+          ? "AnalysisCancelledError"
+          : "AnalysisTimeoutError",
+      );
+      if (interruption !== "caller")
+        expect(projectAnalysisError(primary).details).toMatchObject({
+          timeout_ms: 54_321,
+          diagnostics: { phase: "analysis" },
+        });
+      if (interruption === "caller") expect(primary.cause).toBe(reason);
+      if (interruption === "analysis")
+        expect(primary.cause).toBe(phase.analysis.signal.reason);
+    }
+    stopper.mockRestore();
+    fixture.restoreCleanup();
+    await fixture.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(projectAnalysisError(result.error).code).toBe(expected);
+    await assertFirmwareCleanup(fixture.launches);
+  },
+);
 
 test.each(["none", "caller", "publication", "clock"] as const)(
   "preserves the selected budget, verified progress and rollback at commit: %s",
@@ -288,7 +543,7 @@ test.each([
 ] as const)(
   "retains committed output and late timeout through workspace cleanup: $expiry, denied: $denied",
   async ({ expiry, denied }) => {
-    const phase = phases(654_321);
+    const phase = phases(654_321, 234_567);
     const advance = phaseClock();
     const fixture = await firmwareFixture();
     const commit = SafeOutputTree.prototype.commit;
@@ -318,9 +573,11 @@ test.each([
     const result = await fixture.service.execute("extract_firmware", {
       path: fixture.path,
       output_directory: fixture.output,
+      analysis_timeout_ms: 234_567,
       publication_timeout_ms: 654_321,
     });
     if (result.ok) throw new Error("Expected timeout during final cleanup");
+    expect(phase.budgets).toEqual([234_567, 654_321]);
     expect(phase.publication.signal.aborted).toBe(expiry === "signal");
     const projected = projectAnalysisError(result.error);
     expect(
@@ -331,7 +588,10 @@ test.each([
     });
     expect(result.error.partialObservation).toMatchObject({
       kind: "firmware",
-      result: { output_directory: fixture.output },
+      result: {
+        output_directory: fixture.output,
+        analysis_timeout_ms: 234_567,
+      },
     });
     expect(await readFile(join(fixture.output, "rootfs/config"), "utf8")).toBe(
       "firmware=true\n",

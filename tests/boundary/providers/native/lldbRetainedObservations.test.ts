@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { FileHandle } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { err, ok, type Result } from "../../../../src/domain/result.js";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { nativeCallPartialObservationSchema } from "../../../../src/domain/native/nativeCallPartialObservation.js";
 import {
-  LLDB_OBSERVATION_JOURNAL_MAX_BYTES,
-  parseLldbObservationJournal,
   projectLldbPartialObservation,
-  readBoundedPrefix,
   readLldbObservationJournal,
   readPartialCapture,
 } from "../../../../src/native/LldbRetainedObservations.js";
-import type { LldbReadbackFiles } from "../../../../src/native/LldbReadbackFiles.js";
+import { LldbReadbackFiles } from "../../../../src/native/LldbReadbackFiles.js";
 
 const event = {
   sequence: 0,
@@ -29,11 +29,24 @@ const event = {
   backtrace: [],
 };
 
-const observation = (
+const readJournal = async (bytes: Buffer) => {
+  const root = await createTestTempDirectory("rea-lldb-journal-");
+  const path = join(root, "journal");
+  await writeFile(path, bytes);
+  const result = await readLldbObservationJournal(
+    path,
+    new LldbReadbackFiles(),
+    bytes.length,
+  );
+  if (!result.ok) throw result.error;
+  return result.value.parsed;
+};
+
+const observation = async (
   reason: "cancelled" | "tracer-failure" | "cleanup-failure",
   journalText: string,
 ) => {
-  const parsed = parseLldbObservationJournal(Buffer.from(journalText));
+  const parsed = await readJournal(Buffer.from(journalText));
   return nativeCallPartialObservationSchema.parse(
     projectLldbPartialObservation({
       target: {
@@ -55,13 +68,33 @@ const observation = (
 };
 
 describe("LLDB retained observations", () => {
+  it("preserves partial source coordinates while accepting historical omission", async () => {
+    const attributed = {
+      ...event,
+      source_location: {
+        file_path: "/missing/fixture.pas",
+        line: 23,
+        column: null,
+      },
+    };
+    const journal =
+      [event, attributed]
+        .map((entry) => JSON.stringify({ kind: "event", event: entry }))
+        .join("\n") + "\n";
+    const partial = await observation("cancelled", journal);
+    expect(partial.events).toEqual([event, attributed]);
+    expect(partial.limitations).toContain(
+      "Source paths and lines are LLDB line-table attribution; REA did not read or verify the referenced source bytes.",
+    );
+  });
+
   it.each([
     ["cancellation", "cancelled"],
     ["bridge failure", "tracer-failure"],
     ["cleanup failure", "cleanup-failure"],
-  ] as const)("retains admitted events after %s", (_case, reason) => {
+  ] as const)("retains admitted events after %s", async (_case, reason) => {
     const journal = `${JSON.stringify({ kind: "event", event })}\n`;
-    const partial = observation(reason, journal);
+    const partial = await observation(reason, journal);
     expect(partial.events).toEqual([event]);
     expect(partial.coverage).toEqual({ status: "partial", reason });
     expect(partial.process.stdout).toMatchObject({
@@ -80,14 +113,14 @@ describe("LLDB retained observations", () => {
     );
   });
 
-  it("keeps valid rows around malformed data and ignores a torn final row", () => {
+  it("keeps valid rows around malformed data and ignores a torn final row", async () => {
     const journal = [
       JSON.stringify({ kind: "event", event }),
       "{bad-json}",
       JSON.stringify({ kind: "other-stop", reason: "signal SIGTERM" }),
       '{"kind":"event","event":',
     ].join("\n");
-    const partial = observation("tracer-failure", journal);
+    const partial = await observation("tracer-failure", journal);
     expect(partial.events).toEqual([event]);
     expect(partial.process.other_stops).toEqual(["signal SIGTERM"]);
     expect(partial.limitations).toContain(
@@ -98,7 +131,7 @@ describe("LLDB retained observations", () => {
     );
   });
 
-  it("rejects invalid UTF-8 rows while retaining valid neighbors and literal replacement characters", () => {
+  it("rejects invalid UTF-8 rows while retaining valid neighbors and literal replacement characters", async () => {
     const before = Buffer.from(`${JSON.stringify({ kind: "event", event })}\n`);
     const invalid = Buffer.concat([
       Buffer.from('{"kind":"other-stop","reason":"before'),
@@ -111,7 +144,7 @@ describe("LLDB retained observations", () => {
     const after = Buffer.from(
       `${JSON.stringify({ kind: "event", event: { ...event, sequence: 1 } })}\n`,
     );
-    const parsed = parseLldbObservationJournal(
+    const parsed = await readJournal(
       Buffer.concat([before, invalid, literalReplacement, after]),
     );
 
@@ -122,7 +155,7 @@ describe("LLDB retained observations", () => {
     );
   });
 
-  it("ignores a torn non-ASCII tail without discarding completed rows", () => {
+  it("ignores a torn non-ASCII tail without discarding completed rows", async () => {
     const complete = Buffer.from(
       `${JSON.stringify({ kind: "event", event })}\n`,
     );
@@ -130,7 +163,7 @@ describe("LLDB retained observations", () => {
       Buffer.from('{"kind":"other-stop","reason":"'),
       Buffer.from([0xe2, 0x82]),
     ]);
-    const parsed = parseLldbObservationJournal(Buffer.concat([complete, torn]));
+    const parsed = await readJournal(Buffer.concat([complete, torn]));
 
     expect(parsed.events).toEqual([event]);
     expect(parsed.otherStops).toEqual([]);
@@ -144,18 +177,15 @@ describe("LLDB retained observations", () => {
 });
 
 describe("LLDB retained observation read failures", () => {
-  it("bounds malformed-row diagnostics for an 8 MiB journal", () => {
+  it("bounds malformed-row diagnostics for an 8 MiB journal", async () => {
     const valid = JSON.stringify({ kind: "event", event });
     const malformed = '{"kind":"unknown"}\n';
     const malformedRows = Math.floor(
-      (LLDB_OBSERVATION_JOURNAL_MAX_BYTES - valid.length * 2 - 2) /
-        malformed.length,
+      (8 * 1024 * 1024 - valid.length * 2 - 2) / malformed.length,
     );
     const journal = `${valid}\n${malformed.repeat(malformedRows)}${valid}\n`;
-    expect(Buffer.byteLength(journal)).toBeLessThanOrEqual(
-      LLDB_OBSERVATION_JOURNAL_MAX_BYTES,
-    );
-    const partial = observation("tracer-failure", journal);
+    expect(Buffer.byteLength(journal)).toBeLessThanOrEqual(8 * 1024 * 1024);
+    const partial = await observation("tracer-failure", journal);
     expect(partial.events).toEqual([event, event]);
     expect(partial.limitations.length).toBeLessThanOrEqual(6);
     expect(
@@ -168,21 +198,76 @@ describe("LLDB retained observation read failures", () => {
   });
 
   it("continues a bounded prefix read after short reads", async () => {
-    const source = Buffer.from("retained prefix");
+    const source = Buffer.from(`${JSON.stringify({ kind: "event", event })}\n`);
     let position = 0;
-    const result = await readBoundedPrefix(
-      source.length,
-      async (buffer, offset, length, requestedPosition) => {
-        expect(requestedPosition).toBe(position);
-        const count = Math.min(2, length, source.length - position);
-        source.copy(buffer, offset, position, position + count);
-        position += count;
-        return count;
+    const files = {
+      read: async <Value>(
+        _path: string,
+        read: (file: FileHandle) => Promise<Value>,
+      ): Promise<Result<Value, unknown>> => {
+        const handle = {
+          stat: async () => ({ size: source.length }),
+          read: async (
+            buffer: Buffer,
+            offset: number,
+            length: number,
+            requestedPosition: number,
+          ) => {
+            expect(requestedPosition).toBe(position);
+            const count = Math.min(2, length, source.length - position);
+            source.copy(buffer, offset, position, position + count);
+            position += count;
+            return { bytesRead: count, buffer };
+          },
+        } as unknown as FileHandle;
+        try {
+          return ok(await read(handle));
+        } catch (cause) {
+          return err(cause);
+        }
       },
+    } as LldbReadbackFiles;
+    const result = await readLldbObservationJournal("journal", files);
+    if (!result.ok) throw result.error;
+    expect(position).toBe(source.length);
+    expect(result.value.status).toBe("complete");
+    expect(result.value.parsed.events).toEqual([event]);
+  });
+
+  it("reads the selected partial capture and journal budgets instead of fixed defaults", async () => {
+    const source = Buffer.from("retained-output");
+    const first = await readPartialCapture(
+      "stdout",
+      readbackFilesFailingAfter(source, source.length, new Error("unused")),
+      8,
     );
-    expect(result.bytesRead).toBe(source.length);
-    expect(result.buffer.toString("utf8", 0, result.bytesRead)).toBe(
-      "retained prefix",
+    const raised = await readPartialCapture(
+      "stdout",
+      readbackFilesFailingAfter(source, source.length, new Error("unused")),
+      32,
+    );
+    if (!first.ok || !raised.ok)
+      throw new Error("Expected retained output reads");
+    expect(first.value.capture.text).toBe("retained");
+    expect(raised.value.capture.text).toBe("retained-output");
+    const row = `${JSON.stringify({ kind: "event", event })}\n`;
+    const journal = Buffer.from(row.repeat(2));
+    const limited = await readLldbObservationJournal(
+      "journal",
+      readbackFilesFailingAfter(journal, journal.length, new Error("unused")),
+      Buffer.byteLength(row),
+    );
+    const complete = await readLldbObservationJournal(
+      "journal",
+      readbackFilesFailingAfter(journal, journal.length, new Error("unused")),
+      journal.length,
+    );
+    if (!limited.ok || !complete.ok)
+      throw new Error("Expected retained journal reads");
+    expect(limited.value.parsed.events).toEqual([event]);
+    expect(complete.value.parsed.events).toEqual([event, event]);
+    expect(limited.value.limitations).toContainEqual(
+      expect.stringContaining("capture_limits.trace_bytes"),
     );
   });
 
@@ -197,7 +282,6 @@ describe("LLDB retained observation read failures", () => {
     );
     const result = await readLldbObservationJournal("journal", files);
 
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(result.value.status).toBe("read-failure");
     if (result.value.status !== "read-failure")
@@ -217,7 +301,6 @@ describe("LLDB retained observation read failures", () => {
       "stdout",
       readbackFilesFailingAfter(source, Buffer.byteLength(prefix), failure),
     );
-    expect(partial.ok).toBe(true);
     if (!partial.ok) throw partial.error;
     expect(partial.value.status).toBe("read-failure");
     if (partial.value.status !== "read-failure")

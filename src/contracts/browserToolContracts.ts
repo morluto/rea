@@ -1,3 +1,13 @@
+import { z } from "zod";
+import {
+  javaScriptRoutesCompleteDeliveryShape,
+  webRoutesSummaryDeliveryShape,
+} from "../domain/analysisView/javascriptRoutesView.js";
+import {
+  javaScriptRoutesViewResultSchema,
+  webBundleSummaryViewResultSchema,
+  webBundlePageViewResultSchema,
+} from "../domain/analysisView/analysisView.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import {
   inspectWebPageInputSchema,
@@ -35,7 +45,20 @@ import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 
 const listOutputSchema = evidenceResultOf(browserTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(webPageInspectionSchema);
-const bundleOutputSchema = evidenceResultOf(webBundleAnalysisSchema);
+export const analyzeWebBundleRequestSchema = z
+  .discriminatedUnion("detail", [
+    analyzeWebBundleInputSchema.extend(javaScriptRoutesCompleteDeliveryShape),
+    analyzeWebBundleInputSchema.extend(webRoutesSummaryDeliveryShape),
+  ])
+  .meta({ "x-rea-root-discriminator": "detail" });
+const bundleOutputSchema = evidenceResultOf(
+  z.union([
+    webBundleAnalysisSchema,
+    javaScriptRoutesViewResultSchema,
+    webBundleSummaryViewResultSchema,
+    webBundlePageViewResultSchema,
+  ]),
+);
 const observationSessionOutputSchema = evidenceResultOf(
   webObservationSessionSchema,
 );
@@ -129,8 +152,17 @@ const exampleScenarioCapture = () => ({
       network_transaction_range: null,
     },
   },
-  completeness: scenarioCompleteness,
-  limitations: [],
+  completeness: {
+    status: "incomplete",
+    equality_eligible: false,
+    missing_sections: ["events"],
+    truncated_sections: [],
+  },
+  limitations: [
+    "CDP attachment cannot recover pre-attach events or guarantee launch-time context options.",
+    "Attached locale en-US applies to Intl formatting only; navigator.language(s) and Accept-Language remain caller-controlled. Use launch mode for matching page and request languages.",
+    "Detaching a CDP page session may clear caller-owned navigator.platform emulation. REA cannot snapshot the caller's complete user-agent/client-hint state before attachment; use launch mode to avoid mutating that external browser.",
+  ],
 });
 
 /** Passive browser reverse-engineering contracts. */
@@ -139,7 +171,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "list_browser_targets",
     ...toolContractMetadata("list_browser_targets"),
     description:
-      "List page targets exposed by the selected loopback Chrome DevTools Protocol endpoint. Optionally filter by exact origin. URLs preserve query values and fragments; only URL userinfo credentials are removed.",
+      "List pages exposed by one loopback Chrome DevTools Protocol endpoint, optionally filtered by exact origin. Returns target IDs and URLs; query values and fragments are preserved, with URL userinfo credentials removed. Use a returned target ID with inspect_web_page. discovery_timeout_ms controls discovery; command_timeout_ms does not apply. Browser-socket endpoints remain shared by the active browser provider until it closes or target-session cleanup is unconfirmed; cancellation/deadline on a clean socket releases only this call’s lease.",
     kind: "browser-provider",
     inputSchema: listBrowserTargetsInputSchema,
     outputSchema: listOutputSchema,
@@ -174,9 +206,9 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "analyze_web_bundle",
     ...toolContractMetadata("analyze_web_bundle"),
     description:
-      "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. JavaScript is parsed but never executed.",
+      'Recover a static chunk graph, route/endpoint candidates, vendor fingerprints and page-declared WebMCP metadata from JavaScript on one selected CDP page. May fetch source maps only from the target origin or explicitly selected origins; application JavaScript is not executed. detail summary retains complete Evidence; view {kind: "web-bundle", collection: "endpoints"} selects endpoint rows, and javascript-routes views select route patterns/occurrences/sources/unknowns. Read later pages with inspect_analysis_view. Static candidates do not establish runtime reachability or a complete route set.',
     kind: "browser-provider",
-    inputSchema: analyzeWebBundleInputSchema,
+    inputSchema: analyzeWebBundleRequestSchema,
     outputSchema: bundleOutputSchema,
     examples: [
       {
@@ -235,7 +267,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "compare_web_captures",
     ...toolContractMetadata("compare_web_captures"),
     description:
-      "Compare passive web captures by providing before and after, each with the complete inspect_web_page normalized_result in inspection and an optional complete discover_webmcp_tools normalized_result in webmcp; or compare recorded scenarios by passing complete capture_browser_scenario normalized_result objects in before_scenario and after_scenario with an optional normalization policy. Use exactly one input group. Network comparison includes observed HTTP requests and WebSocket frame streams; same-URL connections are compared as an unordered collection of ordered streams, retaining connection counts without claiming stable identity between individual connections. Scenario comparison aligns exact step IDs, records deterministic literal normalization, and returns every artifact-level difference plus alignment failures inline. Missing or truncated evidence never proves equality.",
+      "Compare two passive page inspections or two recorded browser scenarios. For passive captures, pass before/after with each complete inspect_web_page normalized_result in inspection and optional complete discover_webmcp_tools normalized_result in webmcp. For scenarios, pass complete normalized_result objects as before_scenario/after_scenario; use exactly one input group. Returns artifact differences and alignment failures. Scenario steps align by exact IDs; optional literal normalization is recorded. HTTP requests and ordered WebSocket streams are compared without inventing stable identities for same-URL connections. Missing or truncated Evidence never proves equality.",
     kind: "browser-provider",
     inputSchema: browserCaptureComparisonInputSchema,
     outputSchema: captureDiffOutputSchema,
@@ -300,10 +332,10 @@ export const BROWSER_TOOL_CONTRACTS = [
 
 function exampleScreenshot() {
   return {
-    sha256: "153cf6c9a526a63053a37b10234c2fd85df38887c2dc0a800d90abfa6631d01c",
+    sha256: "cdb30873bdf16770bfea1fe86e44db7476e504c2dca1542b0660b20f47f523a7",
     bytes: 70,
     media_type: "image/png",
     data_base64:
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PzWvWQAAAABJRU5ErkJggg==",
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
   };
 }

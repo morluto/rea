@@ -6,12 +6,12 @@ import {
   connect as connectTool,
   jsonResult,
 } from "./enhancedToolsHarness.js";
-import type {
-  AnalysisExecution,
-  AnalysisOperationPort,
+import {
+  createAnalysisExecution,
+  type AnalysisExecution,
+  type AnalysisOperation,
+  type AnalysisOperationPort,
 } from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import type { AnalysisOperation } from "../../../src/application/AnalysisProvider.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -22,6 +22,7 @@ import {
   ok as resultOk,
   type Result,
 } from "../../../src/domain/result.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 
@@ -364,6 +365,10 @@ describe("enhanced MCP binary overview", () => {
       segment_count: 2,
       procedure_count: 2,
       string_count: 700,
+      inventory_coverage: {
+        scope: "provider_inventory",
+        discovery_coverage: "unknown",
+      },
     });
   });
 
@@ -406,11 +411,56 @@ describe("enhanced MCP binary overview", () => {
       document: "/tmp/fixture.bin",
       procedure_count: 0,
       string_count: 0,
+      inventory_coverage: {
+        scope: "provider_inventory",
+        discovery_coverage: "unknown",
+      },
     });
   });
 });
 
 describe("enhanced MCP inventory validation", () => {
+  // Injected provider successes verify public MCP composition, not real-provider behavior.
+  it.each(["list_procedures", "list_strings"] as const)(
+    "rejects malformed successful %s inventory without manufacturing overview counts",
+    async (operation) => {
+      let inventory: JsonValue = [];
+      const client = await connect({
+        execute: (name, parameters, options) =>
+          name === operation
+            ? Promise.resolve(ok(inventory))
+            : completeOverviewPort.execute(name, parameters, options),
+      });
+      for (const malformed of [
+        { error: "inventory unavailable" },
+        { "0x1000": "obsolete map" },
+        [{ address: "0x1000", value: 7 }],
+      ]) {
+        inventory = malformed;
+        const response = await client.callTool({
+          name: "binary_overview",
+          arguments: {},
+        });
+        expect(response.isError).toBe(true);
+        expect(parseMcpToolError(response).error).toMatchObject({
+          code: "unreadable_output",
+          details: { operation },
+        });
+      }
+      inventory = [{ address: "0x1000", value: "canonical control" }];
+      const response = await client.callTool({
+        name: "binary_overview",
+        arguments: {},
+      });
+      expect(response.isError).not.toBe(true);
+      expect(jsonResult(response)).toMatchObject({
+        document: "fixture",
+        procedure_count: operation === "list_procedures" ? 1 : 2,
+        string_count: operation === "list_strings" ? 1 : 700,
+      });
+    },
+  );
+
   it("rejects paginated provider output", async () => {
     const client = await connect({
       execute: () =>
@@ -657,4 +707,35 @@ it("refuses document fallback while the current-selection owner reports incomple
   });
   expect(calls).toEqual(["current_document"]);
   expect(failure.cleanupIncomplete).toBe(true);
+});
+
+it("forwards max_input_bytes from the MCP tool to the binary metadata operation", async () => {
+  const received: unknown[] = [];
+  const client = await connect({
+    execute: (name, parameters) => {
+      if (name === "inspect_native_dispatch_metadata")
+        received.push(parameters);
+      return Promise.resolve(
+        err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            name,
+            "Metadata is unavailable in this provider fixture",
+          ),
+        ),
+      );
+    },
+  });
+  await client.callTool({
+    name: "inspect_native_dispatch_metadata",
+    arguments: { max_input_bytes: 134217728 },
+  });
+  await client.callTool({
+    name: "inspect_native_dispatch_metadata",
+    arguments: {},
+  });
+  expect(received).toEqual([
+    { max_records: 5000, max_input_bytes: 134217728 },
+    { max_records: 5000 },
+  ]);
 });

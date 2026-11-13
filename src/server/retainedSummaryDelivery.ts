@@ -23,40 +23,33 @@ export interface EvidenceToolFamilyOptions {
 type Parameters = Readonly<Record<string, JsonValue>>;
 
 /**
- * Summary delivery for the named operations: refuse it before analysis when
+ * Summary delivery for one named operation: refuse it before analysis when
  * this server retains no Evidence, then return the retained summary view.
  */
 export const retainedSummaryDelivery = (
-  operations: ReadonlySet<string>,
+  operation: string,
   options: Pick<EvidenceToolFamilyOptions, "recordEvidence" | "evidenceById">,
 ) => {
   const retention = {
     recordEvidence: options.recordEvidence,
     evidenceById: options.evidenceById,
   };
-  const selected = (operation: string, parameters: Parameters): boolean =>
-    operations.has(operation) && parameters.detail === "summary";
+  const selected = (parameters: Parameters): boolean =>
+    parameters.detail === "summary";
   return {
-    preflight: (operation: string, parameters: Parameters) =>
-      selected(operation, parameters)
+    preflight: (parameters: Parameters) =>
+      selected(parameters)
         ? requireAnalysisViewRetention(operation, retention)
         : ok(null),
-    projectEvidence: (
-      operation: string,
-      parameters: Parameters,
-      evidence: Evidence,
-    ) =>
-      selected(operation, parameters)
+    projectEvidence: (parameters: Parameters, evidence: Evidence) =>
+      selected(parameters)
         ? summarizeRetainedAnalysis(evidence, retention)
         : ok(evidence),
   };
 };
 
-/** Delivery detail selects a response shape; it never reaches tools or Evidence identity. */
-export const withoutDeliveryDetail =
-  (operations: ReadonlySet<string>) =>
-  (operation: string, parameters: Parameters): Parameters => {
-    if (!operations.has(operation)) return parameters;
-    const { detail: _detail, ...selected } = parameters;
-    return selected;
-  };
+/** Delivery detail selects a response shape; it never reaches analysis. */
+export const withoutDeliveryDetail = (parameters: Parameters): Parameters => {
+  const { detail: _detail, ...selected } = parameters;
+  return selected;
+};

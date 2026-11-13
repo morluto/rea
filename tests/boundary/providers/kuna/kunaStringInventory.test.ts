@@ -85,7 +85,19 @@ it("skips members it does not interpret without retaining them", async () => {
       strings: [{ ...row, score: 1, origin: { tool: [1] } }],
     }).replace('"functions":[]', '"functions":[],"__proto__":{"text":1}'),
   );
-  expect(result).toMatchObject({ ok: true, value: { items: [{}] } });
+  if (!result.ok) throw result.error;
+  expect(result.value.items).toEqual([
+    {
+      address: "0x20000000000001",
+      value: "a\nΔelta",
+      string: {
+        encoding: "utf8",
+        encoding_status: "observed",
+        termination: "present_or_not_required",
+        byte_length: 9,
+      },
+    },
+  ]);
 });
 
 it.each([
@@ -155,7 +167,6 @@ it("indexes canonical u64 addresses and keeps each encoding at the same address"
     wire({ ...document(), count: rows.length, strings: rows }),
     3,
   );
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.items.map(({ address }) => address)).toEqual([
     "0x0",
@@ -192,7 +203,6 @@ it("indexes canonical u64 addresses and keeps each encoding at the same address"
 
 it("looks up an empty validated inventory", async () => {
   const { result } = await read(wire({ ...document(), count: 0, strings: [] }));
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(kunaStringsAtAddress(result.value, "0x0")).toEqual([]);
 });
@@ -281,7 +291,11 @@ it("bounds keys and numbers: overlong keys match no field, overlong kept numbers
   const kept = wire({ ...document(), count: "@1" + "0".repeat(64) });
   expect((await read(kept)).result).toMatchObject({
     ok: false,
-    error: { reason: "count is not a number Kuna writes" },
+    error: {
+      _tag: "AnalysisOutputError",
+      reason: "not_kuna_number",
+      diagnostics: { code: "not_kuna_number", field: "count" },
+    },
   });
 });
 

@@ -1,4 +1,5 @@
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type { JavaScriptSourceAnalysisPort } from "../domain/javascript/javascriptSourceAnalysis.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
@@ -95,6 +96,8 @@ export class ArtifactResourceScope {
   >();
   readonly #active = new Set<Promise<unknown>>();
   #draining: Promise<void> | undefined;
+  #closeInFlight: Promise<void> | undefined;
+  readonly #closeHooks: Array<() => Promise<void>> = [];
   #closed = false;
 
   get hasPending(): boolean {
@@ -203,10 +206,104 @@ export class ArtifactResourceScope {
     return this.#draining;
   }
 
+  /**
+   * Run after retained owners are released. Hooks stay registered so a later
+   * close retries them, and a failing hook does not skip the ones after it.
+   * Concurrent closes share one in-flight attempt.
+   */
+  addCloseHook(hook: () => Promise<void>): void {
+    this.#closeHooks.push(hook);
+  }
+
   /** Stop admission, wait for active operations, and retry every retained owner. */
   close(): Promise<void> {
     this.#closed = true;
-    return this.retryCleanup();
+    if (this.#closeInFlight !== undefined) return this.#closeInFlight;
+    const attempt = this.#finishClose();
+    let published: Promise<void>;
+    published = attempt.finally(() => {
+      if (this.#closeInFlight === published) this.#closeInFlight = undefined;
+    });
+    this.#closeInFlight = published;
+    return published;
+  }
+
+  /** Every registered hook runs. One failure is returned unchanged; several are aggregated. */
+  async #runCloseHooks(): Promise<Result<void, unknown>> {
+    const failures: unknown[] = [];
+    for (const hook of this.#closeHooks) {
+      try {
+        await hook();
+      } catch (cause: unknown) {
+        failures.push(cause);
+      }
+    }
+    if (failures.length === 0) return ok(undefined);
+    if (failures.length === 1) return err(failures[0]);
+    return err(
+      new AggregateError(
+        failures,
+        failures
+          .map((cause) =>
+            cause instanceof Error ? cause.message : String(cause),
+          )
+          .join("; "),
+      ),
+    );
+  }
+
+  async #finishClose(): Promise<void> {
+    // A parked analyzer is not a pending owner. Stop it even when another
+    // retained cleanup is still failing. A later close retries both.
+    const cleanup = await this.retryCleanup().then(
+      () => ok(undefined),
+      (cause: unknown) => err(cause),
+    );
+    const hooks = await this.#runCloseHooks();
+    if (!cleanup.ok && !hooks.ok)
+      throw this.#composeCloseFailures(cleanup.error, hooks.error);
+    if (!hooks.ok) throw hooks.error;
+    if (!cleanup.ok) throw cleanup.error;
+  }
+
+  /**
+   * Report both outstanding owners. The pending set and the close hook stay
+   * registered, so the next close retries each failed path.
+   */
+  #composeCloseFailures(
+    cleanup: unknown,
+    hookFailure: unknown,
+  ): ArtifactReaderFailure {
+    const retained = ArtifactReaderFailure.cleanupObservation(
+      cleanup,
+      "retained artifact cleanup",
+    );
+    const hook = ArtifactReaderFailure.cleanupObservation(
+      hookFailure,
+      "close hook",
+    );
+    const resources = [...new Set([...retained.resources, ...hook.resources])];
+    const options = {
+      cause: new AggregateError(
+        [cleanup, hookFailure],
+        "Retained cleanup and a close hook both failed",
+      ),
+      cleanup: {
+        reason: `${retained.reason}; ${hook.reason}`,
+        resources,
+      },
+    };
+    const message = `Artifact cleanup remains incomplete: ${resources.join(", ")}`;
+    if (cleanup instanceof ArtifactResourceRetryFailure)
+      return new ArtifactResourceRetryFailure(
+        cleanup.failedOwners.map((owner) => ({
+          owner,
+          lease: this.#lease(owner),
+        })),
+        message,
+        options,
+      );
+    return new ArtifactReaderFailure("unavailable", message, options);
   }
 
   async #drainAndRetry(): Promise<void> {

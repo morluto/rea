@@ -5,7 +5,7 @@ import { z } from "zod";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   clientConfigurationValuesEqual,
   clientRegistrationEntry,
@@ -110,10 +110,13 @@ const workspaceTrusted = async (
   return ok(trusted);
 };
 
-/** Check effective Gemini scopes while preserving their authority and source identity. */
+/**
+ * Check Gemini scopes using the caller's user-file observation (undefined means absent).
+ * Other settings sources are read here; transaction owners supply fresh user facts.
+ */
 export const readClientPolicyBlock = async (
   client: SetupClient,
-  userDocument?: ClientConfigurationDocument,
+  userDocument: ClientConfigurationDocument | undefined,
   desiredRegistration?: unknown,
   resources?: ArtifactResourceScope,
 ): Promise<Result<string | undefined, ClientConfigurationFileError>> => {
@@ -128,7 +131,7 @@ export const readClientPolicyBlock = async (
     settings.systemPath,
   ]) {
     const parsed =
-      path === client.configPath && userDocument !== undefined
+      path === client.configPath
         ? ok(userDocument)
         : await readConfigurationFile(path, "json", resources);
     if (!parsed.ok) return parsed;
@@ -208,7 +211,7 @@ export const readClientPolicyBlock = async (
   const desired =
     desiredRegistration ??
     userDocument?.servers[PRODUCT_IDENTITY.mcpServerKey] ??
-    clientRegistrationEntry("json", npxRegistrationCommand(), {});
+    clientRegistrationEntry("json", currentClientRegistrationCommand(), {});
   if (
     override !== undefined &&
     !clientConfigurationValuesEqual(

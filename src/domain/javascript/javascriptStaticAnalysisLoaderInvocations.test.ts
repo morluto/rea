@@ -3,39 +3,222 @@ import * as path from "node:path";
 import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import { unshadowedReferenceSourceRequireCalls } from "../referenceSourceRequireBindings.js";
+import { referenceSourceRequireCalls } from "../referenceSourceRequireBindings.js";
+import { parseReferenceSourceImports } from "../referenceSourceImportParsing.js";
 
-it.each(["require", "require.resolve", "require.main"])(
+it.each([
+  '(require.resolve as any)("./dep.cjs");',
+  '(require as any).resolve("./dep.cjs");',
+  '(require as any)?.["resolve"]("./dep.cjs");',
+])(
+  "retains an unknown-host resolver through TypeScript wrappers: %s",
+  (source) => {
+    const parsed = parseJavaScriptSource(source, "entry.TS");
+    if (parsed === null) throw new Error("Expected TypeScript fixture");
+    expect(
+      analyzeParsedJavaScriptStaticSource(source, parsed).references,
+    ).toContainEqual(
+      expect.objectContaining({
+        kind: "require",
+        specifier: "./dep.cjs",
+        operation: "resolve",
+        loader_authority: "candidate",
+      }),
+    );
+  },
+);
+
+it.each([
+  ["require", "load"],
+  ["require?.", "load"],
+  ["require.resolve", "resolve"],
+  ["require.resolve?.", "resolve"],
+  ["require?.resolve", "resolve"],
+  ["require?.resolve?.", "resolve"],
+  ['require?.["resolve"]', "resolve"],
+  ["(require?.resolve)", "resolve"],
+  ["require.main", "not-callable"],
+] as const)(
   "distinguishes invoked loading from reference association for %s",
-  (callee) => {
+  (callee, operation) => {
     const source = `${callee}('node:path');`;
     const execute = () =>
       runInNewContext(source, { require: createRequire(import.meta.url) });
-    if (callee === "require") expect(execute().join).toBe(path.join);
-    else if (callee === "require.resolve") expect(execute()).toBe("node:path");
+    if (operation === "load") expect(execute().join).toBe(path.join);
+    else if (operation === "resolve") expect(execute()).toBe("node:path");
     else expect(execute).toThrow();
     const analysis = analyzeJavaScriptStaticSource(source);
     expect(analysis.parse_error_count).toBe(0);
     expect(analysis.references).toEqual(
-      callee === "require"
+      operation === "load"
         ? [expect.objectContaining({ kind: "require", specifier: "node:path" })]
-        : [],
+        : operation === "resolve"
+          ? [
+              expect.objectContaining({
+                kind: "require",
+                specifier: "node:path",
+              }),
+            ]
+          : [],
     );
     const parsed = parseJavaScriptSource(source);
     if (parsed === null) throw new Error("Expected loader association fixture");
-    expect(
-      unshadowedReferenceSourceRequireCalls(parsed, "entry.cjs").size,
-    ).toBe(1);
+    expect(referenceSourceRequireCalls(parsed, "entry.cjs").size).toBe(
+      operation === "not-callable" ? 0 : 1,
+    );
+    const historical = parseReferenceSourceImports(
+      "entry.cjs",
+      new TextEncoder().encode(source),
+      "JavaScript",
+    );
+    expect(historical.parse_failures).toEqual([]);
+    expect(historical.relationships).toEqual(
+      operation === "not-callable"
+        ? []
+        : [
+            {
+              from_path: "entry.cjs",
+              to: "node:path",
+              kind: "requires",
+              resolution: "external",
+              parse_state: "parsed",
+              resolutionStrategy: "runtime-require",
+            },
+          ],
+    );
   },
 );
 
+it("does not keep a dependency when an immediate call returns a replaced member", () => {
+  const callsFor = (source: string) => {
+    const parsed = parseJavaScriptSource(source, "entry.cjs");
+    if (parsed === null) throw new Error("Expected CommonJS fixture");
+    return [...referenceSourceRequireCalls(parsed, "entry.cjs").values()].map(
+      ({ resolutionBase }) => resolutionBase,
+    );
+  };
+  expect(
+    callsFor(
+      'const box = { load: require }; box.load = () => {}; (() => box.load)()("./dep.cjs");',
+    ),
+  ).toEqual([]);
+  expect(
+    callsFor('const box = { load: require }; (() => box.load)()("./dep.cjs");'),
+  ).toEqual(["source-file"]);
+  expect(
+    callsFor(
+      'const box = { load: require }; box.load = () => {}; (() => (0, box.load))()("./dep.cjs");',
+    ),
+  ).toEqual([]);
+  expect(
+    callsFor(
+      'const box = { load: require }; (() => (0, box.load))()("./dep.cjs");',
+    ),
+  ).toEqual(["source-file"]);
+  expect(
+    callsFor(
+      'let f; const box = { load: require }; box.load = () => {}; (() => (f = box.load))()("./dep.cjs");',
+    ),
+  ).toEqual([]);
+  expect(
+    callsFor(
+      'let f; const box = { load: require }; (() => (f = box.load))()("./dep.cjs");',
+    ),
+  ).toEqual(["source-file"]);
+});
+
 const imported = "import {createRequire as make} from 'node:module';";
+it.each([
+  ["call", 'null,"./valid.cjs"', 'null,"./invented.cjs"'],
+  ["apply", 'null,["./valid.cjs"]', 'null,["./invented.cjs"]'],
+])(
+  "distinguishes nested loader-%s replacement from a child property write",
+  (method, valid, invented) => {
+    const references = (source: string) =>
+      analyzeCommonJsStaticFixture(source).references.map(
+        ({ operation, specifier }) => ({ operation, specifier }),
+      );
+    expect(
+      references(
+        `const box={load:require};box.load.${method}.extra=1;box.load.${method}(${valid});`,
+      ),
+    ).toContainEqual({ operation: "load", specifier: "./valid.cjs" });
+    expect(
+      references(
+        `const box={load:require};box.load.${method}=custom;box.load.${method}(${invented});`,
+      ),
+    ).not.toContainEqual({ operation: "load", specifier: "./invented.cjs" });
+  },
+);
+it("preserves a native resolver before a later loader receiver escape", () => {
+  const references = (source: string) =>
+    analyzeCommonJsStaticFixture(source).references.map(
+      ({ operation, specifier }) => ({ operation, specifier }),
+    );
+  expect(
+    references(
+      'require.resolve.paths=custom;require.resolve("./first.cjs");require.call.extra=1;require.call(null,"./second.cjs");',
+    ),
+  ).toEqual([
+    { operation: "resolve", specifier: "./first.cjs" },
+    { operation: "load", specifier: "./second.cjs" },
+  ]);
+  expect(
+    references('opaque(require);require.resolve("./unsafe.cjs");').at(-1),
+  ).toEqual({
+    operation: "load",
+    specifier: null,
+  });
+  for (const source of [
+    'function run(){require.resolve("./unsafe.cjs");opaque(require);}run();run();',
+    'function mutate(){opaque(require)}mutate();require.resolve("./unsafe.cjs");',
+  ]) {
+    expect(references(source)).not.toContainEqual({
+      operation: "resolve",
+      specifier: "./unsafe.cjs",
+    });
+  }
+});
+it("retains consecutive native resolver calls while keeping replaced or escaped loaders uncertain", () => {
+  const references = (source: string) =>
+    analyzeCommonJsStaticFixture(source).references.map(
+      ({ operation, specifier }) => ({ operation, specifier }),
+    );
+  expect(
+    references('require.resolve("./first.js");require.resolve("./second.js");'),
+  ).toEqual([
+    { operation: "resolve", specifier: "./first.js" },
+    { operation: "resolve", specifier: "./second.js" },
+  ]);
+  for (const prefix of [
+    "require.resolve=custom;",
+    "opaque(require);",
+    "const box={r:require};box.r.resolve=custom;",
+    'Object.defineProperty(require,"resolve",{value:custom});',
+  ])
+    expect(
+      references(`${prefix}require.resolve("./second.js");`).at(-1),
+    ).toEqual({
+      operation: "load",
+      specifier: null,
+    });
+});
 it.each([
   [
     "proven factory",
     `${imported}const require=make(import.meta.url);require('node:path');`,
+    1,
+    "node:path",
+  ],
+  [
+    "renamed proven factory",
+    `${imported}const load=make(import.meta.url);load('node:path');`,
     1,
     "node:path",
   ],
@@ -50,9 +233,9 @@ it.each([
   (_name, source, associated, specifier) => {
     const parsed = parseJavaScriptSource(source);
     if (parsed === null) throw new Error("Expected factory proof fixture");
-    expect(
-      unshadowedReferenceSourceRequireCalls(parsed, "entry.mjs").size,
-    ).toBe(associated);
+    expect(referenceSourceRequireCalls(parsed, "entry.mjs").size).toBe(
+      associated,
+    );
     const analysis = analyzeJavaScriptStaticSource(source);
     expect(analysis.parse_error_count).toBe(0);
     expect(
@@ -60,6 +243,118 @@ it.each([
     ).toEqual([expect.objectContaining({ kind: "require", specifier })]);
   },
 );
+
+it("associates a renamed createRequire resolve method with search options", () => {
+  const parsed = parseJavaScriptSource(
+    `${imported}const load=make(import.meta.url);load.resolve('node:path',{paths:[]});`,
+  );
+  if (parsed === null) throw new Error("Expected factory proof fixture");
+  expect(referenceSourceRequireCalls(parsed, "entry.mjs").size).toBe(1);
+});
+
+it("keeps current-file and mixed createRequire bases distinct", () => {
+  const currentFile = parseJavaScriptSource(
+    `${imported}const load=make(import.meta.url);load('./dep.cjs');`,
+  );
+  if (currentFile === null)
+    throw new Error("Expected current-file base fixture");
+  const currentCall = [
+    ...referenceSourceRequireCalls(currentFile, "sub/main.mjs").keys(),
+  ][0];
+  expect(
+    referenceSourceRequireCalls(currentFile, "sub/main.mjs").get(currentCall!)
+      ?.resolutionBase,
+  ).toBe("source-file");
+
+  const mixed = parseJavaScriptSource(
+    `${imported}const load=make(flag?import.meta.url:new URL('./sub/entry.cjs',import.meta.url));load('./dep.cjs');`,
+  );
+  if (mixed === null) throw new Error("Expected mixed-base fixture");
+  const mixedBases = referenceSourceRequireCalls(mixed, "main.mjs");
+  expect(
+    [...mixedBases.values()].map(({ resolutionBase }) => resolutionBase),
+  ).toEqual(["unknown"]);
+});
+
+it.each(["require.resolve", "require.resolve?.", "require?.resolve"])(
+  "keeps search-path uncertainty for historical %s calls",
+  (callee) => {
+    const source = [
+      'require.resolve("./dep.cjs");',
+      'require.resolve("./same-path.cjs", { paths: [__dirname] });',
+      'require.resolve("./dep.cjs", { paths: [__dirname + "/sub"] });',
+      'require.resolve("./dep.cjs", { paths: [] });',
+      'function shadow(__dirname) { require.resolve("./shadow.cjs", { paths: [__dirname] }); }',
+    ]
+      .join("\n")
+      .replaceAll("require.resolve", callee);
+    const result = parseReferenceSourceImports(
+      "main.cjs",
+      new TextEncoder().encode(source),
+      "JavaScript",
+    );
+    expect(
+      result.relationships.map(({ to, resolution, parse_state }) => ({
+        to,
+        resolution,
+        parse_state,
+      })),
+    ).toEqual([
+      { to: "./dep.cjs", resolution: "internal", parse_state: "parsed" },
+      { to: "./same-path.cjs", resolution: "internal", parse_state: "parsed" },
+      { to: "./dep.cjs", resolution: "unknown", parse_state: "partial" },
+      { to: "./dep.cjs", resolution: "unknown", parse_state: "partial" },
+      { to: "./shadow.cjs", resolution: "unknown", parse_state: "partial" },
+    ]);
+  },
+);
+
+it.each(["load.resolve", "load.resolve?.", "load?.resolve"])(
+  "retains a mutated %s request as an unknown fact",
+  (callee) => {
+    const source = `${imported}const load=make(import.meta.url);load.resolve=custom;${callee}("./dep.cjs");`;
+    const result = parseReferenceSourceImports(
+      "main.mjs",
+      new TextEncoder().encode(source),
+      "JavaScript",
+    );
+    expect(
+      result.relationships.filter(({ kind }) => kind === "requires"),
+    ).toEqual([
+      expect.objectContaining({
+        from_path: "main.mjs",
+        to: "./dep.cjs",
+        kind: "requires",
+        resolution: "unknown",
+        parse_state: "partial",
+      }),
+    ]);
+    expect(
+      analyzeJavaScriptStaticSource(source).references.filter(
+        ({ kind }) => kind === "require",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "require",
+        operation: "load",
+        specifier: null,
+      }),
+    ]);
+  },
+);
+
+it("does not treat bundler factory resolve members as Node resolvers", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    globalThis.webpackChunkApp.push([[1], {
+      "factory": function (module, exports, loader) {
+        loader.resolve("./not-a-dependency.cjs");
+      }
+    }]);
+  `);
+  expect(analysis.references.filter(({ kind }) => kind === "require")).toEqual(
+    [],
+  );
+});
 
 it.each([
   [
@@ -113,7 +408,7 @@ it.each([
       require: (request: string) => module.require(request),
     });
     expect(result.join === path.join).toBe(host);
-    const analysis = analyzeJavaScriptStaticSource(source);
+    const analysis = analyzeCommonJsStaticFixture(source);
     expect(analysis.parse_error_count).toBe(0);
     expect(analysis.references).toEqual(
       specifier === undefined
@@ -286,5 +581,50 @@ it.each([
         ? [expect.objectContaining({ kind: "require", specifier: null })]
         : [],
     );
+  },
+);
+
+it("retains unknown historical .js loader scope until a package manifest establishes it", () => {
+  const bytes = new TextEncoder().encode('require("./dep.cjs");');
+  const relationships = (
+    mode?: "module" | "commonjs" | "unspecified" | "unknown",
+  ) =>
+    parseReferenceSourceImports("main.js", bytes, "JavaScript", mode)
+      .relationships;
+  expect(relationships()).toEqual([
+    expect.objectContaining({
+      to: "./dep.cjs",
+      resolution: "unknown",
+      parse_state: "partial",
+    }),
+  ]);
+  expect(relationships("module")).toEqual([]);
+  for (const mode of ["commonjs", "unspecified"] as const)
+    expect(relationships(mode)).toEqual([
+      expect.objectContaining({
+        to: "./dep.cjs",
+        resolution: "internal",
+        parse_state: "parsed",
+      }),
+    ]);
+});
+
+it.each(["main.cjs", "main.MJS"])(
+  "does not use an unproven invocation receiver as a dependency: %s",
+  (path) => {
+    for (const source of [
+      'require.call=custom;require.call("./receiver.cjs","./actual.cjs");',
+      'require.call=custom;require.call.call(require,"./receiver.cjs","./actual.cjs");',
+      'require.call=custom;require.call.apply(require,["./receiver.cjs","./actual.cjs"]);',
+    ]) {
+      const result = parseReferenceSourceImports(
+        path,
+        new TextEncoder().encode(source),
+        "JavaScript",
+      );
+      expect(
+        result.relationships.filter(({ kind }) => kind === "requires"),
+      ).toEqual([]);
+    }
   },
 );

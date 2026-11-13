@@ -4,10 +4,15 @@ import { Readable } from "node:stream";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { DESTINATION_CASE_COLLISION_PREFIX } from "../../artifacts/ArtifactPaths.js";
+import {
+  DestinationCaseCollisionFailure,
+  DestinationPathUnrepresentableFailure,
+} from "../../artifacts/ArtifactPaths.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../../domain/browserNetworkEvidence.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
   webScriptExportManifestSchema,
   webScriptExportResultSchema,
@@ -16,6 +21,7 @@ import {
   type WebScriptExportResult,
 } from "../../domain/webScriptExport.js";
 import {
+  isolatedWebScriptPath,
   planWebScriptExport,
   type PlannedWebScript,
 } from "../../domain/webScriptExportPlan.js";
@@ -30,6 +36,8 @@ const LIMITATIONS = [
   "Scenario response bytes preserve the output of Playwright's Response.body() API; any source-body provenance caveat from the capture is retained in this manifest. Debugger sources are the exposed text encoded as UTF-8. Redacted bytes are exported exactly as retained, and may no longer parse as JavaScript.",
 ];
 
+const OPERATION = "export_web_scripts";
+
 interface PublishWebScriptsOptions {
   readonly resources: ArtifactResourceScope;
   readonly signal?: AbortSignal;
@@ -43,6 +51,12 @@ export const publishWebScripts = async (
   options: PublishWebScriptsOptions,
 ): Promise<WebScriptExportResult> =>
   options.resources.run(async () => {
+    const assertActive = (): void => {
+      if (options.signal?.aborted)
+        throw new AnalysisCancelledError(OPERATION, {
+          cause: options.signal.reason,
+        });
+    };
     const planned = planWebScriptExport(capture.scripts);
     const scenarioResponseBodyCaptured =
       capture.kind === "browser-scenario" &&
@@ -64,10 +78,10 @@ export const publishWebScripts = async (
     let result: WebScriptExportResult | undefined;
     try {
       tree = await SafeOutputTree.create(input.output_directory);
-      options.signal?.throwIfAborted();
+      assertActive();
       const records: ExportedWebScript[] = [];
       for (const [index, item] of planned.entries()) {
-        options.signal?.throwIfAborted();
+        assertActive();
         records.push(
           await publishPlannedScript(tree, item, index, options.signal),
         );
@@ -112,10 +126,19 @@ export const publishWebScripts = async (
         { sha256: digest, bytes: bytes.byteLength },
         options.signal,
       );
-      options.signal?.throwIfAborted();
+      assertActive();
       await tree.commit(options.signal);
       return result;
     } catch (cause: unknown) {
+      const cancellation =
+        cause instanceof AnalysisCancelledError
+          ? cause
+          : cause instanceof ArtifactReaderFailure &&
+              cause.cancellation !== undefined
+            ? new AnalysisCancelledError(OPERATION, {
+                cause: cause.cancellation.reason,
+              })
+            : undefined;
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
       if (tree !== undefined) {
         const cleanup = await options.resources.release({
@@ -128,22 +151,42 @@ export const publishWebScripts = async (
           const diagnostic = tree.published
             ? `Publication completed, but descriptor cleanup failed (${message(cleanupCause)}). The published output remains available.`
             : `Publication failed (${message(cause)}); rollback failed (${message(cleanupCause)}). Remove the residual output directory before retrying.`;
+          const partialObservation =
+            tree.published && result !== undefined
+              ? ({ kind: "web-script-export", result } as const)
+              : undefined;
+          if (cancellation !== undefined) {
+            const cancelled = new AnalysisCancelledError(OPERATION, {
+              cause: cancellation.cause,
+              cleanup: { reason: diagnostic, resources: [tree.outputRoot] },
+              ...(partialObservation === undefined
+                ? {}
+                : { partialObservation }),
+            });
+            cleanup.lease.bindCleanupError(cancelled);
+            throw cancelled;
+          }
           const error = new WebScriptExportError(
             cause instanceof ArtifactReaderFailure ? cause.reason : "io",
             tree.outputRoot,
             diagnostic,
-            { residualPaths: [tree.outputRoot] },
+            { cause, residualPaths: [tree.outputRoot] },
           );
-          if (tree.published && result !== undefined)
-            error.retainPartialObservation({
-              kind: "web-script-export",
-              result,
-            });
+          if (partialObservation !== undefined)
+            error.retainPartialObservation(partialObservation);
+          cleanup.lease.bindCleanupError(error);
           throw error;
         }
+
         if (tree.published && result !== undefined) return result;
       }
-      throw cause;
+      if (cancellation !== undefined) throw cancellation;
+      // Only a destination refusal can blame the selected output directory.
+      throw outputDirectoryAdmissionRefusal(
+        OPERATION,
+        "output_directory",
+        cause,
+      );
     }
   });
 
@@ -168,10 +211,15 @@ const publishPlannedScript = async (
     await write(record.content.relative_path);
     return record;
   } catch (cause: unknown) {
-    const collision = destinationCollisionReason(cause);
-    if (collision === undefined || record.content.layout !== "url-path")
+    if (
+      !(
+        cause instanceof DestinationCaseCollisionFailure ||
+        cause instanceof DestinationPathUnrepresentableFailure
+      ) ||
+      record.content.layout !== "url-path"
+    )
       throw cause;
-    const relativePath = isolatedScriptPath(script, index);
+    const relativePath = isolatedWebScriptPath(script.source, index);
     await write(relativePath);
     return {
       ...record,
@@ -179,24 +227,11 @@ const publishPlannedScript = async (
         ...record.content,
         relative_path: relativePath,
         layout: "isolated",
-        layout_reason: collision,
+        layout_reason: cause.message,
       },
     };
   }
 };
-
-const isolatedScriptPath = (
-  script: PlannedWebScript["script"],
-  index: number,
-): string =>
-  `isolated/source-${index + 1}-${createHash("sha256").update(JSON.stringify(script.source)).digest("hex")}.js`;
-
-const destinationCollisionReason = (cause: unknown): string | undefined =>
-  cause instanceof ArtifactReaderFailure &&
-  cause.reason === "path" &&
-  cause.message.startsWith(DESTINATION_CASE_COLLISION_PREFIX)
-    ? cause.message
-    : undefined;
 
 const message = (cause: unknown): string =>
   cause instanceof Error ? cause.message : "Unknown publication failure";

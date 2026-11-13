@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from zipfile import BadZipFile, ZipFile
 
 from website import NOTES_FIXTURES, SITE_ORIGIN, authored_markdown, page_url, sync_pages
+from website_i18n import is_language_code
 
 LEGACY_ORIGIN = "morluto.github.io"
 SITE_TEXT_URL = re.compile(
@@ -179,7 +180,7 @@ def check_search_metadata(site, pages):
         if not title:
             errors.append(f"{label}: needs exactly one nonempty head title")
         first = path.relative_to(site).parts[0]
-        expected_language = first if re.fullmatch(r"[a-z]{2}(?:-[A-Z]{2})?", first) else "en"
+        expected_language = first if is_language_code(first) else "en"
         if page.translation_fallback:
             if page.lang != "en" or not page.noindex():
                 errors.append(f"{label}: English translation fallback needs lang=en and noindex")

@@ -1,3 +1,4 @@
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { z } from "incur";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
@@ -22,41 +23,62 @@ export const registerIl2cppCommands = (
     description:
       "Inventory IL2CPP global-metadata.dat names, owners and string literals, optionally linking method addresses from the native binary",
     args: z.object({
-      path: z
-        .string()
-        .describe("Local global-metadata.dat (version 24, 27, 29, 31 or 39)"),
+      path: localPathStringSchema.describe(
+        "Local global-metadata.dat (version 24, 27, 29, 31 or 39)",
+      ),
     }),
-    options: z.object({
-      ...analysisEvidenceDeliveryOptions,
-      binary: z
-        .string()
-        .optional()
-        .describe(
-          "Matching native binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so) to link method addresses; read only",
-        ),
-      architecture: z
-        .enum(["arm64", "amd64"])
-        .optional()
-        .describe("Slice of a universal Mach-O binary"),
-      ghidraSeeds: z
-        .string()
-        .optional()
-        .describe(
-          "Also write REA_GHIDRA_SEED_FILE function seeds named Type$$Method for every linked method; needs --binary",
-        ),
-      seedBase: z
-        .string()
-        .regex(/^0x[0-9a-fA-F]{1,16}$/u)
-        .optional()
-        .describe(
-          "Address Ghidra loads the binary at; seeds are seed-base + RVA (default: Ghidra's loader default, 0x100000 for an ELF linked at 0, else the link base)",
-        ),
-    }),
+    options: z
+      .object({
+        ...analysisEvidenceDeliveryOptions,
+        binary: localPathStringSchema
+          .optional()
+          .describe(
+            "Matching native binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so) to link method addresses; read only",
+          ),
+        architecture: z
+          .enum(["arm64", "amd64"])
+          .optional()
+          .describe("Slice of a universal Mach-O binary"),
+        genericInstances: z
+          .boolean()
+          .optional()
+          .describe(
+            "Also link generic method instances (Type<Args>$$Method<Args>) and include them in --ghidra-seeds; needs --binary",
+          ),
+        ghidraSeeds: localPathStringSchema
+          .optional()
+          .describe(
+            "Also write REA_GHIDRA_SEED_FILE function seeds named Type$$Method for every linked method; needs --binary",
+          ),
+        seedBase: z
+          .string()
+          .regex(/^0x[0-9a-fA-F]{1,16}$/u)
+          .optional()
+          .describe(
+            "Address Ghidra loads the binary at; seeds are seed-base + RVA (default: Ghidra's loader default, 0x100000 for an ELF linked at 0, else the link base)",
+          ),
+      })
+      .meta({
+        dependentRequired: {
+          architecture: ["binary"],
+          ghidraSeeds: ["binary"],
+          seedBase: ["ghidraSeeds"],
+        },
+        if: {
+          properties: { genericInstances: { const: true } },
+          required: ["genericInstances"],
+        },
+        then: { required: ["binary"] },
+      }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectIl2cppMetadata, async () => {
           const service = createIl2cppMetadataService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
+            ...(options.binary === undefined
+              ? {}
+              : { callerInputPaths: { binary_path: options.binary } }),
             run: () => {
               const input = {
                 path: absoluteCallerPath(args.path),
@@ -67,6 +89,9 @@ export const registerIl2cppCommands = (
                 ...(options.architecture === undefined
                   ? {}
                   : { binary_architecture: options.architecture }),
+                ...(options.genericInstances === true
+                  ? { generic_instances: true }
+                  : {}),
               };
               if (options.ghidraSeeds !== undefined)
                 return service.inspectWithGhidraSeeds(

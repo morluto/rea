@@ -1,9 +1,7 @@
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import {
-  canonicalExportShapeValue,
-  digestExportShapeValue,
-} from "./javascriptExportShapeComparisonIdentity.js";
+import { canonicalJson } from "../comparisonSemantics.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
   javaScriptExportShapeComparisonResultSchema,
   type JavaScriptExportShapeComparisonChange,
@@ -86,7 +84,7 @@ export const compareJavaScriptExportShapes = (
   };
   return javaScriptExportShapeComparisonResultSchema.parse({
     ...semantic,
-    comparison_id: `jesc_${digestExportShapeValue(semantic)}`,
+    comparison_id: `jesc_${digestCanonicalValue(semantic, "JavaScript export shape comparison")}`,
   });
 };
 
@@ -97,14 +95,17 @@ const sortChanges = (
     .map((change, index) => ({
       change,
       index,
-      sortKey: canonicalExportShapeValue({
-        discriminant: change.discriminant,
-        path: change.path,
-        status: change.status,
-        left_source_range: change.left_source_range,
-        right_source_range: change.right_source_range,
-        change_id: change.change_id,
-      }),
+      sortKey: canonicalJson(
+        {
+          discriminant: change.discriminant,
+          path: change.path,
+          status: change.status,
+          left_source_range: change.left_source_range,
+          right_source_range: change.right_source_range,
+          change_id: change.change_id,
+        },
+        "JavaScript export shape comparison",
+      ),
     }))
     .sort(
       (left, right) =>

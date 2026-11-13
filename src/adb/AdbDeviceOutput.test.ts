@@ -18,7 +18,7 @@ describe("parseAdbDevicesOutput", () => {
     ].join("\n");
     const { devices, unparsedLines, daemonStarted } =
       parseAdbDevicesOutput(output);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(daemonStarted).toBe(false);
     expect(devices).toEqual([
       {
@@ -28,7 +28,13 @@ describe("parseAdbDevicesOutput", () => {
         product: "sdk_gphone64_x86_64",
         model: "sdk_gphone64_x86_64",
         device: "emu64xa",
-        transport_id: 1,
+        transport_identity: {
+          status: "reported",
+          decimal: "1",
+          source_token: "1",
+          source_line:
+            "emulator-5554          device product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 device:emu64xa transport_id:1",
+        },
         kind: "emulator",
         kind_basis: "emulator_serial_prefix",
       },
@@ -39,7 +45,13 @@ describe("parseAdbDevicesOutput", () => {
         product: "raven",
         model: "Pixel_6_Pro",
         device: "raven",
-        transport_id: 2,
+        transport_identity: {
+          status: "reported",
+          decimal: "2",
+          source_token: "2",
+          source_line:
+            "07ef9c2a              device usb:1-1 product:raven model:Pixel_6_Pro device:raven transport_id:2",
+        },
         kind: "physical",
         kind_basis: "usb_transport",
       },
@@ -50,9 +62,61 @@ describe("parseAdbDevicesOutput", () => {
         product: "mock",
         model: "mock",
         device: null,
-        transport_id: 3,
+        transport_identity: {
+          status: "reported",
+          decimal: "3",
+          source_token: "3",
+          source_line:
+            "192.168.1.42:5555     device product:mock model:mock transport_id:3",
+        },
         kind: "unknown",
         kind_basis: "none",
+      },
+    ]);
+  });
+
+  it("classifies adb mDNS wireless serials as TCP without treating them as USB", () => {
+    const output = [
+      "List of devices attached",
+      "adb-8c4f2a1b4e5d6f70-AbCdEf._adb-tls-connect._tcp device product:cheetah model:Pixel_7_Pro device:cheetah transport_id:4",
+      "phone._adb._tcp       device transport_id:5",
+      "not-a-service._tcp    device transport_id:6",
+      "adb-wired._adb-tls-connect._tcp device usb:1-1 product:raven model:Pixel_6 device:raven transport_id:7",
+      "",
+    ].join("\n");
+    const { devices, unparsedLines } = parseAdbDevicesOutput(output);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
+    expect(
+      devices.map(({ serial, transport, kind, kind_basis }) => ({
+        serial,
+        transport,
+        kind,
+        kind_basis,
+      })),
+    ).toEqual([
+      {
+        serial: "adb-8c4f2a1b4e5d6f70-AbCdEf._adb-tls-connect._tcp",
+        transport: "tcp",
+        kind: "unknown",
+        kind_basis: "none",
+      },
+      {
+        serial: "phone._adb._tcp",
+        transport: "tcp",
+        kind: "unknown",
+        kind_basis: "none",
+      },
+      {
+        serial: "not-a-service._tcp",
+        transport: "unknown",
+        kind: "unknown",
+        kind_basis: "none",
+      },
+      {
+        serial: "adb-wired._adb-tls-connect._tcp",
+        transport: "usb",
+        kind: "physical",
+        kind_basis: "usb_transport",
       },
     ]);
   });
@@ -88,7 +152,7 @@ describe("ADB daemon startup notices", () => {
       stderr,
     );
     expect(daemonStarted).toBe(true);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(devices).toHaveLength(1);
   });
 
@@ -98,7 +162,7 @@ describe("ADB daemon startup notices", () => {
       "* daemon started successfully *\r\n",
     );
     expect(daemonStarted).toBe(true);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
   });
 
   it("does not treat a daemon startup error containing the success phrase as success", () => {
@@ -107,7 +171,7 @@ describe("ADB daemon startup notices", () => {
       "* daemon not started successfully\r\n",
     );
     expect(daemonStarted).toBe(false);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
   });
 
   it("ignores non-startup lines and device strings on stderr", () => {
@@ -126,7 +190,7 @@ describe("ADB daemon startup notices", () => {
       stderr,
     );
     expect(daemonStarted).toBe(false);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(devices).toHaveLength(1);
     expect(devices[0]?.serial).toBe("emulator-5554");
   });
@@ -158,11 +222,60 @@ describe("ADB device states", () => {
     expect(devices.map(({ serial, state }) => [serial, state])).toEqual([
       ["serial-no-permission", "no permissions"],
     ]);
-    expect(unparsedLines).toEqual([
-      "serial-bad-device deviceXYZ  ",
-      "serial-bad-offline offline-ish",
-      "serial-bad-auth unauthorizedXYZ",
+    expect(unparsedLines).toEqual({
+      sample: [
+        "serial-bad-device deviceXYZ  ",
+        "serial-bad-offline offline-ish",
+        "serial-bad-auth unauthorizedXYZ",
+      ],
+      total: 3,
+    });
+  });
+
+  it.each([
+    [
+      "without a reason",
+      "no permissions; see [http://developer.android.com/tools/device.html]",
+    ],
+    [
+      "with a reason",
+      "no permissions (user alice is not in the plugdev group); see [http://developer.android.com/tools/device.html]",
+    ],
+  ])("parses adb's no-permissions help text %s", (_name, stateText) => {
+    const { devices, unparsedLines } = parseAdbDevicesOutput(
+      [
+        "List of devices attached",
+        `07ef9c2a               ${stateText} usb:1-1 transport_id:4`,
+        "emulator-5554          device product:sdk model:sdk device:emu transport_id:1",
+        "",
+      ].join("\n"),
+    );
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
+    expect(devices.map(({ serial, state }) => [serial, state])).toEqual([
+      ["07ef9c2a", "no permissions"],
+      ["emulator-5554", "device"],
     ]);
+    expect(devices[0]).toMatchObject({
+      transport: "usb",
+      product: null,
+      model: null,
+      device: null,
+      transport_identity: {
+        status: "reported",
+        decimal: "4",
+        source_token: "4",
+        source_line: `07ef9c2a               ${stateText} usb:1-1 transport_id:4`,
+      },
+      kind: "physical",
+    });
+  });
+
+  it("rejects a semicolon after any state other than no permissions", () => {
+    const { devices, unparsedLines } = parseAdbDevicesOutput(
+      "serial-bad-device device; see [url] transport_id:1\n",
+    );
+    expect(devices).toEqual([]);
+    expect(unparsedLines.total).toBe(1);
   });
 
   it("returns unrecognized lines instead of dropping them", () => {
@@ -172,7 +285,10 @@ describe("ADB device states", () => {
       "",
     ].join("\n");
     const { unparsedLines } = parseAdbDevicesOutput(output);
-    expect(unparsedLines).toEqual(["this is not a device line"]);
+    expect(unparsedLines).toEqual({
+      sample: ["this is not a device line"],
+      total: 1,
+    });
   });
 
   it("reports a non-numeric transport_id as unknown", () => {
@@ -182,7 +298,12 @@ describe("ADB device states", () => {
       "",
     ].join("\n");
     const { devices } = parseAdbDevicesOutput(output);
-    expect(devices[0]?.transport_id).toBeNull();
+    expect(devices[0]?.transport_identity).toEqual({
+      status: "invalid",
+      source_token: "not-a-number",
+      source_line: "emulator-5554          device transport_id:not-a-number",
+      reason: "invalid_decimal",
+    });
   });
 });
 
@@ -259,7 +380,7 @@ describe("parsePackageListOutput", () => {
       "",
     ].join("\n");
     const { packages, unparsedLines } = parsePackageListOutput(output);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(packages).toEqual([
       {
         package_name: "com.example",
@@ -278,7 +399,19 @@ describe("parsePackageListOutput", () => {
       "package:/data/app/x/base.apk=com.ok\n  garbage line  \n",
     );
     expect(packages).toHaveLength(1);
-    expect(unparsedLines).toEqual(["  garbage line  "]);
+    expect(unparsedLines).toEqual({ sample: ["  garbage line  "], total: 1 });
+  });
+
+  it("samples the first ten unrecognized lines and counts every one", () => {
+    const rows = Array.from(
+      { length: 11 },
+      (_, index) => `row ${String(index + 1)}`,
+    );
+    const { packages, unparsedLines } = parsePackageListOutput(
+      ["package:/data/app/x/base.apk=com.ok", ...rows].join("\n"),
+    );
+    expect(packages).toHaveLength(1);
+    expect(unparsedLines).toEqual({ sample: rows.slice(0, 10), total: 11 });
   });
 });
 
@@ -291,7 +424,7 @@ describe("parsePmPathOutput", () => {
       "",
     ].join("\n");
     const { paths, unparsedLines } = parsePmPathOutput(output);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(paths).toEqual([
       {
         device_path: "/data/app/~~a==/com.example.b==/base.apk",
@@ -325,6 +458,7 @@ describe("parsePmPathOutput", () => {
     const devicePath = "/data/app/My App/résumé:final\\draft*.apk";
     const { paths, rejectedPaths, unparsedLines } = parsePmPathOutput(
       `package:${devicePath}\r\n`,
+      "linux",
     );
     expect(paths).toEqual([
       {
@@ -334,7 +468,7 @@ describe("parsePmPathOutput", () => {
       },
     ]);
     expect(rejectedPaths).toEqual([]);
-    expect(unparsedLines).toEqual([]);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
   });
 
   it("rejects an empty final component without normalizing the source", () => {
@@ -349,6 +483,48 @@ describe("parsePmPathOutput", () => {
   it("retains malformed lines including surrounding whitespace", () => {
     expect(
       parsePmPathOutput(" package:/data/app/pkg/base.apk \n").unparsedLines,
-    ).toEqual([" package:/data/app/pkg/base.apk "]);
+    ).toEqual({ sample: [" package:/data/app/pkg/base.apk "], total: 1 });
+  });
+});
+
+it.each([
+  ["1", "reported", "1"],
+  ["2147483648", "reported", "2147483648"],
+  ["9007199254740991", "reported", "9007199254740991"],
+  ["9007199254740993", "reported", "9007199254740993"],
+  ["18446744073709551615", "reported", "18446744073709551615"],
+  ["0001", "reported", "1"],
+  ["0", "invalid", "reserved_zero"],
+  ["-1", "invalid", "invalid_decimal"],
+  ["1e3", "invalid", "invalid_decimal"],
+  ["", "invalid", "invalid_decimal"],
+  ["18446744073709551616", "invalid", "outside_uint64"],
+] as const)("retains exact transport identity %s", (token, status, fact) => {
+  const { devices } = parseAdbDevicesOutput(
+    `serial device model:Pixel transport_id:${token}\r\n`,
+  );
+  expect(devices[0]).toMatchObject({
+    serial: "serial",
+    model: "Pixel",
+    transport_identity: {
+      status,
+      source_token: token,
+      ...(status === "reported" ? { decimal: fact } : { reason: fact }),
+    },
+  });
+});
+
+it("uses only the final transport field and distinguishes a missing field", () => {
+  const { devices } = parseAdbDevicesOutput(
+    [
+      "first device product:foo transport_id:7 model:Pixel transport_id:9",
+      "second device product:foo transport_id:7 model:Pixel",
+    ].join("\n"),
+  );
+  expect(devices[0]).toMatchObject({
+    transport_identity: { status: "reported", decimal: "9", source_token: "9" },
+  });
+  expect(devices[1]).toMatchObject({
+    transport_identity: { status: "not_reported", source_token: null },
   });
 });

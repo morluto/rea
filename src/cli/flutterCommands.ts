@@ -1,3 +1,9 @@
+import { safeParseJson } from "../domain/safeJson.js";
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import {
+  evidenceSchema,
+  withEvidenceCallerInputPath,
+} from "../domain/evidence.js";
 import { z } from "incur";
 import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
@@ -6,12 +12,14 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
   flutterInputSchemas,
+  dartPoolPolicySchema,
   type FlutterOperation,
 } from "../domain/flutter/flutterBuildAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 
 /** One flutter command: CLI shape and the request it produces. */
 interface FlutterCommandSpec {
@@ -52,11 +60,32 @@ export const registerFlutterCommands = (
       }),
       optionSchema: z.object({
         abi: flutterInputSchemas.inspect_dart_aot.shape.abi,
+        poolPolicy: z
+          .string()
+          .transform((text, context) => {
+            const parsed = safeParseJson(text);
+            if (!parsed.ok) {
+              context.addIssue({
+                code: "custom",
+                message: "pool-policy must be a JSON object",
+              });
+              return z.NEVER;
+            }
+            return parsed.value;
+          })
+          .pipe(dartPoolPolicySchema)
+          .optional()
+          .describe(
+            "JSON printable-run selection: contains, uri_limit (500), token_limit (2000), run_bytes (1024), token_bytes (128). Filters apply before bounded collection; URI/token counts cover matches. Positive safe integers; next call, no restart. Does not raise APK/library/ELF/reply limits.",
+          ),
       }),
       operation: "inspect_dart_aot",
       toInput: (arguments_, options) => ({
         path: arguments_.path,
         ...(options.abi === undefined ? {} : { abi: options.abi }),
+        ...(options.poolPolicy === undefined
+          ? {}
+          : { pool_policy: options.poolPolicy }),
       }),
     },
   ];
@@ -70,17 +99,30 @@ export const registerFlutterCommands = (
         withCommandCancellation((signal) =>
           logCliCommand(logger, spec.command, () =>
             finishAnalysisCommand(
-              () =>
+              bindCliEvidenceCallerPath(args.path as string, () =>
                 new FlutterBuildAnalysisService(provider).execute(
                   spec.operation,
                   spec.toInput(args, options ?? {}),
                   { signal },
                 ),
+              ),
               { close: () => provider.close() },
               "flutter",
               spec.operation,
               signal,
-            ),
+              undefined,
+              {
+                recoverCompletedObservation: (observation) => {
+                  const parsed = evidenceSchema.safeParse(observation);
+                  return parsed.success
+                    ? withEvidenceCallerInputPath(
+                        parsed.data,
+                        args.path as string,
+                      )
+                    : undefined;
+                },
+              },
+            ).then(projectCliAnalysisResult),
           ),
         ),
     });

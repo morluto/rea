@@ -1,4 +1,5 @@
-import { rm } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
@@ -10,6 +11,7 @@ import type {
   AnalysisClient,
   AnalysisProvider,
   CapabilityDescriptor,
+  AnalysisOperation,
 } from "../../../src/application/AnalysisProvider.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
@@ -23,9 +25,9 @@ import {
 } from "../../../src/domain/apple/interfaceBuilderGraph.js";
 import { inspectNativeDispatchMetadata } from "../../../src/domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceSchema } from "../../../src/domain/native/nativeInvestigationGraph.js";
+import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
-import type { AnalysisOperation } from "../../../src/application/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -33,13 +35,24 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createSessionMcpHarness } from "./sessionMcpHarness.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
-let directory: string | undefined;
+
+const writeEligibleAppBundle = async (root: string): Promise<string> => {
+  const app = join(root, "Eligible.app");
+  const contents = join(app, "Contents");
+  await mkdir(join(contents, "MacOS"), { recursive: true });
+  await writeFile(
+    join(contents, "MacOS", "Fixture"),
+    thinMach(0xfeedfacf, 0x0100000c),
+  );
+  await writeFile(
+    join(contents, "Info.plist"),
+    "<plist><dict><key>CFBundleExecutable</key><string>Fixture</string></dict></plist>",
+  );
+  return app;
+};
 
 afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
 });
 
 const identity = {
@@ -51,11 +64,12 @@ const controllerName = "BuildViewController";
 const selector = "buildTapped:";
 const handlerAddress = "0x1000";
 const calleeAddress = "0x2000";
-const dispatchMetadata = inspectNativeDispatchMetadata([
-  { address: handlerAddress, name: `-[${controllerName} ${selector}]` },
-]);
+const dispatchMetadata = inspectNativeDispatchMetadata(
+  [{ address: handlerAddress, name: `-[${controllerName} ${selector}]` }],
+  1,
+);
 const symbolInventory = [
-  { address: handlerAddress, name: `-[${controllerName} ${selector}]` },
+  { address: handlerAddress, value: `-[${controllerName} ${selector}]` },
 ];
 const interfaceBuilderFor = (targetSha256: string) =>
   buildInterfaceBuilderAnalysis({
@@ -205,16 +219,19 @@ describe("native UI action availability through available routes", () => {
   it.each(routeScenarios)(
     "reports the $name route available when its observed path succeeds",
     async (scenario) => {
-      directory = await createTestTempDirectory("rea-native-ui-availability-");
+      const directory = await createTestTempDirectory(
+        "rea-native-ui-availability-",
+      );
       const calls: ProviderOperation[] = [];
-      const { mcp, first } = await createSessionMcpHarness(
+      const { mcp } = await createSessionMcpHarness(
         directory,
         () => provider(scenario, calls),
         resources,
       );
+      const app = await writeEligibleAppBundle(directory);
       const opened = await mcp.callTool({
         name: "open_binary",
-        arguments: { path: first },
+        arguments: { path: app },
       });
       expect(opened.isError).not.toBe(true);
 
@@ -264,16 +281,19 @@ describe("native UI action availability for unmet routes", () => {
   ])(
     "reports unmet route sources for $name without hiding partial results",
     async (scenario) => {
-      directory = await createTestTempDirectory("rea-native-ui-no-metadata-");
+      const directory = await createTestTempDirectory(
+        "rea-native-ui-no-metadata-",
+      );
       const calls: ProviderOperation[] = [];
-      const { mcp, first } = await createSessionMcpHarness(
+      const { mcp } = await createSessionMcpHarness(
         directory,
         () => provider(scenario, calls),
         resources,
       );
+      const app = await writeEligibleAppBundle(directory);
       const opened = await mcp.callTool({
         name: "open_binary",
-        arguments: { path: first },
+        arguments: { path: app },
       });
       expect(opened.isError).not.toBe(true);
 
@@ -378,20 +398,21 @@ describe("native UI action availability for failures and target gates", () => {
   it.each([metadataRuntimeFailureScenario, decodeCancelledScenario])(
     "preserves runtime failures for $name without trying another declared source",
     async (scenario) => {
-      directory = await createTestTempDirectory(
+      const directory = await createTestTempDirectory(
         "rea-native-ui-source-failure-",
       );
       const calls: ProviderOperation[] = [];
-      const { mcp, first } = await createSessionMcpHarness(
+      const { mcp } = await createSessionMcpHarness(
         directory,
         () => provider(scenario, calls),
         resources,
       );
+      const app = await writeEligibleAppBundle(directory);
       expect(
         (
           await mcp.callTool({
             name: "open_binary",
-            arguments: { path: first },
+            arguments: { path: app },
           })
         ).isError,
       ).not.toBe(true);
@@ -426,7 +447,7 @@ describe("native UI action availability for failures and target gates", () => {
   );
 
   it("reports target_required before querying provider operations", async () => {
-    directory = await createTestTempDirectory("rea-native-ui-no-target-");
+    const directory = await createTestTempDirectory("rea-native-ui-no-target-");
     const calls: ProviderOperation[] = [];
     const { mcp } = await createSessionMcpHarness(
       directory,
@@ -440,6 +461,44 @@ describe("native UI action availability for failures and target gates", () => {
       reason: "target_required",
     });
     expect(calls).toEqual([]);
+  });
+
+  it("keeps authored UI dispatch unavailable for a non-bundle target", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-native-ui-non-bundle-",
+    );
+    const calls: ProviderOperation[] = [];
+    const { mcp } = await createSessionMcpHarness(
+      directory,
+      () => provider(authoredUiDirectScenario, calls),
+      resources,
+    );
+    const executable = join(directory, "Standalone");
+    await writeFile(executable, thinMach(0xfeedfacf, 0x0100000c));
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: executable },
+        })
+      ).isError,
+    ).not.toBe(true);
+
+    try {
+      const entry = dispatchAvailability(await readInventory(mcp));
+      const authored = entry?.modes?.find(
+        (mode) => mode.name === "authored_ui_dispatch",
+      );
+      expect(authored).toMatchObject({
+        available: false,
+        missing_operations: ["decode_interface_builder"],
+      });
+      expect(calls).toEqual([]);
+    } finally {
+      expect(
+        (await mcp.callTool({ name: "close_binary", arguments: {} })).isError,
+      ).not.toBe(true);
+    }
   });
 });
 

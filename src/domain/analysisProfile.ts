@@ -1,8 +1,6 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
+import { digestCanonicalValue } from "./canonicalDigest.js";
 import { jsonObjectSchema, type JsonValue } from "./jsonValue.js";
 import { digestSchema } from "./../domain/digests.js";
 
@@ -53,23 +51,23 @@ export const createAnalysisProfile = (
   });
 };
 
+/** Exact provider identity, including unknown Evidence versions, without interpreting parameters. */
+export const committedProvidersEqual = (
+  left: Readonly<{ id: string; name: string; version: string | null }>,
+  right: Readonly<{ id: string; name: string; version: string | null }>,
+): boolean =>
+  left.id === right.id &&
+  left.name === right.name &&
+  left.version === right.version;
+
 /** Compare two already-validated commitments without interpreting parameters. */
 export const analysisProfilesEqual = (
   left: AnalysisProfileCommitment,
   right: AnalysisProfileCommitment,
 ): boolean =>
   left.digest === right.digest &&
-  left.provider.id === right.provider.id &&
-  left.provider.name === right.provider.name &&
-  left.provider.version === right.provider.version;
+  committedProvidersEqual(left.provider, right.provider);
 
 const profileDigest = (
   profile: z.infer<typeof unsignedAnalysisProfileSchema>,
-): string => createHash("sha256").update(canonicalJson(profile)).digest("hex");
-
-const canonicalJson = (value: JsonValue): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("RFC 8785 canonicalization rejected analysis profile");
-  return encoded;
-};
+): string => digestCanonicalValue(profile, "Analysis profile");

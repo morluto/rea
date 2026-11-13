@@ -5,11 +5,7 @@ import { describe, expect, it } from "vitest";
 import { parseApplicationGraphEvidence } from "../../../src/application/javascript/JavaScriptApplicationEvidenceGraph.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { compareJavaScriptExportShapesEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
-import {
-  javaScriptExportShapeComparisonResultSchema,
-  projectedExportReturnShapesSchema,
-} from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
+import { projectedExportReturnShapesSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 
@@ -48,7 +44,8 @@ describe("JavaScript export container coverage through authenticated Evidence", 
       before: "",
       after: ", options: { nested: {} }",
       paths: ["/options", "/options/nested"],
-      addedPaths: ["/options"],
+      // Complete root coverage proves the absent ancestor and its descendants.
+      addedPaths: ["/options", "/options/nested"],
     },
     {
       name: "escaped property keys",
@@ -267,10 +264,8 @@ const compareEvidence = (left: Source, right: Source) => {
     right_export_name: "default",
   });
   if (!compared.ok) throw compared.error;
-  const evidence = parseEvidence(compared.value);
-  const result = javaScriptExportShapeComparisonResultSchema.parse(
-    evidence.normalized_result,
-  );
+  const evidence = compared.value.evidence;
+  const result = compared.value.result;
   const evidenceLinks = [left.evidence.evidence_id, right.evidence.evidence_id];
   expect(evidence).toMatchObject({
     operation: "compare_javascript_export_shapes",

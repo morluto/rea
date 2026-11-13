@@ -13,7 +13,7 @@ import { createAnalysisExecution } from "../../../src/application/AnalysisProvid
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { inspectNativeDispatchMetadata } from "../../../src/domain/native/objcSwiftMetadata.js";
 import { err, ok } from "../../../src/domain/result.js";
-import type { ProviderRejectionCode } from "../../../src/contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../../../src/domain/providerSelection.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -35,14 +35,17 @@ const identity = {
   name: "Fixture analysis provider",
   version: "1",
 };
-const dispatchMetadata = inspectNativeDispatchMetadata([
-  {
-    address: "0x1000",
-    name: "-[BuildViewController buildTapped:]",
-  },
-]);
+const dispatchMetadata = inspectNativeDispatchMetadata(
+  [
+    {
+      address: "0x1000",
+      name: "-[BuildViewController buildTapped:]",
+    },
+  ],
+  1,
+);
 const symbolInventory = [
-  { address: "0x1000", name: "-[BuildViewController buildTapped:]" },
+  { address: "0x1000", value: "-[BuildViewController buildTapped:]" },
 ];
 
 type Operation = "inspect_native_dispatch_metadata" | "list_names";

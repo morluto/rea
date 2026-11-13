@@ -1,6 +1,5 @@
 import { artifactInventoryResultSchema } from "../../src/domain/artifactGraph.js";
 import { createEvidence, type Evidence } from "../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../src/domain/jsonValue.js";
 
 /** Partition a real scan into authenticated partial observations for merge tests. */
 export const fragmentInventoryEvidence = (
@@ -26,7 +25,7 @@ export const fragmentInventoryEvidence = (
         parameters: evidence.parameters,
         confidence: "derived",
         authority: evidence.authority,
-        result: jsonValueSchema.parse({
+        result: {
           ...inventory,
           nodes: inventory.nodes.filter(
             (_, ordinal) => ordinal % count === index,
@@ -37,7 +36,7 @@ export const fragmentInventoryEvidence = (
           edges: inventory.edges.filter(
             (_, ordinal) => ordinal % count === index,
           ),
-        }),
+        },
       },
     ),
   );

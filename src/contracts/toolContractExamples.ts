@@ -14,6 +14,7 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
 > = {
   ...UNKNOWN_CONTRACT_EXAMPLES,
   ...INVESTIGATION_EXAMPLES,
+  inspect_byte_entropy: { path: "/artifacts/firmware.bin" },
   goto_address: { address: "0x1000" },
   procedure_address: { procedure: "main" },
   procedure_assembly: { procedure: "main" },
@@ -52,6 +53,7 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   trace_feature: { query: "license" },
   trace_call_path: { start: "0x1000", goal: "0x1100" },
   trace_native_ui_action: { action: "buildTapped:" },
+  decompile_all: { output_directory: "/tmp/decompile-out" },
   open_binary: { path: "/tmp/fixture" },
   open_bundle_resources: { path: "/tmp/Fixture.app" },
   export_evidence_bundle: { path: "/tmp/evidence.json" },

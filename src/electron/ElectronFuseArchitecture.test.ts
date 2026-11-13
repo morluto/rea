@@ -114,5 +114,5 @@ const assertArchitecture = async (
   expect(
     report.slices[0]?.sentinels[0]?.fuses.map((fuse) => fuse.raw_byte),
   ).toEqual(OBSIDIAN_FUSE_BYTES);
-  expect(await readFile(path)).toEqual(image.bytes);
+  expect(Buffer.compare(await readFile(path), image.bytes)).toBe(0);
 };

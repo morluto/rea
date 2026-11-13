@@ -28,7 +28,7 @@ const citedEdgeSchema = z.object({
 });
 const pathSchema = z
   .object({
-    hops: z.number().int().min(0),
+    hops: z.int().min(0),
     nodes: z.array(citedNodeSchema).min(1),
     edges: z.array(citedEdgeSchema),
     evidence_links: z.array(evidenceIdSchema).min(1),
@@ -53,12 +53,17 @@ const resultContextShape = {
   start: nativeAddressSchema,
   goal: nativeAddressSchema,
   explored: z.object({
-    nodes: z.number().int().min(0),
-    edges: z.number().int().min(0),
-    depth_reached: z.number().int().min(0),
+    nodes: z.int().min(0),
+    edges: z.int().min(0),
+    depth_reached: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).min(1),
   limitations: z.array(z.string()),
+};
+const searchScope = {
+  graph: z.literal("supplied_evidence"),
+  discovery: z.enum(["complete", "partial", "unknown"]),
+  observed_status: z.enum(["found", "not_found", "unknown"]),
 };
 
 /** Evidence-cited directed call-path result containing every shortest path. */
@@ -66,22 +71,43 @@ export const callPathResultSchema = z.union([
   z.object({
     ...resultContextShape,
     status: z.literal("found"),
-    shortest_hops: z.number().int().min(0),
-    search_scope: z.object({ exhaustive: z.boolean() }),
+    shortest_hops: z.int().min(0),
+    search_scope: z.object({
+      ...searchScope,
+      exhaustive: z.boolean(),
+      observed_status: z.literal("found"),
+    }),
     paths: z.array(pathSchema).min(1),
   }),
   z.object({
     ...resultContextShape,
     status: z.literal("not_found"),
     shortest_hops: z.null(),
-    search_scope: z.object({ exhaustive: z.literal(true) }),
+    search_scope: z.object({
+      ...searchScope,
+      exhaustive: z.literal(true),
+      discovery: z.literal("complete"),
+      observed_status: z.literal("not_found"),
+    }),
     paths: emptyArraySchema,
   }),
   z.object({
     ...resultContextShape,
     status: z.literal("unknown"),
     shortest_hops: z.null(),
-    search_scope: z.object({ exhaustive: z.literal(false) }),
+    search_scope: z.union([
+      z.object({
+        ...searchScope,
+        exhaustive: z.literal(false),
+        observed_status: z.literal("unknown"),
+      }),
+      z.object({
+        ...searchScope,
+        exhaustive: z.literal(true),
+        discovery: z.enum(["partial", "unknown"]),
+        observed_status: z.literal("not_found"),
+      }),
+    ]),
     paths: emptyArraySchema,
   }),
 ]);

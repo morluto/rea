@@ -1,0 +1,301 @@
+import { expect, it } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { elf } from "../../domain/binaryTarget.fixture.js";
+import { createTestBinarySession } from "../../../tests/fixtures/binarySession.js";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { createAnalysisProfile } from "../../domain/analysisProfile.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { err, ok } from "../../domain/result.js";
+import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
+import { BinarySession } from "./BinarySession.js";
+import { binaryTargetSummary } from "./BinaryTargetSummary.js";
+import {
+  SessionProviderRouter,
+  type SessionProviderRoute,
+} from "./SessionProviderRouter.js";
+
+it.each([false, true])(
+  "refreshes state published by close on alias switch (incoming fails: %s)",
+  async (failIncoming) => {
+    const directory = await createTestTempDirectory("rea-published-profile-");
+    const first = join(directory, "first.elf"),
+      alias = join(directory, "alias.elf");
+    await writeFile(first, elf(2, 1, 62));
+    await writeFile(alias, elf(2, 1, 62));
+    const identity = {
+      id: "fixture",
+      name: "Fixture analysis provider",
+      version: "1",
+    };
+    let generation = 0,
+      dirty = false;
+    const starts: number[] = [];
+    const failure = new AnalysisOutputError(
+      "health",
+      "Incoming target refused",
+    );
+    const session = createTestBinarySession(
+      (_target, profile) => ({
+        execute: async () => {
+          const selected = profile?.parameters.generation;
+          starts.push(Number(selected));
+          if (selected !== generation)
+            return err(
+              new AnalysisOutputError("health", "Stale published profile"),
+            );
+          return ok(createAnalysisExecution(null, identity));
+        },
+        close: async () => {
+          if (dirty) {
+            generation++;
+            dirty = false;
+          }
+          return ok(null);
+        },
+      }),
+      {
+        resolveAnalysisProfile: async (target) =>
+          failIncoming && generation > 0 && target.path === alias
+            ? err(failure)
+            : ok({
+                profile: createAnalysisProfile(identity, { generation }),
+                refreshAfterRetirement: true,
+              }),
+      },
+    );
+    try {
+      expect((await session.open(first)).ok).toBe(true);
+      expect((await session.execute("list_strings", {})).ok).toBe(true);
+      dirty = true;
+      const switched = await session.open(alias);
+      if (failIncoming) {
+        expect(switched.ok).toBe(false);
+        expect(session.activeTarget()?.path).toBe(first);
+      } else {
+        expect(switched.ok).toBe(true);
+        expect(session.activeTarget()?.path).toBe(alias);
+      }
+      expect(session.analysisProfile()?.parameters.generation).toBe(1);
+      expect(await session.status()).toMatchObject({
+        analysis_provider_binding: {
+          selection_source: "auto-single-candidate",
+        },
+        analysis_provider_candidates: [
+          { selected: true, selection_source: "auto-single-candidate" },
+        ],
+      });
+      expect((await session.execute("list_strings", {})).ok).toBe(true);
+      expect(starts).toEqual([0, 1]);
+    } finally {
+      expect((await session.close()).ok).toBe(true);
+    }
+  },
+);
+
+it("reports the previous selection after a failed switch restores its provider", async () => {
+  const session = new BinarySession(
+    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), []),
+  );
+  const identity = {
+    id: "restoration-test",
+    name: "Restoration test",
+    version: "1",
+  };
+  const failure = new AnalysisOutputError(
+    "health",
+    "Selected target could not start",
+  );
+  let previousStarts = 0;
+  let previousCloses = 0;
+  let failedCloses = 0;
+  const route: SessionProviderRoute = {
+    identity,
+    capabilities: new Map(),
+    profile: createAnalysisProfile(identity, { fixture: "original" }),
+    binding: null,
+    selection: undefined,
+    createClient: () => {
+      previousStarts += 1;
+      return {
+        execute: async () => ok(createAnalysisExecution(null, identity)),
+        close: async () => {
+          previousCloses += 1;
+          return ok(null);
+        },
+      };
+    },
+  };
+  try {
+    const target = await session.resolveTarget(process.execPath);
+    if (!target.ok) throw target.error;
+    expect(
+      (await session.openResolvedTarget({ target: target.value, route })).ok,
+    ).toBe(true);
+    const result = await session.openResolvedTarget({
+      target: target.value,
+      route: {
+        ...route,
+        profile: createAnalysisProfile(identity, { fixture: "selected" }),
+        createClient: () => ({
+          execute: async () => err(failure),
+          close: async () => {
+            failedCloses += 1;
+            return ok(null);
+          },
+        }),
+      },
+    });
+    if (result.ok) throw new Error("Expected failed switch");
+    expect(result.error).toBe(failure);
+    expect(result.targetAtCompletion).toEqual(
+      binaryTargetSummary(target.value),
+    );
+    expect(session.activeTarget()).toEqual(target.value);
+    expect({ previousStarts, previousCloses, failedCloses }).toEqual({
+      previousStarts: 2,
+      previousCloses: 1,
+      failedCloses: 1,
+    });
+    expect((await session.close()).ok).toBe(true);
+    expect(result.targetAtCompletion).toEqual(
+      binaryTargetSummary(target.value),
+    );
+  } finally {
+    await session.close();
+  }
+});
+
+it.each([
+  { cancelled: false, cleanupFails: false },
+  { cancelled: true, cleanupFails: false },
+  { cancelled: false, cleanupFails: true },
+  { cancelled: true, cleanupFails: true },
+])(
+  "retains failed restoration after switch cancellation=$cancelled, cleanup failure=$cleanupFails",
+  async ({ cancelled, cleanupFails }) => {
+    const session = new BinarySession(
+      SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), []),
+    );
+    const controller = new AbortController();
+    const identity = {
+      id: "restoration-test",
+      name: "Restoration test",
+      version: "1",
+    };
+    const restorationFailure = new AnalysisOutputError(
+      "health",
+      "Previous target could not restart",
+    );
+    const switchFailure = new AnalysisOutputError(
+      "health",
+      "Selected target could not start",
+    );
+    const cleanupFailure = new ProviderCleanupError(
+      identity.id,
+      ["restored-client"],
+      { reason: "close failed" },
+    );
+    let created = 0;
+    let restorationCloseCalls = 0;
+    const route: SessionProviderRoute = {
+      identity,
+      capabilities: new Map(),
+      profile: createAnalysisProfile(identity, { fixture: "original" }),
+      binding: null,
+      selection: undefined,
+      createClient: () => {
+        const restoring = created++ > 0;
+        return {
+          execute: async () =>
+            restoring
+              ? err(restorationFailure)
+              : ok(createAnalysisExecution(null, identity)),
+          close: async () => {
+            if (!restoring) {
+              if (cancelled) controller.abort("cancel switch");
+              return ok(null);
+            }
+            restorationCloseCalls += 1;
+            if (cleanupFails && restorationCloseCalls === 1)
+              return err(cleanupFailure);
+            cleanupFailure.resolveCleanup();
+            return ok(null);
+          },
+        };
+      },
+    };
+    try {
+      const target = await session.resolveTarget(process.execPath);
+      expect(target.ok).toBe(true);
+      if (!target.ok) return;
+      expect(
+        (await session.openResolvedTarget({ target: target.value, route })).ok,
+      ).toBe(true);
+      expect(session.activeTarget()).toEqual(target.value);
+      const result = await session.openResolvedTarget(
+        {
+          target: target.value,
+          route: {
+            ...route,
+            profile: createAnalysisProfile(identity, { fixture: "selected" }),
+            createClient: () => ({
+              execute: async () => err(switchFailure),
+              close: async () => ok(null),
+            }),
+          },
+        },
+        { signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.targetAtCompletion).toBeNull();
+      expect(result.providerIdAtCompletion).toBeNull();
+      expect(result.selection).toEqual({ kind: "none" });
+      expect(session.activeTarget()).toBeUndefined();
+      expect(await session.status()).toMatchObject({
+        open: false,
+        cleanup_pending: cleanupFails,
+      });
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: cleanupFails
+          ? "cleanup_incomplete"
+          : cancelled
+            ? "cancelled"
+            : "unreadable_output",
+      });
+      expect((await session.close()).ok).toBe(true);
+      expect(restorationCloseCalls).toBe(cleanupFails ? 2 : 1);
+      expect(result.targetAtCompletion).toBeNull();
+      expect(await session.status()).toMatchObject({
+        open: false,
+        cleanup_pending: false,
+      });
+      expect(projectAnalysisError(result.error).code).toBe(
+        cancelled ? "cancelled" : "unreadable_output",
+      );
+      expect(result.selection).toEqual({ kind: "none" });
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        details: {
+          diagnostics: {
+            restoration_error: projectAnalysisError(restorationFailure),
+          },
+        },
+      });
+      if (cancelled) {
+        const primary = result.error.cleanupPrimary ?? result.error;
+        expect(primary).toBeInstanceOf(AnalysisCancelledError);
+      } else {
+        expect(result.error.cleanupPrimary ?? result.error).toBe(switchFailure);
+      }
+    } finally {
+      await session.close();
+    }
+  },
+);

@@ -1,12 +1,20 @@
 import { inspect } from "node:util";
-import { SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
+import {
+  Client,
+  SdkErrorCode,
+  SdkHttpError,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createIdaMcpConnection,
   decodeIdaToolResult,
 } from "./IdaMcpConnection.js";
 import { createIdaDiagnosticRedactor } from "./IdaDiagnosticRedactor.js";
-import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisTimeoutError,
+} from "../domain/analysisErrorCore.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
 
 describe("upstream IDA tool result decoding", () => {
@@ -67,6 +75,15 @@ describe("upstream IDA tool result decoding", () => {
     );
   });
   it("decodes scalar wrappers and legacy text without dropping structured dictionaries", () => {
+    expect(
+      decodeIdaToolResult({
+        content: [],
+        structuredContent: { result: [{ address: "0x1" }] },
+      }),
+    ).toEqual([{ address: "0x1" }]);
+    expect(
+      decodeIdaToolResult({ content: [{ type: "text", text: '{"data":[]}' }] }),
+    ).toEqual({ data: [] });
     expect(
       decodeIdaToolResult({
         content: [],
@@ -171,6 +188,7 @@ const mockedHttpBoundary = ({
   serverName,
   tools,
   call,
+  readResource,
 }: {
   readonly serverName: string;
   readonly tools: readonly {
@@ -181,6 +199,7 @@ const mockedHttpBoundary = ({
     request: MockedIdaHttpRequest,
     signal: AbortSignal | null | undefined,
   ) => Response | Promise<Response>;
+  readonly readResource?: (request: MockedIdaHttpRequest) => unknown;
 }): void => {
   vi.stubGlobal(
     "fetch",
@@ -194,7 +213,7 @@ const mockedHttpBoundary = ({
           id: request.id,
           result: {
             protocolVersion: request.params?.protocolVersion,
-            capabilities: { tools: {} },
+            capabilities: { tools: {}, resources: {} },
             serverInfo: { name: serverName, version: "1" },
           },
         });
@@ -210,6 +229,12 @@ const mockedHttpBoundary = ({
           result: { tools },
         });
       if (request.method === "tools/call") return call(request, init?.signal);
+      if (request.method === "resources/read" && readResource !== undefined)
+        return jsonRpcResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: readResource(request),
+        });
       throw new Error(`Unexpected fixture request: ${request.method}`);
     }),
   );
@@ -246,7 +271,12 @@ it("preserves the SDK request timeout as a typed IDA timeout", async () => {
     expect(failure).toMatchObject({
       operation: "decompile",
       timeoutMs: requestTimeoutMs,
+      userMessage: expect.stringContaining("40 ms"),
+      remediationAction: expect.stringContaining("REA_IDA_MCP_CONFIG"),
     });
+    expect(
+      failure instanceof AnalysisTimeoutError ? failure.userMessage : "",
+    ).toContain("1000 ms");
     if (!(failure instanceof AnalysisTimeoutError))
       throw new Error("Expected a typed IDA request timeout");
     expect(failure.cause).toBeInstanceOf(Error);
@@ -309,16 +339,20 @@ it("bounds a stalled health poll by the remaining readiness deadline", async () 
     expect(pendingCalls).toBe(2);
     expect(failure).toBeInstanceOf(AnalysisTimeoutError);
     expect(failure).toMatchObject({
-      operation: "server_health: headless worker still busy in config_json_get",
+      operation: "server_health",
       timeoutMs,
+      userMessage: expect.stringContaining("800 ms"),
+      remediationAction: expect.stringContaining("timeoutMs"),
       cause: busy,
       diagnostics: {
+        busy_tool: "config_json_get",
         health_request_operation: "server_health",
         health_request_timeout_ms: 250,
       },
     });
     if (!(failure instanceof AnalysisTimeoutError))
       throw new Error("Expected the readiness deadline to expire");
+    expect(failure.userMessage).toContain("config_json_get");
     expect(failure.capturedOutput).toBeDefined();
   } finally {
     await connection.close();
@@ -424,6 +458,37 @@ describe("retained IDA diagnostic errors", () => {
   });
 });
 
+const withIdaResource = async (
+  response: unknown,
+  verify: (
+    connection: ReturnType<typeof createIdaMcpConnection>,
+  ) => Promise<void>,
+): Promise<void> => {
+  mockedHttpBoundary({
+    serverName: "ida-resource-fixture",
+    tools: [],
+    call: () => {
+      throw new Error("Unexpected tool call");
+    },
+    readResource: () => response,
+  });
+  const connection = createIdaMcpConnection(
+    {
+      url: "http://127.0.0.1:12345/mcp",
+      headers: {},
+      mode: "attached",
+      timeoutMs: 1000,
+    },
+    {},
+  );
+  try {
+    await connection.connect();
+    await verify(connection);
+  } finally {
+    await connection.close();
+  }
+};
+
 it.each([
   {
     code: SdkErrorCode.ClientHttpNotImplemented,
@@ -502,4 +567,625 @@ it("owns unclassified truncated-output hints separately from their context", () 
     '{"error":"[redacted transport credential]","path":"/caller/output"}',
   );
   expect(inspectRetainedError(failure)).not.toContain(String.raw`q\"uote`);
+});
+
+it.each([
+  undefined,
+  "application/json",
+  "Application/JSON",
+  "application/json; charset=utf-8",
+])(
+  "accepts SDK JSON metadata resources with media type %s",
+  async (mimeType) => {
+    await withIdaResource(
+      {
+        contents: [
+          {
+            uri: "ida://idb/metadata",
+            ...(mimeType === undefined ? {} : { mimeType }),
+            text: '{"sha256":"recorded"}',
+          },
+        ],
+      },
+      async (connection) => {
+        if (connection.readResource === undefined)
+          throw new Error("IDA connection does not support resource reads");
+        await expect(
+          connection.readResource("ida://idb/metadata"),
+        ).resolves.toEqual({ sha256: "recorded" });
+      },
+    );
+  },
+);
+it("keeps JSON resource identity, media type and JSON parsing strict", async () => {
+  const resource = (uri: string, mimeType: string, text: string) => ({
+    contents: [{ uri, mimeType, text }],
+  });
+  for (const [reply, message] of [
+    [
+      resource("wrong://resource", "application/json", "{}"),
+      /ida:\/\/idb\/metadata/u,
+    ],
+    [
+      resource("ida://idb/metadata", "text/plain", "{}"),
+      /Expected a JSON resource media type/u,
+    ],
+    [
+      resource("ida://idb/metadata", "application/json", "not JSON"),
+      /IDA MCP returned malformed JSON text/u,
+    ],
+  ] as const)
+    await withIdaResource(reply, async (connection) => {
+      if (connection.readResource === undefined)
+        throw new Error("IDA connection does not support resource reads");
+      await expect(
+        connection.readResource("ida://idb/metadata"),
+      ).rejects.toThrow(message);
+    });
+});
+
+it("uses the actual SDK abort outcome to preserve the caller reason", async () => {
+  let started!: () => void;
+  const requestStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  mockedHttpBoundary({
+    serverName: "ida-abort-fixture",
+    tools: [],
+    call: (_request, signal) => {
+      started();
+      return stalledResponse(signal);
+    },
+  });
+  const connection = createIdaMcpConnection(
+    {
+      url: "http://127.0.0.1:12345/mcp",
+      headers: {},
+      mode: "attached",
+      timeoutMs: 1000,
+    },
+    {},
+  );
+  const controller = new AbortController();
+  const reason = { caller: "exact opaque reason" };
+  try {
+    await connection.connect();
+    const pending = connection
+      .call("decompile", {}, { signal: controller.signal })
+      .catch((cause: unknown) => cause);
+    await requestStarted;
+    controller.abort(reason);
+    const failure = await pending;
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    if (!(failure instanceof AnalysisCancelledError))
+      throw new Error("Expected SDK-owned cancellation");
+    expect(failure.operation).toBe("decompile");
+    expect(failure.cause).toBe(reason);
+    expect(failure.capturedOutput).toMatchObject({
+      stderr: "",
+      truncated: false,
+    });
+  } finally {
+    await connection.close();
+  }
+});
+
+it("keeps a real SDK physical failure when abort arrives during its outer unwind", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "late abort" };
+  mockedHttpBoundary({
+    serverName: "ida-failure-first-fixture",
+    tools: [],
+    call: (request) =>
+      jsonRpcResponse({
+        jsonrpc: "2.0",
+        id: request.id,
+        error: { code: -32000, message: "established producer failure" },
+      }),
+  });
+  const callTool = Client.prototype.callTool;
+  const spy = vi
+    .spyOn(Client.prototype, "callTool")
+    .mockImplementation(function (this: Client, params, options) {
+      return callTool.call(this, params, options).catch((cause: unknown) => {
+        // The SDK has already rejected this request. Delay only its outer unwind.
+        queueMicrotask(() => controller.abort(reason));
+        throw cause;
+      });
+    });
+  const connection = createIdaMcpConnection(
+    {
+      url: "http://127.0.0.1:12345/mcp",
+      headers: {},
+      mode: "attached",
+      timeoutMs: 1000,
+    },
+    {},
+  );
+  try {
+    await connection.connect();
+    const failure = await connection
+      .call("decompile", {}, { signal: controller.signal })
+      .catch((cause: unknown) => cause);
+    expect(controller.signal.aborted).toBe(true);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(AnalysisCancelledError);
+    expect(failure).toMatchObject({
+      message: expect.stringContaining("established producer failure"),
+    });
+  } finally {
+    spy.mockRestore();
+    await connection.close();
+  }
+});
+
+it.each(["1e400", '{"observed":1e400}'])(
+  "rejects IDA JSON text outside the JSON value contract: %s",
+  (text) => {
+    expect(() =>
+      decodeIdaToolResult({ content: [{ type: "text", text }] }),
+    ).toThrow("JSON numbers must be finite");
+  },
+);
+
+it("preserves observed own structured members before deciding whether to unwrap a result", () => {
+  const structured: unknown = JSON.parse(
+    '{"__proto__":{"observed":true},"result":"field","nested":[{"__proto__":"nested fact"}]}',
+  );
+  const decoded = decodeIdaToolResult({
+    content: [],
+    structuredContent: structured,
+  });
+  expect(Object.hasOwn(decoded as object, "__proto__")).toBe(true);
+  expect(JSON.stringify(decoded)).toBe(JSON.stringify(structured));
+  const wrapped: unknown = JSON.parse(
+    '{"result":{"__proto__":{"observed":true},"nested":{"__proto__":"nested fact"}}}',
+  );
+  const value = decodeIdaToolResult({
+    content: [],
+    structuredContent: wrapped,
+  });
+  expect(Object.hasOwn(value as object, "__proto__")).toBe(true);
+  expect(JSON.stringify(value)).toBe(
+    '{"__proto__":{"observed":true},"nested":{"__proto__":"nested fact"}}',
+  );
+});
+
+it("keeps error, truncation and native-text precedence ahead of structured JSON admission", () => {
+  const structuredContent = { result: Infinity };
+  expect(() =>
+    decodeIdaToolResult({
+      isError: true,
+      structuredContent,
+      content: [{ type: "text", text: "engine refused" }],
+    }),
+  ).toThrow(/IDA MCP tool failed: \s*engine refused/u);
+  expect(() =>
+    decodeIdaToolResult({
+      structuredContent,
+      content: [],
+      _meta: { ida_mcp: { output_truncated: true } },
+    }),
+  ).toThrow("IDA MCP truncated its output");
+  expect(
+    decodeIdaToolResult(
+      {
+        structuredContent,
+        content: [{ type: "text", text: '{"complete":true}' }],
+      },
+      "native",
+    ),
+  ).toEqual({ complete: true });
+});
+
+it("requires a valid content array even when IDA supplies structured evidence", () => {
+  for (const content of [
+    "invalid",
+    undefined,
+    null,
+    {},
+    [null],
+    [{ type: "text", text: 42 }],
+  ])
+    expect(() =>
+      decodeIdaToolResult({ content, structuredContent: { observed: true } }),
+    ).toThrow();
+});
+
+it("selects structured IDA evidence ahead of text while admitting mixed content", () => {
+  const image = { type: "image", data: "AA==", mimeType: "image/png" };
+  expect(
+    decodeIdaToolResult({
+      content: [image, { type: "text", text: "fallback" }],
+      structuredContent: { observed: true },
+    }),
+  ).toEqual({ observed: true });
+  expect(
+    decodeIdaToolResult({
+      content: [image, { type: "text", text: "fallback" }],
+    }),
+  ).toBe("fallback");
+  for (const structuredContent of [null, [], "invalid", { observed: Infinity }])
+    expect(() =>
+      decodeIdaToolResult({
+        content: [{ type: "text", text: "fallback" }],
+        structuredContent,
+      }),
+    ).toThrow();
+  expect(() => decodeIdaToolResult({ content: [image] })).toThrow(
+    "empty observation",
+  );
+  expect(() =>
+    decodeIdaToolResult({
+      content: [
+        { type: "text", text: "first" },
+        { type: "text", text: "second" },
+      ],
+    }),
+  ).toThrow("empty observation");
+});
+
+it("requires complete native IDA JSON text despite usable structured content", () => {
+  for (const content of [[], [{ type: "text", text: "plain text" }]])
+    expect(() =>
+      decodeIdaToolResult(
+        { content, structuredContent: { observed: true } },
+        "native",
+      ),
+    ).toThrow();
+});
+
+const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+const cleanupConnection = () =>
+  createIdaMcpConnection(
+    {
+      url: "http://127.0.0.1:12345/mcp",
+      headers: {},
+      mode: "attached",
+      timeoutMs: 1000,
+    },
+    {},
+  );
+
+it("refuses an oversized HTTP error promptly and retains its exact pending cancellation for retry", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cancel = vi.fn(() => gate);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array(65537));
+            },
+            cancel,
+          }),
+          { status: 500, headers: { "content-type": "text/plain" } },
+        ),
+    ),
+  );
+  const connection = cleanupConnection();
+  try {
+    const failure = await connection.connect().catch((cause: unknown) => cause);
+    expect(failure).not.toBeInstanceOf(AnalysisTimeoutError);
+    expect(failure).toMatchObject({
+      message: expect.stringContaining("exceeds 65536 UTF-8 bytes"),
+    });
+    const closeFailure = await connection
+      .close()
+      .catch((cause: unknown) => cause);
+    expect(closeFailure).toMatchObject({
+      cleanupIncomplete: true,
+      cleanupResources: ["IDA MCP HTTP response body"],
+    });
+    await expect(connection.close()).rejects.toMatchObject({
+      cleanupIncomplete: true,
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    release();
+    await turn();
+    await expect(connection.close()).resolves.toBeUndefined();
+    expect(closeFailure).toMatchObject({ cleanupIncomplete: false });
+  } finally {
+    release();
+    await turn();
+    await connection.close();
+  }
+});
+
+it("preserves independent transport-close and exact rejected response-cancellation failures", async () => {
+  const cancellationFailure = new Error(
+    "controlled response cancellation rejected",
+  );
+  const cancel = vi.fn(async () => {
+    throw cancellationFailure;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array(65537));
+            },
+            cancel,
+          }),
+          { status: 500, headers: { "content-type": "text/plain" } },
+        ),
+    ),
+  );
+  const connection = cleanupConnection();
+  await connection.connect().catch(() => undefined);
+  await turn();
+  const transportClose = vi
+    .spyOn(Client.prototype, "close")
+    .mockRejectedValueOnce(new Error("controlled transport close rejected"));
+  try {
+    const mixed = await connection.close().catch((cause: unknown) => cause);
+    expect(mixed).toBeInstanceOf(AggregateError);
+    if (!(mixed instanceof AggregateError))
+      throw new Error("Expected both cleanup failures");
+    expect(mixed.errors[0]).toMatchObject({
+      message: "controlled transport close rejected",
+    });
+    expect(mixed.errors[1]).toMatchObject({
+      cleanupIncomplete: true,
+      cleanupResources: ["IDA MCP HTTP response body"],
+    });
+    const responseFailure = mixed.errors[1] as Error;
+    expect(responseFailure.cause).toMatchObject({
+      cause: { errors: [cancellationFailure] },
+    });
+    await expect(connection.close()).rejects.toMatchObject({
+      cleanupIncomplete: true,
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+  } finally {
+    transportClose.mockRestore();
+    // A rejected Web Stream cancel cannot be retried; keep its exact failure.
+    await connection.close().catch(() => undefined);
+  }
+});
+
+it.each([200, 500])(
+  "retains an ignored-abort late HTTP %s acquisition and its later body cancellation",
+  async (status) => {
+    let deliver!: (response: Response) => void;
+    let entered!: () => void;
+    const enteredFetch = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const pendingFetch = new Promise<Response>((resolve) => {
+      deliver = resolve;
+    });
+    let release!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const cancel = vi.fn(() => cleanup);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => {
+        entered();
+        return pendingFetch;
+      }),
+    );
+    const connection = cleanupConnection();
+    const connecting = connection.connect().catch((cause: unknown) => cause);
+    try {
+      await enteredFetch;
+      await expect(connection.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: ["IDA MCP HTTP response acquisition"],
+      });
+      deliver(
+        new Response(new ReadableStream<Uint8Array>({ cancel }), { status }),
+      );
+      await connecting;
+      await turn();
+      await expect(connection.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: ["IDA MCP HTTP response body"],
+      });
+      expect(cancel).toHaveBeenCalledOnce();
+      release();
+      await turn();
+      await expect(connection.close()).resolves.toBeUndefined();
+    } finally {
+      deliver(new Response(null, { status: 500 }));
+      release();
+      await connecting;
+      await turn();
+      await connection.close();
+    }
+  },
+);
+
+it("allows SDK transport-close session DELETE traffic to finish its own response", async () => {
+  const methods: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_input: unknown, init?: RequestInit) => {
+      methods.push(init?.method ?? "GET");
+      if (init?.method === "GET") return new Response(null, { status: 405 });
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const request = JSON.parse(String(init?.body)) as MockedIdaHttpRequest;
+      if (request.id === undefined) return new Response(null, { status: 202 });
+      const response = jsonRpcResponse({
+        jsonrpc: "2.0",
+        id: request.id,
+        result:
+          request.method === "initialize"
+            ? {
+                protocolVersion: request.params?.protocolVersion,
+                capabilities: { tools: {} },
+                serverInfo: { name: "close-traffic-fixture", version: "1" },
+              }
+            : { tools: [] },
+      });
+      response.headers.set("mcp-session-id", "owned-fixture-session");
+      return response;
+    }),
+  );
+  const connection = cleanupConnection();
+  await connection.connect();
+  const originalClose = StreamableHTTPClientTransport.prototype.close;
+  const close = vi
+    .spyOn(StreamableHTTPClientTransport.prototype, "close")
+    .mockImplementationOnce(async function (
+      this: StreamableHTTPClientTransport,
+    ) {
+      await this.terminateSession();
+      await originalClose.call(this);
+    });
+  try {
+    await expect(connection.close()).resolves.toBeUndefined();
+    expect(methods).toContain("DELETE");
+  } finally {
+    close.mockRestore();
+    await connection.close();
+  }
+});
+
+it.each(["completed", "pending", "rejected"] as const)(
+  "cancels an acquired parked HTTP error reader at close after deadline with %s cleanup",
+  async (outcome) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const rejection = new Error(
+      "controlled parked-reader cancellation failure",
+    );
+    const cancel = vi.fn(async () => {
+      if (outcome === "pending") await gate;
+      if (outcome === "rejected") throw rejection;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode("partial diagnostic"),
+                );
+              },
+              cancel,
+            }),
+            { status: 500, headers: { "content-type": "text/plain" } },
+          ),
+      ),
+    );
+    const connection = createIdaMcpConnection(
+      {
+        url: "http://127.0.0.1:12345/mcp",
+        headers: {},
+        mode: "attached",
+        timeoutMs: 30,
+      },
+      {},
+    );
+    try {
+      const failure = await connection
+        .connect()
+        .catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(AnalysisTimeoutError);
+      await connection.close().catch(() => undefined);
+      await turn();
+      expect(cancel).toHaveBeenCalledOnce();
+      if (outcome === "completed")
+        await expect(connection.close()).resolves.toBeUndefined();
+      else {
+        const retained = await connection
+          .close()
+          .catch((cause: unknown) => cause);
+        expect(retained).toMatchObject({
+          cleanupIncomplete: true,
+          cleanupResources: ["IDA MCP HTTP response body"],
+        });
+        if (outcome === "rejected") {
+          expect(retained).toMatchObject({
+            cause: { cause: { errors: [rejection] } },
+          });
+          await expect(connection.close()).rejects.toMatchObject({
+            cleanupIncomplete: true,
+          });
+        } else {
+          release();
+          await turn();
+          await expect(connection.close()).resolves.toBeUndefined();
+        }
+      }
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally {
+      release();
+      await turn();
+      await connection.close().catch(() => undefined);
+    }
+  },
+);
+
+it("closes an acquired parked error reader after caller abort and preserves the exact reason", async () => {
+  let entered!: () => void;
+  let release!: () => void;
+  const parked = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cancel = vi.fn(() => gate);
+  mockedHttpBoundary({
+    serverName: "parked-error-abort-fixture",
+    tools: [],
+    call: () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("partial diagnostic"));
+          },
+          pull() {
+            entered();
+          },
+          cancel,
+        }),
+        { status: 500, headers: { "content-type": "text/plain" } },
+      ),
+  });
+  const connection = cleanupConnection();
+  const controller = new AbortController();
+  const reason = { caller: "parked diagnostic abort" };
+  try {
+    await connection.connect();
+    const calling = connection
+      .call("decompile", {}, { signal: controller.signal })
+      .catch((cause: unknown) => cause);
+    await parked;
+    controller.abort(reason);
+    const failure = await calling;
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    expect(failure).toMatchObject({ cause: reason });
+    await connection.close().catch(() => undefined);
+    await turn();
+    expect(cancel).toHaveBeenCalledOnce();
+    await expect(connection.close()).rejects.toMatchObject({
+      cleanupIncomplete: true,
+      cleanupResources: ["IDA MCP HTTP response body"],
+    });
+    release();
+    await turn();
+    await expect(connection.close()).resolves.toBeUndefined();
+    expect(cancel).toHaveBeenCalledOnce();
+  } finally {
+    release();
+    await turn();
+    await connection.close().catch(() => undefined);
+  }
 });

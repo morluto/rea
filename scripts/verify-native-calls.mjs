@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import {
   artifactCli,
   artifactMcpResult,
+  artifactMcpCall,
   withArtifactMcp,
 } from "./lib/artifact-e2e.mjs";
 
@@ -60,6 +61,10 @@ const stable = (result) =>
     file_address: event.file_address,
     selector: event.selector,
     receiver_class: event.receiver_class,
+    source_location: event.source_location,
+    caller_source_locations: event.backtrace.map(
+      (frame) => frame.source_location,
+    ),
     counter:
       event.symbol === GREET
         ? event.registers[3].value
@@ -95,6 +100,18 @@ const checkScenario = async (binary) => {
   });
   const greet = result.events.filter(({ symbol }) => symbol === GREET);
   const add = result.events.filter(({ symbol }) => symbol === "rea_call_add");
+  for (const location of [
+    ...result.events,
+    ...result.events.flatMap((event) => event.backtrace),
+    ...result.breakpoints.flatMap((breakpoint) => breakpoint.locations),
+  ]) {
+    assert.equal(location.source_location?.file_path, SOURCE);
+    assert.ok(location.source_location.line > 0);
+    assert.ok(
+      location.source_location.column === null ||
+        location.source_location.column > 0,
+    );
+  }
   assert.equal(greet.length, 3, JSON.stringify(result));
   assert.equal(add.length, 3, JSON.stringify(result));
   for (const [index, event] of greet.entries()) {
@@ -225,7 +242,8 @@ const checkHardenedRuntime = async (directory, binary) => {
   assert.equal(denied.code, "capability_unavailable");
   assert.match(denied.details.reason, /^debugger-attach-denied: /u);
   await withArtifactMcp(blocked, async (client) => {
-    const deniedMcp = await client.callTool(
+    const deniedMcp = await artifactMcpCall(
+      client,
       {
         name: "observe_native_calls",
         arguments: INPUT,
@@ -267,6 +285,8 @@ try {
   const binary = join(directory, "ReaCalls");
   await exec("/usr/bin/xcrun", [
     "clang",
+    "-g",
+    "-O0",
     "-fobjc-arc",
     "-framework",
     "Foundation",

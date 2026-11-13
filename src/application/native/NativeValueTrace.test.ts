@@ -1,42 +1,55 @@
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { describe, expect, it } from "vitest";
-import { traceNativeValues } from "./NativeValueTrace.js";
+import { traceNativeValues as traceNativeValuesCore } from "./NativeValueTrace.js";
+import { executeComposedWorkflow } from "../WorkflowEvidence.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
 } from "../AnalysisProvider.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { nativeValueTraceSchema } from "../../domain/native/nativeValueTrace.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
+import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import { ok, err } from "../../domain/result.js";
+import {
+  EXPECTED_UNRECORDED_VALUE_FLOW,
+  nativeFlowDossier,
+  pcodeOperation as node,
+  pcodeScalar as scalar,
+  staticValueGraph,
+  valueTraceDiamond,
+  valueTraceUnboundArguments,
+  valueTraceProvider as provider,
+  valueTraceSubject as subject,
+} from "./NativeValueTrace.fixture.js";
 
-const subject = {
-  path: "/fixture",
-  sha256: "a".repeat(64),
-  format: "mach-o" as const,
-  architecture: "arm64" as const,
+const traceNativeValues: typeof traceNativeValuesCore = async (
+  source,
+  parameters,
+  signal,
+) => {
+  const result = await executeComposedWorkflow(source, (observed) =>
+    traceNativeValuesCore(observed, parameters, signal),
+  );
+  return result.ok ? ok(result.value.result) : result;
 };
-const provider = { id: "fixture", name: "Fixture", version: "1" };
-const scalar = {
-  kind: "constant",
-  size_bytes: 4,
-  location: null,
-  constant_hex: "3",
-};
-const node = (id: string, address: string, opcode: string) => ({
-  id,
-  address,
-  sequence: 0,
-  opcode,
-  is_dead: true,
-  block_membership: "member",
-  inputs: [scalar, scalar],
-  output: scalar,
+
+it("does not return a source ID without an Evidence owner", async () => {
+  const result = await traceNativeValuesCore(valueTraceDiamond().port, {
+    procedure: "0x1000",
+  });
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
 });
+
 const analysis: AnalysisOperationPort = {
   execute: async (operation, parameters) => {
     if (operation === "resolve_native_call_targets")
@@ -106,6 +119,121 @@ const analysis: AnalysisOperationPort = {
     );
   },
 };
+describe("native value trace seed admission", () => {
+  it("preserves the exact abort reason before attempting a seed", async () => {
+    const reason = { request: "cancel before native trace" };
+    const attempted: unknown[] = [];
+    const result = await traceNativeValues(
+      {
+        execute: async (operation, parameters) => {
+          attempted.push([operation, parameters]);
+          return analysis.execute(operation, parameters);
+        },
+      },
+      { procedure: "0x1000" },
+      AbortSignal.abort(reason),
+    );
+    if (result.ok) throw new Error("Expected pre-seed cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+    expect(attempted).toEqual([]);
+  });
+
+  it.each([
+    new AnalysisInputError("analyze_function", {
+      userMessage: "Unknown selector: missing",
+    }),
+    new NoBinaryOpenError(),
+    new AnalysisResourceConstraintError(
+      "analyze_function",
+      "capacity",
+      "Provider is busy",
+      null,
+      { retryable: true },
+    ),
+    new AnalysisCancelledError("analyze_function"),
+  ])("preserves the original seed failure object: $_tag", async (failure) => {
+    const attempted: unknown[] = [];
+    const result = await traceNativeValues(
+      {
+        execute: async (operation, parameters) => {
+          attempted.push([operation, parameters]);
+          return err(failure);
+        },
+      },
+      { procedure: "missing" },
+    );
+    if (result.ok) throw new Error("Expected seed failure");
+    expect(result.error).toBe(failure);
+    expect(attempted).toEqual([["analyze_function", { procedure: "missing" }]]);
+  });
+
+  it("retains a successful seed without def-use as a useful unknown trace", async () => {
+    const base = functionDossierSchema.parse(ghidraFunctionDossier());
+    const result = await traceNativeValues(
+      {
+        execute: async () =>
+          ok(
+            createAnalysisExecution(
+              { ...base, native_value_flow: null },
+              provider,
+              { subject },
+            ),
+          ),
+      },
+      { procedure: base.procedure.address },
+    );
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value)).toMatchObject({
+      target_sha256: subject.sha256,
+      decompilations: 1,
+      procedures: [
+        expect.objectContaining({ address: base.procedure.address }),
+      ],
+      unknowns: [
+        {
+          procedure: base.procedure.address,
+          address: null,
+          reason: EXPECTED_UNRECORDED_VALUE_FLOW,
+        },
+      ],
+    });
+  });
+
+  it("preserves an explicit unavailable reason for that procedure", async () => {
+    const base = functionDossierSchema.parse(ghidraFunctionDossier());
+    const providerReason = "selected procedure has no p-code model";
+    const result = await traceNativeValues(
+      {
+        execute: async () =>
+          ok(
+            createAnalysisExecution(
+              {
+                ...base,
+                native_value_flow: {
+                  available: false,
+                  reason: providerReason,
+                  limitations: [],
+                },
+              },
+              provider,
+              { subject },
+            ),
+          ),
+      },
+      { procedure: base.procedure.address },
+    );
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value).unknowns).toEqual([
+      {
+        procedure: base.procedure.address,
+        address: null,
+        reason: providerReason,
+      },
+    ]);
+  });
+});
+
 describe("native value parameter-use node membership", () => {
   it("retains only parameter uses whose parameter nodes fit the node budget", async () => {
     const operationCount = 3_000;
@@ -162,7 +290,8 @@ describe("native value parameter-use node membership", () => {
           kind: "parameter",
         }),
       ],
-      truncated: true,
+      page_truncated: true,
+      traversal: { status: "complete" },
     });
     expect(includedResult.edges).toHaveLength(parameterUseCount);
 
@@ -180,8 +309,16 @@ describe("native value parameter-use node membership", () => {
       total_edges: 0,
       nodes: [expect.objectContaining({ kind: "operation" })],
       edges: [],
-      truncated: true,
+      page_truncated: true,
+      traversal: { status: "truncated", reasons: ["max_nodes"] },
     });
+    expect(omittedResult.unknowns).toEqual([
+      {
+        procedure: procedureAddress,
+        address: null,
+        reason: "Node budget reached",
+      },
+    ]);
   });
 
   it.each([3, 4])(
@@ -250,46 +387,6 @@ describe("native value parameter-use node membership", () => {
     },
   );
 });
-
-const nativeFlowDossier = (
-  base: ReturnType<typeof functionDossierSchema.parse>,
-  facts: {
-    address: string;
-    name: string;
-    operations: ReturnType<typeof node>[];
-    parameters: { ordinal: number; name: string; data_type: string }[];
-  },
-) => {
-  const { address, name, operations, parameters } = facts;
-  return jsonValueSchema.parse({
-    ...base,
-    procedure: {
-      address,
-      name,
-      classification: null,
-      body: {
-        available: false,
-        reason: "The provider did not report complete function body ranges.",
-      },
-      signature: null,
-      locals: [],
-    },
-    native_value_flow: {
-      available: true,
-      provenance: "ghidra-high-pcode",
-      operations,
-      def_use: [],
-      effects: [],
-      parameters,
-      parameter_uses: [],
-      truncated: false,
-      omitted_operations_lower_bound: 0,
-      known_omitted_inputs: 0,
-      known_omitted_edges: 0,
-      limitations: [],
-    },
-  });
-};
 
 const callBindingAnalysis = (input: {
   readonly callerAddress: string;
@@ -405,6 +502,11 @@ describe("native value failed-callee traversal", () => {
         );
       },
     };
+    const expectedCalls = [
+      { source: "0x1000/bad-1", target: "0x2000" },
+      { source: "0x1000/bad-2", target: "0x2000" },
+      { source: "0x1000/good", target: "0x3000" },
+    ];
     // A new invocation retries the failed selector: failures are not cached
     // across traces, and successful procedure identity remains separate.
     for (let run = 0; run < 2; run++) {
@@ -426,10 +528,86 @@ describe("native value failed-callee traversal", () => {
         address: null,
         reason: expect.stringContaining("Callee unavailable"),
       });
-      expect(trace.edges.filter(({ kind }) => kind === "call")).toHaveLength(3);
-      expect(trace.truncated).toBe(false);
+      expect(
+        trace.edges
+          .filter(({ kind }) => kind === "call")
+          .map(({ source, target }) => ({ source, target })),
+      ).toEqual(expectedCalls);
+      // A failed callee is an explicit unknown, not a traversal budget stop.
+      expect(trace).toMatchObject({
+        page_truncated: false,
+        traversal: { status: "complete" },
+        truncated: false,
+      });
     }
+    const capped = await traceNativeValues(port, {
+      procedure: "0x1000",
+      max_functions: 3,
+      max_edges: 2,
+    });
+    if (!capped.ok) throw capped.error;
+    const cappedTrace = nativeValueTraceSchema.parse(capped.value);
+    expect(
+      cappedTrace.edges.map(({ source, target }) => ({ source, target })),
+    ).toEqual(expectedCalls.slice(0, 2));
+    expect(cappedTrace).toMatchObject({
+      page_truncated: false,
+      traversal: { status: "truncated", reasons: ["max_edges"] },
+      truncated: true,
+    });
+    expect(cappedTrace.unknowns).toContainEqual({
+      procedure: "0x1000",
+      address: null,
+      reason: "Edge budget reached",
+    });
   });
+});
+
+it("preserves and deduplicates source value-flow limitations across analyzed functions", async () => {
+  const base = functionDossierSchema.parse(ghidraFunctionDossier());
+  const caller = functionDossierSchema.parse(
+    nativeFlowDossier(base, {
+      address: "0x1000",
+      name: "caller",
+      operations: [node("call", "0x1000", "CALL")],
+      parameters: [],
+    }),
+  );
+  const callee = functionDossierSchema.parse(
+    nativeFlowDossier(base, {
+      address: "0x2000",
+      name: "callee",
+      operations: [],
+      parameters: [],
+    }),
+  );
+  if (
+    !caller.native_value_flow?.available ||
+    !callee.native_value_flow?.available
+  )
+    throw new Error("Expected available fixture value flow");
+  caller.native_value_flow.limitations = ["Shared provider caveat."];
+  callee.native_value_flow.limitations = [
+    "Shared provider caveat.",
+    "Callee-specific caveat.",
+  ];
+  const result = await traceNativeValues(
+    callBindingAnalysis({
+      callerAddress: "0x1000",
+      calleeAddress: "0x2000",
+      caller,
+      callee,
+    }),
+    { procedure: "0x1000", max_functions: 2 },
+  );
+  if (!result.ok) throw result.error;
+  const limitations = nativeValueTraceSchema.parse(result.value).limitations;
+  expect(limitations).toContain(
+    "Fixture (fixture 1) analyze_function: Callee-specific caveat.",
+  );
+  expect(
+    limitations.filter((item) => item.includes("Shared provider caveat.")),
+  ).toEqual(["Fixture (fixture 1) analyze_function: Shared provider caveat."]);
 });
 
 describe("native value call-binding fan-out", () => {
@@ -542,7 +720,7 @@ describe("native value call-binding fan-out", () => {
     expect(completeResult).toMatchObject({
       total_nodes: callCount + 2,
       total_edges: callCount * 3,
-      truncated: false,
+      traversal: { status: "complete" },
       unknowns: [],
     });
     expect(edgeShape(completeResult.edges)).toEqual(expectedEdges);
@@ -556,7 +734,8 @@ describe("native value call-binding fan-out", () => {
     expect(cappedResult).toMatchObject({
       total_nodes: callCount + 2,
       total_edges: callCount * 3 - 1,
-      truncated: true,
+      traversal: { status: "truncated", reasons: ["max_edges"] },
+      unknowns: [budgetUnknown(callerAddress, "Edge budget reached")],
     });
     expect(edgeShape(cappedResult.edges)).toEqual(
       expectedEdges.slice(0, callCount * 3 - 1),
@@ -571,12 +750,15 @@ describe("native value call-binding fan-out", () => {
     expect(nodeCappedResult).toMatchObject({
       total_nodes: callCount + 1,
       total_edges: callCount * 2,
-      truncated: true,
-      unknowns: Array.from({ length: callCount }, () => ({
-        procedure: callerAddress,
-        address: null,
-        reason: `Parameter bindings for ${calleeAddress} are unavailable or omitted`,
-      })),
+      traversal: { status: "truncated", reasons: ["max_nodes"] },
+      unknowns: [
+        budgetUnknown(calleeAddress, "Node budget reached"),
+        ...Array.from({ length: callCount }, () => ({
+          procedure: callerAddress,
+          address: null,
+          reason: `Parameter bindings for ${calleeAddress} are unavailable or omitted`,
+        })),
+      ],
     });
     expect(edgeShape(nodeCappedResult.edges)).toEqual(
       expectedEdges.filter(({ kind }) => kind !== "argument-binding"),
@@ -593,6 +775,8 @@ describe("bounded native value dependency composition", () => {
     expect(bounded.ok).toBe(true);
     if (bounded.ok)
       expect(bounded.value).toMatchObject({
+        page_truncated: false,
+        traversal: { status: "truncated", reasons: ["max_functions"] },
         truncated: true,
         decompilations: 1,
       });
@@ -602,7 +786,12 @@ describe("bounded native value dependency composition", () => {
     });
     expect(page.ok).toBe(true);
     if (page.ok)
-      expect(page.value).toMatchObject({ total_nodes: 3, next_offset: 1 });
+      expect(page.value).toMatchObject({
+        total_nodes: 3,
+        next_offset: 1,
+        page_truncated: true,
+        traversal: { status: "complete" },
+      });
     const ambiguous = await traceNativeValues(
       {
         execute: async (operation, parameters, options) => {
@@ -639,6 +828,10 @@ describe("bounded native value dependency composition", () => {
       expect(ambiguous.value).toMatchObject({
         decompilations: 1,
         edges: [expect.objectContaining({ status: "candidate" })],
+        traversal: {
+          status: "truncated",
+          reasons: ["ambiguous_call_candidates"],
+        },
       });
   });
   it("propagates cancellation and rejects cross-target dependencies", async () => {
@@ -677,6 +870,25 @@ describe("bounded native value dependency composition", () => {
       ok: false,
       error: { _tag: "AnalysisOutputError" },
     });
+  });
+
+  it("returns typed cancellation when the caller aborts with the final provider reply", async () => {
+    const controller = new AbortController();
+    const reason = { request: "stop trace" };
+    const result = await traceNativeValues(
+      {
+        execute: async (operation, parameters, options) => {
+          const value = await analysis.execute(operation, parameters, options);
+          if (parameters.procedure === "0x2000") controller.abort(reason);
+          return value;
+        },
+      },
+      { procedure: "0x1000" },
+      controller.signal,
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
   });
 });
 
@@ -727,11 +939,19 @@ describe("native value node byte budgets", () => {
     );
     if (!result.ok) throw result.error;
     expect(nativeValueTraceSchema.parse(result.value)).toMatchObject({
+      traversal: { status: "truncated", reasons: ["node_payload_bytes"] },
       truncated: true,
       total_nodes: 0,
       total_edges: 0,
       nodes: [],
       edges: [],
+      unknowns: [
+        {
+          procedure: "0x1000",
+          address: null,
+          reason: "Node payload budget reached",
+        },
+      ],
     });
   });
 
@@ -765,6 +985,7 @@ describe("native value node byte budgets", () => {
     if (!result.ok) throw result.error;
     const trace = nativeValueTraceSchema.parse(result.value);
     expect(trace).toMatchObject({
+      traversal: { status: "truncated", reasons: ["node_payload_bytes"] },
       truncated: true,
       total_nodes: 2,
       total_edges: 0,
@@ -805,6 +1026,7 @@ describe("native value node byte budgets", () => {
     if (!result.ok) throw result.error;
     const trace = nativeValueTraceSchema.parse(result.value);
     expect(trace).toMatchObject({
+      traversal: { status: "truncated", reasons: ["node_payload_bytes"] },
       truncated: true,
       total_nodes: 2,
       total_edges: 1,
@@ -850,7 +1072,10 @@ describe("native value byte-bound call bindings", () => {
     );
     if (!result.ok) throw result.error;
     const trace = nativeValueTraceSchema.parse(result.value);
-    expect(trace.truncated).toBe(true);
+    expect(trace).toMatchObject({
+      traversal: { status: "truncated", reasons: ["node_payload_bytes"] },
+      truncated: true,
+    });
     expect(trace.nodes.map(({ kind }) => kind)).toEqual([
       "operation",
       "operation",
@@ -865,4 +1090,575 @@ describe("native value byte-bound call bindings", () => {
       }),
     );
   });
+});
+
+describe("native value validation failure provenance", () => {
+  it.each(["call-targets", "target-digest"] as const)(
+    "retains the exact provider observation for invalid %s",
+    async (failure) => {
+      let expected:
+        | ReturnType<typeof createAnalysisExecutionEvidence>
+        | undefined;
+      const result = await traceNativeValues(
+        {
+          execute: async (operation, parameters, options) => {
+            const execution = await analysis.execute(
+              operation,
+              parameters,
+              options,
+            );
+            if (!execution.ok) return execution;
+            if (
+              (failure === "call-targets" &&
+                operation === "resolve_native_call_targets") ||
+              (failure === "target-digest" && parameters.procedure === "0x2000")
+            ) {
+              const observation = {
+                ...execution.value,
+                ...(failure === "call-targets"
+                  ? { result: { malformed: "call targets" } }
+                  : { subject: { ...subject, sha256: "b".repeat(64) } }),
+                rawResult: { original: "provider output" },
+                limitations: ["Provider coverage is partial"],
+              };
+              expected = createAnalysisExecutionEvidence(
+                operation,
+                parameters,
+                observation,
+                "observed",
+              );
+              return ok(observation);
+            }
+            return execution;
+          },
+        },
+        { procedure: "0x1000" },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error._tag).toBe("AnalysisOutputError");
+      expect(expected).toBeDefined();
+      expect(result.error.partialObservation).toEqual(expected);
+    },
+  );
+});
+
+const budgetUnknown = (procedure: string, reason: string) => ({
+  procedure,
+  address: null,
+  reason,
+});
+
+const traced = async (
+  port: AnalysisOperationPort,
+  request: Record<string, unknown>,
+) => {
+  const result = await traceNativeValues(port, request);
+  if (!result.ok) throw result.error;
+  return nativeValueTraceSchema.parse(result.value);
+};
+
+const omittedBindings = (callee: string, callers: readonly string[]) =>
+  callers.map((procedure) =>
+    budgetUnknown(
+      procedure,
+      `Parameter bindings for ${callee} are unavailable or omitted`,
+    ),
+  );
+const edgeKey = (edge: { source: string; target: string; kind: string }) =>
+  `${edge.kind} ${edge.source} ${edge.target}`;
+
+describe("native value trace page omission", () => {
+  it("assembles every page of a complete trace without reporting traversal truncation", async () => {
+    const { port } = valueTraceDiamond();
+    const request = { procedure: "0x1000", max_depth: 1 };
+    const complete = await traced(port, request);
+    expect(complete).toMatchObject({
+      total_nodes: 11,
+      total_edges: 9,
+      next_offset: null,
+      page_truncated: false,
+      traversal: { status: "complete" },
+      truncated: false,
+      unknowns: [],
+    });
+    const pages: (typeof complete)[] = [];
+    for (let offset: number | null = 0; offset !== null;) {
+      const page = await traced(port, { ...request, offset, limit: 2 });
+      pages.push(page);
+      offset = page.next_offset;
+    }
+    expect(pages).toHaveLength(6);
+    for (const page of pages)
+      expect(page).toMatchObject({
+        total_nodes: 11,
+        total_edges: 9,
+        page_truncated: true,
+        traversal: { status: "complete" },
+        truncated: true,
+        unknowns: [],
+      });
+    expect(pages.at(-1)).toMatchObject({ next_offset: null, nodes: [{}] });
+    expect(pages.flatMap(({ nodes }) => nodes)).toEqual(complete.nodes);
+    expect(pages.flatMap(({ edges }) => edges.map(edgeKey)).sort()).toEqual(
+      complete.edges.map(edgeKey).sort(),
+    );
+
+    expect(await traced(port, { ...request, limit: 11 })).toMatchObject({
+      next_offset: null,
+      page_truncated: false,
+      truncated: false,
+    });
+  });
+
+  it("keeps a page beyond the retained nodes separate from traversal truncation", async () => {
+    const { port } = valueTraceDiamond();
+    expect(
+      await traced(port, { procedure: "0x1000", max_depth: 1, offset: 100 }),
+    ).toMatchObject({
+      nodes: [],
+      edges: [],
+      total_nodes: 11,
+      next_offset: null,
+      page_truncated: true,
+      traversal: { status: "complete" },
+    });
+  });
+
+  it("does not report an exactly filled node or edge budget as truncation", async () => {
+    const { port } = valueTraceDiamond();
+    expect(
+      await traced(port, {
+        procedure: "0x1000",
+        max_depth: 1,
+        max_nodes: 11,
+        max_edges: 9,
+      }),
+    ).toMatchObject({
+      total_nodes: 11,
+      total_edges: 9,
+      traversal: { status: "complete" },
+      truncated: false,
+      unknowns: [],
+    });
+  });
+});
+
+describe("native value traversal budgets", () => {
+  it.each([
+    {
+      label: "node",
+      budgets: { max_nodes: 9 },
+      reasons: ["max_nodes"],
+      unknowns: [
+        { procedure: "0x3000", address: null, reason: "Node budget reached" },
+        ...omittedBindings("0x3000", ["0x1000", "0x2000"]),
+      ],
+      nodes: 9,
+    },
+    {
+      label: "edge",
+      budgets: { max_edges: 2 },
+      reasons: ["max_edges"],
+      unknowns: [
+        { procedure: "0x1000", address: null, reason: "Edge budget reached" },
+        ...omittedBindings("0x2000", ["0x1000"]),
+      ],
+      nodes: 4,
+    },
+    {
+      label: "node and edge",
+      budgets: { max_nodes: 9, max_edges: 4 },
+      reasons: ["max_nodes", "max_edges"],
+      unknowns: [
+        { procedure: "0x3000", address: null, reason: "Node budget reached" },
+        { procedure: "0x3000", address: null, reason: "Edge budget reached" },
+        ...omittedBindings("0x3000", ["0x1000", "0x2000"]),
+      ],
+      nodes: 9,
+    },
+  ])(
+    "names the observed $label budget on every page, including the last",
+    async ({ budgets, reasons, unknowns, nodes }) => {
+      const { port } = valueTraceDiamond();
+      const request = { procedure: "0x1000", max_depth: 1, ...budgets };
+      const unpaged = await traced(port, request);
+      expect(unpaged).toMatchObject({
+        total_nodes: nodes,
+        next_offset: null,
+        page_truncated: false,
+        traversal: { status: "truncated", reasons },
+        truncated: true,
+        unknowns,
+      });
+      const last = await traced(port, {
+        ...request,
+        offset: nodes - 1,
+        limit: 3,
+      });
+      expect(last).toMatchObject({
+        nodes: [{ id: unpaged.nodes.at(-1)?.id }],
+        next_offset: null,
+        page_truncated: true,
+        traversal: { status: "truncated", reasons },
+        truncated: true,
+        unknowns,
+      });
+    },
+  );
+
+  it("stops resolving call sites once the edge budget rejects a call", async () => {
+    const { port, resolved, analyzed } = valueTraceDiamond();
+    const trace = await traced(port, {
+      procedure: "0x1000",
+      max_depth: 1,
+      max_edges: 1,
+    });
+    expect(trace).toMatchObject({
+      traversal: { status: "truncated", reasons: ["max_edges"] },
+      unknowns: [
+        { procedure: "0x1000", address: null, reason: "Edge budget reached" },
+      ],
+    });
+    expect(trace.edges.map(({ kind }) => kind)).toEqual(["def-use"]);
+    expect(resolved).toEqual(["0x1004"]);
+    expect(analyzed).toEqual(["0x1000"]);
+  });
+});
+
+describe("native value traversal limits and policies", () => {
+  it("reports a depth limit only when no shallower path analyzes the destination", async () => {
+    const shared = valueTraceDiamond();
+    expect(
+      await traced(shared.port, { procedure: "0x1000", max_depth: 1 }),
+    ).toMatchObject({ traversal: { status: "complete" }, unknowns: [] });
+    // 0x2000 reaches 0x3000 at the depth limit before the seed's own call does.
+    expect(shared.analyzed).toEqual(["0x1000", "0x2000", "0x3000"]);
+
+    expect(
+      await traced(valueTraceDiamond().port, {
+        procedure: "0x1000",
+        max_depth: 0,
+      }),
+    ).toMatchObject({
+      traversal: { status: "truncated", reasons: ["max_depth"] },
+      unknowns: [
+        {
+          procedure: "0x1000",
+          address: "0x1004",
+          reason: "Call depth budget reached",
+        },
+        {
+          procedure: "0x1000",
+          address: "0x1008",
+          reason: "Call depth budget reached",
+        },
+        ...omittedBindings("0x2000", ["0x1000"]),
+        ...omittedBindings("0x3000", ["0x1000"]),
+      ],
+    });
+  });
+
+  it("attributes a queued destination to the decompilation budget, not depth", async () => {
+    expect(
+      await traced(valueTraceDiamond().port, {
+        procedure: "0x1000",
+        max_depth: 1,
+        max_functions: 2,
+      }),
+    ).toMatchObject({
+      traversal: { status: "truncated", reasons: ["max_functions"] },
+      unknowns: [
+        {
+          procedure: "0x3000",
+          address: null,
+          reason: "decompilation budget reached",
+        },
+        ...omittedBindings("0x3000", ["0x1000", "0x2000"]),
+      ],
+    });
+  });
+
+  it("names call-site, provider p-code and ambiguous-candidate limits", async () => {
+    expect(
+      await traced(valueTraceDiamond().port, {
+        procedure: "0x1000",
+        max_depth: 1,
+        max_call_sites: 1,
+      }),
+    ).toMatchObject({
+      traversal: { status: "truncated", reasons: ["max_call_sites"] },
+      unknowns: [
+        {
+          procedure: "0x1000",
+          address: "0x1008",
+          reason: "Call-site resolution budget reached",
+        },
+        {
+          procedure: "0x2000",
+          address: "0x2004",
+          reason: "Call-site resolution budget reached",
+        },
+      ],
+    });
+
+    const limited = staticValueGraph(
+      {
+        "0x1000": {
+          operations: [node("call", "0x1004", "CALL")],
+          pcodeTruncated: true,
+        },
+      },
+      { "0x1004": [{ destination: "0x2000", status: "candidate" }] },
+    );
+    expect(await traced(limited.port, { procedure: "0x1000" })).toMatchObject({
+      traversal: {
+        status: "truncated",
+        reasons: ["provider_pcode_truncated", "ambiguous_call_candidates"],
+      },
+      unknowns: [
+        {
+          procedure: "0x1000",
+          address: null,
+          reason: "Provider p-code was truncated",
+        },
+        {
+          procedure: "0x1000",
+          address: "0x1004",
+          reason: "Ambiguous call candidates were not traversed",
+        },
+      ],
+    });
+    expect(limited.analyzed).toEqual(["0x1000"]);
+  });
+});
+
+describe("recovered call input bindings", () => {
+  it("locates recovered operands without inventing formal or variadic parameters", async () => {
+    const trace = await traced(valueTraceUnboundArguments().port, {
+      procedure: "0x1000",
+    });
+    const call = trace.nodes.find(({ id }) => id === "0x1000/call")!;
+    expect(
+      trace.edges.filter(({ kind }) => kind === "argument-binding"),
+    ).toMatchObject([
+      { source: call.id, target: "0x2000/parameter:0", input_index: 1 },
+    ]);
+    expect(trace.unknowns).toContainEqual({
+      procedure: "0x1000",
+      address: "0x1010",
+      reason: expect.stringContaining("no recovered parameter binding"),
+      call_inputs: {
+        call_node_id: call.id,
+        destination: "0x2000",
+        evidence_id: call.evidence_id,
+        input_indices: [2, 3],
+      },
+    });
+    expect(trace.traversal).toEqual({ status: "complete" });
+  });
+
+  it("keeps binding facts when a second alias resolves to an already analyzed callee", async () => {
+    const graph = staticValueGraph(
+      {
+        "0x1000": {
+          operations: [
+            node("call", "0x1010", "CALL"),
+            node("again", "0x1020", "CALL"),
+          ],
+        },
+        "0x2000": {
+          operations: [node("return", "0x2010", "RETURN")],
+          parameters: [{ ordinal: 0, name: "value", data_type: "/int" }],
+        },
+      },
+      {
+        "0x1010": [{ destination: "callee", status: "direct" }],
+        "0x1020": [{ destination: "also_callee", status: "direct" }],
+      },
+      { procedureAliases: { callee: "0x2000", also_callee: "0x2000" } },
+    );
+    const trace = await traced(graph.port, { procedure: "0x1000" });
+    expect(
+      trace.edges.filter(({ kind }) => kind === "argument-binding"),
+    ).toMatchObject([
+      { source: "0x1000/call", target: "0x2000/parameter:0", input_index: 1 },
+      { source: "0x1000/again", target: "0x2000/parameter:0", input_index: 1 },
+    ]);
+    expect(
+      trace.edges.filter(({ kind }) => kind === "return-binding"),
+    ).toMatchObject([
+      { source: "0x2000/return", target: "0x1000/call" },
+      { source: "0x2000/return", target: "0x1000/again" },
+    ]);
+    expect(trace.procedures.map(({ address }) => address)).toEqual([
+      "0x1000",
+      "0x2000",
+    ]);
+    expect(graph.analyzed).toEqual(["0x1000", "callee", "also_callee"]);
+    expect(trace.unknowns).toEqual([]);
+  });
+});
+
+it.each([
+  { max_depth: 0 },
+  { max_functions: 1 },
+  { max_nodes: 2 },
+  { max_edges: 1 },
+])(
+  "does not claim examined binding gaps after traversal refusal %j",
+  async (limits) => {
+    const trace = await traced(valueTraceUnboundArguments().port, {
+      procedure: "0x1000",
+      ...limits,
+    });
+    expect(trace.traversal.status).toBe("truncated");
+    expect(
+      trace.unknowns.some(({ call_inputs }) => call_inputs !== undefined),
+    ).toBe(false);
+  },
+);
+
+it.each([false, true])(
+  "keeps partial parameter recovery unknown (provider truncated=%s)",
+  async (truncated) => {
+    const graph = staticValueGraph(
+      {
+        "0x1000": { operations: [node("call", "0x1010", "CALL")] },
+        "0x2000": { operations: [], pcodeTruncated: truncated },
+      },
+      { "0x1010": [{ destination: "0x2000", status: "direct" }] },
+    );
+    const trace = await traced(graph.port, { procedure: "0x1000" });
+    const located = trace.unknowns.filter(
+      ({ call_inputs }) => call_inputs !== undefined,
+    );
+    expect(located).toHaveLength(truncated ? 0 : 1);
+    if (!truncated) expect(located[0]?.call_inputs?.input_indices).toEqual([1]);
+  },
+);
+
+it("does not invent a binding unknown for a fully examined zero-argument call", async () => {
+  const graph = staticValueGraph(
+    {
+      "0x1000": {
+        operations: [{ ...node("call", "0x1010", "CALL"), inputs: [scalar] }],
+      },
+      "0x2000": { operations: [] },
+    },
+    { "0x1010": [{ destination: "0x2000", status: "direct" }] },
+  );
+  expect((await traced(graph.port, { procedure: "0x1000" })).unknowns).toEqual(
+    [],
+  );
+});
+
+it("retains binding-gap indices even when paging omits their call node", async () => {
+  const trace = await traced(valueTraceUnboundArguments().port, {
+    procedure: "0x1000",
+    offset: 1,
+    limit: 1,
+  });
+  expect(trace.nodes.every(({ id }) => id !== "0x1000/call")).toBe(true);
+  expect(trace.unknowns).toContainEqual(
+    expect.objectContaining({
+      call_inputs: expect.objectContaining({
+        call_node_id: "0x1000/call",
+        input_indices: [2, 3],
+      }),
+    }),
+  );
+  expect(trace.page_truncated).toBe(true);
+  expect(trace.traversal.status).toBe("complete");
+});
+
+it("binds each exact call destination once when resolution repeats it", async () => {
+  const graph = staticValueGraph(
+    {
+      "0x1000": {
+        operations: [
+          {
+            ...node("call", "0x1010", "CALL"),
+            inputs: Array.from({ length: 1_001 }, () => scalar),
+          },
+        ],
+      },
+      "0x2000": {
+        operations: [],
+        parameters: [{ ordinal: 0, name: "fixed", data_type: "/int" }],
+      },
+    },
+    {
+      "0x1010": Array.from({ length: 16 }, () => ({
+        destination: "0x2000",
+        status: "direct" as const,
+      })),
+    },
+  );
+  const trace = await traced(graph.port, { procedure: "0x1000" });
+  const gaps = trace.unknowns.flatMap(({ call_inputs }) =>
+    call_inputs === undefined ? [] : [call_inputs],
+  );
+  expect(gaps).toHaveLength(1);
+  expect(gaps[0]?.input_indices).toEqual(
+    Array.from({ length: 999 }, (_, index) => index + 2),
+  );
+  expect(
+    trace.edges.filter(({ kind }) => kind === "argument-binding"),
+  ).toHaveLength(1);
+  expect(trace.edges.filter(({ kind }) => kind === "call")).toHaveLength(16);
+  expect(graph.analyzed).toEqual(["0x1000", "0x2000"]);
+});
+
+it("requires an Evidence owner for aliases of an already analyzed procedure", async () => {
+  const graph = staticValueGraph(
+    {
+      "0x1000": { operations: [node("call", "0x1010", "CALL")] },
+      "0x2000": { operations: [] },
+    },
+    {
+      "0x1010": [
+        { destination: "callee", status: "direct" },
+        { destination: "also_callee", status: "direct" },
+      ],
+    },
+    { procedureAliases: { callee: "0x2000", also_callee: "0x2000" } },
+  );
+  let expected: ReturnType<typeof createAnalysisExecutionEvidence> | undefined;
+  const result = await executeComposedWorkflow(graph.port, (owned) =>
+    traceNativeValuesCore(
+      {
+        execute: async (operation, parameters, options) => {
+          const execution = await owned.execute(operation, parameters, options);
+          if (
+            !execution.ok ||
+            operation !== "analyze_function" ||
+            parameters.procedure !== "also_callee"
+          )
+            return execution;
+          const { evidenceId: _evidenceId, ...unowned } = execution.value;
+          expected = createAnalysisExecutionEvidence(
+            operation,
+            parameters,
+            unowned,
+            "observed",
+          );
+          return ok(unowned);
+        },
+      },
+      { procedure: "0x1000" },
+    ),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      operation: "trace_native_values",
+    },
+  });
+  if (result.ok)
+    throw new Error("An unowned alias must not establish binding identity");
+  expect(expected).toBeDefined();
+  expect(result.error.partialObservation).toEqual(expected);
+  expect(graph.analyzed).toEqual(["0x1000", "callee", "also_callee"]);
 });

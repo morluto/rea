@@ -28,12 +28,14 @@ const target = {
 const stateFor = (scripts: CaptureState["scripts"]): CaptureState => ({
   scripts,
   contexts: new Map(),
+  latestContexts: new Map(),
   eventsObserved: scripts.length,
   eventsRetained: scripts.length,
   eventsDropped: 0,
   metadataBytes: 0,
   scriptsObserved: scripts.length,
   invalidScripts: 0,
+  parseFailedScripts: 0,
   invalidContexts: 0,
   truncated: false,
   truncationReasons: new Set(),
@@ -74,6 +76,7 @@ it("authorizes distinct Inspector locations and preserves stable deduplication",
       {
         rawUrl: firstUrl,
         executionContextKey: "1",
+        executionContextId: 1,
         cdpHash: "first",
         length: 7,
         isModule: false,
@@ -81,6 +84,7 @@ it("authorizes distinct Inspector locations and preserves stable deduplication",
       {
         rawUrl: firstUrl,
         executionContextKey: "1",
+        executionContextId: 1,
         cdpHash: "first",
         length: 7,
         isModule: false,
@@ -88,6 +92,7 @@ it("authorizes distinct Inspector locations and preserves stable deduplication",
       {
         rawUrl: secondUrl,
         executionContextKey: "1",
+        executionContextId: 1,
         cdpHash: "second",
         length: 7,
         isModule: false,
@@ -95,6 +100,7 @@ it("authorizes distinct Inspector locations and preserves stable deduplication",
       {
         rawUrl: "ftp://example.test/unapproved.js",
         executionContextKey: null,
+        executionContextId: null,
         cdpHash: null,
         length: 0,
         isModule: false,
@@ -102,13 +108,20 @@ it("authorizes distinct Inspector locations and preserves stable deduplication",
     ]),
   );
 
-  expect(result.scripts.items.map(({ location }) => location)).toEqual(
+  expect(result.scripts.items).toEqual(
     expect.arrayContaining([
-      { kind: "file", file_path: await realpath(firstPath) },
-      { kind: "file", file_path: await realpath(secondPath) },
+      expect.objectContaining({
+        location: { kind: "file", file_path: await realpath(firstPath) },
+        reported_url: firstUrl,
+      }),
+      expect.objectContaining({
+        location: { kind: "file", file_path: await realpath(secondPath) },
+        reported_url: secondUrl,
+      }),
     ]),
   );
   expect(result.scripts.items).toHaveLength(2);
+  expect(result.scripts.parse_failed_total).toBe(0);
   expect(result.scripts.excluded).toEqual({
     unsupported_location: 1,
     invalid_protocol_value: 0,
@@ -119,6 +132,7 @@ it("authorizes each unique script location through a bounded worker pool", async
   const drafts = Array.from({ length: 200 }, (_, index) => ({
     rawUrl: `file:///fixture/script-${String(index)}.js`,
     executionContextKey: "1",
+    executionContextId: 1,
     cdpHash: `hash-${String(index)}`,
     length: 7,
     isModule: false,
@@ -129,6 +143,7 @@ it("authorizes each unique script location through a bounded worker pool", async
     {
       rawUrl: "ftp://example.test/unapproved.js",
       executionContextKey: null,
+      executionContextId: null,
       cdpHash: null,
       length: 0,
       isModule: false,
@@ -154,6 +169,7 @@ it("authorizes each unique script location through a bounded worker pool", async
   expect(activeUrls.size).toBe(0);
   expect(result.scripts.items).toHaveLength(200);
   expect(result.scripts.observed_total).toBe(202);
+  expect(result.scripts.parse_failed_total).toBe(0);
   expect(result.scripts.excluded).toEqual({
     unsupported_location: 1,
     invalid_protocol_value: 0,
@@ -165,6 +181,7 @@ it("preserves raw script facts without authorizing locations in partial projecti
     {
       rawUrl: "file:///slow-or-unavailable.js?token=retained",
       executionContextKey: "1",
+      executionContextId: 1,
       cdpHash: "observed",
       length: 7,
       isModule: false,
@@ -172,6 +189,7 @@ it("preserves raw script facts without authorizing locations in partial projecti
     {
       rawUrl: "https://example.test/script.js?caller-value=kept",
       executionContextKey: "1",
+      executionContextId: 1,
       cdpHash: "remote",
       length: 12,
       isModule: true,
@@ -179,6 +197,7 @@ it("preserves raw script facts without authorizing locations in partial projecti
     {
       rawUrl: "",
       executionContextKey: "1",
+      executionContextId: 1,
       cdpHash: "anonymous",
       length: 0,
       isModule: false,
@@ -188,6 +207,7 @@ it("preserves raw script facts without authorizing locations in partial projecti
   state.eventsRetained += 1;
   state.contexts.set("1", {
     contextKey: "1",
+    executionContextId: 1,
     state: "created",
     name: "main",
     origin: "file:///slow-or-unavailable.js?token=retained",
@@ -252,13 +272,45 @@ it("preserves raw script facts without authorizing locations in partial projecti
   expect(result.execution_contexts).toEqual([
     {
       context_key: "1",
+      execution_context_id: 1,
       state: "created",
       name: "main",
       origin: "file:///slow-or-unavailable.js?token=retained",
     },
   ]);
-  expect(result.unknowns).toContain(
-    "2 observed script locations remain unverified; raw URLs and script metadata are retained.",
+  expect(result.unknowns).toContainEqual(
+    expect.stringMatching(
+      /2 observed script locations.*unverified.*raw URLs.*metadata.*retained/iu,
+    ),
+  );
+});
+
+it("counts retained unresolved script locations after deduplication in partial captures", async () => {
+  const draft = {
+    rawUrl: "file:///fixture/duplicate.js",
+    executionContextKey: "1",
+    executionContextId: 1,
+    cdpHash: "same",
+    length: 7,
+    isModule: false,
+  };
+  const result = await finalizeInspectorCapture({
+    input: {
+      inspector_endpoint: "http://127.0.0.1:9222",
+      target_id: target.id,
+      observation_ms: 0,
+    },
+    runtime: { product: "Node.js", protocol_version: "1.3", v8_version: null },
+    target,
+    state: stateFor([draft, { ...draft }]),
+    locationMode: "reported",
+  });
+  expect(result.scripts.items).toHaveLength(1);
+  expect(result.scripts.observed_total).toBe(2);
+  expect(result.unknowns).toContainEqual(
+    expect.stringMatching(
+      /1 observed script location.*unverified.*raw URLs.*metadata.*retained/iu,
+    ),
   );
 });
 
@@ -266,6 +318,7 @@ it("waits for active authorization workers to settle before returning a failure"
   const scripts = Array.from({ length: 12 }, (_, index) => ({
     rawUrl: `file:///fixture/failure-${String(index)}.js`,
     executionContextKey: null,
+    executionContextId: null,
     cdpHash: null,
     length: 0,
     isModule: false,
@@ -326,6 +379,7 @@ it("stops finalization when cancellation arrives during location authorization",
     {
       rawUrl: "https://example.test/script.js",
       executionContextKey: null,
+      executionContextId: null,
       cdpHash: null,
       length: 0,
       isModule: false,

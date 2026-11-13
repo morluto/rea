@@ -90,7 +90,10 @@ export async function verifyHopperTerminalInstructions(call) {
       throw new Error(
         `Native fixture procedure ${address} omitted its terminal call`,
       );
-    const dossier = await call("analyze_function", { procedure: address });
+    const dossier = await call("analyze_function", {
+      procedure: address,
+      detail: "complete",
+    });
     const instructions = await call("read_function_instructions", {
       procedure: address,
     });
@@ -160,6 +163,7 @@ async function verifyHopperTerminalComment(call, address, terminal) {
     });
     const annotated = await call("analyze_function", {
       procedure: address,
+      detail: "complete",
     });
     if (
       !annotated.comments.some(

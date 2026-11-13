@@ -1,36 +1,74 @@
+import {
+  ghidraProjectPathSchema,
+  ghidraProgramNameSchema,
+} from "./ghidraExistingProject.js";
 import { z } from "zod";
+import { mcpInputBudgetSchema } from "./mcpInputBudget.js";
 import { isAbsolute } from "node:path";
 
-import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  ConfigurationError,
+  type ConfigurationSettingIssue,
+} from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
+import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 import {
   ghidraCompilerSpecIdSchema,
   ghidraLanguageIdSchema,
 } from "./ghidraLanguageOverride.js";
 import { ghidraDisabledAnalyzersSchema } from "./ghidraDisabledAnalyzers.js";
 import {
-  DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
-  DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
   DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
   providerStartupTimeoutSchema,
 } from "./providerStartupTimeout.js";
 import { mcpInputSchemaProfileSchema } from "./mcpInputSchemaProfile.js";
 import { mcpOutputSchemaProfileSchema } from "./mcpOutputSchemaProfile.js";
+import { mcpToolCatalogProfileSchema } from "./mcpToolCatalogProfile.js";
 import { mcpResponseBudgetSchema } from "./mcpResponseBudget.js";
+import { debuggerSessionLimitEnvironmentShape } from "./debuggerSessionLimits.js";
+import {
+  mcpDoctorDeadlineMsSchema,
+  mcpFirstCatalogBudgetMsSchema,
+  mcpInitializeBudgetMsSchema,
+  mcpToolsListBudgetMsSchema,
+} from "./mcpStartupBudgets.js";
+import { mcpToolFamiliesSchema } from "./mcpToolFamilies.js";
 import { parseLoaderArgs, parseStringArray } from "./parsers.js";
+import { processStartConfigurationSchema } from "./processStart.js";
+import { parseJebMcpEndpoint } from "./jebMcpEndpoint.js";
 
 const environmentSchema = z.object({
+  ...debuggerSessionLimitEnvironmentShape,
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
   REA_MCP_MAX_RESPONSE_BYTES: mcpResponseBudgetSchema.optional(),
+  REA_MCP_MAX_INPUT_ELEMENTS: mcpInputBudgetSchema.optional(),
+  REA_MCP_INITIALIZE_BUDGET_MS: mcpInitializeBudgetMsSchema.optional(),
+  REA_MCP_TOOLS_LIST_BUDGET_MS: mcpToolsListBudgetMsSchema.optional(),
+  REA_MCP_FIRST_CATALOG_BUDGET_MS: mcpFirstCatalogBudgetMsSchema.optional(),
+  REA_MCP_DOCTOR_DEADLINE_MS: mcpDoctorDeadlineMsSchema.optional(),
   REA_MCP_INPUT_SCHEMA_PROFILE: mcpInputSchemaProfileSchema.optional(),
+  REA_MCP_TOOL_FAMILIES: mcpToolFamiliesSchema.optional(),
   REA_MCP_OUTPUT_SCHEMA_PROFILE: mcpOutputSchemaProfileSchema.optional(),
+  REA_MCP_TOOL_CATALOG_PROFILE: mcpToolCatalogProfileSchema.optional(),
   REA_IDA_MCP_CONFIG: z
     .string()
     .min(1)
     .refine(isAbsolute, "REA_IDA_MCP_CONFIG must be absolute")
     .optional(),
-  REA_JEB_MCP_TIMEOUT_MS: providerStartupTimeoutSchema.optional(),
+  REA_JEB_MCP_URL: z
+    .string()
+    .superRefine((value, context) => {
+      const parsed = parseJebMcpEndpoint(value);
+      if (!parsed.ok)
+        context.addIssue({
+          code: "custom",
+          message:
+            typeof parsed.error.cause === "string"
+              ? parsed.error.cause
+              : parsed.error.message,
+        });
+    })
+    .optional(),
   GHIDRA_INSTALL_DIR: z
     .string()
     .min(1)
@@ -46,15 +84,19 @@ const environmentSchema = z.object({
     .min(1)
     .refine(isAbsolute, "REA_GHIDRA_NATIVEAOT_JAR must be absolute")
     .optional(),
-  REA_GHIDRA_STARTUP_TIMEOUT_MS: providerStartupTimeoutSchema.default(
-    DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
-  ),
-  REA_HOPPER_STARTUP_TIMEOUT_MS: providerStartupTimeoutSchema.default(
-    DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
-  ),
   REA_SWIFTC_COMPILE_TIMEOUT_MS: providerStartupTimeoutSchema.default(
     DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
   ),
+  REA_GHIDRA_PROJECT_PATH: ghidraProjectPathSchema.optional(),
+  REA_GHIDRA_CHECKPOINT_DIR: z
+    .string()
+    .min(1)
+    .refine(
+      (value) => value.startsWith("/") && !value.includes("\0"),
+      "must be an absolute POSIX directory path",
+    )
+    .optional(),
+  REA_GHIDRA_PROGRAM_NAME: ghidraProgramNameSchema.optional(),
   REA_GHIDRA_LANGUAGE_ID: ghidraLanguageIdSchema.optional(),
   REA_GHIDRA_COMPILER_SPEC_ID: ghidraCompilerSpecIdSchema.optional(),
   REA_GHIDRA_DISABLED_ANALYZERS: ghidraDisabledAnalyzersSchema.optional(),
@@ -72,11 +114,34 @@ const environmentSchema = z.object({
   HOPPER_TARGET_PATH: z.string().min(1).optional(),
   HOPPER_TARGET_KIND: z.enum(["executable", "database"]).default("executable"),
   HOPPER_LOADER_ARGS_JSON: z.string().optional(),
-  REA_LOG_LEVEL: z
-    .enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"])
-    .default("info"),
+  REA_LOG_LEVEL: processStartConfigurationSchema.shape.REA_LOG_LEVEL,
   REA_REFERENCE_SECRET_PATTERNS_JSON: z.string().default("[]"),
 });
+
+/** Copy producer-owned update facts from a Zod issue without inventing them. */
+const configurationSettingFromIssue = (issue: {
+  readonly path: readonly PropertyKey[];
+  readonly message: string;
+  readonly code: string;
+  readonly params?: Readonly<Record<string, unknown>> | undefined;
+}): ConfigurationSettingIssue => {
+  const setting = String(issue.path[0] ?? "environment");
+  const constraint = issue.message;
+  if (issue.code !== "custom" || issue.params === undefined)
+    return { setting, constraint };
+  const updateMode = issue.params.update_mode;
+  const pendingRestart = issue.params.pending_restart;
+  return {
+    setting,
+    constraint,
+    ...(updateMode === "runtime" || updateMode === "restart"
+      ? { update_mode: updateMode }
+      : {}),
+    ...(typeof pendingRestart === "boolean"
+      ? { pending_restart: pendingRestart }
+      : {}),
+  };
+};
 
 /** Parse the JEB-only timeout at its isolated provider-composition boundary. */
 export const parseJebMcpTimeoutMs = (
@@ -99,7 +164,7 @@ export const parseJebMcpTimeoutMs = (
   );
 };
 
-type Environment = Omit<
+export type Environment = Omit<
   z.infer<typeof environmentSchema>,
   "HOPPER_LOADER_ARGS_JSON" | "REA_REFERENCE_SECRET_PATTERNS_JSON"
 > & {
@@ -113,20 +178,22 @@ export const parseEnvironmentValues = (
   unresolvedSettings: ReadonlySet<string> = new Set(),
 ): Result<Environment, ConfigurationError> => {
   // Unknown client-specific entries are preserved by registration owners and
-  // still cross the child-process boundary. Check their byte admission before
+  // still cross the child-process boundary. Check names and byte admission before
   // the known-setting schema strips them; never include rejected values.
   // Cordis expression values stay unknown, but their literal names are known.
   const keys = new Set([...Object.keys(environment), ...unresolvedSettings]);
   const invalidEntries = [...keys]
     .filter(
       (key) =>
+        key.includes("=") ||
         key.includes("\0") ||
         (Object.hasOwn(environment, key) && environment[key]?.includes("\0")),
     )
     .map((setting) => ({
       setting,
-      constraint:
-        "Environment variable names and values must not contain NUL bytes",
+      constraint: setting.includes("=")
+        ? "Environment variable names must not contain '='"
+        : "Environment variable names and values must not contain NUL bytes",
     }));
   if (invalidEntries.length > 0)
     return err(
@@ -134,13 +201,18 @@ export const parseEnvironmentValues = (
         settings: invalidEntries,
       }),
     );
-  const parsed = environmentSchema.safeParse(environment);
+  // An expression has no known runtime value to validate or default. Its
+  // original text was checked for invalid bytes above and remains with its owner.
+  const literals = Object.fromEntries(
+    Object.entries(environment).filter(([key]) => !unresolvedSettings.has(key)),
+  );
+  const parsed = environmentSchema.safeParse(literals);
   if (!parsed.success) {
     // Zod messages name the constraint, never the rejected value.
-    const settings = parsed.error.issues.map((issue) => ({
-      setting: String(issue.path[0] ?? "environment"),
-      constraint: issue.message,
-    }));
+    // A producer may attach update_mode and pending_restart on a custom issue.
+    const settings = parsed.error.issues.map((issue) =>
+      configurationSettingFromIssue(issue),
+    );
     return err(
       new ConfigurationError("Invalid REA environment configuration", {
         cause: parsed.error,
@@ -176,6 +248,59 @@ export const parseEnvironment = (
   const parsed = parseEnvironmentValues(environment, unresolvedSettings);
   if (!parsed.ok) return parsed;
   const env = parsed.value;
+  if (env.REA_GHIDRA_CHECKPOINT_DIR !== undefined) {
+    const conflicts = [
+      "REA_GHIDRA_PROJECT_PATH",
+      "REA_GHIDRA_SEED_FILE",
+      "REA_GHIDRA_NATIVEAOT_JAR",
+      "REA_GHIDRA_LANGUAGE_ID",
+      "REA_GHIDRA_DISABLED_ANALYZERS",
+    ].filter((key) => Reflect.get(env, key) !== undefined);
+    if (conflicts.length > 0)
+      return err(
+        new ConfigurationError(
+          "Ghidra checkpoints currently support stock fresh-import analysis only",
+          {
+            settings: conflicts.map((setting) => ({
+              setting,
+              constraint: "cannot be combined with REA_GHIDRA_CHECKPOINT_DIR",
+            })),
+          },
+        ),
+      );
+  }
+  const project = env.REA_GHIDRA_PROJECT_PATH;
+  const incompatible =
+    project === undefined
+      ? env.REA_GHIDRA_PROGRAM_NAME === undefined ||
+        unresolvedSettings.has("REA_GHIDRA_PROJECT_PATH")
+        ? []
+        : ["REA_GHIDRA_PROGRAM_NAME"]
+      : [
+          "REA_GHIDRA_LANGUAGE_ID",
+          "REA_GHIDRA_COMPILER_SPEC_ID",
+          "REA_GHIDRA_SEED_FILE",
+          "REA_GHIDRA_DISABLED_ANALYZERS",
+          "REA_GHIDRA_NATIVEAOT_JAR",
+        ].filter(
+          (setting) =>
+            // Blank analyzer lists parse to no override, so they cannot conflict.
+            (setting === "REA_GHIDRA_DISABLED_ANALYZERS"
+              ? env[setting]
+              : environment[setting]) !== undefined,
+        );
+  if (incompatible.length > 0)
+    return err(
+      new ConfigurationError("Invalid existing Ghidra project configuration", {
+        settings: incompatible.map((setting) => ({
+          setting,
+          constraint:
+            project === undefined
+              ? "requires REA_GHIDRA_PROJECT_PATH"
+              : "Import and analysis overrides cannot be combined with an existing project",
+        })),
+      }),
+    );
   // Ghidra's analyzeHeadless accepts -cspec only together with -processor.
   if (
     env.REA_GHIDRA_COMPILER_SPEC_ID !== undefined &&

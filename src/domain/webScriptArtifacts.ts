@@ -1,18 +1,14 @@
 import { z } from "zod";
 import { digestSchema } from "./digests.js";
-import { localPathStringSchema } from "./localPath.js";
+import { absoluteLocalPathStringSchema } from "./localPath.js";
 import { webScriptExportManifestSchema } from "./webScriptExport.js";
 
 /** Select one source from an existing captured-script export. */
 export const selectedWebScriptInputSchema = z.strictObject({
-  manifest_path: localPathStringSchema.describe(
+  manifest_path: absoluteLocalPathStringSchema.describe(
     "Absolute export_web_scripts manifest path",
   ),
-  script_index: z
-    .number()
-    .int()
-    .min(0)
-    .describe("Zero-based index in manifest.scripts"),
+  script_index: z.int().min(0).describe("Zero-based index in manifest.scripts"),
 });
 export type SelectedWebScriptInput = z.output<
   typeof selectedWebScriptInputSchema
@@ -22,7 +18,7 @@ export type SelectedWebScriptInput = z.output<
 export const webArtifactFileSchema = z.strictObject({
   path: z.string().min(1),
   sha256: digestSchema,
-  bytes: z.number().int().min(0),
+  bytes: z.int().min(0),
 });
 
 /** Artifact-port report shared by capture-derived analyses. */

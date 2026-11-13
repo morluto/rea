@@ -1,19 +1,21 @@
 import * as t from "@babel/types";
 
 import { sanitizeBrowserUrl } from "./browserObservation.js";
+import { hasScheme } from "./artifactPathSyntax.js";
 import {
   isNullishJavaScriptSyntax,
   readExactJavaScriptLiteral,
   staticObjectProperty,
+  type ObjectDataPropertyValue,
 } from "./javascript/javascriptAstValues.js";
 
 /** Read a statically known own property value from an object expression. */
 export const objectValue = (
   object: t.ObjectExpression,
   name: string,
-): t.ObjectProperty["value"] | undefined => {
+): ObjectDataPropertyValue | undefined => {
   const result = staticObjectProperty(object, name, isNullishJavaScriptSyntax);
-  return result.status === "explicit" ? result.property.value : undefined;
+  return result.status === "explicit" ? result.value : undefined;
 };
 
 export const objectString = (
@@ -33,7 +35,7 @@ export const isUrlLikeModuleSpecifier = (specifier: string): boolean =>
   specifier.startsWith("/") ||
   specifier.startsWith("./") ||
   specifier.startsWith("../") ||
-  /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(specifier);
+  hasScheme(specifier);
 
 export const resolveSpecifier = (
   specifier: string,
