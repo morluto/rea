@@ -236,11 +236,11 @@ static Handle openRelative(HANDLE parent, const std::wstring& name, DWORD access
 }
 
 static std::string protectedDaclReadback(PACL acl, SECURITY_DESCRIPTOR_CONTROL control, bool root,
-                                       const Security& supplied) {
-  SECURITY_DESCRIPTOR_CONTROL suppliedControl = 0;
-  DWORD suppliedRevision = 0;
-  const bool suppliedKnown = GetSecurityDescriptorControl(
-      const_cast<SECURITY_DESCRIPTOR*>(&supplied.descriptor), &suppliedControl, &suppliedRevision) != FALSE;
+                                       const Security& expected) {
+  SECURITY_DESCRIPTOR_CONTROL expectedControl = 0;
+  DWORD expectedRevision = 0;
+  const bool expectedKnown = GetSecurityDescriptorControl(
+      const_cast<SECURITY_DESCRIPTOR*>(&expected.descriptor), &expectedControl, &expectedRevision) != FALSE;
   const bool present = (control & SE_DACL_PRESENT) != 0;
   const bool protectedDacl = (control & SE_DACL_PROTECTED) != 0;
   std::string text = "Private object requires a present protected DACL; readback present=";
@@ -251,15 +251,15 @@ static std::string protectedDaclReadback(PACL acl, SECURITY_DESCRIPTOR_CONTROL c
   text += acl == nullptr ? "absent" : std::to_string(acl->AceCount);
   text += " root=";
   text += root ? "1" : "0";
-  if (!suppliedKnown) return text + " supplied_control=unavailable";
-  const bool suppliedPresent = (suppliedControl & SE_DACL_PRESENT) != 0;
-  const bool suppliedProtected = (suppliedControl & SE_DACL_PROTECTED) != 0;
-  text += " supplied_present=";
-  text += suppliedPresent ? "1" : "0";
-  text += " supplied_protected=";
-  text += suppliedProtected ? "1" : "0";
-  text += " control_differs=";
-  text += (present == suppliedPresent && protectedDacl == suppliedProtected) ? "0" : "1";
+  if (!expectedKnown) return text + " expected_control=unavailable";
+  const bool expectedPresent = (expectedControl & SE_DACL_PRESENT) != 0;
+  const bool expectedProtected = (expectedControl & SE_DACL_PROTECTED) != 0;
+  text += " expected_present=";
+  text += expectedPresent ? "1" : "0";
+  text += " expected_protected=";
+  text += expectedProtected ? "1" : "0";
+  text += " differs_from_expected=";
+  text += (present == expectedPresent && protectedDacl == expectedProtected) ? "0" : "1";
   return text;
 }
 
