@@ -119,7 +119,6 @@ import {
 } from "./javascriptSemanticCoverage.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
-  javaScriptRuntimeContext,
   javaScriptProgramStrictness,
   parseJavaScriptSource,
   type ParsedJavaScriptSource,

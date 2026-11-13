@@ -16,12 +16,15 @@ describe("managed signature identity", () => {
     );
   });
 
-  it("matches resolved digests and raw digests among themselves", () => {
+  it("keeps different raw digests distinct when resolution is unavailable", () => {
+    expect(signatureIdentity(signature(digest, null))).not.toBe(
+      signatureIdentity(signature("cd".repeat(32), null)),
+    );
+  });
+
+  it("matches resolved digests despite different raw digests", () => {
     expect(signatureIdentity(signature("01".repeat(32), digest))).toBe(
       signatureIdentity(signature("02".repeat(32), digest)),
-    );
-    expect(signatureIdentity(signature(digest, null))).toBe(
-      signatureIdentity(signature(digest, null)),
     );
   });
 });

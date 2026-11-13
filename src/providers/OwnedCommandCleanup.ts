@@ -124,7 +124,7 @@ export const retainOwnedCommandCleanup = (
 };
 
 /** A cancellation keeps its exact inspection record without exposing machine observations. */
-export class ProcessInspectionAnalysisCancelledError extends AnalysisCancelledError {
+class ProcessInspectionAnalysisCancelledError extends AnalysisCancelledError {
   constructor(
     operation: string,
     readonly inspectionFailure: ProcessInspectionFailure,

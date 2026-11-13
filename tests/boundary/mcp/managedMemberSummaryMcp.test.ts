@@ -211,15 +211,14 @@ it("summarizes selected members and pages every original collection after the fi
       detail: "summary",
     }),
   ).toBe(true);
-  const reply = await client.callTool({
-    name: "inspect_managed_members",
-    arguments: { path, type_names, detail: "summary" },
-  });
+  const reply = await client.callTool(
+    {
+      name: "inspect_managed_members",
+      arguments: { path, type_names, detail: "summary" },
+    },
+    { toolDefinition: definition },
+  );
   expect(reply.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, reply.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const receipt = parseEvidence(reply.structuredContent);
   const view = managedMemberSummaryViewResultSchema.parse(
     receipt.normalized_result,

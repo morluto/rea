@@ -706,7 +706,8 @@ const fetchOne = async (
         budget: budget.decodedRecords,
       },
     );
-  } catch (caught: unknown) {
+  } catch (failure: unknown) {
+    let caught = failure;
     if (caught instanceof SourceMapPendingFetch) {
       if (caught.cause instanceof SourceMapDeadlineError) {
         // Native fetch reports abort completion asynchronously. Check the next
@@ -870,7 +871,8 @@ const readBoundedText = async (
       if (value !== undefined) chunks.push(value);
       bytes += nextBytes;
     }
-  } catch (cause: unknown) {
+  } catch (caught: unknown) {
+    let cause = caught;
     // Fetch can error its body with the abort reason before read cancellation.
     // A confirmed errored stream is already terminal and needs only its lock released.
     await Promise.resolve();

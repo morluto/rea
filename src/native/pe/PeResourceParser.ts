@@ -148,13 +148,13 @@ export const parsePeResources = async (
       bytes.subarray(header, header + PE_RESOURCE_DIRECTORY_BYTES),
     );
     const { namedEntries: named, idEntries: ids, entryCount: count } = facts;
+    relative(at, PE_RESOURCE_DIRECTORY_BYTES + PE_RESOURCE_ENTRY_BYTES * count);
     if (count > input.max_entries - examined)
       limit(
         "PE resource directory entry budget exceeded; no partial inventory was returned.",
         "capacity",
       );
     examined += count;
-    relative(at, PE_RESOURCE_DIRECTORY_BYTES + PE_RESOURCE_ENTRY_BYTES * count);
     const directory = {
       path,
       entry_locations: entryLocations,

@@ -69,15 +69,11 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   const args = { capture_path: "/capture.har", format: "har" };
   expect(ajv.validate(inputSchema, args)).toBe(true);
-  const response = await client.callTool({
-    name: "inspect_web_network_capture",
-    arguments: args,
-  });
+  const response = await client.callTool(
+    { name: "inspect_web_network_capture", arguments: args },
+    { toolDefinition: advertised },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const parsed = toolContract("inspect_web_network_capture").outputSchema.parse(
     response.structuredContent,
   );

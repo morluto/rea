@@ -1,3 +1,4 @@
+import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { ElfNotesPort } from "./ElfNotesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -8,7 +9,6 @@ import {
   elfNotesSchema,
   type ElfNotes,
 } from "../../domain/native/elfNotes.js";
-import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
@@ -54,9 +54,7 @@ export class ElfNotesService {
         ),
       );
     const value = report.data;
-    const architecture = BINARY_ARCHITECTURES.find(
-      (supported) => supported === elfArchitecture(value.machine),
-    );
+    const architecture = elfArchitecture(value.machine);
     const locations = [
       { kind: "artifact-path" as const, path: value.artifact.path },
       ...value.tables.map((table) => ({
@@ -93,8 +91,7 @@ const validReport = (
   maxEntries: number,
   maxBytes: number,
 ): boolean => {
-  const inside = ({ offset, bytes }: { offset: number; bytes: number }) =>
-    offset <= report.artifact.bytes - bytes;
+  const inside = insideArtifact(report.artifact.bytes);
   if (
     report.artifact.bytes > maxBytes ||
     report.coverage.examined_entries > maxEntries ||

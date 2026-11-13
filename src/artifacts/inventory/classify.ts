@@ -3,12 +3,10 @@ import {
   nesContainerFormat,
   parseInesLayout,
 } from "../../domain/inesContainer.js";
-import type { GodotPckAdmission } from "../GodotPckLocation.js";
 import {
   resolveArtifactReaderLimits,
   type ArtifactReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import type { PyInstallerAdmission } from "../pyinstaller/PyInstallerAdmission.js";
 import type {
   ArtifactReaderAdmission,
   ArtifactFormatAdmission,

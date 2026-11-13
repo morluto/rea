@@ -33,7 +33,6 @@ import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewServic
 import {
   DEFAULT_BUILD_TEMPLATE_RULES,
   buildEnvironment,
-  canonicalTemplateRules,
   classifyBuildCapture,
   type EnvironmentBuildInput,
 } from "./environmentBuild.js";
@@ -497,12 +496,20 @@ describe("classifyBuildCapture", () => {
   });
 });
 
-describe("canonicalTemplateRules", () => {
-  it("orders rules as the views apply them", () => {
-    expect(
-      canonicalTemplateRules(["prefix-variance", "after-uid-literal"]),
-    ).toEqual(["after-uid-literal", "prefix-variance"]);
-  });
+it("reports template rules in the order the views apply them", async () => {
+  const root = await createTestTempDirectory("rea-environment-rule-order-");
+  const built = await buildEnvironment(
+    await buildInput(root, undefined, {
+      dryRun: true,
+      directory: undefined,
+      templateRules: ["prefix-variance", "after-uid-literal"],
+    }),
+  );
+  if (!built.ok) throw built.error;
+  expect(built.value.manifest.template_rules).toEqual([
+    "after-uid-literal",
+    "prefix-variance",
+  ]);
 });
 
 describe("buildEnvironment credential names", () => {
