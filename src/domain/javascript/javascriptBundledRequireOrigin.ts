@@ -398,7 +398,11 @@ const isCanonicalExportGetters = (
   );
 };
 
-/** Webpack's `o(object, key)`: `Object.prototype.hasOwnProperty.call(object, key)`. */
+/**
+ * Webpack's `o(object, key)`: `Object.prototype.hasOwnProperty.call(object, key)`.
+ * The invoked `call` is hasOwnProperty's own property or the inherited
+ * `Function.prototype.call`; a visible write to either replaces the check.
+ */
 const isCanonicalOwnPropertyCheck = (
   write: t.AssignmentExpression,
   state: JavaScriptSemanticAnalysisState,
@@ -409,14 +413,13 @@ const isCanonicalOwnPropertyCheck = (
   return (
     helper !== undefined &&
     callsWith(call, state, ...helper.parameters) &&
-    t.isMemberExpression(call.callee) &&
-    semanticStaticPropertyKey(call.callee.property, call.callee.computed) ===
-      "call" &&
-    isUnmodifiedGlobalReference(call.callee.object, state, [
+    isUnmodifiedGlobalReference(call.callee, state, [
       "Object",
       "prototype",
       "hasOwnProperty",
-    ])
+      "call",
+    ]) &&
+    !state.ambientWrites.covers(["global", "Function", "prototype", "call"])
   );
 };
 

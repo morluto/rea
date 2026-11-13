@@ -574,7 +574,9 @@ include Webpack export getters,
 statements install the bootstrap's own `d` and `o` helpers before the entry
 call and nothing else writes them; a read evaluates the getter's returned
 expression in the completed module. A key also written another way, a replaced
-or reshaped helper, and helpers installed inside another function stay
+or reshaped helper, a visible write to an intrinsic they call
+(`Object.defineProperty`, `Object.prototype.hasOwnProperty` or its `call`, and
+`Function.prototype.call`), and helpers installed inside another function stay
 unresolved. Recovered Electron
 paths retain source ranges, module identities, literal channels and branch
 conditions as static candidates. A channel the IPC call site itself

@@ -2284,6 +2284,18 @@ describe("Webpack harmony export getters", () => {
       },
     ],
     [
+      "a patched hasOwnProperty.call",
+      {
+        runtime: `${DEFINE_GETTERS}\n${OWN_PROPERTY}\nObject.prototype.hasOwnProperty.call = () => false;`,
+      },
+    ],
+    [
+      "a patched Function.prototype.call",
+      {
+        runtime: `${DEFINE_GETTERS}\n${OWN_PROPERTY}\nFunction.prototype.call = () => true;`,
+      },
+    ],
+    [
       "helpers installed after the entry call",
       {
         runtime: `__webpack_require__(3);\n${DEFINE_GETTERS}\n${OWN_PROPERTY}`,
