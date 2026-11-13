@@ -1389,6 +1389,7 @@ CSV records use CRLF line endings; TSV records use LF. Cells containing the
 delimiter, quotes, or line breaks are quoted and embedded quotes are doubled.
 Values are emitted as UTF-8 without Unicode normalization. Missing and `null`
 cells are empty; booleans and finite numbers use their ordinary text forms.
+A row with a single empty cell is written as `""` so readers preserve the record.
 String cells and headers that begin with spreadsheet formula syntax are refused
 with a structured error; unpaired surrogates in selected cells or headers are
 also refused. JSON retains those values unchanged.

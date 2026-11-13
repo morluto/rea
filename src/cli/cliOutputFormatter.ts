@@ -238,10 +238,13 @@ export function* formatDelimitedOutputParts({
 }: PreparedDelimitedOutput): Generator<string> {
   yield `# rea-delimited-v1 ${JSON.stringify(metadata)}${lineEnding}`;
   yield `${encodedHeaders.join(delimiter)}${lineEnding}`;
-  for (const row of rows)
-    yield `${row
+  for (const row of rows) {
+    const encoded = row
       .map((value) => encodeDelimitedScalar(value, format))
-      .join(delimiter)}${lineEnding}`;
+      .join(delimiter);
+    // Readers can skip a blank line; quote the empty field to keep the record.
+    yield `${row.length === 1 && encoded === "" ? '""' : encoded}${lineEnding}`;
+  }
 }
 
 const encodeDelimitedScalar = (
