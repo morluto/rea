@@ -249,9 +249,13 @@ const extensionOf = (path: string | null | undefined): string | null => {
   const normalized = path.replaceAll("/", "\\");
   const slash = normalized.lastIndexOf("\\");
   const stored = slash === -1 ? normalized : normalized.slice(slash + 1);
-  // A `\\?\` path skips normalization, so it keeps the periods and spaces it stores.
+  // Only a filesystem path gets Win32 trimming. A `RelativePath` may hold a URL, where a
+  // trailing period addresses a different resource, and an unexpanded prefix may expand to a
+  // `\\?\` path that skips the pass entirely.
   const name =
-    DEVICE_PATH.test(normalized) || mayExpandToDevicePath(normalized)
+    !isFullPath(normalized) ||
+    DEVICE_PATH.test(normalized) ||
+    mayExpandToDevicePath(normalized)
       ? stored
       : fileNameSegment(stored);
   const dot = name.lastIndexOf(".");

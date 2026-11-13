@@ -952,3 +952,20 @@ it("keeps a path that may expand into a device path as written", async () => {
   // A full path whose prefix is known to be a drive still trims.
   expect(await extensionFor("C:\\Tools\\app.exe.")).toBe(".exe");
 });
+it("does not trim a relative target that may be a URL", async () => {
+  // Without a `LinkInfo` the target comes from `RelativePath`, which can hold a URL. A trailing
+  // period addresses a different resource there, so only a filesystem path is trimmed.
+  const extensionFor = async (relativePath: string) => {
+    const report = await parse(
+      windowsShortcutBytes({ iconLocation: "", linkInfo: null, relativePath }),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "target_extension",
+    );
+    return found?.kind === "target_extension" ? found.extension : undefined;
+  };
+  expect(await extensionFor("https://example.test/app.exe.")).toBeNull();
+  expect(await extensionFor("https://example.test/app.exe")).toBe(".exe");
+  // A full path recorded in `RelativePath` is still a filesystem path and keeps its trim.
+  expect(await extensionFor("C:\\Tools\\app.exe.")).toBe(".exe");
+});
