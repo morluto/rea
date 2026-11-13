@@ -338,7 +338,8 @@ the complete parent Evidence. The reply links that parent's identity and digest;
 export it with `export_evidence_bundle` or read its summary again through
 `inspect_analysis_view`. CLI summaries require `--evidence_output` and return
 the portable bundle path. Omitted or `complete` detail preserves complete inline
-Evidence. Search and reference operations retain their existing contracts.
+Evidence. Class search and reference traces have their own summary and paging
+delivery, described in [Large class and reference inventories](#large-class-and-reference-inventories).
 Symbol summary views admit at most **1 MiB**, including view context. An admitted
 method's source can already consume that amount; a larger combined summary
 fails explicitly instead of silently truncating facts. MCP refusal includes
@@ -383,6 +384,65 @@ without any class record, such as `usage.txt` or `seeds.txt`, is refused before
 JADX is used. Requests read their mappings one at a time, in the same queue as
 the JADX work and under the same operation deadline. A mapping failure therefore never starts or retires the JADX
 session, and a different mapping reuses the loaded APK.
+
+## Large class and reference inventories
+
+`search_android_classes` and `trace_android_references` return every row inline
+when `detail` is omitted or `"complete"`. On an APK with tens of thousands of
+classes that is large: in one measurement an empty-query search of a 110 MB APK
+listing 30,353 class names was 3,329,270 bytes (about 1.05 million tokens), and a
+trace of `kotlin.jvm.internal.Intrinsics` returned 9,101 using nodes in
+5,138,090 bytes. Select `detail: "summary"` to keep the complete result in the
+retaining session and return a bounded summary instead. Complete delivery is
+unchanged.
+
+```sh
+rea search-android-classes /path/Example.apk ""   --detail summary --evidence_output /tmp/classes-evidence.json
+rea trace-android-references /path/Example.apk example.Util   --detail summary --evidence_output /tmp/trace-evidence.json
+```
+
+A class-search summary carries the engine identity, query, `total_classes`,
+counts of matches and repeated names, a **derived** histogram of classes per
+leading two package segments (the 20 largest, with the number of prefixes it does
+not list), a 64-name preview and up to 64 repeated names. A trace summary carries
+the target identity and `total`, counts, derived histograms by provider node kind
+and by top-level class, and a 64-row preview. Preview rows omit `direct_invokes`;
+read those offsets from a page that selects the field. Histograms and previews are
+computed from the retained rows and never replace them. Class-search rows remain
+decompiler display names of top-level classes, so they exclude classes the
+decompiler nests (the same APK has 64,706 DEX class definitions); the summary says
+so under `unknowns`.
+
+Read pages with `inspect_analysis_view`, source kind `retained-evidence` and the
+returned `normalized_result.parent_evidence_id`. The APK is not reopened:
+
+```json
+{
+  "source": { "kind": "retained-evidence", "evidence_id": "ev_..." },
+  "view": {
+    "kind": "android-classes",
+    "collection": "matches",
+    "package_prefix": "com.example.",
+    "offset": 0,
+    "limit": 500
+  }
+}
+```
+
+`android-classes` pages the `matches` or `duplicate_names` collection and accepts
+`indices`, exact `class_names` and, for `matches`, a literal `package_prefix`.
+`android-references` pages the `references` collection and accepts `indices`,
+exact `kinds`, `containing_classes` and `top_classes`, and `fields` to project
+columns such as `direct_invokes`. Every row keeps its original `row_index`; an
+empty filter array matches nothing. Follow `coverage.next_offset` until
+`exhausted`. A page that would exceed the 1 MiB view allowance fails with the
+retained parent ID instead of truncating; lower `limit` or select fewer `fields`.
+
+With `detail: "summary"` an optional `view` selects a page directly in the first
+reply. `view` without summary detail is rejected, and the CLI requires
+`--evidence_output`, then `--view` takes the same JSON. Summary delivery changes
+delivery only: the provider request, the complete Evidence and its raw calls are the
+same as for complete delivery.
 
 ## Link native declarations to JNI candidates
 

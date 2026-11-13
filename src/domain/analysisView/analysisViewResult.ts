@@ -299,6 +299,16 @@ import {
 } from "./androidSymbolView.js";
 import { androidJniSummarySchema } from "./androidJniView.js";
 import {
+  androidClassesSummarySchema,
+  androidReferencesSummarySchema,
+} from "./androidInventoryView.js";
+import {
+  androidClassesViewItemsSchema,
+  androidClassesViewRequestSchema,
+  androidReferencesViewItemsSchema,
+  androidReferencesViewRequestSchema,
+} from "../android/androidInventoryQuery.js";
+import {
   androidJniViewRequestSchema,
   androidJniViewItemsSchema,
 } from "../android/androidJniQuery.js";
@@ -393,6 +403,8 @@ const viewResultBase = {
     "inspect_android_class",
     "inspect_android_method",
     "inspect_android_jni_bindings",
+    "search_android_classes",
+    "trace_android_references",
     "inspect_pcap_capture",
     "inspect_dart_aot",
     "inspect_il2cpp_metadata",
@@ -749,6 +761,45 @@ export const androidJniSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_android_jni_bindings"),
   summary: androidJniSummarySchema,
+});
+export const androidClassesSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("search_android_classes"),
+  summary: androidClassesSummarySchema,
+});
+export const androidClassesPageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("android-classes"),
+  parent_operation: z.literal("search_android_classes"),
+  view: androidClassesViewRequestSchema,
+  items: androidClassesViewItemsSchema,
+  source: z.strictObject({
+    query: z.string(),
+    total_classes: z.int().nonnegative(),
+    coverage: z.literal("complete"),
+    matches: z.int().nonnegative(),
+    duplicate_names: z.int().nonnegative(),
+  }),
+});
+export const androidReferencesSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("trace_android_references"),
+  summary: androidReferencesSummarySchema,
+});
+export const androidReferencesPageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("android-references"),
+  parent_operation: z.literal("trace_android_references"),
+  view: androidReferencesViewRequestSchema,
+  items: androidReferencesViewItemsSchema,
+  source: androidReferencesSummarySchema.pick({
+    class_name: true,
+    method_name: true,
+    overload_index: true,
+    total: true,
+    coverage: true,
+    reference_unit: true,
+  }),
 });
 export const androidJniPageViewResultSchema = z.strictObject({
   ...viewResultBase,
@@ -1394,6 +1445,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     browserScenarioSummaryViewResultSchema,
     androidPackageSummaryViewResultSchema,
     androidJniSummaryViewResultSchema,
+    androidClassesSummaryViewResultSchema,
+    androidReferencesSummaryViewResultSchema,
     androidClassSummaryViewResultSchema,
     androidMethodSummaryViewResultSchema,
     pcapCaptureSummaryViewResultSchema,
@@ -1585,6 +1638,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   androidPackageViewResultSchema,
   androidJniPageViewResultSchema,
+  androidClassesPageViewResultSchema,
+  androidReferencesPageViewResultSchema,
   z.strictObject({
     kind: z.literal("dart-aot"),
     view: dartAotViewRequestSchema,

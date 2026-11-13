@@ -15,6 +15,16 @@ import {
   androidJniReportSchema,
 } from "./androidJniBindings.js";
 import { androidJniViewRequestSchema } from "./androidJniQuery.js";
+import {
+  androidClassesViewRequestSchema,
+  androidReferencesViewRequestSchema,
+} from "./androidInventoryQuery.js";
+import {
+  androidMethodSelectorSchema,
+  androidReferenceSchema,
+} from "./androidReferenceSchemas.js";
+
+export { androidMethodSelectorSchema };
 
 const target = {
   path: localPathStringSchema.describe(
@@ -86,6 +96,22 @@ export const androidPackageInspectionInputSchema =
       view: androidViewRequestSchema.optional(),
     })
     .superRefine(validateAndroidPackageDelivery);
+
+/** Delivery is an adapter/application choice, never a provider analysis option. */
+export const androidInventoryInspectionInputSchemas = {
+  search_android_classes: androidInputSchemas.search_android_classes
+    .extend({
+      detail: z.enum(["complete", "summary"]).optional(),
+      view: androidClassesViewRequestSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery),
+  trace_android_references: androidInputSchemas.trace_android_references
+    .extend({
+      detail: z.enum(["complete", "summary"]).optional(),
+      view: androidReferencesViewRequestSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery),
+} as const;
 
 /** Delivery is an adapter/application choice, never a provider analysis option. */
 export const androidSymbolInspectionInputSchemas = {
@@ -205,12 +231,6 @@ const method = z.strictObject({
   is_constructor: z.boolean(),
   dex_descriptor: dexDescriptorSchema,
 });
-/** Exact member selector shared with follow-up APK method inspection. */
-export const androidMethodSelectorSchema = z.strictObject({
-  class_name: z.string().min(1),
-  method_name: z.string().min(1),
-  overload_index: z.int().nonnegative(),
-});
 const engine = z.strictObject({
   name: z.string().min(1),
   version: z.string().nullable(),
@@ -308,33 +328,7 @@ export const androidResultSchemas = {
         recorded_sites: z.int().nonnegative(),
       })
       .exactOptional(),
-    references: z.array(
-      z.strictObject({
-        kind: z.string(),
-        name: z.string(),
-        reported_full_name: z.string(),
-        containing_class: z.string(),
-        top_class: z.string(),
-        source_line: z.null(),
-        dex_offset: z.null(),
-        /** An explicit follow-up selector accepted by inspect_android_method. */
-        source_selector: androidMethodSelectorSchema.exactOptional(),
-        /** false means transport-bounded instruction evidence; null is unknown. */
-        direct_invokes_exhaustive: z.boolean().nullable(),
-        /** Raw direct invoke instructions inside this using node, when available. */
-        direct_invokes: z
-          .array(
-            z.strictObject({
-              dex_entry: z.string().min(1),
-              source_raw_method_id: z.string().min(1),
-              dex_code_unit_offset: z.int().nonnegative(),
-              dex_method_index: z.int().nonnegative(),
-              opcode: z.string().regex(/^INVOKE_/u),
-            }),
-          )
-          .nullable(),
-      }),
-    ),
+    references: z.array(androidReferenceSchema),
     coverage: z.literal("complete"),
     reference_unit: z.literal("using_node"),
   }),

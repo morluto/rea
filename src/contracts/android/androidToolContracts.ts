@@ -5,6 +5,7 @@ import {
   androidSymbolInspectionInputSchemas,
   androidResultSchemas,
   androidJniInspectionInputSchema,
+  androidInventoryInspectionInputSchemas,
 } from "../../domain/android/androidAnalysis.js";
 import {
   androidPackageSummaryViewResultSchema,
@@ -15,6 +16,10 @@ import {
   androidMethodSummaryViewResultSchema,
   androidJniSummaryViewResultSchema,
   androidJniPageViewResultSchema,
+  androidClassesSummaryViewResultSchema,
+  androidClassesPageViewResultSchema,
+  androidReferencesSummaryViewResultSchema,
+  androidReferencesPageViewResultSchema,
 } from "../../domain/analysisView/analysisView.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
@@ -99,14 +104,34 @@ export const ANDROID_TOOL_CONTRACTS = [
     name: "search_android_classes",
     ...toolContractMetadata("search_android_classes"),
     description:
-      "Search complete top-level decompiler class-name rows in an explicit local APK by case-sensitive substring. Empty query inventories all rows. Repeated names remain repeated and appear in duplicate_names; the provider accepts only class names for lookup, so these rows do not identify which same-name class node a later lookup selects. Retains artifact and engine identity; no APK execution.",
+      "Search complete top-level decompiler class-name rows in an explicit local APK by case-sensitive substring. Empty query inventories all rows. Repeated names remain repeated and appear in duplicate_names; the provider accepts only class names for lookup, so these rows do not identify which same-name class node a later lookup selects. Retains artifact and engine identity; no APK execution. Omitted or complete detail returns every row inline, which costs about a million tokens on an APK with tens of thousands of classes. Select detail summary to retain the complete inventory and return a bounded summary: counts, a derived histogram of leading package prefixes and a 64-row preview. Read later pages with inspect_analysis_view and the returned parent_evidence_id, using view {kind:android-classes,collection:matches,offset:0,limit:64,package_prefix,class_names,indices} (or collection duplicate_names); follow coverage.next_offset until exhausted. With summary detail an optional view selects such a page directly; complete detail rejects a view.",
     kind: "android-provider",
-    inputSchema: androidInputSchemas.search_android_classes,
-    outputSchema: evidenceResultOf(androidResultSchemas.search_android_classes),
+    inputSchema: androidInventoryInspectionInputSchemas.search_android_classes,
+    outputSchema: evidenceResultOf(
+      z.union([
+        androidResultSchemas.search_android_classes,
+        androidClassesSummaryViewResultSchema,
+        androidClassesPageViewResultSchema,
+      ]),
+    ),
     examples: [
       {
         title: "Find activity classes",
         input: { path: "/tmp/Example.apk", query: "Activity" },
+      },
+      {
+        title: "Summarize a large inventory and page one package",
+        input: {
+          path: "/tmp/Example.apk",
+          query: "",
+          detail: "summary",
+          view: {
+            kind: "android-classes",
+            collection: "matches",
+            package_prefix: "com.example.",
+            limit: 100,
+          },
+        },
       },
     ],
   },
@@ -167,11 +192,16 @@ export const ANDROID_TOOL_CONTRACTS = [
     name: "trace_android_references",
     ...toolContractMetadata("trace_android_references"),
     description:
-      "Trace incoming static using nodes to an exact Android class or selected method overload. A method target may be an external class directly named by DEX invokes: target_definition external and reference_scope direct_dex_invokes identify this narrower inventory, without inventing a class definition or body. Ambiguous external requests list observed DEX prototypes; select overload_index explicitly. For APK-defined targets use inspect_android_class. The total counts containing nodes, not individual invokes. External callers include source_selector for inspect_android_method. Source lines and the containing node dex_offset remain unknown. direct_invokes carries exact DEX code-unit offsets when available; direct_invokes_exhaustive false marks byte-bounded partial instruction evidence, and null means unknown. No reflection, JNI or runtime dispatch is inferred.",
+      "Trace incoming static using nodes to an exact Android class or selected method overload. A method target may be an external class directly named by DEX invokes: target_definition external and reference_scope direct_dex_invokes identify this narrower inventory, without inventing a class definition or body. Ambiguous external requests list observed DEX prototypes; select overload_index explicitly. For APK-defined targets use inspect_android_class. The total counts containing nodes, not individual invokes. External callers include source_selector for inspect_android_method. Source lines and the containing node dex_offset remain unknown. direct_invokes carries exact DEX code-unit offsets when available; direct_invokes_exhaustive false marks byte-bounded partial instruction evidence, and null means unknown. No reflection, JNI or runtime dispatch is inferred. Omitted or complete detail returns every using node inline, which can cost over a million tokens for a class referenced thousands of times. Select detail summary to retain the complete trace and return a bounded summary: counts, derived histograms by node kind and top-level class, and a 64-row preview without direct_invokes. Read later pages with inspect_analysis_view and the returned parent_evidence_id, using view {kind:android-references,collection:references,offset:0,limit:64,kinds,containing_classes,top_classes,indices,fields:[...]}; select fields direct_invokes to read raw invoke offsets; follow coverage.next_offset until exhausted. With summary detail an optional view selects such a page directly; complete detail rejects a view.",
     kind: "android-provider",
-    inputSchema: androidInputSchemas.trace_android_references,
+    inputSchema:
+      androidInventoryInspectionInputSchemas.trace_android_references,
     outputSchema: evidenceResultOf(
-      androidResultSchemas.trace_android_references,
+      z.union([
+        androidResultSchemas.trace_android_references,
+        androidReferencesSummaryViewResultSchema,
+        androidReferencesPageViewResultSchema,
+      ]),
     ),
     examples: [
       {
@@ -185,6 +215,20 @@ export const ANDROID_TOOL_CONTRACTS = [
           class_name: "android.app.NotificationManager",
           method_name: "notify",
           overload_index: 0,
+        },
+      },
+      {
+        title: "Summarize a heavily referenced class and page its callers",
+        input: {
+          path: "/tmp/Example.apk",
+          class_name: "example.Util",
+          detail: "summary",
+          view: {
+            kind: "android-references",
+            collection: "references",
+            top_classes: ["example.MainActivity"],
+            limit: 50,
+          },
         },
       },
     ],

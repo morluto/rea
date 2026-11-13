@@ -21,6 +21,10 @@ import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { parseAnalysisInput } from "../application/AnalysisInput.js";
 import { androidJniSelectionSchema } from "../domain/android/androidJniBindings.js";
 import { androidJniDeliverySchema } from "../domain/android/androidJniQuery.js";
+import {
+  androidClassesDeliverySchema,
+  androidReferencesDeliverySchema,
+} from "../domain/android/androidInventoryQuery.js";
 import { androidInputSchemas } from "../domain/android/androidAnalysis.js";
 import { cliIntegerArgument } from "./options.js";
 
@@ -194,12 +198,39 @@ export const registerAndroidCommands = (
       path,
       query: androidInputSchemas.search_android_classes.shape.query,
     }),
-    run: ({ args }) =>
-      execute(
-        CLI_COMMANDS.searchAndroidClasses,
-        "search_android_classes",
-        args,
-        args.path,
+    options: z.object({
+      ...analysisEvidenceDeliveryOptions,
+      view: z
+        .string()
+        .optional()
+        .describe(
+          "JSON android-classes page; requires --detail summary and --evidence_output",
+        ),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.searchAndroidClasses, async () => {
+          const operation = "search_android_classes";
+          const delivery = parseCliAnalysisEvidenceDelivery(
+            operation,
+            options,
+            androidClassesDeliverySchema,
+          );
+          if (!delivery.ok) return projectAnalysisError(delivery.error);
+          return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
+            run: () => service.execute(operation, args, { signal }),
+            service: { close: () => provider.close() },
+            providerId: "jadx",
+            operation,
+            signal,
+            detail: delivery.value.detail,
+            evidenceOutput: delivery.value.evidenceOutput,
+            ...(delivery.value.view === undefined
+              ? {}
+              : { view: delivery.value.view }),
+          });
+        }),
       ),
   });
   cli.command(CLI_COMMANDS.inspectAndroidClass, {
@@ -267,22 +298,52 @@ export const registerAndroidCommands = (
         .describe(
           "Index among defined methods or observed external prototypes listed by an ambiguous query",
         ),
+      ...analysisEvidenceDeliveryOptions,
+      view: z
+        .string()
+        .optional()
+        .describe(
+          "JSON android-references page; requires --detail summary and --evidence_output",
+        ),
     }),
     run: ({ args, options }) =>
-      execute(
-        CLI_COMMANDS.traceAndroidReferences,
-        "trace_android_references",
-        {
-          path: args.path,
-          class_name: args.className,
-          ...(options.methodName === undefined
-            ? {}
-            : { method_name: options.methodName }),
-          ...(options.overloadIndex === undefined
-            ? {}
-            : { overload_index: options.overloadIndex }),
-        },
-        args.path,
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.traceAndroidReferences, async () => {
+          const operation = "trace_android_references";
+          const delivery = parseCliAnalysisEvidenceDelivery(
+            operation,
+            options,
+            androidReferencesDeliverySchema,
+          );
+          if (!delivery.ok) return projectAnalysisError(delivery.error);
+          return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
+            run: () =>
+              service.execute(
+                operation,
+                {
+                  path: args.path,
+                  class_name: args.className,
+                  ...(options.methodName === undefined
+                    ? {}
+                    : { method_name: options.methodName }),
+                  ...(options.overloadIndex === undefined
+                    ? {}
+                    : { overload_index: options.overloadIndex }),
+                },
+                { signal },
+              ),
+            service: { close: () => provider.close() },
+            providerId: "jadx",
+            operation,
+            signal,
+            detail: delivery.value.detail,
+            evidenceOutput: delivery.value.evidenceOutput,
+            ...(delivery.value.view === undefined
+              ? {}
+              : { view: delivery.value.view }),
+          });
+        }),
       ),
   });
 };

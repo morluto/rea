@@ -56,6 +56,10 @@ import { pcapViewRequestSchema } from "./pcapCaptureView.js";
 import { qlogViewRequestSchema } from "./qlogCaptureView.js";
 import { androidViewRequestSchema } from "./androidPackageView.js";
 import { androidJniViewRequestSchema } from "../android/androidJniQuery.js";
+import {
+  androidClassesViewRequestSchema,
+  androidReferencesViewRequestSchema,
+} from "../android/androidInventoryQuery.js";
 import { dartAotViewRequestSchema } from "./dartAotView.js";
 import { il2cppMetadataViewRequestSchema } from "./il2cppMetadataView.js";
 import {
@@ -120,6 +124,8 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   managedMembersViewRequestSchema,
   androidViewRequestSchema,
   androidJniViewRequestSchema,
+  androidClassesViewRequestSchema,
+  androidReferencesViewRequestSchema,
   apiSurfaceViewSchema,
   environmentManifestViewRequestSchema,
   environmentStateViewRequestSchema,

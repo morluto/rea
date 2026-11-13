@@ -13,6 +13,13 @@ own APK path and explicit selectors; do not open a native session first.
 Choose an `overload_index` from the class inventory when methods are ambiguous
 instead of guessing.
 
+On a large APK an empty-query `search_android_classes` or a trace of a hot class
+can return about a million tokens inline. Select `detail: "summary"` on those two
+calls: they return counts, derived histograms and a 64-row preview while the
+complete result stays retained, and `android-classes` / `android-references`
+views page the rest with filters and `fields`. Complete detail is unchanged. See
+the [inventory guide](https://github.com/morluto/rea/blob/main/docs/guides/android/android-analysis.md#large-class-and-reference-inventories).
+
 For JNI implementations, discover `inspect_android_jni_bindings`. Select raw
 DEX class/method identities and optional descriptors, ABI or logical library
 paths. Prefer `detail: "summary"`; complete Evidence remains retained and
