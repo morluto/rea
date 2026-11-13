@@ -25,6 +25,10 @@ const installCliRuntime = async (
   await Promise.all([
     copyFile("scripts/rea.mjs", workspace.path("scripts/rea.mjs")),
     copyFile(
+      "scripts/lib/cli-runtime-files.mjs",
+      workspace.path("scripts/lib/cli-runtime-files.mjs"),
+    ),
+    copyFile(
       "scripts/lib/cli-process-environment.mjs",
       workspace.path("scripts/lib/cli-process-environment.mjs"),
     ),
@@ -364,6 +368,10 @@ describe("executable dispatcher", () => {
       await workspace.mkdir("scripts/lib");
       await Promise.all([
         copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
+        copyFile(
+          "scripts/lib/cli-runtime-files.mjs",
+          workspace.path("scripts/lib/cli-runtime-files.mjs"),
+        ),
         copyFile(
           "scripts/lib/cli-process-environment.mjs",
           workspace.path("scripts/lib/cli-process-environment.mjs"),

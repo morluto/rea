@@ -191,6 +191,8 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     throw new Error("package did not expose both rea command entry points");
   if (!packedFiles.includes("package/scripts/lib/cli-process-environment.mjs"))
     throw new Error("package omitted the CLI process environment owner");
+  if (!packedFiles.includes("package/scripts/lib/cli-runtime-files.mjs"))
+    throw new Error("package omitted the shared CLI bootstrap file inventory");
   if (!packedFiles.includes("package/scripts/lib/runtime-admission.mjs"))
     throw new Error("package omitted the CLI runtime admission owner");
   if (packedFiles.some((path) => path.startsWith("package/.agents/")))

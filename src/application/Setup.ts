@@ -32,10 +32,13 @@ import {
   type AnalysisCleanupObservation,
 } from "../domain/analysisErrorBase.js";
 import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import { assertSetupActive } from "./SetupCancellation.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  assertSetupActive,
+  withSetupCancellation,
+} from "./SetupCancellation.js";
 import type {
   SetupSkillInstallError,
   SkillInstallResult,
@@ -105,8 +108,17 @@ export const runSetup = async (
   const pending: { skill?: SetupSkillInstallError } = {};
   let primaryFailure: unknown;
   let threw = false;
+  const settledEffects: JsonValue[] = [];
   try {
-    result = await runSetupWorkflow(options, host, progress, confirm, pending);
+    result = await runSetupWorkflow(
+      options,
+      withSetupCancellation(host, options.signal, (operation, value) => {
+        settledEffects.push({ operation, result: value });
+      }),
+      progress,
+      confirm,
+      pending,
+    );
   } catch (cause: unknown) {
     if (cause instanceof AnalysisCancelledError)
       cause.retainDiagnostics({ setup_progress: setupProgressFacts(progress) });
@@ -123,6 +135,8 @@ export const runSetup = async (
   }
   if (cleanup !== undefined && !cleanup.cleanupIncomplete) cleanup = undefined;
   if (threw) {
+    if (primaryFailure instanceof AnalysisError && options.signal?.aborted)
+      primaryFailure.retainDiagnostics({ setup_effects: settledEffects });
     if (cleanup === undefined) throw primaryFailure;
     if (primaryFailure instanceof AnalysisError)
       throw analysisErrorWithCleanupFailure(
@@ -161,7 +175,10 @@ export const runSetup = async (
   if (options.signal?.aborted === true) {
     const cancelled = new AnalysisCancelledError("setup", {
       cause: options.signal.reason,
-      diagnostics: { setup_result: jsonValueSchema.parse(result) },
+      diagnostics: {
+        setup_result: jsonValueSchema.parse(result),
+        setup_effects: settledEffects,
+      },
     });
     if (cleanup !== undefined)
       throw analysisErrorWithCleanupFailure(
@@ -244,6 +261,7 @@ const runSetupWorkflow = async (
       REA_MCP_TOOL_CATALOG_PROFILE: options.toolCatalogProfile,
     };
   clientStates = discovery.clientStates;
+  host.prepareClientSetup?.(discovery.installHopper, providerEnvironment);
   progress.clientStates = clientStates;
   const clientSelectionAllowed =
     options.clientIds === undefined &&
@@ -317,7 +335,6 @@ const runSetupWorkflow = async (
     selectedClientIds = [...selectedActionIds]
       .filter((id) => id.startsWith("configure_client:"))
       .map((id) => id.slice("configure_client:".length));
-    skillNeedsInstall = await host.skillNeedsInstall(selectedClientIds);
     const proposedInstallAction = selectionActions.plannedActions.some(
       ({ id }) => id === "install_hopper",
     );
@@ -327,6 +344,8 @@ const runSetupWorkflow = async (
         options.installHopper ||
         (proposedInstallAction && selectedActionIds.has("install_hopper")),
     };
+    host.prepareClientSetup?.(planDiscovery.installHopper, providerEnvironment);
+    skillNeedsInstall = await host.skillNeedsInstall(selectedClientIds);
     // The offered skill action can carry a client-specific ID (for example
     // `install_skill:claude_code`); without a selected client it means the
     // shared CLI skill.
@@ -528,6 +547,9 @@ const runSetupWorkflow = async (
   const doctor = summarizeDoctor(await host.doctor(readinessScope));
   const remediation = combineRemediation(
     desktopFailure,
+    ...(doctor.pluginChecks ?? [])
+      .filter(({ ok }) => !ok)
+      .map(({ remediation, detail }) => remediation ?? detail),
     hopperFailure?.remediation ??
       desktop.readinessRemediation(doctor.healthy) ??
       finalSetupRemediation(
@@ -755,6 +777,13 @@ const summarizeDoctor = (report: DoctorReport): SetupDoctorSummary => ({
   healthy: report.healthy,
   environment_healthy: report.environment_healthy,
   scope: report.scope,
+  ...(report.scope.plugin_clients === undefined
+    ? {}
+    : {
+        pluginChecks: report.scope_checks.filter(({ name }) =>
+          report.scope.plugin_clients?.some((id) => name === `plugin:${id}`),
+        ),
+      }),
   availableProviders: [
     ...(report.hopperPath !== undefined &&
     report.checks

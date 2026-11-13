@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { prepareCliProcessEnvironment } from "./lib/cli-process-environment.mjs";
+import { MCP_BOOTSTRAP_FILES } from "./lib/cli-runtime-files.mjs";
 import { unsupportedRuntimeMessage } from "./lib/runtime-admission.mjs";
 
 // Route production MCP before importing Incur. Incur owns registration helpers
@@ -59,7 +60,7 @@ let stdoutClosed = false;
 const runtimeFiles = [
   builtinArgumentRuntime,
   ...(isMcpMode || isMcpHttpMode
-    ? ["dist/mcp/main.js"]
+    ? MCP_BOOTSTRAP_FILES
     : isMcpDoctorMode
       ? ["dist/mcp/main.js", "dist/cli-runtime/mcpDoctor.js"]
       : [

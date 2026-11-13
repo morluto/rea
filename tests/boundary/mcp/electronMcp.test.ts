@@ -506,15 +506,6 @@ it("runs active Electron scenarios with selected paths and inferred working dire
   await server.connect(serverTransport);
   await client.connect(clientTransport);
 
-  const advertised = (await client.listTools()).tools.find(
-    ({ name }) => name === "capture_electron_scenario",
-  );
-  if (advertised?.outputSchema === undefined)
-    throw new Error("Active Electron output schema was not advertised");
-  const validateOutput = new Ajv2020({
-    strict: false,
-    validateFormats: false,
-  }).compile(z.record(z.string(), z.unknown()).parse(advertised.outputSchema));
   const captured = await client.callTool({
     name: "capture_electron_scenario",
     arguments: {
@@ -528,10 +519,6 @@ it("runs active Electron scenarios with selected paths and inferred working dire
     },
   });
   expect(captured.isError, JSON.stringify(captured)).not.toBe(true);
-  expect(
-    validateOutput(captured.structuredContent),
-    JSON.stringify(validateOutput.errors),
-  ).toBe(true);
   expect(captured.structuredContent).toMatchObject({
     normalized_result: {
       application: { process_ownership: "provider-owned" },
@@ -614,6 +601,23 @@ it("runs active Electron scenarios with selected paths and inferred working dire
       ],
     },
   });
+  // callTool compiles every output schema cached by tools/list. List this
+  // tool after the calls so the workflow does not compile the whole catalog.
+  const advertised = (await client.listTools()).tools.find(
+    ({ name }) => name === "capture_electron_scenario",
+  );
+  if (advertised?.outputSchema === undefined)
+    throw new Error("Active Electron output schema was not advertised");
+  const validateOutput = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+    inlineRefs: false,
+    code: { optimize: false },
+  }).compile(z.record(z.string(), z.unknown()).parse(advertised.outputSchema));
+  expect(
+    validateOutput(captured.structuredContent),
+    JSON.stringify(validateOutput.errors),
+  ).toBe(true);
 }, 20_000);
 
 it("exposes the target-free static JavaScript application workflow", async () => {

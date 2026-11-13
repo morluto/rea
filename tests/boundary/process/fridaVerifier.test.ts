@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -47,7 +48,7 @@ registerHooks({ resolve(specifier, context, next) {
       process.execPath,
       [
         "--import",
-        preload,
+        pathToFileURL(preload).href,
         "scripts/verify-frida.mjs",
         ...(remote ? ["--address", "127.0.0.1:27042", "--pid", "41"] : []),
       ],

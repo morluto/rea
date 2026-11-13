@@ -102,7 +102,8 @@ try {
     packageRoot: ${JSON.stringify(packageRoot)},
     tarball: ${JSON.stringify(tarball)},
     workspace: ${JSON.stringify(workspace)},
-    environment: { PATH: process.env.PATH },
+    // Windows owned children need SystemRoot for Node crypto initialization.
+    environment: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot },
     commands,
   });
 } catch (cause) {

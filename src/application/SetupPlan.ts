@@ -186,8 +186,10 @@ export const planSetupActions = async (input: {
       blocker: hopperCache.error.message,
     };
   if (
-    selectedClients.length > 0 &&
-    input.host.registrationCommandBlocker !== undefined
+    input.host.registrationCommandBlocker !== undefined &&
+    selectedClients.some(
+      (client) => input.host.clientSetupAction?.(client.name) === undefined,
+    )
   )
     return {
       plannedActions: [],
@@ -237,9 +239,17 @@ export const planSetupActions = async (input: {
       ? {}
       : { linuxPackageFamily: input.discovery.linuxPackageFamily }),
     command: input.command,
-  });
+  }).map((action) =>
+    action.kind === "configure_client"
+      ? (input.host.clientSetupAction?.(
+          action.id.slice("configure_client:".length),
+        ) ?? action)
+      : action,
+  );
   const blocker =
-    (clientPlans.length > 0
+    (clientPlans.some(
+      ({ client }) => input.host.clientSetupAction?.(client.name) === undefined,
+    )
       ? input.host.registrationCommandBlocker
       : undefined) ??
     redirectedWriteBlocker(

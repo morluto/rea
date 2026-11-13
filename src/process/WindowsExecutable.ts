@@ -59,18 +59,19 @@ export const findWindowsExecutable = async (
   for (const extension of extensions)
     if (!extension.startsWith(".") || /[\\/:\0]/u.test(extension))
       return err({ kind: "invalid_extension", extension });
+  const runnableExtensions =
+    options.allowBatch === true
+      ? [".exe", ".com", ".bat", ".cmd"]
+      : [".exe", ".com"];
   const explicitExtension = win32.extname(executable);
   const allowed =
     explicitExtension !== ""
-      ? options.allowBatch === true ||
-        [".exe", ".com"].includes(explicitExtension.toLowerCase())
+      ? runnableExtensions.includes(explicitExtension.toLowerCase())
         ? [""]
         : []
-      : options.allowBatch === true
-        ? extensions
-        : extensions.filter((extension) =>
-            [".exe", ".com"].includes(extension.toLowerCase()),
-          );
+      : extensions.filter((extension) =>
+          runnableExtensions.includes(extension.toLowerCase()),
+        );
   const cwd = options.cwd ?? process.cwd();
   for (const directory of windowsPathEntries(selected.PATH ?? "")) {
     for (const extension of allowed) {

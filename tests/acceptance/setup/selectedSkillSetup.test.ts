@@ -16,7 +16,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest.for(["root", "references"] as const)(
-  "rejects a linked skill %s during planning before configuring a client",
+  "direct setup rejects a linked skill %s during planning before configuring a client",
   async (kind, { cli }) => {
     const directory = await createTestTempDirectory("rea-skill-preflight-");
     const selected = join(
@@ -45,13 +45,15 @@ cliTest.for(["root", "references"] as const)(
         cwd: directory,
         environment: { USERPROFILE: directory },
       });
-    const preview = await run([
+    const setupArguments = [
       "setup",
       "--client",
       "claude_code",
-      "--dry-run",
-    ]);
-    const applied = await run(["setup", "--client", "claude_code", "--yes"]);
+      "--skill-client",
+      "claude_code",
+    ];
+    const preview = await run([...setupArguments, "--dry-run"]);
+    const applied = await run([...setupArguments, "--yes"]);
     await expect(access(join(directory, ".claude.json"))).rejects.toMatchObject(
       {
         code: "ENOENT",
@@ -64,7 +66,9 @@ cliTest.for(["root", "references"] as const)(
         code: "skill_install_failed",
         appliedActions: [],
       });
-      expect(result.stdout).toContain(link);
+      expect(result.json).toMatchObject({
+        remediation: expect.stringContaining(link),
+      });
       expect(result.stdout).toContain("--skill=false");
     }
     const doctor = await run(["doctor", "--client", "claude_code", "--skill"]);
@@ -73,7 +77,9 @@ cliTest.for(["root", "references"] as const)(
       healthy: false,
       identity: { skill: { state: "unmanaged" } },
     });
-    expect(doctor.stdout).toContain(link);
+    expect(doctor.json).toMatchObject({
+      identity: { skill: { remediation: expect.stringContaining(link) } },
+    });
     expect((await lstat(link)).isSymbolicLink()).toBe(true);
   },
 );
