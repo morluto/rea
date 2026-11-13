@@ -240,8 +240,9 @@ provider evidence.
 
 Vitest projects use up to two workers, bounded by host parallelism.
 `process-boundary` runs later with serial files because process-tree sampling
-shares host resources. Acceptance and process-global cases use isolated forks
-without serial scheduling. Pure domain/service, composition, conformance,
+and wide-capacity regressions share host CPU and memory resources. Acceptance
+and process-global cases use isolated forks without serial scheduling.
+Pure domain/service, composition, conformance,
 evaluation, CLI boundary, and MCP boundary projects share module graphs. Their
 tests avoid process-global state and keep resource cleanup test-scoped. Each
 MCP session still owns its resources, and CLI cases retain fresh command
