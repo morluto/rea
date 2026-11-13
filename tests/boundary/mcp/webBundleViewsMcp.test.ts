@@ -150,18 +150,18 @@ it("projects web bundle summary views over MCP using retained and inline sources
   const parent = makeParent();
   expect(session.recordEvidence(parent).ok).toBe(true);
 
-  const summaryCall = await client.callTool({
-    ...schemas.toolDefinition,
-    arguments: {
-      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
-      view: { kind: "summary" },
+  const summaryCall = await client.callTool(
+    {
+      name: schemas.toolDefinition.name,
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+        view: { kind: "summary" },
+      },
     },
-  });
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(summaryCall.isError, JSON.stringify(summaryCall)).not.toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.outputSchema, summaryCall.structuredContent),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
+
   const summaryResult = webBundleSummaryViewResultSchema.parse(
     parseEvidence(summaryCall.structuredContent).normalized_result,
   );
@@ -173,21 +173,18 @@ it("projects web bundle summary views over MCP using retained and inline sources
     completeness: { status: "partial" },
   });
 
-  const collectionSummaryCall = await client.callTool({
-    ...schemas.toolDefinition,
-    arguments: {
-      source: { kind: "inline", evidence: parent },
-      view: { kind: "web-bundle", collection: "summary" },
+  const collectionSummaryCall = await client.callTool(
+    {
+      name: schemas.toolDefinition.name,
+      arguments: {
+        source: { kind: "inline", evidence: parent },
+        view: { kind: "web-bundle", collection: "summary" },
+      },
     },
-  });
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(collectionSummaryCall.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(
-      schemas.outputSchema,
-      collectionSummaryCall.structuredContent,
-    ),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
+
   const collectionSummaryResult = webBundlePageViewResultSchema.parse(
     parseEvidence(collectionSummaryCall.structuredContent).normalized_result,
   );
@@ -205,23 +202,23 @@ it("pages web bundle endpoints and inferences over MCP using evidence-file sourc
   const evidenceFile = join(tempDir, "webbundle-evidence.json");
   await writeFile(evidenceFile, JSON.stringify(parent));
 
-  const page1Call = await client.callTool({
-    ...schemas.toolDefinition,
-    arguments: {
-      source: { kind: "evidence-file", path: evidenceFile },
-      view: {
-        kind: "web-bundle",
-        collection: "endpoints",
-        offset: 0,
-        limit: 2,
+  const page1Call = await client.callTool(
+    {
+      name: schemas.toolDefinition.name,
+      arguments: {
+        source: { kind: "evidence-file", path: evidenceFile },
+        view: {
+          kind: "web-bundle",
+          collection: "endpoints",
+          offset: 0,
+          limit: 2,
+        },
       },
     },
-  });
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(page1Call.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.outputSchema, page1Call.structuredContent),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
+
   const page1 = webBundlePageViewResultSchema.parse(
     parseEvidence(page1Call.structuredContent).normalized_result,
   );
@@ -243,23 +240,23 @@ it("pages web bundle endpoints and inferences over MCP using evidence-file sourc
   });
   expect(page1.completeness.status).toBe("partial");
 
-  const page2Call = await client.callTool({
-    ...schemas.toolDefinition,
-    arguments: {
-      source: { kind: "evidence-file", path: evidenceFile },
-      view: {
-        kind: "web-bundle",
-        collection: "endpoints",
-        offset: 2,
-        limit: 2,
+  const page2Call = await client.callTool(
+    {
+      name: schemas.toolDefinition.name,
+      arguments: {
+        source: { kind: "evidence-file", path: evidenceFile },
+        view: {
+          kind: "web-bundle",
+          collection: "endpoints",
+          offset: 2,
+          limit: 2,
+        },
       },
     },
-  });
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(page2Call.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.outputSchema, page2Call.structuredContent),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
+
   const page2 = webBundlePageViewResultSchema.parse(
     parseEvidence(page2Call.structuredContent).normalized_result,
   );
@@ -276,25 +273,22 @@ it("pages web bundle endpoints and inferences over MCP using evidence-file sourc
     exhausted: true,
   });
 
-  const candidatesCall = await client.callTool({
-    ...schemas.toolDefinition,
-    arguments: {
-      source: { kind: "evidence-file", path: evidenceFile },
-      view: {
-        kind: "web-bundle",
-        collection: "inferences",
-        kinds: ["endpoint_candidate"],
+  const candidatesCall = await client.callTool(
+    {
+      name: schemas.toolDefinition.name,
+      arguments: {
+        source: { kind: "evidence-file", path: evidenceFile },
+        view: {
+          kind: "web-bundle",
+          collection: "inferences",
+          kinds: ["endpoint_candidate"],
+        },
       },
     },
-  });
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(candidatesCall.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(
-      schemas.outputSchema,
-      candidatesCall.structuredContent,
-    ),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
+
   const candidatesPage = webBundlePageViewResultSchema.parse(
     parseEvidence(candidatesCall.structuredContent).normalized_result,
   );
@@ -307,23 +301,23 @@ it("pages web bundle endpoints and inferences over MCP using evidence-file sourc
     }),
   ]);
 
-  const emptyCall = await client.callTool({
-    ...schemas.toolDefinition,
-    arguments: {
-      source: { kind: "evidence-file", path: evidenceFile },
-      view: {
-        kind: "web-bundle",
-        collection: "endpoints",
-        offset: 100,
-        limit: 10,
+  const emptyCall = await client.callTool(
+    {
+      name: schemas.toolDefinition.name,
+      arguments: {
+        source: { kind: "evidence-file", path: evidenceFile },
+        view: {
+          kind: "web-bundle",
+          collection: "endpoints",
+          offset: 100,
+          limit: 10,
+        },
       },
     },
-  });
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(emptyCall.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.outputSchema, emptyCall.structuredContent),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
+
   const emptyPage = webBundlePageViewResultSchema.parse(
     parseEvidence(emptyCall.structuredContent).normalized_result,
   );

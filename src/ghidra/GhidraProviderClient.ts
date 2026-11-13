@@ -300,7 +300,7 @@ export const createGhidraProviderClient = (input: {
   const { config, logger, clientFactory, context, installation } = input;
   const { target, profile } = input.admission;
   const prerequisites = ghidraClientPrerequisites(profile, installation);
-  if (!prerequisites.ok) return err(prerequisites.error);
+  if (!prerequisites.ok) return prerequisites;
   const committedProfile = prerequisites.value.profile;
   const checkpoint = ghidraCheckpointSelectionSchema
     .optional()

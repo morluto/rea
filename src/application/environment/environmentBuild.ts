@@ -86,7 +86,7 @@ export const classifyBuildCapture = (
 };
 
 /** Rules in the views' fixed order, so the report and manifest list them canonically. */
-export const canonicalTemplateRules = (
+const canonicalTemplateRules = (
   rules: readonly TemplateRule[],
 ): TemplateRule[] => TEMPLATE_RULES.filter((rule) => rules.includes(rule));
 

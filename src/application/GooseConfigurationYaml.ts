@@ -143,7 +143,7 @@ const gooseYamlOptions = {
 } as const;
 
 /** A duplicate YAML member cannot establish one selected configuration value. */
-export class GooseConfigurationYamlError extends ConfigurationError {
+class GooseConfigurationYamlError extends ConfigurationError {
   readonly kind = "shadowed_member";
   constructor(
     readonly path: readonly string[],

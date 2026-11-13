@@ -62,7 +62,7 @@ export const isImmutableEvidenceBundle = (
   typeof input === "object" && input !== null && immutableBundles.has(input);
 
 /** Caller input has valid shape but is not in authenticated canonical form. */
-export class NonCanonicalEvidenceBundleError extends TypeError {
+class NonCanonicalEvidenceBundleError extends TypeError {
   constructor() {
     super("Evidence bundle manifests are not canonical");
     this.name = "NonCanonicalEvidenceBundleError";
@@ -70,7 +70,7 @@ export class NonCanonicalEvidenceBundleError extends TypeError {
 }
 
 /** Caller input lists the same Evidence record more than once. */
-export class DuplicateEvidenceRecordError extends TypeError {
+class DuplicateEvidenceRecordError extends TypeError {
   constructor() {
     super("Evidence bundle contains duplicate record IDs");
     this.name = "DuplicateEvidenceRecordError";

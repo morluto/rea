@@ -138,9 +138,9 @@ export const compareManagedMemberPaths = async (
             operation,
           ).bindCleanupDependencies([leftTarget.error, rightTarget.error]),
         );
-      return err(leftTarget.error);
+      return leftTarget;
     }
-    if (!rightTarget.ok) return err(rightTarget.error);
+    if (!rightTarget.ok) return rightTarget;
     const inspectTarget = async (
       target: BinaryTarget,
       inputField: "leftPath" | "rightPath",

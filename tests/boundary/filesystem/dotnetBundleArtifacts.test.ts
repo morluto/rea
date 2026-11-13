@@ -24,6 +24,31 @@ import {
 } from "../../../src/artifacts/dotnet/DotnetBundle.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+it.each(["close", "cancel"] as const)(
+  "does not complete a .NET bundle inventory after %s at the last entry",
+  async (interruption) => {
+    const root = await createTestTempDirectory("rea-dotnet-paused-");
+    const path = join(root, "app");
+    await writeFile(
+      path,
+      dotnetBundleFixture([{ path: "member", bytes: Buffer.from("x") }]).bytes,
+    );
+    const reader = new DotnetBundleArtifactReader(path);
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
+
 it.each([
   { field: "entry_count", maximum: 1, required: 2 },
   { field: "string_bytes", maximum: 13, required: 14 },

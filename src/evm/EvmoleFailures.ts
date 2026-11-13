@@ -69,7 +69,7 @@ export interface EvmFileSizeFailureEvidence {
 }
 
 /** Keep carrier read, engine and owned lifecycle failures distinct. */
-export interface EvmFailureContext {
+interface EvmFailureContext {
   readonly phase: "configuration" | "artifact-read" | "worker";
   readonly path: string;
   readonly workerLimits?: EvmWorkerLimits | undefined;
