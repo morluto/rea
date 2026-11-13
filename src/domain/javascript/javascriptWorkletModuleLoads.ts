@@ -21,6 +21,20 @@ const CSS_WORKLETS = ["paintWorklet", "layoutWorklet", "animationWorklet"];
 /** Constructors whose instances read `audioWorklet` from `BaseAudioContext`. */
 const AUDIO_CONTEXTS = ["AudioContext", "OfflineAudioContext"];
 
+/** Prototypes that provide `addModule`, nearest first; every worklet inherits it from `Worklet`. */
+const CSS_WORKLET_PROTOTYPES = ["Worklet"];
+
+/** An `AudioWorklet` reaches `Worklet.prototype` through its own prototype. */
+const AUDIO_WORKLET_PROTOTYPES = ["AudioWorklet", "Worklet"];
+
+/** Members of a bound audio context whose change redirects its `addModule`. */
+const AUDIO_CONTEXT_PATHS = [
+  ["audioWorklet", "addModule"],
+  ["audioWorklet", "__proto__"],
+  ["__proto__"],
+] as const;
+
+/** A visible write to, or an escape of, a prototype member or its link may have replaced it. */
 const prototypeMemberMayHaveChanged = (
   bindings: JavaScriptSemanticAnalysisState,
   owners: readonly string[],
@@ -37,15 +51,65 @@ const prototypeMemberMayHaveChanged = (
   );
 
 /**
- * Prove `<context>.audioWorklet.addModule()` on a context that an unmodified
- * global constructor created, directly or through stable bindings. The getter
- * and `addModule` are inherited, so a visible write to either member, to an
+ * The one guard for the inherited `addModule` of every worklet, whatever the
+ * receiver: no visible change to the prototypes that provide it and no earlier
+ * `eval` or `Function` code.
+ */
+const inheritedAddModuleMayHaveChanged = (
+  callee: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+  prototypes: readonly string[],
+): boolean =>
+  prototypeMemberMayHaveChanged(bindings, prototypes, "addModule") ||
+  semanticOpaqueGlobalMayHaveChanged(callee, bindings);
+
+/**
+ * Prove the called `CSS.<worklet>.addModule` path. Like
+ * `navigator.serviceWorker.register`, the complete path must retain its
+ * platform identity; a replaced prototype link of the worklet redirects the
+ * inherited method as well. Escapes of the worklet are not queried: each
+ * method call retains its own receiver as an escape, so a file-wide query
+ * would reject every load.
+ */
+const isCssWorkletReceiver = (
+  callee: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): boolean =>
+  CSS_WORKLETS.some(
+    (worklet) =>
+      isUnmodifiedGlobalReference(callee, bindings, [
+        "CSS",
+        worklet,
+        "addModule",
+      ]) &&
+      !bindings.ambientWrites.covers([
+        "global",
+        "CSS",
+        worklet,
+        "__proto__",
+        "addModule",
+      ]),
+  );
+
+const audioContextMayHaveChanged = (
+  index: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
+  site: t.Node,
+  context: t.Node,
+): boolean =>
+  AUDIO_CONTEXT_PATHS.some((path) =>
+    index.referenceMayHaveChangedAt(site, context, path),
+  );
+
+/**
+ * Prove the receiver of `<context>.audioWorklet.addModule()`: a context that an
+ * unmodified global constructor created, directly or through stable bindings.
+ * The `audioWorklet` getter is inherited, so a visible write to it, to an
  * owning prototype, or to a followed reference rejects the call. An earlier
  * call that receives the context or its worklet, including a previous
  * `addModule`, is such a possible change. Undefined requests shared
  * member-mutation facts.
  */
-const isAudioWorkletModuleLoad = (
+const isAudioWorkletReceiver = (
   node: t.CallExpression | t.OptionalCallExpression,
   callee: t.MemberExpression | t.OptionalMemberExpression,
   bindings: JavaScriptSemanticAnalysisState,
@@ -64,11 +128,7 @@ const isAudioWorkletModuleLoad = (
   while (t.isIdentifier(receiver)) {
     if (
       index !== undefined &&
-      (index.referenceMayHaveChangedAt(node, receiver, [
-        "audioWorklet",
-        "addModule",
-      ]) ||
-        index.referenceMayHaveChangedAt(node, receiver, ["__proto__"]))
+      audioContextMayHaveChanged(index, node, receiver)
     )
       return false;
     const binding = resolveSemanticBindingState(
@@ -98,13 +158,7 @@ const isAudioWorkletModuleLoad = (
       bindings,
       [constructor, "BaseAudioContext"],
       "audioWorklet",
-    ) ||
-    prototypeMemberMayHaveChanged(
-      bindings,
-      ["AudioWorklet", "Worklet"],
-      "addModule",
-    ) ||
-    semanticOpaqueGlobalMayHaveChanged(callee, bindings)
+    )
   )
     return false;
   return index === undefined && seen.size > 0 ? undefined : true;
@@ -123,19 +177,17 @@ const isWorkletModuleLoad = (
     semanticStaticPropertyName(callee.property, callee.computed) !== "addModule"
   )
     return false;
-  // Like `navigator.serviceWorker.register`, the complete called path must
-  // retain its platform identity.
+  const css = isCssWorkletReceiver(node.callee, bindings);
+  const receiver = css
+    ? true
+    : isAudioWorkletReceiver(node, callee, bindings, index);
+  const prototypes = css ? CSS_WORKLET_PROTOTYPES : AUDIO_WORKLET_PROTOTYPES;
   if (
-    CSS_WORKLETS.some((worklet) =>
-      isUnmodifiedGlobalReference(node.callee, bindings, [
-        "CSS",
-        worklet,
-        "addModule",
-      ]),
-    )
+    receiver === false ||
+    inheritedAddModuleMayHaveChanged(callee, bindings, prototypes)
   )
-    return true;
-  return isAudioWorkletModuleLoad(node, callee, bindings, index);
+    return false;
+  return receiver;
 };
 
 /** Prove a platform worklet module load; mutation facts are indexed on demand. */

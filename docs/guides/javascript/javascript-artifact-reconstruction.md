@@ -407,8 +407,10 @@ Selected bounded text is then parsed as inert data to recover:
   string keeps its expression. A context of unproven origin, such as a
   parameter or a `this` property, records no reference. Neither does a load
   after an earlier call that receives the bound context or its `audioWorklet`,
-  including a previous `addModule`, because that call may have replaced the
-  method;
+  including a previous `addModule`, or after `eval` or `Function` code, because
+  that code may have replaced the method. A source that visibly writes to, or
+  passes on, the `Worklet` or `AudioWorklet` prototype or the global object
+  (as an argument or a method receiver) records none either;
 - Vite preload dependency tables (`__vite__mapDeps`): `./` entries resolve
   relative to the importing chunk; base-relative entries such as
   `assets/chunk.js` carry a `vite-output:` specifier and resolve under the one

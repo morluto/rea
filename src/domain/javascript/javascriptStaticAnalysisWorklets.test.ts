@@ -57,12 +57,41 @@ describe("worklet module load identity", () => {
     'const context = new AudioContext(); context.audioWorklet.addModule = load; context.audioWorklet.addModule("./p.js");',
     'const context = new AudioContext(); Object.assign(context.audioWorklet, { addModule: load }); context.audioWorklet.addModule("./p.js");',
     'const context = new AudioContext(); patch(context); context.audioWorklet.addModule("./p.js");',
+    'const context = new AudioContext(); context.audioWorklet.__proto__.addModule = load; context.audioWorklet.addModule("./p.js");',
+    'const context = new AudioContext(); context.audioWorklet.__proto__ = { addModule: load }; context.audioWorklet.addModule("./p.js");',
+    'CSS.paintWorklet.__proto__.addModule = load; CSS.paintWorklet.addModule("./p.js");',
+    'CSS.paintWorklet.__proto__ = { addModule: load }; CSS.paintWorklet.addModule("./p.js");',
     'AudioWorklet.prototype.addModule = load; new AudioContext().audioWorklet.addModule("./p.js");',
-    'Worklet.prototype.addModule = load; new AudioContext().audioWorklet.addModule("./p.js");',
     'AudioContext.prototype.audioWorklet = vendor; new AudioContext().audioWorklet.addModule("./p.js");',
-    'eval(code); new AudioContext().audioWorklet.addModule("./p.js");',
   ])("does not attribute a replaced or unproven API: %s", (source) => {
     expect(worklets(source)).toEqual([]);
+  });
+
+  // Every worklet inherits `addModule` from `Worklet.prototype`: one guard owns
+  // that prototype for each receiver family. Each group opens with a control.
+  describe.each([
+    "CSS.paintWorklet",
+    "CSS.layoutWorklet",
+    "CSS.animationWorklet",
+    "new AudioContext().audioWorklet",
+    "const context = new AudioContext(); context.audioWorklet",
+  ])("inherited addModule of %s", (receiver) => {
+    const load = `${receiver}.addModule(${moduleUrl});`;
+
+    it("resolves after a write to an unrelated shared member", () => {
+      expect(worklets(`Worklet.prototype.unrelated = load; ${load}`)).toEqual([
+        { specifier: "./processor.js?v=2", expression: null },
+      ]);
+    });
+
+    it.each([
+      "Worklet.prototype.addModule = load;",
+      "Object.assign(Worklet.prototype, { addModule: load });",
+      "patch(Worklet.prototype);",
+      "eval(code);",
+    ])("is not attributed after %s", (change) => {
+      expect(worklets(`${change} ${load}`)).toEqual([]);
+    });
   });
 
   it.each([
