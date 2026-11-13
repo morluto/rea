@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, realpath, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { assertMipsLoadedImage } from "../tests/conformance/ghidra/mips-checks.mjs";
@@ -23,6 +21,7 @@ import {
 import { prepareVerifierTokenCleanup } from "./lib/verifier-token-cleanup.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import {
   assertVerifierCleanupComplete,
   createVerifierRun,
@@ -50,7 +49,10 @@ if (!process.env.GHIDRA_INSTALL_DIR || !process.env.JAVA_HOME)
   throw new Error(
     "Supply GHIDRA_INSTALL_DIR and JAVA_HOME for the MIPS32 positive control.",
   );
-const execute = promisify(execFile);
+const { VerifierCommandExitError } = await importVerifierSource(
+  "./lib/verifier-command-owner.mts",
+  import.meta.url,
+);
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const cli = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 // Only declared tool prerequisites and resource settings reach REA children.
@@ -76,13 +78,13 @@ const run = createVerifierRun();
 const root = await mkdtemp(join(tmpdir(), "rea-mips-boundaries-"));
 const env = { ...environment, TMPDIR: root, REA_PROCESS_RUN_ID: run.run_id };
 const reports = [];
-async function runControls(cleanup, readelf) {
+async function runControls(cleanup, commands) {
   const command = process.env.REA_MIPS_READELF ?? "readelf";
   const readelfOptions = {
     env: { PATH: env.PATH, LC_ALL: "C" },
     timeout: 10_000,
   };
-  const versionOutput = await readelf.exec(
+  const versionOutput = await commands.exec(
     command,
     ["--version"],
     readelfOptions,
@@ -134,7 +136,7 @@ async function runControls(cleanup, readelf) {
     gnu[0x11df] = 3; // Soft float.
     const gnuPath = join(root, `gnu-fp-${byteOrder}.elf`);
     await writeFile(gnuPath, gnu);
-    const attributes = await readelf.exec(
+    const attributes = await commands.exec(
       command,
       ["-A", gnuPath],
       readelfOptions,
@@ -184,9 +186,9 @@ async function runControls(cleanup, readelf) {
           await invoke("open_binary", { path, provider_id: "ghidra" }),
         );
         assert.match(JSON.stringify(mcpError), pattern);
-        let stdout;
+        let reply;
         try {
-          await execute(
+          await commands.exec(
             process.execPath,
             [
               cli,
@@ -200,16 +202,23 @@ async function runControls(cleanup, readelf) {
             ],
             { env, timeout: requestOptions.timeout },
           );
-          assert.fail("CLI admitted an unsupported MIPS declaration");
         } catch (cause) {
-          assert.equal(cause.code, 1);
-          stdout = cause.stdout;
+          if (!(cause instanceof VerifierCommandExitError) || cause.code !== 1)
+            throw cause;
+          reply = JSON.parse(cause.snapshot.stdout.text);
         }
-        const reply = JSON.parse(stdout);
-        assert.equal(reply.ok, false);
+        assert.equal(
+          reply?.ok,
+          false,
+          "CLI admitted an unsupported MIPS declaration or omitted its refusal",
+        );
         const cliError = analysisErrorProjectionSchema.parse(
           cliOperationFailurePayload(reply),
         );
+        if (cliError.code !== "capability_unavailable")
+          throw new Error("CLI did not report an ordinary provider refusal", {
+            cause: cliError,
+          });
         assert.match(JSON.stringify(cliError), pattern);
         refusals[control] = { selected_path: path, cli: reply, mcp: mcpError };
       }
@@ -391,10 +400,10 @@ let completed;
 try {
   const cleanup = await prepareVerifierTokenCleanup(run);
   await withVerifierCleanup(async () => {
-    const readelf = await createVerifierCommands();
+    const commands = await createVerifierCommands();
     return withVerifierCleanup(
-      () => runControls(cleanup, readelf),
-      [() => readelf.close()],
+      () => runControls(cleanup, commands),
+      [() => commands.close()],
     );
   }, [
     async () => {
