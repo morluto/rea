@@ -155,7 +155,10 @@ async function runControls(cleanup, commands) {
       expectedCommand: null,
       sweepTokenOwnedProcesses: true,
     });
-    commands.adopt(transport, "MIPS verifier MCP process");
+    // CLI commands run while this transport is live. Keep its owner separate
+    // so command-scope cleanup cannot close the active MCP connection.
+    const transportOwner = await createVerifierCommands();
+    transportOwner.adopt(transport, "MIPS verifier MCP process");
     const client = new Client({ name: "rea-mips-boundaries", version: "1" });
     const mcp = createGhidraVerifierMcpOperations(client, requestOptions);
     const invoke = (name, args = {}) => mcp.callTool({ name, arguments: args });
@@ -416,7 +419,7 @@ async function runControls(cleanup, commands) {
         source_unchanged: true,
         target_executed: false,
       });
-    }, [() => client.close(), () => transport.close()]);
+    }, [() => client.close(), () => transportOwner.close()]);
   }
 }
 let tokenCleanup;
