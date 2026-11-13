@@ -7,8 +7,20 @@ export const SQLITE_DATABASE_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 /** SQLite exposes this table as a row source but omits its own catalog entry. */
 export const SQLITE_SCHEMA_TABLE_NAME = "sqlite_schema";
+/**
+ * The only other spelling SQLite resolves in every schema.
+ *
+ * "Alternative Names" in the schema-table documentation: `sqlite_master` "works anywhere",
+ * while `sqlite_temp_schema` and `sqlite_temp_master` only resolve for the TEMP database.
+ * PRAGMA inventory and the stored catalog bytes use the canonical spelling only, so a caller
+ * name has to be normalized before those lookups.
+ */
+export const SQLITE_SCHEMA_TABLE_ALIAS = "sqlite_master";
+/** The canonical catalog spelling for a recognized caller spelling. */
+export const sqliteCatalogSpelling = (name: string): string =>
+  name === SQLITE_SCHEMA_TABLE_ALIAS ? SQLITE_SCHEMA_TABLE_NAME : name;
 export const sqliteSchemaHasObjectDeclaration = (name: string): boolean =>
-  name !== SQLITE_SCHEMA_TABLE_NAME;
+  name !== SQLITE_SCHEMA_TABLE_NAME && name !== SQLITE_SCHEMA_TABLE_ALIAS;
 
 /** Default ordinary-table sample size when the caller selects a table. */
 export const SQLITE_ROW_LIMIT_DEFAULT = 20;

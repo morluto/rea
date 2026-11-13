@@ -54,9 +54,13 @@ reported. If a virtual table cannot be resolved, possible backing tables have
 ordinary tables remain selectable. Schema inventory does not execute views,
 triggers or arbitrary SQL.
 
-The exact table name `sqlite_schema` is also a supported read-only row source.
-SQLite's [`table_list`](https://www.sqlite.org/pragma.html#pragma_table_list)
-and `table_xinfo` pragmas establish its row-source type and columns. The
+The schema catalog is also a supported read-only row source. SQLite's
+[`table_list`](https://www.sqlite.org/pragma.html#pragma_table_list) and
+`table_xinfo` pragmas establish its row-source type and columns. Both the
+canonical `sqlite_schema` spelling and the documented `sqlite_master` alias
+resolve to it; the alias is the only alternative SQLite recognizes in every
+schema, so the TEMP-only `sqlite_temp_schema` and `sqlite_temp_master`
+spellings are not accepted for a non-TEMP database. The
 [schema catalog](https://www.sqlite.org/schematab.html) has no self-entry for
 `sqlite_schema`, so REA does not invent a declaration, SQL statement or root
 page for it in `schema.tables`.
