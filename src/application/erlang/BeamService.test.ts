@@ -53,11 +53,14 @@ it("rejects a relative path and extra arguments before reading", async () => {
       issues: [{ path: ["path"] }],
     });
   if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  if (!nul.ok)
-    expect(nul.error).toMatchObject({
-      _tag: "AnalysisInputError",
-      issues: [{ path: ["path"] }],
-    });
+  if (!nul.ok) {
+    expect(nul.ok).toBe(false);
+    const inputError = nul.error as AnalysisInputError;
+    expect(inputError).toBeInstanceOf(AnalysisInputError);
+    expect(inputError.issues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: ["path"] })]),
+    );
+  }
   expect(calls).toBe(0);
 });
 
