@@ -8,9 +8,12 @@ a device. HAR/SAZ/mitmproxy web-capture workflows remain separate.
 
 Supply an existing TShark 4.x installation **on Linux**, with util-linux
 `prlimit` available at `/usr/bin/prlimit`. Override its absolute path with
-`REA_TSHARK_PRLIMIT_COMMAND` if required. Unsupported hosts, including macOS
-and Windows, are refused before inspection because this integration requires
-an enforced address-space limit.
+`REA_TSHARK_PRLIMIT_COMMAND` if required. Each call admits the selected limiter
+only when it is an absolute regular executable whose `--version` reports
+`<name> from util-linux <version>` and whose `--help` lists `--as`, `--fsize`,
+`--cpu` and `--core`; otherwise inspection is refused as a capability gap.
+Unsupported hosts, including macOS and Windows, are refused before inspection
+because this integration requires an enforced address-space limit.
 
 TShark selection follows the same rule as [`inspect_pcap_capture`](pcap-analysis.md):
 an absolute `REA_TSHARK_COMMAND`, otherwise `tshark` from the first absolute

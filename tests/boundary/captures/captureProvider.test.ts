@@ -3,13 +3,14 @@ import { packetFieldsCatalogSchema } from "../../../src/domain/captures/packetFi
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
 import { writeFile, readdir, chmod, symlink } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
 import { PacketCaptureService } from "../../../src/application/captures/PacketCaptureService.js";
 import { packetCaptureSchema } from "../../../src/domain/captures/packetCapture.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
+import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
 import { Cli } from "incur";
@@ -27,7 +28,8 @@ const fixture = async (mode = "ok", failCleanup = false) => {
   await writeFile(
     script,
     `import {readFileSync, writeFileSync, chmodSync, truncateSync} from 'node:fs';
-if (process.argv.includes('--version')) { console.log(${JSON.stringify(mode)} === 'bad-version' ? 'TShark (Wireshark) 3.0.0' : ${JSON.stringify(mode)} === 'foreign-version' ? 'tcpdump version 4.99.4' : 'TShark (Wireshark) 4.6.9 (fixture)'); console.error('version warning'); }
+if (!process.argv.includes('--')) { if (process.argv.includes('--help')) console.log(' --as[=limits] --fsize[=limits] --cpu[=limits] --core[=limits]'); else { console.log(${JSON.stringify(mode)} === 'foreign-limiter' ? 'prlimit (fixture) 1.0' : process.env.REA_FIXTURE_LIMITER + ' from util-linux 2.39.3'); if (${JSON.stringify(mode)} === 'probe-wait') setInterval(() => {}, 1000); } }
+else if (process.argv.includes('--version')) { console.log(${JSON.stringify(mode)} === 'bad-version' ? 'TShark (Wireshark) 3.0.0' : ${JSON.stringify(mode)} === 'foreign-version' ? 'tcpdump version 4.99.4' : 'TShark (Wireshark) 4.6.9 (fixture)'); console.error('version warning'); }
 else if (['invalid-stdout', 'invalid-stderr', 'replacement', 'invalid-nonzero'].includes(${JSON.stringify(mode)})) {
   const marker = ${JSON.stringify(mode)}.startsWith('invalid-') && ${JSON.stringify(mode)} !== 'invalid-stderr' ? Buffer.from([0xff]) : Buffer.from('�');
   if (${JSON.stringify(mode)} === 'invalid-stderr') process.stderr.write(Buffer.from([0xff]));
@@ -64,13 +66,21 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
       ...(mode === "path"
         ? { PATH: directory, REA_TSHARK_COMMAND: undefined }
         : { REA_TSHARK_COMMAND: configuredCommand }),
-      REA_TSHARK_PRLIMIT_COMMAND: configuredCommand,
+      REA_TSHARK_PRLIMIT_COMMAND:
+        mode === "relative-limiter"
+          ? "relative/prlimit"
+          : mode === "directory-limiter"
+            ? directory
+            : configuredCommand,
     },
     async (input) => {
       calls++;
-      if (mode === "launch-failure" && !input.arguments.includes("--version"))
+      // Limiter probes run without the prlimit `--` terminator.
+      const probe = !input.arguments.includes("--");
+      const producer = !probe && !input.arguments.includes("--version");
+      if (mode === "launch-failure" && producer)
         throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
-      if (mode === "file-limit" && !input.arguments.includes("--version")) {
+      if (mode === "file-limit" && producer) {
         const stdout = { text: "", bytes: 0, observedBytes: 0 };
         const stderr = {
           text: "before file limit\n",
@@ -89,10 +99,21 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
         command: process.execPath,
         arguments: [script, ...input.arguments],
         expectedCommand: process.execPath,
+        env: { ...input.env, REA_FIXTURE_LIMITER: basename(input.command) },
       });
-      if (mode === "wait" && !input.arguments.includes("--version"))
+      if ((mode === "wait" && producer) || (mode === "probe-wait" && probe))
         spawned.process.stdout?.once("data", () => controller.abort());
-      return spawned;
+      if (mode !== "probe-cleanup" || !probe) return spawned;
+      const cleanupOwned =
+        spawned.cleanup ?? (() => cleanupOwnedProcessGroup(spawned.ownership));
+      return {
+        ...spawned,
+        cleanup: async () => {
+          const cleaned = await cleanupOwned();
+          if (!mayClean) throw new Error("injected probe cleanup failure");
+          return cleaned;
+        },
+      };
     },
     async () => {
       if (mode === "workspace-full")
@@ -121,11 +142,11 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
     },
     "linux",
     async (...args) => {
-      if (mode === "oversized-tool" && calls === 2 && args[0] === script) {
+      if (mode === "oversized-tool" && calls === 4 && args[0] === script) {
         const { truncate } = await import("node:fs/promises");
         await truncate(script, 64 * 1024 * 1024 + 1);
       }
-      if (mode === "post-run-abort" && calls === 2) controller.abort();
+      if (mode === "post-run-abort" && calls === 4) controller.abort();
       return readStableArtifact(...args);
     },
     async (limits) => ({ ...limits, file_bytes: 1048576 }),
@@ -367,7 +388,7 @@ it("bounds admission without queuing additional snapshots or delaying cancellati
     ok: false,
     error: { _tag: "AnalysisCancelledError" },
   });
-  expect(f.calls()).toBe(2);
+  expect(f.calls()).toBe(4);
   expect(await f.service.inspect(input)).toMatchObject({ ok: true });
 });
 
@@ -450,7 +471,7 @@ it.each(["capture", "fields"] as const)(
         ? await f.service.inspect({ path: f.path, fields: ["ip.addr"] })
         : await f.service.inspectFields({ kind: "fields" });
     if (result.ok) throw new Error("Expected launch failure");
-    expect(f.calls()).toBe(2);
+    expect(f.calls()).toBe(4);
     expect(result.error.message).toContain("spawn E2BIG");
     expect(result.error.capturedOutput).toBeUndefined();
   },
@@ -466,7 +487,7 @@ it("retains a completed observation and cleanup ownership for retry", async () =
   });
   const retry = await f.service.inspect({ path: f.path, fields: ["ip.addr"] });
   expect(retry.ok).toBe(false);
-  expect(f.calls()).toBe(2);
+  expect(f.calls()).toBe(4);
   f.allowCleanup();
   await f.service.close();
   expect(
@@ -556,7 +577,7 @@ it.each([
           system_code: "ENOSPC",
         },
       });
-    expect(f.calls()).toBe(mode === "workspace-full" ? 0 : 1);
+    expect(f.calls()).toBe(mode === "workspace-full" ? 0 : 3);
     expect(
       (await readdir(f.directory)).filter((name) =>
         name.startsWith("decoder-"),
@@ -622,7 +643,7 @@ it.each([
       _tag: "AnalysisCapabilityUnavailableError",
       reason: expect.stringContaining(reason),
     });
-    expect(f.calls()).toBe(1);
+    expect(f.calls()).toBe(3);
   },
 );
 
@@ -646,6 +667,87 @@ it("refuses a relative REA_TSHARK_COMMAND instead of searching PATH", async () =
     _tag: "AnalysisCapabilityUnavailableError",
     reason: "REA_TSHARK_COMMAND must be an absolute path to the tshark binary",
   });
+});
+
+it.each([
+  ["foreign-limiter", 1],
+  ["directory-limiter", 0],
+  ["relative-limiter", 0],
+] as const)(
+  "refuses a limiter that is not an absolute util-linux prlimit: %s",
+  async (mode, launches) => {
+    const f = await fixture(mode);
+    const result = await f.service.inspect({
+      path: f.path,
+      fields: ["ip.addr"],
+    });
+    if (result.ok) throw new Error("Expected limiter refusal");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      providerId: "tshark-capture",
+      operation: "inspect_packet_capture",
+      diagnostics: { configuration_key: "REA_TSHARK_PRLIMIT_COMMAND" },
+    });
+    expect(result.error.capturedOutput?.stdout).toBe(
+      mode === "foreign-limiter" ? "prlimit (fixture) 1.0\n" : undefined,
+    );
+    expect(analysisErrorRemediationAction(result.error)).toContain(
+      "util-linux prlimit",
+    );
+    expect(f.calls()).toBe(launches);
+    expect(
+      (await readdir(f.directory)).filter((name) =>
+        name.startsWith("decoder-"),
+      ),
+    ).toEqual([]);
+  },
+);
+
+it("retains a limiter probe whose cleanup failed and retries it on close", async () => {
+  const f = await fixture("probe-cleanup", true);
+  const result = await f.service.inspect({ path: f.path, fields: ["ip.addr"] });
+  if (result.ok) throw new Error("Expected probe cleanup failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupPrimary).toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    diagnostics: { configuration_key: "REA_TSHARK_PRLIMIT_COMMAND" },
+  });
+  expect(
+    result.error.cleanupResources.some((resource) =>
+      resource.startsWith("process-group:"),
+    ),
+  ).toBe(true);
+  expect(
+    await f.service.inspect({ path: f.path, fields: ["ip.addr"] }),
+  ).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
+  expect(f.calls()).toBe(1);
+  expect(
+    (await readdir(f.directory)).filter((name) => name.startsWith("decoder-")),
+  ).toHaveLength(1);
+  f.allowCleanup();
+  await f.service.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(
+    (await readdir(f.directory)).filter((name) => name.startsWith("decoder-")),
+  ).toEqual([]);
+});
+
+it("cancels during the limiter probe and releases the workspace", async () => {
+  const f = await fixture("probe-wait");
+  const result = await f.service.inspect(
+    { path: f.path, fields: ["ip.addr"] },
+    { signal: f.controller.signal },
+  );
+  if (result.ok) throw new Error("Expected probe cancellation");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cleanupIncomplete: false,
+  });
+  expect(result.error.cause).toBe(f.controller.signal.reason);
+  expect(f.calls()).toBe(1);
+  expect(
+    (await readdir(f.directory)).filter((name) => name.startsWith("decoder-")),
+  ).toEqual([]);
 });
 
 it("preserves complete Evidence when aborted during post-run integrity checks", async () => {
@@ -917,7 +1019,7 @@ it("retains completed discovery on late cancellation and cleanup failure", async
     if (mode === "cleanup") {
       await f.service.inspectFields({});
       await f.service.inspect({ path: f.path, fields: ["ip.addr"] });
-      expect(f.calls()).toBe(2);
+      expect(f.calls()).toBe(4);
       for (let attempt = 0; attempt < 2; attempt++)
         await expect(f.service.close()).rejects.toMatchObject({
           operation: "inspect_packet_fields",
