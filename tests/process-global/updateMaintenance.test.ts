@@ -1,6 +1,8 @@
 import {
   UpdateCommandRunner,
   UPDATE_COMMAND_OUTPUT_BYTES,
+  MAX_UPDATE_TERMINATION_GRACE_MS,
+  type UpdateCommandLimits,
 } from "../../src/application/UpdateCommandRunner.js";
 import { mkdir, readFile, rm, writeFile, access } from "node:fs/promises";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
@@ -648,6 +650,262 @@ describe("update subprocess boundaries", () => {
         packageRoot,
       }),
     ).resolves.toEqual(ok("3.3.0"));
+  });
+});
+
+const probeWithLimits = async (
+  command: readonly string[],
+  limits: UpdateCommandLimits,
+) => {
+  const runner = new UpdateCommandRunner(undefined, limits);
+  try {
+    return await runner.runProbe(command, process.env);
+  } finally {
+    await runner.close();
+  }
+};
+
+describe("update subprocess output collection limits", () => {
+  it("rejects oversized finite output and reports the retention budget error", async () => {
+    const result = await updateCommands.runProbe(
+      [
+        process.execPath,
+        "-e",
+        `process.stdout.write("x".repeat(${String(UPDATE_COMMAND_OUTPUT_BYTES + 1)}))`,
+      ],
+      process.env,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining(String(UPDATE_COMMAND_OUTPUT_BYTES)),
+      },
+    });
+  });
+
+  it("terminates an endless stream and enforces the default output limit when omitted", async () => {
+    const script = [
+      'const chunk = "x".repeat(64 * 1024);',
+      "const write = () => {",
+      "  while (process.stdout.write(chunk));",
+      '  process.stdout.once("drain", write);',
+      "};",
+      "write();",
+    ].join(" ");
+    const result = await updateCommands.runProbe(
+      [process.execPath, "-e", script],
+      process.env,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining(String(UPDATE_COMMAND_OUTPUT_BYTES)),
+      },
+    });
+  });
+
+  it("enforces a custom collection limit when supplied", async () => {
+    const result = await probeWithLimits(
+      [
+        process.execPath,
+        "-e",
+        'while(true) process.stdout.write("excessive output chunk ");',
+      ],
+      { maxOutputBytes: 1024 },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining("1024"),
+      },
+    });
+  });
+
+  it("escalates to SIGKILL and reports the limit error when a child process ignores SIGTERM", async () => {
+    const script = [
+      'process.on("SIGTERM", () => {});',
+      'while (true) process.stdout.write("excessive output chunk ");',
+    ].join(" ");
+    const result = await probeWithLimits([process.execPath, "-e", script], {
+      maxOutputBytes: 1024,
+      terminationGraceMs: 200,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining("1024"),
+      },
+    });
+  });
+
+  it("escalates immediately to SIGKILL when terminationGraceMs is zero", async () => {
+    const script = [
+      'process.on("SIGTERM", () => {});',
+      'while (true) process.stdout.write("excessive output chunk ");',
+    ].join(" ");
+    const result = await probeWithLimits([process.execPath, "-e", script], {
+      maxOutputBytes: 1024,
+      terminationGraceMs: 0,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining("1024"),
+      },
+    });
+  });
+
+  it("enforces the shared output budget across stdout and stderr when each stream is below the limit", async () => {
+    // 60 bytes on stdout and 50 bytes on stderr; neither stream exceeds the 100-byte limit alone,
+    // but the combined 110 bytes exceeds the shared budget.
+    const result = await probeWithLimits(
+      [
+        process.execPath,
+        "-e",
+        'process.stdout.write("a".repeat(60)); process.stderr.write("b".repeat(50));',
+      ],
+      { maxOutputBytes: 100 },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining("100"),
+      },
+    });
+  });
+
+  it("succeeds when combined stdout and stderr output totals exactly the configured limit", async () => {
+    // 60 bytes on stdout and 40 bytes on stderr total exactly 100 bytes.
+    const stdoutContent = "a".repeat(60);
+    const result = await probeWithLimits(
+      [
+        process.execPath,
+        "-e",
+        `process.stdout.write(${JSON.stringify(stdoutContent)}); process.stderr.write("b".repeat(40));`,
+      ],
+      { maxOutputBytes: 100 },
+    );
+    expect(result).toEqual(ok(stdoutContent));
+  });
+});
+
+describe("update subprocess limit validation", () => {
+  it.each([
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])(
+    "rejects invalid maxOutputBytes override %s before spawning a child process",
+    (maxOutputBytes) => {
+      expect(
+        () => new UpdateCommandRunner(undefined, { maxOutputBytes }),
+      ).toThrow(RangeError);
+      expect(
+        () => new UpdateCommandRunner(undefined, { maxOutputBytes }),
+      ).toThrow(/maxOutputBytes/u);
+    },
+  );
+
+  it.each([
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    -1,
+    1.5,
+    MAX_UPDATE_TERMINATION_GRACE_MS + 1,
+  ])(
+    "rejects invalid terminationGraceMs override %s before spawning a child process",
+    (terminationGraceMs) => {
+      expect(
+        () => new UpdateCommandRunner(undefined, { terminationGraceMs }),
+      ).toThrow(RangeError);
+      expect(
+        () => new UpdateCommandRunner(undefined, { terminationGraceMs }),
+      ).toThrow(/terminationGraceMs/u);
+    },
+  );
+
+  it.each([
+    Number.NaN,
+    0,
+    -1,
+    Number.POSITIVE_INFINITY,
+    MAX_UPDATE_TERMINATION_GRACE_MS + 1,
+  ])(
+    "rejects invalid probeTimeoutMs override %s before spawning a child process",
+    (probeTimeoutMs) => {
+      expect(() => new UpdateCommandRunner(probeTimeoutMs)).toThrow(RangeError);
+      expect(() => new UpdateCommandRunner(probeTimeoutMs)).toThrow(
+        /probe timeout/u,
+      );
+    },
+  );
+
+  it("rejects non-object limits configuration", () => {
+    expect(
+      () =>
+        new UpdateCommandRunner(
+          undefined,
+          null as unknown as UpdateCommandLimits,
+        ),
+    ).toThrow(TypeError);
+  });
+
+  it("enforces small output budgets and exact boundary behavior", async () => {
+    const script = 'process.stdout.write("hello")';
+    const successfulResult = await probeWithLimits(
+      [process.execPath, "-e", script],
+      { maxOutputBytes: 5 },
+    );
+    expect(successfulResult).toEqual(ok("hello"));
+
+    const boundedFailure = await probeWithLimits(
+      [process.execPath, "-e", script],
+      { maxOutputBytes: 4 },
+    );
+    expect(boundedFailure).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining("4"),
+      },
+    });
+
+    const emptySuccess = await probeWithLimits(
+      [process.execPath, "-e", 'process.stdout.write("")'],
+      { maxOutputBytes: 0 },
+    );
+    expect(emptySuccess).toEqual(ok(""));
+
+    const zeroBudgetExceeded = await probeWithLimits(
+      [process.execPath, "-e", 'process.stdout.write("x")'],
+      { maxOutputBytes: 0 },
+    );
+    expect(zeroBudgetExceeded).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining("0"),
+      },
+    });
+  });
+
+  it("accepts maximum valid timer grace period without throwing", () => {
+    expect(
+      () =>
+        new UpdateCommandRunner(undefined, {
+          terminationGraceMs: MAX_UPDATE_TERMINATION_GRACE_MS,
+        }),
+    ).not.toThrow();
   });
 });
 
