@@ -358,6 +358,32 @@ it("lists properties in packaging, scope, type and classifier", () => {
   ]);
 });
 
+it("classifies a Gradle exclusive-lower-bound request as a range", () => {
+  const report = parse(
+    JSON.stringify({
+      formatVersion: "1.1",
+      component: { group: "com.example", module: "demo", version: "1.0.0" },
+      variants: [
+        {
+          name: "apiElements",
+          dependencies: [
+            {
+              group: "com.example",
+              module: "lib",
+              version: { requires: "]1.0,2.0]" },
+            },
+          ],
+        },
+      ],
+    }),
+    "/artifacts/demo-1.0.0.module",
+  );
+  expect(report.dependencies[0]).toMatchObject({
+    version: "]1.0,2.0]",
+    version_kind: "range",
+  });
+});
+
 it("keeps an empty relativePath and a property-spelled optional distinct from omission", () => {
   const report = parse(`<project>
   <parent>

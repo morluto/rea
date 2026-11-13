@@ -3,7 +3,7 @@ import {
   inspectMavenGradleMetadataInputSchema,
   mavenGradleMetadataSchema,
   mavenPropertyReferences,
-  mavenRequestedVersionKind,
+  requestedVersionKind,
 } from "./mavenGradleMetadata.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
@@ -73,11 +73,16 @@ it("classifies requested versions without interpolating properties", () => {
     "${changelist}",
   ]);
   expect(mavenPropertyReferences("1.2.3")).toEqual([]);
-  expect(mavenRequestedVersionKind("${jackson.version}")).toBe("property");
-  expect(mavenRequestedVersionKind("[5.10,6.0)")).toBe("range");
-  expect(mavenRequestedVersionKind("(,1.0]")).toBe("range");
-  expect(mavenRequestedVersionKind("2.17.2")).toBe("literal");
-  expect(mavenRequestedVersionKind(null)).toBe("missing");
+  expect(requestedVersionKind("${jackson.version}", "maven-pom")).toBe(
+    "property",
+  );
+  expect(requestedVersionKind("[5.10,6.0)", "maven-pom")).toBe("range");
+  expect(requestedVersionKind("(,1.0]", "maven-pom")).toBe("range");
+  expect(requestedVersionKind("2.17.2", "maven-pom")).toBe("literal");
+  expect(requestedVersionKind(null, "maven-pom")).toBe("missing");
+  expect(requestedVersionKind("]1.0,2.0]", "gradle-module")).toBe("range");
+  expect(requestedVersionKind("[1.0,2.0[", "gradle-module")).toBe("range");
+  expect(requestedVersionKind("1.0]", "maven-pom")).toBe("literal");
 });
 
 it("admits a complete POM report with unresolved parent and property references", () => {

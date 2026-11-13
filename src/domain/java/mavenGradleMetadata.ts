@@ -30,13 +30,18 @@ export const mavenPropertyReferences = (value: string | null): string[] =>
     ? []
     : [...new Set(Array.from(value.matchAll(PROPERTY_REFERENCE), (m) => m[0]))];
 
-/** Classify a requested version as spelled, without interpolating or resolving. */
-export const mavenRequestedVersionKind = (
+/**
+ * Classify a requested version as spelled for its document format, without
+ * interpolating or resolving. Gradle also writes an exclusive lower bound as `]`.
+ */
+export const requestedVersionKind = (
   value: string | null,
+  format: MavenGradleMetadataFormat,
 ): "literal" | "range" | "property" | "missing" => {
   if (value === null) return "missing";
   if (mavenPropertyReferences(value).length > 0) return "property";
-  if (/[[(]/u.test(value)) return "range";
+  const rangeDelimiter = format === "gradle-module" ? /[[(\]]/u : /[[(]/u;
+  if (rangeDelimiter.test(value)) return "range";
   return "literal";
 };
 

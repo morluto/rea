@@ -3,7 +3,7 @@ import type { Element, Node } from "@xmldom/xmldom";
 import { parseXmlDocument, opensLikeXml } from "../domain/xmlDocument.js";
 import {
   mavenPropertyReferences,
-  mavenRequestedVersionKind,
+  requestedVersionKind,
   type MavenGradleDependency,
   type MavenGradleMetadata,
   type MavenGradleUnresolved,
@@ -238,7 +238,7 @@ const parseMavenDependency = (
     group_id,
     artifact_id,
     version,
-    version_kind: mavenRequestedVersionKind(version),
+    version_kind: requestedVersionKind(version, "maven-pom"),
     gradle_version: null,
     scope,
     type,
@@ -397,7 +397,7 @@ const parseGradleDependency = (
     group_id,
     artifact_id,
     version,
-    version_kind: mavenRequestedVersionKind(version),
+    version_kind: requestedVersionKind(version, "gradle-module"),
     gradle_version,
     scope: null,
     type: null,
