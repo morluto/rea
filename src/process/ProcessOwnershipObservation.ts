@@ -1,3 +1,9 @@
+import {
+  DEFAULT_PROCESS_TABLE_MAX_BYTES,
+  parseProcessTableMaxBytes,
+  PROCESS_TABLE_MAX_BYTES_SETTING,
+} from "../config/processTableOutputBudget.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { readProcessInspectionFile } from "./ProcessInspectionFile.js";
 import {
   assertProcessOwnershipInspectionActive,
@@ -28,6 +34,7 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
 import {
+  execFileFailureCapturedOutput,
   execFileOutput,
   execFileOutputFailure,
   HOST_SPAWN_CAPACITY_CODES,
@@ -1187,6 +1194,9 @@ export const createSystemProcessOwnershipHost = (
     readonly execFileOutput?: typeof execFileOutput;
   } = {},
 ): ProcessOwnershipHost => {
+  const processTableBudget = parseProcessTableMaxBytes(
+    hostEnvironment[PROCESS_TABLE_MAX_BYTES_SETTING],
+  );
   const runExecFileOutput = options.execFileOutput ?? execFileOutput;
   const darwinModuleCachePath =
     options.darwinModuleCachePath ??
@@ -1224,6 +1234,7 @@ export const createSystemProcessOwnershipHost = (
       : undefined;
   const listProcesses = async (signal?: AbortSignal) => {
     if (platform === "win32") return [];
+    if (!processTableBudget.ok) throw processTableBudget.error;
     let stdout: string;
     try {
       ({ stdout } = await runExecFileOutput(
@@ -1232,6 +1243,7 @@ export const createSystemProcessOwnershipHost = (
         {
           env: hostEnvironment,
           stopSignal: "SIGTERM",
+          maxBuffer: processTableBudget.value,
           ...(signal === undefined ? {} : { signal }),
         },
       ));
@@ -1526,6 +1538,7 @@ export const createSystemProcessOwnershipHost = (
       return await listProcesses(signal);
     } catch (cause: unknown) {
       rethrowInspectionFailure(cause);
+      if (cause instanceof ConfigurationError) throw cause;
       const failure = execFileOutputFailure(cause);
       if (
         spawnCapacityExhausted(failure) ||
@@ -1545,6 +1558,9 @@ export const createSystemProcessOwnershipHost = (
         throw new LinuxOwnedProcessPrerequisiteError(cause, {
           missing: systemCode === "ENOENT",
           systemCode,
+          maximumBytes: processTableBudget.ok
+            ? processTableBudget.value
+            : undefined,
         });
       throw new ProcessAdmissionError(
         "baseline_unavailable",
@@ -1790,11 +1806,13 @@ export const LINUX_PROCESS_OWNERSHIP_REMEDIATION =
 export interface LinuxOwnedProcessPrerequisiteOptions {
   readonly missing?: boolean;
   readonly systemCode?: string | undefined;
+  readonly maximumBytes?: number | undefined;
 }
 
 /** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
 export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavailableError {
   readonly systemCode: string | undefined;
+  readonly outputLimitBytes: number | undefined;
   readonly admissionCode: string | undefined;
 
   constructor(
@@ -1808,6 +1826,11 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
             systemCode: optionsOrSystemCode,
           }
         : optionsOrSystemCode;
+    const failure = execFileOutputFailure(cause);
+    const outputLimitBytes =
+      failure?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+        ? (options.maximumBytes ?? DEFAULT_PROCESS_TABLE_MAX_BYTES)
+        : undefined;
     const admissionCode =
       cause instanceof ProcessAdmissionError ? cause.code : undefined;
     const rawCode =
@@ -1825,33 +1848,48 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
       (options.missing ??
         (resolvedCode === "ENOENT" || resolvedCode === undefined));
     const reason =
-      admissionCode !== undefined || isMissing
-        ? `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`
-        : resolvedCode !== undefined
-          ? `Linux process ownership inspection failed to execute ps (${resolvedCode}): ${errorMessage(cause)}`
-          : `Linux process ownership inspection could not obtain the process table using ps: ${errorMessage(cause)}`;
+      outputLimitBytes !== undefined
+        ? `Linux process ownership inspection is unknown because ps exceeded the ${String(outputLimitBytes)}-byte per-stream output allowance; the incomplete process table was not used. Raise ${PROCESS_TABLE_MAX_BYTES_SETTING} in REA's launch environment if needed and restart REA; a larger allowance can retain more memory.`
+        : admissionCode !== undefined || isMissing
+          ? `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`
+          : resolvedCode !== undefined
+            ? `Linux process ownership inspection failed to execute ps (${resolvedCode}): ${errorMessage(cause)}`
+            : `Linux process ownership inspection could not obtain the process table using ps: ${errorMessage(cause)}`;
     const remediation =
-      admissionCode !== undefined
-        ? processOwnershipAdmissionRecovery(admissionCode, "linux")
-        : isMissing
-          ? LINUX_PROCESS_OWNERSHIP_REMEDIATION
-          : processOwnershipAdmissionRecovery(
-              "baseline_unavailable",
-              "linux",
-              resolvedCode,
-            );
+      outputLimitBytes !== undefined
+        ? `Raise ${PROCESS_TABLE_MAX_BYTES_SETTING} in REA's launch environment if needed and restart REA; a larger allowance can retain more memory.`
+        : admissionCode !== undefined
+          ? processOwnershipAdmissionRecovery(admissionCode, "linux")
+          : isMissing
+            ? LINUX_PROCESS_OWNERSHIP_REMEDIATION
+            : processOwnershipAdmissionRecovery(
+                "baseline_unavailable",
+                "linux",
+                resolvedCode,
+              );
     super("process-ownership", "prepare_owned_process", reason, {
       cause,
       userMessage: reason,
       remediationAction: remediation,
+      ...(failure === undefined
+        ? {}
+        : { capturedOutput: execFileFailureCapturedOutput(failure) }),
       diagnostics: {
         boundary: "process-ownership",
+        ...(outputLimitBytes === undefined
+          ? {}
+          : {
+              prerequisite: "ps",
+              reason: "output_limit",
+              max_output_bytes_per_stream: outputLimitBytes,
+            }),
         ...(admissionCode === undefined
           ? {}
           : { admission_code: admissionCode }),
         ...(resolvedCode === undefined ? {} : { system_code: resolvedCode }),
       },
     });
+    this.outputLimitBytes = outputLimitBytes;
     this.systemCode = resolvedCode;
     this.admissionCode = admissionCode;
   }

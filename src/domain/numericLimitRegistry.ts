@@ -137,6 +137,14 @@ export const NUMERIC_LIMIT_REGISTRY = [
       "Bounds the MCP tools/list phase while the server is starting. It shapes server startup, not a later analysis call.",
   },
   {
+    name: "REA_PROCESS_TABLE_MAX_BYTES",
+    update_mode: "restart",
+    policy: "restart-only",
+    read: "construction",
+    reason:
+      "Captured from the launch environment when the process-ownership host is constructed. Its later process inventories reuse that per-stream output allowance; the shared host and its active supervisors do not adopt a runtime setting update.",
+  },
+  {
     name: "REA_RECONNECT_TIMEOUT_SECONDS",
     update_mode: "restart",
     policy: "restart-only",

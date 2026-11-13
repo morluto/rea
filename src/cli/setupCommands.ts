@@ -153,7 +153,7 @@ const registerDoctorCommand = (
         .array(z.enum(DOCTOR_PROVIDER_IDS))
         .default([])
         .describe(
-          "Deep-analysis provider, or desktop_build for a desktop build host, whose readiness is required",
+          "Analysis provider, firmware integration, or desktop_build host whose readiness is required",
         ),
       skill: z
         .boolean()
@@ -267,7 +267,11 @@ const runSetupCommand = async (
     ]);
   const result = await runSetup(
     { ...setupRunOptions(input, interactive, hasExplicitScope), signal },
-    systemSetupHost(createSystemDoctorHost(environment, signal), environment),
+    // Firmware readiness must not select an engine or change setup's install plan.
+    systemSetupHost(
+      createSystemDoctorHost(environment, signal, { firmware: false }),
+      environment,
+    ),
     interactive
       ? (actions, context) =>
           confirmInteractiveSetup(actions, options.accessible, context, signal)

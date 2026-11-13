@@ -2,9 +2,16 @@ import { expect, it } from "vitest";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { STARTUP_OWNER_CLOSED } from "../process/SharedStartupAttempt.js";
 import { createDoctorHostFixture } from "./Doctor.fixture.js";
-import { runDoctorOwned, systemDoctorHost } from "./Doctor.js";
+import {
+  runDoctorOwned,
+  systemDoctorHost,
+  type DoctorProviderInspection,
+} from "./Doctor.js";
 
 it("joins a late provider inspection and retries only its unresolved cleanup owners", async () => {
   let enter!: (signal: AbortSignal) => void;
@@ -83,9 +90,14 @@ it("joins a late provider inspection and retries only its unresolved cleanup own
     await host.close!();
     expect(failure.cleanupIncomplete).toBe(false);
     expect(closes).toEqual({ successful: 1, refused: 2 });
-    await expect(host.providerInspections!([])).rejects.toThrow(
-      "scope is closed",
-    );
+    await expect(host.providerInspections!([])).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: STARTUP_OWNER_CLOSED,
+      diagnostics: {
+        provider_inspections: [],
+        provider_inspection_groups: { completed: 0, total: 1 },
+      },
+    });
   }, [
     () => {
       denied = false;
@@ -100,6 +112,59 @@ it("joins a late provider inspection and retries only its unresolved cleanup own
     },
     () => host.close!(),
   ]);
+});
+
+it("creates client-selected inspection groups afresh and drains cleanup between groups", async () => {
+  const events: string[] = [];
+  const selections: readonly string[][] = [["claude"], ["codex"]];
+  let factories = 0;
+  const host = systemDoctorHost({
+    environment: {},
+    providerInspectionGroups: (selectedClients) => {
+      factories++;
+      const selected = selectedClients[0]!;
+      let cleaned = false;
+      return [
+        async (owner, _signal, clients) => {
+          expect(clients).toBe(selectedClients);
+          events.push(`inspect:${selected}`);
+          owner.retain(
+            {
+              close: async () => {
+                cleaned = true;
+                events.push(`cleanup:${selected}`);
+              },
+            },
+            `selected-registration:${selected}`,
+          );
+          return [providerInspection(selected, true)];
+        },
+        async (_owner, _signal, clients) => {
+          expect(clients).toBe(selectedClients);
+          expect(cleaned).toBe(true);
+          events.push(`continue:${selected}`);
+          return [];
+        },
+      ];
+    },
+  });
+  try {
+    for (const selection of selections)
+      await expect(host.providerInspections!(selection)).resolves.toEqual([
+        providerInspection(selection[0]!, true),
+      ]);
+    expect(factories).toBe(2);
+    expect(events).toEqual([
+      "inspect:claude",
+      "cleanup:claude",
+      "continue:claude",
+      "inspect:codex",
+      "cleanup:codex",
+      "continue:codex",
+    ]);
+  } finally {
+    await host.close!();
+  }
 });
 
 it("retains a completed healthy report when cancellation arrives during final cleanup", async () => {
@@ -123,6 +188,142 @@ it("retains a completed healthy report when cancellation arrives during final cl
   });
 });
 
+it.each([
+  ["active group", false],
+  ["active group", true],
+  ["cleanup gate", false],
+  ["cleanup gate", true],
+] as const)(
+  "retains completed inspections when host closure interrupts the %s (caller cancelled first: %s)",
+  async (stage, callerCancelledFirst) => {
+    const controller = new AbortController();
+    const reason = { request: "cancel before doctor host closes" };
+    const completed = providerInspection("ghidra", true);
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let laterGroups = 0;
+    let cleanupAttempts = 0;
+    const host = systemDoctorHost({
+      environment: {},
+      signal: controller.signal,
+      providerInspections: [
+        async (owner) => {
+          if (stage === "active group") {
+            enter();
+            await released;
+          } else {
+            owner.retain(
+              {
+                close: async () => {
+                  cleanupAttempts++;
+                  enter();
+                  await released;
+                },
+              },
+              "completed-provider-command",
+            );
+          }
+          return [completed];
+        },
+        async () => {
+          laterGroups++;
+          return [providerInspection("kuna", true)];
+        },
+      ],
+    });
+    const inspection = runDoctorOwned(
+      undefined,
+      createDoctorHostFixture({
+        signal: controller.signal,
+        providerInspections: host.providerInspections!,
+        close: host.close!,
+      }),
+    ).catch((cause: unknown) => cause);
+    let closing: Promise<unknown> | undefined;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(entered, inspection, "doctor closure gate");
+      if (callerCancelledFirst) controller.abort(reason);
+      closing = host.close!();
+      release();
+      const failure = await inspection;
+      expect(failure).toBeInstanceOf(AnalysisCancelledError);
+      if (!(failure instanceof AnalysisCancelledError))
+        throw new Error("Expected typed doctor closure cancellation");
+      expect(failure.cause).toBe(
+        callerCancelledFirst ? reason : STARTUP_OWNER_CLOSED,
+      );
+      expect(
+        JSON.parse(JSON.stringify(projectAnalysisError(failure))),
+      ).toMatchObject({
+        code: "cancelled",
+        details: {
+          diagnostics: {
+            provider_inspections: [completed],
+            provider_inspection_groups: { completed: 1, total: 2 },
+          },
+        },
+      });
+      expect(laterGroups).toBe(0);
+      expect(cleanupAttempts).toBe(stage === "cleanup gate" ? 1 : 0);
+      await closing;
+    }, [
+      () => release(),
+      async () => {
+        await inspection;
+      },
+      async () => {
+        await closing;
+      },
+      () => host.close!(),
+    ]);
+  },
+);
+
+it("preserves an admitted provider's physical failure when its host closes", async () => {
+  const primary = new ProviderAdapterError("kuna", "doctor", {
+    diagnostics: { reason: "controlled provider fault during closure" },
+  });
+  const completed = providerInspection("ghidra", true);
+  let closing: Promise<unknown> | undefined;
+  let laterGroups = 0;
+  const host = systemDoctorHost({
+    environment: {},
+    providerInspections: [
+      async () => [completed],
+      async () => {
+        closing = host.close!();
+        throw primary;
+      },
+      async () => {
+        laterGroups++;
+        return [];
+      },
+    ],
+  });
+  await expect(
+    runDoctorOwned(
+      undefined,
+      createDoctorHostFixture({
+        providerInspections: host.providerInspections!,
+        close: host.close!,
+      }),
+    ),
+  ).rejects.toBe(primary);
+  expect(primary.diagnostics).toMatchObject({
+    reason: "controlled provider fault during closure",
+    provider_inspections: [completed],
+    provider_inspection_groups: { completed: 1, total: 3 },
+  });
+  expect(laterGroups).toBe(0);
+  await closing;
+});
+
 it("preserves an inspection-authored physical failure when final cleanup also observes cancellation", async () => {
   const controller = new AbortController();
   const physical = new ProviderAdapterError("ghidra", "doctor", {
@@ -144,4 +345,192 @@ it("preserves an inspection-authored physical failure when final cleanup also ob
     ),
   ).rejects.toBe(physical);
   expect(physical.cause).toBeUndefined();
+});
+
+it.each([false, true])(
+  "retains completed provider inspections through failed cleanup and retry (late cancellation: %s)",
+  async (cancelDuringCleanup) => {
+    const controller = new AbortController();
+    const reason = { request: "cancel between provider groups" };
+    const inspections = [
+      providerInspection("ghidra", true),
+      providerInspection("kuna", false),
+    ];
+    let denied = true;
+    let laterGroups = 0;
+    const closes = { successful: 0, refused: 0 };
+    const host = systemDoctorHost({
+      environment: {},
+      signal: controller.signal,
+      providerInspections: [
+        async () => [inspections[0]!],
+        async (owner) => {
+          owner.retain(
+            {
+              close: async () => {
+                closes.successful++;
+              },
+            },
+            "successful-provider-command",
+          );
+          owner.retain(
+            {
+              close: async () => {
+                closes.refused++;
+                if (cancelDuringCleanup) controller.abort(reason);
+                if (denied) throw new Error("controlled cleanup refusal");
+              },
+            },
+            "refused-provider-command",
+          );
+          return [inspections[1]!];
+        },
+        async () => {
+          laterGroups++;
+          return [providerInspection("binwalk", true)];
+        },
+      ],
+    });
+    try {
+      const failure: unknown = await runDoctorOwned(
+        undefined,
+        createDoctorHostFixture({
+          signal: controller.signal,
+          providerInspections: host.providerInspections!,
+          close: host.close!,
+        }),
+      ).catch((cause: unknown) => cause);
+      if (!(failure instanceof AnalysisError))
+        throw new Error("Expected typed doctor cleanup failure");
+      const retained = {
+        provider_inspections: inspections,
+        provider_inspection_groups: { completed: 2, total: 3 },
+      };
+      // Use the CLI's error projection and JSON encoding, including the outer
+      // failed-close composition rather than only inspecting the inner error.
+      expect(
+        JSON.parse(JSON.stringify(projectAnalysisError(failure))),
+      ).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          resources: ["refused-provider-command"],
+          diagnostics: {
+            primary_error: { details: { diagnostics: retained } },
+          },
+        },
+      });
+      expect(laterGroups).toBe(0);
+      expect(closes).toEqual({ successful: 1, refused: 2 });
+      if (cancelDuringCleanup) expect(controller.signal.reason).toBe(reason);
+
+      denied = false;
+      await host.close!();
+      expect(failure.cleanupIncomplete).toBe(false);
+      expect(failure.cleanupResources).toEqual([]);
+      expect(closes).toEqual({ successful: 1, refused: 3 });
+      expect(
+        JSON.parse(JSON.stringify(projectAnalysisError(failure))),
+      ).toMatchObject({
+        code: "execution_failure",
+        details: { diagnostics: retained },
+      });
+      expect(laterGroups).toBe(0);
+    } finally {
+      denied = false;
+      await host.close!();
+    }
+  },
+);
+
+it.each(["physical failure", "cancellation"] as const)(
+  "preserves completed provider inspections and the original %s when a later group fails",
+  async (kind) => {
+    const controller = new AbortController();
+    const reason = { request: "cancel doctor" };
+    const primary =
+      kind === "cancellation"
+        ? new AnalysisCancelledError("doctor", { cause: reason })
+        : new ProviderAdapterError("kuna", "doctor", {
+            cause: new Error("controlled provider fault"),
+            diagnostics: { reason: "controlled provider fault" },
+            capturedOutput: {
+              stdout: "probe output",
+              stderr: "probe failure",
+              truncated: false,
+            },
+          });
+    const originalCause = primary.cause;
+    const inspection = providerInspection("ghidra", true);
+    let laterGroups = 0;
+    const host = systemDoctorHost({
+      environment: {},
+      signal: controller.signal,
+      providerInspections: [
+        async () => [inspection],
+        async () => {
+          throw primary;
+        },
+        async () => {
+          laterGroups++;
+          return [];
+        },
+      ],
+    });
+    await expect(
+      runDoctorOwned(
+        undefined,
+        createDoctorHostFixture({
+          signal: controller.signal,
+          providerInspections: host.providerInspections!,
+          close: async () => {
+            controller.abort(reason);
+            return host.close!();
+          },
+        }),
+      ),
+    ).rejects.toBe(primary);
+    expect(primary.cause).toBe(originalCause);
+    expect(laterGroups).toBe(0);
+    expect(
+      JSON.parse(JSON.stringify(projectAnalysisError(primary))),
+    ).toMatchObject({
+      code: kind === "cancellation" ? "cancelled" : "execution_failure",
+      details: {
+        diagnostics: {
+          ...(kind === "cancellation"
+            ? {}
+            : { reason: "controlled provider fault" }),
+          provider_inspections: [inspection],
+          provider_inspection_groups: { completed: 1, total: 3 },
+        },
+        ...(kind === "cancellation"
+          ? {}
+          : { captured_output: primary.capturedOutput }),
+      },
+    });
+  },
+);
+
+const providerInspection = (
+  id: string,
+  healthy: boolean,
+): DoctorProviderInspection => ({
+  id,
+  configured: true,
+  available: healthy,
+  providerVersion: `${id}-observed-version`,
+  registrationEnvironment: {},
+  checks: [
+    {
+      name: `${id}-readiness`,
+      ok: healthy,
+      code: healthy ? null : "controlled_probe_failure",
+      detail: healthy
+        ? "Observed ready provider"
+        : "Observed failed provider probe",
+      remediation: healthy ? null : "Repair the provider probe",
+      classification: "runtime_failure",
+      details: { output: `${id} captured output` },
+    },
+  ],
 });

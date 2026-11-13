@@ -3,6 +3,7 @@ import {
   ghidraProgramNameSchema,
 } from "./ghidraExistingProject.js";
 import { z } from "zod";
+import { processTableMaxBytesSchema } from "./processTableOutputBudget.js";
 import { mcpInputBudgetSchema } from "./mcpInputBudget.js";
 import { isAbsolute } from "node:path";
 
@@ -40,6 +41,7 @@ import { parseJebMcpEndpoint } from "./jebMcpEndpoint.js";
 const environmentSchema = z.object({
   ...debuggerSessionLimitEnvironmentShape,
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
+  REA_PROCESS_TABLE_MAX_BYTES: processTableMaxBytesSchema.optional(),
   REA_MCP_MAX_RESPONSE_BYTES: mcpResponseBudgetSchema.optional(),
   REA_MCP_MAX_INPUT_ELEMENTS: mcpInputBudgetSchema.optional(),
   REA_MCP_INITIALIZE_BUDGET_MS: mcpInitializeBudgetMsSchema.optional(),

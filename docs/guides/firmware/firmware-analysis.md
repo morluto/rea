@@ -43,10 +43,11 @@ Capability discovery recommends `REA_BINWALK_COMMAND` for missing inspection
 and `REA_UNBLOB_COMMAND` for missing extraction. Configuring the other engine
 does not enable the unavailable operation.
 Both require util-linux `prlimit`, normally `/usr/bin/prlimit`; override its
-absolute path with `REA_FIRMWARE_PRLIMIT_COMMAND` if needed. `rea doctor` does
-not currently inspect firmware readiness. Engine selection/version checks run
-when the firmware operation is requested; successful general doctor checks do
-not establish firmware tool or external-extractor availability.
+absolute path with `REA_FIRMWARE_PRLIMIT_COMMAND` if needed. Use
+`rea doctor --provider binwalk --json` or `rea doctor --provider unblob --json`
+for the readiness diagnostics described below. Firmware requests also validate
+engine selection and version; readiness does not establish that a particular
+target or selected format can be analyzed.
 
 REA retains at most 8 MiB of combined stdout and stderr per command. Exceeding
 that diagnostic budget stops analysis with an explicit truncated-output error;
@@ -112,6 +113,27 @@ rea extract-firmware /path/to/firmware.bin /path/to/new-output
 rea extract-firmware /path/to/firmware.bin /path/to/selected-output \
   --offset 64 --length 4096 --max-depth 3
 ```
+
+### Readiness diagnostics
+
+Run `rea doctor --provider binwalk --json` or
+`rea doctor --provider unblob --json` to require just the selected firmware
+integration; absent native analysis engines remain informational in that scope.
+An unscoped `rea doctor --json` also lists both optional firmware integrations.
+
+Doctor checks Linux support, absolute readable executable paths, the existing
+util-linux `prlimit` selection (default `/usr/bin/prlimit`), a procps-compatible
+`ps` on REA's `PATH`, and the tool's reported version through the same release
+admission rules as analysis. Compatible patch releases are explicitly labeled
+as unverified. Unblob's `--show-external-dependencies` report lists installed
+and missing extractors; missing extractors make its readiness check unhealthy,
+although selected formats may still extract with partial coverage. Unrecognized
+reports remain unknown rather than being treated as successful checks.
+
+These bounded probes inspect only the caller-supplied tools and host prerequisites;
+they do not load firmware, extract files, install dependencies or update agent
+registrations. Tool startup failure, timeout or incomplete process cleanup is
+reported. Readiness is not proof that a particular target can be analyzed.
 
 The corresponding MCP tools accept the same intent:
 
