@@ -4,23 +4,39 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { devicetreeFixture } from "../../src/firmware/devicetree/Devicetree.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+const devicetreeContract = (() => {
+  const contract = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
+    (item) => item.name === "inspect_devicetree",
+  );
+  if (contract === undefined)
+    throw new Error("Missing inspect_devicetree contract");
+  return contract;
+})();
+
 const oracle = z
   .object({
-    cases: z.array(
-      z.object({
-        version: z.union([z.literal(16), z.literal(17)]),
-        table_hex: z.string().regex(/^(?:[a-f0-9]{2})+$/u),
-        reservations: z.array(
-          z.object({ address: z.string(), size: z.string() }),
-        ),
-      }),
-    ),
+    cases: z
+      .array(
+        z.object({
+          version: z.union([z.literal(16), z.literal(17)]),
+          table_hex: z.string().regex(/^(?:[a-f0-9]{2})+$/u),
+          reservations: z.array(
+            z.object({ address: z.string(), size: z.string() }),
+          ),
+        }),
+      )
+      .refine(
+        (cases) =>
+          cases.length === 2 &&
+          new Set(cases.map(({ version }) => version)).size === 2,
+        "Expected exactly one libfdt witness for each supported version (16 and 17)",
+      ),
   })
   .parse(
     JSON.parse(
@@ -65,9 +81,7 @@ cliTest(
         arguments: ["inspect-devicetree", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract("inspect_devicetree").outputSchema.parse(
-        result.json,
-      );
+      const evidence = devicetreeContract.outputSchema.parse(result.json);
       const report = evidence.normalized_result;
       if (!("reservations" in report))
         throw new Error("Expected complete DTB report");
@@ -87,7 +101,7 @@ cliTest(
       if (sample.version === 17) {
         const response = await call("inspect_devicetree", { path });
         expect(response.isError).not.toBe(true);
-        const mcp = toolContract("inspect_devicetree").outputSchema.parse(
+        const mcp = devicetreeContract.outputSchema.parse(
           response.structuredContent,
         );
         expect(mcp.normalized_result).toEqual(report);
