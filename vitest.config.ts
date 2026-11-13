@@ -150,8 +150,11 @@ export default defineConfig({
     runner: "./tests/processOwnershipRunner.ts",
     // Boundary projects may compete with TypeScript, docs, and package checks
     // under Turbo. Keep the deadline bounded while avoiding false failures from
-    // host-level CPU and filesystem contention.
-    testTimeout: COVERAGE_ENABLED ? 60_000 : 30_000,
+    // host-level CPU and filesystem contention. Hosted CI runs a worker per
+    // core, so CPU-bound cases share the runner with each other's subprocesses;
+    // the deadline still bounds a hang there, at twice the local allowance.
+    testTimeout:
+      (COVERAGE_ENABLED ? 60_000 : 30_000) * (DEDICATED_CI_RUNNER ? 2 : 1),
     coverage: {
       enabled: false,
       provider: "v8",
