@@ -20,6 +20,7 @@ import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import {
   compareParsedProcessEvidence,
   readProcessComparisonSource,
+  unsupportedProcessCaptureProvider,
 } from "./ProcessComparisonService.js";
 import { createProgressReporter } from "../ProgressReporter.js";
 import { captureProcessScenario } from "../../process/capture/ProcessHarness.js";
@@ -287,13 +288,7 @@ const projectCaptureFileFailure = (
         "invalid_value",
       );
     case "unsupported-provider":
-      return new AnalysisInputError("compare_process_captures", undefined, [
-        {
-          path: [side, "provider"],
-          reason: "invalid_value",
-          message: `The ${side} Evidence provider ${failure.provider.id} v${failure.provider.version} (${failure.provider.name}) is not the current or supported legacy ${PROCESS_PROVIDER.id} v${PROCESS_PROVIDER.version} process capture provider.`,
-        },
-      ]);
+      return unsupportedProcessCaptureProvider(side, failure);
     case "invalid-capture":
       return invalidCaptureEvidence(failure.cause, side);
   }

@@ -1,3 +1,4 @@
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import {
   DEFAULT_BUN_READER_LIMITS,
   type BunReaderLimits,
@@ -16,10 +17,7 @@ import type {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
-import {
-  artifactReadCancelledBy,
-  assertArtifactReadActive,
-} from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
   normalizeArtifactPath,
   ArtifactPathRegistry,
@@ -62,12 +60,7 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
   readonly #streams = new Set<Readable>();
   readonly #source: ArtifactFileSource;
   #admission: BunStandaloneAdmission | undefined;
-  #prepared:
-    | {
-        readonly signal: AbortSignal | undefined;
-        readonly promise: Promise<void>;
-      }
-    | undefined;
+  readonly #preparation = new ArtifactPreparation();
   #header: BunStandaloneMetadata | undefined;
   #closing = false;
 
@@ -108,27 +101,11 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      for (;;) {
-        const pending = (this.#prepared ??= {
-          signal,
-          promise: this.#prepare(signal),
-        });
-        try {
-          await pending.promise;
-          break;
-        } catch (cause: unknown) {
-          if (this.#prepared === pending) this.#prepared = undefined;
-          if (
-            pending.signal !== signal &&
-            signal?.aborted !== true &&
-            artifactReadCancelledBy(cause, pending.signal)
-          ) {
-            this.#assertOpen(signal);
-            continue;
-          }
-          throw cause;
-        }
-      }
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
       await this.#source.readSelectedPath(signal);
     });
     let index = 0;
@@ -209,7 +186,7 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
     this.#entries.clear();
     this.#header = undefined;
     this.#admission = undefined;
-    this.#prepared = undefined;
+    this.#preparation.clear();
   }
 
   provenance(): readonly [] {

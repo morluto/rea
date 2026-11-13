@@ -16,6 +16,10 @@ export const isErasedJavaScriptDeclaration = (node: t.Node): boolean =>
 export const isUnmodeledJavaScriptRuntimeScope = (node: t.Node): boolean =>
   t.isTSModuleDeclaration(node) || t.isTSEnumDeclaration(node);
 
+/** Compiler options determine whether an inline type-only declaration retains a side effect. */
+export const TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION =
+  "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.";
+
 /** Whether TypeScript explicitly erases this entire import declaration. */
 export const isTypeOnlyImportDeclaration = (
   node: t.ImportDeclaration,

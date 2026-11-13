@@ -1,3 +1,4 @@
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import type { Readable } from "node:stream";
 
 import {
@@ -17,10 +18,7 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import {
-  artifactReadCancelledBy,
-  assertArtifactReadActive,
-} from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
@@ -34,9 +32,7 @@ export class NtfsMftArtifactReader implements ArtifactReader {
   readonly format = "ntfs-mft" as const;
   readonly #scope = new ArtifactResourceScope();
   readonly #source: ArtifactFileSource;
-  #prepared:
-    | { signal: AbortSignal | undefined; promise: Promise<void> }
-    | undefined;
+  readonly #preparation = new ArtifactPreparation();
   #metadata: ArtifactFormatMetadata | undefined;
   #limitations: readonly string[] = [];
   #closing = false;
@@ -67,27 +63,11 @@ export class NtfsMftArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      for (;;) {
-        const pending = (this.#prepared ??= {
-          signal,
-          promise: this.#prepare(signal),
-        });
-        try {
-          await pending.promise;
-          break;
-        } catch (cause: unknown) {
-          if (this.#prepared === pending) this.#prepared = undefined;
-          if (
-            pending.signal !== signal &&
-            signal?.aborted !== true &&
-            artifactReadCancelledBy(cause, pending.signal)
-          ) {
-            this.#assertOpen(signal);
-            continue;
-          }
-          throw cause;
-        }
-      }
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
       this.#assertOpen(signal);
       await this.#source.read(signal);
     });

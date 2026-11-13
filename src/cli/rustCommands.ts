@@ -1,3 +1,4 @@
+import { parseCliJsonOption } from "./cliJsonOption.js";
 import { z } from "incur";
 import { producerLimitsOption } from "./producerLimitsOption.js";
 import { rustProducerLimitsSchema } from "../domain/rust/rustResourceLimits.js";
@@ -12,9 +13,7 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { inspectRustBinaryRequestSchema } from "../domain/rust/rustBinaryQuery.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { safeParseJson } from "../domain/safeJson.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -62,25 +61,13 @@ export const registerRustCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectRustBinary, async () => {
-          const decoded =
-            options.view === undefined
-              ? { ok: true as const, value: undefined }
-              : safeParseJson(options.view);
-          if (!decoded.ok) {
-            return projectAnalysisError(
-              new AnalysisInputError(
-                "inspect_rust_binary",
-                { cause: decoded.cause },
-                [
-                  {
-                    path: ["view"],
-                    reason: "invalid_format",
-                    message: "view must be a JSON package or edge selection",
-                  },
-                ],
-              ),
-            );
-          }
+          const decoded = parseCliJsonOption(
+            "inspect_rust_binary",
+            "view",
+            options.view,
+            "view must be a JSON package or edge selection",
+          );
+          if (!decoded.ok) return projectAnalysisError(decoded.error);
           const view = decoded.value;
           const input = inspectRustBinaryRequestSchema.safeParse({
             path: absoluteCallerPath(args.path),
