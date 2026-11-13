@@ -45,6 +45,8 @@ const MAXIMUM_STRING_BYTES = 1024 * 1024;
 const MAXIMUM_STRINGS = 100_000;
 /** Retained split-type tokens; one joined literal can otherwise become a million strings. */
 const MAXIMUM_REQUIRED_SPLIT_TYPES = 64;
+/** Retained split-type text; a single non-ASCII token expands 3x as UTF-8 JSON. */
+const MAXIMUM_REQUIRED_SPLIT_TYPES_BYTES = 16 * 1024;
 const UTF8_FLAG = 0x100;
 const ATTRIBUTE_ROWS = 20;
 const RES_XML_NODE_HEADER = 16;
@@ -176,20 +178,47 @@ const readStringPool = (
 };
 
 /**
+ * Retain at most `maximumBytes` of UTF-8 text, dropping a partial trailing code
+ * point rather than splitting one into U+FFFD.
+ */
+const truncateUtf8 = (value: string, maximumBytes: number): string => {
+  const encoded = Buffer.from(value, "utf8");
+  if (encoded.length <= maximumBytes) return value;
+  let end = maximumBytes;
+  // A continuation byte is 0b10xxxxxx; back off to the start of a sequence.
+  while (end > 0 && (encoded[end]! & 0xc0) === 0x80) end -= 1;
+  return encoded.subarray(0, end).toString("utf8");
+};
+
+/**
  * Walk the declaration one delimiter at a time. `split(",")` would build an
  * array entry per token before the cap applies, so a literal admitted up to
  * a mebibyte could still expand into a quarter of a million live substrings.
+ * Retained bytes are bounded too: one non-ASCII token can serialize to 1.5 MiB
+ * of UTF-8 JSON even though the pool charged it as fewer UTF-16 units, which
+ * would push the enclosing unknown past the view's message budget.
  */
 const splitTypes = (value: string): AndroidBinaryManifestSplitTypeList => {
   const types: string[] = [];
   let declaredCount = 0;
+  let retainedBytes = 0;
   let start = 0;
   while (start <= value.length) {
     const end = value.indexOf(",", start);
     const token = value.slice(start, end === -1 ? value.length : end).trim();
     if (token.length > 0) {
       declaredCount += 1;
-      if (types.length < MAXIMUM_REQUIRED_SPLIT_TYPES) types.push(token);
+      if (types.length < MAXIMUM_REQUIRED_SPLIT_TYPES) {
+        const bytes = Buffer.byteLength(token, "utf8");
+        const remaining = MAXIMUM_REQUIRED_SPLIT_TYPES_BYTES - retainedBytes;
+        if (bytes <= remaining) {
+          types.push(token);
+          retainedBytes += bytes;
+        } else if (remaining > 0) {
+          types.push(truncateUtf8(token, remaining));
+          retainedBytes = MAXIMUM_REQUIRED_SPLIT_TYPES_BYTES;
+        }
+      }
     }
     if (end === -1) break;
     start = end + 1;
@@ -197,7 +226,9 @@ const splitTypes = (value: string): AndroidBinaryManifestSplitTypeList => {
   return {
     types,
     declared_count: declaredCount,
-    truncated: declaredCount > types.length,
+    truncated:
+      declaredCount > types.length ||
+      retainedBytes >= MAXIMUM_REQUIRED_SPLIT_TYPES_BYTES,
   };
 };
 

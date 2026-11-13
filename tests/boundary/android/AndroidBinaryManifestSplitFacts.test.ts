@@ -140,6 +140,35 @@ it("reads an extended UTF-8 length prefix with an eight-bit shift", () => {
   });
 });
 
+it("bounds retained split-type text by serialized bytes, not only token count", () => {
+  // The pool charges this literal in UTF-16 units, but each CJK code point
+  // serializes to three UTF-8 bytes, so a single token can exceed what the
+  // enclosing view message may carry. The retained prefix stays small enough
+  // to survive that budget.
+  const facts = readAndroidBinaryManifestSplitFacts(
+    binaryManifestFixture({
+      attributes: [
+        android("requiredSplitTypes", {
+          resourceId: 0x0101064c,
+          stringValue: "分".repeat(20_000),
+        }),
+      ],
+    }),
+  );
+  expect(facts.ok).toBe(true);
+  const list = facts.ok ? facts.value.required_split_types : null;
+  if (list === null || list === "unknown")
+    throw new Error("expected a retained split-type list");
+  expect(list.declared_count).toBe(1);
+  expect(list.truncated).toBe(true);
+  expect(list.types).toHaveLength(1);
+  expect(Buffer.byteLength(list.types[0] ?? "", "utf8")).toBeLessThanOrEqual(
+    16 * 1024,
+  );
+  // Truncation drops whole code points, so no replacement character appears.
+  expect(list.types[0]).not.toContain("�");
+});
+
 it("reads an isSplitRequired boolean and ignores non-Android namespaces", () => {
   const facts = readAndroidBinaryManifestSplitFacts(
     binaryManifestFixture({

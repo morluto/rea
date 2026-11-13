@@ -97,11 +97,15 @@ const noteUnbundledSplitLibraries = async (input: {
     );
   } else if (splitTypes !== null && splitTypes.declared_count > 0) {
     // Only the retained prefix is listed: the declaration's full count stays
-    // stated so a bounded list is not read as the complete set.
+    // stated so a bounded list is not read as the complete set. A byte-capped
+    // prefix answers no exact "N more", so the list states its own cut instead.
     const listing = splitTypes.types.join(", ");
+    const omitted = splitTypes.declared_count - splitTypes.types.length;
     input.inventory.unknowns.push(
       splitTypes.truncated
-        ? `The manifest requires split APKs (${listing}, and ${String(splitTypes.declared_count - splitTypes.types.length)} more); native libraries may live in those splits rather than in this APK.`
+        ? omitted > 0
+          ? `The manifest requires split APKs (${listing}, and ${String(omitted)} more); native libraries may live in those splits rather than in this APK.`
+          : `The manifest requires split APKs (${listing}, cut at the retained-text allowance); native libraries may live in those splits rather than in this APK.`
         : `The manifest requires split APKs (${listing}); native libraries may live in those splits rather than in this APK.`,
     );
   } else if (facts.value.is_split_required === "unknown") {
