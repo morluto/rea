@@ -19,7 +19,8 @@
 เปิดใช้ได้ 3 วิธี:
 
 1. **ดับเบิลคลิก** ไฟล์ `REA-QuickTools.bat` ใน File Explorer (จะเปิดหน้าต่างเมนูของตัวเอง)
-2. **จาก cmd ที่เปิดอยู่** รัน:
+2. **จาก cmd ที่เปิดอยู่** รัน (แทนค่า root จาก `npm root -g` ของเครื่องคุณ —
+   ตัวอย่างด้านล่างใช้ default prefix `%APPDATA%\npm` เท่านั้น):
    ```bat
    "%APPDATA%\npm\node_modules\rea-agents\tools\windows\REA-QuickTools.bat"
    ```
