@@ -14,7 +14,6 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { seededLockStartNotice } from "../../../src/application/desktop/DesktopBuildComputers.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   buildComputerFakes as fakes,
@@ -333,7 +332,12 @@ it("points a bundle's start that never got ready at the lock files its seed hold
     "envs/calc/seed/Documents/q1.ods.LCK",
   ];
   expect(pointed).toContain(notReady);
-  expect(pointed).toContain(seededLockStartNotice(locks));
+  expect(pointed).toContain(
+    "The bundle's seed holds lock files, which can keep the app from starting",
+  );
+  expect(pointed).toContain(
+    "Delete them from the bundle, or export it again, which leaves them out, and start again.",
+  );
   for (const lock of locks) expect(pointed).toContain(lock);
   expect(pointed).not.toContain("Documents/notes.lck");
   expect(unlocked).not.toContain(locks[0]);

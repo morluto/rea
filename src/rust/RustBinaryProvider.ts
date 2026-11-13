@@ -199,7 +199,7 @@ const outputLimit = (path: string, maxOutputBytes: number) =>
   );
 
 /** Resource-guard guidance delivered with every Rust inspection report. */
-export const RUST_RESOURCE_GUARD_LIMITATION =
+const RUST_RESOURCE_GUARD_LIMITATION =
   "Default input and complete-report admission are 256 MiB and 8 MiB; producer_limits.input_bytes/output_bytes select larger or smaller values for the next call without restart. Independent parser guards bound the compressed dependency stream to 1 MiB and inflated JSON to the smaller of 8 MiB and 64 times the consumed compressed-stream length. Report admission applies before package schema cloning, graph objects, or reverse-edge allocation.";
 
 const limitationsFor = (

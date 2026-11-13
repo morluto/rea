@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 
 import { readPlistJson } from "../../../../src/native/parsers/plist.js";
-import { parseLipoOutput } from "../../../../src/native/parsers/lipo.js";
+import { parseLipoOutputResult } from "../../../../src/native/parsers/lipo.js";
 
 it.each([
   "line\nbreak",
@@ -11,9 +11,9 @@ it.each([
   "retains the reported thin architecture when lipo echoes filename %j",
   (filename) => {
     const output = `input file /owned/${filename} is not a fat file\nNon-fat file: /owned/${filename} is architecture: arm64\n`;
-    expect(parseLipoOutput(output)).toMatchObject({
-      format: "thin",
-      architectures: [{ name: "arm64" }],
+    expect(parseLipoOutputResult(output)).toMatchObject({
+      ok: true,
+      value: { format: "thin", architectures: [{ name: "arm64" }] },
     });
   },
 );
@@ -37,12 +37,15 @@ it("does not mistake fat slice output for a thin Non-fat file record", () => {
     "    align 2^12 (4096)",
     "",
   ].join("\n");
-  expect(parseLipoOutput(output)).toMatchObject({
-    format: "fat",
-    architectures: [
-      { name: "arm64", file_offset: 16384 },
-      { name: "x86_64", file_offset: 16793600 },
-    ],
+  expect(parseLipoOutputResult(output)).toMatchObject({
+    ok: true,
+    value: {
+      format: "fat",
+      architectures: [
+        { name: "arm64", file_offset: 16384 },
+        { name: "x86_64", file_offset: 16793600 },
+      ],
+    },
   });
 });
 

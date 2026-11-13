@@ -15,13 +15,14 @@ import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourc
 import {
   copyExistingGhidraProject,
   fingerprintGhidraProject,
-  GHIDRA_PROJECT_PROFILE_MISMATCH,
   resolveGhidraProject,
 } from "../../../../src/ghidra/GhidraProjectSnapshot.js";
 import { parseConfig } from "../../../../src/config/parseConfig.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 let resources: ArtifactResourceScope;
+const GHIDRA_PROJECT_PROFILE_MISMATCH =
+  "Selected Ghidra project content no longer matches the profile committed by open_binary; when it changed is not established";
 beforeEach(() => {
   resources = new ArtifactResourceScope();
 });

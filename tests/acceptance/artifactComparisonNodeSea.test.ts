@@ -7,7 +7,6 @@ import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
 } from "../../src/domain/artifactGraph.js";
-import { FORMAT_DECLARATION_UNKNOWN_LIMITATION } from "../../src/domain/artifactComparison.js";
 import {
   artifactGraphDigest,
   artifactManifestId,
@@ -153,7 +152,11 @@ it("compares raw SEA asset keys without interpreting serialization order as meta
     dimensions: ["availability"],
     evidence_links: [historical.evidence_id, right.evidence_id],
   });
-  expect(unknown.limitations).toContain(FORMAT_DECLARATION_UNKNOWN_LIMITATION);
+  expect(unknown.limitations).toContainEqual(
+    expect.stringMatching(
+      /metadata declarations are missing.*complete declaration unavailable/u,
+    ),
+  );
   const reversed = await compare(right, historical);
   expect(
     reversed.changes.find(({ logical_path }) => logical_path === nfc),

@@ -43,7 +43,7 @@ export interface CdpResponseFacts {
   readonly encodedDataLength: number | undefined;
   readonly headers: unknown;
 }
-export const readCdpResponseFacts = (
+const readCdpResponseFacts = (
   reported: unknown,
 ): CdpResponseFacts | undefined => {
   const source = recordValue(reported);

@@ -1,5 +1,5 @@
 import { analyzeParsedJavaScriptSemantics } from "../../src/domain/javascript/javascriptSemanticAnalysis.js";
-import { analyzeParsedJavaScriptStaticSource } from "../../src/domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "../../src/domain/javascript/javascriptSourceParser.js";
 
 // These fixtures model CommonJS TypeScript assets. The filename establishes

@@ -8,7 +8,6 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import {
   EVIDENCE_LINK_INSPECTION_LIMIT,
-  EVIDENCE_LINK_INSPECTION_LIMITATIONS,
   evidenceBundleSummarySchema,
   evidenceLinkInspectionSchema,
 } from "../../../src/domain/evidenceRecordSummary.js";
@@ -74,13 +73,16 @@ const connect = async (
   });
   for (const retained of options.records ?? PARTIAL)
     expect(session.recordEvidence(retained).ok).toBe(true);
-  const reply = (args: Record<string, unknown>) =>
-    client.callTool({ name: "get_evidence_bundle", arguments: args });
   // Every delivered result must satisfy what this profile actually advertises.
   const { tools } = await client.listTools();
   const advertised = tools.find(({ name }) => name === "get_evidence_bundle");
   if (advertised?.outputSchema === undefined)
     throw new Error("get_evidence_bundle advertises no output schema");
+  const reply = (args: Record<string, unknown>) =>
+    client.callTool(
+      { name: "get_evidence_bundle", arguments: args },
+      { toolDefinition: advertised },
+    );
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
   const outputSchema: Record<string, unknown> = advertised.outputSchema;
   const validation = schemaValidation.assertions;
@@ -93,10 +95,6 @@ const connect = async (
     ).toBe(true);
     const result = await reply(args);
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
-    expect(
-      validation.validate(outputSchema, result.structuredContent),
-      JSON.stringify(validation.errors),
-    ).toBe(true);
     return z.object({ result: z.unknown() }).parse(result.structuredContent)
       .result;
   };
@@ -137,7 +135,9 @@ it.each(["full", "compact"] as const)(
       matching_links: 0,
       next_offset: null,
       rows: [],
-      limitations: [...EVIDENCE_LINK_INSPECTION_LIMITATIONS],
+      limitations: [
+        expect.stringMatching(/missing means absent here.*analysis coverage/u),
+      ],
     });
 
     // The record that names the absent source reports it without any payload.

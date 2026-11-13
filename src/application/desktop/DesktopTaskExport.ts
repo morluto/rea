@@ -490,7 +490,7 @@ const admitScreenTask = async (
 };
 
 /** Whether a prompt names the app by its title, environment or package, in any letter case. */
-export const namesApp = (
+const namesApp = (
   prompt: string,
   {
     title,

@@ -131,14 +131,16 @@ mcpTest(
         (tool) => tool.name === "inspect_evm_interface",
       ),
     ).toHaveLength(1);
-    const response = await client.callTool({
-      name: "inspect_evm_interface",
-      arguments: { path: value.artifact.path, encoding: "hex" },
-    });
+    const response = await client.callTool(
+      {
+        name: "inspect_evm_interface",
+        arguments: { path: value.artifact.path, encoding: "hex" },
+      },
+      { toolDefinition: schemas.toolDefinition },
+    );
     assertRecordedMcpEvidence(
       response,
       "inspect_evm_interface",
-      schemas,
       session,
       value,
       "inferred",
@@ -368,30 +370,28 @@ it("returns the exact inferred interface summary while preserving complete defau
   const input = { path: value.artifact.path, encoding: "hex" };
   let original;
   for (const detail of [undefined, "complete"] as const) {
-    const response = await harness.client.callTool({
-      name: "inspect_evm_interface",
-      arguments: { ...input, ...(detail ? { detail } : {}) },
-    });
+    const response = await harness.client.callTool(
+      {
+        name: "inspect_evm_interface",
+        arguments: { ...input, ...(detail ? { detail } : {}) },
+      },
+      { toolDefinition: definition },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(response.structuredContent);
     expect(evidence.normalized_result).toEqual(value);
     expect(evidence.parameters).toEqual(input);
     original = evidence;
   }
   if (original === undefined) throw new Error("No complete control");
-  const response = await harness.client.callTool({
-    name: "inspect_evm_interface",
-    arguments: { ...input, detail: "summary" },
-  });
+  const response = await harness.client.callTool(
+    {
+      name: "inspect_evm_interface",
+      arguments: { ...input, detail: "summary" },
+    },
+    { toolDefinition: definition },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const derived = parseEvidence(response.structuredContent);
   const view = evmInterfaceSummaryViewResultSchema.parse(
     derived.normalized_result,

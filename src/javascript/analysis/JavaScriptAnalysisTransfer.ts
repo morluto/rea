@@ -133,7 +133,7 @@ const assertTransferByteBudget = (transferBytes: number): void => {
 const encodeTransferRecord = (
   input: unknown,
   previousBytes: number,
-  transferBytes = TRANSFER_BYTES,
+  transferBytes: number,
 ) => {
   const record = recordSchema.parse(input);
   const line = `${JSON.stringify(record)}\n`;

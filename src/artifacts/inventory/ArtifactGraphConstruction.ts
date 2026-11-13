@@ -560,7 +560,7 @@ export const classifyArtifactPath = (
 export const classifyArtifactContent = (
   path: string,
   evidence: ArtifactClassificationEvidence,
-  fileSize = evidence.prefix.length,
+  fileSize: number,
 ): {
   readonly kind: ArtifactOccurrence["artifact_kind"];
   readonly format: ArtifactOccurrence["artifact_format"];
@@ -620,7 +620,7 @@ const artifactRoleForFormat = (
 /** Classify storage bytes independently of path names, roles, and permissions. */
 export const classifyArtifactBytes = (
   evidence: ArtifactClassificationEvidence,
-  fileSize = evidence.prefix.length,
+  fileSize: number,
 ): ArtifactNode["format"] => {
   const { prefix, suffix, mzWindowsHeaderSignature } = evidence;
   // A header-only region has the signature but not the declared cartridge

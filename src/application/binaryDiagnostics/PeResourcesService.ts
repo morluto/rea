@@ -1,3 +1,4 @@
+import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { PeResourcesPort } from "./PeResourcesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -83,8 +84,7 @@ const validReport = (
   maxEntries: number,
   maxBytes: number,
 ): boolean => {
-  const inside = ({ offset, bytes }: { offset: number; bytes: number }) =>
-    offset <= report.artifact.bytes - bytes;
+  const inside = insideArtifact(report.artifact.bytes);
   const identityInside = (identity: PeResourceIdentity): boolean =>
     identity.kind === "id" || inside(identity.location);
   if (
