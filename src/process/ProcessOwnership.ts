@@ -111,9 +111,8 @@ export type ProcessIdentityObservation =
        */
       readonly name?: string;
       /**
-       * Linux PF_KTHREAD from the same `/proc/<pid>/stat` record. A kernel
-       * thread is never forked by a provider and cannot carry its run token;
-       * optional because only a Linux stat read can establish it.
+       * Linux PF_KTHREAD from the same `/proc/<pid>/stat` record as `identity`.
+       * A kernel thread cannot carry a run token. Only a Linux stat read sets it.
        */
       readonly kernelThread?: true;
     }
@@ -1917,11 +1916,9 @@ const scanWithOwnershipEvidence = async (
       fact.identityAfter.state === "readable"
         ? fact.identityAfter
         : undefined;
-    // An unrelated kernel thread is forked by the kernel, never by a provider,
-    // so it cannot carry this run's token and cleanup must not act on it. Its
-    // token read typically fails while the thread exits (ESRCH) rather than
-    // because the environment was withheld, which is why environment
-    // withholding alone cannot exonerate it.
+    // A kernel thread has no user environment, so it cannot carry this run's
+    // token. Procfs can fail its environment read (for example with ESRCH)
+    // while it stays live, and root callers see no credential restriction.
     if (
       knownUnrelated &&
       (observed?.kernelThread === true ||
