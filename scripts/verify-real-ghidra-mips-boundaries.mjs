@@ -22,6 +22,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { prepareVerifierTokenCleanup } from "./lib/verifier-token-cleanup.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import {
   assertVerifierCleanupComplete,
   createVerifierRun,
@@ -103,10 +104,18 @@ async function runControls(cleanup) {
     gnu[0x11df] = 3; // Soft float.
     const gnuPath = join(root, `gnu-fp-${byteOrder}.elf`);
     await writeFile(gnuPath, gnu);
-    const { stdout: attributes } = await execute(
-      process.env.REA_MIPS_READELF ?? "readelf",
-      ["-A", gnuPath],
-      { env: { PATH: env.PATH, LC_ALL: "C" } },
+    const readelf = await createVerifierCommands();
+    const { stdout: attributes } = await withVerifierCleanup(
+      () =>
+        readelf.exec(
+          process.env.REA_MIPS_READELF ?? "readelf",
+          ["-A", gnuPath],
+          {
+            env: { PATH: env.PATH, LC_ALL: "C" },
+            timeout: 10_000,
+          },
+        ),
+      [() => readelf.close()],
     );
     assert.match(attributes, /Tag_GNU_MIPS_ABI_FP.*Soft float/iu);
     const transport = new StdioClientTransport({
