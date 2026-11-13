@@ -148,7 +148,7 @@ export const registerSessionStatusTool = (
           ? {}
           : { evmLimiterAvailability: availabilityResults.evmLimiter }),
       }).filter(({ name }) => server.advertisesTool(name));
-      const serverIdentity = createServerIdentity({
+      const serverIdentity = await createServerIdentity({
         startedAt,
         commandPath: CURRENT_ENTRYPOINT_PATH,
         catalog: server.catalogIdentity,
@@ -194,7 +194,7 @@ const projectSessionStatus = (options: {
     Record<string, import("../domain/jsonValue.js").JsonValue>
   >;
   readonly toolAvailability: readonly ToolAvailability[];
-  readonly serverIdentity: ReturnType<typeof createServerIdentity>;
+  readonly serverIdentity: Awaited<ReturnType<typeof createServerIdentity>>;
   readonly clientFeatures: ClientFeatureAvailability;
 }) =>
   jsonObjectSchema.parse({

@@ -49,7 +49,7 @@ export const runSessionStatus = async (
             sqliteDatabaseCapability(process.versions.node),
           ]),
         ],
-        server_identity: createServerIdentity({
+        server_identity: await createServerIdentity({
           startedAt: new Date().toISOString(),
           commandPath: CURRENT_ENTRYPOINT_PATH,
           catalog:

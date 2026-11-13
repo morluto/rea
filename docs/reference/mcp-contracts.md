@@ -1122,6 +1122,10 @@ or limitation false. Keep availability reasons, remediation, client-feature
 requirements, and mode facts inline with the grouped tool names. The optional
 inputs `expected_package_version`, `expected_catalog_digest`, and
 `expected_server_path` compare the live session with the caller's expectations.
+`expected_server_path` is compared by resolved filesystem identity, so an
+absolute symlink or `..` traversal spelling that selects the live entrypoint
+stays `aligned`; an expectation whose filesystem identity cannot be established
+keeps alignment `unknown` instead of advising a restart.
 
 `server_identity.catalog` contains catalog counts and schema digests. Grouped
 tool availability carries the name set and current per-tool facts; `tools/list`

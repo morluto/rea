@@ -1,6 +1,6 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -194,15 +194,15 @@ describe("server and catalog identity", () => {
     expect(withoutExamples.prompts_sha256).toBe(original.prompts_sha256);
   });
 
-  it("reports unknown without a live comparison and distinguishes aligned from stale", () => {
-    const unknown = createServerIdentity({
+  it("reports unknown without a live comparison and distinguishes aligned from stale", async () => {
+    const unknown = await createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
       commandPath: normalizeEntrypointPath(""),
     });
     expect(unknown.alignment.state).toBe("unknown");
     expect(unknown.server.command_path).toBeNull();
-    const aligned = createServerIdentity({
+    const aligned = await createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
       commandPath: "/packaged/rea.mjs",
@@ -213,7 +213,7 @@ describe("server and catalog identity", () => {
       },
     });
     expect(aligned.alignment).toMatchObject({ state: "aligned", reasons: [] });
-    const stale = createServerIdentity({
+    const stale = await createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
       commandPath: "/packaged/rea.mjs",
@@ -228,8 +228,8 @@ describe("server and catalog identity", () => {
     });
   });
 
-  it("keeps registration alignment unknown when the server entrypoint is absent", () => {
-    const identity = createServerIdentity({
+  it("keeps registration alignment unknown when the server entrypoint is absent", async () => {
+    const identity = await createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
       commandPath: undefined,
@@ -241,6 +241,78 @@ describe("server and catalog identity", () => {
       state: "unknown",
       reasons: [],
       remediation: expect.stringContaining("entrypoint path is unavailable"),
+    });
+  });
+});
+
+describe("registration path identity", () => {
+  it("aligns equivalent symlink and parent-traversal spellings of the entrypoint", async () => {
+    const directory = await createTestTempDirectory("rea-registration-path-");
+    const entrypointPackage = join(directory, "nested", "package");
+    await mkdir(entrypointPackage, { recursive: true });
+    const entrypoint = join(entrypointPackage, "rea.mjs");
+    await writeFile(entrypoint, "export {};");
+    await symlink(entrypointPackage, join(directory, "link"), "junction");
+    const cases = [
+      ["symlink spelling", entrypoint, `${directory}/link/rea.mjs`],
+      ["parent traversal", entrypoint, `${directory}/link/../package/rea.mjs`],
+      ["recorded launch spelling", `${directory}/link/rea.mjs`, entrypoint],
+    ] as const;
+    for (const [name, commandPath, serverPath] of cases) {
+      const identity = await createServerIdentity({
+        catalog: DEFAULT_CATALOG_IDENTITY,
+        startedAt: "2026-07-13T00:00:00.000Z",
+        commandPath,
+        expected: { server_path: serverPath },
+      });
+      expect(identity.alignment, name).toMatchObject({
+        state: "aligned",
+        reasons: [],
+      });
+    }
+  });
+
+  it("keeps a registration mismatch for a genuinely different entrypoint file", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-registration-mismatch-",
+    );
+    const entrypointPackage = join(directory, "nested", "package");
+    const otherPackage = join(directory, "other", "package");
+    await mkdir(entrypointPackage, { recursive: true });
+    await mkdir(otherPackage, { recursive: true });
+    await writeFile(join(entrypointPackage, "rea.mjs"), "export {};");
+    await writeFile(join(otherPackage, "rea.mjs"), "export {};");
+    await symlink(otherPackage, join(directory, "other-link"), "junction");
+    const identity = await createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: join(entrypointPackage, "rea.mjs"),
+      expected: { server_path: `${directory}/other-link/rea.mjs` },
+    });
+    expect(identity.alignment).toMatchObject({
+      state: "mcp_server_restart_required",
+      reasons: ["registration_path_mismatch"],
+    });
+  });
+
+  it("keeps alignment unknown when the expectation has no resolvable file identity", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-registration-unresolved-",
+    );
+    const entrypointPackage = join(directory, "package");
+    await mkdir(entrypointPackage, { recursive: true });
+    const entrypoint = join(entrypointPackage, "rea.mjs");
+    await writeFile(entrypoint, "export {};");
+    const identity = await createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: entrypoint,
+      expected: { server_path: `${directory}/missing/../package/rea.mjs` },
+    });
+    expect(identity.alignment).toMatchObject({
+      state: "unknown",
+      reasons: [],
+      remediation: expect.stringContaining("could not be resolved"),
     });
   });
 });

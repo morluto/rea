@@ -2,6 +2,7 @@ import { dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { createCatalogIdentity } from "./catalogIdentity.js";
+import { canonicalCallerPath } from "./filesystem/canonicalCallerPath.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "./identity.js";
 
 /** Optional observations supplied by a client comparing its expected server. */
@@ -25,7 +26,7 @@ const packageRoot = (): string => {
 };
 
 /** Build one runtime identity without claiming alignment from absent observations. */
-export const createServerIdentity = (input: {
+export const createServerIdentity = async (input: {
   readonly startedAt: string;
   readonly commandPath: string | undefined;
   readonly expected?: ExpectedServerIdentity;
@@ -46,17 +47,28 @@ export const createServerIdentity = (input: {
     input.expected.catalog_digest !== catalog.digests.combined_sha256
   )
     reasons.push("catalog_digest_mismatch");
-  if (
-    input.expected?.server_path !== undefined &&
-    serverPath !== undefined &&
-    resolve(input.expected.server_path) !== serverPath
-  )
-    reasons.push("registration_path_mismatch");
+  // Lexical `resolve` rewrites symlink/`..` traversal into a different file
+  // spelling, so compare resolved filesystem identities instead. A path whose
+  // identity cannot be established (dangling symlink, missing `..` component)
+  // keeps alignment unknown rather than claiming a registration mismatch.
+  let registrationPathComparable = true;
+  if (input.expected?.server_path !== undefined && serverPath !== undefined) {
+    try {
+      const [expectedPath, livePath] = await Promise.all([
+        canonicalCallerPath(input.expected.server_path),
+        canonicalCallerPath(serverPath),
+      ]);
+      if (expectedPath !== livePath) reasons.push("registration_path_mismatch");
+    } catch {
+      registrationPathComparable = false;
+    }
+  }
   const observedExpectation =
     input.expected !== undefined &&
     Object.values(input.expected).some((value) => value !== undefined);
   const pathComparable =
-    input.expected?.server_path === undefined || serverPath !== undefined;
+    input.expected?.server_path === undefined ||
+    (serverPath !== undefined && registrationPathComparable);
   return {
     package: {
       name: PRODUCT_IDENTITY.packageName,
@@ -102,10 +114,11 @@ export const createServerIdentity = (input: {
           ? "Restart the registered MCP server/client, then compare identity again."
           : observedExpectation && pathComparable
             ? null
-            : input.expected?.server_path !== undefined &&
-                serverPath === undefined
-              ? "The server entrypoint path is unavailable, so registration identity cannot be compared."
-              : "Supply expected package, catalog, or registration identity to compare the live server.",
+            : input.expected?.server_path === undefined
+              ? "Supply expected package, catalog, or registration identity to compare the live server."
+              : serverPath === undefined
+                ? "The server entrypoint path is unavailable, so registration identity cannot be compared."
+                : "The registration path could not be resolved to a filesystem identity, so registration identity cannot be compared.",
     },
   } as const;
 };
