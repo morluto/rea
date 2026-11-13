@@ -18,6 +18,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { parseCliJsonOption } from "./cliJsonOption.js";
 import {
   createEvidenceBundle,
   createImmutableEvidenceBundle,
@@ -102,20 +103,14 @@ export const parseCliAnalysisEvidenceDelivery = <
   Delivery & { readonly evidenceOutput: string | undefined },
   AnalysisError
 > => {
-  let view: unknown;
-  try {
-    view = options.view === undefined ? undefined : JSON.parse(options.view);
-  } catch (cause) {
-    return err(
-      new AnalysisInputError(operation, { cause }, [
-        {
-          path: ["view"],
-          reason: "invalid_format",
-          message: "view must be valid JSON",
-        },
-      ]),
-    );
-  }
+  const decoded = parseCliJsonOption(
+    operation,
+    "view",
+    options.view,
+    "view must be valid JSON",
+  );
+  if (!decoded.ok) return decoded;
+  const view = decoded.value;
   const raw = {
     detail: options.detail,
     ...(view === undefined ? {} : { view }),
