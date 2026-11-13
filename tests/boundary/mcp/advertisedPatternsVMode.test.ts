@@ -9,7 +9,10 @@ import {
   INVALID_BASE64_PADDING_PATTERN,
   INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
 } from "../../../src/domain/stringPatterns.js";
-import { advertisedPatternFindings } from "../../fixtures/advertisedPatternPortability.js";
+import {
+  advertisedPatternFindings,
+  collectAdvertisedPatterns,
+} from "../../fixtures/advertisedPatternPortability.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 interface AdvertisedPattern {
@@ -46,24 +49,15 @@ const collectCanonicalBase64Leaves = (
 };
 
 const collectPatterns = (
-  value: unknown,
+  schema: unknown,
   where: string,
   tool: string,
-  found: AdvertisedPattern[],
-): void => {
-  if (value === null || typeof value !== "object") return;
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) =>
-      collectPatterns(entry, `${where}[${String(index)}]`, tool, found),
-    );
-    return;
-  }
-  for (const [key, entry] of Object.entries(value)) {
-    if (key === "pattern" && typeof entry === "string")
-      found.push({ tool, where: `${where}/pattern`, pattern: entry });
-    collectPatterns(entry, `${where}/${key}`, tool, found);
-  }
-};
+): AdvertisedPattern[] =>
+  collectAdvertisedPatterns(schema, where).map((entry) => ({
+    tool,
+    where: entry.where,
+    pattern: entry.pattern,
+  }));
 
 it("advertises portable NUL escapes and patterns that compile in all JS modes", async () => {
   const session = createTestBinarySession(() => {
@@ -85,12 +79,15 @@ it("advertises portable NUL escapes and patterns that compile in all JS modes", 
   const patterns: AdvertisedPattern[] = [];
   const canonicalBase64Leaves: Record<string, unknown>[] = [];
   for (const tool of advertised) {
-    collectPatterns(tool.inputSchema, "inputSchema", tool.name, patterns);
+    patterns.push(
+      ...collectPatterns(tool.inputSchema, "inputSchema", tool.name),
+    );
     collectCanonicalBase64Leaves(tool.inputSchema, canonicalBase64Leaves);
-    if (tool.outputSchema !== undefined)
-      collectPatterns(tool.outputSchema, "outputSchema", tool.name, patterns);
-    if (tool.outputSchema !== undefined)
-      collectCanonicalBase64Leaves(tool.outputSchema, canonicalBase64Leaves);
+    if (tool.outputSchema === undefined) continue;
+    patterns.push(
+      ...collectPatterns(tool.outputSchema, "outputSchema", tool.name),
+    );
+    collectCanonicalBase64Leaves(tool.outputSchema, canonicalBase64Leaves);
   }
 
   for (const pattern of [

@@ -41,6 +41,25 @@ it("admits escapes that stop at the surrogate boundaries", () => {
     expect(advertisedPatternFindings(body), body).toEqual([]);
 });
 
+it("admits escape spellings whose backslash is itself escaped", () => {
+  const backslash = String.fromCharCode(92);
+  const literal = backslash + backslash;
+  for (const body of [
+    "^" + literal + "uD800$",
+    "^[^" + literal + "uD800-" + literal + "uDFFF]*$",
+    "^" + literal + "p{Cs}$",
+    "^[^" + literal + "x00]*$",
+  ])
+    expect(advertisedPatternFindings(body), body).toEqual([]);
+
+  // The distinction is real, not pedantry: `\\uD800` matches the five literal
+  // characters `\uD800` and names no code point, while `\uD800` names one.
+  const escaped = new RegExp("^" + literal + "uD800$", "u");
+  expect(escaped.test(backslash + "uD800")).toBe(true);
+  expect(escaped.test(String.fromCharCode(0xd800))).toBe(false);
+  expect(advertisedPatternFindings("^" + backslash + "uD800$")).not.toEqual([]);
+});
+
 it("flags property escapes, which are undefined without the u or v flag", () => {
   const backslash = String.fromCharCode(92);
   expect(advertisedPatternFindings("^[^" + backslash + "p{Cs}]*$")).not.toEqual(

@@ -19,10 +19,18 @@
  *    changes without `u` is not portable. `\p{Cs}` is the concrete case: under
  *    `u` it names surrogates, and without `u` Annex B reads it as the literal
  *    characters `p`, `{`, `C`, `s`, `}`.
+ *
+ * The text is walked left to right, consuming escapes as it goes, because a
+ * backslash can be escaped: `\\uD800` matches the literal text `\uD800` and
+ * names no code point, so a pattern containing it is safe to publish. Matching
+ * escape spellings anywhere in the string would report it as a surrogate.
  */
 
 const SURROGATE_MIN = 0xd800;
 const SURROGATE_MAX = 0xdfff;
+
+const BACKSLASH = "\\";
+const HEX_DIGIT = /[0-9a-fA-F]/u;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -33,13 +41,6 @@ const isSurrogate = (codePoint: number): boolean =>
 const describe = (codePoint: number): string =>
   `U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
 
-/** Escape spellings that can appear inside an advertised pattern. */
-const CODEPOINT_ESCAPE =
-  /\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})|\\x\{([0-9a-fA-F]+)\}|\\x([0-9a-fA-F]{2})/gu;
-
-/** Unicode property escapes, which are only defined with the `u` or `v` flag. */
-const PROPERTY_ESCAPE = /\\[pP]\{([^}]*)\}/gu;
-
 /** Property values whose meaning is the surrogate block. */
 const SURROGATE_PROPERTIES = new Set(["cs", "surrogate", "surrogates"]);
 
@@ -48,45 +49,118 @@ export interface AdvertisedPatternFinding {
   readonly reason: string;
 }
 
-const codePointFindings = (pattern: string): readonly string[] => {
-  const findings: string[] = [];
-  for (const match of pattern.matchAll(CODEPOINT_ESCAPE)) {
-    const parsed = Number.parseInt(
-      match[1] ?? match[2] ?? match[3] ?? match[4] ?? "",
-      16,
-    );
-    if (!Number.isFinite(parsed)) continue;
-    if (!isSurrogate(parsed)) continue;
-    findings.push(
-      `names surrogate code point ${describe(parsed)} via ${match[0]}`,
-    );
-  }
-  return findings;
+interface Escape {
+  /** Source text of the complete escape. */
+  readonly text: string;
+  /** Decoded code point, when the escape is a code-point escape. */
+  readonly codePoint?: number;
+  /** Property name, when the escape is a Unicode property escape. */
+  readonly property?: string;
+  /** Index just past the escape. */
+  readonly end: number;
+}
+
+const readHexDigits = (
+  pattern: string,
+  start: number,
+  limit: number,
+): { readonly digits: string; readonly end: number } => {
+  let end = start;
+  while (
+    end < pattern.length &&
+    end - start < limit &&
+    HEX_DIGIT.test(pattern[end] ?? "")
+  )
+    end += 1;
+  return { digits: pattern.slice(start, end), end };
 };
 
-const propertyFindings = (pattern: string): readonly string[] => {
-  const findings: string[] = [];
-  for (const match of pattern.matchAll(PROPERTY_ESCAPE)) {
-    const property = (match[1] ?? "").trim().toLowerCase();
-    // Without `u`, Annex B reads `\p{...}` as literal characters, so any
-    // property escape is mode-dependent. A surrogate-valued property is also a
-    // code-point problem even when a client compiles with `u`.
-    if (SURROGATE_PROPERTIES.has(property))
-      findings.push(
-        `${match[0]} is a surrogate property and is only defined with the u flag`,
-      );
-    else findings.push(`${match[0]} is only defined with the u or v flag`);
+/**
+ * Read one escape starting at the backslash at `start`. Returns `undefined`
+ * when the backslash introduces no escape this check understands, including a
+ * trailing backslash and an escaped backslash.
+ */
+const readEscape = (pattern: string, start: number): Escape | undefined => {
+  const marker = pattern[start + 1];
+  if (marker === undefined) return undefined;
+  if (marker === "u" || marker === "x") {
+    const braced = pattern[start + 2] === "{";
+    const required = marker === "u" ? 4 : 2;
+    const { digits, end: digitsEnd } = readHexDigits(
+      pattern,
+      start + (braced ? 3 : 2),
+      braced ? Number.POSITIVE_INFINITY : required,
+    );
+    if (digits.length === 0) return undefined;
+    let end = digitsEnd;
+    if (braced) {
+      if (pattern[end] !== "}") return undefined;
+      end += 1;
+    } else if (digits.length !== required) {
+      // `\uD8` and `\x0` are not code-point escapes; Annex B reads them as
+      // literal characters, so they name no code point here either.
+      return undefined;
+    }
+    return {
+      text: pattern.slice(start, end),
+      codePoint: Number.parseInt(digits, 16),
+      end,
+    };
   }
-  return findings;
+  if (marker === "p" || marker === "P") {
+    if (pattern[start + 2] !== "{") return undefined;
+    const closing = pattern.indexOf("}", start + 3);
+    if (closing === -1) return undefined;
+    return {
+      text: pattern.slice(start, closing + 1),
+      property: pattern.slice(start + 3, closing),
+      end: closing + 1,
+    };
+  }
+  return undefined;
 };
 
 /** Return every reason `pattern` is unsafe to publish, or an empty list. */
 export const advertisedPatternFindings = (
   pattern: string,
-): readonly string[] => [
-  ...codePointFindings(pattern),
-  ...propertyFindings(pattern),
-];
+): readonly string[] => {
+  const findings: string[] = [];
+  let index = 0;
+  while (index < pattern.length) {
+    if (pattern[index] !== BACKSLASH) {
+      index += 1;
+      continue;
+    }
+    // `\\` is an escaped backslash and starts no escape sequence. Skipping the
+    // pair is what keeps `\\uD800` from being reported as a surrogate escape.
+    if (pattern[index + 1] === BACKSLASH) {
+      index += 2;
+      continue;
+    }
+    const escape = readEscape(pattern, index);
+    if (escape === undefined) {
+      index += 1;
+      continue;
+    }
+    if (escape.codePoint !== undefined && isSurrogate(escape.codePoint))
+      findings.push(
+        `names surrogate code point ${describe(escape.codePoint)} via ${escape.text}`,
+      );
+    if (escape.property !== undefined) {
+      // Without `u`, Annex B reads `\p{...}` as literal characters, so any
+      // property escape is mode-dependent. A surrogate-valued property is also
+      // a code-point problem even when a client compiles with `u`.
+      const property = escape.property.trim().toLowerCase();
+      if (SURROGATE_PROPERTIES.has(property))
+        findings.push(
+          `${escape.text} is a surrogate property and is only defined with the u flag`,
+        );
+      else findings.push(`${escape.text} is only defined with the u or v flag`);
+    }
+    index = escape.end;
+  }
+  return findings;
+};
 
 /** Collect every `pattern` string in a schema document, with its location. */
 export const collectAdvertisedPatterns = (
