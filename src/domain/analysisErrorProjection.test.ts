@@ -16,7 +16,6 @@ import {
 import { BrowserObservationError } from "./browserObservationError.js";
 import { EvidenceFileError, EvidenceIntegrityError } from "./evidenceErrors.js";
 import {
-  HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION,
   HOPPER_STARTUP_TIMEOUT_REMEDIATION,
   HopperProcessError,
   HopperRemoteError,
@@ -1570,8 +1569,8 @@ describe("analysis error projection: caller lifetime", () => {
         ),
       },
     );
-    expect(projectAnalysisError(error).remediation.action).toBe(
-      HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION,
+    expect(projectAnalysisError(error).remediation.action).toMatch(
+      /update_analysis_settings.*hopper\.startup_timeout_ms.*without restarting REA/u,
     );
     const invocation = projectAnalysisError(error, "invocation");
     expect(invocation.remediation.action).toBe(

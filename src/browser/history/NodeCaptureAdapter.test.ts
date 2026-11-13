@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { NodeCaptureAdapter } from "./NodeCaptureAdapter.js";
 
@@ -9,17 +9,20 @@ it.each(["har", "qlog"] as const)(
   },
 );
 
-vi.mock("./CaptureRelease.js", async (original) => ({
-  ...(await original<typeof import("./CaptureRelease.js")>()),
-  NODE_CAPTURE_HEAP_ENFORCED: false,
-  captureDecoderProcessMemoryLimitBytes: () => null,
-}));
-
 it.each(["saz", "qlog"] as const)(
-  "refuses a %s worker when the runtime has no enforceable memory bound",
+  "uses an enforceable memory bound for %s on the current runtime",
   async (format) => {
-    await expect(
-      new NodeCaptureAdapter(format).command("/owned/request.json"),
-    ).rejects.toBeInstanceOf(AnalysisCapabilityUnavailableError);
+    const adapter = new NodeCaptureAdapter(format);
+    const bun = process.versions.bun !== undefined;
+    if (bun && process.platform !== "win32") {
+      await expect(
+        adapter.command("/owned/request.json"),
+      ).rejects.toBeInstanceOf(AnalysisCapabilityUnavailableError);
+    } else {
+      const command = await adapter.command("/owned/request.json");
+      expect(command.command).toBe(process.execPath);
+      if (bun) expect(command.memoryLimitBytes).toBeGreaterThan(0);
+      else expect(command.memoryLimitBytes).toBeUndefined();
+    }
   },
 );

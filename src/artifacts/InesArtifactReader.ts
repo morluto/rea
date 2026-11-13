@@ -57,7 +57,7 @@ export class InesArtifactReader implements ArtifactReader {
     this.#layout = parsed.value;
     this.#entries.clear();
     for (const region of parsed.value.regions) {
-      abortIfNeeded(signal);
+      this.#assertOpen(signal);
       const entry: ArtifactEntry = {
         path: region.path,
         kind: "file",
@@ -74,6 +74,7 @@ export class InesArtifactReader implements ArtifactReader {
       this.#entries.set(entry.adapterKey, copyArtifactEntry(entry));
       yield entry;
     }
+    this.#assertOpen(signal);
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
@@ -166,9 +167,7 @@ export class InesArtifactReader implements ArtifactReader {
   }
 
   async #verifySource(signal?: AbortSignal): Promise<void> {
-    abortIfNeeded(signal);
-    if (this.#closed)
-      throw new ArtifactReaderFailure("unavailable", "iNES reader is closed");
+    this.#assertOpen(signal);
     try {
       await assertStableRegularFileIdentity(
         this.source.handle,
@@ -187,5 +186,11 @@ export class InesArtifactReader implements ArtifactReader {
     }
     // State validation is asynchronous even after the final byte was consumed.
     abortIfNeeded(signal);
+  }
+
+  #assertOpen(signal?: AbortSignal): void {
+    abortIfNeeded(signal);
+    if (this.#closed)
+      throw new ArtifactReaderFailure("unavailable", "iNES reader is closed");
   }
 }

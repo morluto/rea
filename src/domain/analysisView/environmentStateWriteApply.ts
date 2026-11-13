@@ -1,3 +1,4 @@
+import { jsonPointerTokens } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -6,7 +7,6 @@ import {
   at,
   isObject,
   pointerTo,
-  pointerTokens,
   replaceAt,
   same,
   scalarText,
@@ -179,7 +179,7 @@ export const valueAt = (
   pointer: string,
 ): JsonValue | undefined => {
   let value: JsonValue | undefined = body;
-  for (const token of pointerTokens(pointer)) {
+  for (const token of jsonPointerTokens(pointer)) {
     if (Array.isArray(value)) {
       // JSON Pointer array indexes are canonical decimal tokens; coercing
       // arbitrary text would make /01 alias /1 and can turn huge indexes into
@@ -343,7 +343,7 @@ const copiedShapes = (
     rules.flatMap((rule): [string, JsonValue][] => {
       if (rule.rule !== "copy" || !Object.hasOwn(observed, rule.field))
         return [];
-      const tokens = pointerTokens(rule.from);
+      const tokens = jsonPointerTokens(rule.from);
       return tokens.length === 1 ? [[tokens[0]!, observed[rule.field]!]] : [];
     }),
   );
@@ -708,7 +708,7 @@ export const writtenResponse = (
   );
   const answer = (written.unloaded ?? []).reduce<JsonObject>(
     (rendered, path) => {
-      const tokens = pointerTokens(path);
+      const tokens = jsonPointerTokens(path);
       const kept = memberAt(shown, tokens);
       if (kept !== undefined) return withMemberAt(rendered, tokens, kept);
       // A member the answer left out of an object it showed stays out.

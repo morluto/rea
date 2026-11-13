@@ -26,6 +26,12 @@ const VIEW: JsonValue = {
 };
 
 describe("locatePointer", () => {
+  it("decodes an escaped tilde once rather than treating the result as another escape", () => {
+    expect(
+      locatePointer({ "~1": "literal", "/": "slash" }, "/~01", "json"),
+    ).toMatchObject({ kind: "value", value: "literal" });
+  });
+
   it("selects the one member a selector names, by field, by attribute, or both", () => {
     expect(
       locatePointer(

@@ -1,11 +1,11 @@
-export interface GoStringHeaderFixtureSpec {
+interface GoStringHeaderFixtureSpec {
   readonly section: "rodata" | "data" | "text";
   readonly offsetInSection: number;
   readonly ptr: bigint;
   readonly len: bigint;
 }
 
-export interface GoRodataStringFixtureOptions {
+interface GoRodataStringFixtureOptions {
   readonly format: "elf" | "pe" | "macho";
   readonly bits?: 32 | 64;
   readonly byteOrder?: "little" | "big";

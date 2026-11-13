@@ -109,7 +109,7 @@ const OPTIONAL_VTOOL_COMMAND = ["vtool", ["-show-build"]] as const;
 const VTOOL_UNAVAILABLE_LIMITATION =
   "vtool is unavailable; build metadata is normalized from binary load commands.";
 /** Recorded when vtool refuses the universal container and slice facts remain. */
-export const VTOOL_CONTAINER_REFUSAL_LIMITATION =
+const VTOOL_CONTAINER_REFUSAL_LIMITATION =
   "vtool declined the universal container as not Mach-O; build metadata is normalized from binary load commands.";
 /** Inspect one Mach-O with the required native commands and normalized output. */
 export const inspectNativeMacho = async (
@@ -122,7 +122,7 @@ export const inspectNativeMacho = async (
       [...prefix, context.target.path],
       context.signal,
     );
-    if (!captured.ok) return err(captured.error);
+    if (!captured.ok) return captured;
     captures.push(captured.value);
   }
   const lipo = captures.find(({ tool }) => tool === "lipo");
@@ -186,7 +186,7 @@ export const inspectNativeMacho = async (
     vtoolSelectsSlice ? runSliceCommand(OPTIONAL_VTOOL_COMMAND) : null,
   ]);
   for (const captured of required) {
-    if (!captured.ok) return err(captured.error);
+    if (!captured.ok) return captured;
     if (
       (captured.value.exitCode !== 0 || captured.value.signal !== null) &&
       dyldSliceRefusal(captured.value) === null &&
@@ -296,7 +296,7 @@ export const inspectNativeMacho = async (
     !namesEveryExport(captures[nmIndex]!.stdout, dyldExports)
   ) {
     const withDyldInfo = await runSliceCommand(DYLD_INFO_EXPORTS);
-    if (!withDyldInfo.ok) return err(withDyldInfo.error);
+    if (!withDyldInfo.ok) return withDyldInfo;
     captures[nmIndex] = withDyldInfo.value;
   }
   const dyldImports = captures.find(
@@ -314,7 +314,7 @@ export const inspectNativeMacho = async (
   );
   if (parsedImports.needsNameInventory) {
     const importNames = await runSliceCommand(SYMBOL_TABLE_IMPORTS);
-    if (!importNames.ok) return err(importNames.error);
+    if (!importNames.ok) return importNames;
     captures.push(importNames.value);
     parsedImports = parseDyldImports(
       sliceOutput(dyldImports),

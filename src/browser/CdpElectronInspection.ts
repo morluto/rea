@@ -244,6 +244,10 @@ const frameInventoryIdentity = (
       .sort(compareUnicodeCodePoints),
   );
 
+/** Key a frame generation consistently for both authorization and capture. */
+const frameGenerationKey = (frameId: string, generation: number): string =>
+  compositeKey([frameId, generation]);
+
 const authorizeFrameGenerations = (
   read: ElectronFrameRead,
   state: ElectronInspectionState,
@@ -262,13 +266,13 @@ const authorizeFrameGenerations = (
     const generation = read.generations.get(frame.frame_id) ?? 0;
     if (unproven.has(frame.frame_id)) continue;
     state.authorizedFrameGenerations.add(
-      compositeKey([frame.frame_id, generation]),
+      frameGenerationKey(frame.frame_id, generation),
     );
   }
   for (const id of read.excludedFrameIds)
     if (!unproven.has(id))
       state.excludedFrameGenerations.add(
-        compositeKey([id, read.generations.get(id) ?? 0]),
+        frameGenerationKey(id, read.generations.get(id) ?? 0),
       );
 };
 
@@ -583,7 +587,7 @@ const captureElectronContent = async (
     frameScopeForScript: (script) => {
       const generation = state.scriptGenerations.get(script);
       if (script.frameId !== null && generation !== undefined) {
-        const key = compositeKey([script.frameId, generation]);
+        const key = frameGenerationKey(script.frameId, generation);
         if (state.excludedFrameGenerations.has(key))
           return { state: "excluded" };
         if (state.authorizedFrameGenerations.has(key))

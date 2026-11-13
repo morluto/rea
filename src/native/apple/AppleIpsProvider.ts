@@ -14,11 +14,11 @@ import {
 } from "../../domain/native/appleIps.js";
 import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
 import {
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import {
@@ -32,7 +32,6 @@ import type { AppleIpsPort } from "../../application/binaryDiagnostics/AppleIpsP
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
@@ -332,20 +331,14 @@ const appleIpsFailurePrimary = (
         [{ path: [field], reason: "invalid_format", message: cause.message }],
       );
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: [field],
-          reason: "invalid_value",
-          message: `Selected report could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "report",
+    field,
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(APPLE_IPS_PROVIDER.id, OPERATION, {
     cause,
     diagnostics: {

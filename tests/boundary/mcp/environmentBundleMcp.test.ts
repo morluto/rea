@@ -107,7 +107,7 @@ it("reports an unmodelled literal delete without claiming recorded reads are abs
 
 it("writes the bundle environment-build writes from retained capture Evidence", async () => {
   const { client, session } = await connect();
-  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+  const { ajv, inputSchema, toolDefinition } = await advertisedMcpToolSchemas(
     client,
     TOOL,
   );
@@ -121,12 +121,11 @@ it("writes the bundle environment-build writes from retained capture Evidence", 
     output_directory: join(root, "grafana"),
   };
   expect(ajv.validate(inputSchema, input)).toBe(true);
-  const response = await client.callTool({ name: TOOL, arguments: input });
+  const response = await client.callTool(
+    { name: TOOL, arguments: input },
+    { toolDefinition },
+  );
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const report = toolContract(TOOL).outputSchema.parse(
     response.structuredContent,
   );

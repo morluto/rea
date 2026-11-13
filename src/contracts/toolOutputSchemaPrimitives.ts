@@ -5,7 +5,6 @@ import { investigationStatisticsSchema } from "../domain/investigationLifecycle.
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 import { analysisCleanupRetrySchema } from "../domain/analysisErrorRecovery.js";
 
-import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
 import {
   evidenceSchema,
@@ -783,5 +782,3 @@ export const objcClassDiscoveryOutput = evidenceResultOf(
     identity_coverage: objcClassDiscoveryCoverageSchema,
   }),
 );
-
-export const functionDossierOutput = evidenceResultOf(functionDossierSchema);
