@@ -102,6 +102,7 @@ export const parsePeResources = async (
     // Rows are retained in arrays; reserve a separator along with each row.
     accountBytes(jsonBytes(value, METADATA_BYTES - metadataBytes - 1) + 1);
   };
+  const remainingCapacity = (): number => METADATA_BYTES - metadataBytes;
   const reserveDecodedName = (utf16Units: number): void => {
     // A JSON string can need six ASCII bytes per UTF-16 code unit (for example,
     // a control character encoded as `\\u0000`). The original spelling and
@@ -287,7 +288,13 @@ export const parsePeResources = async (
     ? readIconGroups(bytes, resources, account, ensureCapacity)
     : [];
   const delphiForms = decodePayloads
-    ? readDelphiForms(bytes, resources, account, ensureCapacity)
+    ? readDelphiForms(
+        bytes,
+        resources,
+        account,
+        ensureCapacity,
+        remainingCapacity,
+      )
     : [];
   const report: PeResources = {
     artifact,
@@ -424,10 +431,11 @@ const readIconGroups = (
  */
 const readDelphiForms = (
   bytes: Buffer,
-  resources: PeResources["resources"],
+  resources: readonly PeResources["resources"][number][],
   account: (value: unknown) => void,
   ensureCapacity: (projectedBytes: number) => void,
-): PeResources["delphi_forms"] => {
+  remainingCapacity: () => number,
+): DelphiFormResource[] => {
   const forms: DelphiFormResource[] = [];
   for (const resource of resources) {
     if (resource.type.kind !== "id" || resource.type.id !== 10) continue;
@@ -443,16 +451,14 @@ const readDelphiForms = (
       resource.code_page === 0
         ? undefined
         : (declaredPage ?? BYTE_PRESERVING_CODE_PAGE);
-    // The decoder is bounded by its own budgets and the decoded form is
-    // accounted below. Reserving the raw payload size here would reject a valid
-    // form whose output is far smaller than its input.
+    // Leave room for the fixed form envelope and at least one root object so
+    // the decoder can fail with a bounded unknown instead of the parser
+    // rejecting the whole inventory at the metadata budget.
     ensureCapacity(1024);
-    const decoded = decodeDelphiFormStream(
-      bytes,
-      offset,
-      offset + size,
-      declared === undefined ? {} : { code_page: declared },
-    );
+    const decoded = decodeDelphiFormStream(bytes, offset, offset + size, {
+      ...(declared === undefined ? {} : { code_page: declared }),
+      max_text_bytes: Math.max(0, remainingCapacity() - 1024),
+    });
     if (decoded === null) continue;
     const form: DelphiFormResource = {
       resource_index: resource.index,

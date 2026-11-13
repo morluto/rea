@@ -486,12 +486,27 @@ function readValue(
     case 12:
     case 20: {
       const declared = stream.uint32();
+      const page = ordinal === 20 ? "utf-8" : codePage;
       // Reject a large retained projection before decoding it. A truncated
       // value keeps its declaration and the bytes the payload holds.
       const available = Math.min(declared, stream.remaining);
-      spendText(budget, available * 10 + 256);
+      try {
+        spendText(budget, available * 10 + 256);
+      } catch (error) {
+        if (!(error instanceof StreamEnd)) throw error;
+        // The length prefix is already observed; keep it on the stopped value
+        // even when the representation budget prevents decoding the payload.
+        throw new StoppedValue(error.message, {
+          kind: "string",
+          text: "",
+          bytes_hex: "",
+          code_page: page,
+          declared_bytes: declared,
+          truncated: true,
+          location: range(at, stream.position),
+        });
+      }
       const raw = stream.take(available);
-      const page = ordinal === 20 ? "utf-8" : codePage;
       const hex = hexOf(raw);
       const value: DelphiFormValue = {
         kind: "string",
@@ -511,7 +526,20 @@ function readValue(
       const characters = stream.uint32();
       const declared = characters * 2;
       const available = Math.min(declared, stream.remaining) & ~1;
-      spendText(budget, available * 10 + 256);
+      try {
+        spendText(budget, available * 10 + 256);
+      } catch (error) {
+        if (!(error instanceof StreamEnd)) throw error;
+        throw new StoppedValue(error.message, {
+          kind: "string",
+          text: "",
+          bytes_hex: "",
+          code_page: "utf-16le",
+          declared_bytes: declared,
+          truncated: true,
+          location: range(at, stream.position),
+        });
+      }
       const raw = stream.take(available);
       const hex = hexOf(raw);
       const value: DelphiFormValue = {
@@ -534,7 +562,18 @@ function readValue(
       // retained-text bound and only fail the post-decode metadata account.
       // A truncated value keeps the declared count with the bytes it holds.
       const available = Math.min(declared, stream.remaining);
-      spendText(budget, Math.min(available, HEX_LIMIT_BYTES) * 2 + 256);
+      try {
+        spendText(budget, Math.min(available, HEX_LIMIT_BYTES) * 2 + 256);
+      } catch (error) {
+        if (!(error instanceof StreamEnd)) throw error;
+        throw new StoppedValue(error.message, {
+          kind: "binary",
+          bytes_hex: "",
+          declared_bytes: declared,
+          truncated: true,
+          location: range(at, stream.position),
+        });
+      }
       const raw = stream.take(available);
       const hex = hexOf(raw);
       const value: DelphiFormValue = {
@@ -950,7 +989,10 @@ export const decodeDelphiFormStream = (
   bytes: Buffer,
   start: number,
   end: number,
-  options: { readonly code_page?: string } = {},
+  options: {
+    readonly code_page?: string;
+    readonly max_text_bytes?: number;
+  } = {},
 ): DelphiFormDecode | null => {
   if (start < 0 || end > bytes.length || end <= start) return null;
   const signature = detectDelphiFormSignature(bytes, start, end);
@@ -960,7 +1002,10 @@ export const decodeDelphiFormStream = (
     objects: MAX_OBJECTS,
     properties: MAX_PROPERTIES,
     values: MAX_VALUES,
-    text: MAX_TEXT_BYTES,
+    text: Math.min(
+      MAX_TEXT_BYTES,
+      Math.max(0, options.max_text_bytes ?? MAX_TEXT_BYTES),
+    ),
   };
   const stream = new Stream(
     bytes,

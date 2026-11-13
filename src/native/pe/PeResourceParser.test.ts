@@ -12,6 +12,7 @@ import {
   delphiComponent,
   delphiForm,
   delphiFormFixture,
+  delphiLString,
   delphiProperty,
   delphiShortString,
 } from "./DelphiForm.fixture.js";
@@ -394,6 +395,40 @@ describe("Delphi forms inside PE resources", () => {
     expect(
       inventory.limitations.some((line) => line.includes("Inventory-only")),
     ).toBe(true);
+  });
+});
+
+it("passes the remaining metadata allowance to the form decoder", async () => {
+  const names = "n".repeat(200);
+  const resources: {
+    type: number;
+    name: string;
+    language: number;
+    payload: Buffer;
+  }[] = Array.from({ length: 2400 }, (_, index) => ({
+    type: 10,
+    name: `${names}${String(index).padStart(4, "0")}`,
+    language: 1033,
+    payload: Buffer.from("opaque"),
+  }));
+  const payload = delphiForm(
+    delphiComponent("TForm1", "Form1", [
+      delphiProperty("Caption", delphiLString("A".repeat(500_000))),
+    ]),
+  );
+  resources.push({ type: 10, name: "ZFORM", language: 1033, payload });
+  const fixture = peResourceFixture(false, resources, 8 * 1024 * 1024);
+  const result = peResourcesSchema.parse(await parse(fixture.bytes, 10_000));
+  expect(result.delphi_forms).toHaveLength(1);
+  expect(result.delphi_forms[0]?.root.unknown?.reason).toContain(
+    "string budget exhausted",
+  );
+  expect(result.delphi_forms[0]?.root.properties[0]?.value).toMatchObject({
+    kind: "string",
+    declared_bytes: 500_000,
+    truncated: true,
+    text: "",
+    bytes_hex: "",
   });
 });
 

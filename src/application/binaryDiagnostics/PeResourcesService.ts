@@ -238,7 +238,7 @@ const insideLocations = (
       (property) =>
         within(property.location) &&
         text(property.name) &&
-        insideValue(property.value, within, codePage),
+        insideValue(property.value, within, codePage, property.value_type),
     ) &&
     object.children.every((child) => insideLocations(child, within, codePage))
   );
@@ -266,11 +266,32 @@ const codePageSourceMatches = (form: DelphiFormResource): boolean => {
   );
 };
 
+/** The decoder derives a string's label from its value type and resource page. */
+const valuePageMatchesType = (
+  valueType: string | null,
+  label: string,
+  codePage: string,
+): boolean => {
+  if (valueType === null)
+    return label === codePage || label === "utf-8" || label === "utf-16le";
+  if (valueType === "vaString" || valueType === "vaLString")
+    return label === codePage;
+  if (valueType === "vaWString" || valueType === "vaUString")
+    return label === "utf-16le";
+  return valueType === "vaUTF8String" && label === "utf-8";
+};
+
 const insideValue = (
   value: DelphiFormValue,
   within: (range: { offset: number; bytes: number }) => boolean,
   codePage: string,
+  valueType: string | null = null,
 ): boolean => {
+  if (value.kind === "string")
+    return (
+      within(value.location) &&
+      valuePageMatchesType(valueType, value.code_page, codePage)
+    );
   if (value.kind === "list")
     return (
       within(value.location) &&
@@ -294,7 +315,12 @@ const insideValue = (
               within(property.location) &&
               within(property.name.location) &&
               property.name.code_page === codePage &&
-              insideValue(property.value, within, codePage),
+              insideValue(
+                property.value,
+                within,
+                codePage,
+                property.value_type,
+              ),
           ),
       )
     );

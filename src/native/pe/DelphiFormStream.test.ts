@@ -521,6 +521,67 @@ describe("Delphi form binary and container values", () => {
     expect(value.bytes_hex).toHaveLength(256);
   });
 
+  it("keeps the declared string length when the decode budget is exhausted", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Caption", lString("a".repeat(100_000))),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_text_bytes: 1000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      code_page: "windows-1252",
+      declared_bytes: 100_000,
+      truncated: true,
+      bytes_hex: "",
+      text: "",
+    });
+  });
+
+  it("keeps the declared wide-string length when the decode budget is exhausted", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Caption", wideString("a".repeat(100_000))),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_text_bytes: 1000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(propertyOf(root, "Caption").value).toMatchObject({
+      kind: "string",
+      code_page: "utf-16le",
+      declared_bytes: 200_000,
+      truncated: true,
+      bytes_hex: "",
+      text: "",
+    });
+  });
+
+  it("keeps the declared binary length when the decode budget is exhausted", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Data", bytes(10, 3, 0, 0, 0, 1, 2, 3)),
+      ]),
+    );
+    const decoded = decodeDelphiFormStream(payload, 0, payload.length, {
+      max_text_bytes: 1000,
+    });
+    const root = decoded?.root;
+    if (root === null || root === undefined) throw new Error("Missing root");
+    expect(propertyOf(root, "Data").value).toMatchObject({
+      kind: "binary",
+      declared_bytes: 3,
+      truncated: true,
+      bytes_hex: "",
+    });
+  });
+
   it("decodes lists, sets and collections", () => {
     const root = rootOf(
       form(

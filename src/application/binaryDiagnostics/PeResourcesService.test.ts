@@ -406,6 +406,77 @@ it("rejects nested form text whose code page contradicts the form", async () => 
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
 });
 
+const formWithStringValue = async (
+  valueType: string,
+  valueCodePage: string,
+) => {
+  const report = await observedReport();
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  resource.code_page = 1251;
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: signatureAt(resource.payload.location),
+      prefix: null,
+      declared_code_page: 1251,
+      code_page: "windows-1251",
+      code_page_source: "resource",
+      root: {
+        ...validRoot(rootAfterSignature(resource.payload.location)),
+        properties: [
+          {
+            name: {
+              text: "Caption",
+              bytes_hex: "43",
+              code_page: "windows-1251",
+              location: resource.payload.location,
+            },
+            value_type: valueType,
+            value: {
+              kind: "string",
+              text: "OK",
+              bytes_hex: "4f4b",
+              code_page: valueCodePage,
+              declared_bytes: 2,
+              truncated: false,
+              location: resource.payload.location,
+            },
+            location: resource.payload.location,
+          },
+        ],
+      },
+    },
+  ];
+  return report;
+};
+
+it("rejects a string value whose code page contradicts its value type", async () => {
+  const report = await formWithStringValue("vaString", "utf-8");
+  const service = new PeResourcesService({
+    identity: PE_RESOURCES_PROVIDER,
+    inspect: () => Promise.resolve(ok(report)),
+  });
+  expect(
+    await service.inspect({ path: "/fixtures/example.exe" }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+});
+
+it("accepts explicit UTF-8 form text on a non-UTF-8 resource page", async () => {
+  const report = await formWithStringValue("vaUTF8String", "utf-8");
+  const service = new PeResourcesService({
+    identity: PE_RESOURCES_PROVIDER,
+    inspect: () => Promise.resolve(ok(report)),
+  });
+  expect(
+    await service.inspect({ path: "/fixtures/example.exe" }),
+  ).toMatchObject({ ok: true });
+});
+
 it("rejects a signature-bearing form without a root", async () => {
   const report = await observedReport();
   const index = report.resources.findIndex(
