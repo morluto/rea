@@ -236,7 +236,7 @@ static Handle openRelative(HANDLE parent, const std::wstring& name, DWORD access
 }
 
 static std::string trusteeReadback(const char* constraint, PACL acl, SECURITY_DESCRIPTOR_CONTROL control,
-                                  const Security& expected) {
+                                  Security& expected) {
   const bool protectedDacl = (control & SE_DACL_PROTECTED) != 0;
   const bool userIsSystem = EqualSid(expected.userSid(), expected.system.data()) != FALSE;
   std::string text = constraint;
