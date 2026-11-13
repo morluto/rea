@@ -1,9 +1,9 @@
 import { err, ok, type Result } from "../result.js";
 
 /** ":" + count + address + type + 255 data bytes + checksum, excluding EOL. */
-export const INTEL_HEX_MAX_LINE_CHARS = 521;
+const INTEL_HEX_MAX_LINE_CHARS = 521;
 /** "S" + type + count + 255 counted bytes, excluding EOL. */
-export const SREC_MAX_LINE_CHARS = 514;
+const SREC_MAX_LINE_CHARS = 514;
 
 export type HexRecordEncoding = "intel-hex" | "srec";
 

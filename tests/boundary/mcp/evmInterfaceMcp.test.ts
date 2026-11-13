@@ -1,3 +1,4 @@
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   advertisedMcpToolSchemas,
   assertRecordedMcpEvidence,
@@ -314,7 +315,8 @@ it("settles the admitted EVM operation after SDK cancellation and accepts a subs
       () => "completed",
       (error: unknown) => error,
     );
-  await entered.promise;
+  onTestFinished(() => controller.abort());
+  await awaitAcknowledgement(entered.promise, cancellation, "EVM inspection");
   controller.abort(new Error("SDK EVM cancellation verification"));
   expect(await cancellation).toMatchObject({
     message: expect.stringContaining("SDK EVM cancellation verification"),

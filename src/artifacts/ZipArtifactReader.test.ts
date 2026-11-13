@@ -6,6 +6,7 @@ import {
 } from "../../tests/fixtures/zipZstandard.js";
 import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { once } from "node:events";
 import { randomBytes } from "node:crypto";
 import { constants, zstdCompressSync } from "node:zlib";
@@ -836,7 +837,7 @@ it("joins an admitted ZIP enumeration before reader close completes", async () =
   const traversal = reader.entries()[Symbol.asyncIterator]();
   const next = traversal.next();
   try {
-    await reached.promise;
+    await awaitAcknowledgement(reached.promise, next, "ZIP enumeration read");
     let closed = false;
     const closing = reader.close().then(() => {
       closed = true;

@@ -12,15 +12,18 @@ import {
   pkcs7SignedDataIndefiniteEnvelopeFixture,
 } from "./PeCertificates.fixture.js";
 import {
-  ASN1_NODE_BUDGET,
-  MAX_DECODED_NAME_BYTES,
-  MAX_OID_ARC_BYTES,
-  MAX_OID_BYTES,
   parseCertificate,
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
 import { parsePeCertificates } from "./PeCertificateParser.js";
+
+// Independent boundary examples: changing an allowance requires reviewing
+// both the admitted and rejected certificate shapes.
+const ASN1_NODE_BUDGET = 16_384;
+const MAX_OID_BYTES = 256;
+const MAX_OID_ARC_BYTES = 32;
+const MAX_DECODED_NAME_BYTES = 65_536;
 
 const defaults = inspectPeCertificatesInputSchema.parse({
   path: "/artifacts/app.exe",

@@ -34,7 +34,7 @@ export const BUILD_REQUEST = {
 const ENDS = ["--seed-checkpoint", "seed", "--end-checkpoint", "end"];
 
 /** The app's package as the capture records it, the URL the export downloads its file from, if it needs one, the download it was installed from, if any, and the packages it installs beside the app. */
-export interface CapturedInstall {
+interface CapturedInstall {
   readonly package?: DesktopPackage;
   readonly packageUrl?: string;
   readonly downloadInstall?: Readonly<Record<string, string>>;
@@ -42,7 +42,7 @@ export interface CapturedInstall {
 }
 
 /** A task the export takes with the checkpoint it is checked at. */
-export interface BuildTaskAtEnd {
+interface BuildTaskAtEnd {
   readonly task: unknown;
   readonly end_checkpoint: string;
 }

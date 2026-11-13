@@ -5,6 +5,7 @@ import {
 import { ok as resultOk, err, ok } from "../../../src/domain/result.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   Client,
@@ -616,7 +617,7 @@ it("guided prompt completion avoids cold startup and cancels warm lookup on clos
   const directory = await createTestTempDirectory("rea-prompt-warm-only-");
   const target = join(directory, "target.hop");
   await writeFile(target, "fixture target");
-  const fixture = await createWarmCompletionFixture(target);
+  const fixture = await createWarmCompletionFixture();
   const { client } = fixture;
 
   const opened = await client.callTool({
@@ -742,9 +743,11 @@ it.each(["replacement", "shutdown"])(
     const first = await connectHttp();
     let next: Client | undefined;
     let finishing: Promise<void> | undefined;
+    let initial: ReturnType<typeof complete> | undefined;
     try {
-      void complete(first, "document", "").catch(() => undefined);
-      await started;
+      initial = complete(first, "document", "");
+      void initial.catch(() => undefined);
+      await awaitAcknowledgement(started, initial, "prompt completion start");
       let finished = false;
       finishing = (
         ending === "shutdown"
@@ -755,7 +758,11 @@ it.each(["replacement", "shutdown"])(
       ).then(() => {
         finished = true;
       });
-      await aborted;
+      await awaitAcknowledgement(
+        aborted,
+        finishing,
+        "prompt completion cancellation",
+      );
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(connections).toHaveBeenCalledTimes(1);
       expect(finished).toBe(false);
@@ -820,7 +827,7 @@ describe("guided prompt completion lifecycle", () => {
       { signal: controller.signal },
     );
     await withVerifierCleanup(async () => {
-      await started;
+      await awaitAcknowledgement(started, pending, "prompt completion start");
       controller.abort();
       await expect(pending).rejects.toThrow();
       release();
@@ -898,7 +905,7 @@ describe("guided prompt completion lifecycle", () => {
   }, 10_000);
 });
 
-const createWarmCompletionFixture = async (target: string) => {
+const createWarmCompletionFixture = async () => {
   const identity = {
     id: "deep-fixture",
     name: "Deep fixture provider",

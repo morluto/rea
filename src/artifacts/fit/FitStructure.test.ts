@@ -12,13 +12,7 @@ import {
   fitFixture,
   type FitFixtureImage,
 } from "./FitImage.fixture.js";
-import {
-  FIT_MAX_CONFIGURATION_REFERENCES,
-  FIT_MAX_CONFIGURATIONS,
-  FIT_MAX_HASH_NODES_PER_IMAGE,
-  FIT_MAX_IMAGES,
-  readFitStructure,
-} from "./FitStructure.js";
+import { readFitStructure } from "./FitStructure.js";
 
 const read = (file: Buffer) =>
   readFitStructure(
@@ -490,13 +484,19 @@ describe("FIT fixed limits", () => {
     expect(
       failureOf(
         fitFixture({
-          images: Array.from({ length: FIT_MAX_IMAGES + 1 }, (_, index) => ({
+          images: Array.from({ length: 1025 }, (_, index) => ({
             name: `image-${String(index)}`,
             data: Buffer.from([index & 0xff]),
           })),
         }),
       ),
-    ).toMatchObject({ reason: "limit", boundary: "capacity" });
+    ).toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      message: expect.stringContaining(
+        "1025 images, above the fixed 1024-image allowance",
+      ),
+    });
   });
 
   it("fails more hash nodes than the fixed allowance", () => {
@@ -506,15 +506,18 @@ describe("FIT fixed limits", () => {
           images: [
             {
               ...kernel(),
-              hashes: Array.from(
-                { length: FIT_MAX_HASH_NODES_PER_IMAGE + 1 },
-                () => "crc32",
-              ),
+              hashes: Array.from({ length: 9 }, () => "crc32"),
             },
           ],
         }),
       ),
-    ).toMatchObject({ reason: "limit", boundary: "capacity" });
+    ).toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      message: expect.stringContaining(
+        "9 hash nodes, above the fixed 8-node allowance",
+      ),
+    });
   });
 
   it("fails more configurations than the fixed allowance", () => {
@@ -524,14 +527,19 @@ describe("FIT fixed limits", () => {
           images: [kernel()],
           configurations: {
             name: "configurations",
-            children: Array.from(
-              { length: FIT_MAX_CONFIGURATIONS + 1 },
-              (_, index) => ({ name: `conf-${String(index)}` }),
-            ),
+            children: Array.from({ length: 1025 }, (_, index) => ({
+              name: `conf-${String(index)}`,
+            })),
           },
         }),
       ),
-    ).toMatchObject({ reason: "limit", boundary: "capacity" });
+    ).toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      message: expect.stringContaining(
+        "1025 configurations, above the fixed 1024-configuration allowance",
+      ),
+    });
   });
 
   it("bounds configuration references before decoding them", () => {
@@ -545,14 +553,20 @@ describe("FIT fixed limits", () => {
               {
                 name: "conf-1",
                 properties: {
-                  loadables: Buffer.alloc(FIT_MAX_CONFIGURATION_REFERENCES + 1),
+                  loadables: Buffer.alloc(16_385),
                 },
               },
             ],
           },
         }),
       ),
-    ).toMatchObject({ reason: "limit", boundary: "capacity" });
+    ).toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      message: expect.stringContaining(
+        "16385 image references, above the fixed 16384-reference allowance",
+      ),
+    });
   });
 
   it("maps a parser limit to a fixed allowance without a caller limit", () => {
@@ -580,10 +594,7 @@ describe("FIT fixed limits", () => {
 
 it("bounds dangling-reference diagnostics while preserving every declared reference", () => {
   const name = "c".repeat(4096);
-  const references = Array.from(
-    { length: FIT_MAX_CONFIGURATION_REFERENCES },
-    () => "missing",
-  );
+  const references = Array.from({ length: 16_384 }, () => "missing");
   const file = fitFixture({
     images: [{ name: "kernel", data: Buffer.from("K") }],
     configurations: {

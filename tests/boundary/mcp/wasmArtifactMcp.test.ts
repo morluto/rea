@@ -4,6 +4,7 @@ import {
 } from "../../fixtures/advertisedMcpTool.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -308,45 +309,52 @@ it.each([undefined, "summary"] as const)(
       { signal: controller.signal },
     );
     const rejected = expect(cancellation).rejects.toThrow();
-    await started;
-    controller.abort(new Error("cancel after provider work starts"));
-    let serverReason: unknown;
     try {
-      await harness.client.ping();
-      serverReason = serverSignal?.reason;
-    } finally {
-      releaseProvider?.();
-    }
-    await rejected;
-    expect(inspect).toHaveBeenCalledOnce();
-    const result = await inspect.mock.results[0]?.value;
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisCancelledError",
-        partialObservation: {
-          operation: "inspect_wasm_artifact",
-          normalized_result: value,
-          confidence: "observed",
+      await awaitAcknowledgement(started, cancellation, "WASM provider start");
+      controller.abort(new Error("cancel after provider work starts"));
+      let serverReason: unknown;
+      try {
+        await harness.client.ping();
+        serverReason = serverSignal?.reason;
+      } finally {
+        releaseProvider?.();
+      }
+      await rejected;
+      expect(inspect).toHaveBeenCalledOnce();
+      const result = await inspect.mock.results[0]?.value;
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisCancelledError",
+          partialObservation: {
+            operation: "inspect_wasm_artifact",
+            normalized_result: value,
+            confidence: "observed",
+          },
         },
-      },
-    });
-    if (result === undefined || result.ok)
-      throw new Error("Expected cancelled WASM Evidence");
-    expect(serverSignal?.aborted).toBe(true);
-    expect(result.error.cause).toBe(serverReason);
-    const partial = parseEvidence(result.error.partialObservation);
-    expect(partial.parameters).toEqual({
-      path: value.artifact.path,
-      glue_paths: [],
-      candidate_paths: [],
-    });
-    await harness.client.ping();
-    await vi.waitFor(() => {
-      // Failed summary delivery retains the complete producer, without a derived view.
-      expect(session.exportEvidenceBundle().records).toEqual([partial]);
-    });
-    expect(session.evidenceById(partial.evidence_id)).toEqual(partial);
+      });
+      if (result === undefined || result.ok)
+        throw new Error("Expected cancelled WASM Evidence");
+      expect(serverSignal?.aborted).toBe(true);
+      expect(result.error.cause).toBe(serverReason);
+      const partial = parseEvidence(result.error.partialObservation);
+      expect(partial.parameters).toEqual({
+        path: value.artifact.path,
+        glue_paths: [],
+        candidate_paths: [],
+      });
+      await harness.client.ping();
+      await vi.waitFor(() => {
+        // Failed summary delivery retains the complete producer, without a derived view.
+        expect(session.exportEvidenceBundle().records).toEqual([partial]);
+      });
+      expect(session.evidenceById(partial.evidence_id)).toEqual(partial);
+    } finally {
+      controller.abort();
+      releaseProvider?.();
+      await cancellation.catch(() => undefined);
+      await rejected.catch(() => undefined);
+    }
   },
 );
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -13,23 +13,80 @@ import {
 } from "../../../src/domain/analysisSnapshot.js";
 import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 
-const target: BinaryTarget = {
+const provider = { id: "ghidra", name: "Ghidra", version: "12.1.4" };
+const commonTarget = {
   path: "/source-owned.elf",
   sha256: "a".repeat(64),
   kind: "executable",
   format: "elf",
-  architecture: "powerpc",
-  availableArchitectures: ["powerpc"],
-  powerpc: { elfClass: 32, byteOrder: "big", type: 2, flags: 0 },
-};
-const provider = { id: "ghidra", name: "Ghidra", version: "12.1.4" };
-const profile = createAnalysisProfile(provider, {
-  powerpc_elf: { elf_class: 32, byte_order: "big", type: 2, flags: 0 },
-});
+} as const;
+const cases = [
+  {
+    architecture: "mips",
+    target: {
+      ...commonTarget,
+      architecture: "mips",
+      availableArchitectures: ["mips"],
+      mips: { elfClass: 32, byteOrder: "little", type: 2, flags: 0x70001001 },
+    },
+    profile: {
+      mips_elf: {
+        elf_class: 32,
+        byte_order: "little",
+        type: 2,
+        flags: 0x70001001,
+      },
+    },
+    changed: {
+      mips_elf: {
+        elf_class: 32,
+        byte_order: "big",
+        type: 2,
+        flags: 0x70001001,
+      },
+    },
+    observation: { address: "0x20150", value: "rea_mips_entry" },
+  },
+  {
+    architecture: "powerpc",
+    target: {
+      ...commonTarget,
+      architecture: "powerpc",
+      availableArchitectures: ["powerpc"],
+      powerpc: { elfClass: 32, byteOrder: "big", type: 2, flags: 0 },
+    },
+    profile: {
+      powerpc_elf: { elf_class: 32, byte_order: "big", type: 2, flags: 0 },
+    },
+    changed: {
+      powerpc_elf: {
+        elf_class: 32,
+        byte_order: "big",
+        type: 2,
+        flags: 0x00010000,
+      },
+    },
+    observation: { address: "0x100101b0", value: "rea_ppc_entry" },
+  },
+] as const satisfies readonly {
+  architecture: string;
+  target: BinaryTarget;
+  profile: object;
+  changed: object;
+  observation: { address: string; value: string };
+}[];
 
-describe("PowerPC identity through lifecycle, Evidence and snapshot consumers", () => {
-  it("round-trips query bindings without relaxing integrity", () => {
-    const result = [{ address: "0x100101b0", value: "rea_ppc_entry" }];
+it.each(cases)(
+  "round-trips $architecture identity through Evidence and snapshots",
+  ({
+    architecture,
+    target,
+    observation,
+    profile: facts,
+    changed: changedFacts,
+  }) => {
+    const result = [observation];
+    const profile = createAnalysisProfile(provider, facts);
     const parameters = {};
     const evidence = createEvidence(target, provider, {
       operation: "list_procedures",
@@ -63,31 +120,24 @@ describe("PowerPC identity through lifecycle, Evidence and snapshot consumers", 
     const restored = parseAnalysisSnapshot(
       JSON.parse(serializeAnalysisSnapshot(snapshot)),
     );
-    expect(restored.target.architecture).toBe("powerpc");
+    expect(restored.target.architecture).toBe(architecture);
     expect(restored.evidence_bundle.records[0]?.subject?.architecture).toBe(
-      "powerpc",
+      architecture,
     );
     expect(restored.entries[0]?.execution.subject?.architecture).toBe(
-      "powerpc",
+      architecture,
     );
     expect(
       sessionOutputSchemas.open_binary.parse({ result: target }).result
         .architecture,
-    ).toBe("powerpc");
+    ).toBe(architecture);
     expect(() =>
       parseEvidence({
         ...evidence,
         subject: { ...evidence.subject, architecture: "x86" },
       }),
     ).toThrow("semantic identifier");
-    const changed = createAnalysisProfile(provider, {
-      powerpc_elf: {
-        elf_class: 32,
-        byte_order: "big",
-        type: 2,
-        flags: 0x00010000,
-      },
-    });
+    const changed = createAnalysisProfile(provider, changedFacts);
     expect(snapshotMatchesProfile(binding, changed)).toBe(false);
-  });
-});
+  },
+);

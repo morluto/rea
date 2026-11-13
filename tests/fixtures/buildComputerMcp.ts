@@ -35,7 +35,7 @@ const hostEnvironment = Object.fromEntries(
 );
 
 /** A check grades its first read, for tests whose app changes nothing while it is checked. */
-export const FIRST_READ: SettleTiming = {
+const FIRST_READ: SettleTiming = {
   intervalMs: 0,
   windowMs: 0,
   boundMs: 0,
