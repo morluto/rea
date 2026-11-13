@@ -30,7 +30,11 @@ import {
 } from "./lib/verifier-run.mjs";
 import { committedProvidersEqual } from "../dist/domain/analysisProfile.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
-import { parseEvidence } from "../dist/domain/evidence.js";
+import {
+  ANALYSIS_EVIDENCE_PREDICATE,
+  evidenceSubjectIdentity,
+  parseEvidence,
+} from "../dist/domain/evidence.js";
 
 // Static source-owned controls. Never execute an ELF or acquire a toolchain.
 if (!["darwin", "linux"].includes(process.platform))
@@ -199,8 +203,6 @@ async function runControls(cleanup) {
             "analyze_function",
           ),
         );
-        const dossier = functionDossierSchema.parse(evidence.normalized_result);
-        assert.ok(dossier.pseudocode.length > 0);
         const { run: activeRun, provider: activeProvider } =
           await currentGhidraSession();
         assert.equal(activeRun.run_id, providerRunId);
@@ -220,6 +222,23 @@ async function runControls(cleanup) {
         // Capture native token-verified identities while the provider is live;
         // A public lineage snapshot is optional; native ownership is mandatory.
         await cleanup.retainProviderRun(providerRunId, providerScope);
+        assert.equal(evidence.operation, "analyze_function");
+        assert.equal(evidence.predicate_type, ANALYSIS_EVIDENCE_PREDICATE);
+        assert.equal(evidence.parameters.procedure, original.entry);
+        const sourceSha256 = digest(expected);
+        const subject = evidenceSubjectIdentity(evidence.subject);
+        assert.deepEqual(
+          subject,
+          {
+            digest: { sha256: sourceSha256 },
+            format: "elf",
+            architecture: "mips",
+          },
+          "MIPS dossier Evidence subject does not identify the exact ELF fixture",
+        );
+        const dossier = functionDossierSchema.parse(evidence.normalized_result);
+        assert.equal(BigInt(dossier.procedure.address), BigInt(original.entry));
+        assert.ok(dossier.pseudocode.trim().length > 0);
         const isMips1 = path === recordlessMips1Path;
         assert.ok(
           evidence.provider.id === "ghidra" &&
@@ -267,12 +286,14 @@ async function runControls(cleanup) {
             "MIPS32 dossier Evidence reports a MIPS-I decoder limitation",
           );
         const image = await call("inspect_native_load_image");
-        assertMipsLoadedImage(image.observations, byteOrder, digest(expected));
+        assertMipsLoadedImage(image.observations, byteOrder, sourceSha256);
         providerRuns.push({
           control: isMips1 ? "recordless_mips1" : "recordless_mips32",
           run_id: providerRunId,
           language_id: image.observations.language_id,
           dossier_evidence_id: evidence.evidence_id,
+          dossier_subject: subject,
+          dossier_entry: dossier.procedure.address,
           dossier_provider: evidence.provider,
           dossier_profile: {
             digest: profile.digest,
