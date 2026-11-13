@@ -583,6 +583,8 @@ argument's other members keep their values. For a rest parameter, a written
 `length` leaves every element unresolved, and an index written past the end
 leaves the elements after the known ones unresolved. Arguments that follow a
 spread of unknown length stay unresolved, because their positions are unknown.
+One value read from such a list or from a rest array, such as `args[0]`, is
+still exactly one argument.
 A wrapper call that is both its own entry and reached through another entry
 is recorded once when both paths find the same facts; calls that supply
 different handlers or channels stay distinct.
