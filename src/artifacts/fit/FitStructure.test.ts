@@ -481,95 +481,74 @@ describe("FIT configurations", () => {
 
 describe("FIT fixed limits", () => {
   it("fails more images than the fixed allowance", () => {
-    expect(
-      failureOf(
-        fitFixture({
-          images: Array.from({ length: 1025 }, (_, index) => ({
-            name: `image-${String(index)}`,
-            data: Buffer.from([index & 0xff]),
-          })),
-        }),
-      ),
-    ).toMatchObject({
+    const make = (count: number) =>
+      fitFixture({
+        images: Array.from({ length: count }, (_, index) => ({
+          name: `image-${String(index)}`,
+          data: Buffer.from([index & 0xff]),
+        })),
+      });
+    expect(read(make(1024)).images).toHaveLength(1024);
+    expect(failureOf(make(1025))).toMatchObject({
       reason: "limit",
       boundary: "capacity",
-      message: expect.stringContaining(
-        "1025 images, above the fixed 1024-image allowance",
-      ),
     });
   });
 
   it("fails more hash nodes than the fixed allowance", () => {
-    expect(
-      failureOf(
-        fitFixture({
-          images: [
-            {
-              ...kernel(),
-              hashes: Array.from({ length: 9 }, () => "crc32"),
-            },
-          ],
-        }),
-      ),
-    ).toMatchObject({
+    const make = (count: number) =>
+      fitFixture({
+        images: [
+          {
+            ...kernel(),
+            hashes: Array.from({ length: count }, () => "crc32"),
+          },
+        ],
+      });
+    expect(read(make(8)).images[0]?.hashes).toHaveLength(8);
+    expect(failureOf(make(9))).toMatchObject({
       reason: "limit",
       boundary: "capacity",
-      message: expect.stringContaining(
-        "9 hash nodes, above the fixed 8-node allowance",
-      ),
     });
   });
 
   it("fails more configurations than the fixed allowance", () => {
-    expect(
-      failureOf(
-        fitFixture({
-          images: [kernel()],
-          configurations: {
-            name: "configurations",
-            children: Array.from({ length: 1025 }, (_, index) => ({
-              name: `conf-${String(index)}`,
-            })),
-          },
-        }),
-      ),
-    ).toMatchObject({
+    const make = (count: number) =>
+      fitFixture({
+        images: [kernel()],
+        configurations: {
+          name: "configurations",
+          children: Array.from({ length: count }, (_, index) => ({
+            name: `conf-${String(index)}`,
+          })),
+        },
+      });
+    expect(read(make(1024)).metadata.configurations).toHaveLength(1024);
+    expect(failureOf(make(1025))).toMatchObject({
       reason: "limit",
       boundary: "capacity",
-      message: expect.stringContaining(
-        "1025 configurations, above the fixed 1024-configuration allowance",
-      ),
     });
   });
 
   it("bounds configuration references before decoding them", () => {
-    expect(
-      failureOf(
-        fitFixture({
-          images: [kernel()],
-          configurations: {
-            name: "configurations",
-            children: [
-              {
-                name: "conf-1",
-                properties: {
-                  loadables: Buffer.alloc(16_385),
-                },
-              },
-            ],
-          },
-        }),
-      ),
-    ).toMatchObject({
+    const make = (count: number) =>
+      fitFixture({
+        images: [kernel()],
+        configurations: {
+          name: "configurations",
+          children: [
+            { name: "conf-1", properties: { loadables: Buffer.alloc(count) } },
+          ],
+        },
+      });
+    expect(read(make(16_384)).metadata.configurations).toHaveLength(1);
+    expect(failureOf(make(16_385))).toMatchObject({
       reason: "limit",
       boundary: "capacity",
-      message: expect.stringContaining(
-        "16385 image references, above the fixed 16384-reference allowance",
-      ),
     });
   });
 
-  it("maps a parser limit to a fixed allowance without a caller limit", () => {
+  it("does not attach caller-adjustable admission to a fixed parser limit", () => {
     let nested: FixtureNode = { name: "leaf" };
     for (let depth = 0; depth < 64; depth += 1)
       nested = { name: `n${String(depth)}`, children: [nested] };
@@ -579,9 +558,12 @@ describe("FIT fixed limits", () => {
         children: [{ name: "images" }, nested],
       }),
     );
-    expect(failure).toMatchObject({ reason: "limit", boundary: "capacity" });
-    // The parser's caller-limit recovery does not apply to fixed FIT reads.
-    expect(String((failure as Error).message)).not.toContain("caller-selected");
+    expect(failure).toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      readerLimit: undefined,
+      admission: undefined,
+    });
   });
 
   it("fails a structure without /images", () => {

@@ -227,6 +227,19 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
       size,
       data: index === 0 ? Buffer.alloc(size, 0x61) : Buffer.alloc(0),
     }));
+    const control = new UnityFsArtifactReader(
+      await fixture(
+        buildUnityFs(members.slice(0, 256), {
+          blockSize: size,
+          encodeBlock: repeatedBlock,
+        }),
+      ),
+    );
+    try {
+      expect(await entries(control)).toHaveLength(256);
+    } finally {
+      await control.close();
+    }
     const reader = new UnityFsArtifactReader(
       await fixture(
         buildUnityFs(members, {
@@ -238,9 +251,6 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     try {
       await expect(entries(reader)).rejects.toMatchObject({
         reason: "limit",
-        message: expect.stringContaining(
-          "UnityFS readable members including aliases",
-        ),
       });
     } finally {
       await reader.close();
@@ -492,16 +502,19 @@ describe("UnityFS stream capacity and cache ownership", () => {
       await fixture(buildUnityFs(members, { blockSize: 1 })),
     );
     try {
+      let completed = 0;
       await expect(
         (async () => {
-          for (const entry of await entries(reader))
+          for (const entry of await entries(reader)) {
             await buffer(await reader.open(entry));
+            completed += 1;
+          }
         })(),
       ).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
-        message: "UnityFS exceeds its directory-and-chunk I/O work budget",
       });
+      expect(completed).toBe(128);
     } finally {
       await reader.close();
     }

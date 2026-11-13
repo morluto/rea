@@ -62,7 +62,7 @@ describe("Ghidra temporary directory probe", () => {
   });
 
   it("probes the Ghidra session root rather than an unusable inherited temp", async () => {
-    const dotted = resolve("work", ".cache", "tmp");
+    const dotted = resolve(directory, ".cache", "tmp");
     for (const name of ["TMPDIR", "TMP", "TEMP"]) vi.stubEnv(name, dotted);
     const expected = ghidraSessionRoot();
     expect(resolve(tmpdir())).toBe(dotted);

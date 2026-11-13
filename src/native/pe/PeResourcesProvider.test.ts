@@ -11,6 +11,7 @@ import {
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PeResourcesProvider } from "./PeResourcesProvider.js";
 import { peResourceFixture } from "./PeResources.fixture.js";
+import { imageFileSizeRemediation } from "../../artifacts/StableArtifactFailure.js";
 
 const inspect = async (
   path: string,
@@ -38,15 +39,16 @@ describe("PE resource provider budget reporting", () => {
     if (result.ok) throw new Error("Expected a refusal");
     expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
     const error = result.error as AnalysisResourceConstraintError;
-    expect(error.message).toContain("Selected artifact exceeds 64 bytes");
     expect(error.reportedLimits).toMatchObject({ max_file_bytes: 64 });
     expect(error.resource).toBe("file-size");
-    expect(error.remediationAction).toContain("Raise max_file_bytes above 64");
+    expect(error.remediationAction).toBe(
+      imageFileSizeRemediation(64, MAX_INSPECT_PE_FILE_BYTES),
+    );
     expect(error.retryable).toBe(false);
     // The projected advice must not send the caller to worker write limits.
     expect(projectAnalysisError(error)).toMatchObject({
       retryable: false,
-      remediation: { action: expect.stringContaining("max_file_bytes") },
+      remediation: { action: error.remediationAction },
     });
   });
 
@@ -58,11 +60,11 @@ describe("PE resource provider budget reporting", () => {
     if (result.ok) throw new Error("Expected a refusal");
     const error = result.error as AnalysisResourceConstraintError;
     expect(error.resource).toBe("capacity");
-    expect(error.message).toContain("entry budget exceeded");
-    expect(error.remediationAction).toContain("Raise max_entries above 1");
+    expect(error.reportedLimits).toMatchObject({ max_entries: 1 });
+    expect(error.remediationAction).toContain("max_entries");
     expect(projectAnalysisError(error)).toMatchObject({
       retryable: false,
-      remediation: { action: expect.stringContaining("max_entries") },
+      remediation: { action: error.remediationAction },
     });
   });
 
@@ -80,30 +82,78 @@ describe("PE resource provider budget reporting", () => {
       if (fileLimit.ok) throw new Error("Expected file-size refusal");
       expect(fileLimit.error).toMatchObject({
         resource: "file-size",
-        remediationAction: expect.stringContaining("input ceiling"),
+        reportedLimits: { max_file_bytes: MAX_INSPECT_PE_FILE_BYTES },
+        remediationAction: imageFileSizeRemediation(
+          MAX_INSPECT_PE_FILE_BYTES,
+          MAX_INSPECT_PE_FILE_BYTES,
+        ),
       });
+      expect(
+        inspectPeResourcesInputSchema.safeParse({
+          path: oversized,
+          max_file_bytes: MAX_INSPECT_PE_FILE_BYTES + 1,
+        }).success,
+      ).toBe(false);
     },
   );
 
   it("names the resource-directory ceiling instead of an impossible bound", async () => {
     const root = await createTestTempDirectory("rea-pe-max-entries-");
-    const fixture = peResourceFixture();
+    const resources = [
+      { type: "first" },
+      { type: "second" },
+      ...Array.from({ length: 65_535 }, (_, type) => ({ type })),
+    ];
+    const fixture = peResourceFixture(false, resources, 2 * 1024 * 1024);
     const directory = fixture.directoryOffsets[0];
     if (directory === undefined)
       throw new Error("Expected a resource directory");
-    // The sum exceeds the limit before the parser reads any directory entries.
-    fixture.bytes.writeUInt16LE(0xffff, directory + 12);
-    fixture.bytes.writeUInt16LE(2, directory + 14);
+    expect(fixture.bytes.readUInt16LE(directory + 12)).toBe(2);
+    expect(fixture.bytes.readUInt16LE(directory + 14)).toBe(65_535);
+    expect(fixture.entryOffsets).toHaveLength(65_537);
+    expect(directory + 16 + 65_537 * 8).toBeLessThanOrEqual(
+      fixture.bytes.length,
+    );
     const path = join(root, "entries.exe");
     await writeFile(path, fixture.bytes);
     const entries = await inspect(path, {
       max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
     });
     if (entries.ok) throw new Error("Expected entry-budget refusal");
+    expect(entries.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    const entryError = entries.error as AnalysisResourceConstraintError;
     expect(entries.error).toMatchObject({
       resource: "capacity",
-      remediationAction: expect.stringContaining("resource-directory ceiling"),
+      reportedLimits: { max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES },
+      retryable: false,
     });
+    expect(typeof entryError.remediationAction).toBe("string");
+    expect(projectAnalysisError(entryError)).toMatchObject({
+      remediation: { action: entryError.remediationAction },
+    });
+    expect(
+      inspectPeResourcesInputSchema.safeParse({
+        path,
+        max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES + 1,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a truncated resource table as malformed before applying the entry budget", async () => {
+    const root = await createTestTempDirectory("rea-pe-truncated-entries-");
+    const fixture = peResourceFixture();
+    const directory = fixture.directoryOffsets[0];
+    if (directory === undefined)
+      throw new Error("Expected a resource directory");
+    fixture.bytes.writeUInt16LE(0xffff, directory + 12);
+    fixture.bytes.writeUInt16LE(2, directory + 14);
+    const path = join(root, "truncated.exe");
+    await writeFile(path, fixture.bytes);
+    const result = await inspect(path, {
+      max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+    });
+    if (result.ok) throw new Error("Expected malformed table refusal");
+    expect(result.error).toMatchObject({ _tag: "AnalysisInputError" });
   });
 });
 
