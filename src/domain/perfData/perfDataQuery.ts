@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { PERF_DATA_MAX_EVENTS, PERF_DATA_MAX_FILE_BYTES } from "./perfData.js";
 
 export const inspectPerfDataInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute path to one local Linux perf recording (perf.data)",
   ),
   max_file_bytes: z

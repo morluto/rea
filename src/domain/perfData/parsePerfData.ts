@@ -567,6 +567,19 @@ export const parsePerfData = (
       "unsafe-attribute-size",
       `The attribute entry stride exceeds Number.MAX_SAFE_INTEGER, so the recorded value cannot be represented and the events were not read.`,
     );
+  // A representable stride that cannot hold an attribute and its ids section is
+  // a header fact too, so it is reported before any extent branch can return
+  // early; otherwise a rejected attribute extent hides that the stride itself
+  // is unusable.
+  const strideFitsEntry =
+    rawStride !== null && stride >= ATTR_SIZE_MIN + PERF_FILE_SECTION_BYTES;
+  if (rawStride !== null && !strideFitsEntry)
+    diagnose(
+      state,
+      null,
+      "unsupported-attribute-size",
+      `The attribute entry stride is ${stride} bytes, which cannot hold an attribute and its ids section.`,
+    );
   const attributeRead = sectionAt(bytes, read, ATTRS_SECTION_FIELD);
   const dataRead = sectionAt(bytes, read, DATA_SECTION_FIELD);
   const attributeSection = attributeRead.section;
@@ -675,19 +688,6 @@ export const parsePerfData = (
         : "The attribute and data sections overlap, so neither extent is trusted.",
     );
   else {
-    // The stride is a fact about the header too, so an unusable one is
-    // reported whatever the section holds: an empty section alone leaves scope
-    // complete, and a malformed stride would then read as a legitimate empty
-    // recording.
-    const strideFitsEntry =
-      rawStride !== null && stride >= ATTR_SIZE_MIN + PERF_FILE_SECTION_BYTES;
-    if (rawStride !== null && !strideFitsEntry)
-      diagnose(
-        state,
-        null,
-        "unsupported-attribute-size",
-        `The attribute entry stride is ${stride} bytes, which cannot hold an attribute and its ids section.`,
-      );
     if (attributeSection.size === 0)
       diagnose(
         state,

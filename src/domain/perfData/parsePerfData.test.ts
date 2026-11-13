@@ -359,6 +359,24 @@ describe("parsePerfData section accounting", () => {
     expect(archive.source_coverage.status).not.toBe("complete-within-scope");
   });
 
+  it("reports a finite unusable stride before a rejected attribute extent", () => {
+    const bytes = buildPerfRecording({ attrBytes: 8 });
+    // Point the attribute extent at a range inside the file header, which is
+    // rejected before the walk: the stride is still a header fact the report
+    // has to state.
+    bytes.writeBigUInt64LE(BigInt(PERF_HEADER_BYTES - 8), 0x18);
+    const archive = parsed(bytes);
+    expect(archive.events).toEqual([]);
+    expect(archive.file_header.attribute_bytes).toBe(24);
+    expect(archive.diagnostics.map(({ code }) => code)).toEqual(
+      expect.arrayContaining([
+        "unsupported-attribute-size",
+        "header-attribute-overlap",
+      ]),
+    );
+    expect(archive.source_coverage.status).not.toBe("complete-within-scope");
+  });
+
   it("refuses to walk attributes when the event-types extent is unrepresentable", () => {
     const bytes = buildPerfRecording();
     // The extent owns bytes the walk cannot compare against, so whether the
