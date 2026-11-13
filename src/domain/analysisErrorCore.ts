@@ -10,14 +10,20 @@ export class AnalysisUnsupportedTargetError extends AnalysisError {
   readonly _tag = "AnalysisUnsupportedTargetError";
   /** Refusal-specific recovery, when the producer knows an available workflow. */
   readonly remediationAction: string | undefined;
+  /** The target holds the content, so unsupported does not make it inapplicable. */
+  readonly undecodedContent: boolean;
   constructor(
     readonly operation: string,
     readonly path: string,
     readonly reason: string,
-    options?: AnalysisErrorOptions & { readonly remediationAction?: string },
+    options?: AnalysisErrorOptions & {
+      readonly remediationAction?: string;
+      readonly undecodedContent?: boolean;
+    },
   ) {
     super(`Unsupported target for ${operation} at ${path}: ${reason}`, options);
     this.remediationAction = options?.remediationAction;
+    this.undecodedContent = options?.undecodedContent ?? false;
   }
 }
 

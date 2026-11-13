@@ -13,14 +13,24 @@ import {
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 
 /** A published tree whose output handles could not be released. */
-export type FailedRelease = Extract<
+type FailedRelease = Extract<
   ArtifactCleanupAttempt,
   { readonly kind: "failed" }
 >;
+
+/** Facts observed by the output owner after publication and final cleanup. */
+export interface DesktopOutputCompletion {
+  readonly kind: "published";
+  readonly release: FailedRelease | undefined;
+  readonly cancellation: AnalysisCancelledError | undefined;
+}
 
 /** A caller-selected destination and the filesystem path admitted for writing. */
 export interface DesktopOutputPlan {
@@ -81,10 +91,19 @@ export const planOutputTree = async (
   }
 };
 
+/** Observe cancellation at an output-owned checkpoint without interpreting a caught cause. */
+const outputCancellation = (
+  operation: string,
+  signal: AbortSignal | undefined,
+) =>
+  signal?.aborted === true
+    ? new AnalysisCancelledError(operation, { cause: signal.reason })
+    : undefined;
+
 /**
  * Write a new or empty folder through the safe output tree, rolling an
  * unpublished tree back on any failure so no partial copy remains. A
- * published tree is kept; a failed release of its handles is returned. A
+ * published tree is kept; its cleanup and cancellation facts are returned. A
  * refused destination names the caller's `field` under `operation`.
  */
 export const writeOutputTree = async (
@@ -92,8 +111,9 @@ export const writeOutputTree = async (
   write: (tree: SafeOutputTree) => Promise<void>,
   refusal: { readonly operation: string; readonly field: string },
   signal: AbortSignal | undefined,
-): Promise<FailedRelease | undefined> => {
-  signal?.throwIfAborted();
+): Promise<DesktopOutputCompletion> => {
+  const cancelled = outputCancellation(refusal.operation, signal);
+  if (cancelled !== undefined) throw cancelled;
   await mkdir(dirname(plan.physical), { recursive: true, mode: 0o700 });
   const resources = new ArtifactResourceScope();
   let tree: SafeOutputTree | undefined;
@@ -121,11 +141,14 @@ export const writeOutputTree = async (
       resource: plan.requested,
       tree,
     });
-    if (released.kind === "failed") {
-      if (tree.published) return released;
+    if (tree.published)
+      return {
+        kind: "published",
+        release: released.kind === "failed" ? released : undefined,
+        cancellation: outputCancellation(refusal.operation, signal),
+      };
+    if (released.kind === "failed")
       throw resources.cleanupFailure(outcome, [released]);
-    }
-    if (tree.published) return undefined;
   }
   if (outcome.kind === "failed")
     throw outputDirectoryAdmissionRefusal(
@@ -133,25 +156,30 @@ export const writeOutputTree = async (
       refusal.field,
       outcome.cause,
     );
-  return undefined;
+  throw new Error("Output tree completed without publication");
 };
 
-/** A complete folder whose output handles could not be closed, reported with what it holds. */
-export const writtenWithOpenHandles = (
+/** Project publication facts after the caller has its complete Evidence. */
+export const desktopOutputFailure = (
   context: {
     readonly provider: string;
     readonly operation: string;
     readonly what: string;
   },
   directory: string,
-  release: FailedRelease,
+  completion: DesktopOutputCompletion,
   evidence?: Evidence,
-): ProviderAdapterError => {
+): AnalysisError | undefined => {
+  const { release, cancellation } = completion;
+  if (cancellation !== undefined && evidence !== undefined)
+    cancellation.retainPartialObservation(evidence);
+  if (release === undefined) return cancellation;
   const reason =
     release.cause instanceof Error
       ? release.cause.message
       : String(release.cause);
   const error = new ProviderAdapterError(context.provider, context.operation, {
+    cause: release.cause,
     userMessage: `The ${context.what} was written to ${directory} and is complete, but its output handles could not be closed: ${reason}.`,
     remediationAction: `Use the written ${context.what}; the handles are released when this process exits.`,
     cleanup: { reason, resources: [directory] },
@@ -159,5 +187,7 @@ export const writtenWithOpenHandles = (
     diagnostics: { output_directory: directory },
   });
   release.lease.bindCleanupError(error);
-  return error;
+  return cancellation === undefined
+    ? error
+    : analysisErrorWithCancellation(error, cancellation);
 };

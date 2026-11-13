@@ -58,9 +58,9 @@ interface PrepareSessionExecutionInput {
 }
 
 /** Recovery for an operation absent from the selected binary route. */
-export const undeclaredOperationGuidance = (
+const undeclaredOperationGuidance = (
   operation: string,
-  entryCommentAvailable = false,
+  entryCommentAvailable: boolean,
 ): string => {
   const entryComment =
     entryCommentAvailable &&

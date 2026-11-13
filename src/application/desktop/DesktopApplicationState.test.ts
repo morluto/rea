@@ -1,10 +1,13 @@
-import { open, readFile, writeFile } from "node:fs/promises";
+import { chmod, open, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,
   primaryAnalysisError,
@@ -12,6 +15,7 @@ import {
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import type {
   DesktopApplicationCapture,
   DesktopCheckpoint,
@@ -24,6 +28,7 @@ import {
 } from "./DesktopApplicationState.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { requirePermissionDenial } from "../../../tests/fixtures/permissionDenial.js";
 import {
   DATABASE,
   HOME,
@@ -1282,3 +1287,131 @@ it("retains a failed input, cancellation and failed descriptor cleanup together"
   }
   expect(failure?.cleanupIncomplete).toBe(false);
 });
+
+it.skipIf(process.platform === "win32").for([
+  { denied: true, abort: false },
+  { denied: true, abort: true },
+  { denied: false, abort: false },
+  { denied: false, abort: true },
+] as const)(
+  "preserves the staged state outcome after real root cleanup (write denied: $denied, abort: $abort)",
+  async ({ denied, abort }, context) => {
+    if (denied) await requirePermissionDenial(context, "directory-write");
+    const captured = capture();
+    const folder = await writeCaptureFolder(captured);
+    const originalCapture = await readFile(join(folder, "capture.json"));
+    const controller = new AbortController();
+    const reason = new AnalysisInputError("inspect_sqlite_database", {
+      userMessage: "Opaque caller-selected cancellation reason.",
+      remediationAction: "Keep this object as a reason, not an input refusal.",
+    });
+    const staged: PrivateRuntimeRoot[] = [];
+    const removed: string[] = [];
+    const expectedRoots = denied ? 1 : captured.state.checkpoints.length;
+    const sqlite = vi.fn(readers.sqlite);
+    const create = PrivateRuntimeRoot.create;
+    const close = PrivateRuntimeRoot.prototype.close;
+    const creating = vi
+      .spyOn(PrivateRuntimeRoot, "create")
+      .mockImplementation(async (options) => {
+        const root = await create(options);
+        if (options?.prefix === "rea-desktop-state-") {
+          staged.push(root);
+          if (denied) await chmod(root.path, 0o500);
+        }
+        return root;
+      });
+    const closing = vi
+      .spyOn(PrivateRuntimeRoot.prototype, "close")
+      .mockImplementation(async function (this: PrivateRuntimeRoot) {
+        const selected = staged.includes(this);
+        if (selected) await chmod(this.path, 0o700);
+        await close.call(this);
+        if (selected) {
+          removed.push(this.path);
+          if (abort && removed.length === expectedRoots)
+            controller.abort(reason);
+        }
+      });
+    try {
+      const result = await inspectDesktopApplicationState(
+        folder,
+        { ...readers, sqlite },
+        controller.signal,
+        { paths: [DATABASE] },
+      );
+      expect(staged).toHaveLength(expectedRoots);
+      expect(removed).toEqual(staged.map((root) => root.path));
+      for (const root of staged)
+        await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(sqlite).toHaveBeenCalledTimes(denied ? 0 : expectedRoots);
+      expect(
+        (await readFile(join(folder, "capture.json"))).equals(originalCapture),
+      ).toBe(true);
+      if (denied) {
+        expect(result).toBeInstanceOf(AnalysisError);
+        if (!(result instanceof AnalysisError)) throw result;
+        const primary = primaryAnalysisError(result);
+        const root = staged[0];
+        if (root === undefined)
+          throw new Error("Expected an owned staging root");
+        expect(primary).toMatchObject({ _tag: "ProviderAdapterError" });
+        expect(primary.cause).toBeInstanceOf(Error);
+        expect(primary.cause).toMatchObject({
+          code: "EACCES",
+          syscall: "open",
+          path: join(root.path, "state.db"),
+        });
+        expect(result.cleanupIncomplete).toBe(false);
+        expect(result.cleanupResources).toEqual([]);
+        if (abort)
+          expect(primary.secondaryFailures).toContainEqual(
+            expect.objectContaining({
+              _tag: "AnalysisCancelledError",
+              cause: reason,
+            }),
+          );
+        else expect(primary.secondaryFailures).toEqual([]);
+      } else if (abort) {
+        expect(result).toBeInstanceOf(AnalysisCancelledError);
+        if (!(result instanceof AnalysisCancelledError)) throw result;
+        expect(result.operation).toBe("inspect_desktop_application_state");
+        expect(result.cause).toBe(reason);
+        expect(result.cleanupIncomplete).toBe(false);
+        expect(result.cleanupResources).toEqual([]);
+      } else {
+        if (!("normalized_result" in result)) throw result;
+        expect(
+          desktopApplicationStateSchema.parse(result.normalized_result).paths,
+        ).toMatchObject([
+          {
+            path: DATABASE,
+            versions: [
+              {
+                view_error: null,
+                view: { tables: { notes: { rows: [[1, "a"]] } } },
+              },
+              {
+                view_error: null,
+                view: {
+                  tables: {
+                    notes: {
+                      rows: [
+                        [1, "a"],
+                        [2, "b"],
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ]);
+      }
+    } finally {
+      creating.mockRestore();
+      closing.mockRestore();
+      for (const root of staged) await root.close();
+    }
+  },
+);

@@ -11,6 +11,7 @@ import {
   VTOOL_CONTAINER_REFUSAL_LIMITATION,
 } from "./NativeMachoInspection.js";
 import {
+  inspectionFatContext,
   inspectionReader,
   unreadEncryption,
 } from "./NativeMachoInspection.fixture.js";
@@ -27,8 +28,11 @@ const inspect = async (options: {
       ? { lipo: `Non-fat file: ${path} is architecture: arm64\n` }
       : {},
   );
+  const context = inspectionFatContext();
   return inspectNativeMacho({
-    readCommandNames: inspectionReader(),
+    resolveSlice: context.resolveSlice,
+    readCommandNames:
+      options.format === "thin" ? inspectionReader() : context.readCommandNames,
     readEncryption: unreadEncryption,
     target: nativeMachoTarget(path),
     run: async (tool, args, _signal, acceptNonZeroIf) => {

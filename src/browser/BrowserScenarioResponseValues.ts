@@ -131,10 +131,11 @@ export const decodedBodyBound = (
   headers: Readonly<Record<string, string>>,
 ): number | undefined => {
   const declared = headers["content-length"]?.trim();
+  // Content-Length allows leading zeros; only significant digits bound precision.
   const bytes =
     received !== undefined && Number.isSafeInteger(received) && received > 0
       ? received
-      : declared !== undefined && /^[1-9]\d{0,14}$/u.test(declared)
+      : declared !== undefined && /^0*[1-9]\d{0,14}$/u.test(declared)
         ? Number(declared)
         : undefined;
   if (bytes === undefined) return undefined;

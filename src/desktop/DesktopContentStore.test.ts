@@ -9,6 +9,7 @@ import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
 import { DesktopContentStore } from "./DesktopContentStore.js";
 import { walkHomeState } from "./HomeStateWalker.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 
 const sha256 = (text: string) =>
@@ -205,3 +206,46 @@ describe("DesktopContentStore", () => {
     expect(await readdir(join(root, "capture/content"))).toEqual(["foreign"]);
   });
 });
+
+it.each([false, true])(
+  "retains read-close cancellation and any actual pending descriptor (close fails: %s)",
+  async (closeFails) => {
+    const root = await createTestTempDirectory("desktop-content-cancel-");
+    await writeFile(join(root, "state.ini"), "state");
+    const state = await walked(root);
+    const content = await store(root, 1024, 1024);
+    const controller = new AbortController();
+    const reason = new Error("cancel during actual source descriptor close");
+    const close = OwnedFileHandle.prototype.close;
+    const closing = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (!closeFails) await close.call(this);
+        controller.abort(reason);
+        if (closeFails) throw new Error("source descriptor close failed");
+      });
+    try {
+      const failure = await content
+        .retain(join(root, "state.ini"), state("state.ini"), controller.signal)
+        .catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      expect(failure).toMatchObject({ reason: "cancelled", cause: reason });
+      if (!(failure instanceof ArtifactReaderFailure))
+        throw new Error("expected actual owner cancellation");
+      expect(failure.cause).toBe(reason);
+      expect(content.files).toBe(0);
+      if (closeFails)
+        await expect(content.close()).rejects.toMatchObject({
+          cleanup: { resources: [join(root, "state.ini")] },
+        });
+      closing.mockRestore();
+      await content.close();
+      await content.discard();
+      expect(await readFile(join(root, "state.ini"), "utf8")).toBe("state");
+    } finally {
+      closing.mockRestore();
+      await content.close();
+      await content.discard();
+    }
+  },
+);

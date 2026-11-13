@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  projectReferenceSourceImportError,
   referenceSourceImportAnalysisError,
   type ReferenceSourceImportError,
 } from "./ReferenceSourceImportTypes.js";
@@ -20,11 +19,13 @@ describe("reference-source import error projection", () => {
       parse: "execution_failure",
     } as const;
     for (const [code, category] of Object.entries(expectedCategories)) {
-      const projected = projectReferenceSourceImportError({
-        tag: "reference-source-import",
-        code: code as ReferenceSourceImportError["code"],
-        message: "EIO while reading /selected/source/src/main.ts",
-      });
+      const projected = projectAnalysisError(
+        referenceSourceImportAnalysisError({
+          tag: "reference-source-import",
+          code: code as ReferenceSourceImportError["code"],
+          message: "EIO while reading /selected/source/src/main.ts",
+        }),
+      );
       expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
         true,
       );
@@ -38,14 +39,20 @@ describe("reference-source import error projection", () => {
     }
   });
 
-  it("projects a later cancellation without replacing a physical failure", () => {
+  it("retains a physical failure and exact later cancellation before projection", () => {
     const reason = { caller: "stop after I/O failure" };
-    const projected = projectReferenceSourceImportError({
+    const physical = new Error("directory read failed");
+    const typed = referenceSourceImportAnalysisError({
       tag: "reference-source-import",
       code: "io",
       message: "directory read failed",
+      cause: physical,
       secondaryCancellation: { cause: reason },
     });
+    expect(typed.cause).toBe(physical);
+    expect(typed.secondaryFailures).toHaveLength(1);
+    expect(typed.secondaryFailures[0]?.cause).toBe(reason);
+    const projected = projectAnalysisError(typed);
     expect(projected.category).toBe("execution_failure");
     expect(projected.details?.secondary_failures).toEqual([
       expect.objectContaining({ category: "cancelled" }),

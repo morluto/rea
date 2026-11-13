@@ -431,7 +431,9 @@ export class DesktopBuildWitness {
     witness.pendingManifest = undefined;
     witness.record = written.record;
     if (written.kind === "published") {
-      witness.published = { error: written.error, release: written.release };
+      if (written.release === undefined) witness.state = "saved";
+      else
+        witness.published = { error: written.error, release: written.release };
       return err(written.error);
     }
     witness.state = "saved";

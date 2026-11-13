@@ -474,11 +474,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     workspacePath: string | null,
     effectiveLimits: LinuxResourceLimits | undefined,
     observedOutput: AnalysisCapturedOutput | undefined,
-    operation = OPERATION,
+    operation: string,
     limits: {
       readonly output_bytes: number;
       readonly command_timeout_ms: number;
-    } = LIMITS,
+    },
   ): AnalysisError {
     if (cause instanceof AnalysisError) return cause;
     if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)

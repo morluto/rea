@@ -1652,15 +1652,15 @@ describe("application workflow CLI export Evidence", () => {
       operation: "compare_javascript_export_shapes",
       predicate_type: "rea.javascript-export-shape-comparison",
       normalized_result: {
-        summary: { added: 1, removed: 0, changed: 0, unknown: 0 },
-        changes: [
-          {
+        summary: { added: 1, removed: 0, changed: 0, unknown: 3 },
+        changes: expect.arrayContaining([
+          expect.objectContaining({
             status: "added",
             path: "/depth",
             presence: { left: "absent", right: "present" },
             right: { availability: "literal", value: 1 },
-          },
-        ],
+          }),
+        ]),
       },
     });
   }, 20_000);

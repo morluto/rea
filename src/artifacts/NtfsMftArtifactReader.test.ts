@@ -273,3 +273,45 @@ it("delivers acquired extension metadata through the canonical inventory schema"
     },
   });
 });
+
+it("does not finish a traversal when close begins during final source verification", async () => {
+  const reader = new NtfsMftArtifactReader(
+    await writeMft("$MFT", recordBytes({})),
+  );
+  const read = ArtifactFileSource.prototype.read;
+  let calls = 0;
+  let entered!: () => void;
+  let resume!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementation(async function (this: ArtifactFileSource, signal) {
+      const result = await read.call(this, signal);
+      if (++calls === 2) {
+        entered();
+        await gate;
+      }
+      return result;
+    });
+  try {
+    const traversal = reader.entries()[Symbol.asyncIterator]().next();
+    const rejected = expect(traversal).rejects.toMatchObject({
+      reason: "unavailable",
+    });
+    await started;
+    const closing = reader.close();
+    resume();
+    await rejected;
+    await closing;
+    expect(calls).toBe(2);
+  } finally {
+    resume();
+    spy.mockRestore();
+    await reader.close();
+  }
+});

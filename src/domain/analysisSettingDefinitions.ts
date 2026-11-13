@@ -227,6 +227,7 @@ export const ANALYSIS_SETTINGS = {
     appliesAt: "next_startup",
     provider: "ghidra",
     operations: [
+      "open_binary",
       "binary_overview",
       "list_documents",
       "list_procedures",
@@ -248,6 +249,7 @@ export const ANALYSIS_SETTINGS = {
     appliesAt: "next_startup",
     provider: "hopper",
     operations: [
+      "open_binary",
       "binary_overview",
       "list_documents",
       "list_procedures",
@@ -372,6 +374,7 @@ export const ANALYSIS_SETTINGS = {
     // Cutter bridge calls. bridgeMaxRequestBytes.test.ts fails when a registry
     // gains an operation that is missing here.
     operations: [
+      "open_binary",
       "address_name",
       "comment",
       "current_address",
@@ -556,16 +559,6 @@ export const ANALYSIS_SETTINGS = {
     operations: windowsChangeTimeOperations,
   },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
-/** Launch seeds `update_analysis_settings` can replace. Startup must not reject them. */
-export const runtimeAnalysisEnvironmentNames = (): ReadonlySet<string> =>
-  new Set(
-    Object.values(ANALYSIS_SETTINGS).flatMap((definition) =>
-      definition.updateMode === "runtime" && "environment" in definition
-        ? [definition.environment]
-        : [],
-    ),
-  );
-
 export const analysisSettingIds = Object.keys(
   ANALYSIS_SETTINGS,
 ) as AnalysisSettingId[];

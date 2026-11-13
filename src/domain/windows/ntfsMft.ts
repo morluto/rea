@@ -8,7 +8,7 @@ import {
   MFT_INLINE_ATTRIBUTE_REFERENCE_LIMIT,
   type MftFileReference,
 } from "./ntfsMftAttributes.js";
-export type { MftFileReference, MftFileName } from "./ntfsMftAttributes.js";
+export type { MftFileReference } from "./ntfsMftAttributes.js";
 import { err, ok, type Result } from "../result.js";
 import type {
   RegionDecodeFailure,

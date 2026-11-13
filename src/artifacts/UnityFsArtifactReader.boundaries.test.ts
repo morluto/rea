@@ -107,6 +107,53 @@ it("does not publish UnityFs entries when final source verification fails", asyn
   }
 });
 
+describe("UnityFS declared container bounds", () => {
+  it.each([
+    ["encrypted", { flags: 0x1400 | 0xc3 }],
+    ["unsupported compression", { blocksInfoCompression: 1 }],
+    ["unknown layout", { engineVersion: "2021.x.32f1c1", flags: 0x2c3 }],
+  ] as const)(
+    "rejects an impossible footer extent even with %s",
+    async (_, options) => {
+      const bytes = buildUnityFs([{ path: "data", data: "x" }], {
+        ...options,
+        blocksInfoAtEnd: true,
+      });
+      bytes.writeUInt32BE(bytes.length + 1, 40);
+      const reader = new UnityFsArtifactReader(await fixture(bytes));
+      try {
+        await expect(entries(reader)).rejects.toMatchObject({
+          reason: "format",
+        });
+      } finally {
+        await reader.close();
+      }
+    },
+  );
+
+  it("does not increase the bundle's plaintext-work budget for appended carrier bytes", async () => {
+    const bytes = buildUnityFs([{ path: "data", data: "x" }], {
+      blocksInfoCompression: 0,
+      blockCompression: 0,
+    });
+    // A one-byte unsupported block declares more than the 256 MiB work floor.
+    // Its bytes need not be decoded to reject the declared virtual extent.
+    bytes.writeUInt32BE(256 * 1024 * 1024 + 1, 64 + 20);
+    bytes.writeUInt16BE(1, 64 + 28);
+    const reader = new UnityFsArtifactReader(
+      await fixture(Buffer.concat([bytes, Buffer.alloc(1024 * 1024)])),
+    );
+    try {
+      await expect(entries(reader)).rejects.toMatchObject({
+        reason: "limit",
+        message: expect.stringContaining("declared virtual stream"),
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+});
+
 describe("UnityFS allocation and malformed-input boundaries", () => {
   it("rejects an oversized directory extending past the physical file", async () => {
     const bytes = buildUnityFs([{ path: "data", data: "x" }]);
