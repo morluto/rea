@@ -33,11 +33,12 @@ export const cutterDiscoverySchema = z.strictObject({
 
 /**
  * An unanswered discovery cannot name its cause, so the limitation lists the
- * possible ones: nothing published, or a published session whose status probe
- * failed, including the observed Cutter 2.5.0 plugin rejection.
+ * possible ones: nothing published (including a bridge that could not write its
+ * descriptor), or a published session whose status probe failed, and the
+ * observed Cutter 2.5.0 plugin rejection.
  */
 const NO_LIVE_BRIDGE_LIMITATION =
-  "No REA bridge session in bridge_directory answered. Discovery cannot tell whether Cutter is not running, did not load the REA Python plugin, uses another REA_CUTTER_BRIDGE_DIR, or published a session that did not return a valid status (stale after Cutter exited, unresponsive, or an incompatible bridge version); Cutter's startup log shows whether the plugin loaded. Official Cutter 2.5.0 builds have been observed to reject Python plugins, including this one (rizinorg/cutter#3659).";
+  "No REA bridge session in bridge_directory answered. Discovery cannot tell whether Cutter is not running, did not load the REA Python plugin, loaded it but could not publish a session (for example, an unwritable or full bridge directory), uses another REA_CUTTER_BRIDGE_DIR, or published a session that did not return a valid status (stale after Cutter exited, unresponsive, or an incompatible bridge version). Cutter's startup log shows whether the plugin loaded; the bridge does not log a publication failure. Official Cutter 2.5.0 builds have been observed to reject Python plugins, including this one (rizinorg/cutter#3659).";
 
 /**
  * Limitations owned by each discovery status. A found session does not make
