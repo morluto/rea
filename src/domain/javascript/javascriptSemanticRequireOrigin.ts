@@ -36,6 +36,7 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import {
+  staticFileExpressionPath,
   staticSourceRelativeUrlPath,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
@@ -724,11 +725,16 @@ export interface JavaScriptRequireCallFact {
   readonly sourceRelativePath?: string;
 }
 
-/** `require.resolve` options replace the default search paths unless exact current-directory paths are supplied. */
+export type RequireResolveSearchPaths =
+  | "source-file"
+  | "package-scope"
+  | "unknown";
+
+/** Valid path arrays can leave disk lookup unknown while preserving package scope. */
 export const requireResolveSearchBase = (
   { operation, arguments: callArguments }: JavaScriptRequireCallFact,
   bindings: JavaScriptSemanticAnalysisState,
-): "loader" | "source-file" | "unknown" => {
+): "loader" | RequireResolveSearchPaths => {
   const arguments_ = callArguments ?? [];
   if (operation !== "resolve" || arguments_.length < 2) return "loader";
   if (arguments_.length !== 2) return "unknown";
@@ -747,13 +753,29 @@ export const requireResolveSearchBase = (
   if (semanticStaticPropertyKey(property.key, property.computed) !== "paths")
     return "unknown";
   const value = t.isExpression(property.value) ? property.value : undefined;
-  if (!t.isArrayExpression(value) || value.elements.length !== 1)
-    return "unknown";
-  const directory = value.elements[0];
-  return javaScriptRuntimeContext(bindings.program) === "commonjs" &&
-    t.isIdentifier(directory, { name: "__dirname" }) &&
-    isUnmodifiedGlobalReference(directory, bindings, "__dirname")
-    ? "source-file"
+  if (!t.isArrayExpression(value)) return "unknown";
+  const sourceDirectory = (node: t.Node): boolean =>
+    javaScriptRuntimeContext(bindings.program) === "commonjs" &&
+    t.isIdentifier(node, { name: "__dirname" }) &&
+    isUnmodifiedGlobalReference(node, bindings, "__dirname");
+  const [directory] = value.elements;
+  if (
+    value.elements.length === 1 &&
+    directory != null &&
+    sourceDirectory(directory)
+  )
+    return "source-file";
+  return value.elements.every(
+    (element) =>
+      element !== null &&
+      (stringValue(element) !== undefined ||
+        sourceDirectory(element) ||
+        staticFileExpressionPath(
+          element,
+          (node, fact) => fact === "source-directory" && sourceDirectory(node),
+        )?.base === "source-directory"),
+  )
+    ? "package-scope"
     : "unknown";
 };
 

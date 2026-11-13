@@ -157,7 +157,8 @@ export interface JavaScriptReferenceInput {
   readonly node: t.Node;
   readonly kind: JavaScriptStaticReference["kind"];
   readonly specifier: string | undefined;
-  readonly resolutionBasePath?: string | null;
+  readonly resolutionBasePath?: string;
+  readonly resolutionSearchPaths?: JavaScriptStaticReference["resolution_search_paths"];
   readonly loader?: JavaScriptStaticReference["loader"];
   readonly loaderAuthority?: "candidate";
 }

@@ -365,7 +365,10 @@ const electron = z
 const referenceShape = {
   ...findingContext,
   operation: z.enum(["load", "resolve"]),
-  resolution_base_path: z.string().nullable().exactOptional(),
+  resolution_base_path: z.string().exactOptional(),
+  resolution_search_paths: z
+    .enum(["source-file", "package-scope", "unknown"])
+    .exactOptional(),
   loader_authority: z.literal("candidate").exactOptional(),
   // A `factory-loader` specifier is a recovered bundle module key rather than a
   // package specifier, so the loader identity travels with the reference.

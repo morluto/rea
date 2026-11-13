@@ -63,6 +63,7 @@ import {
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   requireResolveSearchBase,
+  type RequireResolveSearchPaths,
   semanticFactoryLoaderMemberAt,
   semanticRequireCallAt,
   semanticRequireLoaderAt,
@@ -125,6 +126,9 @@ export const inspectCall = (
       ...(requireCall.resolutionBasePath === undefined
         ? {}
         : { resolutionBasePath: requireCall.resolutionBasePath }),
+      ...(requireCall.resolutionSearchPaths === undefined
+        ? {}
+        : { resolutionSearchPaths: requireCall.resolutionSearchPaths }),
       ...(requireCall.loader === undefined
         ? {}
         : { loader: requireCall.loader }),
@@ -317,7 +321,8 @@ const requireCallSpecifier = (
 ): {
   readonly specifier: string | undefined;
   readonly operation: "load" | "resolve";
-  readonly resolutionBasePath?: string | null;
+  readonly resolutionBasePath?: string;
+  readonly resolutionSearchPaths?: RequireResolveSearchPaths;
   readonly loader?: "commonjs-loader" | "factory-loader" | "create-require";
   readonly loaderAuthority?: "candidate";
 } | null => {
@@ -348,16 +353,13 @@ const requireCallSpecifier = (
     specifier !== undefined && isBuiltin(specifier)
       ? "loader"
       : requireResolveSearchBase(call, bindings);
-  const resolutionBasePath =
-    searchBase === "loader"
-      ? call.sourceRelativePath
-      : searchBase === "unknown"
-        ? null
-        : undefined;
   return {
     operation: call.operation,
     specifier,
-    ...(resolutionBasePath === undefined ? {} : { resolutionBasePath }),
+    ...(call.sourceRelativePath === undefined
+      ? {}
+      : { resolutionBasePath: call.sourceRelativePath }),
+    ...(searchBase === "loader" ? {} : { resolutionSearchPaths: searchBase }),
     // `factory-loader` names a bundle factory require, so its specifier is a
     // recovered module key rather than a package specifier.
     ...(call.loader === "commonjs-loader" ||
@@ -384,6 +386,9 @@ export const finishModuleRequireCalls = (
         ...(call.resolutionBasePath === undefined
           ? {}
           : { resolutionBasePath: call.resolutionBasePath }),
+        ...(call.resolutionSearchPaths === undefined
+          ? {}
+          : { resolutionSearchPaths: call.resolutionSearchPaths }),
         // A factory or `createRequire` loader saved under a member named `require`
         // still names a bundle module key, not a package. Dropping the loader here
         // would read that key as an external specifier.
@@ -1075,6 +1080,9 @@ export const addReference = (
       ...(input.resolutionBasePath === undefined
         ? {}
         : { resolution_base_path: input.resolutionBasePath }),
+      ...(input.resolutionSearchPaths === undefined
+        ? {}
+        : { resolution_search_paths: input.resolutionSearchPaths }),
       ...(input.loader === undefined ? {} : { loader: input.loader }),
       ...(input.loaderAuthority === undefined
         ? {}

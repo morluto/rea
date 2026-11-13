@@ -1,5 +1,6 @@
 import type { ElectronStaticFindings } from "./electronStaticAnalysisTypes.js";
 import type { JavaScriptRouteSourceFacts } from "./javascriptRouteFacts.js";
+import type { RequireResolveSearchPaths } from "./javascriptSemanticRequireOrigin.js";
 import type { JavaScriptStaticCoverage } from "./javascriptStaticCoverage.js";
 
 /** Token semantics shared by bundle producers and worker admission. */
@@ -42,8 +43,10 @@ interface JavaScriptStaticReferenceState {
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;
-  /** A proven filename, or null for an unresolved explicit resolver search base. */
-  readonly resolution_base_path?: string | null;
+  /** Source-relative filename selected by a proven createRequire factory. */
+  readonly resolution_base_path?: string;
+  /** Resolver options can limit disk lookup without changing the enclosing package. */
+  readonly resolution_search_paths?: RequireResolveSearchPaths;
   /**
    * Which loader produced this reference. A `factory-loader` specifier is a
    * recovered bundle module key, so it names a module inside the artifact even

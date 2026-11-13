@@ -286,7 +286,7 @@ it.each([
       kind: "require",
       operation: "resolve",
       specifier: "./dep.cjs",
-      resolution_base_path: null,
+      resolution_search_paths: "package-scope",
     }),
   ]);
 });

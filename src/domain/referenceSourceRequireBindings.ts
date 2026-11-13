@@ -142,7 +142,12 @@ export const referenceSourceRequireCalls = (
       candidates.push({
         call: node,
         arguments: callFact.arguments,
-        resolutionBase: searchBase === "loader" ? base : searchBase,
+        resolutionBase:
+          searchBase === "loader"
+            ? base
+            : searchBase === "source-file"
+              ? searchBase
+              : "unknown",
         ...(runtimeContext === "unknown"
           ? {
               limitation: `Module context is unknown in ${path}; the requested dependency was retained without a proven loader base.`,
