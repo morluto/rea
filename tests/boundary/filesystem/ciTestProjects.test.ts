@@ -204,10 +204,16 @@ describe("Vitest project configuration", () => {
         script,
         `
       import config from ${JSON.stringify(pathToFileURL(join(repository, "vitest.config.ts")).href)};
-      const project = config.test.projects.find(project => project.test.name === 'cli-boundary');
+      const project = (name) => config.test.projects.find(project => project.test.name === name).test;
+      const deadlines = (name) => [project(name).testTimeout, project(name).hookTimeout];
       console.log(JSON.stringify({
-        execArgv: project.test.execArgv,
-        timeout: config.test.testTimeout,
+        execArgv: project('cli-boundary').execArgv,
+        deadlines: {
+          default: [config.test.testTimeout, config.test.hookTimeout],
+          source: deadlines('domain'),
+          built: deadlines('cli-boundary'),
+          longRunning: config.test.tags.find(tag => tag.name === 'long-running').timeout,
+        },
         lines: config.test.coverage.thresholds.lines,
         workers: config.test.maxWorkers,
       }));
@@ -225,9 +231,17 @@ describe("Vitest project configuration", () => {
           stopSignal: "SIGTERM",
         },
       );
+      // Deadlines are hang detection owned by the project: the source
+      // deadline scales with coverage and hosted runners, built projects allow
+      // four times it, and the long-running tag ten times.
       expect(JSON.parse(result.stdout)).toEqual({
         execArgv: ["--max-old-space-size=512"],
-        timeout: timeout * scale,
+        deadlines: {
+          default: [timeout * scale, timeout * scale],
+          source: [timeout * scale, timeout * scale],
+          built: [4 * timeout * scale, 4 * timeout * scale],
+          longRunning: 10 * timeout * scale,
+        },
         lines,
         workers: Math.min(workers, availableParallelism()),
       });

@@ -248,7 +248,7 @@ it("times out when a real descendant holds the exited leader's output open", asy
       );
     }
   }
-}, 17_000);
+});
 
 it("terminates a stalled real child at its deadline while retaining captured output", async () => {
   const processes = createTestProcessRegistry();

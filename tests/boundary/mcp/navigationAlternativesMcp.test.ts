@@ -132,7 +132,6 @@ describe("address navigation refusals", () => {
         await harness.close();
       }
     },
-    30_000,
   );
 });
 
@@ -204,7 +203,7 @@ describe("address navigation refusal alternatives", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 
   it("keep generic advice when the provider offers no declared alternative", async () => {
     const [target] = await createBinarySessionTargets();

@@ -82,7 +82,7 @@ const setup = (
         rm(directory, { recursive: true, force: true }),
       ),
     );
-  }, 45_000);
+  });
   return { client, launcher };
 };
 
