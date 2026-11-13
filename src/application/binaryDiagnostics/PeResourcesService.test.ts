@@ -312,6 +312,7 @@ it.each([
                 value: {
                   kind: "list",
                   items: [],
+                  terminated: true,
                   location: {
                     offset: payload.offset,
                     bytes: payload.bytes + 4,
@@ -415,8 +416,12 @@ const reportWithSyntheticValue = async (
   if (form === undefined) throw new Error("Missing form");
   const root = form.root;
   const name = label("Value", root.location.offset + 13, form.code_page);
+  const markerOnly =
+    value.kind === "null" || value.kind === "nil" || value.kind === "boolean";
+  const valueOffset =
+    name.location.offset + name.location.bytes + (markerOnly ? 0 : 1);
   const valueLocation = {
-    offset: name.location.offset + name.location.bytes,
+    offset: valueOffset,
     bytes: valueBytes,
   };
   report.delphi_forms = [
@@ -431,7 +436,7 @@ const reportWithSyntheticValue = async (
             value: { ...value, location: valueLocation } as never,
             location: {
               offset: name.location.offset,
-              bytes: name.location.bytes + valueBytes,
+              bytes: valueOffset - name.location.offset + valueBytes,
             },
           },
         ],
@@ -440,6 +445,44 @@ const reportWithSyntheticValue = async (
   ];
   return report;
 };
+
+it("accepts the synthetic form baseline", async () => {
+  expect(await inspectReport(await reportWithFormPrefix(0))).toMatchObject({
+    ok: true,
+  });
+});
+
+it("accepts a valid synthetic scalar value", async () => {
+  const report = await reportWithSyntheticValue(
+    "vaInt8",
+    { kind: "integer", text: "1", bytes_hex: "01", width: 8, signed: true },
+    1,
+  );
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
+it("accepts a valid synthetic identifier value", async () => {
+  const report = await reportWithSyntheticValue(
+    "vaIdent",
+    { kind: "identifier", text: "A", bytes_hex: "41" },
+    2,
+  );
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
+it("accepts a valid synthetic float value", async () => {
+  const report = await reportWithSyntheticValue(
+    "vaSingle",
+    {
+      kind: "float",
+      text: "1.5",
+      bytes_hex: "0000c03f",
+      note: DELPHI_FORM_FLOAT_NOTES.vaSingle ?? "",
+    },
+    4,
+  );
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
 
 it("accepts a form prefix at the decoder probe-window boundary", async () => {
   const report = await reportWithFormPrefix(16);
@@ -921,6 +964,7 @@ it("rejects a list item whose declared value type contradicts its value", async 
         value: { kind: "boolean", value: true, location },
       },
     ],
+    terminated: true,
   }));
   expect(await inspectReport(report)).toMatchObject({
     ok: false,
@@ -1152,6 +1196,141 @@ it("rejects a property value that reuses its name range", async () => {
             location: {
               offset: name.location.offset,
               bytes: name.location.bytes,
+            },
+          },
+        ],
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a complete root whose structural value lost its terminator", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("Items", root.location.offset + 13, form.code_page);
+  const valueOffset = name.location.offset + name.location.bytes + 1;
+  const propertyEnd = root.location.offset + root.location.bytes;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...root,
+        properties: [
+          {
+            name,
+            value_type: "vaList",
+            value: {
+              kind: "list",
+              items: [],
+              terminated: false,
+              location: {
+                offset: valueOffset,
+                bytes: propertyEnd - valueOffset,
+              },
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: propertyEnd - name.location.offset,
+            },
+          },
+        ],
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a declared ordinal whose unknown omits the type marker", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("N", root.location.offset + 13, form.code_page);
+  const nameEnd = name.location.offset + name.location.bytes;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...root,
+        unknown: {
+          reason: "stopped",
+          bytes_hex: "",
+          truncated: false,
+          location: {
+            offset: root.location.offset + root.location.bytes,
+            bytes: 0,
+          },
+        },
+        properties: [
+          {
+            name,
+            value_type: "vaInt32",
+            value: {
+              kind: "unknown",
+              reason: "stopped",
+              bytes_hex: "",
+              truncated: false,
+              location: { offset: nameEnd, bytes: 0 },
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: name.location.bytes,
+            },
+          },
+        ],
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects an unknown value type that claims a consumed marker", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("N", root.location.offset + 13, form.code_page);
+  const nameEnd = name.location.offset + name.location.bytes;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...root,
+        unknown: {
+          reason: "stopped",
+          bytes_hex: "",
+          truncated: false,
+          location: {
+            offset: root.location.offset + root.location.bytes,
+            bytes: 0,
+          },
+        },
+        properties: [
+          {
+            name,
+            value_type: "unknown",
+            value: {
+              kind: "unknown",
+              reason: "stopped",
+              bytes_hex: "",
+              truncated: false,
+              location: { offset: nameEnd + 1, bytes: 0 },
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: name.location.bytes + 1,
             },
           },
         ],

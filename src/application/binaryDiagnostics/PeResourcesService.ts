@@ -262,10 +262,17 @@ const valueHasStop = (value: DelphiFormValue): boolean => {
   if (value.kind === "string" || value.kind === "binary")
     return value.decode_truncated;
   if (value.kind === "list")
-    return value.items.some((entry) => valueHasStop(entry.value));
+    return (
+      !value.terminated ||
+      value.items.some((entry) => valueHasStop(entry.value))
+    );
+  if (value.kind === "set") return !value.terminated;
   if (value.kind === "collection")
-    return value.items.some((item) =>
-      item.properties.some((property) => valueHasStop(property.value)),
+    return (
+      !value.terminated ||
+      value.items.some((item) =>
+        item.properties.some((property) => valueHasStop(property.value)),
+      )
     );
   return false;
 };
@@ -305,10 +312,11 @@ const valueFollowsName = (property: DelphiFormProperty): boolean => {
     return false;
   const kind = property.value.kind;
   if (kind === "unknown")
-    return (
-      property.value.location.offset === nameEnd ||
-      property.value.location.offset === nameEnd + 1
-    );
+    // `unknown` means the type marker itself could not be read; any declared
+    // ordinal means it was consumed.
+    return property.value_type === "unknown"
+      ? property.value.location.offset === nameEnd
+      : property.value.location.offset === nameEnd + 1;
   if (kind === "null" || kind === "nil" || kind === "boolean")
     return property.value.location.offset === nameEnd;
   return property.value.location.offset === nameEnd + 1;

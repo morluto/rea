@@ -315,27 +315,37 @@ function readShortStringValue(
   return value;
 }
 
+/**
+ * Read a positional integer tag and its fixed-width payload atomically. When
+ * the payload is truncated or the budget stops the read, the tag stays unread
+ * for the owner's unknown suffix instead of being claimed only by a generic
+ * item or object range.
+ */
 function positionValue(
   stream: Stream,
-  width: 8 | 16 | 32,
+  tag: 2 | 3 | 4,
   budget: Budget,
 ): DelphiFormPosition {
   spendBytes(budget, POSITION_BYTES);
   const at = stream.position;
-  const raw = stream.take(width / 8);
+  const width = tag === 2 ? 8 : tag === 3 ? 16 : 32;
+  const raw = stream.take(1 + width / 8);
+  const payload = raw.subarray(1);
   const text =
     width === 32
-      ? String(raw.readInt32LE(0))
+      ? String(payload.readInt32LE(0))
       : width === 16
-        ? String(raw.readInt16LE(0))
-        : String(raw.readInt8(0));
+        ? String(payload.readInt16LE(0))
+        : String(payload.readInt8(0));
   return {
     kind: "integer",
     text,
-    bytes_hex: raw.toString("hex"),
+    bytes_hex: payload.toString("hex"),
     width,
     signed: true,
-    location: range(at, stream.position),
+    // The tag is structural and represented by the call site; the position
+    // range covers the encoded payload only.
+    location: range(at + 1, stream.position),
   };
 }
 
@@ -606,6 +616,7 @@ function readValue(
           throw new StoppedValue(error.message, {
             kind: "list",
             items,
+            terminated: false,
             location: partialLocation(),
           });
         }
@@ -652,12 +663,18 @@ function readValue(
           throw new StoppedValue(error.message, {
             kind: "list",
             items,
+            terminated: false,
             location: partialLocation(),
           });
         }
       }
       stream.byte();
-      return { kind: "list", items, location: range(at, stream.position) };
+      return {
+        kind: "list",
+        items,
+        terminated: true,
+        location: range(at, stream.position),
+      };
     }
     case 11: {
       const names: DelphiFormText[] = [];
@@ -675,11 +692,17 @@ function readValue(
           throw new StoppedValue(error.message, {
             kind: "set",
             names,
+            terminated: false,
             location: range(at, stream.position),
           });
         }
       }
-      return { kind: "set", names, location: range(at, stream.position) };
+      return {
+        kind: "set",
+        names,
+        terminated: true,
+        location: range(at, stream.position),
+      };
     }
     case 14: {
       const items: DelphiFormCollectionItem[] = [];
@@ -687,6 +710,7 @@ function readValue(
         throw new StoppedValue(reason, {
           kind: "collection",
           items,
+          terminated: false,
           location: range(at, stream.position),
         });
       }
@@ -715,14 +739,8 @@ function readValue(
         let position: DelphiFormPosition | null = null;
         try {
           const next = stream.peek();
-          if (next === 2 || next === 3 || next === 4) {
-            stream.byte();
-            position = positionValue(
-              stream,
-              next === 2 ? 8 : next === 3 ? 16 : 32,
-              budget,
-            );
-          }
+          if (next === 2 || next === 3 || next === 4)
+            position = positionValue(stream, next, budget);
           // `ReadListBegin` consumes the vaList marker that opens each item.
           const marker = stream.byte();
           if (marker !== 1)
@@ -832,6 +850,7 @@ function readValue(
             throw new StoppedValue(error.message, {
               kind: "collection",
               items,
+              terminated: false,
               location: range(at, stream.position),
             });
           }
@@ -847,6 +866,7 @@ function readValue(
       return {
         kind: "collection",
         items,
+        terminated: true,
         location: range(at, stream.position),
       };
     }
@@ -909,14 +929,10 @@ function readObject(
           "Unsupported filer flag bit 0x08 in the component prefix.",
         );
       if ((prefix & 0x02) !== 0) {
-        const width = stream.byte();
-        if (width !== 2 && width !== 3 && width !== 4)
+        const tag = stream.peek();
+        if (tag !== 2 && tag !== 3 && tag !== 4)
           throw new StreamEnd("Child position is not encoded as vaInt8/16/32.");
-        childPosition = positionValue(
-          stream,
-          width === 2 ? 8 : width === 3 ? 16 : 32,
-          budget,
-        );
+        childPosition = positionValue(stream, tag, budget);
       }
     }
     // Keep a complete class name when the component name is truncated, and stop

@@ -103,16 +103,22 @@ export type DelphiFormValue =
   | {
       readonly kind: "list";
       readonly items: DelphiFormListEntry[];
+      /** True only when the closing terminator was read. */
+      readonly terminated: boolean;
       readonly location: DelphiFormRange;
     }
   | {
       readonly kind: "set";
       readonly names: DelphiFormText[];
+      /** True only when the closing terminator was read. */
+      readonly terminated: boolean;
       readonly location: DelphiFormRange;
     }
   | {
       readonly kind: "collection";
       readonly items: DelphiFormCollectionItem[];
+      /** True only when the closing terminator was read. */
+      readonly terminated: boolean;
       readonly location: DelphiFormRange;
     }
   | {
@@ -455,16 +461,19 @@ const valueSchemaOf = <V extends z.ZodType, C extends z.ZodType>(
     z.strictObject({
       kind: z.literal("list"),
       items: z.array(listEntrySchemaOf(value)),
+      terminated: z.boolean(),
       location: rangeSchema,
     }),
     z.strictObject({
       kind: z.literal("set"),
       names: z.array(textSchema),
+      terminated: z.boolean(),
       location: rangeSchema,
     }),
     z.strictObject({
       kind: z.literal("collection"),
       items: z.array(collectionItem),
+      terminated: z.boolean(),
       location: rangeSchema,
     }),
     z.strictObject({

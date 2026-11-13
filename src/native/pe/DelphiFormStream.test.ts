@@ -603,6 +603,7 @@ describe("Delphi form binary and container values", () => {
     );
     expect(propertyOf(root, "Items").value).toMatchObject({
       kind: "list",
+      terminated: true,
       items: [
         { value_type: "vaInt32", value: { kind: "integer", text: "1" } },
         { value_type: "vaString", value: { kind: "string", text: "A" } },
@@ -611,10 +612,11 @@ describe("Delphi form binary and container values", () => {
     });
     expect(propertyOf(root, "Options").value).toMatchObject({
       kind: "set",
+      terminated: true,
       names: [{ text: "foBold" }, { text: "foItalic" }],
     });
     const columns = propertyOf(root, "Columns").value;
-    expect(columns).toMatchObject({ kind: "collection" });
+    expect(columns).toMatchObject({ kind: "collection", terminated: true });
     if (columns.kind !== "collection") throw new Error("Expected collection");
     expect(columns.items).toHaveLength(2);
     expect(columns.items[0]?.position).toMatchObject({
@@ -1027,7 +1029,7 @@ describe("Delphi form truncation and limits", () => {
     expect(root.unknown?.reason).toBeDefined();
     const property = root.properties[0];
     expect(property?.name.text).toBe("Items");
-    expect(property?.value).toMatchObject({ kind: "list" });
+    expect(property?.value).toMatchObject({ kind: "list", terminated: false });
     if (property?.value.kind !== "list") throw new Error("Expected a list");
     // The first entry is complete evidence; the marker of the truncated second
     // entry stays in the partial list as an explicit unknown value.
@@ -1054,7 +1056,7 @@ describe("Delphi form truncation and limits", () => {
     const at = payload.indexOf(value);
     const root = rootOf(payload.subarray(0, at + value.length));
     const property = root.properties[0];
-    expect(property?.value).toMatchObject({ kind: "list" });
+    expect(property?.value).toMatchObject({ kind: "list", terminated: false });
     if (property?.value.kind !== "list") throw new Error("Expected a list");
     expect(property.value.items).toMatchObject([
       { value: { kind: "integer", text: "7" } },
@@ -1101,6 +1103,31 @@ describe("Delphi form truncation and limits", () => {
     expect(root.unknown?.reason).toBeDefined();
     expect(root.properties.at(-1)?.name.text).toBe("Future");
     expect(root.properties.at(-1)?.value_type).toBe("unknown");
+  });
+});
+
+describe("Delphi form stopped positional tags", () => {
+  it("keeps a truncated collection position tag in the unknown suffix", () => {
+    const payload = form(
+      component("TForm1", "Form1", [
+        property_("Items", Buffer.concat([bytes(14), bytes(4, 0x11)])),
+      ]),
+    );
+    const tag = Buffer.from([14, 4, 0x11]);
+    const at = payload.indexOf(tag);
+    const root = rootOf(payload.subarray(0, at + tag.length));
+    const value = propertyOf(root, "Items").value;
+    if (value.kind !== "collection") throw new Error("Expected a collection");
+    expect(value.items).toHaveLength(0);
+    // The vaInt32 tag and the one payload byte are unread source evidence.
+    expect(root.unknown?.bytes_hex).toBe("0411");
+  });
+
+  it("keeps a truncated child position tag in the object unknown", () => {
+    // ffChildPos is set and the position tag is vaInt32, but only one payload
+    // byte follows.
+    const root = rootOf(form(bytes(0xf2, 4, 0x11)));
+    expect(root.unknown?.bytes_hex).toBe("0411");
   });
 });
 
@@ -1288,12 +1315,10 @@ describe("Delphi form partial collections", () => {
     expect(property?.value.kind).toBe("collection");
     if (property?.value.kind !== "collection")
       throw new Error("Expected a collection");
-    expect(property.value.items).toHaveLength(2);
+    expect(property.value.items).toHaveLength(1);
     expect(property.value.items[0]?.properties[0]?.name.text).toBe("Width");
-    expect(property.value.items[1]).toMatchObject({
-      position: null,
-      properties: [],
-    });
+    // The unread vaInt32 tag and partial payload stay in the unknown suffix.
+    expect(root.unknown?.bytes_hex).toContain("0411");
     expect(root.unknown?.reason).toContain("Payload ended");
   });
 
