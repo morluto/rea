@@ -131,14 +131,18 @@ it.each(["invalid", "-1", "4.1", "9007199254740992"])(
 
 it("distinguishes a kernel thread from a process sharing its flags", () => {
   // Field 9 task_flags: PF_KTHREAD is 0x00200000; PF_EXITING stays orthogonal.
-  expect(parseLinuxProcessStat(statRecord({ flags: "2097408" }))).toMatchObject({
-    kernelThread: true,
-    lifecycle: "non-zombie",
-  });
-  expect(parseLinuxProcessStat(statRecord({ flags: "2097156" }))).toMatchObject({
-    kernelThread: true,
-    lifecycle: "exiting",
-  });
+  expect(parseLinuxProcessStat(statRecord({ flags: "2097408" }))).toMatchObject(
+    {
+      kernelThread: true,
+      lifecycle: "non-zombie",
+    },
+  );
+  expect(parseLinuxProcessStat(statRecord({ flags: "2097156" }))).toMatchObject(
+    {
+      kernelThread: true,
+      lifecycle: "exiting",
+    },
+  );
   expect(parseLinuxProcessStat(statRecord({ flags: "4" }))).toMatchObject({
     kernelThread: false,
     lifecycle: "exiting",

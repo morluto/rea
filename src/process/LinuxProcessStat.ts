@@ -1,5 +1,9 @@
 import type { ProcessLifecycle } from "./ProcessLifecycle.js";
 
+/** Linux `include/linux/sched.h` task flags reported by `/proc/<pid>/stat`. */
+const PF_EXITING = 0x00000004;
+const PF_KTHREAD = 0x00200000;
+
 /** Native process facts parsed from one Linux `/proc/<pid>/stat` record. */
 export interface LinuxProcessStat {
   readonly pid: number;
@@ -11,9 +15,9 @@ export interface LinuxProcessStat {
   readonly processGroupId: number;
   readonly sessionId: number;
   /**
-   * CF_KTHREAD|PF_KTHREAD (Linux `fs/proc/array.c` task_flags). Kernel threads
-   * are never forked by a provider, never inherit its environment, and cannot
-   * be token-owned; undefined when field 9 could not be parsed.
+   * PF_KTHREAD from the task flags. A kernel thread has no user address space
+   * or environment, so it cannot carry a run token. Undefined when the flags
+   * field is malformed.
    */
   readonly kernelThread: boolean | undefined;
 }
@@ -77,7 +81,7 @@ export const parseLinuxProcessStat = (
       ? Number(flagsText)
       : Number.NaN;
   const kernelThread = Number.isSafeInteger(flags)
-    ? (flags & 0x00200000) !== 0
+    ? (flags & PF_KTHREAD) !== 0
     : undefined;
   const lifecycle: ProcessLifecycle | undefined =
     state === "Z"
@@ -86,7 +90,7 @@ export const parseLinuxProcessStat = (
         ? "dead"
         : !Number.isSafeInteger(flags)
           ? undefined
-          : (flags & 0x00000004) !== 0
+          : (flags & PF_EXITING) !== 0
             ? "exiting"
             : "non-zombie";
 
