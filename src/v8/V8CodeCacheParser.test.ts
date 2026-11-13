@@ -293,3 +293,24 @@ it("fails closed when the declared payload leaves no admitted header size", () =
     ),
   ).toThrow(expect.objectContaining({ kind: "malformed" }));
 });
+
+it("refuses a wide container that is only four bytes short", () => {
+  // Truncating a 32-byte-header cache by four bytes makes `bytes.length - declaredPayload`
+  // equal 28, which is the narrow header size. The wide header's alignment word sits exactly
+  // there and V8 leaves it zero, so the zero word is the only evidence that the container is
+  // short and its payload is one word shorter than it claims.
+  const short = real.subarray(0, real.length - 4);
+  expect(short.readUInt32LE(28)).toBe(0);
+  expect(() => parse(short)).toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
+  // A real narrow container has payload where that padding would sit.
+  const narrow = Buffer.concat([
+    real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES),
+    real.subarray(V8_CODE_CACHE_HEADER_BYTES),
+  ]);
+  expect(narrow.readUInt32LE(V8_CODE_CACHE_NARROW_HEADER_BYTES)).not.toBe(0);
+  expect(parse(narrow).header.header_bytes).toBe(
+    V8_CODE_CACHE_NARROW_HEADER_BYTES,
+  );
+});

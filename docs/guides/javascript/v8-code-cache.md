@@ -20,9 +20,13 @@ A V8 code cache is a producer-written container, not a documented file format. T
 admits one container shape and reports everything else as an observation, so a build it
 has never seen still yields facts instead of a false parse.
 
-The 32-byte header is eight little-endian 32-bit words. Every word is reported in
-`header.fields` with its byte offset, its observed value, the role this reader believes it
-has, and how confident that role is:
+The header is seven or eight little-endian 32-bit words. V8 lays it out as
+`kHeaderSize = POINTER_SIZE_ALIGN(kUnalignedHeaderSize)` with `kUnalignedHeaderSize` 28, so the
+padding follows the words: a 64-bit producer writes 32 header bytes and a 32-bit producer writes
+28, with the same words in the same order. Which one a container carries follows from its own
+declared payload length. Every word the container holds is reported in `header.fields` with its
+byte offset, its observed value, the role this reader believes it has, and how confident that role
+is:
 
 | Offset         | Role           | Status      |
 | -------------- | -------------- | ----------- |
@@ -41,7 +45,9 @@ claimed.
 
 Only three facts gate admission:
 
-1. the header size this reader pins (32 bytes);
+1. the header size, resolved from the declared payload length and admitted only as 28 or
+   32 bytes. A container that resolves to 28 while carrying the zero alignment word a wide header
+   leaves there is four bytes short of the wide layout and is refused;
 2. the V8 code cache magic high half, `0xc0de`. The low half is
    `ExternalReferenceTable::kSize` and varies per V8 build, so it is reported as a build
    fingerprint and never required to match a fixed value;

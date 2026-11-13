@@ -3,8 +3,10 @@ import {
   MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
   V8_CODE_CACHE_COMPILE_FUNCTION_BIT,
   V8_CODE_CACHE_MODULE_BIT,
+  V8_CODE_CACHE_HEADER_BYTES,
   V8_CODE_CACHE_HEADER_SIZES,
   V8_CODE_CACHE_MIN_HEADER_BYTES,
+  V8_CODE_CACHE_NARROW_HEADER_BYTES,
   V8_CODE_CACHE_MAGIC_HIGH,
   V8_CODE_CACHE_SOURCE_LENGTH_MASK,
   type V8CodeCache,
@@ -89,6 +91,19 @@ export const parseV8CodeCache = (
   // trailing alignment padding the container carries, and the header size follows from it.
   const declaredPayload = field(5);
   const payloadOffset = bytes.length - declaredPayload;
+  // A 64-bit producer pads the header with a word V8 leaves zero, so a four-byte-short wide
+  // container derives the same 28-byte size a 32-bit producer writes. The padding word is the
+  // only thing that separates them: a narrow container has payload where that padding sits, and
+  // measured on Node 24.22.1 every real payload begins with a non-zero word. Reading the
+  // padding as payload would report a truncated cache as a complete one.
+  if (
+    payloadOffset === V8_CODE_CACHE_NARROW_HEADER_BYTES &&
+    bytes.length >= V8_CODE_CACHE_HEADER_BYTES &&
+    bytes.readUInt32LE(V8_CODE_CACHE_NARROW_HEADER_BYTES) === 0
+  )
+    malformed(
+      `Header declares a ${String(declaredPayload)}-byte payload, which resolves to the ${String(V8_CODE_CACHE_NARROW_HEADER_BYTES)}-byte header size only if the ${String(V8_CODE_CACHE_HEADER_BYTES - V8_CODE_CACHE_NARROW_HEADER_BYTES)} zero alignment bytes a wide header carries are payload; the container is ${String(V8_CODE_CACHE_HEADER_BYTES - V8_CODE_CACHE_NARROW_HEADER_BYTES)} bytes short of that layout and is truncated or corrupt.`,
+    );
   if (
     !(V8_CODE_CACHE_HEADER_SIZES as readonly number[]).includes(payloadOffset)
   )
