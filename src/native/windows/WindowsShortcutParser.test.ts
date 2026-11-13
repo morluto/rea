@@ -610,6 +610,38 @@ it("reports a VolumeID that selects a Unicode label it cannot hold", async () =>
   );
 });
 
+it.each([
+  { field: 16, key: "local_base_path" },
+  { field: 28, key: "local_base_path_unicode" },
+] as const)(
+  "reports LinkInfo strings that point into their header ($key)",
+  async ({ field, key }) => {
+    const bytes = windowsShortcutBytes({
+      idList: null,
+      linkInfo: { localBasePath: "C:\\Apps\\safe.exe", commonPathSuffix: "" },
+      extraData: [],
+    });
+    const control = await parse(bytes);
+    expect(control.coverage.status).toBe("complete");
+    bytes.writeUInt32LE(4, 76 + field);
+    const report = await parse(bytes);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: 76 + field,
+    });
+    expect(report.link_info?.[key]).toBeNull();
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_structure",
+        offset: 76 + field,
+      }),
+    );
+    expect(report.extra_data.terminal_offset).toBe(
+      control.extra_data.terminal_offset,
+    );
+  },
+);
+
 it("keeps readable dates for FILETIME values before 1970", async () => {
   // 1950-01-01T00:00:00Z in 100 ns intervals since 1601.
   const report = await parse(

@@ -557,14 +557,15 @@ const readAnsiAt = (
   offset: number,
   field: number,
   walk: Walk,
+  minimum = 0,
 ): string | null => {
   if (offset === 0) return null;
-  if (offset >= view.length) {
+  if (offset < minimum || offset >= view.length) {
     note(
       walk,
       "malformed_structure",
       base + field,
-      "ANSI string offset is outside LinkInfo",
+      "ANSI string offset is outside the data area",
     );
     return null;
   }
@@ -589,14 +590,15 @@ const readUtf16At = (
   offset: number,
   field: number,
   walk: Walk,
+  minimum = 0,
 ): string | null => {
   if (offset === 0) return null;
-  if (offset >= view.length) {
+  if (offset < minimum || offset >= view.length) {
     note(
       walk,
       "malformed_structure",
       base + field,
-      "Unicode string offset is outside LinkInfo",
+      "Unicode string offset is outside the data area",
     );
     return null;
   }
@@ -787,23 +789,38 @@ const parseLinkInfo = (
         : null,
     local_base_path:
       (flags & 0x1) !== 0
-        ? readAnsiAt(view, walk.offset, localOffset, 16, walk)
+        ? readAnsiAt(view, walk.offset, localOffset, 16, walk, headerSize)
         : null,
     local_base_path_unicode:
       (flags & 0x1) !== 0
-        ? readUtf16At(view, walk.offset, localUnicodeOffset, 28, walk)
+        ? readUtf16At(
+            view,
+            walk.offset,
+            localUnicodeOffset,
+            28,
+            walk,
+            headerSize,
+          )
         : null,
     common_network_relative_link:
       (flags & 0x2) !== 0
         ? parseNetwork(view, walk.offset, networkOffset, 20, walk)
         : null,
-    common_path_suffix: readAnsiAt(view, walk.offset, suffixOffset, 24, walk),
+    common_path_suffix: readAnsiAt(
+      view,
+      walk.offset,
+      suffixOffset,
+      24,
+      walk,
+      headerSize,
+    ),
     common_path_suffix_unicode: readUtf16At(
       view,
       walk.offset,
       suffixUnicodeOffset,
       32,
       walk,
+      headerSize,
     ),
   };
   walk.offset += size;
