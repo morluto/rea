@@ -25,6 +25,8 @@ import {
   decodeDelphiExtended,
   decodeDelphiText,
   formatDelphiCurrency,
+  MAX_DELPHI_FORM_DEPTH,
+  MAX_DELPHI_FORM_HEX_BYTES,
   MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES,
   type DelphiFormCollectionItem,
   type DelphiFormListEntry,
@@ -59,8 +61,6 @@ export interface DelphiFormDecode {
 const valueTypeName = (ordinal: number): string =>
   DELPHI_FORM_VALUE_TYPES[ordinal] ?? `unknown_value_type(${String(ordinal)})`;
 
-/** Hex projections are capped; the byte count is always reported in full. */
-const HEX_LIMIT_BYTES = 128;
 const MAX_OBJECTS = 1024;
 const MAX_PROPERTIES = 8192;
 const MAX_VALUES = 32768;
@@ -76,8 +76,6 @@ const ITEM_BYTES = 96;
 const LIST_ENTRY_BYTES = 128;
 /** Positional integers retain width, source bytes and their own range. */
 const POSITION_BYTES = 128;
-/** Bounds recursion so a deeply nested value cannot exhaust the call stack. */
-const MAX_DEPTH = 32;
 
 /** Reported once per inventory; the decoder itself stays free of policy text. */
 export const DELPHI_FORM_LIMITATIONS: readonly string[] = [
@@ -167,7 +165,10 @@ const range = (offset: number, end: number): DelphiFormRange => ({
 const hexOf = (
   bytes: Buffer,
 ): { readonly bytes_hex: string; readonly truncated: boolean } => {
-  const shown = bytes.subarray(0, Math.min(bytes.length, HEX_LIMIT_BYTES));
+  const shown = bytes.subarray(
+    0,
+    Math.min(bytes.length, MAX_DELPHI_FORM_HEX_BYTES),
+  );
   return {
     bytes_hex: shown.toString("hex"),
     truncated: bytes.length > shown.length,
@@ -462,9 +463,9 @@ function readValue(
   const at = stream.position;
   // Nested lists and collections recurse; bound the depth before the call
   // stack does, so a crafted payload reports an unknown instead of failing.
-  if (depth > MAX_DEPTH)
+  if (depth > MAX_DELPHI_FORM_DEPTH)
     throw new StreamEnd(
-      `Delphi form value nesting exceeds ${String(MAX_DEPTH)} levels.`,
+      `Delphi form value nesting exceeds ${String(MAX_DELPHI_FORM_DEPTH)} levels.`,
     );
   const numeric = readNumericValue(stream, ordinal);
   if (numeric !== null) return numeric;
@@ -576,7 +577,10 @@ function readValue(
       // A truncated value keeps the declared count with the bytes it holds.
       const available = Math.min(declared, stream.remaining);
       try {
-        spendText(budget, Math.min(available, HEX_LIMIT_BYTES) * 2 + 256);
+        spendText(
+          budget,
+          Math.min(available, MAX_DELPHI_FORM_HEX_BYTES) * 2 + 256,
+        );
       } catch (error) {
         if (!(error instanceof StreamEnd)) throw error;
         throw new StoppedValue(error.message, {
@@ -889,9 +893,9 @@ function readObject(
   spend(budget, "objects");
   spendBytes(budget, OBJECT_BYTES);
   // Nested components recurse like values, so bound them before the call stack.
-  if (depth > MAX_DEPTH)
+  if (depth > MAX_DELPHI_FORM_DEPTH)
     throw new StreamEnd(
-      `Delphi form object nesting exceeds ${String(MAX_DEPTH)} levels.`,
+      `Delphi form object nesting exceeds ${String(MAX_DELPHI_FORM_DEPTH)} levels.`,
     );
   const at = stream.position;
   const flags: string[] = [];

@@ -197,6 +197,12 @@ export const isDelphiFormValueType = (value: string): boolean => {
 /** The decoder probes a filer signature within this many prefix bytes. */
 export const MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES = 16;
 
+/** Retained hex previews keep at most this many source bytes. */
+export const MAX_DELPHI_FORM_HEX_BYTES = 128;
+
+/** Nested form objects and values are bounded at this depth. */
+export const MAX_DELPHI_FORM_DEPTH = 32;
+
 /**
  * `TFilerFlag` values the decoder can emit. It emits each once, in bit order,
  * and stops on the reserved bit, so no other flag is an observed value.

@@ -7,15 +7,20 @@ import {
   BYTE_PRESERVING_CODE_PAGE,
   DEFAULT_CODE_PAGE,
   DELPHI_FORM_FLOAT_NOTES,
+  MAX_DELPHI_FORM_DEPTH,
   RESOURCE_CODE_PAGES,
 } from "../../domain/native/delphiForm.js";
 import {
   delphiBinary,
   delphiBytes,
+  delphiCollection,
+  delphiCollectionItem,
   delphiComponent,
   delphiFloat32,
   delphiFloat64,
   delphiForm,
+  delphiInt8,
+  delphiInt32,
   delphiProperty,
   delphiUtf8String,
 } from "../../native/pe/DelphiForm.fixture.js";
@@ -445,6 +450,87 @@ const reportWithSyntheticValue = async (
   ];
   return report;
 };
+
+const reportWithBuiltSyntheticValue = async (
+  valueType: string,
+  buildValue: (location: {
+    offset: number;
+    bytes: number;
+  }) => Record<string, unknown>,
+  valueBytes: number,
+) => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("Value", root.location.offset + 13, form.code_page);
+  const valueOffset = name.location.offset + name.location.bytes + 1;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...root,
+        properties: [
+          {
+            name,
+            value_type: valueType,
+            value: {
+              ...buildValue({ offset: valueOffset, bytes: valueBytes }),
+              location: { offset: valueOffset, bytes: valueBytes },
+            } as never,
+            location: {
+              offset: name.location.offset,
+              bytes: valueOffset - name.location.offset + valueBytes,
+            },
+          },
+        ],
+      },
+    },
+  ];
+  return report;
+};
+
+const stopRoot = (report: Awaited<ReturnType<typeof observedReport>>): void => {
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  report.delphi_forms = [
+    {
+      ...form,
+      root: {
+        ...form.root,
+        unknown: {
+          reason: "stopped",
+          bytes_hex: "",
+          truncated: false,
+          location: {
+            offset: form.root.location.offset + form.root.location.bytes,
+            bytes: 0,
+          },
+        },
+      },
+    },
+  ];
+};
+
+const stoppedObjectChain = (
+  location: { offset: number; bytes: number },
+  remaining: number,
+): Record<string, unknown> => ({
+  location,
+  flags: [],
+  child_position: null,
+  class_name: null,
+  component_name: null,
+  properties: [],
+  children:
+    remaining === 0 ? [] : [stoppedObjectChain(location, remaining - 1)],
+  unknown: {
+    reason: "stopped",
+    bytes_hex: "",
+    truncated: false,
+    location: { offset: location.offset + location.bytes, bytes: 0 },
+  },
+});
 
 it("accepts the synthetic form baseline", async () => {
   expect(await inspectReport(await reportWithFormPrefix(0))).toMatchObject({
@@ -884,6 +970,32 @@ it.each(["invented", "unknown_value_type(999)", "unknown_value_type(01)"])(
     });
   },
 );
+
+it("rejects an unknown value whose preview omits bytes from a nonempty range", async () => {
+  const report = await reportWithSyntheticValue(
+    "vaInt8",
+    { kind: "unknown", reason: "stopped", bytes_hex: "", truncated: false },
+    1,
+  );
+  stopRoot(report);
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects an unknown value whose preview exceeds a zero-byte range", async () => {
+  const report = await reportWithSyntheticValue(
+    "vaInt8",
+    { kind: "unknown", reason: "stopped", bytes_hex: "ff", truncated: false },
+    0,
+  );
+  stopRoot(report);
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
 
 it("rejects an integer whose value does not fit its declared width", async () => {
   const report = await formWithProperty("vaInt8", {
@@ -1609,6 +1721,61 @@ it.each(["set", "collection"] as const)(
   },
 );
 
+it("rejects a complete collection item that consumes no source bytes", async () => {
+  const report = await reportWithBuiltSyntheticValue(
+    "vaCollection",
+    (location) => ({
+      kind: "collection",
+      items: [
+        {
+          position: null,
+          properties: [],
+          location: { offset: location.offset, bytes: 0 },
+        },
+      ],
+      terminated: true,
+    }),
+    1,
+  );
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("publishes a decoded collection with framed items", async () => {
+  const report = await reportForPayload(
+    delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty(
+          "Columns",
+          delphiCollection(
+            delphiCollectionItem(
+              delphiInt8(0),
+              delphiProperty("Width", delphiInt32(64)),
+            ),
+          ),
+        ),
+      ]),
+    ),
+  );
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
+it("publishes a collection whose item stopped after its position", async () => {
+  const report = await reportForPayload(
+    delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty(
+          "Columns",
+          Buffer.concat([delphiBytes(14), delphiInt8(5)]),
+        ),
+      ]),
+    ),
+  );
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
 it("rejects duplicate decoded forms for one resource", async () => {
   const report = await reportForPayload(
     delphiForm(delphiComponent("TForm1", "Form1")),
@@ -1718,6 +1885,40 @@ it("publishes a signature-only form with a disjoint unknown suffix", async () =>
   expect(await inspectReport(report)).toMatchObject({ ok: true });
 });
 
+it.each([
+  [MAX_DELPHI_FORM_DEPTH, true],
+  [MAX_DELPHI_FORM_DEPTH + 1, false],
+] as const)(
+  "uses the decoder depth limit for a %i-level form object chain",
+  async (remaining, accepted) => {
+    const report = await reportWithFormPrefix(0);
+    const form = report.delphi_forms[0];
+    if (form === undefined) throw new Error("Missing form");
+    report.delphi_forms = [
+      {
+        ...form,
+        root: stoppedObjectChain(form.root.location, remaining) as never,
+      },
+    ];
+    expect(await inspectReport(report)).toMatchObject(
+      accepted
+        ? { ok: true }
+        : { ok: false, error: { _tag: "AnalysisOutputError" } },
+    );
+  },
+);
+
+it("rejects a cyclic form tree before schema parsing", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  form.root.children.push(form.root);
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("rejects a complete object without class and component names", async () => {
   const report = await observedReport();
   const index = report.resources.findIndex(
@@ -1784,6 +1985,40 @@ it("rejects a complete string whose declared bytes are not retained", async () =
     truncated: false,
     decodeTruncated: false,
   });
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a fully consumed string marked decode-truncated", async () => {
+  const report = await formWithStringValue("vaLString", "windows-1251", {
+    declaredBytes: 2,
+    bytesHex: "4f4b",
+    retainedBytes: 2,
+    truncated: true,
+    decodeTruncated: true,
+  });
+  stopRoot(report);
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a fully consumed binary marked decode-truncated", async () => {
+  const report = await reportWithSyntheticValue(
+    "vaBinary",
+    {
+      kind: "binary",
+      bytes_hex: "4142",
+      declared_bytes: 2,
+      truncated: true,
+      decode_truncated: true,
+    },
+    6,
+  );
+  stopRoot(report);
   expect(await inspectReport(report)).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisOutputError" },

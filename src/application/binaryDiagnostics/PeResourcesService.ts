@@ -17,8 +17,11 @@ import {
   decodeDelphiText,
   formatDelphiCurrency,
   isDelphiFormValueType,
+  MAX_DELPHI_FORM_DEPTH,
+  MAX_DELPHI_FORM_HEX_BYTES,
   MAX_DELPHI_FORM_SIGNATURE_PREFIX_BYTES,
   RESOURCE_CODE_PAGES,
+  type DelphiFormCollectionItem,
   type DelphiFormObject,
   type DelphiFormPosition,
   type DelphiFormProperty,
@@ -53,6 +56,13 @@ export class PeResourcesService {
     if (!input.ok) return input;
     const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
+    if (!formTreeWithinDepth(result.value))
+      return err(
+        new AnalysisOutputError(
+          operation,
+          "PE resource provider returned malformed output or changed artifact identity.",
+        ),
+      );
     const report = peResourcesSchema.safeParse(result.value);
     if (
       !report.success ||
@@ -93,6 +103,100 @@ export class PeResourcesService {
     );
   }
 }
+
+type FormTreeFrame =
+  | {
+      readonly kind: "object" | "property" | "value" | "collection-item";
+      readonly value: unknown;
+      readonly depth: number;
+    }
+  | { readonly kind: "leave"; readonly value: object };
+
+const arrayItems = (node: object, key: string): readonly unknown[] => {
+  const items = (node as Record<string, unknown>)[key];
+  return Array.isArray(items) ? items : [];
+};
+
+/**
+ * Zod follows the lazy form schema before the producer invariants run, so a
+ * cyclic or over-deep provider tree would exhaust the call stack instead of
+ * returning an output error. Walk the decoder's recursive edges first with an
+ * explicit stack and the same depth limit the native decoder applies.
+ */
+const formTreeWithinDepth = (report: unknown): boolean => {
+  if (typeof report !== "object" || report === null) return true;
+  const forms = (report as Record<string, unknown>).delphi_forms;
+  if (!Array.isArray(forms)) return true;
+  const ancestors = new WeakSet<object>();
+  const stack: FormTreeFrame[] = [];
+  for (const form of forms) {
+    if (typeof form !== "object" || form === null) continue;
+    stack.push({
+      kind: "object",
+      value: (form as Record<string, unknown>).root,
+      depth: 0,
+    });
+  }
+  while (stack.length > 0) {
+    const frame = stack.pop()!;
+    if (frame.kind === "leave") {
+      ancestors.delete(frame.value);
+      continue;
+    }
+    const node = frame.value;
+    if (typeof node !== "object" || node === null) continue;
+    if (frame.depth > MAX_DELPHI_FORM_DEPTH) return false;
+    if (ancestors.has(node)) return false;
+    ancestors.add(node);
+    stack.push({ kind: "leave", value: node });
+    if (frame.kind === "object") {
+      // Nested components recurse one level deeper; property values share the
+      // object's depth, exactly as readObject passes it to readValue.
+      for (const child of arrayItems(node, "children"))
+        stack.push({ kind: "object", value: child, depth: frame.depth + 1 });
+      for (const property of arrayItems(node, "properties"))
+        stack.push({ kind: "property", value: property, depth: frame.depth });
+      continue;
+    }
+    if (frame.kind === "property") {
+      stack.push({
+        kind: "value",
+        value: (node as Record<string, unknown>).value,
+        depth: frame.depth,
+      });
+      continue;
+    }
+    if (frame.kind === "collection-item") {
+      // A collection item's property values are read one level below the
+      // collection value.
+      for (const property of arrayItems(node, "properties"))
+        stack.push({
+          kind: "property",
+          value: property,
+          depth: frame.depth + 1,
+        });
+      continue;
+    }
+    const value = node as Record<string, unknown>;
+    if (value.kind === "list")
+      for (const entry of arrayItems(value, "items")) {
+        if (typeof entry !== "object" || entry === null) continue;
+        stack.push({
+          kind: "value",
+          value: (entry as Record<string, unknown>).value,
+          depth: frame.depth + 1,
+        });
+      }
+    if (value.kind === "collection")
+      for (const item of arrayItems(value, "items"))
+        stack.push({
+          kind: "collection-item",
+          value: item,
+          depth: frame.depth,
+        });
+  }
+  return true;
+};
 
 /** Check cross-field invariants before provider output becomes public Evidence. */
 const validReport = (
@@ -383,8 +487,9 @@ const insideLocations = (
       object.unknown.location.offset !==
         object.location.offset + object.location.bytes ||
       object.unknown.bytes_hex.length / 2 !==
-        Math.min(object.unknown.location.bytes, 128) ||
-      object.unknown.truncated !== object.unknown.location.bytes > 128)
+        Math.min(object.unknown.location.bytes, MAX_DELPHI_FORM_HEX_BYTES) ||
+      object.unknown.truncated !==
+        object.unknown.location.bytes > MAX_DELPHI_FORM_HEX_BYTES)
   )
     return false;
   const text = (
@@ -547,10 +652,26 @@ const STRING_PROJECTION: Readonly<
   Record<string, { prefixBytes: number; previewBytes: number; wide: boolean }>
 > = {
   vaString: { prefixBytes: 1, previewBytes: 0xff, wide: false },
-  vaLString: { prefixBytes: 4, previewBytes: 128, wide: false },
-  vaUTF8String: { prefixBytes: 4, previewBytes: 128, wide: false },
-  vaWString: { prefixBytes: 4, previewBytes: 128, wide: true },
-  vaUString: { prefixBytes: 4, previewBytes: 128, wide: true },
+  vaLString: {
+    prefixBytes: 4,
+    previewBytes: MAX_DELPHI_FORM_HEX_BYTES,
+    wide: false,
+  },
+  vaUTF8String: {
+    prefixBytes: 4,
+    previewBytes: MAX_DELPHI_FORM_HEX_BYTES,
+    wide: false,
+  },
+  vaWString: {
+    prefixBytes: 4,
+    previewBytes: MAX_DELPHI_FORM_HEX_BYTES,
+    wide: true,
+  },
+  vaUString: {
+    prefixBytes: 4,
+    previewBytes: MAX_DELPHI_FORM_HEX_BYTES,
+    wide: true,
+  },
 };
 
 const stringMatchesType = (
@@ -572,7 +693,11 @@ const stringMatchesType = (
   if (value.decode_truncated)
     return (
       value.truncated &&
-      available <= value.declared_bytes &&
+      // A stopped decode is strictly short of its declaration. The decoder
+      // charges the budget before taking any body bytes, so the only equality
+      // it can produce is the valid zero-length budget stop.
+      (available < value.declared_bytes ||
+        (available === 0 && value.declared_bytes === 0)) &&
       // When the preview covers every available byte, the text still has to
       // be their decode.
       (value.bytes_hex.length / 2 !== available ||
@@ -600,12 +725,22 @@ const binaryMatches = (
 ): boolean => {
   const available = value.location.bytes - 4;
   const retained = value.bytes_hex.length / 2;
-  if (available < 0 || retained !== Math.min(available, 128)) return false;
+  if (
+    available < 0 ||
+    retained !== Math.min(available, MAX_DELPHI_FORM_HEX_BYTES)
+  )
+    return false;
   if (value.decode_truncated)
-    return value.truncated && available <= value.declared_bytes;
+    // See stringMatchesType: a stopped decode is strictly short unless the
+    // valid zero-length budget stop retained nothing.
+    return (
+      value.truncated &&
+      (available < value.declared_bytes ||
+        (available === 0 && value.declared_bytes === 0))
+    );
   return (
     available === value.declared_bytes &&
-    value.truncated === value.declared_bytes > 128
+    value.truncated === value.declared_bytes > MAX_DELPHI_FORM_HEX_BYTES
   );
 };
 
@@ -628,7 +763,14 @@ const valueMatchesType = (
   codePage: string,
 ): boolean => {
   if (!isDelphiFormValueType(valueType)) return false;
-  if (value.kind === "unknown") return true;
+  if (value.kind === "unknown")
+    // Unknown constructors retain the first up-to-128 bytes of the range they
+    // claim, so a missing byte, an extra byte or a zero-byte preview for a
+    // nonempty range cannot come from this decoder.
+    return (
+      value.bytes_hex.length / 2 ===
+      Math.min(value.location.bytes, MAX_DELPHI_FORM_HEX_BYTES)
+    );
   switch (valueType) {
     case "vaNull":
       return value.kind === "null" && value.location.bytes === 1;
@@ -726,12 +868,53 @@ const setFollowsSource = (
   return value.terminated ? end === expected + 1 : end === expected;
 };
 
+/**
+ * A collection item is an optional positional integer, the `vaList` marker the
+ * reader consumes, its properties and one terminator byte. The last item of a
+ * stopped collection may end anywhere after an observed prefix, but it still
+ * has to start with the bytes the decoder actually consumed.
+ */
+const collectionItemFollowsSource = (
+  item: DelphiFormCollectionItem,
+  complete: boolean,
+): boolean => {
+  if (item.location.bytes === 0) return false;
+  const itemEnd = item.location.offset + item.location.bytes;
+  let cursor = item.location.offset;
+  if (item.position !== null) {
+    // The tag byte is structural and precedes the retained position payload.
+    if (item.position.location.offset !== cursor + 1) return false;
+    cursor = item.position.location.offset + item.position.location.bytes;
+  }
+  // A stopped item can end after a complete position but before its marker.
+  if (itemEnd < cursor + 1) return !complete && item.properties.length === 0;
+  if (!propertiesFollowSource(item.properties)) return false;
+  if (item.properties.length > 0) {
+    // Properties start right after the marker and run to the item end.
+    if (item.properties[0]!.location.offset !== cursor + 1) return false;
+    const last = item.properties.at(-1)!;
+    cursor = last.location.offset + last.location.bytes;
+  } else {
+    cursor += 1;
+  }
+  return complete ? itemEnd === cursor + 1 : itemEnd >= cursor;
+};
+
 const collectionFollowsSource = (
   value: Extract<DelphiFormValue, { kind: "collection" }>,
 ): boolean => {
   let expected = value.location.offset;
-  for (const item of value.items) {
+  for (const [index, item] of value.items.entries()) {
     if (item.location.offset !== expected) return false;
+    // Every item of a terminated collection is complete; in a stopped
+    // collection only the last item may carry an unfinished prefix.
+    if (
+      !collectionItemFollowsSource(
+        item,
+        value.terminated || index < value.items.length - 1,
+      )
+    )
+      return false;
     expected = item.location.offset + item.location.bytes;
   }
   const end = value.location.offset + value.location.bytes;
