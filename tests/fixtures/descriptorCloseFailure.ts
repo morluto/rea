@@ -3,7 +3,7 @@ import { expect } from "vitest";
 import type { Result } from "../../src/domain/result.js";
 import type { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 
-export interface DescriptorCloseFailure {
+interface DescriptorCloseFailure {
   path: string;
   denied: boolean;
   handles: FileHandle[];

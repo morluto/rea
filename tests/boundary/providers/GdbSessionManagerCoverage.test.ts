@@ -1522,23 +1522,28 @@ it("rejects an inferior TTY when GDB does not confirm the setting command", asyn
 });
 
 it("rejects a truncated inferior TTY readback before publishing the session", async () => {
-  const tty = `/dev/pts/${"x".repeat(200)}`;
+  const tty = "/dev/pts/42";
   const fake = createFakeSpawner((child, token, command) => {
-    child.stdout.write(
-      command.includes("inferior-tty-show")
-        ? `${token}^done,inferior_tty_terminal=${JSON.stringify(tty)}\n`
-        : `${token}^done\n`,
-    );
+    if (command.includes("inferior-tty-show")) {
+      const record = `~"${"x".repeat(1024 * 1024)}"\n`;
+      for (let index = 0; index < 17; index += 1) child.stdout.write(record);
+      child.stdout.write(
+        `${token}^done,inferior_tty_terminal=${JSON.stringify(tty)}\n`,
+      );
+    } else child.stdout.write(`${token}^done\n`);
   });
-  const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    controlReplyBytes: 80,
-  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess);
 
   const started = await manager.start(undefined, { inferiorTty: tty });
 
   expect(started).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisCapabilityUnavailableError" },
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      message: expect.stringContaining(
+        "did not report the exact caller-selected inferior TTY",
+      ),
+    },
   });
   expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
 });

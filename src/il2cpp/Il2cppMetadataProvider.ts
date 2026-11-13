@@ -1,5 +1,4 @@
 import { IL2CPP_METADATA_PROVIDER_IDENTITY } from "./Il2CppMetadataProviderIdentity.js";
-import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   Il2cppBinaryFormatFailure,
   IL2CPP_BINARY_BYTES,
@@ -15,7 +14,10 @@ import {
 } from "../artifacts/readStableArtifact.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
+import {
+  projectSelectedArtifactFileFailure,
+  stableArtifactInputRecovery,
+} from "../artifacts/StableArtifactFailure.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -33,7 +35,6 @@ import { createIl2cppMetadataAdmission } from "./Il2cppMetadataAdmission.js";
 import { hexAddress as hex } from "./Il2cppBinaryImage.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -154,20 +155,14 @@ const failureForPrimary = (
         [{ path: [field], reason: "invalid_format", message: cause.message }],
       );
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: [field],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    path,
+    "artifact",
+    field,
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(
     IL2CPP_METADATA_PROVIDER_IDENTITY.id,
     OPERATION,

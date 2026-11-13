@@ -46,6 +46,26 @@ export const advertisedMcpToolSchemas = async (
   };
 };
 
+/** Call an advertised tool and validate its structured result against its schema. */
+export const callAdvertisedMcpTool = async (
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+  validator: AdvertisedSchemaAssertions,
+) => {
+  const schema = await advertisedMcpToolSchemas(client, name, validator);
+  const result = await client.callTool(
+    { name, arguments: args },
+    { toolDefinition: schema.toolDefinition },
+  );
+  expect(result.isError, JSON.stringify(result)).not.toBe(true);
+  expect(
+    schema.ajv.validate(schema.outputSchema, result.structuredContent),
+    JSON.stringify(schema.ajv.errors),
+  ).toBe(true);
+  return result.structuredContent;
+};
+
 /** Keep public output, provenance and session retention checks together. */
 export const assertRecordedMcpEvidence = (
   response: Awaited<ReturnType<Client["callTool"]>>,

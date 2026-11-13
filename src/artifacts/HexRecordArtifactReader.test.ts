@@ -89,7 +89,13 @@ it("fails closed on over-limit records", async () => {
     scanCanonicalArtifactInventory(
       await writeImage("runs.hex", `${runs.join("\n")}\n`),
     ),
-  ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
+  ).rejects.toMatchObject({
+    reason: "limit",
+    boundary: "capacity",
+    message: expect.stringContaining(
+      "more than 65536 address-discontiguous record runs",
+    ),
+  });
 });
 
 it("leaves an invalid first record to plain file classification", async () => {

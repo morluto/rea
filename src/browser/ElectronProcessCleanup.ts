@@ -2,11 +2,9 @@ import {
   cleanupOwnedProcessGroup,
   cleanupWindowsProcessTree,
   verifyNoTokenOwnedProcesses,
-  type OwnedProcessGroup,
   type PersistentOwnedProcessGroup,
   type ProcessCleanupResult,
   type ProcessLineageObservation,
-  type OwnershipSweepUnverifiedProcess,
   type ProcessOwnershipHost,
 } from "../process/ProcessOwnership.js";
 import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";

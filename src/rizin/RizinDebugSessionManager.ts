@@ -332,9 +332,6 @@ export class RizinDebugSessionManager {
     if (!parsed.ok) throw parsed.error;
     return parsed.value;
   }
-  get #maxCommandOutputBytes(): number {
-    return this.#commandOutput.value;
-  }
 
   async start(
     input: {

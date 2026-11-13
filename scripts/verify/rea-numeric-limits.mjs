@@ -185,7 +185,7 @@ const stringBindings = (sourceFile, symbols, unresolved) => {
     )
       return undefined;
     if ((declaration.parent.flags & ts.NodeFlags.Const) === 0) {
-      unknown(identifier, "mutable setting-key or value alias");
+      unknown(declaration.name, "mutable setting-key or value alias");
       return undefined;
     }
     if (declaration.pos >= identifier.pos) {
@@ -919,7 +919,7 @@ if (direct) {
   const entries = parseNumericLimitRegistry(registry);
   const listed = new Map();
   for (const entry of entries) {
-    const { name, policy, read, reason } = entry;
+    const { name, read, reason } = entry;
     if (listed.has(name)) failures.push(`${name} is listed twice`);
     listed.set(name, entry);
     if (reason.trim().length < 40)

@@ -11,7 +11,7 @@ import {
   type PeResourceIdentity,
 } from "../../domain/native/peResources.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 
