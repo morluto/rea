@@ -12,8 +12,27 @@ const offset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
  * process; it matches the pinned CPython pyc reader's 64 MiB ceiling.
  */
 export const MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES = 67108864;
-/** Hard ceiling on the V8 code cache container header this reader accepts. */
+/**
+ * Header size a 64-bit V8 producer writes.
+ *
+ * `kHeaderSize` is `POINTER_SIZE_ALIGN(kUnalignedHeaderSize)` and `kUnalignedHeaderSize` is 28,
+ * so the header is padded after its words rather than between them: a 64-bit build pads to 32
+ * while a 32-bit build leaves 28. Both carry the same words in the same order, so the trailing
+ * padding is the only difference, and the container states which it carries through its own
+ * declared payload length.
+ */
 export const V8_CODE_CACHE_HEADER_BYTES = 32;
+/** Header size a 32-bit V8 producer writes, with no trailing alignment padding. */
+export const V8_CODE_CACHE_NARROW_HEADER_BYTES = 28;
+/** Every container header size this reader admits. */
+export const V8_CODE_CACHE_HEADER_SIZES = [
+  V8_CODE_CACHE_NARROW_HEADER_BYTES,
+  V8_CODE_CACHE_HEADER_BYTES,
+] as const;
+/** Shortest admitted header, so no selected file is smaller than this. */
+export const V8_CODE_CACHE_MIN_HEADER_BYTES = Math.min(
+  ...V8_CODE_CACHE_HEADER_SIZES,
+);
 /**
  * V8 stamps every serialized code cache with `0xC0DE0000 ^ ExternalReferenceTable::kSize`.
  * Only the high half is stable across builds, so the low half is a build fingerprint and
@@ -105,8 +124,8 @@ const headerSchema = z.strictObject({
   magic: uint,
   /** High half of the magic, the only part stable across V8 builds. */
   magic_build_stable: uint,
-  /** Every header word, in container order. */
-  fields: z.array(headerFieldSchema).length(8),
+  /** Every header word this container carries, in container order. */
+  fields: z.array(headerFieldSchema).min(7).max(8),
   /** Bytes this reader treats as header before the payload begins. */
   header_bytes: uint,
   /** Source length in UTF-16 code units, as recorded by the producer, if determinable. */
@@ -169,11 +188,24 @@ export const v8CodeCacheSchema = z
     limitations: z.array(z.string().min(1)).min(1),
   })
   .superRefine((report, context) => {
-    if (report.header.header_bytes !== V8_CODE_CACHE_HEADER_BYTES)
+    if (
+      !(V8_CODE_CACHE_HEADER_SIZES as readonly number[]).includes(
+        report.header.header_bytes,
+      )
+    )
       context.addIssue({
         code: "custom",
         path: ["header", "header_bytes"],
-        message: "This reader only accepts its pinned container header size.",
+        message:
+          "This reader only accepts the container header sizes it admits.",
+      });
+    // The word table describes the container's own header, so it cannot disagree with it.
+    if (report.header.fields.length * 4 !== report.header.header_bytes)
+      context.addIssue({
+        code: "custom",
+        path: ["header", "fields"],
+        message:
+          "The reported header words must cover exactly the declared container header.",
       });
     if (report.header.magic_build_stable !== V8_CODE_CACHE_MAGIC_HIGH)
       context.addIssue({

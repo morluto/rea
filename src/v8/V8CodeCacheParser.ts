@@ -3,7 +3,8 @@ import {
   MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
   V8_CODE_CACHE_COMPILE_FUNCTION_BIT,
   V8_CODE_CACHE_MODULE_BIT,
-  V8_CODE_CACHE_HEADER_BYTES,
+  V8_CODE_CACHE_HEADER_SIZES,
+  V8_CODE_CACHE_MIN_HEADER_BYTES,
   V8_CODE_CACHE_MAGIC_HIGH,
   V8_CODE_CACHE_SOURCE_LENGTH_MASK,
   type V8CodeCache,
@@ -70,9 +71,9 @@ export const parseV8CodeCache = (
 ): V8CodeCache => {
   if (bytes.length !== artifact.bytes)
     malformed("Selected artifact length disagrees with the retained bytes.");
-  if (bytes.length < V8_CODE_CACHE_HEADER_BYTES)
+  if (bytes.length < V8_CODE_CACHE_MIN_HEADER_BYTES)
     malformed(
-      `Selected file is shorter than the ${String(V8_CODE_CACHE_HEADER_BYTES)}-byte V8 code cache header.`,
+      `Selected file is shorter than the ${String(V8_CODE_CACHE_MIN_HEADER_BYTES)}-byte V8 code cache header.`,
     );
 
   const field = (index: number): number => bytes.readUInt32LE(index * 4);
@@ -83,12 +84,16 @@ export const parseV8CodeCache = (
       `Container magic 0x${magic.toString(16).padStart(8, "0")} does not carry the V8 code cache high half 0x${V8_CODE_CACHE_MAGIC_HIGH.toString(16)}; this file is not a V8 code cache.`,
     );
 
+  // The payload-length word sits at byte 20 for every producer, because V8 pads the header
+  // after its words instead of inside them. The declared length therefore states how much
+  // trailing alignment padding the container carries, and the header size follows from it.
   const declaredPayload = field(5);
-  const payloadOffset = V8_CODE_CACHE_HEADER_BYTES;
-  const expectedPayload = bytes.length - payloadOffset;
-  if (declaredPayload !== expectedPayload)
+  const payloadOffset = bytes.length - declaredPayload;
+  if (
+    !(V8_CODE_CACHE_HEADER_SIZES as readonly number[]).includes(payloadOffset)
+  )
     malformed(
-      `Header declares a ${String(declaredPayload)}-byte payload but ${String(expectedPayload)} bytes follow the ${String(V8_CODE_CACHE_HEADER_BYTES)}-byte header; the container is truncated or corrupt.`,
+      `Header declares a ${String(declaredPayload)}-byte payload, leaving ${String(payloadOffset)} header bytes, which is no admitted V8 code cache header size (${V8_CODE_CACHE_HEADER_SIZES.join(" or ")}); the container is truncated or corrupt.`,
     );
 
   const sourceWord = field(2);
@@ -160,13 +165,15 @@ export const parseV8CodeCache = (
     header: {
       magic,
       magic_build_stable: magicHigh,
-      fields: HEADER_ROLES.map((entry, index) => ({
+      // A 32-bit producer omits the trailing alignment padding, so only the words this
+      // container actually carries are reported.
+      fields: HEADER_ROLES.slice(0, payloadOffset / 4).map((entry, index) => ({
         offset: index * 4,
         value: field(index),
         role: entry.role,
         status: entry.status,
       })),
-      header_bytes: V8_CODE_CACHE_HEADER_BYTES,
+      header_bytes: payloadOffset,
       source_length: sourceLength,
       producer,
     },
