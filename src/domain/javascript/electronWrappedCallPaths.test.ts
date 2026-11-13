@@ -2449,6 +2449,10 @@ describe("Webpack harmony export getters", () => {
       },
     ],
     [
+      "a key assigned after its definition",
+      { exports: `${DEFINE_HANDLE}\n__webpack_exports__.handle = handle;` },
+    ],
+    [
       "a key defined twice",
       {
         exports: `__webpack_require__.d(__webpack_exports__, { handle: () => () => {} });\n${DEFINE_HANDLE}`,
