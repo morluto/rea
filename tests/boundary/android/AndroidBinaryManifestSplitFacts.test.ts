@@ -65,7 +65,10 @@ it("bounds retained split types and reports the declaration's full count", () =>
   // A near-1 MiB literal of short comma-separated values is one string-pool
   // entry, so nothing earlier bounds how many tokens it can retain. Keep a
   // fixed prefix and report the count the declaration states.
-  const declared = Array.from({ length: 200 }, (_, index) => `part${String(index)}`);
+  const declared = Array.from(
+    { length: 200 },
+    (_, index) => `part${String(index)}`,
+  );
   const facts = readAndroidBinaryManifestSplitFacts(
     binaryManifestFixture({
       attributes: [

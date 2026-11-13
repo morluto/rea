@@ -178,8 +178,7 @@ const splitTypes = (value: string): AndroidBinaryManifestSplitTypeList => {
   for (const part of value.split(","))
     if (part.trim().length > 0) {
       declaredCount += 1;
-      if (types.length < MAXIMUM_REQUIRED_SPLIT_TYPES)
-        types.push(part.trim());
+      if (types.length < MAXIMUM_REQUIRED_SPLIT_TYPES) types.push(part.trim());
     }
   return {
     types,
