@@ -366,8 +366,11 @@ const TERMUX_CHROMIUM_WRAPPERS = new Set(["chromium", "chromium-browser"]);
  */
 const resolveAndroidChromiumExecutable = async (
   executablePath: string,
+  environment: Readonly<Record<string, string | undefined>>,
 ): Promise<string> => {
   if (process.platform !== "android") return executablePath;
+  const prefix = nonemptyEnvironmentValue(environment, "PREFIX");
+  if (prefix === undefined) return executablePath;
   const selected = posix.isAbsolute(executablePath)
     ? absoluteCallerPath(executablePath)
     : win32.isAbsolute(executablePath)
@@ -377,6 +380,10 @@ const resolveAndroidChromiumExecutable = async (
   const parent = posix.isAbsolute(selected)
     ? posix.dirname(selected)
     : dirname(selected);
+  const termuxBin = win32.isAbsolute(prefix)
+    ? win32.resolve(prefix, "bin")
+    : absoluteCallerPath(appendCallerPath(prefix, "bin"));
+  if (parent !== termuxBin) return executablePath;
   const sibling = appendCallerPath(parent, "../lib/chromium/chrome");
   try {
     await access(sibling, fsConstants.F_OK);
@@ -966,6 +973,7 @@ export const openPlaywrightScenarioBrowser = async (
   let context: BrowserContext;
   const executablePath = await resolveAndroidChromiumExecutable(
     launchedBrowser.executable_path,
+    environment,
   );
   const headless = scenario.browser.headless;
   const chromiumSandbox = chromiumSandboxEnabled(environment);

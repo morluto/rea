@@ -758,6 +758,42 @@ it("keeps a caller-selected Android browser that is not Termux Chromium", async 
   expect(executablePath).toBe(selected);
 });
 
+it.each(["chromium", "chromium-browser"])(
+  "keeps a caller-selected %s wrapper outside the Termux prefix",
+  async (name) => {
+    const root = await createTestTempDirectory("rea-termux-external-wrapper-");
+    const prefix = join(root, "termux");
+    const selected = join(root, "custom", "bin", name);
+    const sibling = join(root, "custom", "lib", "chromium", "chrome");
+    await mkdir(dirname(selected), { recursive: true });
+    await mkdir(dirname(sibling), { recursive: true });
+    await writeFile(selected, "#!/bin/sh\n");
+    await writeFile(sibling, "#!/bin/sh\n");
+    Object.defineProperty(process, "platform", { value: "android" });
+    let launchedExecutable: string | undefined;
+    await expect(
+      openPlaywrightScenarioBrowser(
+        androidLaunchScenario(selected),
+        { PREFIX: prefix, TMPDIR: "", TMP: "", TEMP: "" },
+        {
+          launcher: {
+            connectOverCDP: async () => {
+              throw new Error("Unexpected connection");
+            },
+            launchPersistentContext: async (_profile, options) => {
+              launchedExecutable = options?.executablePath;
+              throw new Error("launch boundary reached");
+            },
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      diagnostics: { startup_error: "launch boundary reached" },
+    });
+    expect(launchedExecutable).toBe(selected);
+  },
+);
+
 it("places each overlapping Playwright artifact directory in its own Termux temp", async () => {
   await import("playwright-core");
   const firstRoot = await createTestTempDirectory("rea-termux-artifacts-a-");
