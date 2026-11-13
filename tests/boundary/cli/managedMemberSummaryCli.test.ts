@@ -149,7 +149,7 @@ const verifyCliFullPages = async (
     expect(rows.length, collection).toBeGreaterThan(0);
     expect(reportedCounts[collection]).toBe(rows.length);
     const paged: unknown[] = [];
-    for (let offset: number | null = 0; offset !== null; ) {
+    for (let offset: number | null = 0; offset !== null;) {
       const response = await cli.run({
         cwd,
         arguments: [
