@@ -194,5 +194,4 @@ it.skipIf(
       error: { code: "invalid_request" },
     });
   },
-  60_000,
 );

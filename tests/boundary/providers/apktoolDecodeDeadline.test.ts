@@ -79,5 +79,4 @@ it.skipIf(process.platform === "win32")(
       await fixture.cleanup([pending, provider.close()]);
     }
   },
-  30_000,
 );
