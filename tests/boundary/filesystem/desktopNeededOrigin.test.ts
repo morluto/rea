@@ -1,9 +1,129 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { inspectLibraryPackages } from "../../../src/desktop/LibraryPackageInventory.js";
 import { elfImage } from "../../../src/domain/desktop/elfImage.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+it
+  .skipIf(process.platform === "win32")
+  .each(["needed", "rpath", "runpath", "cache"] as const)(
+  "preserves directory symlink traversal in %s lookups",
+  async (kind) => {
+    const root = await createTestTempDirectory("rea-needed-symlink-");
+    const bin = join(root, "bin");
+    const physical = join(root, "physical");
+    await Promise.all([
+      mkdir(bin),
+      mkdir(join(physical, "deep"), { recursive: true }),
+    ]);
+    await symlink(join("physical", "deep"), join(root, "bridge"));
+    const actual = join(physical, "libchoice.so");
+    const decoy = join(root, "libchoice.so");
+    const lookup = `${root}/bridge/../libchoice.so`;
+    expect(await realpath(`${root}/bridge/..`)).toBe(physical);
+    const executable = join(bin, "app");
+    await Promise.all([
+      writeFile(actual, elfImage({})),
+      writeFile(decoy, elfImage({})),
+      writeFile(
+        executable,
+        elfImage({
+          needed:
+            kind === "needed"
+              ? ["$ORIGIN/../bridge/../libchoice.so", decoy]
+              : ["libchoice.so"],
+          ...(kind === "rpath" || kind === "runpath"
+            ? { [kind]: "$ORIGIN/../bridge/.." }
+            : {}),
+        }),
+      ),
+    ]);
+    const owners = new Map([
+      [actual, "actual-owner"],
+      [decoy, "decoy-owner"],
+    ]);
+    const report = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) => {
+        if (command === "ldconfig")
+          return {
+            stdout:
+              kind === "cache"
+                ? `\tlibchoice.so (libc6,AArch64) => ${lookup}`
+                : "",
+            exitCode: 0,
+          };
+        return {
+          stdout: args
+            .slice(1)
+            .flatMap((path) =>
+              owners.has(path) ? [`${owners.get(path)}: ${path}`] : [],
+            )
+            .join("\n"),
+          exitCode: 0,
+        };
+      },
+      undefined,
+    );
+    expect(report).toEqual({
+      library_packages:
+        kind === "needed" ? ["actual-owner", "decoy-owner"] : ["actual-owner"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "retains the loaded object's lookup directory for its own ORIGIN declarations",
+  async () => {
+    const root = await createTestTempDirectory("rea-needed-alias-origin-");
+    const bin = join(root, "bin"),
+      alias = join(root, "alias"),
+      physical = join(root, "physical");
+    await Promise.all([bin, alias, physical].map((path) => mkdir(path)));
+    const executable = join(bin, "app");
+    const parent = join(physical, "libparent.so");
+    const loaded = join(alias, "libparent.so");
+    const child = join(alias, "libchild.so");
+    await Promise.all([
+      writeFile(executable, elfImage({ needed: [loaded] })),
+      writeFile(parent, elfImage({ needed: ["$ORIGIN/libchild.so"] })),
+      writeFile(child, elfImage({})),
+      writeFile(join(physical, "libchild.so"), elfImage({})),
+    ]);
+    await symlink(parent, loaded);
+    const owners = new Map([
+      [parent, "parent-owner"],
+      [child, "child-owner"],
+      [join(physical, "libchild.so"), "decoy-owner"],
+    ]);
+    const result = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) =>
+        command === "ldconfig"
+          ? { stdout: "", exitCode: 0 }
+          : {
+              stdout: args
+                .slice(1)
+                .flatMap((path) =>
+                  owners.has(path) ? [`${owners.get(path)}: ${path}`] : [],
+                )
+                .join("\n"),
+              exitCode: 0,
+            },
+      undefined,
+    );
+    expect(result).toEqual({
+      library_packages: ["child-owner", "parent-owner"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+    });
+  },
+);
 
 it.skipIf(process.platform === "win32").each(["$ORIGIN", "${ORIGIN}"])(
   "resolves %s DT_NEEDED in each declaring object before deduplicating requests",

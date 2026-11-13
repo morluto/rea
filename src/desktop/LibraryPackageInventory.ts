@@ -171,24 +171,24 @@ export const inspectLibraryPackages = async (
     { path: executable, dependencies: root.value },
     parseLinkerCache(cache),
     {
+      resolvePath: async (path) => {
+        try {
+          return await realpath(path);
+        } catch (cause) {
+          if (isRefusedRead(cause)) return undefined;
+          throw hostReadFailure(cause);
+        }
+      },
       dependencies: (path, expected) =>
         elfDependencies(path, signal, policy, expected),
       isFile: isHostFile,
     },
     policy.libraries,
   );
-  const located = await Promise.all(
-    closure.libraries.map(async ({ path }) => ({
-      path,
-      candidates: ownershipCandidates([
-        path,
-        ...(await realpath(path).then(
-          (physical) => [physical],
-          () => [],
-        )),
-      ]),
-    })),
-  );
+  const located = closure.libraries.map(({ path }) => ({
+    path,
+    candidates: ownershipCandidates([path]),
+  }));
   const owners = await packageOwners(
     located.flatMap((library) => library.candidates),
     runQuery,

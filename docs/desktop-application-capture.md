@@ -274,11 +274,14 @@ at all for an archive package, whose export does not use it. REA reads
 DT_NEEDED from the resolved executable and from each library it finds, and
 looks each soname up as ld.so does: in the RPATH of the needing image and of
 each image up its chain of loaders to the executable when the needing image
-has no RUNPATH, then in its RUNPATH (with `$ORIGIN` expanded and paths
-normalized), and then in the `ldconfig -p` cache entries for the executable's
+has no RUNPATH, then in its RUNPATH (with `$ORIGIN` expanded), and then in the
+`ldconfig -p` cache entries for the executable's
 machine. `$ORIGIN` and `${ORIGIN}` in DT_NEEDED itself are expanded relative
 to the object declaring that dependency before full-path lookup and request
 deduplication; the same spelling in two libraries can name two different files.
+Lookup paths retain directory symlinks and subsequent `..` components until the
+filesystem resolves them. Resolved paths determine identity, containment and
+package ownership; the original loaded path supplies a library's own `$ORIGIN`.
 A combination with another dollar expression that REA does not expand remains
 unresolved with a reason, rather than selecting a literal token-named file.
 Each candidate's ELF machine, class and byte order must match the

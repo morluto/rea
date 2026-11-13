@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { posix } from "node:path";
 
 import { err, ok } from "../result.js";
 import {
@@ -54,6 +55,7 @@ const host = (
     >
   >,
 ) => ({
+  resolvePath: async (path: string) => posix.normalize(path),
   dependencies: async (path: string, expected: ElfLibraryIdentity) => {
     const image = images[path];
     if (typeof image !== "object")
@@ -73,7 +75,7 @@ const host = (
       ? err({ kind: "unreadable" as const, ...image })
       : ok(image);
   },
-  isFile: async (path: string) => path in images,
+  isFile: async (path: string) => posix.normalize(path) in images,
 });
 
 const typora = {
