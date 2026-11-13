@@ -48,8 +48,16 @@ export const ANDROID_APP_FUNCTIONS_LIMITS = Object.freeze({
   schemaFactsBytes: 384 * 1024,
 });
 
-const APP_FUNCTION_ASSET_PATTERN =
-  /^assets\/(?:.+\/)?[^/]*app[_-]?function[^/]*\.xml$/iu;
+const APP_FUNCTION_NAME_PATTERN = /app[_-]?function/u;
+
+// Linear-time asset name check: member names are archive-controlled, so avoid
+// a backtracking pattern over the whole path.
+const isAppFunctionAssetPath = (path: string): boolean => {
+  const lower = path.toLowerCase();
+  if (!lower.startsWith("assets/") || !lower.endsWith(".xml")) return false;
+  const basename = lower.slice(lower.lastIndexOf("/") + 1, -".xml".length);
+  return APP_FUNCTION_NAME_PATTERN.test(basename);
+};
 
 const STATIC_SCOPE_LIMITATION =
   "Static AppFunction declarations and XML schema assets do not establish runtime registration, caller authorization, or execution.";
@@ -722,7 +730,7 @@ export const readAndroidAppFunctionAssets = async (input: {
             break;
           }
           const isReferenced = referenced.has(entry.path);
-          const matchesPattern = APP_FUNCTION_ASSET_PATTERN.test(entry.path);
+          const matchesPattern = isAppFunctionAssetPath(entry.path);
           if (!isReferenced && !matchesPattern) continue;
           if (entry.kind === "directory" && !isReferenced) continue;
           if (seenPaths.has(entry.path)) duplicatePaths.add(entry.path);
