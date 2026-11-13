@@ -1774,12 +1774,18 @@ it("serializes script loading against concurrent close and unloads the loaded sc
   void closing.then(() => {
     closed = true;
   });
-  expect(manager.closeSession(started.value.sessionId)).toBe(closing);
+  const secondClose = manager.closeSession(started.value.sessionId);
+  let secondClosed = false;
+  void secondClose.then(() => {
+    secondClosed = true;
+  });
   await Promise.resolve();
   expect(closed).toBe(false);
+  expect(secondClosed).toBe(false);
   finishScriptLoad?.();
   expect((await loading).ok).toBe(true);
   expect((await closing).ok).toBe(true);
+  expect((await secondClose).ok).toBe(true);
   expect(bindings.device.session.scripts[0]?.isDestroyed).toBe(true);
   expect(bindings.device.session.isDetached()).toBe(true);
 });

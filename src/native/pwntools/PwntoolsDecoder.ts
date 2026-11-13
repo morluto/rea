@@ -78,7 +78,7 @@ import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
 
 /** Names the detected host so a host refusal is not read as a target refusal. */
-export const pwntoolsHostRequirement = (
+const pwntoolsHostRequirement = (
   platform: NodeJS.Platform,
   arch: string,
 ): string =>

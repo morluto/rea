@@ -19,7 +19,6 @@ import type {
   NativeCommandRunner,
 } from "./CommandRunner.js";
 import { XcrunCommandRunner } from "./CommandRunner.js";
-import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
 
 vi.mock("../process/OwnedCommand.js", async (original) => ({
@@ -68,7 +67,6 @@ describe("native_command_timeout_ms", () => {
     const result = await execute(runner, {});
     expect(result.ok, JSON.stringify(result)).toBe(true);
     expect(runner.timeouts.every((timeout) => timeout === 60_000)).toBe(true);
-    expect(DEFAULT_NATIVE_COMMAND_TIMEOUT_MS).toBe(60_000);
     expect(runner.timeouts.length).toBeGreaterThan(0);
   });
 

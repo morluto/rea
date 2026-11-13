@@ -34,6 +34,7 @@ import {
 import type { SignalRecordingPort } from "../application/signals/SignalRecordingService.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ARTIFACT_PRODUCER_LIMITATION,
   ArtifactAnalysisResources,
   artifactCommandOutput,
   type ArtifactAnalysisRuntime,
@@ -55,7 +56,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { createEvidence } from "../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { windowAnnotationText } from "../domain/signals/annotationTextWindow.js";
@@ -426,7 +427,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
               "Annotations are the selected decoder's interpretation of the recorded samples and caller-selected settings, not independently verified protocol semantics. Empty output does not establish absence of traffic.",
               "Sample-number ranges and display text are preserved verbatim, not converted to timestamps or parsed as a lossless byte stream. All producer stderr is retained, including warnings on exit zero.",
               "Only a private copy of the selected file is decoded. Hardware discovery/acquisition and target execution are not requested. Caller-supplied tools, plugins and decoder modules are trusted; this is not an OS sandbox.",
-              "Linux prlimit enforces the reported per-process address-space, per-file and CPU limits before execution with no core dumps, preserving tighter inherited soft and hard limits. Input, command deadline and retained output budgets are reported in limits; producer_limits can change their requested defaults on the next call without restart. Output overflow fails. Parser and transport bounds remain independent. These are per-process/per-file limits, not aggregate memory or filesystem quotas; caller-supplied tools and the limiter are trusted.",
+              ARTIFACT_PRODUCER_LIMITATION,
             ],
           }),
         );
@@ -454,14 +455,12 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     return this.#resources.finish(
       result,
       (execution) =>
-        createEvidence(execution.subject ?? undefined, execution.provider, {
+        createAnalysisExecutionEvidence(
           operation,
-          parameters: input,
-          result: execution.result,
-          confidence: "observed",
-          locations: execution.locations,
-          limitations: execution.limitations,
-        }),
+          input,
+          execution,
+          "observed",
+        ),
       operation,
       options?.signal,
     );

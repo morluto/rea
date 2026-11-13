@@ -265,6 +265,26 @@ it("keeps mutable and shadowed aliases from proving a setting read", () => {
   );
 });
 
+it("does not attribute an unrelated same-named local to a numeric limit", () => {
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/shadowed-paths.ts",
+      source: `
+        const selectedPath = process.env.REA_SAMPLE_MAX_BYTES;
+        Number(selectedPath);
+        function inspect(path: string) {
+          let selectedPath = path;
+          consume(selectedPath);
+        }
+      `,
+    },
+  ]);
+  expect(discovered.get("REA_SAMPLE_MAX_BYTES")?.sites).toEqual(
+    expect.arrayContaining([expect.objectContaining({ evidence: "direct" })]),
+  );
+  expect(discovered.unresolved).toEqual([]);
+});
+
 it("keeps a destructured environment key, including a rename and a default", () => {
   const name = "REA_NEW_MAX_BYTES";
   const discovered = discoverNumericLimitUses([

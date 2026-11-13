@@ -90,7 +90,6 @@ it("reports a failed session close, joins concurrent attempts and retries the re
     if (!(reason instanceof AggregateError))
       throw new Error("Harness ignored the session close failure");
     expect(reason.errors).toContain(failure);
-    expect(concurrent).toBe(closing);
     expect(await concurrentOutcome).toBe(reason);
     expect(failure.cleanupIncomplete).toBe(true);
     expect(await harness.session.status()).toMatchObject({

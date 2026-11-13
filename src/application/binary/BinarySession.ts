@@ -1396,11 +1396,6 @@ export class BinarySession
       : structuredClone(this.#active.target);
   }
 
-  activeBundleResourceRoot(): ResolvedAppBundleResourceRoot | undefined {
-    const root = this.#activeBundleResources?.root;
-    return root === undefined ? undefined : structuredClone(root);
-  }
-
   override exportAnalysisSnapshot() {
     if (this.#activeBundleResources !== undefined)
       return err(new ResourceSnapshotMismatchError("export"));

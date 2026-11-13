@@ -1,6 +1,7 @@
 import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import { access } from "node:fs/promises";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
+import * as processOutput from "../../process/ExecFileOutput.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -95,15 +96,11 @@ it("preserves Linux process inspection failure and recovery before launching the
   const cause = Object.assign(new Error("ps permission denied"), {
     code: "EACCES",
   });
-  const host = createSystemProcessOwnershipHost(
-    "linux",
-    {},
-    {
-      execFileOutput: async () => {
-        throw cause;
-      },
-    },
-  );
+  const command = vi
+    .spyOn(processOutput, "execFileOutput")
+    .mockRejectedValue(cause);
+  onTestFinished(() => command.mockRestore());
+  const host = createSystemProcessOwnershipHost("linux", {});
   const result = await runSourceMapCommand(
     "{}",
     "/probe/source.map",
@@ -131,16 +128,14 @@ it("retains a physical process inspection failure when the caller cancels concur
   const physical = Object.assign(new Error("ps permission denied"), {
     code: "EACCES",
   });
-  const host = createSystemProcessOwnershipHost(
-    "linux",
-    {},
-    {
-      execFileOutput: async () => {
-        controller.abort(reason);
-        throw physical;
-      },
-    },
-  );
+  const command = vi
+    .spyOn(processOutput, "execFileOutput")
+    .mockImplementation(async () => {
+      controller.abort(reason);
+      throw physical;
+    });
+  onTestFinished(() => command.mockRestore());
+  const host = createSystemProcessOwnershipHost("linux", {});
   const result = await runSourceMapCommand(
     "{}",
     "/probe/source.map",

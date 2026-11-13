@@ -169,6 +169,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
         assertContainedDirectory(root, directory, admittedRoot.identity),
       );
     }
+    abortIfNeeded(signal);
     if (unrepresentableNameCount > 0)
       options?.onCoverage?.({
         status: "unknown",
@@ -254,6 +255,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
     };
     try {
       for (;;) {
+        abortIfNeeded(signal);
         await withDirectoryIoContext("inspect directory", directory, () =>
           assertContainedDirectory(root, directory, admittedRoot.identity),
         );

@@ -38,13 +38,13 @@ export const guestFileAnswerBytes = (bytes: number, files: number): number =>
 /** The most REA reads into memory for one answer of unknown size: a quarter of the V8 heap, as for recordings. */
 const heapQuarter = () => Math.floor(getHeapStatistics().heap_size_limit / 4);
 /** Where the data/get answer ceiling comes from. The guest's reported size does not change it. */
-export const GUEST_FILE_ANSWER_SOURCE = "v8.heap_size_limit/4";
+const GUEST_FILE_ANSWER_SOURCE = "v8.heap_size_limit/4";
 /**
  * Copies of one answer held together while it is parsed: the raw chunks, the
  * concatenated buffer, and the text. The decoded files replace the text
  * afterward and are smaller than the base64 body.
  */
-export const GUEST_FILE_ANSWER_COPIES = 3;
+const GUEST_FILE_ANSWER_COPIES = 3;
 
 /** The host ceiling for one data/get answer, including base64 expansion and each file's envelope. */
 export const guestFileAnswerCeiling = (): number => heapQuarter();
@@ -105,7 +105,7 @@ export interface GuestFilePart {
  * The decoded files, or a refusal when they contain more bytes than the
  * computer reported. An underreported size must not admit the larger body.
  */
-export const retainGuestFiles = (
+const retainGuestFiles = (
   parts: readonly GuestFilePart[],
   reportedBytes: number,
   files: number,
