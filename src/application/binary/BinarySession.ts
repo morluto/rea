@@ -54,7 +54,10 @@ import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { recordEvidenceSources } from "../investigation/recordEvidenceSources.js";
 import { recoverProviderSourceFailure } from "../investigation/sourcePublicationRecovery.js";
 import { BinarySessionRecords } from "./BinarySessionRecords.js";
-import { binarySessionStatus } from "./BinarySessionStatus.js";
+import {
+  binarySessionStatus,
+  currentRouteCapability,
+} from "./BinarySessionStatus.js";
 import { SessionRuntimeAvailability } from "./SessionRuntimeAvailability.js";
 import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
@@ -1567,6 +1570,8 @@ export class BinarySession
       parameters: arguments_,
       snapshotContext: options?.snapshotContext,
       nativeSourceAdmitted: this.#active?.nativeSourceAdmitted === true,
+      isOperationAvailable: (operation) => this.#currentlyAvailable(operation),
+      isOperationAdvertised: options?.isOperationAdvertised,
       unboundOperationError: (operation, route) =>
         this.#providerRouter.unboundOperationError(operation, route),
       lookupSnapshot: (target, profile, operation, parameters) =>
@@ -1703,6 +1708,20 @@ export class BinarySession
       return ok(retained);
     }
     return execution;
+  }
+
+  /** Whether the active route can run an operation now, as status reports it. */
+  #currentlyAvailable(operation: string): boolean {
+    const active = this.#active;
+    const descriptor = active?.route.capabilities.get(operation);
+    return (
+      descriptor !== undefined &&
+      currentRouteCapability(
+        descriptor,
+        active?.target,
+        this.#runtimeAvailability.entries,
+      ).available
+    );
   }
 
   #clearRuntimeAvailability(): void {
