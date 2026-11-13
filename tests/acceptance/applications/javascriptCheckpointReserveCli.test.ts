@@ -60,7 +60,6 @@ cliTest.skipIf(process.versions.bun !== undefined).for([
   { laterSources: 1, heapMb: 448, methodsCount: 600, retainGraph: false },
 ])(
   "preserves evidence with $laterSources later checkpoints and a $heapMb MiB parent heap",
-  { timeout: 90_000 },
   async ({ laterSources, heapMb, methodsCount, retainGraph }, { cli }) => {
     const root = await createTestTempDirectory("rea-js-checkpoint-reserve-");
     const source = Array.from(
@@ -173,7 +172,6 @@ cliTest.skipIf(process.versions.bun !== undefined).for([
 
 cliTest.skipIf(process.versions.bun !== undefined)(
   "keeps every source's static facts after semantic results use the parent result budget",
-  { timeout: 90_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-js-static-capacity-");
     // Plain functions produce semantic graphs large enough to use the result

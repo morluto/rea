@@ -171,7 +171,6 @@ cliTest.skipIf(process.platform === "win32")(
     expect(await readFile(configPath, "utf8")).toBe(original);
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
   },
-  60_000,
 );
 
 cliTest.skipIf(process.platform === "win32")(
