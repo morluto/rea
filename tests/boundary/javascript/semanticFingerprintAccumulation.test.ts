@@ -94,5 +94,8 @@ it.each(["direct", "transferred"] as const)(
       });
     }
   },
-  30_000,
+  // About 22 s of CPU-bound projection on a typical hosted runner. A suite
+  // deadline of 30 s fails it on slower runners, and an explicit 30 s also
+  // removed the suite's longer coverage-mode allowance.
+  60_000,
 );
