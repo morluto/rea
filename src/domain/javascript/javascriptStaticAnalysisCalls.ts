@@ -4,7 +4,10 @@ import {
 } from "./javascriptNetworkRequests.js";
 import * as t from "@babel/types";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
-import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import {
+  traverseJavaScriptAst,
+  traverseJavaScriptValueAst,
+} from "./javascriptSemanticTraversal.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 
 import {
@@ -12,7 +15,10 @@ import {
   htmlUrlText,
   stripQueryAndFragment,
 } from "../artifactPathSyntax.js";
-import { sanitizeEndpointCandidate } from "../browserObservation.js";
+import {
+  removeTransportCredentials,
+  sanitizeEndpointCandidate,
+} from "../browserObservation.js";
 import {
   electronCalleePath,
   electronCandidateAuthority,
@@ -827,12 +833,65 @@ const addPartialNetworkEndpoint = (
   addEndpoint(context, {
     node,
     kind: "network",
-    // Partial values preserve the original expression text, byte for byte.
-    value: sourceSlice(context.source, target),
+    value: partialEndpointValue(context.source, target),
     mechanism: `call:${name}`,
     ...(authority === "candidate" ? { interpretation: "candidate" } : {}),
     resolution: "partial",
   });
+
+interface SourceEdit {
+  readonly start: number;
+  readonly end: number;
+  readonly text: string;
+}
+
+/**
+ * Partial values preserve the original expression text, byte for byte, except
+ * URL userinfo in its literals. That is a transport credential, which exact
+ * endpoint values already omit, so no analyzer output echoes it.
+ */
+const partialEndpointValue = (source: string, target: t.Node): string => {
+  const edits: SourceEdit[] = [];
+  traverseJavaScriptAst(target, {
+    enter: (node) => {
+      if (!t.isStringLiteral(node) && !t.isTemplateElement(node)) return;
+      const edit = credentialFreeLiteral(source, node);
+      if (edit !== undefined) edits.push(edit);
+    },
+  });
+  let value = sourceSlice(source, target);
+  const base = target.start ?? 0;
+  // Apply the last edit first so earlier offsets stay valid.
+  for (const edit of edits.sort((left, right) => right.start - left.start))
+    value = `${value.slice(0, edit.start - base)}${edit.text}${value.slice(edit.end - base)}`;
+  return value;
+};
+
+/** Edit one literal whose value spells URL userinfo; leave every other literal. */
+const credentialFreeLiteral = (
+  source: string,
+  node: t.StringLiteral | t.TemplateElement,
+): SourceEdit | undefined => {
+  const cooked = t.isStringLiteral(node) ? node.value : node.value.cooked;
+  if (
+    typeof cooked !== "string" ||
+    typeof node.start !== "number" ||
+    typeof node.end !== "number"
+  )
+    return undefined;
+  const redacted = removeTransportCredentials(cooked);
+  if (redacted === cooked) return undefined;
+  const quoted = t.isStringLiteral(node);
+  const start = quoted ? node.start + 1 : node.start;
+  const end = quoted ? node.end - 1 : node.end;
+  // An unescaped body keeps its quotes and every other byte.
+  if (source.slice(start, end) === cooked)
+    return { start, end, text: redacted };
+  // An escape moves the offsets, so write the literal again from its value.
+  return quoted
+    ? { start: node.start, end: node.end, text: JSON.stringify(redacted) }
+    : { start, end, text: redacted.replace(/[\\`]|\$\{/gu, "\\$&") };
+};
 
 const resolvedRequestTarget = (
   node: t.Node,

@@ -538,3 +538,65 @@ it("resolves net.request from the string an unchanged URL object returns", () =>
     },
   ]);
 });
+
+// A partial value echoes source text, so URL userinfo written in its literals
+// is a transport credential and goes the way exact endpoint values already do.
+it.each([
+  [
+    'fetch({ url: "https://user:secret@api.example.test/v1" });',
+    '{ url: "https://api.example.test/v1" }',
+  ],
+  [
+    'fetch("https://user:secret@api.example.test/" + path);',
+    '"https://api.example.test/" + path',
+  ],
+  [
+    "fetch(`https://user:secret@api.example.test/${path}`);",
+    "`https://api.example.test/${path}`",
+  ],
+  [
+    "new WebSocket('wss://user:secret@api.example.test/' + path);",
+    "'wss://api.example.test/' + path",
+  ],
+  [
+    // The host is dynamic, so the literal is only the start of a URL.
+    "fetch(`https://user:secret@${host}/v1`);",
+    "`https://${host}/v1`",
+  ],
+  [
+    // The escape moves every offset, so the literal is written again.
+    'fetch("https://user:secret\\u0040api.example.test/" + path);',
+    '"https://api.example.test/" + path',
+  ],
+  [
+    'import { net } from "electron"; net.request({ method: "POST", url: "https://user:secret@api.example.test/v1" });',
+    '{ method: "POST", url: "https://api.example.test/v1" }',
+  ],
+  [
+    'import { net } from "electron"; net.fetch("https://user:secret@api.example.test/" + path);',
+    '"https://api.example.test/" + path',
+  ],
+])(
+  "removes URL userinfo from a partial endpoint expression: %s",
+  (source, value) => {
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.endpoints.map((endpoint) => endpoint.value)).toEqual([
+      value,
+    ]);
+    expect(analysis.endpoints[0]?.resolution).toBe("partial");
+    expect(JSON.stringify(analysis)).not.toContain("secret");
+  },
+);
+
+it("keeps partial expression text that only resembles URL credentials", () => {
+  const source =
+    'fetch({ url: "https://api.example.test/@scope/pkg", mail: "user:secret@api.example.test", next: "https://api.example.test/?to=a@b" });';
+  expect(endpoints(source)).toEqual([
+    {
+      kind: "network",
+      value: source.slice("fetch(".length, -");".length),
+      mechanism: "call:fetch",
+      resolution: "partial",
+    },
+  ]);
+});

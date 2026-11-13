@@ -340,3 +340,18 @@ const credentialFreeHref = (parsed: URL): string => {
 export const sanitizeEndpointCandidate = (value: string): string => {
   return sanitizeBrowserUrl(value).url;
 };
+
+/**
+ * Remove URL userinfo from text that opens with a URL authority. A fragment
+ * such as `https://user:secret@`, the start of a URL whose host comes later,
+ * is not yet a URL that `sanitizeBrowserUrl` can parse.
+ */
+export const removeTransportCredentials = (text: string): string => {
+  // Userinfo ends at an `@`; skip the URL parse for the many texts without one.
+  if (!text.includes("@")) return text;
+  const { credentials } = parseRecordedTransportUrl(text);
+  if (credentials === null) return text;
+  return credentials === "ambiguous"
+    ? sanitizeBrowserUrl(text).url
+    : `${text.slice(0, credentials.start)}${text.slice(credentials.end)}`;
+};

@@ -6,6 +6,7 @@ import {
   browserOriginSchema,
   recordedBrowserOriginSchema,
   recordedBrowserObservationEndpointSchema,
+  removeTransportCredentials,
   sanitizeEndpointCandidate,
   sanitizeBrowserUrl,
 } from "./browserObservation.js";
@@ -285,3 +286,24 @@ describe("browser observation sensitive surfaces and retention", () => {
     );
   });
 });
+
+it.each([
+  ["https://user:secret@api.example.test/v1", "https://api.example.test/v1"],
+  // The host may come from an expression, so the text is not yet a URL.
+  ["https://user:secret@", "https://"],
+  ["//user:secret@api.example.test/v1", "//api.example.test/v1"],
+  ["https:user:secret@api.example.test/v1", "https://api.example.test/v1"],
+  // Only the authority's userinfo is a transport credential.
+  [
+    "https://api.example.test/@scope/pkg",
+    "https://api.example.test/@scope/pkg",
+  ],
+  ["https://api.example.test/?to=a@b", "https://api.example.test/?to=a@b"],
+  ["user:secret@api.example.test", "user:secret@api.example.test"],
+  ["/api/search?q=rea#results", "/api/search?q=rea#results"],
+])(
+  "removes URL userinfo from text that opens with an authority: %s",
+  (text, expected) => {
+    expect(removeTransportCredentials(text)).toBe(expected);
+  },
+);
