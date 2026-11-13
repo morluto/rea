@@ -226,7 +226,7 @@ describe("SoC catalog selection", () => {
     );
 
     expect(report.detectedPlatforms.map((candidate) => candidate.platform)).toEqual(
-      ["esp32", "esp32c3", "esp32c6"],
+      ["esp32", "esp32c2", "esp32c3", "esp32c6"],
     );
     expect(
       report.detectedPlatforms.every(
@@ -237,7 +237,7 @@ describe("SoC catalog selection", () => {
     expect(
       report.peripheralBlocks.some((block) => block.socPeripheralName === "UART0"),
     ).toBe(false);
-    expect(report.limitations[0]).toContain("esp32, esp32c3, esp32c6");
+    expect(report.limitations[0]).toContain("esp32, esp32c2, esp32c3, esp32c6");
   });
 
   it("names the ESP32-C6 UART when no other catalog owns the window", () => {
@@ -294,6 +294,27 @@ describe("SoC catalog selection", () => {
     ).toBe(false);
     expect(report.attributions[0]?.regionName).toBe("System RAM");
     expect(report.attributions[0]?.isMmio).toBe(false);
+  });
+});
+
+describe("ESP32-C2 catalog selection", () => {
+  it("names the ESP32-C2 sensitive block when no other catalog owns it", () => {
+    const report = reconstructHardwareFromReferences(
+      [{ target_address: "0x600c1000", read: true }],
+      "riscv",
+    );
+
+    expect(report.detectedPlatforms).toEqual([
+      {
+        platform: "esp32c2",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["SENSITIVE"],
+      },
+    ]);
+    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe("SENSITIVE");
+    expect(report.limitations).toEqual([]);
   });
 });
 

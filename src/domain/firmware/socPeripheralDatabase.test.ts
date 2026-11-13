@@ -243,6 +243,13 @@ describe("CPU-compatible catalog scoring", () => {
         matchedPeripherals: ["UART0"],
       },
       {
+        platform: "esp32c2",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART0"],
+      },
+      {
         platform: "esp32c3",
         matchedCount: 1,
         totalAddresses: 1,
@@ -326,6 +333,7 @@ describe("ESP32-C3 peripheral windows", () => {
     const leaders = detectSocPlatform(["0x60000000"], "riscv");
     expect(leaders.map((candidate) => candidate.platform)).toEqual([
       "esp32",
+      "esp32c2",
       "esp32c3",
       "esp32c6",
     ]);
@@ -345,18 +353,23 @@ describe("ESP32-C3 peripheral windows", () => {
 describe("ESP32-C6 peripheral windows", () => {
   it("keeps a shared page from selecting only one family", () => {
     expect(lookupSocPeripheral("0x60002000", "esp32")?.name).toBe("SPI1");
+    expect(lookupSocPeripheral("0x60002000", "esp32c2")?.name).toBe("SPI1");
     expect(lookupSocPeripheral("0x60002000", "esp32c3")?.name).toBe("SPI1");
     expect(lookupSocPeripheral("0x60002000", "esp32c6")?.name).toBe("SPI0");
+    expect(lookupSocPeripheral("0x60010000", "esp32c2")?.name).toBe("UART1");
     expect(lookupSocPeripheral("0x60010000", "esp32c3")?.name).toBe("UART1");
     expect(lookupSocPeripheral("0x60010000", "esp32c6")?.name).toBe("INTMTX");
+    expect(lookupSocPeripheral("0x600c0000", "esp32c2")?.name).toBe("SYSTEM");
     expect(lookupSocPeripheral("0x600c0000", "esp32c3")?.name).toBe("SYSTEM");
     expect(lookupSocPeripheral("0x600c0000", "esp32c6")?.name).toBe("TRACE");
     expect(detectSocPlatform(["0x60002000"], "riscv").map((candidate) => candidate.platform)).toEqual([
       "esp32",
+      "esp32c2",
       "esp32c3",
       "esp32c6",
     ]);
     expect(detectSocPlatform(["0x60010000"], "riscv").map((candidate) => candidate.platform)).toEqual([
+      "esp32c2",
       "esp32c3",
       "esp32c6",
     ]);
@@ -364,6 +377,7 @@ describe("ESP32-C6 peripheral windows", () => {
 
   it("lets a C6-only window select that family", () => {
     expect(lookupSocPeripheral("0x60001000", "esp32")).toBeNull();
+    expect(lookupSocPeripheral("0x60001000", "esp32c2")).toBeNull();
     expect(lookupSocPeripheral("0x60001000", "esp32c3")).toBeNull();
     expect(lookupSocPeripheral("0x60001000", "esp32c6")?.name).toBe("UART1");
     expect(lookupSocPeripheral("0x6000f000", "esp32c3")).toBeNull();
@@ -382,5 +396,39 @@ describe("ESP32-C6 peripheral windows", () => {
       },
     ]);
     expect(detectSocPlatform(["0x6000f000"], "arm")).toEqual([]);
+  });
+});
+
+describe("ESP32-C2 peripheral windows", () => {
+  it("keeps a shared page from selecting only one family", () => {
+    expect(lookupSocPeripheral("0x60008000", "esp32c2")?.name).toBe("RTCCNTL");
+    expect(lookupSocPeripheral("0x60008000", "esp32c2")?.sizeBytes).toBe(0x800);
+    expect(lookupSocPeripheral("0x60008800", "esp32c3")).toBeNull();
+    expect(lookupSocPeripheral("0x60008800", "esp32c2")?.name).toBe("EFUSE");
+    expect(lookupSocPeripheral("0x60020000", "esp32c2")).toBeNull();
+    expect(detectSocPlatform(["0x60008800"], "riscv").map((candidate) => candidate.platform)).toEqual([
+      "esp32",
+      "esp32c2",
+      "esp32c6",
+    ]);
+  });
+
+  it("lets a C2-only window select that family", () => {
+    expect(lookupSocPeripheral("0x60024000", "esp32")).toBeNull();
+    expect(lookupSocPeripheral("0x60024000", "esp32c3")).toBeNull();
+    expect(lookupSocPeripheral("0x60024000", "esp32c6")).toBeNull();
+    expect(lookupSocPeripheral("0x60024000", "esp32c2")?.name).toBe("SPI2");
+    expect(lookupSocPeripheral("0x600c1000", "esp32c6")).toBeNull();
+    expect(lookupSocPeripheral("0x600c1000", "esp32c2")?.name).toBe("SENSITIVE");
+    expect(detectSocPlatform(["0x600c1000"], "riscv")).toEqual([
+      {
+        platform: "esp32c2",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["SENSITIVE"],
+      },
+    ]);
+    expect(detectSocPlatform(["0x600c1000"], "arm")).toEqual([]);
   });
 });

@@ -9,6 +9,7 @@ export const SOC_PLATFORMS = [
   "gd32f4",
   "rp2040",
   "esp32",
+  "esp32c2",
   "esp32c3",
   "esp32c6",
 ] as const;
@@ -1471,6 +1472,113 @@ const ESP32C6_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   },
 ];
 
+// ESP32-C2 bases from esp-idf soc/esp32c2/register/soc/reg_base.h.
+// Pages already recorded for another RISC-V ESP catalog are recorded here too,
+// so a shared address cannot select only one family. SPI2 and SENSITIVE use
+// C2 bases those catalogs do not own. Chip id 0x000C is riscv.
+const ESP32C2_PERIPHERALS: readonly InternalPeripheralEntry[] = [
+  {
+    name: "UART0",
+    base: 0x60000000n,
+    size: 0x1000,
+    bus: "System",
+    description: "UART register block. DR_REG_UART_BASE",
+  },
+  {
+    name: "SPI1",
+    base: 0x60002000n,
+    size: 0x1000,
+    bus: "System",
+    description: "SPI1 register block. DR_REG_SPI1_BASE",
+  },
+  {
+    name: "SPI0",
+    base: 0x60003000n,
+    size: 0x1000,
+    bus: "System",
+    description: "SPI0 register block. DR_REG_SPI0_BASE",
+  },
+  {
+    name: "GPIO",
+    base: 0x60004000n,
+    size: 0x1000,
+    bus: "System",
+    description: "GPIO register block. DR_REG_GPIO_BASE",
+  },
+  {
+    name: "RTCCNTL",
+    base: 0x60008000n,
+    size: 0x800,
+    bus: "RTC",
+    description:
+      "RTC control register block. DR_REG_RTCCNTL_BASE; the next header base is EFUSE",
+  },
+  {
+    name: "EFUSE",
+    base: 0x60008800n,
+    size: 0x800,
+    bus: "System",
+    description:
+      "eFuse register block. DR_REG_EFUSE_BASE; the next header base is IO_MUX",
+  },
+  {
+    name: "IO_MUX",
+    base: 0x60009000n,
+    size: 0x1000,
+    bus: "System",
+    description: "IO mux register block. DR_REG_IO_MUX_BASE",
+  },
+  {
+    name: "UART1",
+    base: 0x60010000n,
+    size: 0x1000,
+    bus: "System",
+    description: "UART1 register block. DR_REG_UART1_BASE",
+  },
+  {
+    name: "I2C0",
+    base: 0x60013000n,
+    size: 0x1000,
+    bus: "System",
+    description: "I2C register block. DR_REG_I2C_EXT_BASE",
+  },
+  {
+    name: "TIMG0",
+    base: 0x6001f000n,
+    size: 0x1000,
+    bus: "System",
+    description: "Timer group 0. DR_REG_TIMERGROUP0_BASE",
+  },
+  {
+    name: "SYSTIMER",
+    base: 0x60023000n,
+    size: 0x1000,
+    bus: "System",
+    description: "System timer. DR_REG_SYSTIMER_BASE",
+  },
+  {
+    name: "SPI2",
+    base: 0x60024000n,
+    size: 0x1000,
+    bus: "System",
+    description: "SPI2 register block. DR_REG_SPI2_BASE",
+  },
+  {
+    name: "SYSTEM",
+    base: 0x600c0000n,
+    size: 0x1000,
+    bus: "System",
+    description: "System register block. DR_REG_SYSTEM_BASE",
+  },
+  {
+    name: "SENSITIVE",
+    base: 0x600c1000n,
+    size: 0x1000,
+    bus: "System",
+    description: "Sensitive register block. DR_REG_SENSITIVE_BASE",
+  },
+];
+
 const PLATFORM_PERIPHERALS: Record<
   SocPlatform,
   readonly InternalPeripheralEntry[]
@@ -1481,6 +1589,7 @@ const PLATFORM_PERIPHERALS: Record<
   gd32f4: GD32F4_PERIPHERALS,
   rp2040: RP2040_PERIPHERALS,
   esp32: ESP32_PERIPHERALS,
+  esp32c2: ESP32C2_PERIPHERALS,
   esp32c3: ESP32C3_PERIPHERALS,
   esp32c6: ESP32C6_PERIPHERALS,
 };
@@ -1493,6 +1602,7 @@ const PLATFORM_CPU: Record<SocPlatform, readonly HardwareArchitecture[]> = {
   gd32f4: ["arm", "cortex-m"],
   rp2040: ["arm", "cortex-m"],
   esp32: ["riscv"],
+  esp32c2: ["riscv"],
   esp32c3: ["riscv"],
   esp32c6: ["riscv"],
 };
