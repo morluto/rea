@@ -263,10 +263,6 @@ const decodeText = async (
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
 
-/** Line terminators other than LF that a `.config` value may not contain. */
-const isLineBreak = (char: number): boolean =>
-  char === 0x0d || char === 0x2028 || char === 0x2029;
-
 /**
  * Decoded `"..."` value whose only escapes are `\"` and `\\`. The line is
  * validated in place first, yielding once per TURN_STRIDE characters, so the
@@ -287,7 +283,9 @@ const unquote = async (
       await yieldTurn(signal);
     }
     const char = raw.charCodeAt(index);
-    if (char === QUOTE || isLineBreak(char)) return null;
+    // Kconfig writes Unicode separators literally inside quoted strings.
+    // LF already frames records; CR remains disallowed in a value.
+    if (char === QUOTE || char === 0x0d) return null;
     if (char !== BACKSLASH) continue;
     const next = raw.charCodeAt(index + 1);
     if (index + 1 >= end || (next !== QUOTE && next !== BACKSLASH)) return null;
