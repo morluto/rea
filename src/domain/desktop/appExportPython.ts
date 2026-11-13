@@ -176,9 +176,14 @@ def _ensure_state_aliases(home: Path) -> None:
         link.symlink_to(destination)
 
 
-def _dconf(arguments: list, environment: dict) -> str:
-    return subprocess.run(["dconf", *arguments], env={**os.environ, **environment}, capture_output=True, text=True,
-                          check=True).stdout
+def _dconf(arguments: list, environment: dict, cwd: Path | None = None) -> str:
+    child_environment = {**os.environ, **environment}
+    if cwd is not None:
+        child_environment["PATH"] = os.pathsep.join(
+            part if os.path.isabs(part) else os.path.join(os.getcwd(), part)
+            for part in child_environment.get("PATH", os.defpath).split(os.pathsep))
+    return subprocess.run(["dconf", *arguments], env=child_environment, capture_output=True, text=True,
+                          check=True, cwd=cwd).stdout
 
 
 def _load_dconf(home: Path) -> None:
@@ -195,8 +200,8 @@ def _load_dconf(home: Path) -> None:
             keyfiles.mkdir()
             if database.is_file():
                 profile = Path(scratch, "profile")
-                profile.write_text(f"file-db:{database}\n")
-                existing = _dconf(["dump", "/"], {"DCONF_PROFILE": str(profile)})
+                profile.write_text("file-db:./user\n")
+                existing = _dconf(["dump", "/"], {"DCONF_PROFILE": str(profile.resolve())}, cwd=database.parent)
                 (keyfiles / "00-existing").write_text(existing)
             (keyfiles / "01-captured").write_text(_respelled(DCONF, home))
             _dconf(["compile", str(Path(scratch, "user")), str(keyfiles)], {})

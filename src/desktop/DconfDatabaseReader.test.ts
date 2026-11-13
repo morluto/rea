@@ -1,5 +1,5 @@
-import { readFile, readdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -8,24 +8,88 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { dumpDconfDatabase } from "./DconfDatabaseReader.js";
 
 describe.skipIf(process.platform === "win32")("dumpDconfDatabase", () => {
-  it("names the staged database in a profile written beside it", async () => {
-    const tools = await createTestTempDirectory("dconf-tool-");
-    const command = join(tools, "dconf");
-    await writeFile(command, '#!/bin/sh\ncat "$DCONF_PROFILE"\n', {
-      mode: 0o755,
-    });
-    const staged = await createTestTempDirectory("dconf-staged-");
-    const database = join(staged, "user");
-    await writeFile(database, "GVariant");
+  it.each(["ordinary", "hash#stage", "line\nbreak"])(
+    "binds a relative profile to the staged database directory: %s",
+    async (name) => {
+      const tools = await createTestTempDirectory("dconf-tool-");
+      const command = join(tools, "dconf");
+      await writeFile(
+        command,
+        '#!/bin/sh\nprintf "%s\\n" "$PWD"\ncat "$DCONF_PROFILE"\n',
+        {
+          mode: 0o755,
+        },
+      );
+      const staged = join(await createTestTempDirectory("dconf-staged-"), name);
+      await mkdir(staged);
+      const database = join(staged, "user");
+      await writeFile(database, "GVariant");
 
-    const dump = await dumpDconfDatabase(database, {
-      PATH: process.env.PATH,
-      REA_DCONF_COMMAND: command,
-    });
+      const dump = await dumpDconfDatabase(database, {
+        PATH: process.env.PATH,
+        REA_DCONF_COMMAND: command,
+      });
 
-    expect(dump).toEqual({ ok: true, text: `file-db:${database}\n` });
-    expect((await readdir(staged)).sort()).toEqual(["profile", "user"]);
-  });
+      expect(dump).toEqual({ ok: true, text: `${staged}\nfile-db:./user\n` });
+      expect((await readdir(staged)).sort()).toEqual(["profile", "user"]);
+    },
+  );
+
+  it.each(["user#other", "user\nother", "user "])(
+    "refuses a filename the profile cannot represent instead of reading another database: %j",
+    async (name) => {
+      const staged = await createTestTempDirectory("dconf-profile-name-");
+      await writeFile(join(staged, name), "GVariant");
+      const dump = await dumpDconfDatabase(join(staged, name), {
+        REA_DCONF_COMMAND: "/must-not-start-for-an-unrepresentable-name",
+      });
+      expect(dump).toEqual({
+        ok: false,
+        error:
+          "The staged dconf database filename cannot be represented in a dconf profile",
+      });
+      expect(await readdir(staged)).toEqual([name]);
+    },
+  );
+
+  it.each(["relative-command", "relative-PATH", "empty-PATH"])(
+    "preserves launch selection after changing the reader cwd: %s",
+    async (selection) => {
+      const root = await createTestTempDirectory("dconf-command-context-");
+      const tools = join(root, "tools"),
+        staged = join(root, "staged");
+      await Promise.all([mkdir(tools), mkdir(staged)]);
+      const command = join(tools, "dconf");
+      await writeFile(command, "#!/bin/sh\nprintf selected", { mode: 0o755 });
+      await writeFile(join(staged, "dconf"), "#!/bin/sh\nprintf foreign", {
+        mode: 0o755,
+      });
+      await writeFile(join(staged, "user"), "GVariant");
+      const dump = await dumpDconfDatabase(
+        join(staged, "user"),
+        selection === "relative-command"
+          ? {
+              PATH: process.env.PATH,
+              REA_DCONF_COMMAND: relative(process.cwd(), command),
+            }
+          : {
+              PATH:
+                selection === "relative-PATH"
+                  ? relative(process.cwd(), tools)
+                  : "",
+            },
+      );
+      expect(dump).toEqual(
+        selection === "empty-PATH"
+          ? {
+              ok: false,
+              error:
+                "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND",
+            }
+          : { ok: true, text: "selected" },
+      );
+    },
+  );
 
   it("retains a physical profile write failure", async () => {
     const staged = await createTestTempDirectory("dconf-existing-profile-");
@@ -93,7 +157,7 @@ describe.skipIf(process.platform === "win32")("dumpDconfDatabase", () => {
         await expect(readFile(ready)).rejects.toMatchObject({ code: "ENOENT" });
       } else {
         expect(await readFile(join(staged, "profile"), "utf8")).toBe(
-          `file-db:${database}\n`,
+          "file-db:./user\n",
         );
       }
     },

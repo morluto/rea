@@ -1,5 +1,5 @@
-import { writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { realpath, writeFile } from "node:fs/promises";
+import { basename, delimiter, dirname, isAbsolute, join, sep } from "node:path";
 
 import {
   execFileOutput,
@@ -20,8 +20,8 @@ export type DconfDump =
 
 /**
  * Dump a staged dconf user database with `dconf dump /`. A profile written
- * beside it, in the caller's private directory, names it as a file database,
- * so neither the user's live database nor the dconf service is involved.
+ * beside it names the file relative to that private working directory. Paths
+ * stay outside the profile's comment/line grammar; no live database is read.
  */
 export const dumpDconfDatabase = async (
   database: string,
@@ -30,14 +30,38 @@ export const dumpDconfDatabase = async (
 ): Promise<DconfDump> => {
   assertArtifactReadActive(signal);
   try {
-    const profile = join(dirname(database), "profile");
-    await writeFile(profile, `file-db:${database}\n`, {
+    const name = basename(database);
+    // dconf strips # comments, LF-delimited lines and trailing ASCII whitespace.
+    // Production staging uses "user"; refuse any unrepresentable leaf rather
+    // than silently reading a different database.
+    if (/[#\n]|[\t\v\f\r ]$/u.test(name))
+      return {
+        ok: false,
+        error:
+          "The staged dconf database filename cannot be represented in a dconf profile",
+      };
+    const directory = await realpath(dirname(database));
+    const profile = join(directory, "profile");
+    await writeFile(profile, `file-db:./${name}\n`, {
       mode: 0o600,
       flag: "wx",
     });
     const command = environment.REA_DCONF_COMMAND ?? "dconf";
-    const { stdout } = await execFileOutput(command, ["dump", "/"], {
-      env: { PATH: environment.PATH ?? "", DCONF_PROFILE: profile },
+    // Changing cwd must not change caller-selected commands or relative PATH entries.
+    const startedIn = process.cwd();
+    const fromOriginalDirectory = (path: string): string =>
+      isAbsolute(path) ? path : `${startedIn}${sep}${path}`;
+    const invocation =
+      command.includes("/") || command.includes(sep)
+        ? fromOriginalDirectory(command)
+        : command;
+    const searchPath = (environment.PATH ?? "")
+      .split(delimiter)
+      .map(fromOriginalDirectory)
+      .join(delimiter);
+    const { stdout } = await execFileOutput(invocation, ["dump", "/"], {
+      cwd: directory,
+      env: { PATH: searchPath, DCONF_PROFILE: profile },
       timeout: DCONF_TIMEOUT_MS,
       maxBuffer: DCONF_MAX_BUFFER,
       ...(signal === undefined ? {} : { signal }),
