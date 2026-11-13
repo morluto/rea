@@ -14,12 +14,14 @@ soft-float attribute fixture. The receipt records the selected readelf command,
 observed version, and raw attribute output for each byte order. Declared-o32
 MIPS I and unsupported GNU soft-float inputs are refused, while recordless MIPS I
 and MIPS32 controls produce real Ghidra dossiers and exact loaded bytes. The
+receipt preserves the checked CLI and MCP diagnostics for both refusals. The
 verifier checks the imported `MIPS:LE:32:default` and `MIPS:BE:32:default`
 language IDs through `inspect_native_load_image` and records the observed ID
 for each control.
-It checks each public dossier against the exact MIPS ELF fixture digest and
-entry address, verifies that its Evidence commits the active Ghidra profile,
-and checks the Ghidra version, support lane, and inferred o32 ABI basis.
+It checks each public dossier against the exact MIPS ELF fixture digest,
+canonical source path, and entry address. It verifies that its Evidence commits
+the active Ghidra profile and checks the Ghidra version, support lane, and
+inferred o32 ABI basis.
 The MIPS I Evidence must also report the generic decoder's instruction-subset
 limitation. Load-delay semantics remain unverified. Supply existing Ghidra/Java
 and GNU readelf (`REA_MIPS_READELF`). Source hashes are checked after

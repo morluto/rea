@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,8 @@ import {
   committedProvidersEqual,
 } from "../dist/domain/analysisProfile.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { cliOperationFailurePayload } from "../dist/cliLogging.js";
+import { analysisErrorProjectionSchema } from "../dist/contracts/errorSchemas.js";
 import {
   ANALYSIS_EVIDENCE_PREDICATE,
   evidenceSubjectIdentity,
@@ -169,17 +171,19 @@ async function runControls(cleanup, readelf) {
     };
     await withVerifierCleanup(async () => {
       await mcp.connect(transport);
-      for (const [path, pattern] of [
+      const refusals = {};
+      for (const [control, path, pattern] of [
         [
+          "declared_o32_mips1",
           original.path,
           /requires EF_MIPS_ARCH_32R2 for headers that declare an ABI/u,
         ],
-        [gnuPath, /GNU floating-point ABI attribute/u],
+        ["gnu_fp_attributes", gnuPath, /GNU floating-point ABI attribute/u],
       ]) {
-        const error = requireMcpToolError(
+        const mcpError = requireMcpToolError(
           await invoke("open_binary", { path, provider_id: "ghidra" }),
         );
-        assert.match(JSON.stringify(error), pattern);
+        assert.match(JSON.stringify(mcpError), pattern);
         let stdout;
         try {
           await execute(
@@ -203,13 +207,18 @@ async function runControls(cleanup, readelf) {
         }
         const reply = JSON.parse(stdout);
         assert.equal(reply.ok, false);
-        assert.match(JSON.stringify(reply), pattern);
+        const cliError = analysisErrorProjectionSchema.parse(
+          cliOperationFailurePayload(reply),
+        );
+        assert.match(JSON.stringify(cliError), pattern);
+        refusals[control] = { selected_path: path, cli: reply, mcp: mcpError };
       }
       const providerRuns = [];
       for (const [path, expected] of [
         [legacyPath, legacy],
         [recordlessMips1Path, recordlessMips1],
       ]) {
+        const selectedSourcePath = await realpath(path);
         await call("open_binary", { path, provider_id: "ghidra" });
         // The session ID is authoritative before analyze_function can launch
         // Ghidra. Its token stays in the sweep even if that first call fails.
@@ -256,6 +265,11 @@ async function runControls(cleanup, readelf) {
             architecture: "mips",
           },
           "MIPS dossier Evidence subject does not identify the exact ELF fixture",
+        );
+        assert.equal(
+          evidence.subject.local_path,
+          selectedSourcePath,
+          "MIPS dossier Evidence path does not match the selected ELF fixture",
         );
         const dossier = functionDossierSchema.parse(evidence.normalized_result);
         assert.equal(BigInt(dossier.procedure.address), BigInt(original.entry));
@@ -327,7 +341,11 @@ async function runControls(cleanup, readelf) {
           run_id: providerRunId,
           language_id: image.observations.language_id,
           dossier_evidence_id: evidence.evidence_id,
-          dossier_subject: subject,
+          selected_path: path,
+          dossier_subject: {
+            ...subject,
+            local_path: evidence.subject.local_path,
+          },
           dossier_entry: dossier.procedure.address,
           loaded_bytes: loaded,
           dossier_provider: evidence.provider,
@@ -350,11 +368,9 @@ async function runControls(cleanup, readelf) {
       reports.push({
         byte_order: byteOrder,
         provider_runs: providerRuns,
-        declared_o32_mips1: "refused by CLI and MCP",
+        refusals,
         recordless_mips1:
           "real Ghidra dossier with decoder limitation, pinned 32-bit import language and exact loaded bytes; load-delay semantics unverified",
-        gnu_fp_attributes:
-          "independently decoded soft-float declaration; refused by CLI and MCP",
         readelf: { command, version, raw: attributes.stdout },
         existing_mips32_control:
           "real Ghidra dossier, pinned 32-bit import language and exact loaded bytes",
