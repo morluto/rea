@@ -4,7 +4,7 @@ import {
 } from "../../domain/elfStringTable.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
-import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
+import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { createHash } from "node:crypto";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -714,8 +714,8 @@ export const parseElfNotes = (
     sections.offset > BigInt(Number.MAX_SAFE_INTEGER)
   )
     return fail("ELF offset or size exceeds a safe integer.");
-  const presence = validateElfSectionTablePresence(raw.value);
-  if (!presence.ok) return fail(presence.error);
+  const sectionTable = validateElfSectionTableFields(raw.value);
+  if (!sectionTable.ok) return fail(sectionTable.error);
   const phoff = Number(programs.offset);
   const shoff = Number(sections.offset);
   const phentsize = programs.width;
@@ -723,12 +723,7 @@ export const parseElfNotes = (
   const shentsize = sections.width;
   const shnum = sections.count;
   const shstrndx = sections.namesIndex;
-  if (
-    phnum === 0xffff ||
-    shnum === 0xffff ||
-    shstrndx === 0xffff ||
-    (shoff !== 0 && shnum === 0)
-  )
+  if (phnum === 0xffff || shstrndx === 0xffff || (shoff !== 0 && shnum === 0))
     throw new BinaryFormatFailure(
       "unsupported",
       "ELF extended numbering is unsupported.",
