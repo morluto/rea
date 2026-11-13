@@ -147,6 +147,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
         );
       let inputStream: Readable | undefined;
       let decodedStream: Readable | undefined;
+      let finalizing = false;
       const onFailure = (cause: unknown): void => {
         stream.destroy(
           this.#memberFailure(selected.file, decodedStream?.errored ?? cause),
@@ -167,13 +168,19 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
         this.#readMember(
           source,
           selected.file,
-          { source: observeSource, failure: onFailure },
+          {
+            source: observeSource,
+            failure: onFailure,
+            finalizing: () => {
+              finalizing = true;
+            },
+          },
           signal,
         ),
         { objectMode: false },
       );
       const onAbort = (): void => {
-        if (stream.destroyed) return;
+        if (stream.destroyed || finalizing) return;
         if (inputStream !== undefined && !inputStream.destroyed) return;
         onFailure(
           inputStream?.errored ??
@@ -235,6 +242,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     lifecycle: {
       source(input: Readable, decoded: Readable): void;
       failure(cause: unknown): void;
+      finalizing(): void;
     },
     signal?: AbortSignal,
   ): AsyncGenerator<Buffer> {
@@ -257,21 +265,25 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     let bytes = 0;
     try {
       for await (const raw of decoded) {
-        abortIfNeeded(signal);
-        const chunk: Buffer = raw;
-        bytes += chunk.length;
-        if (bytes > file.size) {
-          const failure = new ArtifactReaderFailure(
-            "limit",
-            `.NET bundle entry expands beyond its declared size: ${file.path}`,
-          );
-          // Leaving for-await closes the decoder, which can emit an AbortError.
-          // Record this validation failure before that iterator cleanup begins.
-          lifecycle.failure(failure);
-          throw failure;
+        try {
+          abortIfNeeded(signal);
+          const chunk: Buffer = raw;
+          bytes += chunk.length;
+          if (bytes > file.size)
+            throw new ArtifactReaderFailure(
+              "limit",
+              `.NET bundle entry expands beyond its declared size: ${file.path}`,
+            );
+          yield chunk;
+        } catch (cause) {
+          // Iterator cleanup can emit AbortError. Retain the failure that
+          // caused this body to exit, including the caller's cancellation.
+          lifecycle.failure(cause);
+          throw cause;
         }
-        yield chunk;
       }
+      // Final source validation owns its in-flight I/O before late cancellation.
+      lifecycle.finalizing();
       await pumping;
       if (
         bytes !== file.size ||
@@ -282,6 +294,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
           `.NET bundle member length or compressed extent does not match its declaration: ${file.path}`,
         );
       await this.#source.readSelectedPath(signal);
+      abortIfNeeded(signal);
     } catch (cause) {
       const failure = this.#memberFailure(file, cause);
       lifecycle.failure(failure);
