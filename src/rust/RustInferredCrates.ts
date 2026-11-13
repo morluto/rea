@@ -147,7 +147,14 @@ const hasCargoPathBoundary = (region: Uint8Array, start: number): boolean => {
   if (previous === 0x2e) {
     return start === 1 || isPathBoundaryDelimiter(region[start - 2] ?? 0);
   }
-  return false;
+  // Rust packs file!() strings without terminators, so a relative path can
+  // follow the previous source path's ".rs" directly.
+  return (
+    start >= 3 &&
+    region[start - 3] === 0x2e &&
+    region[start - 2] === 0x72 &&
+    previous === 0x73
+  );
 };
 
 const matchesAscii = (

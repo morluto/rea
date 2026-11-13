@@ -19,6 +19,34 @@ import {
   recoverRustSourceFingerprintsAsync,
 } from "./RustInferredCrates.js";
 
+it("recovers relative Cargo paths packed after another Rust source path", () => {
+  // Remapped release builds store file!() strings back to back, with no NUL between them.
+  const rodata = Buffer.from(
+    [
+      "cargo/git/checkouts/alpha-0123456789abcdef/a1b2c3d/src/lib.rs",
+      "cargo/git/checkouts/beta-fedcba9876543210/b2c3d4e/src/lib.rs",
+      "cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.217/src/de.rs",
+      "notcargo/registry/src/index.crates.io-6f17d22bba15001f/ignored-1.0.0/src/lib.rs",
+    ].join("") + "\0",
+    "latin1",
+  );
+  const bytes = createRustImage({
+    format: "elf",
+    omitSection: true,
+    readOnlyBytes: rodata,
+  });
+  const result = recoverRustSourceFingerprints(
+    bytes,
+    readBinaryContainer(bytes),
+  );
+  expect(result.inferred_crates.discovered_count).toBe(3);
+  expect(result.inferred_crates.items.map((item) => item.name)).toEqual([
+    "alpha",
+    "beta",
+    "serde",
+  ]);
+});
+
 it("recovers hyphenated, numeric, pre-release, build-metadata, Windows, and git Cargo crates", () => {
   const rodata = Buffer.from(
     [
