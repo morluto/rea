@@ -104,6 +104,7 @@ const createRizinCommandEvidence = ({
     },
     result: { ...result },
     rawResult: { ...result },
+    authority: "controlled-replay",
     subjectUnavailableReason:
       "The current debugger target identity is not established by the Rizin session identifier.",
     limitations: [
