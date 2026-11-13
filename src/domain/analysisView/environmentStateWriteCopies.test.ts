@@ -99,6 +99,7 @@ it("finds the echoed members a wide body's constants hold without searching each
       `constant text ${String(index)}`,
     ]),
   );
+  const started = performance.now();
   const result = create(
     {
       id: 1,
@@ -109,6 +110,8 @@ it("finds the echoed members a wide body's constants hold without searching each
     body,
     () => [],
   );
+  // Searching every text for every echoed member is quadratic in the body.
+  expect(performance.now() - started).toBeLessThan(5_000);
   expect(result.fixed).toEqual([
     { member: `e${String(n - 1)}`, sent: body[`e${String(n - 1)}`] },
   ]);
