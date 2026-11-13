@@ -191,6 +191,7 @@ the exact commit messages and references from the release they describe.
 - [Model file declarations](model-artifacts.md)
 - [Match native functions across builds](native-function-matching.md)
 - [Node.js single executable applications](node-sea.md)
+- [NuGet packages](nuget-nupkg.md)
 - [PE Authenticode certificate tables](pe-certificates.md)
 - [PE import and delay-load tables](pe-imports.md)
 - [PE TLS callbacks and load configuration](pe-load-config.md)

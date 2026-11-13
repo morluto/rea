@@ -553,6 +553,17 @@ The workflow reports IFF chunk names, atom tables, exports, imports, lambdas,
 and the Code chunk header. Missing optional tables stay null. See
 [Erlang BEAM files](../erlang-beam.md).
 
+Inspect a NuGet `.nupkg` without restoring the package or contacting a feed:
+
+```bash
+rea inspect-nuget-nupkg /absolute/path/to/Demo.Package.1.2.3.nupkg --json
+```
+
+The workflow reports package identity, license and repository fields as present,
+dependency groups with version ranges, and a ZIP contents inventory with
+path-derived folder roles. Missing or malformed `.nuspec` members still return
+the inventory with limitations. See [NuGet packages](../nuget-nupkg.md).
+
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and
 `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`.

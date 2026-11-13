@@ -631,6 +631,11 @@ export const documentationSections = [
         route: "/node-sea",
       },
       {
+        text: "NuGet packages",
+        source: "nuget-nupkg.md",
+        route: "/nuget-nupkg",
+      },
+      {
         text: "PE Authenticode certificate tables",
         source: "pe-certificates.md",
         route: "/pe-certificates",

@@ -76,6 +76,7 @@ export const CLI_COMMANDS = Object.freeze({
   inspectGpuCodeObjects: "inspect-gpu-code-objects",
   inspectRustBinary: "inspect-rust-binary",
   inspectPythonPyc: "inspect-python-pyc",
+  inspectNugetNupkg: "inspect-nuget-nupkg",
   inspectErlangBeam: "inspect-erlang-beam",
   inspectV8CodeCache: "inspect-v8-code-cache",
   inspectPeResources: "inspect-pe-resources",

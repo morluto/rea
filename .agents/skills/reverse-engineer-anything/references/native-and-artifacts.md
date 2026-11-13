@@ -318,6 +318,19 @@ exports retain every arity and original atom index. CLI summary delivery require
 `--evidence_output`. Null table counts remain distinct from decoded empty tables. See
 [Erlang BEAM files](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
 
+## NuGet packages
+
+Use `inspect_nuget_nupkg` for an explicit local `.nupkg` when the question
+concerns package identity, license, repository, dependency groups, or the ZIP
+contents inventory. No `open_binary`, restore, feed access, or target execution
+is required. The CLI equivalent is `inspect-nuget-nupkg PATH`. Preserve artifact
+SHA-256, `.nuspec` fields as present, dependency version ranges as spelled, and
+path-derived member roles (`lib`, `ref`, `runtimes`, and the other NuGet folder
+conventions). Missing, ambiguous, or malformed `.nuspec` members succeed with
+inventory and limitations. Encrypted members are listed and not extracted.
+Roles are folder conventions, not restore-time asset selection. See
+[NuGet packages](https://github.com/morluto/rea/blob/main/docs/nuget-nupkg.md).
+
 ## SQLite snapshots
 
 Use `inspect_sqlite_database` with an explicit local database snapshot for its
