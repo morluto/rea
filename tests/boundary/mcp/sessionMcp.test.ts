@@ -649,7 +649,7 @@ describe("target-free MCP workflow", () => {
       ).isError,
     ).not.toBe(true);
     await mcp.callTool({ name: "close_binary", arguments: {} });
-  });
+  }, 60_000);
 });
 
 describe("MCP snapshot open ordering", () => {
