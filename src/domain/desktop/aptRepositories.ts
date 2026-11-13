@@ -38,7 +38,12 @@ export interface AptSourceEntry extends Omit<
 const ARMOR_BEGIN = "-----BEGIN PGP PUBLIC KEY BLOCK-----";
 const ARMOR_END = "-----END PGP PUBLIC KEY BLOCK-----";
 
-const listValues = (value: string | undefined): readonly string[] =>
+/** Source fields separate words with whitespace; commas remain URI/name data. */
+const fieldValues = (value: string | undefined): readonly string[] =>
+  (value ?? "").split(/\s+/u).filter((part) => part.length > 0);
+
+/** Architecture and Signed-By options also admit comma-separated values. */
+const optionValues = (value: string | undefined): readonly string[] =>
   (value ?? "").split(/[\s,]+/u).filter((part) => part.length > 0);
 
 const withoutTrailingSlashes = (uri: string): string =>
@@ -95,8 +100,8 @@ const stanza = (
       .map(withoutTrailingSlashes),
     suites: fields.suites,
     components: fields.components,
-    architectures: listValues(fields.options.get("arch")),
-    signedBy: inlineKey === null ? listValues(signedBy) : [],
+    architectures: optionValues(fields.options.get("arch")),
+    signedBy: inlineKey === null ? optionValues(signedBy) : [],
     inlineKey,
   };
 };
@@ -126,7 +131,7 @@ export const parseOneLineSources = (
         {
           uris: [groups.uri],
           suites: [groups.suite],
-          components: listValues(groups.components),
+          components: fieldValues(groups.components),
           options,
         },
       ),
@@ -165,7 +170,7 @@ export const parseDeb822Sources = (
 ): readonly AptSourceStanza[] =>
   deb822Paragraphs(text).flatMap((fields, index) => {
     if (
-      !listValues(fields.get("types")).includes("deb") ||
+      !fieldValues(fields.get("types")).includes("deb") ||
       fields.get("enabled")?.toLowerCase() === "no"
     )
       return [];
@@ -173,9 +178,9 @@ export const parseDeb822Sources = (
       stanza(
         { file, position: index + 1 },
         {
-          uris: listValues(fields.get("uris")),
-          suites: listValues(fields.get("suites")),
-          components: listValues(fields.get("components")),
+          uris: fieldValues(fields.get("uris")),
+          suites: fieldValues(fields.get("suites")),
+          components: fieldValues(fields.get("components")),
           options: new Map([
             ["signed-by", fields.get("signed-by") ?? ""],
             ["arch", fields.get("architectures") ?? ""],
