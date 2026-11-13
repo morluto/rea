@@ -375,10 +375,8 @@ describe("build witness state views", () => {
         ],
       });
       const parsed = appStateViews(parts);
-      expect(task.ok).toBe(true);
-      expect(parsed.ok).toBe(true);
-      if (!task.ok || !parsed.ok)
-        throw new Error("Expected valid task and state");
+      if (!task.ok) throw new Error(task.error);
+      if (!parsed.ok) throw new Error(parsed.error);
       expect([...parsed.value.keys()]).toEqual([path]);
       expect(parsed.value.get(path)).toEqual({
         format: "json",
