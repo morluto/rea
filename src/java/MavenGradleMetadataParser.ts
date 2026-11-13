@@ -8,6 +8,7 @@ import {
   type MavenGradleMetadata,
   type MavenGradleUnresolved,
 } from "../domain/java/mavenGradleMetadata.js";
+import { parseRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import { MavenGradleMetadataFormatFailure } from "./MavenGradleMetadata.errors.js";
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -70,6 +71,22 @@ const boolOf = (value: string | null): boolean | null => {
   if (folded === "true") return true;
   if (folded === "false") return false;
   return null;
+};
+
+/** Remove URL userinfo; an unlocatable credential span withholds the whole URL. */
+const redactTransportCredentials = (
+  value: string | null,
+): { url: string | null; url_credentials_redacted: boolean } => {
+  if (value === null) return { url: null, url_credentials_redacted: false };
+  const { credentials } = parseRecordedTransportUrl(value);
+  if (credentials === null)
+    return { url: value, url_credentials_redacted: false };
+  if (credentials === "ambiguous")
+    return { url: null, url_credentials_redacted: true };
+  return {
+    url: `${value.slice(0, credentials.start)}${value.slice(credentials.end)}`,
+    url_credentials_redacted: true,
+  };
 };
 
 const pushUnresolved = (
@@ -479,7 +496,7 @@ const parseGradle = (
               group_id: textOf(available.group),
               artifact_id: textOf(available.module),
               version: textOf(available.version),
-              url: textOf(available.url),
+              ...redactTransportCredentials(textOf(available.url)),
             },
       dependency_count: variantDependencies.length,
       constraint_count: constraints.length,

@@ -54,7 +54,10 @@ dependency and constraint counts. Variant dependencies are `origin`
 `variant-dependencies`; `dependencyConstraints` are `origin`
 `variant-constraints`. Rich versions keep `requires`, `prefers`, `strictly`,
 and `rejects`. A variant whose category is `platform` or `enforced-platform`
-marks its constraints `platform: true`. `available-at` is not fetched.
+marks its constraints `platform: true`. `available-at` is not fetched. URL
+userinfo credentials in `available_at.url` are removed and
+`url_credentials_redacted` is `true`; when the credential span cannot be
+located, `url` is `null`.
 
 `unresolved` names property references, missing coordinates that a parent
 would normally supply, and other missing coordinates. These are explicit

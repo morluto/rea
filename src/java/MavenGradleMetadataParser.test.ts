@@ -274,6 +274,48 @@ it("lists every property in a compound CI-friendly version", () => {
   );
 });
 
+it("removes credentials from Gradle available-at URLs", () => {
+  const report = parse(
+    JSON.stringify({
+      formatVersion: "1.1",
+      component: { group: "com.example", module: "demo", version: "1.0.0" },
+      variants: [
+        {
+          name: "secret",
+          "available-at": {
+            url: "https://user:password@repo.example/demo-jvm/1.0.0/demo-jvm-1.0.0.module",
+            group: "com.example",
+            module: "demo-jvm",
+            version: "1.0.0",
+          },
+        },
+        {
+          name: "relative",
+          "available-at": {
+            url: "../../demo-jvm/1.0.0/demo-jvm-1.0.0.module",
+            group: "com.example",
+            module: "demo-jvm",
+            version: "1.0.0",
+          },
+        },
+      ],
+    }),
+    "/artifacts/demo-1.0.0.module",
+  );
+  const urls = report.gradle?.variants.map((variant) => ({
+    url: variant.available_at?.url,
+    redacted: variant.available_at?.url_credentials_redacted,
+  }));
+  expect(urls).toEqual([
+    {
+      url: "https://repo.example/demo-jvm/1.0.0/demo-jvm-1.0.0.module",
+      redacted: true,
+    },
+    { url: "../../demo-jvm/1.0.0/demo-jvm-1.0.0.module", redacted: false },
+  ]);
+  expect(JSON.stringify(report)).not.toContain("password");
+});
+
 it("keeps an empty relativePath and a property-spelled optional distinct from omission", () => {
   const report = parse(`<project>
   <parent>

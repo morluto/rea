@@ -128,6 +128,7 @@ const gradleVariantSchema = z.strictObject({
       artifact_id: nullableText,
       version: nullableText,
       url: nullableText,
+      url_credentials_redacted: z.boolean(),
     })
     .nullable(),
   dependency_count: uint,
