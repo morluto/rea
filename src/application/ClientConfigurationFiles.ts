@@ -162,10 +162,13 @@ export const readClientConfigurationFiles = async (
     if (fallbackText.value !== undefined) {
       try {
         const document = parseGgcodeLegacyConfiguration(fallbackText.value);
+        // The fallback becomes the writable source while the standalone file
+        // is absent, so proposed overrides must repair invalid saved settings
+        // here exactly as they do on the standalone path.
         const environment = clientRegistrationEnvironment(
           document,
           undefined,
-          {},
+          writeOverrides,
           "fragment",
         );
         if (!environment.ok)
@@ -173,7 +176,7 @@ export const readClientConfigurationFiles = async (
             invalidEnvironment(
               client.fallbackConfigPath,
               environment.error,
-              undefined,
+              writeOverrides,
               platform,
             ),
           );
