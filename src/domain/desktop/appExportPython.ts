@@ -189,6 +189,10 @@ def _dconf(arguments: list, environment: dict, cwd: Path | None = None) -> str:
             child = subprocess.Popen([command, *arguments], env=child_environment,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd)
         except OSError as error:
+            # Popen identifies an exec failure with the executable filename;
+            # parent capacity, pipe setup and cwd failures are not PATH misses.
+            if error.filename != command:
+                raise
             # Match Python's executable search: retain the first non-missing
             # spawn error, but never retry a child that actually started.
             if error.errno in (errno.ENOENT, errno.ENOTDIR):

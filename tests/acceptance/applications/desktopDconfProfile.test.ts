@@ -325,7 +325,7 @@ printf '[org/notes]\\nselected=true\\n'
 }
 
 it.skipIf(process.platform === "win32" || !hasPython)(
-  "generated dconf does not retry an EIO after starting and reaps its child",
+  "generated dconf retains spawn-capacity and read failures without retry, and reaps its child",
   async () => {
     const root = await createTestTempDirectory("dconf-capture-io-");
     const tools = join(root, "tools");
@@ -361,6 +361,19 @@ it.skipIf(process.platform === "win32" || !hasPython)(
         '    raise AssertionError("read failure was hidden")',
         "assert len(started) == 1",
         "assert started[0].poll() is not None",
+        'capacity = OSError(errno.EAGAIN, "controlled host spawn refusal")',
+        "attempted = []",
+        "def refuse_spawn(*args, **kwargs):",
+        "    attempted.append(args)",
+        "    raise capacity",
+        "subprocess.Popen = refuse_spawn",
+        "try:",
+        '    _dconf(["dump", "/"], {})',
+        "except OSError as error:",
+        "    assert error is capacity",
+        "else:",
+        '    raise AssertionError("spawn refusal was hidden")',
+        "assert len(attempted) == 1",
         'print("read failure preserved; child reaped")',
       ].join("\n"),
     );
