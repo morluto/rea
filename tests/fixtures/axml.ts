@@ -233,11 +233,11 @@ export const buildAxml = (
       u16(0),
       ...records,
     ]);
-    // Start-element chunk carries a larger header than other nodes.
+    // The node header is fixed at 16 bytes; the attribute ext is body.
     const size = 16 + ext.length;
     return Buffer.concat([
       u16(0x0102),
-      u16(36),
+      u16(16),
       u32(size),
       u32(1),
       u32(event.comment === undefined ? NO_INDEX : pool.add(event.comment)),
