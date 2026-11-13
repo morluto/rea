@@ -452,12 +452,14 @@ export class CutterBridgeClient {
       );
     const discoveryStatus =
       sessions.length > 0 ? "sessions_found" : "no_live_bridge_found";
+    // Live ceiling mismatches threw above; each other gap is a failed probe.
+    const unanswered = descriptors.length - sessions.length;
     return {
       sessions,
       bridge_directory: this.#directory,
       discovery_status: discoveryStatus,
       bridge_directory_security: loaded.security,
-      limitations: cutterDiscoveryLimitations(discoveryStatus),
+      limitations: cutterDiscoveryLimitations(discoveryStatus, unanswered),
     };
   }
 

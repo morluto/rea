@@ -39,11 +39,22 @@ export const cutterDiscoverySchema = z.strictObject({
 const NO_LIVE_BRIDGE_LIMITATION =
   "No REA bridge session in bridge_directory answered. Discovery cannot tell whether Cutter is not running, did not load the REA Python plugin, uses another REA_CUTTER_BRIDGE_DIR, or published a session that did not return a valid status (stale after Cutter exited, unresponsive, or an incompatible bridge version); Cutter's startup log shows whether the plugin loaded. Official Cutter 2.5.0 builds have been observed to reject Python plugins, including this one (rizinorg/cutter#3659).";
 
-/** Limitations owned by each discovery status. */
+/**
+ * Limitations owned by each discovery status. A found session does not make
+ * discovery complete: published sessions whose status probe failed stay
+ * unlisted, and their count remains visible.
+ */
 export const cutterDiscoveryLimitations = (
   status: z.infer<typeof cutterDiscoverySchema>["discovery_status"],
-): string[] =>
-  status === "no_live_bridge_found" ? [NO_LIVE_BRIDGE_LIMITATION] : [];
+  unansweredSessions = 0,
+): string[] => {
+  if (status === "no_live_bridge_found") return [NO_LIVE_BRIDGE_LIMITATION];
+  if (status !== "sessions_found" || unansweredSessions === 0) return [];
+  const sessions = unansweredSessions === 1 ? "session" : "sessions";
+  return [
+    `${String(unansweredSessions)} other published ${sessions} in bridge_directory did not return a valid status (stale after Cutter exited, unresponsive, or an incompatible bridge version) and ${unansweredSessions === 1 ? "is" : "are"} not listed.`,
+  ];
+};
 
 export type CutterBridgeSession = z.infer<typeof cutterSessionSchema>;
 
