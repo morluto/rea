@@ -60,7 +60,7 @@ const start = async (owned: boolean) => {
   onTestFinished(async () => {
     await client.close();
     for (const child of launcher.fixture.processes) child.kill();
-  }, 45_000);
+  });
   expect((await client.start()).ok).toBe(true);
   return { client, launcher };
 };

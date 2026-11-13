@@ -840,6 +840,5 @@ describe("ASAR entry streaming", () => {
         await reader.close();
       }
     },
-    120_000,
   );
 });

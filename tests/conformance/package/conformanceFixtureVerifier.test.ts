@@ -46,6 +46,7 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
   { mode: "fragment", marker: "performAction:error:" },
 ])(
   "verifies compiler-produced fixture records: $mode / $marker",
+  { tags: ["long-running"] },
   async ({ mode, marker }) => {
     const { commands, root } = await ownedFixture("rea-fixture-symbols-");
     const sources = join(root, "sources");
@@ -129,48 +130,43 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
       expect(JSON.parse(completed.stdout)).toMatchObject({ verified: 2 });
     }
   },
-  120_000,
 );
 
 it.each([
   { schemaVersion: undefined, expectations: {} },
   { schemaVersion: 1, expectations: {} },
   { schemaVersion: 2, expectations: { strings: ["ambiguous"] } },
-])(
-  "refuses retired manifest semantics: %j",
-  async (legacy) => {
-    const { commands, root } = await ownedFixture(
-      "rea-fixture-manifest-version-",
-    );
-    const manifest = join(root, "manifest.json");
-    await writeFile(
-      manifest,
-      JSON.stringify({
-        schemaVersion: legacy.schemaVersion,
-        platform: "linux",
-        fixtures: [{ expectations: legacy.expectations }],
-      }),
-    );
-    await expect(
-      commands.exec(process.execPath, [verifier, manifest, root], {
-        cwd: root,
-        timeout: 10_000,
-      }),
-    ).rejects.toMatchObject({
-      code: 1,
-      snapshot: {
-        stderr: {
-          text: expect.stringContaining(
-            legacy.schemaVersion === 2
-              ? "Invalid conformance fixture string expectations"
-              : "Unsupported conformance manifest",
-          ),
-        },
+])("refuses retired manifest semantics: %j", async (legacy) => {
+  const { commands, root } = await ownedFixture(
+    "rea-fixture-manifest-version-",
+  );
+  const manifest = join(root, "manifest.json");
+  await writeFile(
+    manifest,
+    JSON.stringify({
+      schemaVersion: legacy.schemaVersion,
+      platform: "linux",
+      fixtures: [{ expectations: legacy.expectations }],
+    }),
+  );
+  await expect(
+    commands.exec(process.execPath, [verifier, manifest, root], {
+      cwd: root,
+      timeout: 10_000,
+    }),
+  ).rejects.toMatchObject({
+    code: 1,
+    snapshot: {
+      stderr: {
+        text: expect.stringContaining(
+          legacy.schemaVersion === 2
+            ? "Invalid conformance fixture string expectations"
+            : "Unsupported conformance manifest",
+        ),
       },
-    });
-  },
-  30_000,
-);
+    },
+  });
+});
 
 it("preserves a carriage return that belongs to an nm symbol name", () => {
   expect(splitNmSymbolRecords("rea_entry\r\nrea_inventory_0000\n")).toEqual([
