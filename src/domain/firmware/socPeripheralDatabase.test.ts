@@ -313,6 +313,7 @@ describe("ESP32-C3 peripheral windows", () => {
       "USB_SERIAL_JTAG",
     );
     expect(lookupSocPeripheral("0x6002e000", "esp32c3")).toBeNull();
+    expect(lookupSocPeripheral("0x6002e000", "esp32")).toBeNull();
     const leaders = detectSocPlatform(["0x60000000"], "riscv");
     expect(leaders.map((candidate) => candidate.platform)).toEqual([
       "esp32",

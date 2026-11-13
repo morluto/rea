@@ -1271,13 +1271,6 @@ const ESP32_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     description: "System timer (ESP32-C)",
   },
   {
-    name: "UART1",
-    base: 0x6002e000n,
-    size: 0x1000,
-    bus: "System",
-    description: "Universal asynchronous receiver transmitter 1 (ESP32-C)",
-  },
-  {
     name: "SYSTEM",
     base: 0x600c0000n,
     size: 0x1000,
