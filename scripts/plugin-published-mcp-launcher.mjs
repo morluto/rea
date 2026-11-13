@@ -432,6 +432,31 @@ if (process.exitCode === 1) {
     }
 
     if (process.exitCode !== 1 && entry === undefined && holdLock) {
+      // Another client may have published the cache between our first miss and
+      // acquiring the lock. Reuse it: installing again would replace a prefix a
+      // running MCP process is already importing from.
+      try {
+        entry = inspectReadyCache(prefix);
+      } catch (cause) {
+        if (
+          cause instanceof Error &&
+          cause.message.includes("executable cache")
+        ) {
+          refuseUntrustedCache(cause);
+        } else if (!isIncompleteCache(cause)) {
+          process.stderr.write(
+            `REA plugin failed to read ${PACKAGE}@${version} cache: ${cause instanceof Error ? cause.message : String(cause)}.\n`,
+          );
+          process.exitCode = 1;
+        }
+      }
+      if (entry !== undefined || process.exitCode === 1) {
+        releaseInstallLock(lockPath);
+        holdLock = false;
+      }
+    }
+
+    if (process.exitCode !== 1 && entry === undefined && holdLock) {
       try {
         rmSync(staging, { recursive: true, force: true });
         mkdirSync(staging, { recursive: true, mode: 0o700 });
