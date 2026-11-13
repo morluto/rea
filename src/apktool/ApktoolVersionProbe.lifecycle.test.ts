@@ -58,7 +58,6 @@ it.skipIf(process.platform === "win32")(
       await fixture.cleanup([probe]);
     }
   },
-  30_000,
 );
 
 let commands = new ApktoolCommandCleanup();

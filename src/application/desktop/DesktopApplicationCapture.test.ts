@@ -374,7 +374,6 @@ it.skipIf(process.platform !== "linux")(
       spy.mockRestore();
     }
   },
-  30_000,
 );
 
 describe.skipIf(process.platform !== "linux")(
@@ -437,7 +436,7 @@ describe.skipIf(process.platform !== "linux")(
       expect(
         JSON.parse(await readFile(join(output, "capture.json"), "utf8")),
       ).toEqual(JSON.parse(JSON.stringify(evidence)));
-    }, 30_000);
+    });
 
     it("keeps a baseline-only capture when cancelled before any checkpoint", async () => {
       const { root, home, environment } = await fixture();
@@ -538,7 +537,7 @@ describe.skipIf(process.platform !== "linux")(
           after: expect.objectContaining({ sha256: sha256("count=2\n") }),
         }),
       ]);
-    }, 30_000);
+    });
   },
 );
 
@@ -610,7 +609,7 @@ describe.skipIf(process.platform !== "linux")(
         { name: "stop", trigger: "stop" },
         { name: "exit", trigger: "exit" },
       ]);
-    }, 30_000);
+    });
   },
 );
 
@@ -665,7 +664,6 @@ describe.skipIf(process.platform !== "linux")(
           details: { cleanup: "incomplete", resources: [statePath] },
         });
       },
-      30_000,
     );
   },
 );
@@ -701,7 +699,7 @@ describe.skipIf(process.platform !== "linux")(
       expect(await readdir(root)).toEqual(
         expect.arrayContaining(["group-term", "setsid-term"]),
       );
-    }, 30_000);
+    });
 
     it("stops the application gracefully and removes retained content when the session fails", async () => {
       const { root, home, environment } = await fixture();
@@ -734,7 +732,7 @@ describe.skipIf(process.platform !== "linux")(
       expect(await readdir(root)).toEqual(
         expect.arrayContaining(["group-term", "setsid-term"]),
       );
-    }, 30_000);
+    });
   },
 );
 
@@ -805,7 +803,7 @@ describe.skipIf(process.platform !== "linux")(
       expect(capture.limitations).toContainEqual(
         expect.stringMatching(/^The window list could not be read in [34] /u),
       );
-    }, 30_000);
+    });
   },
 );
 

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { beforeAll, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import {
   createJavaScriptSemanticGraphProjection,
   projectJavaScriptSemanticFileSteps,
@@ -8,40 +8,33 @@ import { analyzeJavaScriptSemantics } from "../../../src/domain/javascript/javas
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { resolveJavaScriptSemanticEvidence } from "../../support/javascriptSemanticGraphFixture.js";
 
-// This forked project uses the CLI parent's main-thread stack. The inventory
-// exceeds its call-argument capacity and fits the selected graph ceilings.
+// This forked project uses the same main-thread stack as the CLI parent.
+// These real callable facts exceed V8's call-argument capacity, but fit the
+// caller-selectable one-million-node graph ceiling.
 const count = 130_000;
-let fixture: {
-  readonly file: JavaScriptArtifactFile;
-  readonly ir: ReturnType<typeof analyzeJavaScriptSemantics>;
-  readonly sha256: string;
+const source = "(()=>{});\n".repeat(count);
+const sha256 = createHash("sha256").update(source).digest("hex");
+const file: JavaScriptArtifactFile = {
+  path: "entry.mjs",
+  container_sha256: sha256,
+  sha256,
+  bytes: Buffer.byteLength(source),
+  inventory_artifact_id: `art_${sha256}`,
+  kind: "javascript",
+  unpacked: false,
+  text: { included: true, value: source },
 };
-// Source preparation retains the original case budget in its new setup stage.
-beforeAll(() => {
-  const source = "(()=>{});\n".repeat(count);
-  const sha256 = createHash("sha256").update(source).digest("hex");
-  const file: JavaScriptArtifactFile = {
-    path: "entry.mjs",
-    container_sha256: sha256,
-    sha256,
-    bytes: Buffer.byteLength(source),
-    inventory_artifact_id: `art_${sha256}`,
-    kind: "javascript",
-    unpacked: false,
-    text: { included: true, value: source },
-  };
-  const ir = analyzeJavaScriptSemantics(source);
-  expect(ir.callables).toHaveLength(count);
-  expect(ir.functionFingerprints).toHaveLength(count);
-  // Both paths consume the same read-only producer facts. Each test below
-  // still creates and verifies its own independently projected graph.
-  fixture = { file, ir, sha256 };
-}, 30_000);
+// Projection reads the analysis without changing it, so both projection modes
+// share one analysis of the wide source instead of repeating it.
+let analysis: ReturnType<typeof analyzeJavaScriptSemantics> | undefined;
+const analyzedSource = () => (analysis ??= analyzeJavaScriptSemantics(source));
 
 it.each(["direct", "transferred"] as const)(
   "retains an admitted source's wide fingerprint list through %s projection",
   (mode) => {
-    const { file, ir, sha256 } = fixture;
+    const ir = analyzedSource();
+    expect(ir.callables).toHaveLength(count);
+    expect(ir.functionFingerprints).toHaveLength(count);
     const projection = createJavaScriptSemanticGraphProjection({
       totalNodes: count + 1,
       fileNodes: count + 1,
@@ -106,5 +99,4 @@ it.each(["direct", "transferred"] as const)(
       });
     }
   },
-  30_000,
 );

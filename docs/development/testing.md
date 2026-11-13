@@ -299,6 +299,17 @@ work from fixture generation, schema compilation, subprocess startup and cleanup
 Choose elapsed, CPU and process-family memory limits before the run; a worker
 count or test timeout alone does not enforce those limits.
 
+A test deadline turns a hang into a named failure; it is not a performance
+assertion. `vitest.config.ts` applies the deadlines in
+`tests/support/testDeadlines.ts` per project: 30 seconds for source projects
+and 120 seconds for built projects, doubled under coverage, with hooks sharing
+their project's deadline. Do not pass a per-test timeout
+to fit a slow host. Tag a bounded workload that needs longer with
+`{ tags: ["long-running"] }`, or a whole file with
+`// @module-tag long-running`. Assert elapsed time explicitly when speed is the
+behavior under test. Derive an explicit deadline only when a test must outlive
+an operation deadline whose diagnostics it checks.
+
 Keep capacity fixtures intact when diagnosing a test failure. For byte equality
 of large buffers, use `Buffer.equals` or `Buffer.compare`; a generic structural
 diff can allocate far more than the production operation.

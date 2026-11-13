@@ -159,5 +159,4 @@ it.runIf(process.platform === "win32")(
     expectRetryableBusy(result.error, database.path);
     await expectRootsRemoved(roots);
   },
-  20_000,
 );

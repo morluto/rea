@@ -1232,7 +1232,7 @@ it("closes an idle session when its quoted executable contains groups=[", async 
     commands.filter((command) => command.includes("list-thread-groups")),
   ).toHaveLength(1);
   expect(commands).toContain("-gdb-exit");
-}, 10_000);
+});
 
 it("reports incomplete stop if GDB exits while close waits in the serialized queue", async () => {
   let heldToken = "";

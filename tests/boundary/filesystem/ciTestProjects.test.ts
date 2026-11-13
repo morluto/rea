@@ -162,43 +162,49 @@ describe("Vitest project configuration", () => {
   });
 
   it.each([
-    { flags: [], timeout: 30_000, lines: 68 },
-    { flags: ["--coverage"], timeout: 60_000, lines: 68 },
-    { flags: ["--coverage.enabled"], timeout: 60_000, lines: 68 },
-    { flags: ["--coverage=false"], timeout: 30_000, lines: 68 },
+    { flags: [], scale: 1, lines: 68 },
+    { flags: ["--coverage"], scale: 2, lines: 68 },
+    { flags: ["--coverage.enabled"], scale: 2, lines: 68 },
+    { flags: ["--coverage=false"], scale: 1, lines: 68 },
     {
       flags: ["--coverage.enabled=false"],
-      timeout: 30_000,
+      scale: 1,
       lines: 68,
     },
     {
       flags: ["--coverage.provider=v8"],
-      timeout: 30_000,
+      scale: 1,
       lines: 68,
     },
     {
       flags: ["--coverage.enabled", "--shard", "1/6"],
-      timeout: 60_000,
+      scale: 2,
       lines: 0,
     },
     {
       flags: ["--coverage.enabled=false", "--shard=1/6"],
-      timeout: 30_000,
+      scale: 1,
       lines: 0,
     },
   ])(
     "resolves worker resources from actual CLI options: $flags",
-    async ({ flags, timeout, lines }) => {
+    async ({ flags, scale, lines }) => {
       const root = await createTestTempDirectory("rea-vitest-worker-policy-");
       const script = join(root, "worker-policy.mjs");
       await writeFile(
         script,
         `
       import config from ${JSON.stringify(pathToFileURL(join(repository, "vitest.config.ts")).href)};
-      const project = config.test.projects.find(project => project.test.name === 'cli-boundary');
+      const project = (name) => config.test.projects.find(project => project.test.name === name).test;
+      const deadlines = (name) => [project(name).testTimeout, project(name).hookTimeout];
       console.log(JSON.stringify({
-        execArgv: project.test.execArgv,
-        timeout: config.test.testTimeout,
+        execArgv: project('cli-boundary').execArgv,
+        deadlines: {
+          default: [config.test.testTimeout, config.test.hookTimeout],
+          source: deadlines('domain'),
+          built: deadlines('cli-boundary'),
+          longRunning: config.test.tags.find(tag => tag.name === 'long-running').timeout,
+        },
         lines: config.test.coverage.thresholds.lines,
       }));
     `,
@@ -213,9 +219,16 @@ describe("Vitest project configuration", () => {
           stopSignal: "SIGTERM",
         },
       );
+      // Deadlines are hang detection owned by the project, scaled together
+      // when coverage instrumentation slows every lane.
       expect(JSON.parse(result.stdout)).toEqual({
         execArgv: ["--max-old-space-size=512"],
-        timeout,
+        deadlines: {
+          default: [30_000 * scale, 30_000 * scale],
+          source: [30_000 * scale, 30_000 * scale],
+          built: [120_000 * scale, 120_000 * scale],
+          longRunning: 300_000 * scale,
+        },
         lines,
       });
     },
