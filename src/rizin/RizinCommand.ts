@@ -25,7 +25,7 @@ export const rizinCommand = (input: RizinInput): readonly string[] => [
 export const rizinCommandLimitations = (
   input: RizinInput,
 ): readonly string[] => [
-  "completion_status reports process completion. Command validity remains unverified: Rizin can reject a command while returning exit_code 0. Inspect stdout and stderr before treating an empty response as absence.",
+  "completion_status reports process completion. Command validity remains unverified: Rizin can reject a command while returning exit_code 0. Inspect stdout and stderr before treating an empty response as absence; when Rizin's rejection marker is observed on stderr the Evidence limitations name the rejected command.",
   ...(input.asm_arch === undefined &&
   input.asm_bits === undefined &&
   input.asm_cpu === undefined

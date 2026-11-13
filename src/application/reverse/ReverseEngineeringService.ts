@@ -75,6 +75,7 @@ import {
   windowsNativeSpawnControlError,
 } from "../../windows/WindowsOwnedProcess.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import { rizinCommandRejection } from "../../rizin/RizinCommandRejection.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 
@@ -1076,6 +1077,11 @@ export class ReverseEngineeringService {
           : digestAfter !== digest;
     const outputBudgetSource =
       parameters.max_output_bytes === undefined ? "default" : "request";
+    // A provider that rejects the command with exit 0 must not read as an empty answer.
+    const rejection =
+      operation === "execute_rizin_command"
+        ? rizinCommandRejection(stderr)
+        : undefined;
     const result = {
       stdout,
       stderr,
@@ -1113,6 +1119,11 @@ export class ReverseEngineeringService {
       ...(operation === "execute_rizin_command"
         ? [
             "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
+            ...(rejection === undefined
+              ? []
+              : [
+                  `Rizin rejected '${rejection.command}' on stderr ("ERROR: Command '${rejection.command}' does not exist." or its help-of variant); stdout can carry rizin's help text rather than command output, so an empty or help-shaped response is not evidence of absence.`,
+                ]),
           ]
         : []),
       ...(profile.limitations ?? []),
