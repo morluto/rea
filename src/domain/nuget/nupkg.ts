@@ -119,7 +119,10 @@ const dependencyGroupSchema = z.strictObject({
 });
 
 const contentSchema = z.strictObject({
+  /** ZIP member name as stored in the archive. */
   name: z.string().min(1),
+  /** Name with separators normalized and leading `./` removed; drives role and lookup. */
+  path: z.string().min(1),
   uncompressed_size: z.number().int().nonnegative().nullable(),
   compressed_size: z.number().int().nonnegative().nullable(),
   role: z.enum(NUGET_NUPKG_ENTRY_ROLES),

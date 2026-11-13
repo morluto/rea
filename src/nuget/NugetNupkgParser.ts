@@ -449,11 +449,13 @@ export const parseNugetNupkg = async (
     for (const entry of entries) {
       if (entry.directory) continue;
       if (!asFileEntry(entry)) continue;
-      const name = nugetNupkgLogicalPath(zipEntryPath(entry));
+      const sourceName = zipEntryPath(entry);
+      const name = nugetNupkgLogicalPath(sourceName);
       if (name === "") continue;
       files.push({ entry, name });
       contents.push({
-        name,
+        name: sourceName,
+        path: name,
         uncompressed_size: zipSize(entry.uncompressedSize),
         compressed_size: zipSize(entry.compressedSize),
         role: nugetNupkgEntryRole(name),

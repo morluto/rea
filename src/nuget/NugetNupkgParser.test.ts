@@ -91,6 +91,25 @@ it("reads identity, license, repository, dependency groups and folder roles", as
   expect(report.limitations).toContain(NUPKG_LIMITATIONS.memberRoles);
 });
 
+it("keeps the stored ZIP member name beside its logical path", async () => {
+  const bytes = await nugetNupkgFixture({
+    extraMembers: { "./lib/net8.0/Extra.txt": "x" },
+  });
+  const report = nugetNupkgSchema.parse(
+    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+  );
+  expect(
+    report.contents.find((entry) => entry.path === "lib/net8.0/Extra.txt"),
+  ).toMatchObject({
+    name: "./lib/net8.0/Extra.txt",
+    path: "lib/net8.0/Extra.txt",
+    role: "lib",
+  });
+  expect(
+    report.contents.find((entry) => entry.path === "lib/net8.0/Demo.dll"),
+  ).toMatchObject({ name: "lib/net8.0/Demo.dll" });
+});
+
 it("records ungrouped dependencies as a group with a null target framework", async () => {
   const bytes = await nugetNupkgFixture({
     nuspec: ungroupedNuspec,

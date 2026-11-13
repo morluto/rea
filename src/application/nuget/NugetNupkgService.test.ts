@@ -35,6 +35,7 @@ const report: NugetNupkg = {
   contents: [
     {
       name: "Demo.Package.nuspec",
+      path: "Demo.Package.nuspec",
       uncompressed_size: 12,
       compressed_size: 12,
       role: "nuspec",

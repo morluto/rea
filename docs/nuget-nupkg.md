@@ -38,8 +38,9 @@ attributes when a repository element is present. Absent elements stay `null`.
 as a group with `target_framework: null`. Version ranges are recorded as text;
 restore results are unknown.
 
-`contents` lists file ZIP members with name, uncompressed and compressed sizes,
-an `encrypted` flag, and a path-derived `role` (`lib`, `ref`, `runtimes`,
+`contents` lists file ZIP members with the stored ZIP `name`, a logical `path`
+(backslashes as `/`, leading `./` removed), uncompressed and compressed sizes,
+an `encrypted` flag, and a `path`-derived `role` (`lib`, `ref`, `runtimes`,
 `native`, `analyzers`, `build`, `buildTransitive`, `buildMultiTargeting`,
 `content`, `contentFiles`, `tools`, `nuspec`, `opc`, or `unknown`). Directory
 markers are omitted. Encrypted members are listed and not extracted.
