@@ -181,3 +181,30 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     }
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "omits URL userinfo from partial Electron request targets through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-electron-net-userinfo-");
+    await writeFixtureFiles(root, {
+      "main.cjs": `
+    const { net } = require("electron");
+    net.request({ method: "POST", url: "https://user:secret@api.example.test/v1/options" });
+    net.fetch("https://user:secret@api.example.test/v1/" + path);
+  `,
+    });
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    const observations = result.graph.nodes
+      .filter(({ kind }) => kind === "endpoint")
+      .flatMap(({ observations }) => observations);
+    expect(
+      observations.map(({ properties }) => String(properties.value)).sort(),
+    ).toEqual([
+      '"https://api.example.test/v1/" + path',
+      '{ method: "POST", url: "https://api.example.test/v1/options" }',
+    ]);
+    for (const observation of observations)
+      expect(observation.properties.resolution).toBe("partial");
+    expect(JSON.stringify(result.graph)).not.toContain("secret");
+  },
+);
