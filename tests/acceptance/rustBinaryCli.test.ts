@@ -718,3 +718,34 @@ cliTest(
     expect(report.auditable_metadata?.packages).toHaveLength(2);
   },
 );
+
+cliTest(
+  "rejects malformed Rust view JSON before opening the selected path",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-view-json-");
+    const result = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        join(root, "missing"),
+        "--view",
+        "{",
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_rust_binary",
+        issues: [
+          {
+            path: ["view"],
+            reason: "invalid_format",
+            message: "view must be a JSON package or edge selection",
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(result.json)).not.toContain("ENOENT");
+  },
+);

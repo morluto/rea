@@ -37,10 +37,10 @@ export const DENO_CHILD_SUFFIXES = {
   sourceMap: ".deno-sourcemap",
 } as const;
 
-const INDEXED_PATH_LIMITATION = `The virtual name exceeds the fixed ${String(MAX_DENO_LOGICAL_PATH_PARTS)}-part logical path allowance; an indexed path is used and the original name is retained.`;
+export const DENO_PATH_PARTS_LIMITATION = `The virtual name exceeds the fixed ${String(MAX_DENO_LOGICAL_PATH_PARTS)}-part logical path allowance; an indexed path is used and the original name is retained.`;
 const NAME_LIMITATION = `The virtual name exceeds the fixed ${String(MAX_DENO_VFS_NAME_UNITS)}-unit name allowance; an indexed path is used and the original name is not retained.`;
 export const DENO_PATH_LENGTH_LIMITATION = `The virtual name exceeds the fixed ${String(MAX_DENO_PATH_COMPONENT_BYTES)}-byte path component or ${String(MAX_DENO_LOGICAL_PATH_BYTES)}-byte logical path allowance; an indexed path is used and the original name is retained.`;
-const UNSAFE_PATH_LIMITATION =
+export const DENO_UNSAFE_PATH_LIMITATION =
   "The virtual name is not a safe relative path; an indexed path is used and the original name is retained.";
 const MTIME_LIMITATION = "The file mtime is not a safe integer; it is omitted.";
 const SYMLINK_PART_LIMITATION = `A symlink target part exceeds the fixed ${String(MAX_DENO_VFS_NAME_UNITS)}-unit name allowance; the target parts are not retained.`;
@@ -384,10 +384,10 @@ const logicalDestination = (
   if (parent.limitation !== null) return indexed(parent.limitation, source);
   if (name.length > MAX_DENO_VFS_NAME_UNITS)
     return indexed(NAME_LIMITATION, null);
-  if (unsafeName(name)) return indexed(UNSAFE_PATH_LIMITATION, source);
+  if (unsafeName(name)) return indexed(DENO_UNSAFE_PATH_LIMITATION, source);
   const parts = parent.parts + 1;
   if (parts > MAX_DENO_LOGICAL_PATH_PARTS)
-    return indexed(INDEXED_PATH_LIMITATION, source);
+    return indexed(DENO_PATH_PARTS_LIMITATION, source);
   const joined = parent.path === null ? name : `${parent.path}/${name}`;
   try {
     const path = normalizeArtifactPath(joined);
@@ -402,7 +402,7 @@ const logicalDestination = (
     };
   } catch (cause) {
     if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
-      return indexed(UNSAFE_PATH_LIMITATION, source);
+      return indexed(DENO_UNSAFE_PATH_LIMITATION, source);
     throw cause;
   }
 };

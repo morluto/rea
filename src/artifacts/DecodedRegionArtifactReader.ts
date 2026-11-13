@@ -1,3 +1,4 @@
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import { Readable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
@@ -18,10 +19,7 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import {
-  artifactReadCancelledBy,
-  assertArtifactReadActive,
-} from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
@@ -72,9 +70,7 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
   readonly #streams = new Set<Readable>();
   readonly #source: ArtifactFileSource;
   readonly #decoding: RegionDecoding<Image>;
-  #prepared:
-    | { signal: AbortSignal | undefined; promise: Promise<void> }
-    | undefined;
+  readonly #preparation = new ArtifactPreparation();
   /** Whole-file facts only; the region map is the sole owner of region bytes. */
   #described: Omit<DecodedRegions, "regions"> | undefined;
   #closing = false;
@@ -115,27 +111,11 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      for (;;) {
-        const pending = (this.#prepared ??= {
-          signal,
-          promise: this.#prepare(signal),
-        });
-        try {
-          await pending.promise;
-          break;
-        } catch (cause: unknown) {
-          if (this.#prepared === pending) this.#prepared = undefined;
-          if (
-            pending.signal !== signal &&
-            signal?.aborted !== true &&
-            artifactReadCancelledBy(cause, pending.signal)
-          ) {
-            this.#assertOpen(signal);
-            continue;
-          }
-          throw cause;
-        }
-      }
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
       await this.#source.read(signal);
     });
     const coverage = this.#described?.coverage;
