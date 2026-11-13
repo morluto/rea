@@ -29,6 +29,12 @@ const indexesOf = (text: string, word: string): number[] => {
   return found;
 };
 
+const earliestIndex = (indexes: readonly number[]): number => {
+  let best = Number.POSITIVE_INFINITY;
+  for (const index of indexes) if (index < best) best = index;
+  return best;
+};
+
 /** A nearby not/without governs this mention. "imports without execution" does not. */
 const negatedAt = (lower: string, index: number): boolean => {
   const clauseStart = Math.max(
@@ -37,8 +43,10 @@ const negatedAt = (lower: string, index: number): boolean => {
   );
   if (/\b(not|never|without|no)\b/u.test(lower.slice(clauseStart, index)))
     return true;
+  const period = lower.indexOf(".", index);
+  const forwardEnd = period < 0 ? index + 32 : Math.min(index + 32, period);
   return /\b(?:is|are|was|were|does|do|did|cannot|can)\s+not\b/u.test(
-    lower.slice(index, index + 32),
+    lower.slice(index, forwardEnd),
   );
 };
 
@@ -66,29 +74,41 @@ const excerptAround = (
       ? negationAt + 1
       : Math.max(0, hit - 24);
   const excerpt = description.slice(start, hit + room);
-  return excerpt.length <= room
-    ? excerpt
-    : excerpt.slice(excerpt.length - room);
+  // Keep a governing "not" on the left. Trimming the tail drops the hit only
+  // when the denial itself already fills the remaining preview.
+  return excerpt.length <= room ? excerpt : excerpt.slice(0, room);
 };
 
-/** The opening task stays. A query word past 240 is appended, not substituted. */
+/** The opening task stays. A query word the opening does not show is appended. */
 export const discoveryPreview = (
   description: string,
   words: readonly string[],
 ): string => {
   if (description.length <= DISCOVERY_PREVIEW_CHARS) return description;
   const lower = description.toLowerCase();
-  const hidden = words
-    .flatMap((word) => indexesOf(lower, word))
-    .filter((index) => index >= DISCOVERY_PREVIEW_CHARS);
-  if (hidden.length === 0) return description.slice(0, DISCOVERY_PREVIEW_CHARS);
   const separator = " … ";
   const opening = openingOf(description).slice(
     0,
     DISCOVERY_PREVIEW_CHARS - separator.length - 48,
   );
+  const openingLower = opening.toLowerCase();
+  const seen = new Set<string>();
+  let hidden = Number.POSITIVE_INFINITY;
+  let repeatedLate = Number.POSITIVE_INFINITY;
+  for (const word of words) {
+    if (seen.has(word)) continue;
+    seen.add(word);
+    const late = lower.indexOf(word, DISCOVERY_PREVIEW_CHARS);
+    if (late >= 0 && late < repeatedLate) repeatedLate = late;
+    if (openingLower.includes(word)) continue;
+    const index = lower.indexOf(word, opening.length);
+    if (index >= 0 && index < hidden) hidden = index;
+  }
+  if (hidden === Number.POSITIVE_INFINITY) hidden = repeatedLate;
+  if (hidden === Number.POSITIVE_INFINITY)
+    return description.slice(0, DISCOVERY_PREVIEW_CHARS);
   const room = DISCOVERY_PREVIEW_CHARS - opening.length - separator.length;
-  return `${opening}${separator}${excerptAround(description, Math.min(...hidden), room)}`;
+  return `${opening}${separator}${excerptAround(description, hidden, room)}`;
 };
 
 const nameToken = (name: string, word: string): boolean =>
@@ -103,7 +123,7 @@ const placement = (name: string, description: string, word: string): number => {
   const hits = indexesOf(lower, word);
   const affirmative = hits.filter((index) => !negatedAt(lower, index));
   if (affirmative.length === 0) return hits.length === 0 ? 0 : 1;
-  return Math.min(...affirmative) < DISCOVERY_PREVIEW_CHARS ? 3 : 2;
+  return earliestIndex(affirmative) < DISCOVERY_PREVIEW_CHARS ? 3 : 2;
 };
 
 const rankScore = (
@@ -123,7 +143,7 @@ const earliestAffirmative = (
       (index) => !negatedAt(lower, index),
     );
     const index =
-      live.length === 0 ? Number.MAX_SAFE_INTEGER : Math.min(...live);
+      live.length === 0 ? Number.MAX_SAFE_INTEGER : earliestIndex(live);
     return Math.min(earliest, index);
   }, Number.MAX_SAFE_INTEGER);
 };
@@ -216,10 +236,11 @@ export class ProgressiveToolCatalog {
         ),
         false,
       );
-    const words = (input.query ?? "")
-      .toLowerCase()
-      .split(/\s+/u)
-      .filter(Boolean);
+    const words = [
+      ...new Set(
+        (input.query ?? "").toLowerCase().split(/\s+/u).filter(Boolean),
+      ),
+    ];
     const matches =
       names ??
       [...this.tools]

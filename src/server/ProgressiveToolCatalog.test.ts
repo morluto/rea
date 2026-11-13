@@ -2,6 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
+import { discoveryPreview } from "./ProgressiveToolCatalog.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
@@ -361,4 +362,43 @@ it("keeps tools loaded in one catalog invisible to another", async () => {
   expect(
     (await second.client.listTools()).tools.map(({ name }) => name),
   ).toEqual(["binary_session", "discover_tools"]);
+});
+
+it("keeps a denial in the same sentence ahead of the next sentence", async () => {
+  const f = await connect({
+    extra: [
+      {
+        name: "alpha_misc",
+        description: "Measure startup time. Does not open a target.",
+      },
+      {
+        name: "zebra_misc",
+        description: `${"padding ".repeat(40)}startup probe`,
+      },
+    ],
+  });
+  const page = await f.discover({ query: "startup", limit: 2 });
+  const tools = z
+    .object({ tools: z.array(z.object({ name: z.string() })) })
+    .parse(page.structuredContent).tools;
+  expect(tools.map((tool) => tool.name)).toEqual(["alpha_misc", "zebra_misc"]);
+});
+
+it("keeps the governing not when a late match has a long tail", () => {
+  const description =
+    "Push one local file to an absolute device path. If the destination is an existing directory, adb places the file inside it under the local basename and the result reports that file path. A device-mutating tool: checks for an existing destination file before transfer and refuses it unless overwrite is explicitly requested; this check is not atomic and another process can create the path before adb writes. The private staged copy remains non-writable and preserves source executable bits.";
+  const preview = discoveryPreview(description, ["atomic"]);
+  expect(preview.length).toBeLessThanOrEqual(240);
+  expect(preview.startsWith("Push one local file")).toBe(true);
+  expect(preview).toContain("not atomic");
+});
+
+it("finds one late hit when the query repeats that word", () => {
+  const description = `${"padding ".repeat(40)}120-second budget for recovery`;
+  const preview = discoveryPreview(
+    description,
+    Array.from({ length: 4000 }, () => "120-second"),
+  );
+  expect(preview.length).toBeLessThanOrEqual(240);
+  expect(preview).toContain("120-second");
 });
