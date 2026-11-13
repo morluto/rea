@@ -235,6 +235,34 @@ static Handle openRelative(HANDLE parent, const std::wstring& name, DWORD access
   return result;
 }
 
+static std::string protectedDaclReadback(PACL acl, SECURITY_DESCRIPTOR_CONTROL control, bool root,
+                                       const Security& supplied) {
+  SECURITY_DESCRIPTOR_CONTROL suppliedControl = 0;
+  DWORD suppliedRevision = 0;
+  const bool suppliedKnown = GetSecurityDescriptorControl(
+      const_cast<SECURITY_DESCRIPTOR*>(&supplied.descriptor), &suppliedControl, &suppliedRevision) != FALSE;
+  const bool present = (control & SE_DACL_PRESENT) != 0;
+  const bool protectedDacl = (control & SE_DACL_PROTECTED) != 0;
+  std::string text = "Private object requires a present protected DACL; readback present=";
+  text += present ? "1" : "0";
+  text += " protected=";
+  text += protectedDacl ? "1" : "0";
+  text += " ace_count=";
+  text += acl == nullptr ? "absent" : std::to_string(acl->AceCount);
+  text += " root=";
+  text += root ? "1" : "0";
+  if (!suppliedKnown) return text + " supplied_control=unavailable";
+  const bool suppliedPresent = (suppliedControl & SE_DACL_PRESENT) != 0;
+  const bool suppliedProtected = (suppliedControl & SE_DACL_PROTECTED) != 0;
+  text += " supplied_present=";
+  text += suppliedPresent ? "1" : "0";
+  text += " supplied_protected=";
+  text += suppliedProtected ? "1" : "0";
+  text += " control_differs=";
+  text += (present == suppliedPresent && protectedDacl == suppliedProtected) ? "0" : "1";
+  return text;
+}
+
 static void verifyPrivate(HANDLE handle, const std::wstring& path, bool root) {
   Security expected;
   PSID owner = nullptr;
@@ -249,8 +277,8 @@ static void verifyPrivate(HANDLE handle, const std::wstring& path, bool root) {
   SECURITY_DESCRIPTOR_CONTROL control;
   DWORD revision;
   require(GetSecurityDescriptorControl(raw, &control, &revision), "Read DACL control flags failed", path);
-  require(acl != nullptr && (control & SE_DACL_PRESENT) != 0 && (!root || (control & SE_DACL_PROTECTED) != 0),
-          "Private object requires a present protected DACL", path, ERROR_ACCESS_DENIED);
+  if (!(acl != nullptr && (control & SE_DACL_PRESENT) != 0 && (!root || (control & SE_DACL_PROTECTED) != 0)))
+    throw Failure(protectedDaclReadback(acl, control, root, expected), path, ERROR_ACCESS_DENIED);
   require(acl->AceCount == 2, "Private DACL contains unexpected trustees", path, ERROR_ACCESS_DENIED);
   bool user = false, system = false;
   for (DWORD index = 0; index < acl->AceCount; ++index) {
