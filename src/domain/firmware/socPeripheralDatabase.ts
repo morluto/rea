@@ -1323,6 +1323,14 @@ const ESP32C3_PERIPHERALS: readonly InternalPeripheralEntry[] = [
       "RTC control register block. DR_REG_RTCCNTL_BASE; the next header base is EFUSE",
   },
   {
+    name: "EFUSE",
+    base: 0x60008800n,
+    size: 0x800,
+    bus: "System",
+    description:
+      "eFuse register block. DR_REG_EFUSE_BASE; the next header base is IO_MUX",
+  },
+  {
     name: "IO_MUX",
     base: 0x60009000n,
     size: 0x1000,
@@ -1365,11 +1373,25 @@ const ESP32C3_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     description: "System timer. DR_REG_SYSTIMER_BASE",
   },
   {
+    name: "SPI2",
+    base: 0x60024000n,
+    size: 0x1000,
+    bus: "System",
+    description: "SPI2 register block. DR_REG_SPI2_BASE",
+  },
+  {
     name: "SYSTEM",
     base: 0x600c0000n,
     size: 0x1000,
     bus: "System",
     description: "System register block. DR_REG_SYSTEM_BASE",
+  },
+  {
+    name: "SENSITIVE",
+    base: 0x600c1000n,
+    size: 0x1000,
+    bus: "System",
+    description: "Sensitive register block. DR_REG_SENSITIVE_BASE",
   },
   {
     name: "USB_SERIAL_JTAG",
@@ -1474,8 +1496,8 @@ const ESP32C6_PERIPHERALS: readonly InternalPeripheralEntry[] = [
 
 // ESP32-C2 bases from esp-idf soc/esp32c2/register/soc/reg_base.h.
 // Pages already recorded for another RISC-V ESP catalog are recorded here too,
-// so a shared address cannot select only one family. SPI2 and SENSITIVE use
-// C2 bases those catalogs do not own. Chip id 0x000C is riscv.
+// so a shared address cannot select only one family. I2C_MST is a C2 base
+// those catalogs do not own. Chip id 0x000C is riscv.
 const ESP32C2_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   {
     name: "UART0",
@@ -1562,6 +1584,13 @@ const ESP32C2_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     size: 0x1000,
     bus: "System",
     description: "SPI2 register block. DR_REG_SPI2_BASE",
+  },
+  {
+    name: "I2C_MST",
+    base: 0x6004e800n,
+    size: 0x1000,
+    bus: "System",
+    description: "I2C master register block. DR_REG_I2C_MST_BASE",
   },
   {
     name: "SYSTEM",

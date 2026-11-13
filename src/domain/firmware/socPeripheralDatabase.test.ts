@@ -403,32 +403,40 @@ describe("ESP32-C2 peripheral windows", () => {
   it("keeps a shared page from selecting only one family", () => {
     expect(lookupSocPeripheral("0x60008000", "esp32c2")?.name).toBe("RTCCNTL");
     expect(lookupSocPeripheral("0x60008000", "esp32c2")?.sizeBytes).toBe(0x800);
-    expect(lookupSocPeripheral("0x60008800", "esp32c3")).toBeNull();
+    expect(lookupSocPeripheral("0x60008800", "esp32c3")?.name).toBe("EFUSE");
     expect(lookupSocPeripheral("0x60008800", "esp32c2")?.name).toBe("EFUSE");
+    expect(lookupSocPeripheral("0x60024000", "esp32c2")?.name).toBe("SPI2");
+    expect(lookupSocPeripheral("0x60024000", "esp32c3")?.name).toBe("SPI2");
+    expect(lookupSocPeripheral("0x600c1000", "esp32c2")?.name).toBe("SENSITIVE");
+    expect(lookupSocPeripheral("0x600c1000", "esp32c3")?.name).toBe("SENSITIVE");
+    expect(lookupSocPeripheral("0x600c1000", "esp32c6")).toBeNull();
     expect(lookupSocPeripheral("0x60020000", "esp32c2")).toBeNull();
     expect(detectSocPlatform(["0x60008800"], "riscv").map((candidate) => candidate.platform)).toEqual([
       "esp32",
       "esp32c2",
+      "esp32c3",
       "esp32c6",
+    ]);
+    expect(detectSocPlatform(["0x600c1000"], "riscv").map((candidate) => candidate.platform)).toEqual([
+      "esp32c2",
+      "esp32c3",
     ]);
   });
 
   it("lets a C2-only window select that family", () => {
-    expect(lookupSocPeripheral("0x60024000", "esp32")).toBeNull();
-    expect(lookupSocPeripheral("0x60024000", "esp32c3")).toBeNull();
-    expect(lookupSocPeripheral("0x60024000", "esp32c6")).toBeNull();
-    expect(lookupSocPeripheral("0x60024000", "esp32c2")?.name).toBe("SPI2");
-    expect(lookupSocPeripheral("0x600c1000", "esp32c6")).toBeNull();
-    expect(lookupSocPeripheral("0x600c1000", "esp32c2")?.name).toBe("SENSITIVE");
-    expect(detectSocPlatform(["0x600c1000"], "riscv")).toEqual([
+    expect(lookupSocPeripheral("0x6004e800", "esp32")).toBeNull();
+    expect(lookupSocPeripheral("0x6004e800", "esp32c3")).toBeNull();
+    expect(lookupSocPeripheral("0x6004e800", "esp32c6")).toBeNull();
+    expect(lookupSocPeripheral("0x6004e800", "esp32c2")?.name).toBe("I2C_MST");
+    expect(detectSocPlatform(["0x6004e800"], "riscv")).toEqual([
       {
         platform: "esp32c2",
         matchedCount: 1,
         totalAddresses: 1,
         confidence: 1,
-        matchedPeripherals: ["SENSITIVE"],
+        matchedPeripherals: ["I2C_MST"],
       },
     ]);
-    expect(detectSocPlatform(["0x600c1000"], "arm")).toEqual([]);
+    expect(detectSocPlatform(["0x6004e800"], "arm")).toEqual([]);
   });
 });

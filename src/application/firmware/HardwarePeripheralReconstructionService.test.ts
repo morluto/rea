@@ -298,9 +298,9 @@ describe("SoC catalog selection", () => {
 });
 
 describe("ESP32-C2 catalog selection", () => {
-  it("names the ESP32-C2 sensitive block when no other catalog owns it", () => {
+  it("names the ESP32-C2 I2C master when no other catalog owns it", () => {
     const report = reconstructHardwareFromReferences(
-      [{ target_address: "0x600c1000", read: true }],
+      [{ target_address: "0x6004e800", read: true }],
       "riscv",
     );
 
@@ -310,11 +310,27 @@ describe("ESP32-C2 catalog selection", () => {
         matchedCount: 1,
         totalAddresses: 1,
         confidence: 1,
-        matchedPeripherals: ["SENSITIVE"],
+        matchedPeripherals: ["I2C_MST"],
       },
     ]);
-    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe("SENSITIVE");
+    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe("I2C_MST");
     expect(report.limitations).toEqual([]);
+  });
+
+  it("does not name the sensitive block when C2 and C3 share it", () => {
+    const report = reconstructHardwareFromReferences(
+      [{ target_address: "0x600c1000", read: true }],
+      "riscv",
+    );
+
+    expect(report.detectedPlatforms.map((candidate) => candidate.platform)).toEqual([
+      "esp32c2",
+      "esp32c3",
+    ]);
+    expect(
+      report.peripheralBlocks.some((block) => block.socPeripheralName === "SENSITIVE"),
+    ).toBe(false);
+    expect(report.limitations[0]).toContain("esp32c2, esp32c3");
   });
 });
 
