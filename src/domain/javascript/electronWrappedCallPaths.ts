@@ -262,6 +262,7 @@ export function* collectElectronWrappedCallPathsSteps(
     state.parentsByNode,
   );
   const resolver = new JavaScriptSymbolicBindings(state, program, identity);
+  yield* resolver.prepareSteps();
   const paths: ElectronCallPath[] = [];
   const seen = new Set<string>();
   const unconditionalRegistrations = new Set<string>();

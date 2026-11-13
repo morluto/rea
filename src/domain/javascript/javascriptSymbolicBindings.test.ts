@@ -19,10 +19,9 @@ const resolverFor = (source: string) => {
   const state = completeSemanticSteps(
     indexJavaScriptBindingsSteps(parsed.program),
   );
-  return {
-    parsed,
-    resolver: new JavaScriptSymbolicBindings(state, parsed.program),
-  };
+  const resolver = new JavaScriptSymbolicBindings(state, parsed.program);
+  completeSemanticSteps(resolver.prepareSteps());
+  return { parsed, resolver };
 };
 
 /** Parse a fixture and collect the first argument of each inspect call. */
@@ -333,6 +332,26 @@ it.each([
   ],
   ["a reassignment", `${babelEnum}\nChannel = other;`],
   [
+    "a member write in a function that receives the enum",
+    `${tscEnum}\nfunction mutate(value) { value.Ping = "app:other"; }\nmutate(Channel);`,
+  ],
+  [
+    "a member write in a function that receives the Babel enum",
+    `${babelEnum}\nfunction mutate(value) { value.Ping = "app:other"; }\nmutate(Channel);`,
+  ],
+  [
+    "an assigning call",
+    `${tscEnum}\nObject.assign(Channel, { Ping: "app:other" });`,
+  ],
+  [
+    "a defined member under a dynamic key",
+    `${babelEnum}\nObject.defineProperty(Channel, key, { value: "app:other" });`,
+  ],
+  [
+    "a member write through an alias",
+    `${tscEnum}\nconst alias = Channel;\nalias.Ping = runtimeChannel;`,
+  ],
+  [
     "a merged declaration",
     `${tscEnum}\n(function (Channel) { Channel["Other"] = "app:other"; })(Channel || (Channel = {}));`,
   ],
@@ -363,6 +382,18 @@ it.each([
     symbolicVariants(value).filter(({ kind }) => kind !== "unknown"),
   ).toEqual([]);
 });
+
+it.each([
+  ["tsc", tscEnum],
+  ["Babel", babelEnum],
+])(
+  "reads %s enum members before a later call receives the enum",
+  (_emitter, source) => {
+    expect(
+      inspectOne(`${source}\ninspect(Channel.Ping);\nregister(Channel);`),
+    ).toEqual({ kind: "literal", value: "app:ping" });
+  },
+);
 
 it("keeps a synchronous cross-function callback before initialization unresolved", () => {
   const { parsed, resolver } = resolverFor(`function outer() {

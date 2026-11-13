@@ -15,8 +15,13 @@ import type { SymbolicValue } from "./javascriptSymbolicValues.js";
 interface TypeScriptEnum {
   /** Call that assigns the members; a read must follow its completion. */
   readonly call: t.CallExpression;
-  /** The binding's own `E = {}` in the call argument, if any. */
-  readonly assignment: t.Node | undefined;
+  /**
+   * Expression that creates the object: the call, or the initializer around
+   * it. Effects on the binding inside it belong to the recognized shape.
+   */
+  readonly declaration: t.Node;
+  /** The empty object literal that the call fills and returns. */
+  readonly object: t.ObjectExpression;
   readonly value: SymbolicValue;
 }
 
@@ -24,7 +29,8 @@ interface TypeScriptEnum {
  * Recognize the binding of a compiled TypeScript enum: tsc's
  * `var E; (function (E) { E["A"] = "a"; E[E["B"] = 0] = "B"; })(E || (E = {}));`
  * or the `var E = function (E) {...; return E; }(E || {})` of Babel and
- * esbuild. The caller rejects any other write to the binding.
+ * esbuild. Any other write to the binding or escape of its object is a fact
+ * the caller must still check.
  */
 export const typeScriptEnumInitializer = (
   binding: JavaScriptSemanticBindingState,
@@ -65,13 +71,15 @@ const initializedEnum = (
   )
     return undefined;
   // The binding is still undefined while its own initializer runs.
-  const object = unwrapJavaScriptExpression(call.arguments[0]!).node;
+  const argument = unwrapJavaScriptExpression(call.arguments[0]!).node;
   const fresh =
-    isEmptyObject(object) ||
-    (t.isLogicalExpression(object, { operator: "||" }) &&
-      refersTo(object.left, binding.bindingId, state) &&
-      isEmptyObject(object.right));
-  return fresh ? enumObject(call, undefined, true, state) : undefined;
+    t.isLogicalExpression(argument, { operator: "||" }) &&
+    refersTo(argument.left, binding.bindingId, state)
+      ? emptyObject(argument.right)
+      : emptyObject(argument);
+  return fresh === undefined
+    ? undefined
+    : enumObject(call, initializer, fresh, true, state);
 };
 
 /** `var E; (function (E) {...})(E || (E = {}))`, or `(E || (exports.E = E = {}))`. */
@@ -82,8 +90,9 @@ const assignedEnum = (
 ): TypeScriptEnum | undefined => {
   const isBinding = (node: t.Node) => refersTo(node, binding.bindingId, state);
   const assignment = state.parentsByNode.get(object);
+  const fresh = emptyObject(object);
   if (
-    !isEmptyObject(object) ||
+    fresh === undefined ||
     !t.isAssignmentExpression(assignment, { operator: "=" }) ||
     !isBinding(assignment.left)
   )
@@ -102,7 +111,7 @@ const assignedEnum = (
     t.isCallExpression(call) &&
     call.arguments.length === 1 &&
     runsInBindingBody(call, binding, state)
-    ? enumObject(call, assignment, false, state)
+    ? enumObject(call, call, fresh, false, state)
     : undefined;
 };
 
@@ -143,7 +152,8 @@ const runsInBindingBody = (
  */
 const enumObject = (
   call: t.CallExpression,
-  assignment: t.Node | undefined,
+  declaration: t.Node,
+  object: t.ObjectExpression,
   returnsParameter: boolean,
   state: JavaScriptSemanticAnalysisState,
 ): TypeScriptEnum | undefined => {
@@ -209,7 +219,7 @@ const enumObject = (
       (write) => assign(write, true) !== null,
     );
   return complete
-    ? { call, assignment, value: { kind: "record", values } }
+    ? { call, declaration, object, value: { kind: "record", values } }
     : undefined;
 };
 
@@ -218,9 +228,11 @@ const operands = (node: t.Node): t.Node[] => {
   return t.isSequenceExpression(value) ? [...value.expressions] : [value];
 };
 
-const isEmptyObject = (node: t.Node): boolean => {
+const emptyObject = (node: t.Node): t.ObjectExpression | undefined => {
   const value = unwrapJavaScriptExpression(node).node;
-  return t.isObjectExpression(value) && value.properties.length === 0;
+  return t.isObjectExpression(value) && value.properties.length === 0
+    ? value
+    : undefined;
 };
 
 const refersTo = (

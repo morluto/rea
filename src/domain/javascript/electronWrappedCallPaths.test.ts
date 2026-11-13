@@ -842,6 +842,41 @@ it("keeps an enum member channel unresolved after another member write", () => {
   ]);
   expect(result.parse_status).toBe("partial");
 });
+it.each([
+  [
+    "tsc",
+    `var Channel;
+    (function (Channel) {
+        Channel["Ping"] = "app:ping";
+    })(Channel || (Channel = {}));`,
+  ],
+  [
+    "Babel",
+    `var Channel = function (Channel) {
+      Channel["Ping"] = "app:ping";
+      return Channel;
+    }(Channel || {});`,
+  ],
+])(
+  "keeps a %s enum member channel unresolved after a function receives the enum",
+  (_emitter, enumeration) => {
+    const result = analyzeJavaScriptStaticSource(`
+      const {contextBridge,ipcRenderer}=require("electron");
+      ${enumeration}
+      function mutate(value) { value.Ping = runtimeChannel; }
+      mutate(Channel);
+      contextBridge.exposeInMainWorld("desktop", { ping: () => ipcRenderer.send(Channel.Ping) });
+    `);
+    expect(result.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: null,
+        channel_expression: "Channel.Ping",
+      }),
+    ]);
+    expect(result.electron.call_paths ?? []).toEqual([]);
+    expect(result.parse_status).toBe("partial");
+  },
+);
 it("resolves a site-determined registration whose handler is a named local", () => {
   const result = analyzeJavaScriptStaticSource(`
     const {contextBridge,ipcRenderer}=require("electron");

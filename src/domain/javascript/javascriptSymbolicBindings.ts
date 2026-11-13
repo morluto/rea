@@ -16,6 +16,8 @@ import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
 import {
   indexJavaScriptElectronIdentitySteps,
+  indexSemanticMemberMutationFactsSteps,
+  semanticReferenceChangedSinceDeclaration,
   type JavaScriptElectronIdentity,
 } from "./javascriptSemanticAnalysis.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
@@ -113,7 +115,7 @@ export class JavaScriptSymbolicBindings {
   readonly #mutated = new Set<string>();
   readonly #typeScriptEnums = new Map<
     string,
-    NonNullable<ReturnType<typeof typeScriptEnumInitializer>> | null
+    NonNullable<ReturnType<typeof typeScriptEnumInitializer>>
   >();
   readonly #electronIdentity: JavaScriptElectronIdentity;
   readonly #namespaceOwners = new Map<string, t.Function>();
@@ -143,6 +145,7 @@ export class JavaScriptSymbolicBindings {
       "defineProperty",
     ]);
     this.#indexBindingAliases();
+    this.#indexTypeScriptEnums();
     traverseJavaScriptAst(program, {
       enter: (node) => {
         if (t.isCallExpression(node)) this.#indexBootstrap(node);
@@ -206,6 +209,15 @@ export class JavaScriptSymbolicBindings {
   /** Whether a function is a recognized bundle module factory, which runs once per module load. */
   isModuleFactory(node: t.Node): boolean {
     return t.isFunction(node) && this.#moduleFactories.has(node);
+  }
+
+  /**
+   * Complete the shared member-effect facts that compiled enum reads consult.
+   * Without them such a read stays unknown, so callers run this before reading.
+   */
+  *prepareSteps(): Generator<void, void> {
+    if (this.#typeScriptEnums.size > 0)
+      yield* indexSemanticMemberMutationFactsSteps(this.state);
   }
 
   environmentAt(node: t.Node): SymbolicEnvironment {
@@ -760,27 +772,30 @@ export class JavaScriptSymbolicBindings {
     ]);
   }
 
-  /** A compiled TypeScript enum's members, once its initializer call completes. */
+  /**
+   * A compiled TypeScript enum's members after its initializer call completes,
+   * while no other effect can have changed them. The generic path would
+   * evaluate the initializer without the member writes in its function body,
+   * so the recognized binding never reaches it.
+   */
   #typeScriptEnum(
     binding: JavaScriptSemanticBindingState,
     env: SymbolicEnvironment,
     node: t.Identifier,
   ): SymbolicValue | undefined {
-    let enumeration = this.#typeScriptEnums.get(binding.bindingId);
-    if (enumeration === undefined) {
-      const found = typeScriptEnumInitializer(binding, this.state);
-      // Any other write can replace the object or one of its members.
-      enumeration =
-        found !== undefined &&
-        !this.#mutated.has(binding.bindingId) &&
-        (this.#writes.get(binding.bindingId) ?? []).every(
-          (write) => write.site === found.assignment,
-        )
-          ? found
-          : null;
-      this.#typeScriptEnums.set(binding.bindingId, enumeration);
-    }
-    if (enumeration === null) return undefined;
+    const enumeration = this.#typeScriptEnums.get(binding.bindingId);
+    if (enumeration === undefined) return undefined;
+    // Writes, aliases and calls that receive the object are the semantic
+    // owner's member-effect facts, ordered against this read.
+    if (
+      semanticReferenceChangedSinceDeclaration(
+        this.state,
+        node,
+        node,
+        enumeration.declaration,
+      )
+    )
+      return symbolicUnknown("enum members may have changed");
     const boundary = this.#readBoundary(binding.scopeId, env, node);
     const point =
       boundary === undefined ? undefined : boundary.node[boundary.edge];
@@ -1479,6 +1494,14 @@ export class JavaScriptSymbolicBindings {
       const aliases = this.#aliasesByBinding.get(source.bindingId) ?? [];
       aliases.push(binding.bindingId);
       this.#aliasesByBinding.set(source.bindingId, aliases);
+    }
+  }
+
+  #indexTypeScriptEnums(): void {
+    for (const binding of this.state.bindingsById.values()) {
+      const enumeration = typeScriptEnumInitializer(binding, this.state);
+      if (enumeration !== undefined)
+        this.#typeScriptEnums.set(binding.bindingId, enumeration);
     }
   }
 
