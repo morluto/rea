@@ -2318,9 +2318,10 @@ operands, and names that the dossier reports with a named symbol origin stay
 visible. An `unchanged` result means the masked text matches; it
 does not establish callee identity or call order. A view is `unknown` when the
 exact calls dimension is unknown and its text masks a listed caller or callee,
-when its text masks a call, tail-jump or thunk target that the calls dimension
-does not compare, or when the bounded line diff gives up; it then keeps both
-digests and its masking record, without a text delta.
+when its text masks an incoming call source, or a call, tail-jump or thunk
+target, that the calls dimension does not compare, or when the bounded line
+diff gives up; it then keeps both digests and its masking record, without a
+text delta.
 Each view returns its applied masking rules, counts, limitations, and both
 source Evidence links. Reconstruction claims and static/runtime function
 selectors can name `pseudocode_normalized` or `assembly_normalized` only when

@@ -1013,6 +1013,65 @@ describe("normalized view callee identity", () => {
   });
 });
 
+describe("normalized view incoming call facts", () => {
+  it("treats the source of a typed incoming call missing from callers as an uncompared endpoint", () => {
+    const make = (base: string, caller: string) => {
+      const name = `FUN_${BigInt(caller).toString(16)}`;
+      const site = `0x${(BigInt(caller) + 0x10n).toString(16)}`;
+      const dossier = syntheticDossier({
+        base,
+        name: `FUN_${BigInt(base).toString(16)}`,
+        pseudocode: `void f(void) { register_handler(${name}); }`,
+        assembly: [`${base}: PUSH EBP`],
+        outgoingReferences: [{ source: site, target: base, operandIndex: 0 }],
+      });
+      const edge = dossier.outgoing_references[0]!;
+      return {
+        ...dossier,
+        outgoing_references: [],
+        incoming_references: [
+          {
+            ...edge,
+            source_procedure: {
+              address: caller,
+              name,
+              classification: null,
+              body: {
+                available: false as const,
+                reason: "extent not observed",
+              },
+            },
+            kind: {
+              ...edge.kind,
+              type: "UNCONDITIONAL_CALL",
+              flow: true,
+              call: true,
+              jump: false,
+              data: false,
+              read: false,
+            },
+          },
+        ],
+      };
+    };
+    const [before, after] = syntheticPair(
+      make("0x411700", "0x411860"),
+      make("0x511700", "0x511860"),
+    );
+    const result = compareFunctions(before, after, {
+      includeNormalizedViews: true,
+    });
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        expect.stringContaining(
+          "cannot establish callee identity or call order",
+        ),
+      ]),
+    });
+  });
+});
+
 describe("normalized view outgoing callee facts", () => {
   it.each([
     { edge: "call", call: true, jump: false },

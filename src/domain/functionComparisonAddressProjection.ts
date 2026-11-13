@@ -42,22 +42,24 @@ interface BodyExtent {
 export const hasFunctionBodyExtent = (snapshot: FunctionSnapshot): boolean =>
   bodyExtent(snapshot) !== null;
 
-/** Build the evidence-backed address projection for one dossier. */
-export const createFunctionAddressProjection = (
-  snapshot: FunctionSnapshot,
-  relativeOffsets: boolean,
-): AddressProjection => {
-  const addresses = corroboratedAddresses(snapshot);
-  const parsed = (values: readonly (string | null | undefined)[]) =>
-    values
-      .map((value) => parseAddress((value ?? "").toLowerCase()))
-      .filter((value): value is bigint => value !== null);
-  const callees = parsed(
+const parsedAddresses = (
+  values: readonly (string | null | undefined)[],
+): bigint[] =>
+  values
+    .map((value) => parseAddress((value ?? "").toLowerCase()))
+    .filter((value): value is bigint => value !== null);
+
+/**
+ * Callee targets that control-flow operands may mask, every call endpoint the
+ * views track, and the endpoints the exact calls dimension compares.
+ */
+const callEndpointAddresses = (snapshot: FunctionSnapshot) => {
+  const callees = parsedAddresses(
     snapshot.dossier.callees.map((callee) => callee.address),
   );
   const calleeAddresses = new Set([
     ...callees,
-    ...parsed([
+    ...parsedAddresses([
       ...snapshot.dossier.callees.map(
         (callee) => callee.classification?.thunk_target,
       ),
@@ -70,13 +72,27 @@ export const createFunctionAddressProjection = (
   const callers = snapshot.dossier.callers;
   const comparedCallEndpoints = new Set([
     ...callees,
-    ...parsed(callers.map((caller) => caller.address)),
+    ...parsedAddresses(callers.map((caller) => caller.address)),
   ]);
   const callEndpoints = new Set([
     ...calleeAddresses,
     ...comparedCallEndpoints,
-    ...parsed(callers.map((caller) => caller.classification?.thunk_target)),
+    ...parsedAddresses([
+      ...callers.map((caller) => caller.classification?.thunk_target),
+      ...incomingCallSources(snapshot),
+    ]),
   ]);
+  return { calleeAddresses, callEndpoints, comparedCallEndpoints };
+};
+
+/** Build the evidence-backed address projection for one dossier. */
+export const createFunctionAddressProjection = (
+  snapshot: FunctionSnapshot,
+  relativeOffsets: boolean,
+): AddressProjection => {
+  const addresses = corroboratedAddresses(snapshot);
+  const { calleeAddresses, callEndpoints, comparedCallEndpoints } =
+    callEndpointAddresses(snapshot);
   const extent = relativeOffsets ? bodyExtent(snapshot) : null;
   const targetsBySite = referenceTargetsBySite(snapshot);
   const instructionSites = observedInstructionSites(snapshot);
@@ -240,6 +256,33 @@ const outgoingCallTargets = (
           edge.target_address,
           ...(intoOtherProcedure ? [target?.address] : []),
           target?.classification?.thunk_target,
+        ]
+      : [];
+  });
+};
+
+/**
+ * Typed incoming calls name callers the callers facet may omit: the call site,
+ * the procedure that contains it and that procedure's thunk target.
+ */
+const incomingCallSources = (
+  snapshot: FunctionSnapshot,
+): (string | null | undefined)[] => {
+  const entry = parseAddress(snapshot.dossier.procedure.address.toLowerCase());
+  return snapshot.dossier.incoming_references.flatMap((edge) => {
+    const source = edge.source_procedure;
+    const fromOtherProcedure =
+      source !== null && parseAddress(source.address.toLowerCase()) !== entry;
+    const classifiedCall =
+      edge.call !== undefined && edge.call.classification !== "none";
+    const typedCall =
+      edge.kind.available &&
+      (edge.kind.call || (edge.kind.jump && fromOtherProcedure));
+    return classifiedCall || typedCall
+      ? [
+          edge.source_address,
+          ...(fromOtherProcedure ? [source?.address] : []),
+          source?.classification?.thunk_target,
         ]
       : [];
   });

@@ -314,7 +314,7 @@ export const normalizedViews = (
         (leftText.maskedUncomparedCallee || rightText.maskedUncomparedCallee)
       )
         return unresolved(
-          "Masked text references a call, tail-jump or thunk target that the exact calls dimension does not compare; normalized equality cannot establish callee identity or call order.",
+          "Masked text references an incoming call source, or a call, tail-jump or thunk target, that the exact calls dimension does not compare; normalized equality cannot establish callee identity or call order.",
         );
       if (
         delta.hunks === 0 &&
