@@ -77,7 +77,31 @@ export const selectProcedures = (
     if (!selected.has(row.address) && matches(row, input, bounds))
       selected.set(row.address, row);
   }
-  const procedures = [...selected.values()].sort(compareProcedures);
+  // Decode each address once; the sort comparator runs O(n log n) times.
+  const keyed = [...selected.values()].map((procedure) => ({
+    procedure,
+    coordinate: addressCoordinate(procedure.address),
+  }));
+  keyed.sort((left, right) => {
+    const byAddress = compareParsedAddresses(
+      left.procedure.address,
+      right.procedure.address,
+      left.coordinate,
+      right.coordinate,
+    );
+    if (byAddress !== 0) return byAddress;
+    const byName = compareUnicodeCodePoints(
+      left.procedure.name ?? "",
+      right.procedure.name ?? "",
+    );
+    return byName === 0
+      ? compareUnicodeCodePoints(
+          left.procedure.address,
+          right.procedure.address,
+        )
+      : byName;
+  });
+  const procedures = keyed.map(({ procedure }) => procedure);
   return {
     procedures,
     excluded: seen.size - procedures.length,
@@ -138,25 +162,24 @@ const matchesAddress = (address: string, bounds: DecompileBounds): boolean => {
   );
 };
 
-const compareProcedures = (
-  left: SelectedProcedure,
-  right: SelectedProcedure,
-): number => {
-  const byAddress = compareProcedureAddresses(left.address, right.address);
-  if (byAddress !== 0) return byAddress;
-  const byName = compareUnicodeCodePoints(left.name ?? "", right.name ?? "");
-  return byName === 0
-    ? compareUnicodeCodePoints(left.address, right.address)
-    : byName;
-};
-
 /** Numeric order within an address space; unparsed addresses sort last. */
 export const compareProcedureAddresses = (
   left: string,
   right: string,
+): number =>
+  compareParsedAddresses(
+    left,
+    right,
+    addressCoordinate(left),
+    addressCoordinate(right),
+  );
+
+const compareParsedAddresses = (
+  left: string,
+  right: string,
+  a: ReturnType<typeof addressCoordinate>,
+  b: ReturnType<typeof addressCoordinate>,
 ): number => {
-  const a = addressCoordinate(left);
-  const b = addressCoordinate(right);
   if (a === null || b === null) {
     if (a === null && b === null) return compareUnicodeCodePoints(left, right);
     return a === null ? 1 : -1;
