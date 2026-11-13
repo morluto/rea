@@ -60,11 +60,25 @@ def _entry_bytes(archive, info):
     return data if len(data) == info.file_size else None
 
 
-def _zip_entry(archive, info, refusal):
-    """One entry of a zip view: its name, size and digest, and its own format and view, or why it was not read."""
-    # zipfile can override a UTF-8-flagged name with a Unicode Path extra field.
-    # REA's ZIP reader gives the explicitly UTF-8 stored name precedence.
-    name = info.orig_filename if info.flag_bits & 0x800 else info.filename
+def _zip_selected_name(raw: bytes, flags: int, extra: bytes):
+    """The name, as REA's bounded view reports and classifies it: the final usable Unicode Path field, else the
+    UTF-8 stored name when the flag is set, else the raw stored name (CP437). None when the selection must be UTF-8
+    and is not, which matches the scanner refusing the archive. zipfile retains the first valid Unicode Path, so its
+    own info.filename is not the same identity and is not used."""
+    utf8 = _zip_unicode_path(raw, flags, extra)
+    if utf8 is None and flags & 0x800:
+        utf8 = raw
+    if utf8 is None:
+        return raw.decode("cp437")
+    try:
+        return utf8.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _zip_entry(archive, info, name, refusal):
+    """One entry of a zip view: its name, size and digest, and its own format and view, or why it was not read.
+    name is the identity the bounded scanner selected; it is passed through so the view matches it."""
     entry = {"name": name, "size": info.file_size, "sha256": None, "format": None, "view": None,
              "view_error": refusal}
     if refusal is not None:
@@ -109,21 +123,25 @@ def _zip_end(file, size: int):
 
 
 def _zip_unicode_path(raw: bytes, flags: int, extra: bytes):
-    """An Info-ZIP Unicode Path when zip.js uses it: version 1, no UTF-8 flag, and the CRC-32 of the stored name."""
-    at = 0
+    """An Info-ZIP Unicode Path when zip.js uses it: version 1, no UTF-8 flag, and the CRC-32 of the stored name.
+
+    zip.js indexes extra fields by id in a dict, so a later Unicode Path replaces an earlier one. An unusable
+    final field falls back to the stored name rather than resurrecting an earlier claim."""
+    at, found, selected = 0, False, None
     while at + 4 <= len(extra):
         kind, length = struct.unpack_from("<HH", extra, at)
         if kind == 0x7075:
             data = extra[at + 4:at + 4 + length]
             usable = (length >= 5 and len(data) == length and data[0] == 1 and not flags & 0x800
                       and int.from_bytes(data[1:5], "little") == zlib.crc32(raw))
-            return data[5:] if usable else None
+            selected, found = (data[5:] if usable else None), True
         at += 4 + length
-    return None
+    return selected if found else None
 
 
 def _zip_ends_in_slash(raw: bytes, flags: int, extra: bytes):
-    """Whether an entry's name, as REA decodes it, ends in a slash; None when it must be UTF-8 and is not."""
+    """Whether an entry's name, as REA decodes it, ends in a slash; None when it must be UTF-8 and is not. A plain
+    CP437 name is judged by its last byte, so most records are read without decoding."""
     utf8 = _zip_unicode_path(raw, flags, extra)
     if utf8 is None and flags & 0x800:
         utf8 = raw
@@ -137,7 +155,8 @@ def _zip_ends_in_slash(raw: bytes, flags: int, extra: bytes):
 
 def _zip_directory(file, size: int, keep: int):
     """An archive's central directory read a record at a time, keeping the first file entries' records, as many as keep allows, and
-    counting the rest, as REA reads it: (start, declared offset, records, count), or None when it cannot be read.
+    counting the rest, as REA reads it: (start, declared offset, kept record bytes, count, selected names per kept record), or
+    None when it cannot be read.
     Directories are told apart as zip.js tells them: a final slash, a Unix directory mode, or the MS-DOS attribute."""
     located = _zip_end(file, size)
     if located is None:
@@ -147,7 +166,7 @@ def _zip_directory(file, size: int, keep: int):
     if start < 0:
         return None
     file.seek(start)
-    records, count, at = [], 0, start
+    records, names, count, at = [], [], 0, start
     while at < end:
         fixed = file.read(46)
         if at + 46 > end or len(fixed) < 46 or fixed[:4] != ZIP_CENTRAL:
@@ -166,7 +185,9 @@ def _zip_directory(file, size: int, keep: int):
             count += 1
             if len(records) < keep:
                 records.append(fixed + rest)
-    return start, declared, records, count
+                names.append(_zip_selected_name(rest[:name_length], flags,
+                                                rest[name_length:name_length + extra_length]))
+    return start, declared, records, count, names
 
 
 class _BoundedArchive(io.RawIOBase):
@@ -211,7 +232,7 @@ def _zip(file, size: int) -> dict:
         directory = _zip_directory(file, size, MAX_ZIP_ENTRIES)
         if directory is None:
             raise zipfile.BadZipFile("no readable central directory")
-        start, declared, records, count = directory
+        start, declared, records, count, names = directory
         kept = b"".join(records)
         offset = declared if declared <= 0xFFFFFFFF else start
         # zipfile follows a Zip64 locator signature wherever one sits before the end record, and the kept records
@@ -221,10 +242,10 @@ def _zip(file, size: int) -> dict:
                 + struct.pack("<4sIQI", ZIP64_LOCATOR, 0, offset + len(kept), 1)
                 + struct.pack("<4s4H2IH", ZIP_END, 0, 0, len(records), len(records), len(kept), offset, 0))
         with zipfile.ZipFile(_BoundedArchive(file, start, tail)) as archive:
-            for info in archive.infolist():
+            for info, name in zip(archive.infolist(), names, strict=True):
                 refusal = _zip_refusal(info, spent)
                 spent += info.file_size if refusal is None else 0
-                entries.append(_zip_entry(archive, info, refusal))
+                entries.append(_zip_entry(archive, info, name, refusal))
     except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, OSError, ValueError, struct.error):
         return {"format": "zip", "view": None, "error": "not a readable zip archive"}
     view = {"entries": entries, "entry_count": count, "truncated": count > len(entries)}

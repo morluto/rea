@@ -64,6 +64,23 @@ const sqliteHeader = Buffer.concat([
   Buffer.alloc(84),
 ]);
 
+/** An Info-ZIP Unicode Path extra field for `unicode`, checksumming the stored name's bytes. */
+const unicodePathExtra = (
+  storedName: string,
+  unicode: string,
+  { version = 1, crc }: { version?: number; crc?: number } = {},
+): Buffer => {
+  const stored = Buffer.from(storedName);
+  const raw = Buffer.from(unicode);
+  const extra = Buffer.alloc(9 + raw.length);
+  extra.writeUInt16LE(0x7075, 0);
+  extra.writeUInt16LE(5 + raw.length, 2);
+  extra[4] = version;
+  extra.writeUInt32LE(crc ?? crc32(stored), 5);
+  raw.copy(extra, 9);
+  return extra;
+};
+
 it("gives the UTF-8 flag precedence over a Unicode Path for names and formats", async () => {
   const storedName = "legacy.txt";
   const unicodeName = Buffer.from("café.json");
@@ -265,6 +282,51 @@ describe("zip directories in the exported module", () => {
       entry_count: 2,
       truncated: false,
     });
+  });
+
+  it("uses the final Unicode Path field when an archive declares more than one", async () => {
+    const storedName = "legacy.bin";
+    const archive = zipArchive([
+      {
+        name: storedName,
+        data: '{"zoom": 1.5}',
+        centralExtra: Buffer.concat([
+          unicodePathExtra(storedName, "hidden/"),
+          unicodePathExtra(storedName, "settings.json"),
+        ]),
+      },
+    ]);
+
+    expect(await sameView(archive)).toMatchObject({
+      entries: [{ name: "settings.json", format: "json", view: { zoom: 1.5 } }],
+      entry_count: 1,
+      truncated: false,
+    });
+  });
+
+  it("falls back to the stored name when the final Unicode Path field is unusable", async () => {
+    const storedName = "legacy.bin";
+    for (const final of [
+      unicodePathExtra(storedName, "settings.json", { version: 2 }),
+      unicodePathExtra(storedName, "settings.json", { crc: 1 }),
+    ]) {
+      const archive = zipArchive([
+        {
+          name: storedName,
+          data: '{"zoom": 1.5}',
+          centralExtra: Buffer.concat([
+            unicodePathExtra(storedName, "hidden/"),
+            final,
+          ]),
+        },
+      ]);
+
+      expect(await sameView(archive)).toMatchObject({
+        entries: [{ name: storedName }],
+        entry_count: 1,
+        truncated: false,
+      });
+    }
   });
 
   it("finds the directory through a Zip64 locator whether or not the classic end record defers to it, as zipfile does", async () => {
