@@ -238,7 +238,8 @@ broad changes or diagnosing CI, rather than after every edit. Package/install
 changes additionally need package verification; provider changes need actual
 provider evidence.
 
-Vitest projects use up to two workers, bounded by host parallelism.
+Vitest projects use up to two workers, bounded by host parallelism. GitHub
+Actions jobs own their runner and use up to four.
 `process-boundary` runs later with serial files because process-tree sampling
 shares host resources. Acceptance and process-global cases use isolated forks
 without serial scheduling. Pure domain/service, composition, conformance,
@@ -283,7 +284,7 @@ coverage. Ordinary CI also exhausted the former 384 MiB budget after earlier
 files loaded the shared source/contract graph, while later command registration
 and schema/help rendering still needed transient allocation space. This is a
 measured capacity control, not a suite-wide speedup claim. The worker count
-remains bounded at two, and spawned REA processes retain their own heap settings.
+remains bounded, and spawned REA processes retain their own heap settings.
 Coverage enablement still controls instrumentation, test deadlines and coverage
 thresholds; explicitly disabling it or selecting only a provider does not enable
 instrumentation.
@@ -1102,7 +1103,8 @@ is separate and grows when more shard jobs compete for runners.
 `process-boundary` stays serial because process-tree sampling shares the host.
 Raising the worker cap from two to four on this four-core host cut a six-file
 acceptance sample from 96–101 seconds to 71 seconds and did not remove the
-single-file floor, so the cap stays two. Full qualification keeps six covered
+single-file floor. Hosted CI jobs use four workers; other hosts stay at two
+because they are shared with other checks. Full qualification keeps six covered
 shards; its longer instrumentation is outside this fast budget.
 
 The separate `CI timings` workflow batches recent completed CI and Release runs
