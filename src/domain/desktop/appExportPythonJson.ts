@@ -10,37 +10,10 @@ JSON_SPACE = re.compile(r"[ \t\n\r]*")
 
 
 ${PYTHON_EXACT_JSON_NUMBER}
-_INEXACT = object()
 _DEEP = object()
 _DEEP_INEXACT = object()
-_LEVEL_END = object()
 _INVALID_JSON = object()
 JSON_ATOMS = {"true": True, "false": False, "null": None}
-
-
-def _number_or_mark(spelling: str):
-    """A JSON number read exactly, or a mark for one REA's state view refuses."""
-    try:
-        return _exact_number(spelling)
-    except _Inexact:
-        return _INEXACT
-
-
-def _holds_inexact(value) -> bool:
-    """Whether a parsed JSON value still holds a marked number once duplicate keys kept their last value; one
-    iterator per nesting level, so no child list is copied."""
-    levels = [iter((value,))]
-    while levels:
-        item = next(levels[-1], _LEVEL_END)
-        if item is _LEVEL_END:
-            levels.pop()
-        elif item is _INEXACT or item is _DEEP_INEXACT:
-            return True
-        elif isinstance(item, dict):
-            levels.append(iter(item.values()))
-        elif isinstance(item, list):
-            levels.append(iter(item))
-    return False
 
 
 def _deeper_than(root, limit: int) -> bool:
@@ -190,7 +163,7 @@ def _json_view(text: str, size: int):
     view = _read_json(text)
     if view is _INVALID_JSON:
         return None
-    if _holds_inexact(view):
+    if _holds_inexact(view, _DEEP_INEXACT):
         return {"format": "json", "view": None,
                 "error": "a number in it cannot be read exactly, such as an integer above 2^53"}
     if _deeper_than(view, MAX_JSON_VIEW_DEPTH):
