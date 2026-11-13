@@ -9,6 +9,7 @@ import {
   pythonPycFixture,
   pythonPycHeader,
 } from "../../src/python/PythonPyc.fixture.js";
+import { pythonPycEqualityCases } from "../fixtures/pythonPycCodeEquality.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 
@@ -841,5 +842,43 @@ cliTest(
     expect(
       completePycEvidenceSchema.parse(mcp.structuredContent).normalized_result,
     ).toEqual(report);
+  },
+);
+
+cliTest(
+  "keeps the code objects CPython 3.12 keeps in a frozenset",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-pyc-equality-");
+    const reports = new Map<string, unknown>();
+    for (const fixture of pythonPycEqualityCases) {
+      const path = join(root, `${fixture.name}.pyc`);
+      await writeFile(path, Buffer.from(fixture.hex, "hex"));
+      const response = await cli.run({
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      const report = completePycEvidenceSchema.parse(
+        response.json,
+      ).normalized_result;
+      const [module, ...members] = report.code_objects;
+      expect(module?.consts.at(-1), fixture.name).toEqual({
+        kind: "frozenset",
+        length: fixture.frozensetLength,
+      });
+      expect(members, fixture.name).toHaveLength(fixture.frozensetLength);
+      if (fixture.kept !== null)
+        expect(members[0], fixture.name).toMatchObject(fixture.kept);
+      reports.set(path, report);
+    }
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected file MCP session");
+    for (const [path, report] of reports) {
+      const mcp = await call("inspect_python_pyc", { path });
+      expect(mcp.isError).not.toBe(true);
+      expect(
+        completePycEvidenceSchema.parse(mcp.structuredContent)
+          .normalized_result,
+      ).toEqual(report);
+    }
   },
 );
