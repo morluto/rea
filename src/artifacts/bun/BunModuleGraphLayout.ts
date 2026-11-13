@@ -587,7 +587,8 @@ const fatClaims = async (
   for (const slice of parsed.slices) {
     abortIfNeeded(signal);
     if (parsed.rangeIssues[slice.index] !== null) continue;
-    claims.push(...(await machOClaims(source, slice.offset, slice.size)));
+    for (const claim of await machOClaims(source, slice.offset, slice.size))
+      claims.push(claim);
   }
   return claims;
 };
