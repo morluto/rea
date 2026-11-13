@@ -4,7 +4,6 @@ export const MODEL_CAPACITY_LIMITS = [
   "report-bytes",
   "representation-bytes",
   "exact-offset",
-  "metadata-nesting",
   "json-nesting",
 ] as const;
 
@@ -49,6 +48,7 @@ export function rejectPickle(): never {
 export const MODEL_HEADER_BYTES = 100_000_000;
 export const MODEL_REPORT_BYTES = 32 * 1024 * 1024;
 export const MODEL_ARRAY_PREVIEW = 8;
+/** Maximum retained GGUF array preview depth; deeper arrays are validated iteratively. */
 export const MODEL_METADATA_NESTING = 32;
 export const MODEL_JSON_NESTING = 32;
 
@@ -72,13 +72,9 @@ export const modelCapacityRemediation = (limit: ModelCapacityLimit): string => {
       return fixedModelLimit(
         `Exact host offset precision stops at ${String(Number.MAX_SAFE_INTEGER)}`,
       );
-    case "metadata-nesting":
-      return fixedModelLimit(
-        `GGUF metadata nesting is limited to ${String(MODEL_METADATA_NESTING)} array frames`,
-      );
     case "json-nesting":
       return fixedModelLimit(
-        `Safetensors JSON nesting is limited to ${String(MODEL_JSON_NESTING)} levels`,
+        `Retained Safetensors JSON nesting is limited to ${String(MODEL_JSON_NESTING)} levels; ignored tensor extensions are validated iteratively`,
       );
   }
 };
@@ -96,8 +92,6 @@ export const modelCapacityReportedLimits = (
       return { maximum_representation_bytes: MODEL_REPORT_BYTES };
     case "exact-offset":
       return { maximum_exact_offset: Number.MAX_SAFE_INTEGER };
-    case "metadata-nesting":
-      return { maximum_array_frames: MODEL_METADATA_NESTING };
     case "json-nesting":
       return { maximum_json_depth: MODEL_JSON_NESTING };
   }

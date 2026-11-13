@@ -28,6 +28,22 @@ type HeaderValue =
   | HeaderValue[]
   | { [key: string]: HeaderValue };
 
+type HeaderContext = "root" | "tensor" | "ordinary" | "ignored";
+type HeaderFrame = {
+  depth: number;
+  context: HeaderContext;
+  state: "first" | "next" | "separator";
+} & (
+  | {
+      kind: "object";
+      value: { [key: string]: HeaderValue } | null;
+      keys: Set<string>;
+      key: string;
+    }
+  | { kind: "array"; value: HeaderValue[] | null }
+);
+const TENSOR_FIELDS = new Set(["dtype", "shape", "data_offsets"]);
+
 /** The format's restricted JSON header, with duplicate keys and exact integer checks at its owner. */
 class HeaderJson {
   #position = 0;
@@ -67,16 +83,104 @@ class HeaderJson {
     }
     return rejectModel("Unterminated safetensors JSON string");
   }
-  *#value(depth: number): Generator<void, HeaderValue> {
-    if (++this.#nodes % 4096 === 0) yield;
-    this.#space();
-    this.budget.charge(64);
-    if (depth > MODEL_JSON_NESTING)
-      throw new ModelFormatFailure(
-        "capacity",
-        `Safetensors JSON nesting exceeds ${String(MODEL_JSON_NESTING)} levels`,
-        "json-nesting",
-      );
+  *#value(): Generator<void, HeaderValue> {
+    const frames: HeaderFrame[] = [];
+    let pending: { depth: number; context: HeaderContext } | undefined = {
+      depth: 0,
+      context: "root",
+    };
+    let value: HeaderValue = null;
+    let completed = false;
+    for (;;) {
+      if (pending !== undefined) {
+        if (++this.#nodes % 4096 === 0) yield;
+        this.#space();
+        // Includes the explicit parser frame and ignored object-key tracking.
+        // Charge before allocating; discarded extensions still consume bounded work.
+        this.budget.charge(64);
+        if (pending.context !== "ignored" && pending.depth > MODEL_JSON_NESTING)
+          throw new ModelFormatFailure(
+            "capacity",
+            `Safetensors JSON nesting exceeds ${String(MODEL_JSON_NESTING)} levels`,
+            "json-nesting",
+          );
+        const c = this.text[this.#position];
+        if (c === "{" || c === "[") {
+          this.#position++;
+          const common = { ...pending, state: "first" as const };
+          const retain = pending.context !== "ignored";
+          frames.push(
+            c === "{"
+              ? {
+                  ...common,
+                  kind: "object",
+                  value: retain
+                    ? (Object.create(null) as { [key: string]: HeaderValue })
+                    : null,
+                  keys: new Set<string>(),
+                  key: "",
+                }
+              : { ...common, kind: "array", value: retain ? [] : null },
+          );
+        } else {
+          value = this.#primitive();
+          completed = true;
+        }
+        pending = undefined;
+      }
+      if (completed) {
+        const parent = frames.at(-1);
+        if (parent === undefined) return value;
+        if (parent.kind === "object") {
+          if (parent.value !== null) parent.value[parent.key] = value;
+        } else parent.value?.push(value);
+        parent.state = "separator";
+        completed = false;
+        continue;
+      }
+      const frame = frames.at(-1)!;
+      const close = frame.kind === "object" ? "}" : "]";
+      this.#space();
+      if (frame.state === "separator") {
+        const next = this.text[this.#position++];
+        if (next === close) {
+          frames.pop();
+          value = frame.value;
+          completed = true;
+        } else if (next === ",") frame.state = "next";
+        else rejectModel("Invalid safetensors JSON container");
+        continue;
+      }
+      if (frame.state === "first" && this.text[this.#position] === close) {
+        this.#position++;
+        frames.pop();
+        value = frame.value;
+        completed = true;
+        continue;
+      }
+      let context: HeaderContext =
+        frame.context === "ignored" ? "ignored" : "ordinary";
+      if (frame.kind === "object") {
+        if (this.text[this.#position] !== '"')
+          rejectModel("Expected safetensors JSON object key");
+        const key = this.#string();
+        if (frame.keys.has(key))
+          rejectModel(`Duplicate safetensors JSON key ${key}`);
+        frame.keys.add(key);
+        frame.key = key;
+        this.#space();
+        if (this.text[this.#position++] !== ":")
+          rejectModel("Expected safetensors JSON colon");
+        if (frame.context === "root")
+          context = key === "__metadata__" ? "ordinary" : "tensor";
+        else if (frame.context === "tensor" && !TENSOR_FIELDS.has(key))
+          context = "ignored";
+      }
+      pending = { depth: frame.depth + 1, context };
+    }
+  }
+
+  #primitive(): HeaderValue {
     const c = this.text[this.#position];
     if (c === '"') return this.#string();
     if (this.text.startsWith("null", this.#position)) {
@@ -90,37 +194,6 @@ class HeaderJson {
     if (this.text.startsWith("false", this.#position)) {
       this.#position += 5;
       return false;
-    }
-    if (c === "{" || c === "[") {
-      this.#position++;
-      const object: { [key: string]: HeaderValue } = Object.create(null) as {
-        [key: string]: HeaderValue;
-      };
-      const array: HeaderValue[] = [];
-      const close = c === "{" ? "}" : "]";
-      this.#space();
-      if (this.text[this.#position] === close) {
-        this.#position++;
-        return c === "{" ? object : array;
-      }
-      while (true) {
-        this.#space();
-        if (c === "{") {
-          if (this.text[this.#position] !== '"')
-            rejectModel("Expected safetensors JSON object key");
-          const key = this.#string();
-          if (Object.hasOwn(object, key))
-            rejectModel(`Duplicate safetensors JSON key ${key}`);
-          this.#space();
-          if (this.text[this.#position++] !== ":")
-            rejectModel("Expected safetensors JSON colon");
-          object[key] = yield* this.#value(depth + 1);
-        } else array.push(yield* this.#value(depth + 1));
-        this.#space();
-        const next = this.text[this.#position++];
-        if (next === close) return c === "{" ? object : array;
-        if (next !== ",") rejectModel("Invalid safetensors JSON container");
-      }
     }
     const start = this.#position;
     if (this.text[this.#position] === "-") this.#position++;
@@ -158,7 +231,7 @@ class HeaderJson {
   *read(): Generator<void, HeaderValue> {
     if (this.text[0] !== "{")
       rejectModel("Safetensors header must begin with a JSON object");
-    const value = yield* this.#value(0);
+    const value = yield* this.#value();
     this.#space();
     if (this.#position !== this.text.length)
       rejectModel("Trailing non-whitespace safetensors header bytes");

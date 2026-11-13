@@ -74,7 +74,9 @@ architecture names, [context-length key template](https://github.com/ggml-org/ll
 and [writer method](https://github.com/ggml-org/llama.cpp/blob/620d2225cc436ab0b001e3200e590e3b286ef9ab/gguf-py/gguf/gguf_writer.py#L698-L699).
 Scalar metadata is complete. Arrays have declared element types,
 counts and at most eight preview elements per array, with an explicit
-`preview_complete` flag. This includes tokenizer vocabularies: omitted values
+`preview_complete` flag. Retained previews stop at 32 array frames; deeper arrays
+are validated iteratively without retaining their values, and their previews
+remain explicitly incomplete. This includes tokenizer vocabularies: omitted values
 are not silently represented as a complete array. Strings are UTF-8; 64-bit
 integer metadata and all shape dimensions use decimal strings without rounding.
 Nonfinite floating metadata uses `NaN`, `+Infinity` or `-Infinity` with its
@@ -160,10 +162,11 @@ selection input. Authored regression fixtures use the source-derived sizes
 above; historical executables were not run.
 
 Safetensors reports the header extent, exact string `__metadata__` values, dtype,
-shape and declared data ranges. A null `__metadata__` is treated as omitted;
-unknown fields on tensor entries are ignored within the reader's 32-level JSON
-nesting limit, while the required dtype, shape and data offsets are still
-validated. JSON duplicate keys, invalid UTF-8, out-of-file
+shape and declared data ranges. A null `__metadata__` is treated as omitted.
+Unknown tensor fields are validated iteratively without retaining their values;
+the 32-level JSON nesting bound applies to retained required fields and
+`__metadata__`. Required dtype, shape and data offsets are still validated.
+JSON duplicate keys, invalid UTF-8, out-of-file
 ranges, overlaps, gaps, trailing unindexed data and known dtype/shape byte-length
 contradictions are rejected with a typed `file_format_rejected` constraint (public code `target_unavailable`, category `unsupported_target`).
 A missing, non-regular or otherwise unusable selected path is also `target_unavailable`;
@@ -255,8 +258,14 @@ byte header ceiling (safetensors counts its declared JSON bytes separately from
 the fixed eight-byte length prefix; GGUF counts the complete header) and a separate 32 MiB
 retained representation budget before retaining rows or expanding strings.
 Numeric products use exact integer arithmetic. GGUF follows its four-dimensional
-tensor layout and limits metadata array nesting to 32 frames. Resource refusals
-are typed, rather than returned as complete empty inventories. Cancellation
+tensor layout. GGUF array preview depth is limited to 32 frames; validation of
+omitted nested arrays uses a budgeted explicit stack. Safetensors validates
+ignored tensor-descriptor extensions with the same bounded iterative approach,
+while required fields and metadata keep their 32-level retained JSON bound.
+Ignored values still undergo syntax, string and duplicate-key checks. The
+representation budget also bounds parser frames and discarded-value work; deep
+or wide input can still produce a typed resource refusal. These refusals are
+not returned as complete empty inventories. Cancellation
 joins descriptor finalization; failed cleanup remains owned for retry.
 
 PyTorch pickle and ZIP model deserialization are unsupported; convert using a
