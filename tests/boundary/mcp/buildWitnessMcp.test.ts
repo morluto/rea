@@ -184,6 +184,51 @@ it.each([
   },
 );
 
+it.each([false, true])(
+  "keeps own row conditions through MCP (only special column: %s)",
+  async (onlySpecial) => {
+    const where = onlySpecial
+      ? JSON.parse('{"__proto__":"other"}')
+      : JSON.parse('{"id":1,"__proto__":"wanted"}');
+    const common = { file: "db.sqlite", table: "rows", where };
+    const witness = await witnessed(
+      0,
+      {},
+      {
+        name: "find-row",
+        prompt: "Check every selected column of the row.",
+        checks: [
+          { kind: "row_present", ...common },
+          { kind: "row_absent", ...common },
+          { kind: "row_count", ...common, equals: onlySpecial ? 1 : 0 },
+        ],
+      },
+    );
+    witness.app.state = {
+      "db.sqlite": {
+        format: "sqlite",
+        view: {
+          tables: {
+            rows: {
+              columns: ["id", "__proto__"],
+              primary_key: ["id"],
+              rows: [[1, "other"]],
+              truncated: false,
+            },
+          },
+          tables_truncated: false,
+        },
+        truncated: false,
+      },
+    };
+    const report = parsed(await witness.check({}));
+    expect(report).toMatchObject({ passed: 2, failed: 1 });
+    expect(report.results.map(({ passed }) => passed)).toEqual(
+      onlySpecial ? [true, false, true] : [false, true, true],
+    );
+  },
+);
+
 it("witnesses a task: the seed fails, the edit passes, a near miss fails and so does the reset seed", async () => {
   const { app, computer, directory, check, act } = await witnessed();
 
