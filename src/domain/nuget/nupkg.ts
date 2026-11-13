@@ -99,7 +99,7 @@ export const inspectNugetNupkgInputSchema = z.strictObject({
     .max(MAX_INSPECT_NUGET_NUPKG_NUSPEC_BYTES)
     .default(1048576)
     .describe(
-      "Maximum .nuspec bytes to decode; exceeding the budget fails without partial success",
+      "Maximum expanded bytes to decode for the .nuspec and the OPC _rels/.rels member; exceeding the budget fails without partial success",
     ),
 });
 

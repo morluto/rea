@@ -166,12 +166,46 @@ const wrapZipFailure = (
   );
 };
 
+/** Refuse expansion past the metadata budget before buffering more output. */
+class BoundedUint8ArrayWriter extends Uint8ArrayWriter {
+  #written = 0;
+
+  constructor(
+    private readonly maximum: number,
+    private readonly exceeded: () => Error,
+  ) {
+    super();
+  }
+
+  override async init(size?: number): Promise<void> {
+    if (size !== undefined && size > this.maximum) throw this.exceeded();
+    await super.init?.(size);
+  }
+
+  override async writeUint8Array(array: Uint8Array): Promise<void> {
+    this.#written += array.length;
+    if (this.#written > this.maximum) throw this.exceeded();
+    await super.writeUint8Array(array);
+  }
+}
+
+/** Read one metadata member under max_nuspec_bytes, declared and expanded. */
 const readMemberBytes = async (
   entry: FileEntry,
   signal: AbortSignal | undefined,
+  maximum: number,
+  label: string,
 ): Promise<Uint8Array> => {
+  const exceeded = () =>
+    new NugetNupkgCapacityFailure(
+      "max_nuspec_bytes",
+      maximum,
+      `${label} exceeds the ${String(maximum)}-byte budget.`,
+    );
+  const declared = zipSize(entry.uncompressedSize);
+  if (declared !== null && declared > maximum) throw exceeded();
   try {
-    return await entry.getData(new Uint8ArrayWriter(), {
+    return await entry.getData(new BoundedUint8ArrayWriter(maximum, exceeded), {
       checkSignature: true,
       ...(signal === undefined ? {} : { signal }),
     });
@@ -472,7 +506,12 @@ export const parseNugetNupkg = async (
           "OPC relationships member is encrypted and was not extracted.",
         );
       else {
-        const relsBytes = await readMemberBytes(rels.entry, signal);
+        const relsBytes = await readMemberBytes(
+          rels.entry,
+          signal,
+          input.max_nuspec_bytes,
+          "OPC relationships member",
+        );
         try {
           relsXml = UTF8.decode(relsBytes);
         } catch {
@@ -531,20 +570,12 @@ export const parseNugetNupkg = async (
         limitations,
       };
     }
-    const declared = zipSize(selected.member.entry.uncompressedSize);
-    if (declared !== null && declared > input.max_nuspec_bytes)
-      throw new NugetNupkgCapacityFailure(
-        "max_nuspec_bytes",
-        input.max_nuspec_bytes,
-        `Selected .nuspec exceeds the ${String(input.max_nuspec_bytes)}-byte budget.`,
-      );
-    const nuspecBytes = await readMemberBytes(selected.member.entry, signal);
-    if (nuspecBytes.length > input.max_nuspec_bytes)
-      throw new NugetNupkgCapacityFailure(
-        "max_nuspec_bytes",
-        input.max_nuspec_bytes,
-        `Selected .nuspec exceeds the ${String(input.max_nuspec_bytes)}-byte budget.`,
-      );
+    const nuspecBytes = await readMemberBytes(
+      selected.member.entry,
+      signal,
+      input.max_nuspec_bytes,
+      "Selected .nuspec",
+    );
     let xml: string;
     try {
       xml = UTF8.decode(nuspecBytes);

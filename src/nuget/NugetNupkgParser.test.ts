@@ -241,3 +241,51 @@ it("reports cancellation during a member read with the caller's reason", async (
     enumeration.mockRestore();
   }
 });
+
+const largeRelsFixture = () =>
+  nugetNupkgFixture({
+    includeRels: false,
+    extraMembers: { "_rels/.rels": " ".repeat(4096) },
+  });
+
+it("refuses an OPC relationships member larger than the metadata budget before reading it", async () => {
+  const bytes = await largeRelsFixture();
+  await expect(
+    parseNugetNupkg(bytes, artifactOf(bytes), {
+      ...defaults,
+      max_nuspec_bytes: 1024,
+    }),
+  ).rejects.toMatchObject({
+    constructor: NugetNupkgCapacityFailure,
+    resource: "max_nuspec_bytes",
+    maximum: 1024,
+  });
+});
+
+it("stops expanding an OPC relationships member at the budget when its declared size understates it", async () => {
+  const bytes = await largeRelsFixture();
+  const original = ZipReader.prototype.getEntriesGenerator;
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+      for await (const entry of original.call(this, options)) {
+        if (entry.filename === "_rels/.rels") entry.uncompressedSize = 1;
+        yield entry;
+      }
+      return true;
+    });
+  try {
+    await expect(
+      parseNugetNupkg(bytes, artifactOf(bytes), {
+        ...defaults,
+        max_nuspec_bytes: 1024,
+      }),
+    ).rejects.toMatchObject({
+      constructor: NugetNupkgCapacityFailure,
+      resource: "max_nuspec_bytes",
+      maximum: 1024,
+    });
+  } finally {
+    enumeration.mockRestore();
+  }
+});
