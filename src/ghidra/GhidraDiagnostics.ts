@@ -169,7 +169,11 @@ export const ghidraDiagnosticStream = (
   stream: ProviderProcessSnapshot["stdout"],
   token: string | undefined,
 ): JsonValue => {
-  const redacted = redactCapturedTransportCredential(stream, token, "[REDACTED]");
+  const redacted = redactCapturedTransportCredential(
+    stream,
+    token,
+    "[REDACTED]",
+  );
   const excerpt = new BoundedOutputExcerpt(GHIDRA_DIAGNOSTIC_TEXT_BYTES);
   excerpt.append(Buffer.from(redacted, "utf8"));
   return {

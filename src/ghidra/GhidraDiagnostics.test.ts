@@ -39,7 +39,11 @@ it("redacts the transport credential before deciding the excerpt", () => {
   const token = "t".repeat(64);
   const text = `${token}\n${"x".repeat(GHIDRA_DIAGNOSTIC_TEXT_BYTES)}`;
   const stream = ghidraDiagnosticStream(
-    { text, bytes: Buffer.byteLength(text), observedBytes: Buffer.byteLength(text) },
+    {
+      text,
+      bytes: Buffer.byteLength(text),
+      observedBytes: Buffer.byteLength(text),
+    },
     token,
   ) as Record<string, unknown>;
   expect(stream.text_truncated).toBe(true);
