@@ -157,6 +157,33 @@ const expectUndecided = (
   for (const fact of [stage, ...facts]) expect(error.message).toContain(fact);
 };
 
+it.each([
+  { kind: "file_present", passed: true },
+  { kind: "file_absent", passed: false },
+] as const)(
+  "grades $kind against an own __proto__ state file over MCP",
+  async ({ kind, passed }) => {
+    const witness = await witnessed(
+      0,
+      {},
+      {
+        name: "selected-file",
+        prompt: "Check the selected file.",
+        checks: [{ kind, file: "__proto__" }],
+      },
+    );
+    witness.app.state = JSON.parse(
+      '{"__proto__":{"format":"json","view":{"count":7}}}',
+    );
+    const report = parsed(await witness.check({}));
+    expect(report).toMatchObject({
+      passed: passed ? 1 : 0,
+      failed: passed ? 0 : 1,
+      results: [{ id: "check-1", passed }],
+    });
+  },
+);
+
 it("witnesses a task: the seed fails, the edit passes, a near miss fails and so does the reset seed", async () => {
   const { app, computer, directory, check, act } = await witnessed();
 
