@@ -28,7 +28,7 @@ const fixture = async (mode = "ok", failCleanup = false) => {
   await writeFile(
     script,
     `import {readFileSync, writeFileSync, chmodSync, truncateSync} from 'node:fs';
-if (!process.argv.includes('--')) { if (process.argv.includes('--help')) console.log(' --as[=limits] --fsize[=limits] --cpu[=limits] --core[=limits]'); else { console.log(${JSON.stringify(mode)} === 'foreign-limiter' ? 'prlimit (fixture) 1.0' : process.env.REA_FIXTURE_LIMITER + ' from util-linux 2.39.3'); if (${JSON.stringify(mode)} === 'probe-wait') setInterval(() => {}, 1000); } }
+if (!process.argv.includes('--')) { if (process.argv.includes('--help')) process.stdout.write(${JSON.stringify(mode)} === 'probe-help-overflow' ? 'h'.repeat(65 * 1024) : Buffer.from([...Buffer.from(' --as[=limits] --fsize[=limits] --cpu[=limits] --core[=limits]'), ...(${JSON.stringify(mode)} === 'probe-invalid-utf8' ? [0xff] : []), 10])); else { console.log(${JSON.stringify(mode)} === 'foreign-limiter' ? 'prlimit (fixture) 1.0' : process.env.REA_FIXTURE_LIMITER + ' from util-linux 2.39.3'); if (${JSON.stringify(mode)} === 'probe-wait') setInterval(() => {}, 1000); } }
 else if (process.argv.includes('--version')) { console.log(${JSON.stringify(mode)} === 'bad-version' ? 'TShark (Wireshark) 3.0.0' : ${JSON.stringify(mode)} === 'foreign-version' ? 'tcpdump version 4.99.4' : 'TShark (Wireshark) 4.6.9 (fixture)'); console.error('version warning'); }
 else if (['invalid-stdout', 'invalid-stderr', 'replacement', 'invalid-nonzero'].includes(${JSON.stringify(mode)})) {
   const marker = ${JSON.stringify(mode)}.startsWith('invalid-') && ${JSON.stringify(mode)} !== 'invalid-stderr' ? Buffer.from([0xff]) : Buffer.from('�');
@@ -702,6 +702,29 @@ it.each([
     ).toEqual([]);
   },
 );
+
+it("refuses limiter help output that is not valid UTF-8", async () => {
+  const f = await fixture("probe-invalid-utf8");
+  const result = await f.service.inspect({ path: f.path, fields: ["ip.addr"] });
+  if (result.ok) throw new Error("Expected limiter refusal");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    diagnostics: {
+      configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",
+      stage: "limiter",
+      invalid_utf8_streams: ["stdout"],
+    },
+  });
+  expect(result.error.capturedOutput?.stdout).toContain("--core");
+});
+
+it("reports the failed help probe's own output", async () => {
+  const f = await fixture("probe-help-overflow");
+  const result = await f.service.inspect({ path: f.path, fields: ["ip.addr"] });
+  if (result.ok) throw new Error("Expected limiter probe failure");
+  expect(result.error.capturedOutput?.stdout).toMatch(/^h+$/u);
+  expect(result.error.capturedOutput?.stdout).not.toContain("util-linux");
+});
 
 it("retains a limiter probe whose cleanup failed and retries it on close", async () => {
   const f = await fixture("probe-cleanup", true);

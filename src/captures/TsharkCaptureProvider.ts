@@ -75,6 +75,11 @@ import { prepareLinuxLimiter } from "../pcap/PcapNativeBound.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "inspect_packet_capture";
+/** Fixed budgets for each limiter probe (`--version`, `--help`). */
+const LIMITER_PROBE_LIMITS = {
+  command_timeout_ms: 20_000,
+  output_bytes: 64 * 1024,
+} as const;
 
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
@@ -198,7 +203,10 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               runId: `rea-tshark-${randomUUID()}`,
               hostEnvironment: this.environment,
             },
-            { timeoutMs: 20_000, diagnosticBytes: 64 * 1024 },
+            {
+              timeoutMs: LIMITER_PROBE_LIMITS.command_timeout_ms,
+              diagnosticBytes: LIMITER_PROBE_LIMITS.output_bytes,
+            },
             {
               ...(options?.signal === undefined
                 ? {}
@@ -213,12 +221,36 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               cause.cleanupOwner !== undefined
             )
               this.#resources.retain(runtime, cause.cleanupOwner);
-            throw cause;
+            // Keep the failed probe's own output and reason, as pcap's runner does.
+            throw cause instanceof OwnedCommandFailure
+              ? this.#resources.commandFailure(
+                  cause,
+                  LIMITER_PROBE_LIMITS,
+                  undefined,
+                  operation,
+                )
+              : cause;
           });
           const probeOutput = artifactCommandOutput(output);
           await assertArtifactCommandPath(selected, operation, {
             capturedOutput: probeOutput,
           });
+          const invalidUtf8Streams = [
+            ...(output.stdout.invalidUtf8 ? ["stdout"] : []),
+            ...(output.stderr.invalidUtf8 ? ["stderr"] : []),
+          ];
+          if (invalidUtf8Streams.length > 0)
+            throw new AnalysisOutputError(
+              operation,
+              "Limiter output is not valid UTF-8; retained text contains replacement characters.",
+              {
+                capturedOutput: probeOutput,
+                diagnostics: {
+                  stage: "limiter",
+                  invalid_utf8_streams: invalidUtf8Streams,
+                },
+              },
+            );
           return { stdout: output.stdout.text, capturedOutput: probeOutput };
         },
         signal: options?.signal,
