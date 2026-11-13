@@ -132,6 +132,18 @@ dependencies. An omitted package kind stays null. A rustc commit hash is
 inferred from a read-only `/rustc/<40-hex>/` path and does not by itself
 identify the compiler. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
 
+## Maven POM and Gradle module metadata
+
+Use `inspect_maven_gradle_metadata` for an explicit local Maven `pom.xml` or
+Gradle `.module` file when the question concerns declared coordinates,
+dependency scopes and exclusions, BOM or platform constraints, or unresolved
+property and parent references. No `open_binary`, Maven, Gradle, or repository
+access is required. The CLI equivalent is `inspect-maven-gradle-metadata PATH`.
+Preserve artifact SHA-256, versions as spelled, and `unresolved` entries.
+Interpolation and inheritance are not performed. A missing version is not a
+resolved BOM selection. See
+[Maven POM and Gradle module metadata](https://github.com/morluto/rea/blob/main/docs/maven-gradle-metadata.md).
+
 ## PE Authenticode certificate tables
 
 Use `inspect_pe_certificates` for an explicit local PE32/PE32+ image when the
