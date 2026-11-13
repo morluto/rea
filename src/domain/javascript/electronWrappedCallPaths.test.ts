@@ -2310,63 +2310,63 @@ it.each([false, true])(
   },
 );
 
-describe("Webpack harmony export getters", () => {
-  // Webpack 5's runtime helpers, `d` (export getters) and `o` (own-property
-  // check), each installed by its own statement before the entry call.
-  const DEFINE_GETTERS = `__webpack_require__.d = (exports, definition) => {
-    for (var key in definition) {
-      if (__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
-        Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
-      }
+// Webpack 5's runtime helpers, `d` (export getters) and `o` (own-property
+// check), each installed by its own statement before the entry call.
+const DEFINE_GETTERS = `__webpack_require__.d = (exports, definition) => {
+  for (var key in definition) {
+    if (__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+      Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
     }
-  };`;
-  const OWN_PROPERTY = `__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop));`;
-  const MINIFIED_RUNTIME = `__webpack_require__.d=(e,t)=>{for(var r in t)__webpack_require__.o(t,r)&&!__webpack_require__.o(e,r)&&Object.defineProperty(e,r,{enumerable:!0,get:t[r]})};
-    __webpack_require__.o=(e,t)=>Object.prototype.hasOwnProperty.call(e,t);`;
-  const FUNCTION_RUNTIME = `__webpack_require__.d = function(exports, definition) {
-    for (var key in definition) if (__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+  }
+};`;
+const OWN_PROPERTY = `__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop));`;
+const MINIFIED_RUNTIME = `__webpack_require__.d=(e,t)=>{for(var r in t)__webpack_require__.o(t,r)&&!__webpack_require__.o(e,r)&&Object.defineProperty(e,r,{enumerable:!0,get:t[r]})};
+  __webpack_require__.o=(e,t)=>Object.prototype.hasOwnProperty.call(e,t);`;
+const FUNCTION_RUNTIME = `__webpack_require__.d = function(exports, definition) {
+  for (var key in definition) if (__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+};
+__webpack_require__.o = function(obj, prop) { return Object.prototype.hasOwnProperty.call(obj, prop); };`;
+const DEFINE_HANDLE =
+  "__webpack_require__.d(__webpack_exports__, { handle: () => (handle) });";
+const harmonyBundle = ({
+  exports = DEFINE_HANDLE,
+  runtime = `${DEFINE_GETTERS}\n${OWN_PROPERTY}`,
+  entry = "__webpack_require__(3);",
+}: {
+  readonly exports?: string;
+  readonly runtime?: string;
+  readonly entry?: string;
+} = {}) => `(() => {
+  "use strict";
+  var __webpack_modules__ = {
+    1: (module) => { module.exports = require("electron"); },
+    2: (__unused_module, __webpack_exports__, __webpack_require__) => {
+      ${exports}
+      var electron = __webpack_require__(1);
+      function handle(channel, fn) { electron.ipcMain.handle(channel, fn); }
+    },
+    3: (__unused_module, __webpack_exports__, __webpack_require__) => {
+      var ipc = __webpack_require__(2);
+      (0, ipc.handle)("app:ping", () => 1);
+    },
   };
-  __webpack_require__.o = function(obj, prop) { return Object.prototype.hasOwnProperty.call(obj, prop); };`;
-  const DEFINE_HANDLE =
-    "__webpack_require__.d(__webpack_exports__, { handle: () => (handle) });";
-  const harmonyBundle = ({
-    exports = DEFINE_HANDLE,
-    runtime = `${DEFINE_GETTERS}\n${OWN_PROPERTY}`,
-    entry = "__webpack_require__(3);",
-  }: {
-    readonly exports?: string;
-    readonly runtime?: string;
-    readonly entry?: string;
-  } = {}) => `(() => {
-    "use strict";
-    var __webpack_modules__ = {
-      1: (module) => { module.exports = require("electron"); },
-      2: (__unused_module, __webpack_exports__, __webpack_require__) => {
-        ${exports}
-        var electron = __webpack_require__(1);
-        function handle(channel, fn) { electron.ipcMain.handle(channel, fn); }
-      },
-      3: (__unused_module, __webpack_exports__, __webpack_require__) => {
-        var ipc = __webpack_require__(2);
-        (0, ipc.handle)("app:ping", () => 1);
-      },
-    };
-    var __webpack_module_cache__ = {};
-    function __webpack_require__(moduleId) {
-      var cached = __webpack_module_cache__[moduleId];
-      if (cached !== undefined) return cached.exports;
-      var module = (__webpack_module_cache__[moduleId] = { exports: {} });
-      __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
-      return module.exports;
-    }
-    ${runtime}
-    ${entry}
-  })();`;
-  const pingRegistrations = (source: string) =>
-    analyzeJavaScriptStaticSource(source).electron.ipc.filter(
-      ({ channel }) => channel === "app:ping",
-    );
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var cached = __webpack_module_cache__[moduleId];
+    if (cached !== undefined) return cached.exports;
+    var module = (__webpack_module_cache__[moduleId] = { exports: {} });
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  ${runtime}
+  ${entry}
+})();`;
+const pingRegistrations = (source: string) =>
+  analyzeJavaScriptStaticSource(source).electron.ipc.filter(
+    ({ channel }) => channel === "app:ping",
+  );
 
+describe("Webpack harmony export getters", () => {
   it.each([
     ["the readable runtime", {}],
     ["the minified runtime", { runtime: MINIFIED_RUNTIME }],
