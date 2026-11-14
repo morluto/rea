@@ -735,3 +735,51 @@ describe("signature display property regressions", () => {
     );
   });
 });
+
+describe("comparison of edges to a TypeSpec-owned member", () => {
+  // call MemberRef(0x0a000001), whose parent is TypeSpec 0x1b000001; a
+  // non-generic TypeSpec has no nominal name, so the edge target has no identity.
+  const body = (token: number) =>
+    Buffer.concat([
+      Buffer.from([(6 << 2) | 2, 0x28]),
+      (() => {
+        const operand = Buffer.alloc(4);
+        operand.writeUInt32LE(token, 0);
+        return operand;
+      })(),
+      Buffer.from([0x2a]),
+    ]);
+  const typeSpecMember = (token: number) =>
+    inspectDisplayFixture({
+      typeSpecSignatures: [Buffer.from([0x1d, 0x08])],
+      memberRefParentRaw: (1 << 3) | 4,
+      ilBody: body(token),
+    });
+
+  it("reports unchanged for the same token of the same artifact", () => {
+    const inspection = typeSpecMember(0x0a00_0001);
+    expect(inspection.call_edges[0]?.target_identity_sha256).toBeNull();
+    const comparison = compareManagedMembers(
+      { evidenceId: `ev_${"a".repeat(64)}`, result: inspection },
+      { evidenceId: `ev_${"b".repeat(64)}`, result: inspection },
+    );
+    expect(comparison.methods[0]?.status).toBe("unchanged");
+  });
+
+  it("keeps unknown for the same token across different artifacts", () => {
+    const left = typeSpecMember(0x0a00_0001);
+    const right = inspectDisplayFixture({
+      typeSpecSignatures: [Buffer.from([0x1d, 0x08])],
+      memberRefParentRaw: (1 << 3) | 4,
+      ilBody: body(0x0a00_0001),
+      mvid: Buffer.alloc(16, 7),
+    });
+    expect(left.artifact.sha256).not.toBe(right.artifact.sha256);
+    const comparison = compareManagedMembers(
+      { evidenceId: `ev_${"a".repeat(64)}`, result: left },
+      { evidenceId: `ev_${"b".repeat(64)}`, result: right },
+    );
+    expect(comparison.methods[0]?.status).toBe("unknown");
+    expect(comparison.methods[0]?.dimensions).toContain("availability");
+  });
+});

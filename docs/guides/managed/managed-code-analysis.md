@@ -490,8 +490,11 @@ under different enclosing types and different overload signatures stay distinct.
 This is nominal metadata identity, not assembly resolution or runtime binding.
 Historical edges without a site or identity, unresolved/cyclic type scopes,
 TypeSpec owners and unresolved MethodSpec instantiations retain unknown target
-equivalence. Valid MethodSpecs combine the base member identity with the
-resolved instantiation signature, preserving generic argument distinctions.
+equivalence. The exception is a target the left and right sides reach under the
+same token of the same authenticated artifact: that token names one metadata
+row, so it establishes equal targets without a nominal identity. Valid
+MethodSpecs combine the base member identity with the resolved instantiation
+signature, preserving generic argument distinctions.
 
 Names and semantic labels do not establish durable member identity. Comparison
 preserves observed differences, structural inferences, and unknowns separately.
