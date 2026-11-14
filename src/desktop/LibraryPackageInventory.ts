@@ -291,7 +291,7 @@ export const inspectLibraryPackages = async (
     // its physical target cannot establish who supplies that link.
     ...closure.requiredAliases.map(({ path, ownershipPath }) => ({
       path,
-      candidates: [...new Set([ownershipPath, path])],
+      candidates: ownershipCandidates([ownershipPath, path]),
     })),
   ];
   const owners = await packageOwners(

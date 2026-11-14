@@ -1,5 +1,6 @@
 import {
   copyFile,
+  lstat,
   mkdir,
   readlink,
   realpath,
@@ -7,7 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { expect, it } from "vitest";
 import { inspectLibraryPackages } from "../../../src/desktop/LibraryPackageInventory.js";
 import { elfImage } from "../../../src/domain/desktop/elfImage.fixture.js";
@@ -711,5 +712,80 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")(
     });
     expect(queried).not.toContain("/lib");
     expect(queried).not.toContain("/lib64");
+  },
+);
+
+it
+  .skipIf(process.platform !== "linux" || process.arch !== "x64")
+  .for([true, false])(
+  "uses merged-system spellings for intermediate file links (owned=%s)",
+  async (owned, context) => {
+    let lookup: string | undefined;
+    let middle: string | undefined;
+    for (const name of ["libbrotlicommon.so", "libcom_err.so"]) {
+      const path = `/usr/lib/x86_64-linux-gnu/${name}`;
+      try {
+        if (!(await lstat(path)).isSymbolicLink()) continue;
+        const target = join(dirname(path), await readlink(path));
+        if (!(await lstat(target)).isSymbolicLink()) continue;
+        lookup = path;
+        middle = target;
+        break;
+      } catch (cause) {
+        if (
+          !(
+            cause instanceof Error &&
+            "code" in cause &&
+            ["ENOENT", "ENOTDIR", "EACCES"].includes(String(cause.code))
+          )
+        )
+          throw cause;
+      }
+    }
+    if (lookup === undefined || middle === undefined) {
+      context.skip();
+      return;
+    }
+    const alternate = middle.slice(4);
+    const root = await createTestTempDirectory("rea-needed-usr-link-");
+    const executable = join(root, "app");
+    await writeFile(executable, elfImage({ machine: 62, needed: [lookup] }));
+    const queried: string[] = [];
+    const report = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) => {
+        if (command === "ldconfig")
+          return {
+            ...(await execFileOutput("/sbin/ldconfig", ["-p"], {
+              timeout: 5000,
+            })),
+            exitCode: 0,
+          };
+        queried.push(...args.slice(1));
+        return {
+          stdout: args
+            .slice(1)
+            .flatMap((path) =>
+              path === middle || path === alternate
+                ? owned && path === alternate
+                  ? [`runtime-package: ${path}`]
+                  : []
+                : [`other-package: ${path}`],
+            )
+            .join("\n"),
+          exitCode: 0,
+        };
+      },
+      undefined,
+    );
+    expect(report).toEqual({
+      library_packages: owned
+        ? ["other-package", "runtime-package"]
+        : ["other-package"],
+      missing_libraries: [],
+      unpackaged_libraries: owned ? [] : [middle],
+    });
+    expect(queried).toContain(alternate);
   },
 );
