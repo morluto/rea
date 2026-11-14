@@ -1,3 +1,4 @@
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "./ElectronFuseProviderIdentity.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -28,10 +29,7 @@ import {
   NonRegularFileReadError,
 } from "../filesystem/RegularFile.js";
 import { ElectronFusePathFailure } from "./ElectronFusePath.js";
-import {
-  ElectronFuseFormatFailure,
-  ElectronFuseResourceFailure,
-} from "./ElectronFuseReader.js";
+import { ElectronFuseResourceFailure } from "./ElectronFuseReader.js";
 
 const OPERATION = "inspect_electron_fuses";
 
@@ -98,18 +96,8 @@ export const electronFuseFailure = (
         ),
       },
     );
-  if (cause instanceof ElectronFuseFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(operation, path, cause.message, {
-          cause,
-        })
-      : new AnalysisInputError(operation, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(operation, path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (cause instanceof RegularFileChangedError)
     return new AnalysisArtifactChangedError(operation, path, cause.message, {
       cause,

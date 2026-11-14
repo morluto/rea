@@ -21,7 +21,7 @@ import {
   prepareOwnedCommand,
 } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
-import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { constants, accessSync, statSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
@@ -87,11 +87,11 @@ const JAVA_DIAGNOSTIC_STREAM_BYTES = 8192;
 const capturedProbeOutput = (
   observed: ProviderProcessSnapshot,
 ): AnalysisCapturedOutput => {
-  const stdout = boundedUtf8Text(
+  const stdout = utf8HeadExcerpt(
     observed.stdout.text,
     JAVA_DIAGNOSTIC_STREAM_BYTES,
   );
-  const stderr = boundedUtf8Text(
+  const stderr = utf8HeadExcerpt(
     observed.stderr.text,
     JAVA_DIAGNOSTIC_STREAM_BYTES,
   );

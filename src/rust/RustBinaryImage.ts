@@ -60,9 +60,11 @@ const readContainer = (bytes: Buffer) => {
     return readBinaryContainer(bytes);
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure)
-      throw new RustAuditableFormatFailure(cause.kind, cause.message, {
-        cause,
-      });
+      throw new RustAuditableFormatFailure(
+        cause.kind === "unsupported" ? "unsupported" : "malformed",
+        cause.message,
+        { cause },
+      );
     if (cause instanceof BinaryResourceFailure)
       throw new RustAuditableResourceFailure(
         {
