@@ -23,6 +23,7 @@ import {
   delphiForm,
   delphiInt8,
   delphiInt32,
+  delphiList,
   delphiLString,
   delphiProperty,
   delphiUtf8String,
@@ -2403,6 +2404,24 @@ it("rejects more values than the decoder budget retains", async () => {
   });
 });
 
+it("publishes a long list of extended float projections", async () => {
+  const extended = Buffer.concat([delphiBytes(5), Buffer.alloc(10)]);
+  const report = await reportForPayload(
+    delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty(
+          "Values",
+          delphiList(...Array.from({ length: 8000 }, () => extended)),
+        ),
+      ]),
+    ),
+    undefined,
+    262144,
+  );
+  expect(report.delphi_forms[0]?.root.unknown).toBeNull();
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
 it("publishes the decoder value-budget stop", async () => {
   const items = Buffer.alloc(32767 * 2);
   for (let item = 0; item < 32767; item += 1) items[item * 2] = 1;
@@ -2581,7 +2600,7 @@ it("counts a completed set terminator against the value budget", async () => {
   });
 });
 
-it("rejects an object unknown reason that exceeds the published text budget", async () => {
+it("rejects an object unknown reason longer than the diagnostic bound", async () => {
   const report = await reportForPayload(
     Buffer.concat([
       delphiForm(delphiComponent("TForm1", "Form1")),
@@ -2607,7 +2626,7 @@ it("rejects an object unknown reason that exceeds the published text budget", as
   });
 });
 
-it("rejects a value unknown reason that exceeds the published text budget", async () => {
+it("rejects a value unknown reason longer than the diagnostic bound", async () => {
   const report = await reportWithSyntheticValue(
     "vaInt32",
     {
@@ -2624,7 +2643,7 @@ it("rejects a value unknown reason that exceeds the published text budget", asyn
   });
 });
 
-it("rejects a form prefix note that exceeds the published text budget", async () => {
+it("rejects a form prefix note longer than the diagnostic bound", async () => {
   const report = await reportWithFormPrefix(16);
   const form = report.delphi_forms[0];
   if (form?.prefix === null || form?.prefix === undefined)

@@ -216,6 +216,12 @@ export const MAX_DELPHI_FORM_VALUES = 32768;
 export const MAX_DELPHI_FORM_TEXT_BYTES = 8 * 1024 * 1024;
 export const MAX_DELPHI_FORM_RETAINED_BYTES = 8 * 1024 * 1024;
 
+/**
+ * The producer only emits short diagnostic constants. A provider-controlled
+ * reason or note longer than this cannot be an observed decoder message.
+ */
+export const MAX_DELPHI_FORM_DIAGNOSTIC_CHARS = 256;
+
 /** Per-node bytes the decoder charges before retaining a projection. */
 export const DELPHI_FORM_BYTE_CHARGES = {
   object: 192,
@@ -474,7 +480,7 @@ const valueSchemaOf = <V extends z.ZodType, C extends z.ZodType>(
       kind: z.literal("float"),
       text: z.string().nullable(),
       bytes_hex: hexSchema,
-      note: z.string(),
+      note: z.string().max(MAX_DELPHI_FORM_DIAGNOSTIC_CHARS),
       location: rangeSchema,
     }),
     z.strictObject({
@@ -521,7 +527,7 @@ const valueSchemaOf = <V extends z.ZodType, C extends z.ZodType>(
     }),
     z.strictObject({
       kind: z.literal("unknown"),
-      reason: z.string(),
+      reason: z.string().max(MAX_DELPHI_FORM_DIAGNOSTIC_CHARS),
       bytes_hex: hexSchema,
       truncated: z.boolean(),
       location: rangeSchema,
@@ -542,7 +548,7 @@ const objectSchemaOf = <P extends z.ZodType, O extends z.ZodType>(
     children: z.array(object),
     unknown: z
       .strictObject({
-        reason: z.string(),
+        reason: z.string().max(MAX_DELPHI_FORM_DIAGNOSTIC_CHARS),
         bytes_hex: hexSchema,
         truncated: z.boolean(),
         location: rangeSchema,
@@ -597,7 +603,7 @@ export const delphiFormResourceSchema: z.ZodType<DelphiFormResource> =
       .strictObject({
         location: rangeSchema,
         bytes_hex: hexSchema,
-        note: z.string(),
+        note: z.string().max(MAX_DELPHI_FORM_DIAGNOSTIC_CHARS),
       })
       .nullable(),
     declared_code_page: uint,

@@ -200,17 +200,6 @@ const addPositionBytes = (counters: FormCounters, item: unknown): void => {
 };
 
 /**
- * Decoder diagnostics (`unknown.reason`, float `note`, prefix `note`) are
- * published text too. The producer only emits short constants, but a provider
- * can send arbitrary strings, so charge their projection before Evidence
- * creation instead of hashing an unbounded value.
- */
-const addDiagnostic = (counters: FormCounters, item: unknown): void => {
-  if (typeof item !== "string") return;
-  chargeText(counters, Buffer.byteLength(item, "utf8"));
-};
-
-/**
  * Zod follows the lazy form schema before the producer invariants run, so a
  * cyclic or over-deep provider tree would exhaust the call stack instead of
  * returning an output error. Walk the decoder's recursive edges first with an
@@ -242,9 +231,6 @@ const formTreeWithinDepth = (report: unknown): boolean => {
       text: 0,
       bytes: 0,
     };
-    const formPrefix = (form as Record<string, unknown>).prefix;
-    if (typeof formPrefix === "object" && formPrefix !== null)
-      addDiagnostic(counters, (formPrefix as Record<string, unknown>).note);
     while (stack.length > 0) {
       const frame = stack.pop()!;
       if (frame.kind === "leave") {
@@ -282,9 +268,6 @@ const formTreeWithinDepth = (report: unknown): boolean => {
         addText(counters, object.class_name);
         addText(counters, object.component_name);
         addPositionBytes(counters, object.child_position);
-        const unknown = object.unknown;
-        if (typeof unknown === "object" && unknown !== null)
-          addDiagnostic(counters, (unknown as Record<string, unknown>).reason);
         if (
           counters.properties > MAX_DELPHI_FORM_PROPERTIES ||
           counters.bytes > MAX_DELPHI_FORM_RETAINED_BYTES ||
@@ -354,8 +337,6 @@ const formTreeWithinDepth = (report: unknown): boolean => {
       const location = value.location as Record<string, unknown> | undefined;
       const locationBytes =
         typeof location?.bytes === "number" ? location.bytes : 0;
-      if (value.kind === "unknown") addDiagnostic(counters, value.reason);
-      else if (value.kind === "float") addDiagnostic(counters, value.note);
       if (value.kind === "string") {
         // spendText uses the available body bytes, one prefix byte for
         // vaString and four for the sized string types.
