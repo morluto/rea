@@ -12,6 +12,7 @@ import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
+  staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -271,6 +272,9 @@ const collectRequests = (
       !URL.canParse(endpoint)
     )
       return;
+    // `http`/`https` validate the path before the request exists, so an unescaped
+    // character throws from the call itself.
+    if (rejectsHttpPathLiteral(node, method, context.state)) return;
     output.push({
       node,
       operation: {
@@ -579,6 +583,205 @@ const requestFields = (
   });
 };
 
+/**
+ * The characters Node refuses in an `http.request` path.
+ *
+ * `checkInvalidHeaderChar` is not what runs here; the path goes through
+ * `validatePath`/`ERR_UNESCAPED_CHARACTERS`. Measured on Node 24.22.1, the accepted range is
+ * exactly `U+0021`-`U+00FF`: every ASCII code point was enumerated inside a literal path and
+ * `0x00`-`0x20` are refused, and probing the upper bound refuses `U+0100` onward while
+ * `U+007f`, `U+00a0`, `U+00e9` and `U+00ff` are accepted. So this is a closed range rather
+ * than a list of known-bad characters, and it is Latin-1 rather than ASCII. A space is
+ * refused: `path: "/a b"` throws while `"/a%20b"` connects. `U+0100` and above are refused,
+ * so `path: "/aĀb"` throws too.
+ */
+const UNESCAPED_PATH_CHARACTER = /[^\u0021-\u00ff]/u;
+
+/**
+ * Whether a literal `options.path` makes `http.request` throw before any request exists.
+ *
+ * `http` and `https` validate the path before the request is built, so a literal carrying a
+ * refused character throws `ERR_UNESCAPED_CHARACTERS` from the call itself. Measured on Node
+ * 24.22.1, an empty path is accepted because Node treats `""` as "not given" and falls back
+ * to `/`.
+ */
+/**
+ * Whether a getter is copied before the last write of `member`.
+ *
+ * `Object.assign` walks a source in enumeration order, which is not source order: an
+ * ECMAScript array index comes first, ascending, and a redefined key keeps its first insertion
+ * position while its descriptor comes from the last write. A getter that enumerates before the
+ * member therefore runs before the value is copied, so the syntactic value is not the runtime
+ * one.
+ */
+/** Whether an object-literal entry is a getter accessor. */
+const isGetterEntry = (entry: t.ObjectProperty | t.ObjectMethod): boolean =>
+  t.isObjectMethod(entry) && entry.kind === "get";
+
+const optionGetterPrecedesMember = (
+  options: t.ObjectExpression,
+  member: string,
+): boolean => {
+  const firstIndex = new Map<string, number>();
+  const lastDescriptor = new Map<
+    string,
+    { readonly node: t.ObjectProperty | t.ObjectMethod }
+  >();
+  // An object literal merges `get x` and `set x` into one accessor descriptor, so a later
+  // `set` entry does not remove the getter. Measured on Node 24.22.1,
+  // `{get agent() { this.path = "/ok"; }, path: "/a b", set agent(_) {}}` constructs a request
+  // because the getter still runs before `path` is copied.
+  // A data entry replaces the descriptor, so the key is no longer a getter. A setter merges
+  // with an existing getter instead of replacing it. Measured on Node 24.22.1,
+  // `{get agent() {...}, path: "/a b", agent: null}` throws while the same literal with
+  // `set agent(_) {}` in place of `agent: null` constructs a request.
+  const recordAccessor = (
+    entry: t.ObjectProperty | t.ObjectMethod,
+    name: string,
+  ): void => {
+    if (isGetterEntry(entry)) getterKeys.add(name);
+    else if (t.isObjectProperty(entry)) getterKeys.delete(name);
+  };
+  const getterKeys = new Set<string>();
+  // Each key takes its own position, including the keys a spread contributes: giving every
+  // spread member the spread's outer index loses the order a later redefinition keeps.
+  // Measured on Node 24.22.1,
+  // `http.request({...{agent: null, path: "/a b"}, get agent() { this.path = "/ok"; return false; }})`
+  // constructs a request, because `agent` keeps the position the spread gave it.
+  let position = 0;
+  for (const property of options.properties) {
+    if (t.isSpreadElement(property)) {
+      // An object-literal spread contributes its own keys at this position, so it is walked
+      // rather than treated as opaque. Measured on Node 24.22.1,
+      // `http.request({...{host: "h"}, path: "/a b"})` throws `ERR_UNESCAPED_CHARACTERS`
+      // because the spread materializes `host` as a data property and leaves no getter.
+      const spread = unwrapJavaScriptExpression(property.argument).node;
+      if (!t.isObjectExpression(spread)) return true;
+      // A getter anywhere inside the spread still runs during the copy.
+      if (
+        spread.properties.some(
+          (entry) => !t.isSpreadElement(entry) && isGetterEntry(entry),
+        )
+      )
+        return true;
+      for (const entry of spread.properties) {
+        if (t.isSpreadElement(entry)) return true;
+        const name = semanticStaticPropertyKey(entry.key, entry.computed);
+        if (name === null) return true;
+        if (!firstIndex.has(name)) firstIndex.set(name, position);
+        lastDescriptor.set(name, { node: entry });
+        recordAccessor(entry, name);
+        position += 1;
+      }
+      continue;
+    }
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (
+      t.isObjectMethod(property) &&
+      property.kind !== "method" &&
+      property.computed &&
+      !t.isStringLiteral(property.key)
+    )
+      return true;
+    if (
+      t.isObjectProperty(property) &&
+      !property.computed &&
+      (t.isIdentifier(property.key, { name: "__proto__" }) ||
+        t.isStringLiteral(property.key, { value: "__proto__" }))
+    )
+      continue;
+    if (name === null) continue;
+    if (!firstIndex.has(name)) firstIndex.set(name, position);
+    lastDescriptor.set(name, { node: property });
+    recordAccessor(property, name);
+    position += 1;
+  }
+  const orderOf = (name: string): readonly [number, number] => {
+    const position = firstIndex.get(name) ?? Number.MAX_SAFE_INTEGER;
+    const key = Number(name);
+    return Number.isInteger(key) &&
+      String(key) === name &&
+      key >= 0 &&
+      key < 2 ** 32 - 1
+      ? [0, key]
+      : [1, position];
+  };
+  const before = (
+    left: readonly [number, number],
+    right: readonly [number, number],
+  ): boolean =>
+    left[0] !== right[0] ? left[0] < right[0] : left[1] < right[1];
+  let memberOrder: readonly [number, number] | undefined;
+  let getterOrder: readonly [number, number] | undefined;
+  for (const name of lastDescriptor.keys()) {
+    const order = orderOf(name);
+    if (
+      getterKeys.has(name) &&
+      (getterOrder === undefined || before(order, getterOrder))
+    )
+      getterOrder = order;
+    if (name === member) memberOrder = order;
+  }
+  return (
+    getterOrder !== undefined &&
+    (memberOrder === undefined || before(getterOrder, memberOrder))
+  );
+};
+
+const rejectsHttpPathLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  method: JavaScriptSemanticRequestOperation["method"],
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (method !== "get" && method !== "request") return false;
+  const first = node.arguments[0];
+  if (first === undefined) return false;
+  const firstValue = unwrapJavaScriptExpression(first).node;
+  // A non-object first argument is the options slot only for the `(url, options)`
+  // overload. Measured on Node 24.22.1, `http.request(() => {}, {path: "/a b"})` builds a
+  // request to `/` because `ClientRequest` reads the function as the callback and
+  // replaces options with defaults, so the second object is never read. Only a string,
+  // template or `new URL` target proves that overload.
+  // `new URL` only proves the overload while \`URL\` is the untouched global. Measured on
+  // Node 24.22.1, \`const URL = Function; http.request(new URL(), {path: "/a b"})\` treats the
+  // function as the callback and builds the default \`/\` request, so the second object is
+  // never read.
+  const urlTarget =
+    t.isStringLiteral(firstValue) ||
+    t.isTemplateLiteral(firstValue) ||
+    (t.isNewExpression(firstValue) &&
+      isUnmodifiedGlobalReference(firstValue.callee, state, "URL"));
+  const optionsIndex = t.isObjectExpression(firstValue)
+    ? 0
+    : urlTarget
+      ? 1
+      : -1;
+  if (optionsIndex < 0) return false;
+  // Only a spread at or before the options slot can move it. Measured on Node 24.22.1,
+  // `http.request({path: "/a b"}, ...callbacks)` still throws ERR_UNESCAPED_CHARACTERS,
+  // because expanding a later argument cannot change the object Node already picked.
+  for (let index = 0; index <= optionsIndex; index++)
+    if (
+      index < node.arguments.length &&
+      t.isSpreadElement(node.arguments[index]!)
+    )
+      return false;
+  const options =
+    optionsIndex === 0
+      ? firstValue
+      : unwrapJavaScriptExpression(node.arguments[1] ?? first).node;
+  if (!t.isObjectExpression(options)) return false;
+  // `ClientRequest` copies the options with `Object.assign`, so a getter enumerated before
+  // `path` runs first and can rewrite the value that is then validated. Measured on Node
+  // 24.22.1, `{get agent() { this.path = "/ok"; return undefined; }, path: "/a b"}` builds
+  // a request while the same getter after `path` throws `ERR_UNESCAPED_CHARACTERS`.
+  if (optionGetterPrecedesMember(options, "path")) return false;
+  const lookup = staticObjectProperty(options, "path");
+  if (lookup.status !== "explicit") return false;
+  const literal = readExactJavaScriptLiteral(lookup.value);
+  if (!literal.found || typeof literal.value !== "string") return false;
+  return UNESCAPED_PATH_CHARACTER.test(literal.value);
+};
 const requestEndpoint = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
 ): string | null =>
