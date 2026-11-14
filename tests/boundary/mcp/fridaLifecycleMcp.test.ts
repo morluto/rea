@@ -873,9 +873,11 @@ it("preserves inline Frida partial Evidence when its writer rejects it", async (
   expect(error.code).toBe("cancelled");
   const details = jsonObjectSchema.parse(error.details);
   expect(details.partial_observation).toEqual({
-    kind: "inline-evidence",
-    retention: "unknown",
+    kind: "unretained-evidence",
     evidence: attempts[0],
+  });
+  expect(details.partial_observation_retention_error).toMatchObject({
+    code: expect.any(String),
   });
 });
 

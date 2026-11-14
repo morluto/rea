@@ -407,14 +407,20 @@ it("preserves a partial MCP error without claiming failed Evidence retention", a
   expect(response.isError).toBe(true);
   expect(response.structuredContent?.error?.details).toMatchObject({
     partial_observation: {
-      kind: "inline-evidence",
-      retention: "unknown",
+      kind: "unretained-evidence",
       evidence: { operation: "execute_rizin_command" },
+    },
+    partial_observation_retention_error: {
+      code: "evidence_integrity_mismatch",
     },
   });
   expect(
-    JSON.stringify(response.structuredContent?.error?.details),
-  ).not.toContain("retained-evidence");
+    (
+      response.structuredContent?.error?.details as {
+        readonly partial_observation?: { readonly kind?: string };
+      }
+    )?.partial_observation?.kind,
+  ).not.toBe("retained-evidence");
 });
 
 it("delivers pathless objdump capability Evidence and input errors through its named tool", async () => {
