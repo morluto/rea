@@ -167,6 +167,60 @@ executable, open its resource session first. The CLI `rea inspect-plist <path>`
 opens the selected artifact for its one invocation.
 Use `inspect_signature` on an executable candidate for code-signing claims.
 
+## Bundle placement
+
+`bundle_placement` compares observed placement with Apple's
+[Placing content in a bundle](https://developer.apple.com/documentation/bundleresources/placing-content-in-a-bundle).
+A finding reports a mismatch with that documented layout. It is not a verdict
+that the bundle is malicious or will fail to sign, install, or launch. The check
+is static: it never signs, verifies, or launches target code.
+
+Each finding lists the `rules` it cites, the `bundle_path` and `bundle_layout`
+whose rule applies, the examined `location`, the offending `path` and its
+`entry_kind`, and the `mach_o_images` it rests on. A Mach-O image is a file whose
+inventory format, `mach-o` or `mach-o-universal`, comes from its magic bytes. The
+filename extension is never the basis, so scripts and other files are resources.
+Members of inventoried archives, such as files inside `app.asar`, are not placed
+in the bundle and are not examined.
+
+| Rule                                  | Bundles                                                   | Finding                                                                                                                                                                         |
+| ------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code-in-resource-location`           | `macos-deep`, `versioned-framework`                       | The outermost item under `Contents/Resources/` or `Versions/<version>/Resources/` that is or contains a Mach-O image. A nested bundle is reported once, with all of its images. |
+| `framework-root-content`              | `versioned-framework`                                     | A framework root entry other than `Versions/` and symlinks, or a `Versions/` entry other than a version directory and the `Current` symlink.                                    |
+| `grouping-directory-in-code-location` | `macos-deep`, `versioned-framework`, iOS-family `shallow` | A directory directly in a code location that contains a Mach-O image and has no bundle anatomy: no recognized bundle extension, `Contents/`, `Versions/`, or root `Info.plist`. |
+| `dotted-directory-name`               | As above                                                  | Also cited by a grouping-directory finding whose name contains a dot.                                                                                                           |
+| `standalone-dynamic-library`          | None                                                      | Not evaluated.                                                                                                                                                                  |
+| `framework-in-nested-bundle`          | None                                                      | Not evaluated.                                                                                                                                                                  |
+
+Code locations follow Apple's table. In a `macos-deep` bundle they are
+`Contents/MacOS/`, `Frameworks/`, `PlugIns/`, `Helpers/`, `XPCServices/`, and
+`Library/Automator/`, `QuickLook/`, `LaunchServices/`, `LoginItems/`,
+`Spotlight/`, and `SystemExtensions/`. A framework version's code locations are
+`Frameworks/`, `PlugIns/`, and `Helpers/`. A `shallow` bundle with a root
+`Info.plist` has an iOS-family layout; its code locations are `Frameworks/` and
+`PlugIns/`. `AppClips/` and `Watch/` are omitted because they are iOS-only and
+the layout does not establish iOS.
+
+The macOS rules apply only to observed `macos-deep` and `versioned-framework`
+layouts; Apple's macOS rules also cover Mac Catalyst. A shallow layout does not
+tell iOS, tvOS, watchOS, and visionOS apart. The standalone-dylib and
+nested-framework rules need the bundle platform from target content, such as
+the main executable's build-platform load command, and the standalone-dylib
+rule also needs each image's Mach-O file type. The projection reads only
+inventory paths and content formats, so both rules are `not-evaluated`. Their
+missing findings are unknown, not compliance.
+
+`rules` reports each rule's Apple statement, `status`, `evaluated_bundles`, and
+`limitations`. A rule is `not-evaluated`, `partial`, or `complete`. It is
+`partial` when source inventory coverage is partial, or when an examined file
+has an `unknown` format, unavailable content, or a node outside the supplied
+pages. An empty findings list then does not establish a clean bundle.
+`evaluated_bundles: 0` means that no bundle has a layout the rule covers.
+
+Historical projections omit `bundle_placement`, which means that placement was
+not evaluated. The field participates in `projection_id`, so Apple projection
+identifiers change.
+
 ## Dylib load resolution
 
 `trace_dylib_resolution` answers which file each Mach-O dylib load reaches. It

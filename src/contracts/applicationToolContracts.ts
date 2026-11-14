@@ -384,7 +384,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "project_apple_application_graph",
     ...toolContractMetadata("project_apple_application_graph"),
     description:
-      "Build a static Apple application inventory from the authenticated nested inventory Evidence returned by inspect_artifact for an IPA, .app directory, ZIP or DMG. Returns application roots, nested-bundle roles, launchd plists, component paths/hashes, runtime hints and bridge hypotheses. Roles follow path conventions; plist/CMS semantics and runtime calls are not established.",
+      "Build a static Apple application inventory from the authenticated nested inventory Evidence returned by inspect_artifact for an IPA, .app directory, ZIP or DMG. Returns application roots, nested-bundle roles, launchd plists, component paths/hashes, Mach-O placements that contradict Apple's documented bundle layout, runtime hints and bridge hypotheses. Roles follow path conventions; plist/CMS semantics and runtime calls are not established.",
     kind: "application",
     inputSchema: applicationInventoryProjectionInputSchema,
     outputSchema: evidenceResultOf(appleApplicationProjectionResultSchema),

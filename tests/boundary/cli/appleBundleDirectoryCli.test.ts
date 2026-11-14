@@ -96,7 +96,7 @@ cliTest.for([
 );
 
 cliTest(
-  "Apple CLI and MCP read a flattened framework's Resources/Info.plist",
+  "Apple CLI and MCP read a flattened framework's Resources/Info.plist and report resource code",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-apple-flat-framework-");
     const app = join(root, "Fixture.app");
@@ -113,6 +113,9 @@ cliTest(
       [`${framework}/Core`, machO],
       [`${framework}/Resources/Info.plist`, "<plist><dict/></plist>"],
       [`${framework}/_CodeSignature/CodeResources`, "<plist><dict/></plist>"],
+      // Placement uses Mach-O magic, not the filename extension.
+      ["Contents/Resources/payload.dat", machO],
+      ["Contents/Resources/helper.dylib", "#!/bin/sh\n"],
     ];
     for (const [relative, content] of files) {
       await mkdir(dirname(join(app, relative)), { recursive: true });
@@ -160,6 +163,19 @@ cliTest(
       status: "complete-within-inventory",
       inventory_complete: true,
     });
+    expect(projection.bundle_placement?.findings).toEqual([
+      {
+        rules: ["code-in-resource-location"],
+        bundle_path: ".",
+        bundle_layout: "macos-deep",
+        location: "Contents/Resources",
+        path: "Contents/Resources/payload.dat",
+        entry_kind: "file",
+        mach_o_images: [
+          { path: "Contents/Resources/payload.dat", format: "mach-o" },
+        ],
+      },
+    ]);
   },
 );
 

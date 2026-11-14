@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 import type { ArtifactOccurrence } from "../artifactGraph.js";
 
 import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
-import { projectAppleInventory } from "./appleApplication.js";
+import {
+  appleApplicationProjectionResultSchema,
+  projectAppleInventory,
+} from "./appleApplication.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
@@ -1092,3 +1095,304 @@ it.each(["ipa", "zip", "directory", "dmg"] as const)(
     expect(result.components.executables).toHaveLength(1);
   },
 );
+
+const image = (path: string) => ({ path, format: "mach-o" });
+const ruleCoverage = (result: ReturnType<typeof project>) =>
+  Object.fromEntries(
+    (result.bundle_placement?.rules ?? []).map(
+      ({ rule, status, evaluated_bundles: bundles }) => [
+        rule,
+        [status, bundles],
+      ],
+    ),
+  );
+
+describe("Apple bundle placement findings", () => {
+  it("reports Mach-O code in macOS resource, framework-root, and code locations", () => {
+    const framework = "Contents/Frameworks/Demo.framework";
+    const result = project(
+      inventoryEvidence("directory", "Fixture.app", [
+        { path: "Contents/Info.plist", format: "plist" },
+        macho("Contents/MacOS/Fixture"),
+        macho("Contents/Resources/payload.dat"),
+        macho("Contents/Resources/libextra.dylib"),
+        { path: "Contents/Resources/run.sh" },
+        // A script renamed to .dylib is still a resource.
+        { path: "Contents/Resources/helper.dylib" },
+        macho("Contents/Resources/Nested.bundle/Contents/MacOS/Nested"),
+        macho("Contents/Resources/Nested.bundle/Contents/MacOS/Tool"),
+        { path: "Contents/Resources/Nested.bundle/Contents/Info.plist" },
+        // Archive members are not placed in the bundle.
+        { path: "Contents/Resources/app.asar" },
+        macho("Contents/Resources/app.asar/addon.node"),
+        { path: `${framework}/Demo`, kind: "symlink" },
+        { path: `${framework}/Resources`, kind: "symlink" },
+        { path: `${framework}/Versions/Current`, kind: "symlink" },
+        macho(`${framework}/Versions/A/Demo`),
+        { path: `${framework}/Versions/A/Resources/Info.plist` },
+        macho(`${framework}/Versions/A/Resources/tool`),
+        macho(`${framework}/libstray.dylib`),
+        macho("Contents/PlugIns/Group.v2/Inner.bundle/Contents/MacOS/Inner"),
+        macho("Contents/PlugIns/Waffles/Belgian.plugin/Contents/MacOS/Belgian"),
+        { path: "Contents/PlugIns/Docs/readme.txt" },
+        macho("Contents/PlugIns/Good.plugin/Contents/MacOS/Good"),
+        // Bundle anatomy without a recognized extension is not a grouping directory.
+        macho("Contents/Library/Automator/Act.action/Contents/MacOS/Act"),
+      ]),
+    );
+    const placement = result.bundle_placement;
+    expect(placement?.reference).toBe(
+      "https://developer.apple.com/documentation/bundleresources/placing-content-in-a-bundle",
+    );
+    expect(placement?.findings).toEqual([
+      {
+        rules: ["code-in-resource-location"],
+        bundle_path: framework,
+        bundle_layout: "versioned-framework",
+        location: `${framework}/Versions/A/Resources`,
+        path: `${framework}/Versions/A/Resources/tool`,
+        entry_kind: "file",
+        mach_o_images: [image(`${framework}/Versions/A/Resources/tool`)],
+      },
+      {
+        rules: ["framework-root-content"],
+        bundle_path: framework,
+        bundle_layout: "versioned-framework",
+        location: framework,
+        path: `${framework}/libstray.dylib`,
+        entry_kind: "file",
+        mach_o_images: [image(`${framework}/libstray.dylib`)],
+      },
+      {
+        rules: ["grouping-directory-in-code-location", "dotted-directory-name"],
+        bundle_path: ".",
+        bundle_layout: "macos-deep",
+        location: "Contents/PlugIns",
+        path: "Contents/PlugIns/Group.v2",
+        entry_kind: "directory",
+        mach_o_images: [
+          image("Contents/PlugIns/Group.v2/Inner.bundle/Contents/MacOS/Inner"),
+        ],
+      },
+      {
+        rules: ["grouping-directory-in-code-location"],
+        bundle_path: ".",
+        bundle_layout: "macos-deep",
+        location: "Contents/PlugIns",
+        path: "Contents/PlugIns/Waffles",
+        entry_kind: "directory",
+        mach_o_images: [
+          image(
+            "Contents/PlugIns/Waffles/Belgian.plugin/Contents/MacOS/Belgian",
+          ),
+        ],
+      },
+      {
+        rules: ["code-in-resource-location"],
+        bundle_path: ".",
+        bundle_layout: "macos-deep",
+        location: "Contents/Resources",
+        path: "Contents/Resources/Nested.bundle",
+        entry_kind: "directory",
+        mach_o_images: [
+          image("Contents/Resources/Nested.bundle/Contents/MacOS/Nested"),
+          image("Contents/Resources/Nested.bundle/Contents/MacOS/Tool"),
+        ],
+      },
+      {
+        rules: ["code-in-resource-location"],
+        bundle_path: ".",
+        bundle_layout: "macos-deep",
+        location: "Contents/Resources",
+        path: "Contents/Resources/libextra.dylib",
+        entry_kind: "file",
+        mach_o_images: [image("Contents/Resources/libextra.dylib")],
+      },
+      {
+        rules: ["code-in-resource-location"],
+        bundle_path: ".",
+        bundle_layout: "macos-deep",
+        location: "Contents/Resources",
+        path: "Contents/Resources/payload.dat",
+        entry_kind: "file",
+        mach_o_images: [image("Contents/Resources/payload.dat")],
+      },
+    ]);
+    expect(ruleCoverage(result)).toEqual({
+      "code-in-resource-location": ["complete", 6],
+      "standalone-dynamic-library": ["not-evaluated", 0],
+      "framework-in-nested-bundle": ["not-evaluated", 0],
+      "framework-root-content": ["complete", 1],
+      "grouping-directory-in-code-location": ["complete", 6],
+      "dotted-directory-name": ["complete", 6],
+    });
+    for (const { apple_rule: rule } of placement?.rules ?? [])
+      expect(rule.length).toBeGreaterThan(0);
+  });
+});
+
+describe("Apple framework placement", () => {
+  it("reports non-version content in a framework's Versions directory", () => {
+    const framework = "Fixture.app/Contents/Frameworks/Demo.framework";
+    const result = project(
+      inventoryEvidence("zip", "Fixture.zip", [
+        macho("Fixture.app/Contents/MacOS/Fixture"),
+        { path: `${framework}/Demo`, kind: "symlink" },
+        { path: `${framework}/Headers/Demo.h` },
+        macho(`${framework}/Versions/A/Demo`),
+        macho(`${framework}/Versions/Current/Demo`),
+        { path: `${framework}/Versions/B`, kind: "symlink" },
+        { path: `${framework}/Versions/notes.txt` },
+      ]),
+    );
+    expect(
+      result.bundle_placement?.findings.map(
+        ({
+          rules,
+          location,
+          path,
+          entry_kind: kind,
+          mach_o_images: images,
+        }) => [
+          rules,
+          location,
+          path,
+          kind,
+          images.map(({ path: imagePath }) => imagePath),
+        ],
+      ),
+    ).toEqual([
+      [
+        ["framework-root-content"],
+        framework,
+        `${framework}/Headers`,
+        "directory",
+        [],
+      ],
+      [
+        ["framework-root-content"],
+        `${framework}/Versions`,
+        `${framework}/Versions/B`,
+        "symlink",
+        [],
+      ],
+      [
+        ["framework-root-content"],
+        `${framework}/Versions`,
+        `${framework}/Versions/Current`,
+        "directory",
+        [`${framework}/Versions/Current/Demo`],
+      ],
+      [
+        ["framework-root-content"],
+        `${framework}/Versions`,
+        `${framework}/Versions/notes.txt`,
+        "file",
+        [],
+      ],
+    ]);
+  });
+});
+
+describe("Apple bundle placement coverage", () => {
+  it("keeps rules partial when examined files have no byte-established format", () => {
+    const result = project(
+      inventoryEvidence("directory", "Fixture.app", [
+        macho("Contents/MacOS/Fixture"),
+        { path: "Contents/Resources/blob", format: "unknown" },
+        { path: "Contents/Resources/secret", unavailable: true },
+        { path: "Contents/PlugIns/Group/thing", format: "unknown" },
+      ]),
+    );
+    expect(result.bundle_placement?.findings).toEqual([]);
+    expect(ruleCoverage(result)).toMatchObject({
+      "code-in-resource-location": ["partial", 1],
+      "framework-root-content": ["complete", 0],
+      "grouping-directory-in-code-location": ["partial", 1],
+    });
+    const resources = result.bundle_placement?.rules.find(
+      ({ rule }) => rule === "code-in-resource-location",
+    );
+    expect(resources?.limitations).toEqual([
+      expect.stringMatching(/2 examined files.*"Contents\/Resources\/blob"/u),
+    ]);
+  });
+
+  it("marks every evaluated rule partial when inventory coverage is partial", () => {
+    const evidence = inventoryEvidence("directory", "Fixture.app", [
+      macho("Contents/MacOS/Fixture"),
+    ]);
+    const parsed = parseArtifactInventoryEvidence([evidence]);
+    const result = projectAppleInventory({
+      ...parsed,
+      inventory: {
+        ...parsed.inventory,
+        coverage: { scope: "container-entries", status: "unknown" },
+      },
+    });
+    if (!result.ok) throw result.error;
+    expect(ruleCoverage(result.value)).toMatchObject({
+      "code-in-resource-location": ["partial", 1],
+      "framework-root-content": ["partial", 0],
+      "grouping-directory-in-code-location": ["partial", 1],
+      "dotted-directory-name": ["partial", 1],
+    });
+  });
+
+  it("does not evaluate platform-specific rules from a shallow layout", () => {
+    const app = "Payload/Shallow.app";
+    const result = project(
+      inventoryEvidence("ipa", "Shallow.ipa", [
+        { path: `${app}/Info.plist`, format: "plist" },
+        macho(`${app}/Shallow`),
+        macho(`${app}/libloose.dylib`),
+        macho(`${app}/Frameworks/libswiftCore.dylib`),
+        { path: `${app}/PlugIns/Ext.appex/Info.plist`, format: "plist" },
+        macho(`${app}/PlugIns/Ext.appex/Ext`),
+        macho(`${app}/PlugIns/Ext.appex/Frameworks/Inner.framework/Inner`),
+        macho(`${app}/PlugIns/Group/Late.appex/Late`),
+      ]),
+    );
+    expect(result.bundle_placement?.findings).toEqual([
+      {
+        rules: ["grouping-directory-in-code-location"],
+        bundle_path: app,
+        bundle_layout: "shallow",
+        location: `${app}/PlugIns`,
+        path: `${app}/PlugIns/Group`,
+        entry_kind: "directory",
+        mach_o_images: [image(`${app}/PlugIns/Group/Late.appex/Late`)],
+      },
+    ]);
+    expect(ruleCoverage(result)).toEqual({
+      "code-in-resource-location": ["complete", 0],
+      "standalone-dynamic-library": ["not-evaluated", 0],
+      "framework-in-nested-bundle": ["not-evaluated", 0],
+      "framework-root-content": ["complete", 0],
+      "grouping-directory-in-code-location": ["complete", 2],
+      "dotted-directory-name": ["complete", 2],
+    });
+    for (const rule of [
+      "standalone-dynamic-library",
+      "framework-in-nested-bundle",
+    ])
+      expect(
+        result.bundle_placement?.rules.find(
+          (candidate) => candidate.rule === rule,
+        )?.limitations,
+      ).toEqual([
+        expect.stringMatching(/platform.*not established.*visionOS/u),
+      ]);
+  });
+
+  it("parses historical projections without placement findings", () => {
+    const { bundle_placement: placement, ...historical } = project(
+      inventoryEvidence("directory", "Fixture.app", [
+        macho("Contents/MacOS/Fixture"),
+      ]),
+    );
+    expect(placement).toBeDefined();
+    const parsed = appleApplicationProjectionResultSchema.parse(historical);
+    expect("bundle_placement" in parsed).toBe(false);
+  });
+});

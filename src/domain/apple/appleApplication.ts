@@ -12,6 +12,10 @@ import {
   platformsOf,
 } from "./appleBundleAnatomy.js";
 import {
+  appleBundlePlacementSchema,
+  projectAppleBundlePlacement,
+} from "./appleBundlePlacement.js";
+import {
   isSwiftRuntimeLibrary,
   nativeRuntimeConvention,
 } from "../nativeConvention.js";
@@ -87,6 +91,8 @@ export const appleApplicationProjectionResultSchema = z.strictObject({
     }),
   ),
   bridge_candidate_coverage: bridgeCandidateCoverageSchema,
+  /** Omitted by historical projections, where placement was not evaluated. */
+  bundle_placement: appleBundlePlacementSchema.exactOptional(),
   coverage: z.strictObject({
     status: z.enum(["complete-within-inventory", "partial"]),
     // Count completeness is separate from the declared coverage status.
@@ -113,10 +119,11 @@ export const projectAppleInventory = (
   const { entries, limitations: unresolved } =
     projectedInventoryEntries(inventory);
   const inventoried = projectedFileComponents(entries);
-  const { roots, bundles } = projectAppleBundleAnatomy(entries, {
+  const anatomy = projectAppleBundleAnatomy(entries, {
     name: evidence[0]?.subject?.name ?? "",
     format: rootFormat,
   });
+  const { roots, bundles } = anatomy;
   const { all, unattributed } = attributeComponents(
     inventoried,
     roots,
@@ -182,6 +189,7 @@ export const projectAppleInventory = (
     runtime_families: runtimeFamilies,
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
+    bundle_placement: projectAppleBundlePlacement(anatomy, complete),
     coverage: {
       status:
         complete &&
