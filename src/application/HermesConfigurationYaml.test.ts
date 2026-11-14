@@ -714,7 +714,9 @@ describe("Hermes registration refresh around anchors and merges", () => {
       mcp_servers: { rea: { metadata: { nested: "changed" } } },
     });
   });
+});
 
+describe("Hermes registration refresh through inherited merges", () => {
   it("replaces an inherited remote registration without its remote selectors", () => {
     const source =
       "shared: &shared\n  rea: {url: https://example.invalid, transport: sse}\nmcp_servers:\n  <<: *shared\n";
