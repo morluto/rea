@@ -1,9 +1,54 @@
 import { ProcessOutputTokenScanner } from "../process/ProcessOutputTokenScanner.js";
 import {
+  GHIDRA_DIAGNOSTIC_TEXT_BYTES,
+  ghidraDiagnosticStream,
   ghidraFailureOutput,
   createGhidraDiagnostics,
 } from "./GhidraDiagnostics.js";
 import { expect, it } from "vitest";
+
+it("bounds projected launcher text and reports the cut explicitly", () => {
+  const body = "launcher line\n".repeat(200_000);
+  const stream = ghidraDiagnosticStream(
+    {
+      text: body,
+      bytes: Buffer.byteLength(body),
+      observedBytes: Buffer.byteLength(body),
+    },
+    undefined,
+  ) as Record<string, unknown>;
+  expect(stream.text_truncated).toBe(true);
+  // The excerpt keeps head and tail within the budget plus its omission marker.
+  expect(Buffer.byteLength(stream.text as string)).toBeLessThanOrEqual(
+    GHIDRA_DIAGNOSTIC_TEXT_BYTES + 64,
+  );
+  // The counters keep reporting the source size rather than the excerpt's.
+  expect(stream.bytes).toBe(Buffer.byteLength(body));
+  expect(stream.retained_bytes).toBe(Buffer.byteLength(body));
+});
+
+it("leaves text within budget unmarked and unchanged", () => {
+  const stream = ghidraDiagnosticStream(
+    { text: "short", bytes: 5, observedBytes: 5 },
+    undefined,
+  ) as Record<string, unknown>;
+  expect(stream).toEqual({ text: "short", bytes: 5, retained_bytes: 5 });
+});
+
+it("redacts the transport credential before deciding the excerpt", () => {
+  const token = "t".repeat(64);
+  const text = `${token}\n${"x".repeat(GHIDRA_DIAGNOSTIC_TEXT_BYTES)}`;
+  const stream = ghidraDiagnosticStream(
+    {
+      text,
+      bytes: Buffer.byteLength(text),
+      observedBytes: Buffer.byteLength(text),
+    },
+    token,
+  ) as Record<string, unknown>;
+  expect(stream.text_truncated).toBe(true);
+  expect((stream.text as string).startsWith("[REDACTED]\n")).toBe(true);
+});
 
 it("keeps request output and provenance without projecting launcher history", () => {
   const output = { text: "launcher output", bytes: 15, observedBytes: 15 };
