@@ -144,8 +144,9 @@ const installProcessFamily = async (root: string, path: string) => {
       `( trap 'touch "${join(root, "group-term")}"; exit 0' TERM; touch "${join(root, "group-ready")}"; ${loop} ) &`,
       `setsid sh -c 'trap "touch ${join(root, "setsid-term")}; exit 0" TERM; touch "${join(root, "setsid-ready")}"; ${loop}' &`,
       // Wait for both children to install their traps before writing state.ini.
-      `for i in $(seq 1 100); do [ -f "${join(root, "group-ready")}" ] && [ -f "${join(root, "setsid-ready")}" ] && break; sleep 0.01; done`,
-      'printf "count=1\n" > "$HOME/.config/fakeapp/state.ini"',
+      // Fail loudly rather than continue when a child never reports ready.
+      `ready=; for i in $(seq 1 500); do if [ -f "${join(root, "group-ready")}" ] && [ -f "${join(root, "setsid-ready")}" ]; then ready=1; break; fi; sleep 0.01; done; [ -n "$ready" ] || { echo "synthetic children did not report ready" >&2; exit 97; }`,
+      'printf "count=1\\n" > "$HOME/.config/fakeapp/state.ini"',
       loop,
     ].join("\n"),
   );
