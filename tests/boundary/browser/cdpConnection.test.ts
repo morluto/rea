@@ -13,6 +13,7 @@ import {
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { WEB_RUNTIME_LIMITS } from "../../../src/domain/webRuntime.js";
+import { CdpMalformedReply } from "../../../src/browser/protocol/CdpCommands.js";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
@@ -107,6 +108,41 @@ describe("CDP connection admission cancellation", () => {
 });
 
 describe("CDP connection response correlation", () => {
+  it("rejects one malformed registered reply without poisoning the connection", async () => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: (command) =>
+        command.method === "Page.getFrameTree"
+          ? { frameTree: "not a tree" }
+          : undefined,
+    });
+    browsers.push(browser);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "inspect_web_page",
+    );
+    const protocolFailures: unknown[] = [];
+    connection.onProtocolFailure((error) => protocolFailures.push(error));
+    try {
+      const rejection = await connection
+        .send("Page.getFrameTree")
+        .catch((cause: unknown) => cause);
+      expect(rejection).toBeInstanceOf(CdpMalformedReply);
+      expect(rejection).toMatchObject({
+        reason: "protocol_error",
+        command: "Page.getFrameTree",
+        pointer: "/frameTree",
+      });
+      expect(String((rejection as CdpMalformedReply).detail)).not.toContain(
+        "not a tree",
+      );
+      await expect(connection.send("Runtime.enable")).resolves.toEqual({});
+      expect(connection.isReusable()).toBe(true);
+      expect(protocolFailures).toEqual([]);
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("correlates concurrent command responses over a real WebSocket", async () => {
     const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
     browsers.push(browser);
@@ -120,9 +156,7 @@ describe("CDP connection response correlation", () => {
         connection.send("Page.getFrameTree"),
       ]);
       expect(attached).toMatchObject({ sessionId: "session-1" });
-      expect(frames).toMatchObject({
-        frameTree: { frame: { id: "frame-main" } },
-      });
+      expect(frames.root.facts.frameId).toBe("frame-main");
       browser.emitRawMessage(JSON.stringify({ id: 999 }));
       await expect(connection.send("Runtime.enable")).resolves.toEqual({});
       const first = connection.send("Page.enable", { selected: "first" });

@@ -1724,6 +1724,8 @@ Each line is `address<TAB>kind[<TAB>name]`, where kind is `function`, `code` or 
 
 Label seeds can name mapped uninitialized storage such as `.bss`; function and code seeds require initialized bytes.
 
+When Ghidra has no function for a requested procedure, the error's remediation names this seed recovery. A `resolve_containing_procedure` result of `not_in_procedure` carries it as a limitation. Neither establishes that the address holds code. Seeds apply only to a fresh import, so a session with `REA_GHIDRA_PROJECT_PATH` or `REA_GHIDRA_CHECKPOINT_DIR` names the setting to unset first.
+
 To skip a named Ghidra auto-analyzer (for example, when default auto-analysis
 stalls in one analyzer on a Swift/Objective-C arm64 Mach-O):
 

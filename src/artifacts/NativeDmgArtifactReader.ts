@@ -12,6 +12,7 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
+import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import {
   NonRegularFileReadError,
   RegularFileAdmissionFailure,
@@ -201,16 +202,15 @@ export class NativeDmgArtifactReader implements ArtifactReader {
         limitations: [DMG_CHECKSUM_ABSENT_LIMITATION],
       });
     const prefix = basename(this.path);
-    const entries = directory
-      .entries(signal, {
-        onCoverage: (coverage) => options?.onCoverage?.(coverage),
-        onOmission: (omission) =>
-          options?.onOmission?.({
-            ...omission,
-            path: `${prefix}/${omission.path}`,
-          }),
-      })
-      [Symbol.asyncIterator]();
+    // The attached directory declares its own coverage; silence stays unknown.
+    const entries = declaredArtifactEntries(directory, signal, {
+      onCoverage: (coverage) => options?.onCoverage?.(coverage),
+      onOmission: (omission) =>
+        options?.onOmission?.({
+          ...omission,
+          path: `${prefix}/${omission.path}`,
+        }),
+    })[Symbol.asyncIterator]();
     try {
       for (;;) {
         if (this.#closed)

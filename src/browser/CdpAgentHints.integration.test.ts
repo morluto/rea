@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { startFakeCdpBrowser } from "../../tests/fixtures/fakeCdpBrowser.js";
+import { fakeCdpSend } from "../../tests/fixtures/fakeCdpSend.js";
 import { createBrowserObservationProvider } from "../composition/browserObservation.js";
 import { inspectWebPage } from "../application/BrowserObservationService.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
@@ -105,7 +106,7 @@ it.each(["progress", "enable", "terminal", "complete"] as const)(
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
-      send: async (method: string) => {
+      send: fakeCdpSend((method) => {
         if (method === "Page.getFrameTree")
           return {
             frameTree: { frame: { id: "main", url: "https://app.test/" } },
@@ -113,7 +114,7 @@ it.each(["progress", "enable", "terminal", "complete"] as const)(
         if (method === "WebMCP.enable" && stage === "enable" && interrupted)
           throw failure;
         return {};
-      },
+      }),
     } as unknown as CdpConnection;
     const context: Parameters<typeof discoverWebMcp>[0] = {
       connection,
