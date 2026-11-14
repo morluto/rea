@@ -75,6 +75,8 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   reattributedResourceConstraint,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
@@ -160,6 +162,7 @@ import {
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import { ghidraDolLanguage, ghidraDolSectionFile } from "./GhidraDolProfile.js";
+import { invalidRegexPatternError } from "../process/RegexMatcher.js";
 
 /** Production seam for exercising provider projection without a real process. */
 export type GhidraProviderClientFactory = (
@@ -612,8 +615,7 @@ export const createGhidraProviderClient = (input: {
         : [];
   if (input.signal.aborted)
     return err(
-      new AnalysisCancelledError("create_analysis_client", {
-        cause: input.signal.reason,
+      cancelledBy("create_analysis_client", input.signal, {
         diagnostics: ghidraInstallationDiagnostics(installation),
       }),
     );
@@ -1524,14 +1526,18 @@ const projectPrimarySessionError = (
   if (
     failure.kind === "cancelled" ||
     (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
-  )
-    return new AnalysisCancelledError(operation, {
-      ...context,
-      cause:
+  ) {
+    const { cause: _failure, ...cancellationContext } = context;
+    return cancelledBy(
+      operation,
+      carriedReason(
         failure.cancellation === undefined
           ? failure
           : failure.cancellation.reason,
-    });
+      ),
+      cancellationContext,
+    );
+  }
   if (failure.kind === "remote" && failure.remoteCode === "decompile_failed")
     return new ProviderAdapterError("ghidra", operation, {
       ...context,
@@ -1616,22 +1622,11 @@ const projectPrimarySessionError = (
     failure.kind === "remote" &&
     failure.remoteCode === "invalid_regex_pattern"
   )
-    return new AnalysisInputError(
-      operation,
-      {
-        ...context,
-        userMessage: failure.message,
-        remediationAction:
-          "Correct the pattern using the reported Ghidra regex syntax error, or select mode literal to search for the text literally, then retry.",
-      },
-      [
-        {
-          path: ["pattern"],
-          reason: "invalid_format",
-          message: failure.message,
-        },
-      ],
-    );
+    // The bridge message already names the pattern and Java's syntax error.
+    return invalidRegexPatternError(operation, failure.message, {
+      ...context,
+      userMessage: failure.message,
+    });
   if (failure.kind === "remote" && isGhidraInputFailureCode(failure.remoteCode))
     return new AnalysisInputError(operation, context, [
       { path: [], reason: "invalid_value", message: failure.message },

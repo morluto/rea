@@ -9,8 +9,8 @@ import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -154,9 +154,7 @@ export const resolveGhidraAnalysisProfile = async (
   disabledAnalyzers?: readonly string[],
 ): Promise<Result<AnalysisProfileResolution, AnalysisError>> => {
   if (signal?.aborted === true)
-    return Promise.resolve(
-      err(new AnalysisCancelledError("open_binary", { cause: signal.reason })),
-    );
+    return Promise.resolve(err(cancelledBy("open_binary", signal)));
   if (target.kind !== "executable")
     return Promise.resolve(ok({ profile: null }));
   if (installation.status === "unavailable")

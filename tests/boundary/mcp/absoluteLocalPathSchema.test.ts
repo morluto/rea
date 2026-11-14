@@ -354,7 +354,7 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
   }
 });
 
-// advertisedPatternsVMode.test.ts proves no schema profile advertises the
+// advertisedDialect.test.ts proves no schema profile advertises the
 // surrogate escape; this case proves the handlers still refuse such paths.
 it("rejects unpaired surrogates through in-memory MCP handlers", async () => {
   const firmwareCalls: string[] = [];
