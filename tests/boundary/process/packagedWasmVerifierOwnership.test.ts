@@ -373,5 +373,4 @@ it.skipIf(process.platform === "win32").each([
       await removeTestWorkspace(workspace.root);
     }
   },
-  45_000,
 );

@@ -54,10 +54,10 @@ describe("directory traversal of a parent wider than call arguments allow", () =
     workspace = await createTestWorkspace("rea-wide-directory-");
     root = await workspace.mkdir("tree");
     for (const name of childNames()) mkdirSync(join(root, name));
-  }, 60_000);
+  });
   afterAll(async () => {
     if (workspace !== undefined) await removeTestWorkspace(workspace.root);
-  }, 60_000);
+  });
 
   it("schedules the artifact reader's children within the selected entry budget", async () => {
     // Cancel once the parent listing is complete. The next cancellation
@@ -84,7 +84,7 @@ describe("directory traversal of a parent wider than call arguments allow", () =
       examinedEntries: 2_000,
       maximumEntries: 2_000,
     });
-  }, 60_000);
+  });
 
   it.skipIf(process.platform === "win32")(
     "reads every child directory into the reference-source inventory",
@@ -100,6 +100,5 @@ describe("directory traversal of a parent wider than call arguments allow", () =
       ).toEqual([]);
       expect(missingChildren(entries.map(({ path }) => path))).toEqual([]);
     },
-    120_000,
   );
 });
