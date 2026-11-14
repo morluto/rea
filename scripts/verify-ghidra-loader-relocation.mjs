@@ -9,12 +9,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const exec = promisify(execFile);
@@ -58,7 +59,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
 
-const installation = await inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   ...(process.env.JAVA_HOME === undefined
@@ -98,8 +99,11 @@ const bridge = join(bridgeDirectory, "ReaGhidraBridge.java");
 const compiler = process.env.REA_CC ?? "cc";
 let supervisor;
 let report;
+// Owned Ghidra processes may still use the workspace until cleanup proves
+// they are gone, so the workspace is released only after that proof.
+let workspaceReleasable = true;
 
-try {
+await withVerifierCleanup(async () => {
   await mkdir(project);
   await buildProvider(compiler, providerFixture, provider);
   await buildFixture(compiler, fixture, provider, target);
@@ -175,14 +179,22 @@ try {
     decompiler_scope:
       "native Ghidra baseline and protected pseudocode comparisons passed",
   };
-} finally {
-  if (supervisor !== undefined) {
+}, [
+  async () => {
+    if (supervisor === undefined) return;
     const stopped = await supervisor.stop();
     supervisor.dispose();
-    assert.notEqual(stopped.status, "incomplete", JSON.stringify(stopped));
-  }
-  await rm(workspace, { recursive: true, force: true });
-}
+    workspaceReleasable = stopped.status !== "incomplete";
+    assert.ok(
+      workspaceReleasable,
+      `Owned Ghidra cleanup incomplete; retained ${workspace}: ${JSON.stringify(stopped)}`,
+    );
+  },
+  async () => {
+    if (workspaceReleasable)
+      await rm(workspace, { recursive: true, force: true });
+  },
+]);
 
 assert.ok(report);
 console.log(
@@ -209,7 +221,9 @@ async function buildProvider(compiler, source, output) {
 async function buildFixture(compiler, source, provider, output) {
   const arguments_ = [
     "-O0",
-    "-fPIE",
+    // -fPIC makes the external data read go through a RELRO GOT entry; -fPIE
+    // lets GCC use a copy relocation into writable .bss instead.
+    "-fPIC",
     "-fno-plt",
     "-pie",
     "-nostdlib",

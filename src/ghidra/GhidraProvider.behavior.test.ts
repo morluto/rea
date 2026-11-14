@@ -108,6 +108,7 @@ import {
   functionCoordinateContextsEqual,
 } from "../domain/native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
+import { existingGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
 import {
   createAnalysisExecution,
   type AnalysisOperation,
@@ -871,6 +872,15 @@ describe("Ghidra platform support", () => {
     expect(await semantics("linux")).toBe(
       "volatile-read-only-relocation-blocks-v1",
     );
+    // A caller's existing project is read-only too, so its saved results must
+    // not match a profile that predates the relocation limitation.
+    expect(
+      existingGhidraAnalysisProfile(
+        peTarget("x86_64"),
+        { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+        { project_name: "fixture" },
+      ).parameters.loader_relocation_semantics,
+    ).toBe("read-only-relocation-limitations-v1");
   });
 
   it("commits the PE role and managed classification to profile identity", async () => {
