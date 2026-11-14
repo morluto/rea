@@ -3,7 +3,14 @@ import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
+/** A 32-bit file offset or extent, bounded by the pass's own read budget. */
 const uint = z.number().int().min(0).max(0xffffffff);
+/**
+ * A non-negative safe-integer count or declared size. Declared sizes (such as
+ * an ASAR unpacked member) are not bounded by this artifact's read budget, so
+ * they must not be capped at 32 bits; only true file extents use `uint`.
+ */
+const safeCount = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const rangeSchema = z.strictObject({ offset: uint, bytes: uint });
 
 /** Hard ceiling on the caller-selected stable read budget (512 MiB). */
@@ -64,8 +71,12 @@ export const canonicalizeFactSchema = z.strictObject({
   /** Section kind, custom-section name, entry path or structural path; null when unnamed. */
   name: z.string().nullable(),
   classification: z.enum(CANONICALIZE_FACT_CLASSES),
-  /** Size of the region in bytes, or 0 when the item has no byte extent. */
-  bytes: uint,
+  /**
+   * Size of the region in bytes, or 0 when the item has no byte extent. A
+   * declared size (such as an ASAR unpacked member) may exceed the read budget,
+   * so this is a non-negative safe integer rather than a 32-bit extent.
+   */
+  bytes: safeCount,
   /** File-offset extent when known; null for items without a byte position. */
   location: rangeSchema.nullable(),
   /** SHA-256 of the exact collapsed/retained region bytes; null when not hashed. */
@@ -80,10 +91,16 @@ export type CanonicalizeFact = z.infer<typeof canonicalizeFactSchema>;
 /** A redundancy/padding collapse recorded as counts plus aggregate bytes. */
 export const canonicalizeReductionSchema = z.strictObject({
   collection: z.string().min(1),
-  examined: uint,
-  retained: uint,
-  collapsed: uint,
-  collapsed_bytes: uint,
+  examined: safeCount,
+  retained: safeCount,
+  collapsed: safeCount,
+  collapsed_bytes: safeCount,
+  /**
+   * SHA-256 identifying the collapsed group, so items beyond the exemplar
+   * budget keep a bounded provenance reference; null when the group has no
+   * stable byte identity (for example, a structural depth or node collapse).
+   */
+  group_sha256: digestSchema.nullable(),
   basis: z.string().min(1),
 });
 export type CanonicalizeReduction = z.infer<typeof canonicalizeReductionSchema>;
@@ -91,8 +108,8 @@ export type CanonicalizeReduction = z.infer<typeof canonicalizeReductionSchema>;
 /** Examined-versus-total coverage with explicit truncation, never inferred absence. */
 export const canonicalizeCoverageSchema = z.strictObject({
   status: z.enum(["complete", "partial"]),
-  examined: uint,
-  total: uint.nullable(),
+  examined: safeCount,
+  total: safeCount.nullable(),
   truncated: z.boolean(),
 });
 export type CanonicalizeCoverage = z.infer<typeof canonicalizeCoverageSchema>;

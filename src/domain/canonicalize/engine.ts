@@ -6,21 +6,17 @@ import {
   type NormalizedArtifactFacts,
   type NormalizerBudget,
 } from "./normalizer.js";
-import { asarHeaderNormalizer } from "./normalizers/asarHeader.js";
 import { jsonStructureNormalizer } from "./normalizers/jsonStructure.js";
 import { wasmSectionNormalizer } from "./normalizers/wasmSections.js";
 
 /**
- * Default, config-driven normalizer set, in recognition order. New shields or
- * formats are added declaratively by extending this profile, not by forking the
- * orchestration below.
+ * Default, config-driven normalizer set for byte-based formats, in recognition
+ * order. New byte-based shields are added declaratively by extending this
+ * profile. ASAR is canonicalized by the adapter instead, because it must reuse
+ * REA's owning ASAR reader, which lives outside this pure domain layer.
  */
 export const DEFAULT_CANONICALIZE_PROFILE: CanonicalizeProfile = {
-  normalizers: [
-    wasmSectionNormalizer,
-    asarHeaderNormalizer,
-    jsonStructureNormalizer,
-  ],
+  normalizers: [wasmSectionNormalizer, jsonStructureNormalizer],
 };
 
 /**

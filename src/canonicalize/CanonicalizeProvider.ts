@@ -31,6 +31,12 @@ import {
   type CanonicalizeArtifactInput,
 } from "../domain/canonicalize/canonicalizeArtifact.js";
 import { canonicalizeArtifactFacts } from "../domain/canonicalize/engine.js";
+import {
+  unrecognizedRequestedFacts,
+  type NormalizedArtifactFacts,
+  type NormalizerBudget,
+} from "../domain/canonicalize/normalizer.js";
+import { canonicalizeAsarBytes, looksLikeAsar } from "./asarCanonicalize.js";
 import { err, ok } from "../domain/result.js";
 import { CANONICALIZE_PROVIDER } from "../domain/investigationProviders.js";
 
@@ -67,11 +73,17 @@ export class CanonicalizeProvider implements CanonicalizePort {
           undefined,
           this.#resources,
         );
-        const facts = canonicalizeArtifactFacts(snapshot.bytes, input.format, {
+        const budget: NormalizerBudget = {
           maxFacts: input.max_facts,
           maxDepth: input.max_depth,
           sampleUnits: CANONICALIZE_SAMPLE_UNITS,
-        });
+        };
+        const facts = await this.#canonicalizeBytes(
+          snapshot.bytes,
+          input.format,
+          budget,
+          options?.signal,
+        );
         return ok({
           artifact: {
             path: input.path,
@@ -85,6 +97,27 @@ export class CanonicalizeProvider implements CanonicalizePort {
     } catch (cause) {
       return err(canonicalizeFailure(cause, input, snapshot));
     }
+  }
+
+  /**
+   * Route to the byte-based domain engine for WASM and JSON, or to the ASAR
+   * adapter, which reuses REA's owning ASAR reader. An explicit `asar` request
+   * whose framing is not recognized reports an unverified result rather than
+   * falling through to another format.
+   */
+  async #canonicalizeBytes(
+    bytes: Buffer,
+    format: CanonicalizeArtifactInput["format"],
+    budget: NormalizerBudget,
+    signal: AbortSignal | undefined,
+  ): Promise<NormalizedArtifactFacts> {
+    if (format === "asar")
+      return looksLikeAsar(bytes)
+        ? canonicalizeAsarBytes(bytes, budget, signal)
+        : unrecognizedRequestedFacts("asar");
+    if (format === "auto" && looksLikeAsar(bytes))
+      return canonicalizeAsarBytes(bytes, budget, signal);
+    return canonicalizeArtifactFacts(bytes, format, budget);
   }
 }
 

@@ -51,12 +51,19 @@ The feature mirrors REA's existing in-process, target-free analyzer pattern
 - `src/domain/canonicalize/` — pure engine. `canonicalizeArtifact.ts` holds the
   Zod input/result schemas and named budget constants; `normalizer.ts` defines
   the pluggable `ArtifactNormalizer` interface, the uniform fact model and
-  shared helpers; `engine.ts` selects a normalizer from a config-driven
-  `CanonicalizeProfile`; `normalizers/` holds one module per format.
+  shared helpers; `engine.ts` selects a byte-based normalizer from a
+  config-driven `CanonicalizeProfile`; `normalizers/` holds one module per
+  byte-based format; `asarInventory.ts` is a pure classifier for ASAR inventory
+  entries (see below).
 - `src/application/canonicalize/` — `CanonicalizePort` and `CanonicalizeService`
   (shared CLI/MCP workflow: validate input, run the provider, assemble Evidence).
 - `src/canonicalize/CanonicalizeProvider.ts` — reads one bounded, identity-checked
-  regular file through the shared stable artifact reader and runs the pure engine.
+  regular file through the shared stable artifact reader, then runs the pure
+  byte-based engine (WASM, JSON) or, for Electron `.asar`, the adapter in
+  `src/canonicalize/asarCanonicalize.ts`, which reuses REA's owning ASAR reader
+  (`parseAsarHeaderExtents`, `readAsarListing`) and feeds the validated entries
+  to the pure `asarInventory` classifier. ASAR parsing is not reimplemented in
+  the pure domain layer, which cannot depend on the adapter-layer reader.
 - `src/contracts/canonicalize/` — the `canonicalize_artifact` tool contract.
 - `src/composition/canonicalize.ts`, `src/cli/canonicalizeCommands.ts`,
   `src/server/registerCanonicalizeTool.ts` — composition and the two adapters.
@@ -75,19 +82,30 @@ normalizer in the profile, not by forking the engine.
   link-relevant custom sections (`linking`, `dylink`, `dylink.0`,
   `target_features`, `reloc.*`) are behavior-relevant and retained; all other
   custom sections are non-semantic to execution and collapsed to an exemplar and
-  a digest. This neutralizes custom-section exhaustion regardless of section
-  names.
-- **Electron `.asar`** (`asar-header`): a bounded Pickle/JSON header read. The
-  inventory is bounded and sampled; entries reachable from `package.json`
-  `main`/`exports` are behavior-relevant; abnormally long paths are flagged as
-  unreferenced inflation; a header beyond REA's documented `asar.max_header_bytes`
-  is noted.
+  a digest. Both the retained-fact count (including `reloc.*`) and each retained
+  section name are bounded, so neither a flood of sections nor a multi-megabyte
+  section name can exhaust the pass. This neutralizes custom-section exhaustion
+  regardless of section names.
+- **Electron `.asar`** (`asar-listing`): REA's owning ASAR reader validates the
+  Pickle framing and the header inventory (depth, node schema and expanded-path
+  byte budgets) before any allocation; the pure `asarInventory` classifier then
+  classifies the validated entries. Proven reachability from `package.json`
+  `main`/`exports` wins over every heuristic, so a real entrypoint is never
+  mislabeled; only non-reachable abnormally long paths are flagged as
+  unreferenced inflation. A header beyond REA's documented
+  `asar.max_header_bytes` is noted without failing.
 - **Structured JSON** (`json-structure`): a bounded, iterative, depth- and
-  node-capped walk. Nesting beyond `max_depth` and high-cardinality sibling runs
-  are collapsed. This also covers oversized `tshark`/pcap JSON dumps.
+  node-capped walk that retains bounded behavior-relevant content (keys and
+  scalar values) rather than only a count. Arrays are enumerated without
+  materializing every element, so a long array cannot exhaust the heap before
+  the cap. Nesting beyond `max_depth` and children beyond the fact budget are
+  left `unverified` with partial coverage, never asserted as padding. This also
+  covers oversized `tshark`/pcap JSON dumps.
 
 Unrecognized inputs retain byte identity and report their structure as
-`unverified`.
+`unverified`. Every collapse records a reduction whose `group_sha256` identifies
+the omitted items by reference, and declared sizes (such as a >4 GiB ASAR
+unpacked member) are modeled as non-negative safe integers, not 32-bit extents.
 
 ## Surfaces
 

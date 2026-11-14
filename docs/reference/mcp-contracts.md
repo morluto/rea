@@ -724,7 +724,7 @@ pass bounds its own read budget (`max_file_bytes`), exemplar budget (`max_facts`
 and structural depth (`max_depth`) so an inflated input cannot exhaust the pass
 itself. The canonicalization is lossless for behavior-relevant data: it only
 changes what the analyzer ingests, never the target. See
-[antidote canonicalization](../specs/antidote-canonicalize/spec.md) for
+[antidote canonicalization](../specs/artifacts/antidote-canonicalize/spec.md) for
 the normalizer interface and per-format coverage.
 
 ## Retained application Evidence inputs

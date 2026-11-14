@@ -98,7 +98,7 @@ describe("wasm-sections normalizer", () => {
     expect(type!.bytes).toBe(typePayload.length);
   });
 
-  it("collapses custom sections beyond the exemplar budget to counts", () => {
+  it("collapses custom sections beyond the exemplar budget to counts and a group digest", () => {
     const many = wasmModule([
       wasmSection(1, typePayload),
       ...Array.from({ length: 10 }, (_unused, index) =>
@@ -118,6 +118,67 @@ describe("wasm-sections normalizer", () => {
       retained: 3,
       collapsed: 7,
     });
+    // Items beyond the budget keep a bounded group identity (finding 11).
+    expect(reduction?.group_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    // Omitting sections reports partial coverage, not false completeness.
+    expect(facts.coverage.status).toBe("partial");
+  });
+
+  it("caps link-relevant reloc sections and keeps a group digest", () => {
+    const relocs = Array.from({ length: 5 }, (_unused, index) =>
+      wasmCustomSection(`reloc.CODE${String(index)}`, Buffer.from([0x00])),
+    );
+    const facts = canonicalizeArtifactFacts(
+      wasmModule([wasmSection(1, typePayload), ...relocs]),
+      "wasm",
+      budget({ maxFacts: 2 }),
+    );
+    const retainedLink = facts.core.filter(
+      (fact) =>
+        fact.collection === "wasm-custom-section" &&
+        fact.classification === "behavior-relevant",
+    );
+    expect(retainedLink).toHaveLength(2);
+    const reduction = facts.reductions.find(
+      (entry) => entry.collection === "wasm-link-section",
+    );
+    expect(reduction).toMatchObject({ examined: 5, retained: 2, collapsed: 3 });
+    expect(reduction?.group_sha256).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("bounds an inflated custom-section name in the retained fact", () => {
+    const longName = "a".repeat(300);
+    const facts = canonicalizeArtifactFacts(
+      wasmModule([
+        wasmSection(1, typePayload),
+        wasmCustomSection(longName, Buffer.alloc(8, 0x42)),
+      ]),
+      "wasm",
+      budget(),
+    );
+    const custom = facts.collapsed.find(
+      (fact) => fact.collection === "wasm-custom-section",
+    );
+    expect(custom).toBeDefined();
+    expect((custom?.name ?? "").length).toBeLessThanOrEqual(128);
+    expect(custom?.detail).toMatch(/truncated/u);
+  });
+
+  it("does not miscount a retained link section as collapsed", () => {
+    const facts = canonicalizeArtifactFacts(
+      wasmModule([
+        wasmSection(1, typePayload),
+        wasmCustomSection("linking", Buffer.from([0x02, 0x00])),
+      ]),
+      "wasm",
+      budget(),
+    );
+    expect(named(facts.core, "linking")?.classification).toBe(
+      "behavior-relevant",
+    );
+    // A retained section must not appear as a further "collapsed" reduction.
+    expect(facts.reductions).toHaveLength(0);
+    expect(facts.coverage.status).toBe("complete");
   });
 
   it("stays defensive on a truncated section header", () => {
@@ -132,82 +193,27 @@ describe("wasm-sections normalizer", () => {
   });
 });
 
-// --- ASAR -----------------------------------------------------------------
-
-interface AsarNode {
-  files?: Record<string, AsarNode>;
-  size?: number;
-  offset?: string;
-}
-
-const asarArchive = (
-  files: Record<string, AsarNode>,
-  content = Buffer.alloc(0),
-  headerBufferOverride?: number,
-): Buffer => {
-  const json = Buffer.from(JSON.stringify({ files }), "utf8");
-  const header = Buffer.alloc(16);
-  const headerBufferBytes = headerBufferOverride ?? 8 + json.length;
-  header.writeUInt32LE(4, 0);
-  header.writeUInt32LE(headerBufferBytes, 4);
-  header.writeUInt32LE(headerBufferBytes - 4, 8);
-  header.writeUInt32LE(json.length, 12);
-  return Buffer.concat([header, json, content]);
-};
-
-describe("asar-header normalizer", () => {
-  it("flags an abnormally long inventory path as unreferenced inflation", () => {
-    const longName = `${"a".repeat(5000)}.js`;
-    const bytes = asarArchive({
-      "index.js": { size: 10, offset: "0" },
-      [longName]: { size: 1, offset: "10" },
-    });
-    const facts = canonicalizeArtifactFacts(bytes, "auto", budget());
-    expect(facts.detected_format).toBe("asar");
-    expect(
-      facts.collapsed.some(
-        (fact) => fact.classification === "decoy-unreachable",
-      ),
-    ).toBe(true);
-    expect(
-      facts.reductions.some((entry) => entry.collection === "asar-decoy"),
-    ).toBe(true);
-  });
-
-  it("marks entries reachable from package.json main as behavior-relevant", () => {
-    const manifest = Buffer.from(JSON.stringify({ main: "index.js" }), "utf8");
-    const index = Buffer.from("module.exports = 1;\n", "utf8");
-    const content = Buffer.concat([manifest, index]);
-    const bytes = asarArchive(
-      {
-        "package.json": { size: manifest.length, offset: "0" },
-        "index.js": { size: index.length, offset: String(manifest.length) },
-      },
-      content,
-    );
-    const facts = canonicalizeArtifactFacts(bytes, "asar", budget());
-    const reachable = facts.core.find((fact) => fact.name === "index.js");
-    expect(reachable?.classification).toBe("behavior-relevant");
-    expect(
-      facts.core.find((fact) => fact.name === "package.json"),
-    ).toBeDefined();
-  });
-
-  it("reports a header beyond REA's documented asar budget", () => {
-    const bytes = asarArchive(
-      { "index.js": { size: 1, offset: "0" } },
-      Buffer.alloc(0),
-      17 * 1024 * 1024,
-    );
-    const facts = canonicalizeArtifactFacts(bytes, "asar", budget());
-    expect(facts.limitations.join(" ")).toMatch(/asar\.max_header_bytes/u);
-  });
-});
-
 // --- JSON -----------------------------------------------------------------
 
 describe("json-structure normalizer", () => {
-  it("collapses nesting beyond max_depth and marks it truncated", () => {
+  it("retains behavior-relevant scalar content as bounded facts", () => {
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(
+        JSON.stringify({ main: "index.js", version: "1.0.0" }),
+        "utf8",
+      ),
+      "auto",
+      budget(),
+    );
+    expect(facts.detected_format).toBe("json");
+    expect(facts.core[0]).toMatchObject({ collection: "json-root" });
+    const main = facts.core.find((fact) => fact.name === "$/main");
+    expect(main?.classification).toBe("behavior-relevant");
+    expect(main?.sample).toBe("index.js");
+    expect(facts.coverage.status).toBe("complete");
+  });
+
+  it("collapses nesting beyond max_depth and marks it truncated and unverified", () => {
     let nested = "0";
     for (let depth = 0; depth < 40; depth += 1) nested = `[${nested}]`;
     const facts = canonicalizeArtifactFacts(
@@ -217,12 +223,17 @@ describe("json-structure normalizer", () => {
     );
     expect(facts.detected_format).toBe("json");
     expect(facts.coverage.truncated).toBe(true);
+    expect(facts.coverage.status).toBe("partial");
     expect(
       facts.reductions.some((entry) => entry.collection === "json-depth"),
     ).toBe(true);
+    // Depth-collapsed structure is unverified, never asserted as padding.
+    expect(
+      facts.collapsed.every((fact) => fact.classification === "unverified"),
+    ).toBe(true);
   });
 
-  it("reduces a high-cardinality sibling run to exemplars plus counts", () => {
+  it("marks budget-skipped children unverified with partial coverage, never padding", () => {
     const wide = JSON.stringify(
       Object.fromEntries(
         Array.from({ length: 500 }, (_unused, index) => [
@@ -237,10 +248,21 @@ describe("json-structure normalizer", () => {
       budget({ maxFacts: 16 }),
     );
     const reduction = facts.reductions.find(
-      (entry) => entry.collection === "json-siblings",
+      (entry) => entry.collection === "json-children",
     );
-    expect(reduction?.collapsed).toBe(500 - 16);
+    // Root fact plus 15 retained children leaves 485 of 500 unvisited.
+    expect(reduction?.collapsed).toBe(485);
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.coverage.truncated).toBe(true);
     expect(facts.core[0]).toMatchObject({ collection: "json-root" });
+    expect(
+      facts.collapsed.every((fact) => fact.classification === "unverified"),
+    ).toBe(true);
+    expect(
+      [...facts.core, ...facts.collapsed].some(
+        (fact) => fact.classification === "non-semantic-padding",
+      ),
+    ).toBe(false);
   });
 });
 

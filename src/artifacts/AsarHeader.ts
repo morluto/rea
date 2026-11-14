@@ -126,7 +126,7 @@ export type FinalAsarHeaderProbeObservation = Exclude<
  * observed archive size. This establishes byte extents only; JSON validity and
  * the ASAR header schema belong to the decoder at the interpretation boundary.
  */
-const parseAsarHeaderExtents = (
+export const parseAsarHeaderExtents = (
   prefix: Uint8Array,
   archiveBytes?: number,
 ): Result<Omit<AsarHeaderExtents, "archiveBytes">, ArtifactReaderFailure> => {

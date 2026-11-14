@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   CanonicalizeFact,
   CanonicalizeReduction,
@@ -13,6 +15,12 @@ import {
 const WASM_MAGIC = Buffer.from([0x00, 0x61, 0x73, 0x6d]);
 /** Defensive ceiling so a malformed length field cannot spin the walk. */
 const MAX_SECTIONS = 1_000_000;
+/**
+ * Maximum custom-section name bytes decoded and retained. A section name is
+ * artifact-controlled and can span megabytes; classification needs only a
+ * bounded prefix, and the stored name must not reproduce an inflated name.
+ */
+const MAX_CUSTOM_NAME_BYTES = 128;
 
 /** Known core section ids whose presence and bytes drive module behavior. */
 const CORE_SECTION_NAMES: Readonly<Record<number, string>> = {
@@ -43,8 +51,6 @@ const LINK_RELEVANT_CUSTOM = new Set([
   "dylink.0",
   "target_features",
 ]);
-const isLinkRelevantCustom = (name: string): boolean =>
-  LINK_RELEVANT_CUSTOM.has(name) || name.startsWith("reloc.");
 
 interface Leb {
   readonly value: number;
@@ -70,21 +76,39 @@ const readU32Leb = (bytes: Buffer, offset: number): Leb | null => {
   return null;
 };
 
-/** Read a custom section's name (LEB-prefixed) from its payload; null if malformed. */
+interface CustomName {
+  /** Bounded, decoded name prefix retained in the fact. */
+  readonly name: string;
+  /** Full declared name length in bytes, even when only a prefix was decoded. */
+  readonly nameBytes: number;
+  /** True when the declared name exceeds the retained prefix. */
+  readonly truncated: boolean;
+  readonly contentStart: number;
+}
+
+/** Read a custom section's name (LEB-prefixed), decoding only a bounded prefix. */
 const readCustomName = (
   bytes: Buffer,
   payloadStart: number,
   payloadEnd: number,
-): { readonly name: string; readonly contentStart: number } | null => {
+): CustomName | null => {
   const header = readU32Leb(bytes, payloadStart);
   if (header === null) return null;
   const nameEnd = header.next + header.value;
   if (nameEnd > payloadEnd) return null;
+  const decodeEnd = Math.min(nameEnd, header.next + MAX_CUSTOM_NAME_BYTES);
   return {
-    name: bytes.toString("utf8", header.next, nameEnd),
+    name: bytes.toString("utf8", header.next, decodeEnd),
+    nameBytes: header.value,
+    truncated: header.value > MAX_CUSTOM_NAME_BYTES,
     contentStart: nameEnd,
   };
 };
+
+/** A name is link-relevant when it is an exact known name or a `reloc.` prefix. */
+const isLinkRelevant = (parsed: CustomName): boolean =>
+  parsed.name.startsWith("reloc.") ||
+  (!parsed.truncated && LINK_RELEVANT_CUSTOM.has(parsed.name));
 
 const recognizes = (bytes: Buffer): boolean =>
   bytes.length >= 8 &&
@@ -109,45 +133,96 @@ const coreSectionFact = (
       : null,
 });
 
-/** Classify one custom section as link-relevant core or non-semantic padding. */
-const customSectionFact = (
+/** A retained link-relevant custom section, kept as behavior-relevant. */
+const linkSectionFact = (
+  parsed: CustomName,
+  payloadStart: number,
+  size: number,
+  region: Buffer,
+): CanonicalizeFact => ({
+  collection: "wasm-custom-section",
+  name: parsed.name,
+  classification: "behavior-relevant",
+  bytes: size,
+  location: { offset: payloadStart, bytes: size },
+  sha256: canonicalizeDigest(region),
+  sample: null,
+  detail: parsed.truncated
+    ? `Link-relevant custom section retained; declared name is ${String(parsed.nameBytes)} bytes, truncated to ${String(MAX_CUSTOM_NAME_BYTES)}.`
+    : "Link-relevant custom section retained.",
+});
+
+/** A retained padding exemplar: a custom section non-semantic to execution. */
+const paddingSectionFact = (
   bytes: Buffer,
+  parsed: CustomName | null,
   payloadStart: number,
   payloadEnd: number,
   size: number,
+  region: Buffer,
   budget: NormalizerBudget,
-): CanonicalizeFact => {
-  const parsed = readCustomName(bytes, payloadStart, payloadEnd);
-  const name = parsed?.name ?? null;
-  const region = bytes.subarray(payloadStart, payloadEnd);
-  if (name !== null && isLinkRelevantCustom(name))
-    return {
-      collection: "wasm-custom-section",
-      name,
-      classification: "behavior-relevant",
-      bytes: size,
-      location: { offset: payloadStart, bytes: size },
-      sha256: canonicalizeDigest(region),
-      sample: null,
-      detail: "Link-relevant custom section retained.",
-    };
-  return {
-    collection: "wasm-custom-section",
-    name,
-    classification: "non-semantic-padding",
-    bytes: size,
-    location: { offset: payloadStart, bytes: size },
-    sha256: canonicalizeDigest(region),
-    sample: canonicalizeSample(
-      bytes.subarray(parsed?.contentStart ?? payloadStart, payloadEnd),
-      budget.sampleUnits,
-    ),
-    detail:
-      name === null
-        ? "Custom section with an unreadable name; non-semantic to execution."
+): CanonicalizeFact => ({
+  collection: "wasm-custom-section",
+  name: parsed?.name ?? null,
+  classification: "non-semantic-padding",
+  bytes: size,
+  location: { offset: payloadStart, bytes: size },
+  sha256: canonicalizeDigest(region),
+  sample: canonicalizeSample(
+    bytes.subarray(parsed?.contentStart ?? payloadStart, payloadEnd),
+    budget.sampleUnits,
+  ),
+  detail:
+    parsed === null
+      ? "Custom section with an unreadable name; non-semantic to execution."
+      : parsed.truncated
+        ? `Custom section; non-semantic to WASM execution. Declared name is ${String(parsed.nameBytes)} bytes, truncated to ${String(MAX_CUSTOM_NAME_BYTES)}.`
         : "Custom section; non-semantic to WASM execution.",
-  };
+});
+
+/** A bounded group accumulator: retained count, overflow count, bytes and digest. */
+interface CustomGroup {
+  retained: number;
+  examined: number;
+  overflow: number;
+  overflowBytes: number;
+  readonly digest: ReturnType<typeof createHash>;
+}
+
+const newGroup = (): CustomGroup => ({
+  retained: 0,
+  examined: 0,
+  overflow: 0,
+  overflowBytes: 0,
+  digest: createHash("sha256"),
+});
+
+/** Record one group member beyond the exemplar budget, by reference only. */
+const collapseIntoGroup = (
+  group: CustomGroup,
+  size: number,
+  region: Buffer,
+): void => {
+  group.overflow += 1;
+  group.overflowBytes += size;
+  // Fold the member's own digest into the group digest so the omitted group
+  // keeps a bounded identity without retaining its bytes.
+  group.digest.update(canonicalizeDigest(region));
 };
+
+const groupReduction = (
+  collection: string,
+  group: CustomGroup,
+  basis: string,
+): CanonicalizeReduction => ({
+  collection,
+  examined: group.examined,
+  retained: group.retained,
+  collapsed: group.overflow,
+  collapsed_bytes: group.overflowBytes,
+  group_sha256: group.overflow > 0 ? group.digest.digest("hex") : null,
+  basis,
+});
 
 const canonicalize = (
   bytes: Buffer,
@@ -156,9 +231,8 @@ const canonicalize = (
   const core: CanonicalizeFact[] = [];
   const collapsed: CanonicalizeFact[] = [];
   const limitations: string[] = [];
-  let customExamined = 0;
-  let customRetained = 0;
-  let customCollapsedBytes = 0;
+  const padding = newGroup();
+  const link = newGroup();
   let sectionsExamined = 0;
   let truncated = false;
 
@@ -212,42 +286,65 @@ const canonicalize = (
 
     if (id !== 0) {
       core.push(coreSectionFact(id, payloadStart, size.value));
+      offset = payloadEnd;
+      continue;
+    }
+
+    const parsed = readCustomName(bytes, payloadStart, payloadEnd);
+    const region = bytes.subarray(payloadStart, payloadEnd);
+    if (parsed !== null && isLinkRelevant(parsed)) {
+      link.examined += 1;
+      if (link.retained < budget.maxFacts) {
+        link.retained += 1;
+        core.push(linkSectionFact(parsed, payloadStart, size.value, region));
+      } else collapseIntoGroup(link, size.value, region);
     } else {
-      customExamined += 1;
-      const fact = customSectionFact(
-        bytes,
-        payloadStart,
-        payloadEnd,
-        size.value,
-        budget,
-      );
-      if (fact.classification === "behavior-relevant") core.push(fact);
-      else if (customRetained < budget.maxFacts) {
-        customRetained += 1;
-        collapsed.push(fact);
-      } else customCollapsedBytes += size.value;
+      padding.examined += 1;
+      if (padding.retained < budget.maxFacts) {
+        padding.retained += 1;
+        collapsed.push(
+          paddingSectionFact(
+            bytes,
+            parsed,
+            payloadStart,
+            payloadEnd,
+            size.value,
+            region,
+            budget,
+          ),
+        );
+      } else collapseIntoGroup(padding, size.value, region);
     }
     offset = payloadEnd;
   }
 
   const reductions: CanonicalizeReduction[] = [];
-  const customBeyondBudget = customExamined - customRetained;
-  if (customExamined > customRetained) {
-    reductions.push({
-      collection: "wasm-custom-section",
-      examined: customExamined,
-      retained: customRetained,
-      collapsed: customExamined - customRetained,
-      collapsed_bytes: customCollapsedBytes,
-      basis:
-        "Custom sections beyond the exemplar budget were counted, not retained; they are non-semantic to execution.",
-    });
-  }
-  if (customBeyondBudget > 0)
-    limitations.push(
-      `${String(customBeyondBudget)} further custom sections were collapsed to counts; raise max_facts to retain more exemplars.`,
+  if (padding.overflow > 0) {
+    reductions.push(
+      groupReduction(
+        "wasm-custom-section",
+        padding,
+        "Custom sections beyond the exemplar budget were counted with a group digest, not retained; they are non-semantic to execution.",
+      ),
     );
+    limitations.push(
+      `${String(padding.overflow)} further custom sections were collapsed to counts; raise max_facts to retain more exemplars.`,
+    );
+  }
+  if (link.overflow > 0) {
+    reductions.push(
+      groupReduction(
+        "wasm-link-section",
+        link,
+        "Link-relevant custom sections beyond the exemplar budget were counted with a group digest; raise max_facts to retain more.",
+      ),
+    );
+    limitations.push(
+      `${String(link.overflow)} further link-relevant custom sections were collapsed to counts; raise max_facts to retain more exemplars.`,
+    );
+  }
 
+  const omitted = padding.overflow > 0 || link.overflow > 0;
   return {
     detected_format: "wasm",
     normalizer: "wasm-sections",
@@ -255,7 +352,7 @@ const canonicalize = (
     collapsed,
     reductions,
     coverage: {
-      status: truncated ? "partial" : "complete",
+      status: truncated || omitted ? "partial" : "complete",
       examined: sectionsExamined,
       total: truncated ? null : sectionsExamined,
       truncated,

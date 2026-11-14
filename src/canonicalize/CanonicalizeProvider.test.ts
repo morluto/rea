@@ -40,9 +40,27 @@ const decoyWasm = (): Buffer =>
     customSection("bla.enclave.manifest", Buffer.alloc(8192, 0x41)),
   ]);
 
+/** Build a valid Pickle-framed .asar whose extents the owning reader accepts. */
+const asarArchive = (
+  files: Record<string, unknown>,
+  content: Buffer = Buffer.alloc(0),
+): Buffer => {
+  const json = Buffer.from(JSON.stringify({ files }), "utf8");
+  const headerBytes = json.length + 8;
+  const prefix = Buffer.alloc(16);
+  prefix.writeUInt32LE(4, 0);
+  prefix.writeUInt32LE(headerBytes, 4);
+  prefix.writeUInt32LE(headerBytes - 4, 8);
+  prefix.writeUInt32LE(json.length, 12);
+  return Buffer.concat([prefix, json, content]);
+};
+
 const run = async (
   path: string,
-  input: { readonly max_file_bytes?: number } = {},
+  input: {
+    readonly max_file_bytes?: number;
+    readonly format?: "auto" | "wasm" | "asar" | "json";
+  } = {},
 ) => {
   const service = new CanonicalizeService(new CanonicalizeProvider());
   try {
@@ -78,6 +96,50 @@ describe("canonicalize provider over real files", () => {
       facts.collapsed.some((fact) => fact.name === "bla.enclave.manifest"),
     ).toBe(true);
     expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+  });
+
+  it("canonicalizes a real Electron .asar, reusing REA's reader, and never mutates it", async () => {
+    const root = await createTestTempDirectory("rea-canonicalize-asar-");
+    const path = join(root, "app.asar");
+    const manifest = Buffer.from(JSON.stringify({ main: "index.js" }), "utf8");
+    const entry = Buffer.from("module.exports = 1;\n", "utf8");
+    const bytes = asarArchive(
+      {
+        "package.json": { size: manifest.length, offset: "0" },
+        "index.js": { size: entry.length, offset: String(manifest.length) },
+      },
+      Buffer.concat([manifest, entry]),
+    );
+    await writeFile(path, bytes);
+    const result = await run(path);
+    if (!result.ok) throw result.error;
+    const facts = canonicalizeArtifactSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(facts.detected_format).toBe("asar");
+    expect(facts.normalizer).toBe("asar-listing");
+    // The entry named by package.json main is proven reachable.
+    expect(
+      facts.core.find((fact) => fact.name === "index.js")?.classification,
+    ).toBe("behavior-relevant");
+    expect(
+      facts.core.find((fact) => fact.name === "package.json"),
+    ).toBeDefined();
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+  });
+
+  it("reports an explicit asar request on non-asar bytes as unverified", async () => {
+    const root = await createTestTempDirectory("rea-canonicalize-asar-miss-");
+    const path = join(root, "core.wasm");
+    await writeFile(path, decoyWasm());
+    const result = await run(path, { format: "asar" });
+    if (!result.ok) throw result.error;
+    const facts = canonicalizeArtifactSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(facts.detected_format).toBe("unknown");
+    expect(facts.normalizer).toBe("none");
+    expect(facts.limitations.join(" ")).toMatch(/asar/u);
   });
 
   it("rejects a nonexistent file as invalid input", async () => {

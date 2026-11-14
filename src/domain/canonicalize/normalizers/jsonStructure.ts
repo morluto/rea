@@ -2,19 +2,20 @@ import type {
   CanonicalizeFact,
   CanonicalizeReduction,
 } from "../canonicalizeArtifact.js";
-import type {
-  ArtifactNormalizer,
-  NormalizedArtifactFacts,
-  NormalizerBudget,
+import {
+  canonicalizeSample,
+  type ArtifactNormalizer,
+  type NormalizedArtifactFacts,
+  type NormalizerBudget,
 } from "../normalizer.js";
 
 /** Multiplier bounding the pass's own node walk against structural inflation. */
 const NODE_BUDGET_FACTOR = 256;
 const MIN_NODE_BUDGET = 1024;
 
-const isContainer = (
-  value: unknown,
-): value is Record<string, unknown> | unknown[] =>
+type Container = Record<string, unknown> | unknown[];
+
+const isContainer = (value: unknown): value is Container =>
   typeof value === "object" && value !== null;
 
 const firstNonWhitespace = (bytes: Buffer): number => {
@@ -31,23 +32,69 @@ const recognizes = (bytes: Buffer): boolean => {
   return byte === 0x7b /* { */ || byte === 0x5b; /* [ */
 };
 
-interface Frame {
-  readonly value: Record<string, unknown> | unknown[];
-  readonly depth: number;
-  readonly path: string;
-}
+const memberCount = (value: Container): number =>
+  Array.isArray(value) ? value.length : Object.keys(value).length;
 
-const entriesOf = (
-  value: Record<string, unknown> | unknown[],
-): [string, unknown][] =>
-  Array.isArray(value)
-    ? value.map((child, index) => [String(index), child])
-    : Object.entries(value);
+const scalarText = (value: unknown): string =>
+  typeof value === "string"
+    ? value
+    : value === null
+      ? "null"
+      : typeof value === "bigint"
+        ? value.toString()
+        : String(value as number | boolean);
 
-const rootSummary = (
-  root: Record<string, unknown> | unknown[],
+const containerSummaryFact = (
+  path: string,
+  value: Container,
 ): CanonicalizeFact => {
-  const count = Array.isArray(root) ? root.length : Object.keys(root).length;
+  const count = memberCount(value);
+  return {
+    collection: "json-node",
+    name: path,
+    classification: "behavior-relevant",
+    bytes: 0,
+    location: null,
+    sha256: null,
+    sample: null,
+    detail: `${Array.isArray(value) ? "array" : "object"} with ${String(count)} ${Array.isArray(value) ? "elements" : "members"}`,
+  };
+};
+
+const leafFact = (
+  path: string,
+  value: unknown,
+  sampleUnits: number,
+): CanonicalizeFact => {
+  const kind = value === null ? "null" : typeof value;
+  return {
+    collection: "json-value",
+    name: path,
+    classification: "behavior-relevant",
+    bytes: 0,
+    location: null,
+    sha256: null,
+    sample: canonicalizeSample(
+      Buffer.from(scalarText(value), "utf8"),
+      sampleUnits,
+    ),
+    detail: `Behavior-relevant ${kind} value.`,
+  };
+};
+
+const unverifiedFact = (path: string, detail: string): CanonicalizeFact => ({
+  collection: "json-node",
+  name: path,
+  classification: "unverified",
+  bytes: 0,
+  location: null,
+  sha256: null,
+  sample: null,
+  detail,
+});
+
+const rootSummary = (root: Container): CanonicalizeFact => {
+  const count = memberCount(root);
   return {
     collection: "json-root",
     name: Array.isArray(root) ? "array" : "object",
@@ -60,69 +107,122 @@ const rootSummary = (
   };
 };
 
-const depthFact = (path: string, maxDepth: number): CanonicalizeFact => ({
-  collection: "json-node",
-  name: path,
-  classification: "non-semantic-padding",
-  bytes: 0,
-  location: null,
-  sha256: null,
-  sample: null,
-  detail: `Structure nested beyond max_depth (${String(maxDepth)}); collapsed.`,
-});
-
-const cardinalityFact = (
-  path: string,
-  children: number,
-  retained: number,
-): CanonicalizeFact => ({
-  collection: "json-node",
-  name: path,
-  classification: "non-semantic-padding",
-  bytes: 0,
-  location: null,
-  sha256: null,
-  sample: null,
-  detail: `High-cardinality node with ${String(children)} children; retained ${String(retained)} exemplars.`,
-});
+interface Frame {
+  readonly value: Container;
+  readonly depth: number;
+  readonly path: string;
+}
 
 interface WalkState {
+  readonly core: CanonicalizeFact[];
   readonly collapsed: CanonicalizeFact[];
   readonly stack: Frame[];
+  /** Retained facts so far, including the root and container summaries. */
+  retained: number;
   deepCollapsed: number;
-  redundantCollapsed: number;
+  skippedChildren: number;
+  maxDepthObserved: number;
   truncated: boolean;
 }
 
-/** Expand one container frame: collapse at the depth bound, cap wide runs, enqueue children. */
+/** Admit one child as a bounded fact; return false when the fact budget is full. */
+const admitChild = (
+  state: WalkState,
+  budget: NormalizerBudget,
+  depth: number,
+  path: string,
+  child: unknown,
+): boolean => {
+  if (state.retained >= budget.maxFacts) return false;
+  if (isContainer(child)) {
+    state.core.push(containerSummaryFact(path, child));
+    state.retained += 1;
+    state.stack.push({ value: child, depth: depth + 1, path });
+    return true;
+  }
+  state.core.push(leafFact(path, child, budget.sampleUnits));
+  state.retained += 1;
+  return true;
+};
+
+/** Record a run of budget-skipped children as unverified, never as padding. */
+const recordSkipped = (
+  state: WalkState,
+  budget: NormalizerBudget,
+  path: string,
+  total: number,
+  admitted: number,
+): void => {
+  const skipped = total - admitted;
+  if (skipped <= 0) return;
+  state.skippedChildren += skipped;
+  state.truncated = true;
+  if (state.collapsed.length < budget.maxFacts)
+    state.collapsed.push(
+      unverifiedFact(
+        path,
+        `${String(skipped)} of ${String(total)} children beyond the fact budget were not visited; their behavior relevance is unverified.`,
+      ),
+    );
+};
+
+/** Expand one container: collapse at the depth bound, else admit bounded children. */
 const processFrame = (
   frame: Frame,
   budget: NormalizerBudget,
   state: WalkState,
 ): void => {
+  state.maxDepthObserved = Math.max(state.maxDepthObserved, frame.depth);
   if (frame.depth >= budget.maxDepth) {
     state.deepCollapsed += 1;
     state.truncated = true;
     if (state.collapsed.length < budget.maxFacts)
-      state.collapsed.push(depthFact(frame.path, budget.maxDepth));
+      state.collapsed.push(
+        unverifiedFact(
+          frame.path,
+          `Structure nested beyond max_depth (${String(budget.maxDepth)}); deeper structure is unverified.`,
+        ),
+      );
     return;
   }
-  const entries = entriesOf(frame.value);
-  const retain = Math.min(entries.length, budget.maxFacts);
-  if (entries.length > budget.maxFacts) {
-    state.redundantCollapsed += entries.length - retain;
-    if (state.collapsed.length < budget.maxFacts)
-      state.collapsed.push(cardinalityFact(frame.path, entries.length, retain));
+  if (Array.isArray(frame.value)) {
+    const total = frame.value.length;
+    let admitted = 0;
+    // Enumerate only admitted elements; never materialize the whole array as
+    // key/value pairs, so a long array cannot exhaust the heap before the cap.
+    for (let index = 0; index < total; index += 1) {
+      if (
+        !admitChild(
+          state,
+          budget,
+          frame.depth,
+          `${frame.path}/${String(index)}`,
+          frame.value[index],
+        )
+      )
+        break;
+      admitted += 1;
+    }
+    recordSkipped(state, budget, frame.path, total, admitted);
+    return;
   }
-  for (let index = retain - 1; index >= 0; index -= 1) {
-    const [key, child] = entries[index]!;
-    if (isContainer(child))
-      state.stack.push({
-        value: child,
-        depth: frame.depth + 1,
-        path: `${frame.path}/${key}`,
-      });
+  let total = 0;
+  let admitted = 0;
+  for (const key in frame.value) {
+    if (!Object.hasOwn(frame.value, key)) continue;
+    total += 1;
+    if (
+      admitChild(
+        state,
+        budget,
+        frame.depth,
+        `${frame.path}/${key}`,
+        (frame.value as Record<string, unknown>)[key],
+      )
+    )
+      admitted += 1;
   }
+  recordSkipped(state, budget, frame.path, total, admitted);
 };
 
 const parseFailure = (message: string): NormalizedArtifactFacts => ({
@@ -156,10 +256,13 @@ const canonicalize = (
     };
 
   const state: WalkState = {
+    core: [rootSummary(root)],
     collapsed: [],
     stack: [{ value: root, depth: 0, path: "$" }],
+    retained: 1,
     deepCollapsed: 0,
-    redundantCollapsed: 0,
+    skippedChildren: 0,
+    maxDepthObserved: 0,
     truncated: false,
   };
   const limitations: string[] = [];
@@ -168,7 +271,6 @@ const canonicalize = (
     MIN_NODE_BUDGET,
   );
   let nodesWalked = 0;
-  let maxDepthObserved = 0;
 
   while (state.stack.length > 0) {
     if (nodesWalked >= nodeBudget) {
@@ -178,10 +280,8 @@ const canonicalize = (
       );
       break;
     }
-    const frame = state.stack.pop()!;
     nodesWalked += 1;
-    maxDepthObserved = Math.max(maxDepthObserved, frame.depth);
-    processFrame(frame, budget, state);
+    processFrame(state.stack.pop()!, budget, state);
   }
 
   const reductions: CanonicalizeReduction[] = [];
@@ -192,26 +292,28 @@ const canonicalize = (
       retained: 0,
       collapsed: state.deepCollapsed,
       collapsed_bytes: 0,
-      basis: `Subtrees nested beyond max_depth (${String(budget.maxDepth)}) were collapsed; nesting is non-semantic padding.`,
+      group_sha256: null,
+      basis: `Subtrees nested beyond max_depth (${String(budget.maxDepth)}) were collapsed and left unverified; nesting depth is non-semantic, but their contents were not examined.`,
     });
-  if (state.redundantCollapsed > 0)
+  if (state.skippedChildren > 0)
     reductions.push({
-      collection: "json-siblings",
-      examined: state.redundantCollapsed,
+      collection: "json-children",
+      examined: state.skippedChildren,
       retained: 0,
-      collapsed: state.redundantCollapsed,
+      collapsed: state.skippedChildren,
       collapsed_bytes: 0,
+      group_sha256: null,
       basis:
-        "High-cardinality sibling runs were reduced to exemplars plus counts.",
+        "Children beyond the fact budget were counted, not retained, and left unverified; raise max_facts to retain more exemplars.",
     });
   limitations.push(
-    `Maximum observed structural depth: ${String(maxDepthObserved)}.`,
+    `Maximum observed structural depth: ${String(state.maxDepthObserved)}.`,
   );
 
   return {
     detected_format: "json",
     normalizer: "json-structure",
-    core: [rootSummary(root)],
+    core: state.core,
     collapsed: state.collapsed,
     reductions,
     coverage: {
@@ -224,7 +326,7 @@ const canonicalize = (
   };
 };
 
-/** Canonicalize structured JSON (including oversized tshark/pcap dumps) by bounding depth and collapsing redundant runs. */
+/** Canonicalize structured JSON (including oversized tshark/pcap dumps) by bounding depth and retaining bounded content. */
 export const jsonStructureNormalizer: ArtifactNormalizer = {
   id: "json-structure",
   format: "json",
