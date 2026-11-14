@@ -1,5 +1,8 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import {
   probeGhidraJava,
@@ -344,9 +347,7 @@ export const inspectGhidraInstallation = async (
   host: GhidraInstallationHost = systemGhidraInstallationHost(),
 ): Promise<GhidraInstallationInspection> => {
   if (options.signal?.aborted)
-    throw new AnalysisCancelledError("ghidra:installation", {
-      cause: options.signal.reason,
-    });
+    throw cancelledBy("ghidra:installation", options.signal);
   const platform = options.platform ?? process.platform;
   const architecture = options.architecture ?? process.arch;
   const coordinates = await installationCoordinates(
@@ -415,8 +416,7 @@ export const inspectGhidraInstallation = async (
       },
     };
   if (options.signal?.aborted)
-    throw new AnalysisCancelledError("ghidra:installation", {
-      cause: options.signal.reason,
+    throw cancelledBy("ghidra:installation", options.signal, {
       diagnostics: ghidraInstallationDiagnostics(
         availableInstallation(coordinates, observation, options.javaHome),
       ),

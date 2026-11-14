@@ -367,11 +367,13 @@ export type CancelledOptions = Omit<AnalysisErrorOptions, "cause"> & {
   readonly userMessage?: string;
 };
 
+// Signals are matched structurally last: callers and tests may pass an
+// AbortSignal implementation from another realm or a signal-shaped fake.
 const cancellationCause = (reason: CancellationReason): unknown => {
-  if (reason instanceof AbortSignal) return reason.reason;
   if (reason instanceof AnalysisCancelledError) return reason.cause;
   if (reason instanceof OwnerCancellation) return reason;
-  return reason.carried;
+  if ("carried" in reason) return reason.carried;
+  return reason.reason;
 };
 
 /** The one constructor for a cancellation: its reason is required. */
