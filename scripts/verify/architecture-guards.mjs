@@ -225,6 +225,16 @@ checkCounted(
   ["src/domain/analysisErrorCore.ts"],
 );
 
+// Turning a completed result into a cancellation after cleanup is the
+// finalization precedence that runOwned owns (src/providers/runOwned.ts).
+checkCounted(
+  "completed result reclassified by a hand-read abort signal (finalize through runOwned in src/providers/runOwned)",
+  "completed-abort-reclassification",
+  files,
+  /\.ok\s*&&\s*(?:isAborted\(|[\w.?]*signal\??\.aborted)/gu,
+  ["src/providers/runOwned.ts"],
+);
+
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
 // kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
 // the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.
