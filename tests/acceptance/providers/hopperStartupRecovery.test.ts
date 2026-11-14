@@ -8,13 +8,14 @@ import { dirname, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { expect, onTestFinished, vi } from "vitest";
+import { expect, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
+import { waitFor } from "../../support/testWait.js";
 
 const statusSchema = z.object({ result: z.object({ open: z.boolean() }) });
 const test = workspaceCliTest.skipIf(process.platform !== "darwin");
@@ -365,7 +366,7 @@ test.for(["handoff", "not-found"] as const)(
       [runId, "different-token"],
     ] as const) {
       const wrong = lateBridge(identity, credential);
-      await vi.waitFor(() => access(socket));
+      await waitFor(() => access(socket));
       expect(parseMcpToolError(await call("close_binary")).error.code).toBe(
         "cleanup_incomplete",
       );
@@ -375,7 +376,7 @@ test.for(["handoff", "not-found"] as const)(
       await rm(socket, { force: true });
     }
     const owned = await closeWithLateBridge(mcp, () => lateBridge(runId));
-    await vi.waitFor(() => expect(owned.exitCode).toBe(0));
+    await waitFor(() => expect(owned.exitCode).toBe(0));
     await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
     await writeFile(mode, "bridge");
     expect((await call("open_binary", { path: target })).isError).not.toBe(

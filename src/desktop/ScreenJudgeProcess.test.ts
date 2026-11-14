@@ -14,6 +14,7 @@ import type {
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ScreenJudgeProcess } from "./ScreenJudgeProcess.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 vi.mock("./AgentEnvComputerHelper.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./AgentEnvComputerHelper.js")>()),
@@ -261,7 +262,7 @@ it("waits for final process cleanup after cancellation and keeps its owner", asy
       settled = true;
     });
   // Wait for the mocked command to receive control, not just for the judge to start.
-  await vi.waitFor(() =>
+  await waitFor(() =>
     expect(vi.mocked(runOwnedCommand).mock.calls.at(-1)?.[2]?.signal).toBe(
       controller.signal,
     ),

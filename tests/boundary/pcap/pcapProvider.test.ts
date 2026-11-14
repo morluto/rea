@@ -815,12 +815,7 @@ fs.writeFileSync(${JSON.stringify(marker)}, 'ready'); setInterval(() => {}, 1000
       { signal: controller.signal },
     );
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(
-        ready,
-        pending,
-        `${phase} tool startup`,
-        5_000,
-      );
+      await awaitAcknowledgement(ready, pending, `${phase} tool startup`);
       controller.abort(new Error("caller cancellation"));
       const result = await pending;
       if (result.ok) throw new Error("expected cancellation");

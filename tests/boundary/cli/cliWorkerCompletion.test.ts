@@ -63,12 +63,7 @@ process.stdout.write = (chunk, ...arguments_) => {
         if (frame.ready) ready.resolve();
       }),
     );
-    await awaitAcknowledgement(
-      ready.promise,
-      closed,
-      "CLI worker startup",
-      15_000,
-    );
+    await awaitAcknowledgement(ready.promise, closed, "CLI worker startup");
     child.stdin.end(
       encodeCliSessionFrame({
         id: 1,

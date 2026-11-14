@@ -493,7 +493,7 @@ describe("native command failure capture and limits", () => {
       { signal: controller.signal },
     );
     const result = await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(ready, pending, "command output", 10_000);
+      await awaitAcknowledgement(ready, pending, "command output");
       controller.abort();
       return await pending;
     }, [

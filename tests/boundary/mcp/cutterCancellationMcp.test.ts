@@ -19,6 +19,9 @@ import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+// CutterBridgeClient's per-probe request deadline.
+const CUTTER_REQUEST_DEADLINE_MS = 25_000;
+
 it("propagates MCP cancellation into an active Cutter command", async () => {
   let markDispatched: (() => void) | undefined;
   let observedAbort = false;
@@ -253,15 +256,20 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
   try {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
+    const requested = performance.now();
     const request = client.callTool(
       { name: "list_cutter_sessions", arguments: {} },
       { signal: controller.signal },
     );
-    await awaitAcknowledgement(connected, request, "Cutter discovery", 10_000);
+    await awaitAcknowledgement(connected, request, "Cutter discovery");
     controller.abort(new Error("selected discovery cancellation"));
     await expect(request).rejects.toThrow("selected discovery cancellation");
     await expect.poll(() => settled).toBe(true);
     await expect.poll(() => sockets.size).toBe(0);
+    // Probes the abort missed would still close at their own request deadline.
+    expect(performance.now() - requested).toBeLessThan(
+      CUTTER_REQUEST_DEADLINE_MS,
+    );
     expect(connections).toBe(8);
     await Promise.all(paths.map((path) => rm(path)));
     const recovered = await client.callTool({

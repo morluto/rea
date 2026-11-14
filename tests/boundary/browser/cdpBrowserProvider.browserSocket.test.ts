@@ -19,6 +19,7 @@ import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreensh
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
+import { waitFor } from "../../support/testWait.js";
 
 describe("CdpBrowserProvider: browser socket without HTTP discovery", () => {
   it("reuses one admitted browser socket across sequential operations and closes on provider shutdown", async () => {
@@ -97,7 +98,7 @@ describe("CdpBrowserProvider: browser socket without HTTP discovery", () => {
     } finally {
       await provider.close();
     }
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 });
 
@@ -117,7 +118,7 @@ describe("CdpBrowserProvider: browser socket eviction and per-call scoping", () 
       expect(browser.activeConnectionCount()).toBe(1);
 
       browser.closeActiveConnections();
-      await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 
       const second = await provider.inspectPage(
         inspectWebPageInputSchema.parse({
@@ -133,7 +134,7 @@ describe("CdpBrowserProvider: browser socket eviction and per-call scoping", () 
     } finally {
       await provider.close();
     }
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 
   it("closes a shared browser socket when Target.detachFromTarget fails so no target session leaks", async () => {
@@ -154,7 +155,7 @@ describe("CdpBrowserProvider: browser socket eviction and per-call scoping", () 
         }),
       );
       if (!inspected.ok) throw inspected.error;
-      await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
       expect(browser.openedConnectionCount()).toBe(1);
 
       const listed = await provider.listTargets(
@@ -168,7 +169,7 @@ describe("CdpBrowserProvider: browser socket eviction and per-call scoping", () 
     } finally {
       await provider.close();
     }
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 
   it("preserves per-operation command_timeout_ms and operation identity on a reused browser socket", async () => {
@@ -208,7 +209,7 @@ describe("CdpBrowserProvider: browser socket eviction and per-call scoping", () 
     } finally {
       await provider.close();
     }
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 });
 
@@ -275,7 +276,7 @@ it("retains browser-socket siblings and reports invalid attachment as unknown, n
   } finally {
     await provider.close();
   }
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
 
 describe("CdpBrowserProvider: browser socket failures and cleanup", () => {
@@ -315,7 +316,7 @@ describe("CdpBrowserProvider: browser socket failures and cleanup", () => {
     } finally {
       await provider.close();
     }
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 
   it("rejects malformed browser-socket discovery and closes the socket", async () => {
@@ -340,7 +341,7 @@ describe("CdpBrowserProvider: browser socket failures and cleanup", () => {
         reason: "invalid_endpoint_response",
       },
     });
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 
   it("reports a refused browser socket as unreachable", async () => {
@@ -379,7 +380,7 @@ describe("CdpBrowserProvider: browser socket failures and cleanup", () => {
       }),
       { signal: controller.signal },
     );
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(browser.commands.map(({ method }) => method)).toContain(
         "Target.getTargets",
       ),
@@ -393,7 +394,7 @@ describe("CdpBrowserProvider: browser socket failures and cleanup", () => {
     expect(browser.commands.map(({ method }) => method)).not.toContain(
       "Target.attachToTarget",
     );
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 });
 
@@ -429,7 +430,7 @@ describe("CdpBrowserProvider: browser socket discovery deadline", () => {
     });
     trackBrowser(browser);
     await expectDiscoveryTimeout(browser.browserWebSocketUrl);
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 
   it("times out a WebSocket handshake that never completes", async () => {
@@ -451,7 +452,7 @@ describe("CdpBrowserProvider: browser socket discovery deadline", () => {
       await expectDiscoveryTimeout(
         `ws://127.0.0.1:${String(address.port)}/devtools/browser/stalled`,
       );
-      await vi.waitFor(() => expect(sockets.size).toBe(0));
+      await waitFor(() => expect(sockets.size).toBe(0));
     } finally {
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -510,7 +511,7 @@ describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () =
       if (!inspected.ok) throw inspected.error;
       expect(closeSpy).toHaveBeenCalledTimes(1);
       expect(browser.openedConnectionCount()).toBe(1);
-      await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 
       const session = await observing;
       if (!session.ok) throw session.error;
@@ -586,7 +587,7 @@ describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () =
       denyClose = false;
       await provider.close();
       expect(inspected.error.cleanupIncomplete).toBe(false);
-      await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
     } finally {
       denyClose = false;
       controller.abort(new Error("test teardown"));
@@ -625,7 +626,7 @@ describe("CdpTargetSessionOwner: callback failures and idle protocol eviction", 
       await owner.retryPending();
       expect(cleanup).toHaveBeenCalledTimes(1);
       expect(failure.cleanupIncomplete).toBe(false);
-      await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
     } finally {
       await owner.close();
     }
@@ -654,7 +655,7 @@ describe("CdpTargetSessionOwner: callback failures and idle protocol eviction", 
       expect(browser.activeConnectionCount()).toBe(1);
 
       browser.emitRawMessage("{not-json");
-      await vi.waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(closeSpy).toHaveBeenCalledTimes(1));
 
       const blocked = await provider.listTargets(
         listBrowserTargetsInputSchema.parse({
@@ -676,7 +677,7 @@ describe("CdpTargetSessionOwner: callback failures and idle protocol eviction", 
       expect(browser.activeConnectionCount()).toBe(1);
 
       browser.emitRawMessage("{not-json-idle-second");
-      await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
     } finally {
       closeSpy.mockRestore();
       await provider.close();
@@ -777,7 +778,7 @@ it("blocks new admissions while forced shared-socket cleanup fails with an activ
     closeSpy.mockRestore();
     await provider.close();
   }
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
 
 it("keeps an admitted shared browser socket alive for concurrent peers when a caller aborts or hits discovery_timeout_ms", async () => {
@@ -884,7 +885,7 @@ it("keeps an admitted shared browser socket alive for concurrent peers when a ca
     await Promise.allSettled([observing, cancelling]);
     await provider.close();
   }
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
 
 describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
@@ -946,7 +947,7 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
       await batch?.catch(() => undefined);
       await provider.close();
     }
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 
   it("keeps an in-flight cold-start handshake alive for a longer-deadline peer when one waiter times out", async () => {
@@ -1003,7 +1004,7 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
       await Promise.allSettled([shortCall, longCall]);
       await provider.close();
     }
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 });
 
@@ -1167,7 +1168,7 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
     await Promise.allSettled([observing, inspecting, capturing]);
     await provider.close();
   }
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
 
 it("reuses one browser socket across equivalent normalized spellings while keeping 127.0.0.1 and [::1] distinct", async () => {
@@ -1232,7 +1233,7 @@ it("reuses one browser socket across equivalent normalized spellings while keepi
     connectSpy.mockRestore();
     await provider.close();
   }
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(ipv6Browser.activeConnectionCount()).toBe(0);
     expect(ipv4Browser.activeConnectionCount()).toBe(0);
   });
@@ -1328,7 +1329,7 @@ it("keeps distinct /devtools/browser/<id> paths on separate browser sockets whil
     connectSpy.mockRestore();
     await provider.close();
   }
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(browserA.activeConnectionCount()).toBe(0);
     expect(browserB.activeConnectionCount()).toBe(0);
     expect(browserCaseA.activeConnectionCount()).toBe(0);

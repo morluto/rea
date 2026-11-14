@@ -143,13 +143,10 @@ export const awaitKunaCommand = async (
     }
   })();
   try {
-    // Cold installation, workspace and inventory preparation precede decompile.
-    // The phase probe took over two seconds with the two-core resource bound.
     await awaitAcknowledgement(
       acknowledged,
       operation,
       `Kuna ${command} child`,
-      5_000,
     );
   } finally {
     waiting = false;

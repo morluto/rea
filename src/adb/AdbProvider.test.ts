@@ -72,6 +72,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
 import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -166,13 +167,11 @@ fi`,
   let closing: Promise<void> | undefined;
   try {
     await awaitAcknowledgement(
-      vi.waitFor(
-        async () => expect(await lstat(join(root, "started"))).toBeDefined(),
-        { timeout: 10_000 },
+      waitFor(async () =>
+        expect(await lstat(join(root, "started"))).toBeDefined(),
       ),
       inspection,
       "ADB version probe",
-      10_000,
     );
     let closed = false;
     closing = provider.close().then(() => {

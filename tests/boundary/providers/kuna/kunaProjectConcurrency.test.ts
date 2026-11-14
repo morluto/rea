@@ -130,9 +130,7 @@ it.each([true, false])(
       if (!closed.ok) throw closed.error;
     });
     await expect
-      .poll(() => actual.readdir(listing.directory).catch(() => []), {
-        timeout: 10_000,
-      })
+      .poll(() => actual.readdir(listing.directory).catch(() => []))
       .toHaveLength(2);
     listing.names = await actual.readdir(listing.directory);
     releaseListing();

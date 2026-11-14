@@ -750,12 +750,7 @@ it("keeps an overflow as the primary failure when cancellation arrives during fi
     { signal: caller.signal },
   );
   try {
-    await awaitAcknowledgement(
-      entered,
-      pending,
-      "Kuna overflow cleanup",
-      10_000,
-    );
+    await awaitAcknowledgement(entered, pending, "Kuna overflow cleanup");
     caller.abort("cancel during overflow cleanup");
     releaseCleanup();
     const result = await pending;

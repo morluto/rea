@@ -70,7 +70,7 @@ describe("runSolveHelper", () => {
     // agentenv keeps a sandbox's folder until its teardown is confirmed, so the
     // emptied private root shows nothing is left up: only the cancellation remains.
     try {
-      await awaitAcknowledgement(started, solved, "solve helper start", 10_000);
+      await awaitAcknowledgement(started, solved, "solve helper start");
       stop.abort(new Error("cancelled by the test"));
       const failure: unknown = await solved.then(
         () => undefined,

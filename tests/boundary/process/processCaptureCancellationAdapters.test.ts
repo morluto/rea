@@ -59,9 +59,7 @@ const isRunning = async (pid: number): Promise<boolean> => {
 };
 
 const waitForExit = async (pid: number): Promise<void> => {
-  await expect
-    .poll(() => isRunning(pid), { timeout: 3_000, interval: 25 })
-    .toBe(false);
+  await expect.poll(() => isRunning(pid), { interval: 25 }).toBe(false);
 };
 
 const cleanupFixture = async (marker: Marker | undefined): Promise<void> => {

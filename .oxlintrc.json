@@ -173,6 +173,12 @@
       }
     },
     {
+      "files": ["tests/**/*.ts", "src/**/*.test.ts", "src/**/*.fixture.ts"],
+      "rules": {
+        "rea/project-wait-deadline": "error"
+      }
+    },
+    {
       "files": [
         "scripts/lib/http3-capture-assertions.test.mjs",
         "scripts/lib/http3-verifier-lifecycle.test.mjs"
