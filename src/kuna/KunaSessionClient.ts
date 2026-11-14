@@ -108,10 +108,8 @@ import { KunaStringQueries } from "./KunaStringQueries.js";
 import { normalizeKunaAddress } from "./KunaAddress.js";
 import {
   ambiguousKunaNameMessage,
-  KUNA_PROCEDURE_AMBIGUOUS_NAME_REMEDIATION,
   KUNA_PROCEDURE_MISSING_ADDRESS_REMEDIATION,
   KUNA_PROCEDURE_MISSING_NAME_REMEDIATION,
-  KUNA_XREF_AMBIGUOUS_NAME_REMEDIATION,
   KUNA_XREF_MISSING_NAME_REMEDIATION,
   missingKunaXrefNameMessage,
 } from "./KunaSelectorGuidance.js";
@@ -1344,15 +1342,15 @@ export class KunaSessionClient implements AnalysisClient {
             selector,
             matches.map(({ address }) => address),
           );
-    const remediationAction =
-      field === "address"
+    // An ambiguous name is a typed selector refusal; its recovery is derived.
+    const remediationAction = ambiguous
+      ? undefined
+      : field === "address"
         ? missing
           ? KUNA_XREF_MISSING_NAME_REMEDIATION
-          : KUNA_XREF_AMBIGUOUS_NAME_REMEDIATION
+          : "Select one of the reported addresses and call xrefs again."
         : procedureLookupFailure
-          ? missing
-            ? KUNA_PROCEDURE_MISSING_NAME_REMEDIATION
-            : KUNA_PROCEDURE_AMBIGUOUS_NAME_REMEDIATION
+          ? KUNA_PROCEDURE_MISSING_NAME_REMEDIATION
           : matches.length === 0
             ? "Inspect the data addresses with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call."
             : undefined;
@@ -1364,6 +1362,14 @@ export class KunaSessionClient implements AnalysisClient {
           ...(remediationAction === undefined
             ? {}
             : { remediationAction, conformsToInputContract: true }),
+          ...(ambiguous
+            ? {
+                ambiguousSelector: {
+                  field: [field],
+                  candidates: matches.map(({ address }) => address),
+                },
+              }
+            : {}),
         },
         procedureLookupFailure
           ? [

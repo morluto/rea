@@ -1,0 +1,21 @@
+{
+  "src/application/JsonAuthenticationHeadroom.ts": 1,
+  "src/application/desktop/DesktopBuildSolves.ts": 1,
+  "src/application/ntfs/NtfsJournalService.ts": 1,
+  "src/browser/WebBundleAnalysisWorker.ts": 4,
+  "src/browser/history/playwrightTrace/TraceStream.ts": 2,
+  "src/composition/javascriptAnalysisWorkerProcess.ts": 2,
+  "src/domain/apiContract/parseGraphqlContract.ts": 1,
+  "src/domain/native/nativeAotPe.ts": 1,
+  "src/ghidra/GhidraExecutableHeader.ts": 1,
+  "src/ghidra/GhidraFileArtifacts.ts": 1,
+  "src/il2cpp/Il2cppGhidraSeedWriter.ts": 1,
+  "src/model/ModelArtifactProvider.ts": 1,
+  "src/native/NativeMacOSProvider.ts": 1,
+  "src/native/NativePlistSource.ts": 1,
+  "src/native/SignatureTargetBinding.ts": 1,
+  "src/native/parsers/lipo.ts": 1,
+  "src/process/ArtifactAnalysisResources.ts": 1,
+  "src/server/http/NodeHttpRequestOwner.ts": 1,
+  "src/sqlite/SqliteDatabaseWorkerExecution.ts": 1
+}
