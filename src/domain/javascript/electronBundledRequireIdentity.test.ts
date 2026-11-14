@@ -703,6 +703,10 @@ describe("Electron members destructured from a Webpack external binding", () => 
       "const s=n(45840);const w=s;w.BrowserWindow=class{};const{BrowserWindow}=s;",
     ],
     ["a cyclic alias", "var a=b,b=a;const{BrowserWindow}=a;"],
+    [
+      "an alias read before its hoisted source is initialized",
+      "var saved=s;var s=n(45840);const{BrowserWindow}=saved;",
+    ],
     ["a different table key", "const s=n(45841);const{BrowserWindow}=s;"],
     [
       "a rebindable binding exposed to direct eval",
