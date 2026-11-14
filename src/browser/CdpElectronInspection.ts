@@ -16,7 +16,11 @@ import {
   requiredRecord,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
-import { cdpFrameUrl, snapshotDocuments } from "./CdpCaptureDocuments.js";
+import {
+  cdpFrameUrl,
+  snapshotDocuments,
+  type CdpFrameUrlObservation,
+} from "./CdpCaptureDocuments.js";
 import { cdpFrameEventFacts, type CdpFrameFacts } from "./CdpFrameIdentity.js";
 import type {
   CdpFrameTree,
@@ -407,8 +411,14 @@ const invalidateFrameGenerations = (
 /** Only a known URL and loader together can prove a duplicate document event. */
 const frameDocument = (
   facts: CdpFrameFacts,
+  observation?: CdpFrameUrlObservation,
 ): ElectronFrameDocument | undefined => {
-  const url = cdpFrameUrl(facts.source);
+  const url =
+    observation === undefined
+      ? cdpFrameUrl(facts.source)
+      : observation.kind === "observed"
+        ? observation.url
+        : undefined;
   if (
     url === undefined ||
     url === "" ||
@@ -429,9 +439,9 @@ const seedFrameDocuments = (
   state: ElectronInspectionState,
 ): Set<string> => {
   const unproven = new Set<string>();
-  for (const { facts } of tree.frames) {
+  for (const { facts, url } of tree.frames) {
     const id = facts.frameId;
-    const document = frameDocument(facts);
+    const document = frameDocument(facts, url);
     if (
       id !== null &&
       document === undefined &&
