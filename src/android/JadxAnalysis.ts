@@ -485,7 +485,7 @@ const extractMethodBodyFailureReason = (cause: unknown): string | null => {
     const diagnostics = cause.diagnostics as Record<string, unknown>;
     if (diagnostics.upstream_operation === "get_method_body") {
       const reason = diagnostics.reason;
-      if (typeof reason === "string" && reason.length > 0) return reason.trim();
+      if (typeof reason === "string" && reason.length > 0) return reason;
       return "The upstream JADX bridge reported a method body failure.";
     }
   }
