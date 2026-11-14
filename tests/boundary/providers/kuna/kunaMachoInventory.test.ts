@@ -171,7 +171,7 @@ it("guides valid ambiguous and missing procedure selectors without schema repair
   const client = open();
   try {
     for (const [procedure, expected] of [
-      ["puts", "address"],
+      ["puts", "exactly one of the 2 candidates"],
       ["missing_procedure", "search_procedures"],
       ["0x00000001", "list_procedures"],
     ] as const) {
@@ -189,6 +189,12 @@ it("guides valid ambiguous and missing procedure selectors without schema repair
       if (procedure === "puts") {
         expect(projected.message).toContain("0x100000480");
         expect(projected.message).toContain("0x100004000");
+        expect(projected.details?.refusal).toEqual({
+          kind: "ambiguous_selector",
+          operation: "procedure_address",
+          field: ["procedure"],
+          candidates: ["0x100000480", "0x100004000"],
+        });
       }
     }
     expect(
@@ -226,7 +232,17 @@ it("reports missing and ambiguous xref names within Kuna's inventory", async () 
       code: "invalid_request",
       message: expect.stringMatching(/puts.*2 Kuna entries/iu),
       remediation: {
-        action: expect.stringMatching(/select.*addresses.*xrefs/iu),
+        action: expect.stringMatching(
+          /address.*exactly one of the 2 candidates.*retry xrefs/iu,
+        ),
+      },
+      details: {
+        refusal: {
+          kind: "ambiguous_selector",
+          operation: "xrefs",
+          field: ["address"],
+          candidates: ["0x100000480", "0x100004000"],
+        },
       },
     });
     expect(ambiguousProjection.message).toContain("0x100000480");

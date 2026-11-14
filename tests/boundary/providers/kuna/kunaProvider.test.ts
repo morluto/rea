@@ -559,12 +559,28 @@ it("rejects oversized cached text before buffering while retaining its full expo
     ] as const) {
       const result = await client.execute(operation, { procedure: "main" });
       expect(result.ok).toBe(false);
-      if (!result.ok)
+      if (!result.ok) {
         expect(result.error).toMatchObject({
           _tag: "AnalysisResourceConstraintError",
           resource: "capacity",
           reportedLimits: { limit_bytes: KUNA_FUNCTION_TEXT_BYTES },
         });
+        // A fixed ceiling is not occupied capacity: waiting cannot admit it.
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          retryable: false,
+          remediation: {
+            action: expect.stringContaining("Read the complete export locally"),
+          },
+          details: {
+            refusal: {
+              kind: "fixed_ceiling",
+              operation,
+              limit: KUNA_FUNCTION_TEXT_BYTES,
+              unit: "bytes",
+            },
+          },
+        });
+      }
     }
     const [key] = await readdir(join(cacheRoot, "projects"));
     const bytes = await readFile(

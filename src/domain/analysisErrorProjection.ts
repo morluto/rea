@@ -60,6 +60,8 @@ import {
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
 import { invocationSettingLimit } from "./analysisSettingDefinitions.js";
+import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
+import { analysisRefusalDetails } from "./analysisRefusal.js";
 
 /**
  * Project expected failures into exhaustive, secret-safe caller fields. The
@@ -404,6 +406,7 @@ const projectError = (
   const underlyingCode = underlyingErrorCode(primary);
   const code = error.cleanupIncomplete ? "cleanup_incomplete" : underlyingCode;
   const primaryDetails = errorDetails(primary);
+  const refusal = analysisErrorRefusal(primary);
   const unknownPublication =
     composed.workflowUnknownPublication ?? primary.workflowUnknownPublication;
   const details = {
@@ -428,6 +431,9 @@ const projectError = (
               ? { ...invocationSettingLimit(primary.limit) }
               : { ...primary.limit },
         }),
+    ...(refusal === undefined
+      ? {}
+      : { refusal: analysisRefusalDetails(refusal) }),
     ...(!options.secondary || secondary.size === 0
       ? {}
       : {

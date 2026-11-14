@@ -1,5 +1,6 @@
 import type { JsonValue } from "./jsonValue.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
+import type { AmbiguousSelector } from "./analysisRefusal.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
@@ -96,6 +97,9 @@ const resourceConstraintRecoveryFrom = (
     ...(options?.remediationAction === undefined
       ? {}
       : { remediationAction: options.remediationAction }),
+    ...(options?.measuredExhaustion === undefined
+      ? {}
+      : { measuredExhaustion: options.measuredExhaustion }),
     ...(options?.retryable === undefined
       ? {}
       : { retryable: options.retryable }),
@@ -133,8 +137,11 @@ export const resourceConstraintRecovery = (
   return recovery.fixedAllowance !== undefined
     ? {
         fixedAllowance: {
+          ...recovery.fixedAllowance,
           name: text(recovery.fixedAllowance.name),
-          kind: recovery.fixedAllowance.kind,
+          ...(recovery.fixedAllowance.narrowing === undefined
+            ? {}
+            : { narrowing: text(recovery.fixedAllowance.narrowing) }),
         },
         ...(recovery.retryable === undefined
           ? {}
@@ -144,17 +151,25 @@ export const resourceConstraintRecovery = (
         ...(recovery.remediationAction === undefined
           ? {}
           : { remediationAction: text(recovery.remediationAction) }),
+        ...(recovery.measuredExhaustion === undefined
+          ? {}
+          : { measuredExhaustion: recovery.measuredExhaustion }),
         ...(recovery.retryable === undefined
           ? {}
           : { retryable: recovery.retryable }),
       };
 };
 
-/** Producer-specific recovery, or a fixed allowance whose recovery is derived. */
+/**
+ * Producer-specific recovery, or a fixed allowance whose recovery is derived.
+ * `measuredExhaustion` declares an observed runtime exhaustion or occupied
+ * admission rather than a refusal, so recovery follows the resource kind.
+ */
 export type ResourceConstraintRecovery =
   | {
       readonly remediationAction?: string;
       readonly fixedAllowance?: never;
+      readonly measuredExhaustion?: true;
       readonly retryable?: boolean;
     }
   | {
@@ -180,6 +195,8 @@ export class AnalysisInputError extends AnalysisError {
    * correct such a refusal, so it carries no input-contract recovery.
    */
   readonly conformsToInputContract: boolean;
+  /** A schema-valid selector that matched several candidates. */
+  readonly ambiguousSelector: AmbiguousSelector | undefined;
 
   constructor(
     readonly operation: string,
@@ -187,13 +204,18 @@ export class AnalysisInputError extends AnalysisError {
       readonly userMessage?: string;
       readonly remediationAction?: string;
       readonly conformsToInputContract?: boolean;
+      readonly ambiguousSelector?: AmbiguousSelector;
     },
     readonly issues: readonly AnalysisInputIssue[] = [],
   ) {
     super(`Invalid analysis input for ${operation}`, options);
     this.userMessage = options?.userMessage;
     this.remediationAction = options?.remediationAction;
-    this.conformsToInputContract = options?.conformsToInputContract ?? false;
+    this.ambiguousSelector = options?.ambiguousSelector;
+    // An ambiguous selection conforms to the schema; the contract is not at fault.
+    this.conformsToInputContract =
+      options?.conformsToInputContract ??
+      options?.ambiguousSelector !== undefined;
   }
 }
 
