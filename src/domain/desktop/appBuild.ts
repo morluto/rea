@@ -86,7 +86,7 @@ export const buildInstallSchema = z.discriminatedUnion("kind", [
     kind: z.literal("apt_repository"),
     package: aptPackageSchema,
     uri: downloadUrlSchema,
-    suite: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/\x2d]*$/u),
+    suite: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._\x2f\x2d]*$/u),
     components: z.array(z.string().regex(/^[A-Za-z0-9._\x2d]+$/u)).default([]),
     key_file: absoluteLocalPathStringSchema.describe(
       "The repository's signing key on this host, armored or binary.",
