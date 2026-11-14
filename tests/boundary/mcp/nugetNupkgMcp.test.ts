@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { ZipReader } from "@zip.js/zip.js";
 import { expect, vi } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { ZIP_ZSTANDARD_WINDOW_FIXED_ALLOWANCE } from "../../../src/artifacts/ZipZstandardWindow.js";
+import { fixedAllowanceRemediation } from "../../../src/domain/fixedAllowanceRemediation.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -106,11 +108,13 @@ mcpTest(
       expect(error).toMatchObject({
         code: "resource_constraint",
         retryable: false,
-        remediation: {
-          action: expect.stringContaining("ZIP Zstandard decoder window"),
-        },
       });
-      expect(error.remediation.action).toMatch(/host memory do not raise/iu);
+      expect(error.remediation.action).toBe(
+        fixedAllowanceRemediation(
+          ZIP_ZSTANDARD_WINDOW_FIXED_ALLOWANCE,
+          "parser",
+        ),
+      );
     } finally {
       enumeration.mockRestore();
       await session.close();
