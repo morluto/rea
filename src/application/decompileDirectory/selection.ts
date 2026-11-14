@@ -77,7 +77,18 @@ export const selectProcedures = (
     if (!selected.has(row.address) && matches(row, input, bounds))
       selected.set(row.address, row);
   }
-  const procedures = [...selected.values()].sort(compareProcedures);
+  const procedures = sortProcedureAddresses(
+    [...selected.values()],
+    (left, right) => {
+      const byName = compareUnicodeCodePoints(
+        left.name ?? "",
+        right.name ?? "",
+      );
+      return byName === 0
+        ? compareUnicodeCodePoints(left.address, right.address)
+        : byName;
+    },
+  );
   return {
     procedures,
     excluded: seen.size - procedures.length,
@@ -138,25 +149,36 @@ const matchesAddress = (address: string, bounds: DecompileBounds): boolean => {
   );
 };
 
-const compareProcedures = (
-  left: SelectedProcedure,
-  right: SelectedProcedure,
-): number => {
-  const byAddress = compareProcedureAddresses(left.address, right.address);
-  if (byAddress !== 0) return byAddress;
-  const byName = compareUnicodeCodePoints(left.name ?? "", right.name ?? "");
-  return byName === 0
-    ? compareUnicodeCodePoints(left.address, right.address)
-    : byName;
+/** Stable address order: parse each address once; unparsed addresses sort last. */
+export const sortProcedureAddresses = <T extends { readonly address: string }>(
+  records: readonly T[],
+  tieBreak?: (left: T, right: T) => number,
+): T[] => {
+  if (records.length < 2) return [...records];
+  const keyed = records.map((record) => ({
+    record,
+    coordinate: addressCoordinate(record.address),
+  }));
+  keyed.sort((left, right) => {
+    const byAddress = compareParsedAddresses(
+      left.record.address,
+      right.record.address,
+      left.coordinate,
+      right.coordinate,
+    );
+    return byAddress !== 0
+      ? byAddress
+      : (tieBreak?.(left.record, right.record) ?? 0);
+  });
+  return keyed.map(({ record }) => record);
 };
 
-/** Numeric order within an address space; unparsed addresses sort last. */
-export const compareProcedureAddresses = (
+const compareParsedAddresses = (
   left: string,
   right: string,
+  a: ReturnType<typeof addressCoordinate>,
+  b: ReturnType<typeof addressCoordinate>,
 ): number => {
-  const a = addressCoordinate(left);
-  const b = addressCoordinate(right);
   if (a === null || b === null) {
     if (a === null && b === null) return compareUnicodeCodePoints(left, right);
     return a === null ? 1 : -1;
