@@ -4,10 +4,8 @@ import {
   inspectRpmPackageInputSchema,
   rpmPackageSchema,
 } from "../domain/rpm/package.js";
-import {
-  RpmPackageCapacityFailure,
-  RpmPackageFormatFailure,
-} from "./RpmPackage.errors.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
+import { RpmPackageCapacityFailure } from "./RpmPackage.errors.js";
 import {
   encodeRpmPackage,
   rpmBinaryPackageFixture,
@@ -181,16 +179,32 @@ it("keeps omitted signature digests null", () => {
   expect(report.signature?.blobs).toEqual([]);
 });
 
-it("refuses a truncated header and keeps the lead", () => {
+it("reports a truncated header as truncated and keeps the lead", () => {
   try {
     parse(rpmTruncatedHeaderFixture());
     throw new Error("expected truncated header refusal");
   } catch (cause) {
-    expect(cause).toBeInstanceOf(RpmPackageFormatFailure);
-    if (!(cause instanceof RpmPackageFormatFailure)) return;
-    expect(cause.kind).toBe("malformed");
-    expect(cause.observed).toMatchObject({
-      lead: { magic: "edabeedb", type: "binary" },
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.failure).toMatchObject({
+      kind: "truncated",
+      format: "rpm",
+      observed: { lead: { magic: "edabeedb", type: "binary" } },
+    });
+  }
+});
+
+it("reports a short lead as truncated rather than malformed", () => {
+  try {
+    parse(rpmBinaryPackageFixture().subarray(0, 40));
+    throw new Error("expected truncated lead refusal");
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.failure).toMatchObject({
+      kind: "truncated",
+      format: "rpm",
+      observed: { lead: { magic: "edabeedb" } },
     });
   }
 });
@@ -200,8 +214,9 @@ it("refuses an index entry that leaves the data store", () => {
     parse(rpmOutOfBoundsIndexFixture());
     throw new Error("expected out-of-bounds index refusal");
   } catch (cause) {
-    expect(cause).toBeInstanceOf(RpmPackageFormatFailure);
-    if (!(cause instanceof RpmPackageFormatFailure)) return;
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.kind).toBe("malformed");
     expect(cause.message).toMatch(/outside the data store/u);
   }
 });
@@ -213,8 +228,8 @@ it("refuses a foreign magic as unsupported rather than a parse", () => {
     parse(bytes);
     throw new Error("expected unsupported magic");
   } catch (cause) {
-    expect(cause).toBeInstanceOf(RpmPackageFormatFailure);
-    if (!(cause instanceof RpmPackageFormatFailure)) return;
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
     expect(cause.kind).toBe("unsupported");
   }
 });

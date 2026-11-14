@@ -38,6 +38,24 @@ it.each([
   });
 });
 
+it("keeps facts the parser observed before the failure on the refused path", () => {
+  const cause = new ParseFailureError({
+    kind: "truncated",
+    format: "rpm",
+    detail: "RPM main header range is truncated or outside the file",
+    observed: { lead: { magic: "edabeedb" } },
+  });
+  expect(project(cause)).toMatchObject({
+    issues: [
+      {
+        path: ["path"],
+        reason: "invalid_format",
+        observed: { lead: { magic: "edabeedb" } },
+      },
+    ],
+  });
+});
+
 it("refuses an unsupported form as an unsupported target, keeping undecoded content", () => {
   const cause = unsupportedInput("go", "compressed build-info section", {
     undecodedContent: true,

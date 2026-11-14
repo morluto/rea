@@ -1,3 +1,5 @@
+import type { JsonValue } from "./jsonValue.js";
+
 /**
  * How a byte-format parser failed. One algebra for every format, so the
  * public category depends on what the parser established, not on which error
@@ -23,6 +25,8 @@ interface ParseFailureFacts {
   readonly offset?: number;
   /** The structure or field that failed, when the parser names it. */
   readonly field?: string;
+  /** Facts the parser established before the failure, such as a decoded lead. */
+  readonly observed?: JsonValue;
 }
 
 /** A parse outcome the parser established, carried with its facts. */

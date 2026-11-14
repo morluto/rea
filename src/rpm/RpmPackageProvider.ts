@@ -19,11 +19,8 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { RpmPackagePort } from "../application/rpm/RpmPackagePort.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import {
   MAX_INSPECT_RPM_PACKAGE_FILE_BYTES,
   MAX_INSPECT_RPM_PACKAGE_FILES,
@@ -32,10 +29,7 @@ import {
   type InspectRpmPackageInput,
 } from "../domain/rpm/package.js";
 import { err, ok } from "../domain/result.js";
-import {
-  RpmPackageCapacityFailure,
-  RpmPackageFormatFailure,
-} from "./RpmPackage.errors.js";
+import { RpmPackageCapacityFailure } from "./RpmPackage.errors.js";
 import { parseRpmPackage } from "./RpmPackageParser.js";
 
 const OPERATION = "inspect_rpm_package";
@@ -74,24 +68,8 @@ const rpmFailurePrimary = (
   input: InspectRpmPackageInput,
 ) => {
   const { cause, origin } = facts;
-  if (cause instanceof RpmPackageFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected RPM package ${input.path}: ${cause.message}`,
-            ...(cause.observed === undefined
-              ? {}
-              : { observed: cause.observed }),
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(
     facts,
     OPERATION,

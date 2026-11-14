@@ -11,9 +11,12 @@ import type {
   RpmSignatureBlob,
 } from "../domain/rpm/package.js";
 import {
-  RpmPackageCapacityFailure,
-  RpmPackageFormatFailure,
-} from "./RpmPackage.errors.js";
+  type ParseFailureKind,
+  ParseFailureError,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
+import { BinaryReader } from "../native/metadata/BinaryContainer.js";
+import { RpmPackageCapacityFailure } from "./RpmPackage.errors.js";
 import {
   RPM_FILE_FLAG,
   RPM_HEADER_MAGIC,
@@ -116,49 +119,40 @@ const text = (value: string | undefined): string | null => {
 
 const hex = (bytes: Buffer): string => bytes.toString("hex");
 
+const FORMAT = "rpm";
+
 const fail = (
-  message: string,
-  observed?: Readonly<Record<string, JsonValue>>,
-  kind: "malformed" | "unsupported" = "malformed",
+  detail: string,
+  facts?: {
+    readonly offset?: number;
+    readonly field?: string;
+    readonly observed?: JsonValue;
+  },
 ): never => {
-  throw new RpmPackageFormatFailure(kind, message, observed);
+  throw new ParseFailureError({
+    kind: "malformed",
+    format: FORMAT,
+    detail,
+    ...facts,
+  });
 };
 
-const requireRange = (
-  bytes: Buffer,
-  offset: number,
-  length: number,
-  message: string,
-  observed?: Readonly<Record<string, JsonValue>>,
-): void => {
-  if (
-    !Number.isSafeInteger(offset) ||
-    !Number.isSafeInteger(length) ||
-    offset < 0 ||
-    length < 0 ||
-    offset > bytes.length - length
-  )
-    fail(message, observed);
-};
-
-const u16 = (bytes: Buffer, offset: number): number => {
-  requireRange(
-    bytes,
-    offset,
-    2,
-    `RPM integer at ${String(offset)} is truncated.`,
-  );
-  return bytes.readUInt16BE(offset);
-};
-
-const u32 = (bytes: Buffer, offset: number): number => {
-  requireRange(
-    bytes,
-    offset,
-    4,
-    `RPM integer at ${String(offset)} is truncated.`,
-  );
-  return bytes.readUInt32BE(offset);
+/** Attach the facts decoded so far to a format failure raised while reading on. */
+const observing = <T>(observed: JsonValue, read: () => T): T => {
+  try {
+    return read();
+  } catch (cause) {
+    if (
+      !(cause instanceof ParseFailureError) ||
+      cause.kind === "limit" ||
+      cause.failure.observed !== undefined
+    )
+      throw cause;
+    throw new ParseFailureError<ParseFailureKind>(
+      { ...cause.failure, observed },
+      { cause },
+    );
+  }
 };
 
 const leadObserved = (lead: Lead): Record<string, JsonValue> => ({
@@ -173,25 +167,24 @@ const leadObserved = (lead: Lead): Record<string, JsonValue> => ({
   },
 });
 
-const parseLead = (bytes: Buffer): Lead => {
-  if (bytes.length < 4) fail("RPM lead is truncated.", undefined, "malformed");
-  const magic = bytes.readUInt32BE(0);
+const parseLead = (reader: BinaryReader): Lead => {
+  reader.range(0, 4, "RPM lead magic");
+  const magic = reader.u32(0);
   if (magic !== RPM_LEAD_MAGIC)
-    fail(
+    throw unsupportedInput(
+      FORMAT,
       `Selected file is not an RPM (magic ${magic.toString(16)}).`,
-      undefined,
-      "unsupported",
+      { offset: 0, field: "lead magic" },
     );
-  if (bytes.length < RPM_LEAD_SIZE)
-    fail(
-      "RPM lead is truncated.",
-      { lead: { magic: "edabeedb" } },
-      "malformed",
-    );
-  const typeNumber = u16(bytes, 6);
+  const bytes = observing({ lead: { magic: "edabeedb" } }, () =>
+    reader.range(0, RPM_LEAD_SIZE, "RPM lead"),
+  );
+  const typeNumber = reader.u16(6);
   if (typeNumber !== 0 && typeNumber !== 1)
     fail(`RPM lead type ${String(typeNumber)} is not binary or source.`, {
-      lead_type: typeNumber,
+      offset: 6,
+      field: "lead type",
+      observed: { lead_type: typeNumber },
     });
   const rawName = bytes.subarray(10, 76);
   const nul = rawName.indexOf(0);
@@ -202,10 +195,10 @@ const parseLead = (bytes: Buffer): Lead => {
     magic: "edabeedb",
     version: { major: bytes[4]!, minor: bytes[5]! },
     type: typeNumber === 1 ? "source" : "binary",
-    arch_number: u16(bytes, 8),
-    os_number: u16(bytes, 76),
+    arch_number: reader.u16(8),
+    os_number: reader.u16(76),
     name: text(name),
-    signature_type: u16(bytes, 78),
+    signature_type: reader.u16(78),
     location: { offset: 0, bytes: RPM_LEAD_SIZE },
   };
 };
@@ -214,11 +207,10 @@ const readCString = (
   store: Buffer,
   offset: number,
   message: string,
-  observed?: Readonly<Record<string, JsonValue>>,
 ): { readonly value: string; readonly next: number } => {
-  if (offset >= store.length) fail(message, observed);
+  if (offset >= store.length) fail(message, { field: "data store" });
   const nul = store.indexOf(0, offset);
-  if (nul === -1) fail(message, observed);
+  if (nul === -1) fail(message, { field: "data store" });
   return {
     value: store.subarray(offset, nul).toString("binary"),
     next: nul + 1,
@@ -230,12 +222,11 @@ const readStrings = (
   offset: number,
   count: number,
   message: string,
-  observed?: Readonly<Record<string, JsonValue>>,
 ): readonly string[] => {
   const values: string[] = [];
   let cursor = offset;
   for (let index = 0; index < count; index += 1) {
-    const read = readCString(store, cursor, message, observed);
+    const read = readCString(store, cursor, message);
     values.push(read.value);
     cursor = read.next;
   }
@@ -243,32 +234,28 @@ const readStrings = (
 };
 
 const readInts = (
-  store: Buffer,
+  store: BinaryReader,
   offset: number,
   count: number,
   size: 1 | 2 | 4 | 8,
-  observed?: Readonly<Record<string, JsonValue>>,
 ): readonly number[] => {
-  const width = size * count;
-  requireRange(
-    store,
-    offset,
-    width,
-    `RPM integer array at store offset ${String(offset)} leaves the data store.`,
-    observed,
-  );
+  if (size * count > store.bytes.length - offset)
+    fail(
+      `RPM integer array at store offset ${String(offset)} leaves the data store.`,
+      { field: "data store" },
+    );
   const values: number[] = [];
   for (let index = 0; index < count; index += 1) {
     const at = offset + index * size;
-    if (size === 1) values.push(store[at]!);
-    else if (size === 2) values.push(store.readUInt16BE(at));
-    else if (size === 4) values.push(store.readUInt32BE(at));
+    if (size === 1) values.push(store.bytes[at]!);
+    else if (size === 2) values.push(store.u16(at));
+    else if (size === 4) values.push(store.u32(at));
     else {
-      const value = store.readBigUInt64BE(at);
+      const value = store.word(at, 64);
       if (value > BigInt(Number.MAX_SAFE_INTEGER))
         fail(
           `RPM INT64 at store offset ${String(at)} exceeds a safe integer.`,
-          observed,
+          { field: "data store" },
         );
       values.push(Number(value));
     }
@@ -276,26 +263,23 @@ const readInts = (
   return values;
 };
 
-const decodeEntry = (
-  store: Buffer,
-  entry: IndexEntry,
-  observed?: Readonly<Record<string, JsonValue>>,
-): HeaderValue => {
+const decodeEntry = (store: BinaryReader, entry: IndexEntry): HeaderValue => {
+  const field = `tag ${String(entry.tag)}`;
   const align = TYPE_ALIGN[entry.type] ?? 1;
   if (entry.count < 1)
     fail(
       `RPM tag ${String(entry.tag)} count ${String(entry.count)} is not positive.`,
-      observed,
+      { field },
     );
-  if (entry.offset < 0 || entry.offset > store.length)
+  if (entry.offset < 0 || entry.offset > store.bytes.length)
     fail(
       `RPM tag ${String(entry.tag)} offset ${String(entry.offset)} is outside the data store.`,
-      observed,
+      { field },
     );
   if (align > 1 && entry.offset % align !== 0)
     fail(
       `RPM tag ${String(entry.tag)} offset ${String(entry.offset)} is not aligned for type ${String(entry.type)}.`,
-      observed,
+      { field },
     );
   const size = TYPE_SIZE[entry.type];
   switch (entry.type) {
@@ -313,37 +297,30 @@ const decodeEntry = (
           entry.offset,
           entry.count,
           size as 1 | 2 | 4 | 8,
-          observed,
         ),
       };
     case RPM_TYPE.string:
       if (entry.count !== 1)
         fail(
           `RPM STRING tag ${String(entry.tag)} count ${String(entry.count)} is not 1.`,
-          observed,
+          { field },
         );
       return {
         kind: "string",
         value: readCString(
-          store,
+          store.bytes,
           entry.offset,
           `RPM STRING tag ${String(entry.tag)} is not NUL-terminated in the data store.`,
-          observed,
         ).value,
       };
     case RPM_TYPE.bin: {
-      requireRange(
-        store,
-        entry.offset,
-        entry.count,
-        `RPM BIN tag ${String(entry.tag)} leaves the data store.`,
-        observed,
-      );
+      if (entry.count > store.bytes.length - entry.offset)
+        fail(`RPM BIN tag ${String(entry.tag)} leaves the data store.`, {
+          field,
+        });
       return {
         kind: "bin",
-        value: Buffer.from(
-          store.subarray(entry.offset, entry.offset + entry.count),
-        ),
+        value: Buffer.from(store.range(entry.offset, entry.count, field)),
       };
     }
     case RPM_TYPE.stringArray:
@@ -351,37 +328,35 @@ const decodeEntry = (
       return {
         kind: "strings",
         values: readStrings(
-          store,
+          store.bytes,
           entry.offset,
           entry.count,
-          `RPM string array tag ${String(entry.tag)} is truncated.`,
-          observed,
+          `RPM string array tag ${String(entry.tag)} is not NUL-terminated in the data store.`,
         ),
       };
     default:
       return fail(
         `RPM tag ${String(entry.tag)} type ${String(entry.type)} is not a defined RPM type.`,
-        observed,
+        { field },
       );
   }
 };
 
 const parseHeader = (
-  bytes: Buffer,
+  reader: BinaryReader,
   start: number,
   maxIndex: number,
-  observed: Readonly<Record<string, JsonValue>>,
   label: "signature" | "main",
 ): DecodedHeader => {
-  requireRange(bytes, start, 16, `RPM ${label} header is truncated.`, observed);
-  const magic = u32(bytes, start);
+  reader.range(start, 16, `RPM ${label} header`);
+  const magic = reader.u32(start);
   if (magic !== RPM_HEADER_MAGIC)
-    fail(
-      `RPM ${label} header magic ${magic.toString(16)} is not 8eade801.`,
-      observed,
-    );
-  const indexEntries = u32(bytes, start + 8);
-  const storeBytes = u32(bytes, start + 12);
+    fail(`RPM ${label} header magic ${magic.toString(16)} is not 8eade801.`, {
+      offset: start,
+      field: `${label} header magic`,
+    });
+  const indexEntries = reader.u32(start + 8);
+  const storeBytes = reader.u32(start + 12);
   if (indexEntries > maxIndex)
     throw new RpmPackageCapacityFailure(
       "max_header_index_entries",
@@ -389,24 +364,27 @@ const parseHeader = (
       `RPM ${label} header declares ${String(indexEntries)} index entries, above the ${String(maxIndex)}-entry budget.`,
     );
   const indexBytes = indexEntries * 16;
-  requireRange(
-    bytes,
+  reader.range(
     start + 16,
     indexBytes + storeBytes,
-    `RPM ${label} header index or data store is truncated.`,
-    observed,
+    `RPM ${label} header index and data store`,
   );
   const storeOffset = start + 16 + indexBytes;
-  const store = bytes.subarray(storeOffset, storeOffset + storeBytes);
+  const store = new BinaryReader(
+    reader.range(storeOffset, storeBytes, `RPM ${label} data store`),
+    false,
+    FORMAT,
+  );
   const tags: IndexEntry[] = [];
   const values = new Map<number, HeaderValue>();
   for (let index = 0; index < indexEntries; index += 1) {
     const at = start + 16 + index * 16;
     const entry: IndexEntry = {
-      tag: u32(bytes, at),
-      type: u32(bytes, at + 4),
-      offset: bytes.readInt32BE(at + 8),
-      count: u32(bytes, at + 12),
+      tag: reader.u32(at),
+      type: reader.u32(at + 4),
+      // The on-disk offset is a signed 32-bit field.
+      offset: reader.u32(at + 8) | 0,
+      count: reader.u32(at + 12),
     };
     tags.push(entry);
     if (
@@ -416,17 +394,17 @@ const parseHeader = (
       if (entry.type !== RPM_TYPE.bin || entry.count !== 16)
         fail(
           `RPM ${label} region tag ${String(entry.tag)} is not a 16-byte BIN value.`,
-          observed,
+          { offset: at, field: `${label} region tag` },
         );
       if (entry.offset < 0 || entry.offset > storeBytes - 16)
         fail(
           `RPM ${label} region tag ${String(entry.tag)} is outside the data store.`,
-          observed,
+          { offset: at, field: `${label} region tag` },
         );
       continue;
     }
     if (values.has(entry.tag)) continue;
-    values.set(entry.tag, decodeEntry(store, entry, observed));
+    values.set(entry.tag, decodeEntry(store, entry));
   }
   return {
     location: { offset: start, bytes: 16 + indexBytes + storeBytes },
@@ -496,7 +474,6 @@ const dependencies = (
   namesTag: number,
   flagsTag: number,
   versionsTag: number,
-  observed: Readonly<Record<string, JsonValue>>,
 ): RpmDependency[] | null => {
   const names = stringArray(header, namesTag);
   if (names === undefined) return null;
@@ -508,7 +485,7 @@ const dependencies = (
   )
     fail(
       `RPM dependency arrays for tag ${String(namesTag)} have mismatched counts.`,
-      observed,
+      { field: `tag ${String(namesTag)}` },
     );
   return names.map((name, index) => {
     const flag = flags[index] ?? 0;
@@ -524,9 +501,10 @@ const dependencies = (
 };
 
 const openPgpLength = (
-  bytes: Buffer,
+  reader: BinaryReader,
   at: number,
 ): { readonly length: number; readonly next: number } | undefined => {
+  const { bytes } = reader;
   if (at >= bytes.length) return undefined;
   const first = bytes[at]!;
   if (first < 192) return { length: first, next: at + 1 };
@@ -536,15 +514,16 @@ const openPgpLength = (
   }
   if (first === 255) {
     if (at + 5 > bytes.length) return undefined;
-    return { length: bytes.readUInt32BE(at + 1), next: at + 5 };
+    return { length: reader.u32(at + 1), next: at + 5 };
   }
   return undefined;
 };
 
 const issuerKeyId = (subpackets: Buffer): string | null => {
+  const reader = new BinaryReader(subpackets, false, FORMAT);
   let cursor = 0;
   while (cursor < subpackets.length) {
-    const decoded = openPgpLength(subpackets, cursor);
+    const decoded = openPgpLength(reader, cursor);
     if (decoded === undefined || decoded.length < 1) return null;
     const body = subpackets.subarray(
       decoded.next,
@@ -562,6 +541,7 @@ const decodeOpenPgpSignature = (
   blob: Buffer,
 ): { readonly algorithm: string | null; readonly key_id: string | null } => {
   if (blob.length < 2) return { algorithm: null, key_id: null };
+  const reader = new BinaryReader(blob, false, FORMAT);
   const first = blob[0]!;
   if ((first & 0x80) === 0) return { algorithm: null, key_id: null };
   let tag: number;
@@ -577,17 +557,17 @@ const decodeOpenPgpSignature = (
       offset = 2;
     } else if (lengthType === 1) {
       if (blob.length < 3) return { algorithm: null, key_id: null };
-      length = blob.readUInt16BE(1);
+      length = reader.u16(1);
       offset = 3;
     } else if (lengthType === 2) {
       if (blob.length < 5) return { algorithm: null, key_id: null };
-      length = blob.readUInt32BE(1);
+      length = reader.u32(1);
       offset = 5;
     } else return { algorithm: null, key_id: null };
     body = blob.subarray(offset, offset + length);
   } else {
     tag = first & 0x3f;
-    const decoded = openPgpLength(blob, 1);
+    const decoded = openPgpLength(reader, 1);
     if (decoded === undefined) return { algorithm: null, key_id: null };
     body = blob.subarray(decoded.next, decoded.next + decoded.length);
   }
@@ -601,11 +581,12 @@ const decodeOpenPgpSignature = (
   }
   if (version === 4 && body.length >= 8) {
     const algorithm = OPENPGP_ALGORITHMS[body[2]!] ?? null;
-    const hashedLength = body.readUInt16BE(4);
+    const fields = new BinaryReader(body, false, FORMAT);
+    const hashedLength = fields.u16(4);
     const hashedStart = 6;
     const unhashedStart = hashedStart + hashedLength;
     if (unhashedStart + 2 > body.length) return { algorithm, key_id: null };
-    const unhashedLength = body.readUInt16BE(unhashedStart);
+    const unhashedLength = fields.u16(unhashedStart);
     const unhashed = body.subarray(
       unhashedStart + 2,
       unhashedStart + 2 + unhashedLength,
@@ -649,7 +630,6 @@ const digestAlgorithm = (
 const files = (
   header: DecodedHeader,
   maxFiles: number,
-  observed: Readonly<Record<string, JsonValue>>,
 ): RpmPackageFile[] | null => {
   const baseNames = stringArray(header, RPM_TAG.baseNames);
   const dirNames = stringArray(header, RPM_TAG.dirNames);
@@ -662,12 +642,13 @@ const files = (
       `RPM file inventory has ${String(baseNames.length)} rows, above the ${String(maxFiles)}-file budget.`,
     );
   if (dirNames === undefined || dirIndexes === undefined)
-    return fail(
-      "RPM file inventory is missing DIRNAMES or DIRINDEXES.",
-      observed,
-    );
+    return fail("RPM file inventory is missing DIRNAMES or DIRINDEXES.", {
+      field: "file inventory",
+    });
   if (dirIndexes.length !== baseNames.length)
-    return fail("RPM DIRINDEXES count does not match BASENAMES.", observed);
+    return fail("RPM DIRINDEXES count does not match BASENAMES.", {
+      field: "file inventory",
+    });
   const sizes = intArray(header, RPM_TAG.fileSizes);
   const modes = intArray(header, RPM_TAG.fileModes);
   const digests = stringArray(header, RPM_TAG.fileDigests);
@@ -680,7 +661,7 @@ const files = (
     if (dirIndex < 0 || dirIndex >= dirNames.length)
       fail(
         `RPM DIRINDEXES[${String(index)}] ${String(dirIndex)} is outside DIRNAMES.`,
-        observed,
+        { field: "file inventory" },
       );
     const directory = dirNames[dirIndex]!;
     const flag = flags?.[index];
@@ -797,20 +778,26 @@ export const parseRpmPackage = (
   signal?: AbortSignal,
 ): RpmPackage => {
   signal?.throwIfAborted();
-  const lead = parseLead(bytes);
+  const reader = new BinaryReader(bytes, false, FORMAT);
+  const lead = parseLead(reader);
   const observed = leadObserved(lead);
   if (lead.signature_type !== 5)
-    fail(
-      `RPM signature type ${String(lead.signature_type)} is not the header signature format.`,
+    throw new ParseFailureError({
+      kind: "unsupported",
+      format: FORMAT,
+      detail: `RPM signature type ${String(lead.signature_type)} is not the header signature format.`,
+      offset: 78,
+      field: "lead signature type",
+      undecodedContent: false,
       observed,
-      "unsupported",
-    );
-  const signatureHeader = parseHeader(
-    bytes,
-    RPM_LEAD_SIZE,
-    input.max_header_index_entries,
-    observed,
-    "signature",
+    });
+  const signatureHeader = observing(observed, () =>
+    parseHeader(
+      reader,
+      RPM_LEAD_SIZE,
+      input.max_header_index_entries,
+      "signature",
+    ),
   );
   const padBytes = pad8(signatureHeader.location.bytes);
   const headerStart =
@@ -824,191 +811,191 @@ export const parseRpmPackage = (
     },
   };
   signal?.throwIfAborted();
-  const mainHeader = parseHeader(
-    bytes,
-    headerStart,
-    input.max_header_index_entries,
-    withSignature,
-    "main",
-  );
-  const payloadOffset = mainHeader.location.offset + mainHeader.location.bytes;
-  if (payloadOffset > bytes.length)
-    fail("RPM payload offset is past the end of the file.", withSignature);
-  const immutable = mainHeader.tags.find(
-    (entry) => entry.tag === RPM_TAG.headerImmutable,
-  );
-  const provides = dependencies(
-    mainHeader,
-    RPM_TAG.provideName,
-    RPM_TAG.provideFlags,
-    RPM_TAG.provideVersion,
-    withSignature,
-  );
-  const requires = dependencies(
-    mainHeader,
-    RPM_TAG.requireName,
-    RPM_TAG.requireFlags,
-    RPM_TAG.requireVersion,
-    withSignature,
-  );
-  const conflicts = dependencies(
-    mainHeader,
-    RPM_TAG.conflictName,
-    RPM_TAG.conflictFlags,
-    RPM_TAG.conflictVersion,
-    withSignature,
-  );
-  const obsoletes = dependencies(
-    mainHeader,
-    RPM_TAG.obsoleteName,
-    RPM_TAG.obsoleteFlags,
-    RPM_TAG.obsoleteVersion,
-    withSignature,
-  );
-  const recommends = dependencies(
-    mainHeader,
-    RPM_TAG.recommendName,
-    RPM_TAG.recommendFlags,
-    RPM_TAG.recommendVersion,
-    withSignature,
-  );
-  const suggests = dependencies(
-    mainHeader,
-    RPM_TAG.suggestName,
-    RPM_TAG.suggestFlags,
-    RPM_TAG.suggestVersion,
-    withSignature,
-  );
-  const supplements = dependencies(
-    mainHeader,
-    RPM_TAG.supplementName,
-    RPM_TAG.supplementFlags,
-    RPM_TAG.supplementVersion,
-    withSignature,
-  );
-  const enhances = dependencies(
-    mainHeader,
-    RPM_TAG.enhanceName,
-    RPM_TAG.enhanceFlags,
-    RPM_TAG.enhanceVersion,
-    withSignature,
-  );
-  const fileRows = files(mainHeader, input.max_files, withSignature);
-  const scriptletRows = scriptlets(
-    mainHeader,
-    input.include_script_text,
-    input.max_script_bytes,
-  );
-  const blobs = [
-    signatureBlob(signatureHeader, RPM_SIG_TAG.pgp, "pgp"),
-    signatureBlob(signatureHeader, RPM_SIG_TAG.gpg, "gpg"),
-    signatureBlob(signatureHeader, RPM_SIG_TAG.rsaHeader, "rsa"),
-    signatureBlob(signatureHeader, RPM_SIG_TAG.dsaHeader, "dsa"),
-  ].filter((blob): blob is RpmSignatureBlob => blob !== undefined);
-  const md5 = binValue(signatureHeader, RPM_SIG_TAG.md5);
-  if (md5 !== undefined && md5.length !== 16)
-    fail("RPM MD5 signature tag is not 16 bytes.", withSignature);
-  const payloadFormat = stringValue(mainHeader, RPM_TAG.payloadFormat) ?? null;
-  const payloadCompressor =
-    stringValue(mainHeader, RPM_TAG.payloadCompressor) ?? null;
-  const payloadFlags = stringValue(mainHeader, RPM_TAG.payloadFlags) ?? null;
-  const limitations = [
-    ...RPM_PACKAGE_LIMITATIONS,
-    ...(input.include_script_text
-      ? []
-      : [
-          "Scriptlet source text is omitted unless include_script_text is true.",
-        ]),
-  ];
-  return {
-    artifact,
-    lead,
-    signature: {
-      location: signatureHeader.location,
-      pad_bytes: padBytes,
-      index_entries: signatureHeader.indexEntries,
-      store_bytes: signatureHeader.storeBytes,
-      size: intValue(signatureHeader, RPM_SIG_TAG.size) ?? null,
-      md5: md5 === undefined ? null : hex(md5),
-      sha1_header: text(stringValue(signatureHeader, RPM_SIG_TAG.sha1Header)),
-      sha256_header: text(
-        stringValue(signatureHeader, RPM_SIG_TAG.sha256Header),
-      ),
-      payload_digest: text(
-        stringValue(signatureHeader, RPM_TAG.payloadDigest) ??
-          stringValue(mainHeader, RPM_TAG.payloadDigest),
-      ),
-      payload_digest_algorithm:
-        intValue(signatureHeader, RPM_TAG.payloadDigestAlgo) ??
-        intValue(mainHeader, RPM_TAG.payloadDigestAlgo) ??
-        null,
-      blobs,
-    },
-    header: {
-      location: mainHeader.location,
-      index_entries: mainHeader.indexEntries,
-      store_bytes: mainHeader.storeBytes,
-      immutable_region:
-        immutable === undefined
-          ? null
-          : {
-              present: true,
-              store_offset: immutable.offset,
-              bytes: immutable.count,
-            },
-    },
-    package: {
-      name: text(stringValue(mainHeader, RPM_TAG.name)),
-      version: text(stringValue(mainHeader, RPM_TAG.version)),
-      release: text(stringValue(mainHeader, RPM_TAG.release)),
-      epoch: intValue(mainHeader, RPM_TAG.epoch) ?? null,
-      arch: text(stringValue(mainHeader, RPM_TAG.arch)),
-      os: text(stringValue(mainHeader, RPM_TAG.os)),
-      summary: text(stringValue(mainHeader, RPM_TAG.summary)),
-      license: text(stringValue(mainHeader, RPM_TAG.license)),
-      vendor: text(stringValue(mainHeader, RPM_TAG.vendor)),
-      packager: text(stringValue(mainHeader, RPM_TAG.packager)),
-      url: text(stringValue(mainHeader, RPM_TAG.url)),
-      build_time: intValue(mainHeader, RPM_TAG.buildTime) ?? null,
-      build_host: text(stringValue(mainHeader, RPM_TAG.buildHost)),
-      source_rpm: text(stringValue(mainHeader, RPM_TAG.sourceRpm)),
-      payload_format: text(payloadFormat ?? undefined),
-      payload_compressor: text(payloadCompressor ?? undefined),
-      payload_flags: text(payloadFlags ?? undefined),
-    },
-    provides,
-    requires,
-    conflicts,
-    obsoletes,
-    recommends,
-    suggests,
-    supplements,
-    enhances,
-    scriptlets: scriptletRows,
-    files: fileRows,
-    payload: {
-      offset: payloadOffset,
-      size: bytes.length - payloadOffset,
-      format: text(payloadFormat ?? undefined),
-      compressor: text(payloadCompressor ?? undefined),
-      flags: text(payloadFlags ?? undefined),
-      listing_source: "header",
-    },
-    coverage: {
-      status: "complete",
-      header_tags: mainHeader.indexEntries,
-      files: fileRows === null ? null : fileRows.length,
-      dependencies: dependencyCount(
-        provides,
-        requires,
-        conflicts,
-        obsoletes,
-        recommends,
-        suggests,
-        supplements,
-        enhances,
-      ),
-    },
-    limitations,
-  };
+  return observing(withSignature, (): RpmPackage => {
+    const mainHeader = parseHeader(
+      reader,
+      headerStart,
+      input.max_header_index_entries,
+      "main",
+    );
+    const payloadOffset =
+      mainHeader.location.offset + mainHeader.location.bytes;
+    if (payloadOffset > bytes.length)
+      fail("RPM payload offset is past the end of the file.", {
+        offset: payloadOffset,
+        field: "payload",
+      });
+    const immutable = mainHeader.tags.find(
+      (entry) => entry.tag === RPM_TAG.headerImmutable,
+    );
+    const provides = dependencies(
+      mainHeader,
+      RPM_TAG.provideName,
+      RPM_TAG.provideFlags,
+      RPM_TAG.provideVersion,
+    );
+    const requires = dependencies(
+      mainHeader,
+      RPM_TAG.requireName,
+      RPM_TAG.requireFlags,
+      RPM_TAG.requireVersion,
+    );
+    const conflicts = dependencies(
+      mainHeader,
+      RPM_TAG.conflictName,
+      RPM_TAG.conflictFlags,
+      RPM_TAG.conflictVersion,
+    );
+    const obsoletes = dependencies(
+      mainHeader,
+      RPM_TAG.obsoleteName,
+      RPM_TAG.obsoleteFlags,
+      RPM_TAG.obsoleteVersion,
+    );
+    const recommends = dependencies(
+      mainHeader,
+      RPM_TAG.recommendName,
+      RPM_TAG.recommendFlags,
+      RPM_TAG.recommendVersion,
+    );
+    const suggests = dependencies(
+      mainHeader,
+      RPM_TAG.suggestName,
+      RPM_TAG.suggestFlags,
+      RPM_TAG.suggestVersion,
+    );
+    const supplements = dependencies(
+      mainHeader,
+      RPM_TAG.supplementName,
+      RPM_TAG.supplementFlags,
+      RPM_TAG.supplementVersion,
+    );
+    const enhances = dependencies(
+      mainHeader,
+      RPM_TAG.enhanceName,
+      RPM_TAG.enhanceFlags,
+      RPM_TAG.enhanceVersion,
+    );
+    const fileRows = files(mainHeader, input.max_files);
+    const scriptletRows = scriptlets(
+      mainHeader,
+      input.include_script_text,
+      input.max_script_bytes,
+    );
+    const blobs = [
+      signatureBlob(signatureHeader, RPM_SIG_TAG.pgp, "pgp"),
+      signatureBlob(signatureHeader, RPM_SIG_TAG.gpg, "gpg"),
+      signatureBlob(signatureHeader, RPM_SIG_TAG.rsaHeader, "rsa"),
+      signatureBlob(signatureHeader, RPM_SIG_TAG.dsaHeader, "dsa"),
+    ].filter((blob): blob is RpmSignatureBlob => blob !== undefined);
+    const md5 = binValue(signatureHeader, RPM_SIG_TAG.md5);
+    if (md5 !== undefined && md5.length !== 16)
+      fail("RPM MD5 signature tag is not 16 bytes.", {
+        field: "signature md5",
+      });
+    const payloadFormat =
+      stringValue(mainHeader, RPM_TAG.payloadFormat) ?? null;
+    const payloadCompressor =
+      stringValue(mainHeader, RPM_TAG.payloadCompressor) ?? null;
+    const payloadFlags = stringValue(mainHeader, RPM_TAG.payloadFlags) ?? null;
+    const limitations = [
+      ...RPM_PACKAGE_LIMITATIONS,
+      ...(input.include_script_text
+        ? []
+        : [
+            "Scriptlet source text is omitted unless include_script_text is true.",
+          ]),
+    ];
+    return {
+      artifact,
+      lead,
+      signature: {
+        location: signatureHeader.location,
+        pad_bytes: padBytes,
+        index_entries: signatureHeader.indexEntries,
+        store_bytes: signatureHeader.storeBytes,
+        size: intValue(signatureHeader, RPM_SIG_TAG.size) ?? null,
+        md5: md5 === undefined ? null : hex(md5),
+        sha1_header: text(stringValue(signatureHeader, RPM_SIG_TAG.sha1Header)),
+        sha256_header: text(
+          stringValue(signatureHeader, RPM_SIG_TAG.sha256Header),
+        ),
+        payload_digest: text(
+          stringValue(signatureHeader, RPM_TAG.payloadDigest) ??
+            stringValue(mainHeader, RPM_TAG.payloadDigest),
+        ),
+        payload_digest_algorithm:
+          intValue(signatureHeader, RPM_TAG.payloadDigestAlgo) ??
+          intValue(mainHeader, RPM_TAG.payloadDigestAlgo) ??
+          null,
+        blobs,
+      },
+      header: {
+        location: mainHeader.location,
+        index_entries: mainHeader.indexEntries,
+        store_bytes: mainHeader.storeBytes,
+        immutable_region:
+          immutable === undefined
+            ? null
+            : {
+                present: true,
+                store_offset: immutable.offset,
+                bytes: immutable.count,
+              },
+      },
+      package: {
+        name: text(stringValue(mainHeader, RPM_TAG.name)),
+        version: text(stringValue(mainHeader, RPM_TAG.version)),
+        release: text(stringValue(mainHeader, RPM_TAG.release)),
+        epoch: intValue(mainHeader, RPM_TAG.epoch) ?? null,
+        arch: text(stringValue(mainHeader, RPM_TAG.arch)),
+        os: text(stringValue(mainHeader, RPM_TAG.os)),
+        summary: text(stringValue(mainHeader, RPM_TAG.summary)),
+        license: text(stringValue(mainHeader, RPM_TAG.license)),
+        vendor: text(stringValue(mainHeader, RPM_TAG.vendor)),
+        packager: text(stringValue(mainHeader, RPM_TAG.packager)),
+        url: text(stringValue(mainHeader, RPM_TAG.url)),
+        build_time: intValue(mainHeader, RPM_TAG.buildTime) ?? null,
+        build_host: text(stringValue(mainHeader, RPM_TAG.buildHost)),
+        source_rpm: text(stringValue(mainHeader, RPM_TAG.sourceRpm)),
+        payload_format: text(payloadFormat ?? undefined),
+        payload_compressor: text(payloadCompressor ?? undefined),
+        payload_flags: text(payloadFlags ?? undefined),
+      },
+      provides,
+      requires,
+      conflicts,
+      obsoletes,
+      recommends,
+      suggests,
+      supplements,
+      enhances,
+      scriptlets: scriptletRows,
+      files: fileRows,
+      payload: {
+        offset: payloadOffset,
+        size: bytes.length - payloadOffset,
+        format: text(payloadFormat ?? undefined),
+        compressor: text(payloadCompressor ?? undefined),
+        flags: text(payloadFlags ?? undefined),
+        listing_source: "header",
+      },
+      coverage: {
+        status: "complete",
+        header_tags: mainHeader.indexEntries,
+        files: fileRows === null ? null : fileRows.length,
+        dependencies: dependencyCount(
+          provides,
+          requires,
+          conflicts,
+          obsoletes,
+          recommends,
+          suggests,
+          supplements,
+          enhances,
+        ),
+      },
+      limitations,
+    };
+  });
 };
