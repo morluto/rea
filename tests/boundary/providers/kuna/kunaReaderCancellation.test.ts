@@ -45,7 +45,6 @@ const ready = async () => {
         async () =>
           (await run(client, "procedure_pseudo_code", { procedure: "main" }))
             .rawResult,
-        { timeout: 5000 },
       )
       .toMatchObject({ source: { kind: "project-export" } });
     const [key] = await readdir(join(cacheRoot, "projects"));
@@ -86,7 +85,7 @@ it.each([
       await expect.poll(() => held.streams.length).toBe(1);
       const reason = Object.freeze({ requested: "reader-stop", operation });
       controller.abort(reason);
-      await expect.poll(() => finished, { timeout: 1000 }).toBe(true);
+      await expect.poll(() => finished).toBe(true);
       const cancelledResult = await cancelled;
       expect(cancelledResult).toMatchObject({
         ok: false,
@@ -126,18 +125,14 @@ it("close aborts and drains the shared scan after its only caller cancels", asyn
   try {
     await expect.poll(() => held.streams.length).toBe(1);
     controller.abort();
-    await expect
-      .poll(() => result, { timeout: 1000 })
-      .toMatchObject({ ok: false });
+    await expect.poll(() => result).toMatchObject({ ok: false });
     expect(held.streams[0]?.destroyed).toBe(false);
     let closed: unknown;
     closing = client.close().then((value) => {
       closed = value;
       return value;
     });
-    await expect
-      .poll(() => closed, { timeout: 1000 })
-      .toEqual({ ok: true, value: null });
+    await expect.poll(() => closed).toEqual({ ok: true, value: null });
     expect(held.streams[0]?.destroyed).toBe(true);
     expect(held.streams[0]?.closed).toBe(true);
   } finally {

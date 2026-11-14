@@ -310,7 +310,7 @@ export async function resolveFixtureProcedure(
 }
 
 /** Request the assembly evidence required by the fixture oracle. */
-export const analyzeFixtureProcedure = async (
+const analyzeFixtureProcedure = async (
   client,
   options,
   procedure,

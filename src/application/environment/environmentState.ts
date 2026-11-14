@@ -1,4 +1,4 @@
-import type { AnalysisViewResult } from "../../domain/analysisView/analysisView.js";
+import type { AnalysisViewResult } from "../../domain/analysisView/analysisViewResult.js";
 import {
   changesState,
   type StateDocument,

@@ -580,7 +580,7 @@ describe("managed artifact coded indexes", () => {
         (attribute) => attribute.type_name === "Fixture.LookupAttribute",
       ),
     ).toBe(true);
-  }, 30_000);
+  });
 });
 
 it.each([false, true])(

@@ -41,7 +41,7 @@ MCP `detail: summary` retains complete Evidence in the session. Follow its
 
 ```json
 {
-  "source": { "kind": "retained-evidence", "evidence_id": "ev:<digest>" },
+  "source": { "kind": "retained-evidence", "evidence_id": "ev_<digest>" },
   "view": {
     "kind": "devicetree",
     "collection": "properties",

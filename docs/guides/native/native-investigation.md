@@ -321,7 +321,12 @@ the others. A function that `procedure_info` classifies as external, such as an
 import, is counted as `external` and recorded with that status and the body
 fact as observed. It gets no file, no pseudocode is requested, and a resume
 skips it. A function whose classification is unknown is decompiled as usual;
-a provider that returns null pseudocode for it is reported as `no_pseudocode`. Inventory rows without an address are counted in the limitations. `--layout dwarf`
+a provider that returns null pseudocode for it is reported as `no_pseudocode`. Inventory rows without an address are counted in the limitations.
+The top-level `limitations` of the manifest and index count every retained
+non-external function record whose body is unavailable, including records an
+earlier run wrote, and repeat the reason when all of them share one. A resume
+that skips every file therefore keeps the caveat until a later attempt records
+a known body. `--layout dwarf`
 reports that compilation-unit paths are unavailable and still names files by
 address. Filters are a case-sensitive name substring, a case-sensitive name
 prefix, an inclusive address range (including uppercase hexadecimal input), and a positive safe-integer attempt limit. The limit does not allocate space in proportion to its value. Cancellation leaves

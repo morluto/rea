@@ -7,7 +7,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 
 const routeViewFromEvidence = (evidence: unknown) =>
   javaScriptRoutesViewResultSchema.parse(
@@ -607,7 +607,6 @@ cliTest(
       await browser.close();
     }
   },
-  120000,
 );
 
 it("keeps a large source's partial route facts queryable through SDK delivery", async () => {
@@ -662,4 +661,4 @@ it("keeps a large source's partial route facts queryable through SDK delivery", 
   expect(
     routeViewFromEvidence(unknowns.structuredContent).items.length,
   ).toBeGreaterThan(0);
-}, 60000);
+});

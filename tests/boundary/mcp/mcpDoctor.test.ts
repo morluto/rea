@@ -10,7 +10,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -39,6 +39,12 @@ import {
   mcpDoctorDeadlineRecovery,
   MCP_STARTUP_POLICY,
 } from "../../../src/mcpStartupPolicy.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { waitFor } from "../../support/testWait.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const expectDoctorDeadline = (
   detail: string | undefined,
@@ -264,7 +270,7 @@ describe("production MCP doctor", () => {
       ],
       { timeout: 30_000 },
     );
-  }, 35_000);
+  });
 
   it("preserves the full-output envelope for startup failures", async () => {
     const result = await runProductionMcpDoctorCli(
@@ -332,7 +338,6 @@ describe("production MCP doctor", () => {
       if (cliParity)
         await assertCliCatalogIdentity(selectedEnvironment, identity);
     },
-    30_000,
   );
 });
 
@@ -384,32 +389,51 @@ describe("production MCP doctor family scopes", () => {
       await assertStatusCatalogIdentity(environment, identity);
       if (cliParity) await assertCliCatalogIdentity(environment, identity);
     },
-    30_000,
   );
 
-  it("discovers an empty prompt inventory and explains a scope without session", async () => {
-    const result = await runProductionMcpDoctor({
-      command: process.execPath,
-      args: [resolve("scripts/rea.mjs"), "mcp"],
-      cwd: process.cwd(),
-      environment: { ...process.env, REA_MCP_TOOL_FAMILIES: "browser" },
-    });
-    expect(result).toMatchObject({
-      healthy: false,
-      adapter: "production-stdio",
-      inventory: {
-        prompts: { expected: 0, observed: 0, missing: [], unexpected: [] },
-      },
-      request_flow: { tool: "binary_session", ok: false },
-    });
-    expect(result.checks).toContainEqual({
-      name: "request-flow",
-      ok: false,
-      detail: expect.stringMatching(
-        /binary_session.*outside.*selected tool families.*include.*session family.*request.flow.*identity/iu,
-      ),
-    });
-  });
+  it.each(["browser", "native"])(
+    "explains unobserved identity for a %s scope without session",
+    async (families) => {
+      const result = await runProductionMcpDoctor({
+        command: process.execPath,
+        args: [resolve("scripts/rea.mjs"), "mcp"],
+        cwd: process.cwd(),
+        environment: { ...process.env, REA_MCP_TOOL_FAMILIES: families },
+      });
+      expect(result).toMatchObject({
+        healthy: false,
+        adapter: "production-stdio",
+        inventory: {
+          prompts: { expected: 0, observed: 0, missing: [], unexpected: [] },
+        },
+        request_flow: { tool: "binary_session", ok: false },
+        identity: {
+          observed_package_version: null,
+          observed_catalog_digest: null,
+        },
+      });
+      const scopeLimitation =
+        /binary_session.*outside.*selected tool families.*include.*session family.*request.flow.*identity/iu;
+      expect(result.checks).toContainEqual({
+        name: "server-identity",
+        ok: false,
+        detail: expect.stringMatching(
+          new RegExp(`^identity not observed: ${scopeLimitation.source}`, "iu"),
+        ),
+      });
+      expect(result.checks).not.toContainEqual(
+        expect.objectContaining({
+          name: "server-identity",
+          detail: expect.stringContaining("missing"),
+        }),
+      );
+      expect(result.checks).toContainEqual({
+        name: "request-flow",
+        ok: false,
+        detail: expect.stringMatching(scopeLimitation),
+      });
+    },
+  );
 
   it("fails startup instead of misreporting inventory for an invalid scope", async () => {
     const result = await runProductionMcpDoctor({
@@ -428,7 +452,7 @@ describe("production MCP doctor family scopes", () => {
     expect(result.diagnostics?.stderr).toEqual(
       expect.stringContaining("REA_MCP_TOOL_FAMILIES"),
     );
-  }, 30_000);
+  });
 });
 
 describe("production MCP doctor output", () => {
@@ -494,7 +518,7 @@ describe("production MCP doctor output", () => {
         },
       },
     });
-  }, 35_000);
+  });
 
   it.each([false, true])(
     "frames unhealthy JSONL diagnostics and retains the selected envelope (%s)",
@@ -576,7 +600,10 @@ describe("production MCP doctor probe validation", () => {
     const root = await createTestTempDirectory("rea-mcp-doctor-reply-");
     const snapshotPath = join(root, "reply.json");
     const environment = { PATH: process.env.PATH ?? "" };
-    const client = new Client({ name: "doctor-reply-capture", version: "1" });
+    const client = new Client(
+      { name: "doctor-reply-capture", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -641,6 +668,14 @@ describe("production MCP doctor probe validation", () => {
         ok: true,
         detail: expect.any(String),
       });
+      expect(result.checks).toContainEqual({
+        name: "server-identity",
+        ok: mode !== "invalid",
+        detail:
+          mode === "invalid"
+            ? expect.stringMatching(/^identity not observed: .*output schema/iu)
+            : expect.stringMatching(/^package=.+; catalog=.+$/u),
+      });
       if (mode === "invalid")
         expect(result.checks).toContainEqual({
           name: "request-flow",
@@ -662,7 +697,7 @@ describe("production MCP doctor probe validation", () => {
         });
       }
     }
-  }, 30_000);
+  });
 });
 
 describe("production MCP doctor child lifecycle", () => {
@@ -698,7 +733,7 @@ describe("production MCP doctor child lifecycle", () => {
       stderr_bytes: 4 * 1024 * 1024,
       stderr_truncated: true,
     });
-  }, 10_000);
+  });
 
   it("does not manufacture a replacement character when the retained prefix ends inside UTF-8", async () => {
     const prefixBytes = MCP_STARTUP_POLICY.doctorStderrBytes - 1;
@@ -756,22 +791,87 @@ describe("production MCP doctor child lifecycle", () => {
         REA_MCP_DOCTOR_DEADLINE_MS: "60000",
       },
     });
-    const pid = await vi.waitFor(
-      async () => {
-        const value = Number.parseInt(await readFile(pidPath, "utf8"), 10);
-        expect(Number.isSafeInteger(value) && value > 0).toBe(true);
-        return value;
-      },
-      { timeout: 10_000 },
-    );
+    const pid = await waitFor(async () => {
+      const value = Number.parseInt(await readFile(pidPath, "utf8"), 10);
+      expect(Number.isSafeInteger(value) && value > 0).toBe(true);
+      return value;
+    });
     await vi.advanceTimersByTimeAsync(60_000);
-    const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+    const result = await waitFor(() => pending);
     vi.useRealTimers();
     expect(result.healthy).toBe(false);
     expectDoctorDeadline(result.checks[0]?.detail, 60_000);
     expect(result.checks[0]?.detail).not.toContain("REA_MCP_STARTUP");
     await expect(waitForExit(pid)).resolves.toBeUndefined();
-  }, 10_000);
+  });
+});
+
+describe("production MCP doctor child ownership", () => {
+  it("does not hand an ambient target variable to the diagnostic child", async () => {
+    const root = await createTestTempDirectory("rea-mcp-doctor-target-free-");
+    const seenPath = join(root, "env.json");
+    const result = await runProductionMcpDoctor({
+      command: process.execPath,
+      args: [resolve("tests/fixtures/mcpDoctorEnvironment.mjs")],
+      cwd: root,
+      environment: {
+        ...process.env,
+        HOPPER_TARGET_PATH: "/tmp/ambient-target",
+        HOPPER_TARGET_KIND: "hop",
+        REA_MCP_DOCTOR_SEEN_PATH: seenPath,
+        REA_MCP_DOCTOR_DEADLINE_MS: "5000",
+      },
+    });
+    expect(result.healthy).toBe(false);
+    const seen = JSON.parse(await readFile(seenPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(seen).not.toHaveProperty("HOPPER_TARGET_PATH");
+    expect(seen).not.toHaveProperty("HOPPER_TARGET_KIND");
+    // The rest of the caller's environment still reaches the child.
+    expect(seen.REA_MCP_DOCTOR_SEEN_PATH).toBe(seenPath);
+  });
+
+  it.each([
+    ["in the launcher's process group", "0"],
+    ["in its own session", "1"],
+  ])(
+    "stops a descendant %s that outlives the launcher",
+    async (_case, detached) => {
+      const root = await createTestTempDirectory("rea-mcp-doctor-descendant-");
+      const pidPath = join(root, "pids.json");
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const pending = runProductionMcpDoctor({
+        command: process.execPath,
+        args: [resolve("tests/fixtures/mcpDoctorForkDescendant.mjs")],
+        cwd: process.cwd(),
+        environment: {
+          ...process.env,
+          REA_MCP_DOCTOR_PID_PATH: pidPath,
+          REA_MCP_DOCTOR_DESCENDANT_DETACHED: detached,
+          REA_MCP_DOCTOR_DEADLINE_MS: "60000",
+        },
+      });
+      const pids = await waitFor(async () => {
+        const value = JSON.parse(await readFile(pidPath, "utf8")) as {
+          launcher: number;
+          descendant: number;
+        };
+        expect(Number.isSafeInteger(value.descendant)).toBe(true);
+        return value;
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      const result = await waitFor(() => pending);
+      vi.useRealTimers();
+      // The launcher exits at once, so only owned cleanup can stop the descendant.
+      // The SDK transport signaled only its direct child and reported success.
+      expect(result.healthy).toBe(false);
+      expect(result.checks.map(({ name }) => name)).toEqual(["transport"]);
+      expectDoctorDeadline(result.checks[0]?.detail, 60_000);
+      await expect(waitForExit(pids.descendant)).resolves.toBeUndefined();
+    },
+  );
 });
 
 describe("production MCP doctor request-flow deadline", () => {
@@ -790,14 +890,11 @@ describe("production MCP doctor request-flow deadline", () => {
         REA_MCP_DOCTOR_DEADLINE_MS: "60000",
       },
     });
-    await vi.waitFor(
-      async () => {
-        await readFile(readyPath, "utf8");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(async () => {
+      await readFile(readyPath, "utf8");
+    });
     await vi.advanceTimersByTimeAsync(60_000);
-    const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+    const result = await waitFor(() => pending);
     vi.useRealTimers();
     expect(result.server).not.toBeNull();
     const requestFlow = result.checks.find(
@@ -806,7 +903,7 @@ describe("production MCP doctor request-flow deadline", () => {
     expect(requestFlow?.ok).toBe(false);
     expectDoctorDeadline(requestFlow?.detail, 60_000);
     expect(requestFlow?.detail).not.toContain("REA_MCP_STARTUP");
-  }, 15_000);
+  });
 
   it.each([
     "unrelated fixture method refusal",
@@ -835,7 +932,6 @@ describe("production MCP doctor request-flow deadline", () => {
       expect(requestFlow?.detail).toContain(message);
       expect(requestFlow?.detail).not.toContain("REA_MCP_DOCTOR_DEADLINE_MS");
     },
-    10_000,
   );
 
   it("refuses an invalid phase budget before starting a child", async () => {

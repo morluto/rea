@@ -3,7 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -12,6 +12,11 @@ import { recoveryInstructions } from "../../../src/server/recoveryInstructions.j
 import { UNTRUSTED_CONTENT_INSTRUCTIONS } from "../../../src/server/toolResultEncoding.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { retainedEvidenceReferenceSchema } from "../../../src/domain/evidenceReference.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 it("delivers deadline recovery guidance at initialization before any tool call", async () => {
   const { client, transport } = createResourceClient();
@@ -174,7 +179,7 @@ it("accepts more work after application expansion exceeds memory and retains eve
     await client.close();
     await transport.close();
   }
-}, 90000);
+});
 
 const repeatedSourceCount = 1500;
 const repeatedSourceText = "export const observed = 7;\n";
@@ -306,7 +311,7 @@ it("returns a directly usable partial analysis reference for an oversized timeou
     await client.close();
     await transport.close();
   }
-}, 90000);
+});
 
 const verifyRecovery = async (
   client: Client,
@@ -345,7 +350,10 @@ const verifyRecovery = async (
 const createResourceClient = ({
   parentHeapMb = 512,
 }: { readonly parentHeapMb?: number } = {}) => {
-  const client = new Client({ name: "javascript-resources", version: "1" });
+  const client = new Client(
+    { name: "javascript-resources", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],

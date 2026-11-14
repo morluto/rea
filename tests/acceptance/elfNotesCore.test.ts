@@ -152,7 +152,7 @@ cliTest(
     });
     await writeFile(path, bytes);
 
-    const output = await cli.sharedCliRun!({
+    const output = await cli.run({
       arguments: ["inspect-elf-notes", path, "--json"],
     });
     expect(output.exitCode, output.stderr).toBe(0);

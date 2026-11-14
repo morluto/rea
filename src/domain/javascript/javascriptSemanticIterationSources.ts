@@ -20,11 +20,6 @@ import type {
   SemanticIterationSource,
 } from "./javascriptSemanticIterationFacts.js";
 
-export type {
-  IterationSourceValue,
-  SemanticIterationSource,
-} from "./javascriptSemanticIterationFacts.js";
-
 /** A property value obtained by destructuring or an own-enumerable copy. */
 export interface SemanticPropertyReadSource
   extends IterationSourceValue, SourceGuards {

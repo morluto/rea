@@ -33,6 +33,7 @@ import { decodeHarCapture } from "../../../src/browser/history/HarCapture.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { waitFor } from "../../support/testWait.js";
 
 const linux = it.skipIf(process.platform !== "linux");
 
@@ -336,12 +337,9 @@ it.each(["cancelled", "process"] as const)(
       sensitive_values: ["capture-private-runtime"],
     });
     const target = decoder.inspect(input, { signal: controller.signal });
-    await vi.waitFor(
-      async () => {
-        targetPid = JSON.parse(await readFile(markerPath, "utf8"));
-      },
-      { timeout: 5000 },
-    );
+    await waitFor(async () => {
+      targetPid = JSON.parse(await readFile(markerPath, "utf8"));
+    });
     const peer = decoder.inspect(input);
     await peerEntered.promise;
     if (outcome === "cancelled") controller.abort(reason);
@@ -392,7 +390,6 @@ it.each(["cancelled", "process"] as const)(
       outcome === "cancelled" ? "cancelled" : "execution_failure",
     );
   },
-  15000,
 );
 
 it("applies a non-default capture deadline and releases its runtime", async () => {
@@ -435,7 +432,7 @@ it("applies a non-default capture deadline and releases its runtime", async () =
   expect(result.error.userMessage).toContain("capture_timeout_ms");
   if (runtimePath === undefined) throw new Error("runtime was not acquired");
   await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
-}, 8_000);
+});
 
 it.each([true, false])(
   "binds decoder replies to the complete selected provider identity (matching name: %s)",

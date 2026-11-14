@@ -1,4 +1,4 @@
-import { access, copyFile, cp } from "node:fs/promises";
+import { access, copyFile, cp, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -8,9 +8,6 @@ import { unsupportedRuntimeMessage } from "../../../scripts/lib/runtime-admissio
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
-const CLI_OUTPUT_RUNTIME =
-  "export const cliConfigurationError = () => undefined; export const parseCliOutputArguments = () => ({ validation: { ok: true } }); export const renderCliOutputArgumentError = () => ''; export const renderEmptyFilteredCliOutput = () => undefined; export const renderVersionReport = () => undefined;\n";
-
 const installCliRuntime = async (
   workspace: TestWorkspace,
   cliSource: string,
@@ -18,10 +15,18 @@ const installCliRuntime = async (
 ): Promise<void> => {
   await workspace.mkdir("scripts/lib");
   await workspace.mkdir("dist");
-  // The bundle's entrypoints and shared chunks form one emitted runtime.
+  // The bundle's entrypoints and shared chunks form one emitted runtime. The
+  // one-shot owner and its output admission stay production code; only the
+  // command runtime, its recorded registrars, and result output are replaced.
   await cp("dist/cli-runtime", workspace.path("dist/cli-runtime"), {
     recursive: true,
   });
+  // Production chunks import their packages from the installation root.
+  await symlink(
+    resolve("node_modules"),
+    workspace.path("node_modules"),
+    "junction",
+  );
   await Promise.all([
     copyFile("scripts/rea.mjs", workspace.path("scripts/rea.mjs")),
     copyFile(
@@ -37,8 +42,12 @@ const installCliRuntime = async (
       JSON.stringify({ type: "module", version: "1.0.0" }),
     ),
     workspace.write("dist/cli-runtime/cli.js", cliSource),
-    workspace.write("dist/cli-runtime/cliOutput.js", CLI_OUTPUT_RUNTIME),
     workspace.write("dist/cli-runtime/cliResultOutput.js", resultOutput),
+    // Without a recording, every command loads the replaced complete CLI.
+    workspace.write(
+      "dist/recordedCliCommandRegistrations.js",
+      "export const RECORDED_CLI_COMMAND_REGISTRATIONS = undefined;\n",
+    ),
   ]);
 };
 
@@ -56,11 +65,6 @@ describe("version report dispatch", () => {
           name: "rea-fixture",
           version: "1.0.0",
         }),
-      );
-      // Use the built production preflight, while making full CLI imports fail.
-      await workspace.write(
-        "dist/cli-runtime/cliOutput.js",
-        `export * from ${JSON.stringify(pathToFileURL(resolve("dist/cli-runtime/cliOutput.js")).href)};\n`,
       );
       const invoke = (arguments_: readonly string[], invalidLogLevel = false) =>
         processes.run(
@@ -111,11 +115,6 @@ describe("doctor configuration dispatch", () => {
       await installCliRuntime(
         workspace,
         `process.stderr.write(${JSON.stringify(`${imported}\n`)}); export const closeCliResources = () => {}; export const createCli = () => ({ serve: (args, options) => options.stdout(JSON.stringify({ adapter: "cli", args })) });\n`,
-      );
-      // Both token ownership and output/configuration admission use production code.
-      await workspace.write(
-        "dist/cli-runtime/cliOutput.js",
-        `export * from ${JSON.stringify(pathToFileURL(resolve("dist/cli-runtime/cliOutput.js")).href)};\n`,
       );
       const invoke = (args: readonly string[], completion = "") =>
         processes.run(
@@ -595,19 +594,10 @@ describe("project-scoped Amp registration dispatch", () => {
     },
   );
 
-  const installProductionOutputRuntime = async (workspace: TestWorkspace) => {
-    await installGuardRuntime(workspace);
-    // The guard's structured refusal renders through production output code.
-    await workspace.write(
-      "dist/cli-runtime/cliOutput.js",
-      `export * from ${JSON.stringify(pathToFileURL(resolve("dist/cli-runtime/cliOutput.js")).href)};\n`,
-    );
-  };
-
   workspaceCliTest(
     "renders the Amp scope refusal as a structured document when a structured format is requested",
     async ({ processes, workspace }) => {
-      await installProductionOutputRuntime(workspace);
+      await installGuardRuntime(workspace);
       const invoke = (arguments_: readonly string[]) =>
         processes.run(
           process.execPath,
@@ -660,6 +650,43 @@ describe("project-scoped Amp registration dispatch", () => {
       expect(plain.stdout).toBe("");
       expect(plain.stderr.length).toBeGreaterThan(0);
       expect(plain.stdout).not.toContain(runtimeReached);
+    },
+  );
+});
+
+describe("executable dispatcher exit", () => {
+  workspaceCliTest(
+    "exits with the requested status once the command's handles close",
+    async ({ processes, workspace }) => {
+      // The interval stops after the exit request: the loop drains, the
+      // process does not wait for the forced-exit grace, and the status holds.
+      await installCliRuntime(
+        workspace,
+        "export const closeCliResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { const timer = setInterval(() => {}, 50); options.exit(3); setTimeout(() => clearInterval(timer), 100); } });\n",
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode, result.stderr).toBe(3);
+    },
+  );
+
+  workspaceCliTest(
+    "forces the requested exit when a command leaves a handle open",
+    async ({ processes, workspace }) => {
+      await installCliRuntime(
+        workspace,
+        "export const closeCliResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { setInterval(() => {}, 1_000); options.exit(4); } });\n",
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode, result.stderr).toBe(4);
+      expect(result.signal).toBeNull();
     },
   );
 });

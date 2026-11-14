@@ -111,36 +111,6 @@ interface FileContext extends SemanticFlowProjectionContext {
   >;
 }
 
-/**
- * Resource-safety ceiling on retained semantic nodes.
- *
- * The semantic projection emits one node per AST expression, call site, binding
- * and property slot. That is unbounded in input size. A small tree of five files
- * already yields on the order of 170,000 nodes, and larger trees yield millions,
- * exhausting the heap before the result can be serialized.
- *
- * This is a real resource-safety constraint, not a presentation preference, so
- * the ceiling is applied and reported through the graph's own `coverage` fields
- * (`truncated`, `omitted_nodes`, `omitted_relations`, `limits`) rather than
- * silently dropping data.
- *
- * Defaults bound work even when ample heap is available. Callers may raise the
- * capacities explicitly; isolated worker heap, bounded record transport and
- * parent result admission independently constrain actual retained memory. The
- * result uses incremental serialization rather than a single JSON string.
- */
-export const SEMANTIC_GRAPH_NODE_CEILING =
-  JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodes;
-
-/**
- * Per-file share of the semantic node budget.
- *
- * Bound each source file independently so one large bundled library cannot
- * consume the whole tree's budget and starve the application's own modules.
- */
-export const SEMANTIC_GRAPH_FILE_NODE_CEILING =
-  JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile;
-
 /** File-local semantic projection that does not retain consumed source IR. */
 export interface JavaScriptSemanticGraphProjection {
   /** Node capacity offered to the next independently analyzed source file. */
@@ -216,8 +186,12 @@ export const createJavaScriptSemanticGraphProjection = (
     readonly fileUnknowns?: number;
   } = {},
 ): JavaScriptSemanticGraphProjection => {
-  const nodeCeiling = limits.totalNodes ?? SEMANTIC_GRAPH_NODE_CEILING;
-  const fileNodeCeiling = limits.fileNodes ?? SEMANTIC_GRAPH_FILE_NODE_CEILING;
+  // Bound total and per-file work so a large dependency cannot starve the graph.
+  const nodeCeiling =
+    limits.totalNodes ?? JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodes;
+  const fileNodeCeiling =
+    limits.fileNodes ??
+    JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile;
   const unknownCeiling =
     limits.totalUnknowns ??
     JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticUnknowns;
@@ -276,7 +250,8 @@ export const createJavaScriptSemanticGraphProjection = (
       unknownCeiling,
       unknownsBefore + fileUnknownCeiling,
     );
-    fingerprints.push(...(yield* projectFileSteps(file, ir, state, paths)));
+    for (const fingerprint of yield* projectFileSteps(file, ir, state, paths))
+      fingerprints.push(fingerprint);
     // Nodes were dropped only if the budget actually blocked creation. A file
     // that exactly fills its share ends with a zero budget without dropping
     // anything, so the remaining budget alone cannot decide truncation.
@@ -453,7 +428,8 @@ export const createJavaScriptSemanticGraphProjection = (
       for (const unknown of newUnknowns)
         state.unknowns.set(unknown.unknown_id, unknown);
       for (const root of projection.roots) state.roots.add(root);
-      fingerprints.push(...projection.fingerprints);
+      for (const fingerprint of projection.fingerprints)
+        fingerprints.push(fingerprint);
       if (projection.nodesTruncated) {
         truncatedFiles += 1;
         noteSemanticCeilingReached(

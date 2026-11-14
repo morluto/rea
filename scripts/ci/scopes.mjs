@@ -168,6 +168,7 @@ const PATH_SCOPES = {
     "tests/boundary/process/nativeUiVerifierLane.test.ts",
     "tests/conformance/native/ui-offscreen.swift",
     "tests/boundary/cli/nativeSignatureCli.test.ts",
+    "tests/boundary/cli/nativeMachoImportNamesCli.test.ts",
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
     "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
     "tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts",
@@ -640,6 +641,9 @@ const PATH_SCOPES = {
     "tests/conformance/ghidra/ReaInstructionContextProbe.java",
     "tests/conformance/ghidra/ReaComputedCallCoverageProbe.java",
     "tests/conformance/ghidra/ReaDecodeProbe.java",
+    "scripts/verify-ghidra-loader-relocation.mjs",
+    "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
+    "tests/conformance/ghidra/loader-relocation*.c",
     ".github/workflows/ghidra-bridge-sources.yml",
   ],
   website: [

@@ -74,8 +74,11 @@ const sharedAnalysisSemantics = {
   instruction_status: "unlisted-and-containing-code-data-v3",
   instruction_references: "exact-address-incoming-without-synthetic-entry-v3",
   byte_search_coverage: "separate-loaded-overlays-v1",
-  function_boundary_observations: "ghidra-function-boundary-limitations-v4",
+  function_boundary_observations: "ghidra-function-boundary-limitations-v5",
 } as const;
+const loaderRelocationSemantics = "volatile-unapplied-relocation-blocks-v1";
+// Read-only sessions record relocation limitations without marking blocks volatile.
+const readOnlyLoaderRelocationSemantics = "read-only-relocation-limitations-v1";
 
 /**
  * The processor language REA pins for this target, or undefined when Ghidra may
@@ -324,6 +327,11 @@ export const resolveGhidraAnalysisProfile = async (
             }
           : {}),
         ...sharedAnalysisSemantics,
+        // Windows P0 has no database-mutation authority: limitations only.
+        loader_relocation_semantics:
+          installation.platform === "win32"
+            ? readOnlyLoaderRelocationSemantics
+            : loaderRelocationSemantics,
         no_return_repair:
           installation.platform === "win32"
             ? "disabled-windows-p0"
@@ -491,6 +499,7 @@ export const existingGhidraAnalysisProfile = (
     ...sharedAnalysisSemantics,
     selected_project_relationship_coverage: "prior-analysis-unknown-v1",
     annotation_policy: "read-only-existing-project-v1",
+    loader_relocation_semantics: readOnlyLoaderRelocationSemantics,
     existing_project: project,
     original_analysis: { completeness: "unknown", settings: "unknown" },
     no_return_repair: "disabled-existing-project",

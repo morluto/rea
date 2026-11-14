@@ -82,7 +82,7 @@ it.each([false, true])(
       message: expect.stringContaining("SDK export cancellation verification"),
     });
     await expect
-      .poll(() => readdir(root), { timeout: 5000 })
+      .poll(() => readdir(root))
       .toEqual(overwrite ? ["bundle.json"] : []);
     if (overwrite)
       expect(await readFile(path, "utf8")).toBe("original destination");

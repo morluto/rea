@@ -3,8 +3,8 @@ import { parseOpenStep } from "plist";
 
 import {
   decodeOpenStepPropertyList,
-  OpenStepPropertyListError,
   startsOpenStepPropertyList,
+  type OpenStepPropertyListCode,
 } from "./propertyListOpenStep.js";
 
 it.each([
@@ -30,7 +30,7 @@ const syntaxFailure = (read: () => unknown): Error => {
 };
 
 const containerRefusal = (
-  code: OpenStepPropertyListError["code"],
+  code: OpenStepPropertyListCode,
   position: number,
 ) => ({ code, position });
 
@@ -75,7 +75,7 @@ it.each([
     for (const text of [prefix, prefix + "(".repeat(130)]) {
       const pinned = syntaxFailure(() => parseOpenStep(text));
       const owned = syntaxFailure(() => decodeOpenStepPropertyList(text));
-      expect(owned).not.toBeInstanceOf(OpenStepPropertyListError);
+      expect(owned).not.toHaveProperty("_tag", "OpenStepPropertyListError");
       expect(owned.constructor).toBe(pinned.constructor);
       expect(owned.message).toBe(pinned.message);
     }
@@ -156,8 +156,10 @@ it("does not treat nonterminating whitespace or quoted comment text as line ends
   const error = syntaxFailure(() =>
     decodeOpenStepPropertyList("// comment without a line end"),
   );
-  expect(error).toBeInstanceOf(OpenStepPropertyListError);
-  expect(error).toMatchObject({ code: "unexpected_end" });
+  expect(error).toMatchObject({
+    _tag: "OpenStepPropertyListError",
+    code: "unexpected_end",
+  });
 });
 
 it.each([

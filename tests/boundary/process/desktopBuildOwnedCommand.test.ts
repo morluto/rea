@@ -1,15 +1,15 @@
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { runDesktopBuildOwnedCommand } from "../../../src/desktop/DesktopBuildOwnedCommand.js";
 import { prepareProcessOwnershipInspection } from "../../../src/process/ProcessOwnershipObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { waitFor } from "../../support/testWait.js";
 
 it.skipIf(process.platform === "win32")(
   "stops the packing process family before removing its partial archive on timeout",
-  { timeout: 15_000 },
   async () => {
     await prepareProcessOwnershipInspection();
     const directory = await createTestTempDirectory("rea-owned-pack-");
@@ -56,7 +56,6 @@ it.skipIf(process.platform === "win32")(
 
 it.skipIf(process.platform === "win32")(
   "cancels a running setup process family before removing its partial output",
-  { timeout: 15_000 },
   async () => {
     await prepareProcessOwnershipInspection();
     const directory = await createTestTempDirectory("rea-owned-pack-cancel-");
@@ -79,12 +78,9 @@ it.skipIf(process.platform === "win32")(
     });
     void running.catch(() => undefined);
     try {
-      await vi.waitFor(
-        async () => {
-          expect(Number(await readFile(pidFile, "utf8"))).toBeGreaterThan(0);
-        },
-        { timeout: 5000 },
-      );
+      await waitFor(async () => {
+        expect(Number(await readFile(pidFile, "utf8"))).toBeGreaterThan(0);
+      });
       const pid = Number(await readFile(pidFile, "utf8"));
       controller.abort(reason);
       await expect(running).rejects.toMatchObject({

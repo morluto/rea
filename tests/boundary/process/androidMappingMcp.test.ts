@@ -11,7 +11,7 @@ import { androidResultSchemas } from "../../../src/domain/android/androidAnalysi
 import {
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";

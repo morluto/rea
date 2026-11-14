@@ -699,15 +699,15 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(env.GEMINI_CLI_HOME || home, ".gemini", "settings.json"),
     markerPath: ({ home, env }: ClientPathContext) =>
       join(env.GEMINI_CLI_HOME || home, ".gemini"),
-    // Antigravity creates the shared .gemini directory for its own config.
-    // Only Gemini CLI's own settings or runtime state establish applicability.
-    discoveryPaths: ({ home, env }: ClientPathContext) => {
-      const root = join(env.GEMINI_CLI_HOME || home, ".gemini");
+    // Antigravity keeps its configuration under the same .gemini directory,
+    // so the directory alone does not show Gemini CLI. Its own settings,
+    // trusted-folder records and session state do.
+    discoveryPaths: (context: ClientPathContext) => {
+      const root = join(context.env.GEMINI_CLI_HOME || context.home, ".gemini");
       return [
         join(root, "settings.json"),
+        geminiSettings(context).trustedFoldersPath,
         join(root, "tmp"),
-        env.GEMINI_CLI_TRUSTED_FOLDERS_PATH ||
-          join(root, "trustedFolders.json"),
       ];
     },
     skillPath: ({ home, env }: ClientPathContext) =>

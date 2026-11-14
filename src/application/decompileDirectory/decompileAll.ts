@@ -38,6 +38,7 @@ import {
   DecompileExport,
   exportOutputFailure,
   type ExportIdentity,
+  type UnknownBodies,
 } from "./exportTree.js";
 import {
   bodyRecord,
@@ -64,6 +65,13 @@ const DUPLICATE_ADDRESSES =
 export const OUTPUT_IO_STREAK_LIMIT = 5;
 const unaddressedRows = (count: number): string =>
   `${count.toString()} inventory row(s) had no address and were not exported.`;
+/** Summarizes every retained record, including those earlier runs wrote. */
+const unknownBodyRecords = (unknown: UnknownBodies): string =>
+  `${unknown.count.toString()} exported function record(s) report an unavailable body${
+    unknown.sharedReason === undefined
+      ? ` for differing reasons; see each record's body.reason in ${DECOMPILE_DIRECTORY_INDEX_NAME}.`
+      : `: ${unknown.sharedReason}`
+  }`;
 
 interface FailureReason {
   readonly code: string;
@@ -84,7 +92,6 @@ interface PublishState {
   readonly failures: InlineFailure[];
   inlineFailureBytes: number;
   readonly recentFailures: PublishState["failures"];
-  bodyUnavailable: boolean;
   /** Failure code of the function being attempted, if it failed. */
   lastFailureCode: string | undefined;
   /**
@@ -137,7 +144,6 @@ export const decompileAll = async (
     failures: [],
     inlineFailureBytes: 2,
     recentFailures: [],
-    bodyUnavailable: false,
     lastFailureCode: undefined,
     outputIoStreak: 0,
   };
@@ -161,7 +167,7 @@ export const decompileAll = async (
       input.layout,
       loaded.value.identity,
       selection.collapsedDuplicates,
-      state.bodyUnavailable,
+      session.unknownBodies(),
       loaded.value.unaddressed,
     );
     indexed = await session.writeIndex({
@@ -520,7 +526,6 @@ const publishOne = async (input: {
   );
   if (body.kind === "error")
     return { result: err(body.error), bodySupport: input.bodySupport };
-  if (body.kind === "unavailable") input.state.bodyUnavailable = true;
   // Caveats of the observations this attempt used. The journal record keeps
   // the complete list, written or failed, so the bounded Evidence summary and
   // the length-capped file header never hold the only copy.
@@ -1084,7 +1089,7 @@ const exportLimitations = (
   layout: DecompileDirectoryInput["layout"],
   identity: ExportIdentity,
   collapsedDuplicates: boolean,
-  bodyUnavailable: boolean,
+  unknownBodies: UnknownBodies,
   unaddressed: number,
 ): readonly string[] => [
   ...(layout === "dwarf" ? [DWARF_LAYOUT_UNAVAILABLE] : []),
@@ -1092,7 +1097,7 @@ const exportLimitations = (
   ...(identity.analysisProfileDigest === null ? [PROFILE_UNAVAILABLE] : []),
   ...(collapsedDuplicates ? [DUPLICATE_ADDRESSES] : []),
   ...(unaddressed > 0 ? [unaddressedRows(unaddressed)] : []),
-  ...(bodyUnavailable ? [BODY_UNAVAILABLE] : []),
+  ...(unknownBodies.count > 0 ? [unknownBodyRecords(unknownBodies)] : []),
 ];
 
 const layoutStatus = (

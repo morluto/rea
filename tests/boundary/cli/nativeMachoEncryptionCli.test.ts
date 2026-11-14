@@ -37,9 +37,7 @@ describe.skipIf(process.platform !== "darwin")(
         const fat = join(directory, "fat_enc");
         await writeFile(source, "int main(void) { return 0; }\n");
         const run = async (command: string, arguments_: string[]) => {
-          const result = await processes.run(command, arguments_, {
-            timeoutMs: 30_000,
-          });
+          const result = await processes.run(command, arguments_);
           expect(result.exitCode, result.stderr).toBe(0);
           return result.stdout;
         };

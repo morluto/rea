@@ -91,7 +91,7 @@ export class NativeCommandFailure extends Error {
 }
 
 /** Named cleanup ownership carried alongside the ordinary error cause. */
-export interface NativeCommandFailureOptions extends ErrorOptions {
+interface NativeCommandFailureOptions extends ErrorOptions {
   /** Exact opaque reason recorded by the cancellation-owning boundary. */
   readonly cancellation?: { readonly reason: unknown };
   /** Typed owner retained when command process cleanup was incomplete. */
@@ -113,7 +113,7 @@ export interface NativeCommandCleanupFailure {
 }
 
 /** Partial output and lifecycle details retained when a native command fails. */
-export interface NativeCommandFailureCapture {
+interface NativeCommandFailureCapture {
   readonly stdout: string;
   readonly stderr: string;
   readonly stdoutBytes: number;
@@ -147,7 +147,7 @@ export type NativeCommandLauncher = (
 ) => Promise<SpawnedOwnedProviderProcess>;
 
 /** Resolve one native tool's selected invocation and prelaunch file identity. */
-export type NativeToolResolver = (
+type NativeToolResolver = (
   tool: string,
   signal?: AbortSignal,
   launcher?: NativeCommandLauncher,

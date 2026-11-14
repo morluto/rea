@@ -16,7 +16,6 @@ import {
   nameAndSwiftProjection,
   normalizeCfg,
   referencedStringProjection,
-  sorted,
   swiftLiteralCoverage,
   swiftLiteralSitesConflict,
 } from "./functionComparisonNormalization.js";

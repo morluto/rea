@@ -6,7 +6,7 @@ import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { readPyzArchive, MAX_PYZ_TABLE_BYTES } from "./PyzArchive.js";
+import { readPyzArchive } from "./PyzArchive.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PYTHON_39_MAGIC, pyzArchive } from "./CArchive.fixture.js";
 
@@ -82,7 +82,7 @@ it.each(["PYZ\0", "BAD\0"])(
     await writeFile(path, header);
     const handle = await open(path, "r+");
     try {
-      const size = 12 + MAX_PYZ_TABLE_BYTES + 1;
+      const size = 12 + 16 * 1024 * 1024 + 1;
       await handle.truncate(size);
       expect(await readPyzArchive(handle, 0, size)).toMatchObject({
         ok: false,

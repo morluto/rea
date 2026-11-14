@@ -227,7 +227,6 @@ workspaceCliTest.for([
           REA_IDA_MCP_CONFIG: registration,
           REA_LOG_LEVEL: "silent",
         },
-        timeoutMs: 15000,
       });
       expect(result.stderr).toBe("");
       expect(supervisor.database).toBeUndefined();

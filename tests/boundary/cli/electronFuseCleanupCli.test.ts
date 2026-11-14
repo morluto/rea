@@ -44,7 +44,6 @@ cliTest.for([
           REA_FUSE_PROBE_TRACE: tracePath,
           REA_FUSE_PROBE_ALLOW: join(root, "allow"),
         },
-        timeoutMs: 30_000,
       },
     );
     const trace = (await readFile(tracePath, "utf8"))

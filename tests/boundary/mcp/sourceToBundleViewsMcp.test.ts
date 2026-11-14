@@ -5,7 +5,7 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { sourceToBundleComparisonResultSchema } from "../../../src/domain/javascript/sourceToBundleComparisonSchemas.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";

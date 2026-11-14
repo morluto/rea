@@ -185,6 +185,59 @@ describe("CdpBrowserProvider: discovery authorization 1", () => {
   });
 });
 
+describe("CdpBrowserProvider: listing coverage", () => {
+  it.each([
+    { filtered: false, missingSocket: false },
+    { filtered: false, missingSocket: true },
+    { filtered: true, missingSocket: false },
+    { filtered: true, missingSocket: true },
+  ])(
+    "qualifies listing coverage by transport admission (origin filter: $filtered, missing socket: $missingSocket)",
+    async ({ filtered, missingSocket }) => {
+      const browser = await startFakeCdpBrowser({
+        pageScopedVersionWebSocket: true,
+        additionalPageWithWebSocket: true,
+        additionalPageWithoutWebSocket: missingSocket,
+      });
+      trackBrowser(browser);
+      const listed = await new CdpBrowserProvider().listTargets(
+        listBrowserTargetsInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: filtered ? [browser.allowedOrigin] : [],
+        }),
+      );
+      if (!listed.ok) throw listed.error;
+      expect(listed.value.targets.map(({ target_id }) => target_id)).toEqual([
+        "allowed-page",
+        "allowed-page-with-socket",
+      ]);
+      expect(listed.value.excluded).toEqual({
+        disallowed_origin: filtered ? 1 : 0,
+        unsupported_url: 1,
+        non_page: 1,
+      });
+      expect(listed.value.limitations).toContain(
+        filtered
+          ? "Only page targets with a validated CDP transport whose current URL matches an explicitly requested exact origin are listed."
+          : "All page targets with supported HTTP(S) URLs and a validated CDP transport are listed.",
+      );
+      const excluded = (filtered ? 0 : 1) + (missingSocket ? 1 : 0);
+      expect(
+        listed.value.limitations.filter((message) =>
+          message.includes("lacked a validated direct CDP WebSocket"),
+        ),
+      ).toEqual(
+        excluded === 0
+          ? []
+          : [
+              `${String(excluded)} otherwise allowed page target(s) lacked a validated direct CDP WebSocket and were excluded.`,
+            ],
+      );
+      expect(browser.commands).toEqual([]);
+    },
+  );
+});
+
 it("fails with a protocol error after an unidentifiable frame event and detaches", async () => {
   const { browser, result } = await inspectWithNetworkEvents((command) =>
     command.method === "Network.enable"

@@ -2,7 +2,6 @@ import {
   localSourceMapLimitsSchema,
   WEB_SOURCE_MAP_LIMITS,
 } from "./sourceMapLimits.js";
-export { WEB_SOURCE_MAP_LIMITS } from "./sourceMapLimits.js";
 import { z } from "zod";
 import {
   browserDeadlineIncrease,

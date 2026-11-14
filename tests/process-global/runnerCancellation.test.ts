@@ -11,9 +11,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { expect, it, onTestFinished, vi } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { waitFor } from "../support/testWait.js";
 
 const runnerPath = fileURLToPath(
   new URL("../../scripts/run-exclusive.mjs", import.meta.url),
@@ -194,14 +195,12 @@ async function exerciseWindowsGrandchild(
   try {
     await runner.ready;
     await expect(readFile(readyPath, "utf8")).resolves.toBe("ready");
-    await vi.waitFor(async () =>
+    await waitFor(async () =>
       expect(await readFile(leaderExitedPath, "utf8")).toBe("exited"),
     );
     const activityBefore = await readFile(activityPath, "utf8");
     await expect
-      .poll(async () => (await readFile(activityPath, "utf8")).length, {
-        timeout: 5_000,
-      })
+      .poll(async () => (await readFile(activityPath, "utf8")).length)
       .toBeGreaterThan(activityBefore.length);
     const activityDuring = await readFile(activityPath, "utf8");
     const contender = await launch(

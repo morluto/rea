@@ -1,6 +1,8 @@
 import { err, ok, type Result } from "../result.js";
 import {
   classifyFatContainerEvidence,
+  fatSliceOverlapReason,
+  findOverlappingFatSlices,
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
   validateFatSlice,
@@ -14,7 +16,10 @@ interface MachoImageSelectionFailure {
   readonly message: string;
 }
 
-/** Admit a complete in-memory universal image; FAT-shaped JVM data remains unselected. */
+/**
+ * Admit a complete in-memory universal image whose slices do not overlap;
+ * FAT-shaped JVM data remains unselected.
+ */
 export const readUniversalMachoImage = (
   bytes: Uint8Array,
 ): Result<UniversalMachoHeader | null, MachoImageSelectionFailure> => {
@@ -31,7 +36,13 @@ export const readUniversalMachoImage = (
   const identity = classifyFatContainerEvidence(fat, bytes);
   if (identity.state === "malformed")
     return err({ kind: "malformed", message: identity.reason });
-  return ok(identity.state === "mach-o" ? fat : null);
+  if (identity.state !== "mach-o") return ok(null);
+  // Every range is valid here; aliased declarations are a malformed container,
+  // as the artifact reader also rules, not slices to choose between.
+  const overlap = findOverlappingFatSlices(fat.slices);
+  return overlap === null
+    ? ok(fat)
+    : err({ kind: "malformed", message: fatSliceOverlapReason(overlap) });
 };
 
 /** Validate the selected declaration against the complete embedded CPU identity. */

@@ -90,7 +90,6 @@ cliTest(
 
     const fromCli = await cli.run({
       arguments: ["inspect-web-network-capture", path, "har", "--json"],
-      timeoutMs: 120_000,
     });
     expect(fromCli.exitCode).toBe(0);
     const cliSummary = summarize(fromCli.json);

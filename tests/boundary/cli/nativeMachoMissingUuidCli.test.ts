@@ -58,9 +58,7 @@ describe.skipIf(process.platform !== "darwin")(
           ["clang", "-o", control, source],
           ["clang", "-c", source, "-o", object],
         ]) {
-          const compiled = await processes.run("/usr/bin/xcrun", arguments_, {
-            timeoutMs: 30_000,
-          });
+          const compiled = await processes.run("/usr/bin/xcrun", arguments_);
           expect(compiled.exitCode, compiled.stderr).toBe(0);
         }
 

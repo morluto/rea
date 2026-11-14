@@ -12,6 +12,7 @@ import {
 } from "./ProcessCaptureError.js";
 import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
 import { startProcessSampler } from "./ProcessSampling.js";
+import { waitFor } from "../../../tests/support/testWait.js";
 
 vi.mock("./LinuxProcessSampling.js", async (original) => ({
   ...(await original<typeof import("./LinuxProcessSampling.js")>()),
@@ -52,10 +53,6 @@ it.each(["plain", "all-cancel", "mixed-fd", "opaque-peer"] as const)(
       configurable: true,
       value: "linux",
     });
-    let started!: () => void;
-    const ready = new Promise<void>((resolve) => {
-      started = resolve;
-    });
     let original: unknown;
     const physical = new Error("opaque physical sibling rejection");
     const observations = new Map([
@@ -68,7 +65,6 @@ it.each(["plain", "all-cancel", "mixed-fd", "opaque-peer"] as const)(
       .spyOn(systemProcessOwnershipHost, "environment")
       .mockImplementation(async (_pid, signal) => {
         if (signal === undefined) throw new Error("Missing sampling signal");
-        started();
         await new Promise<void>((resolve) => {
           if (signal.aborted) resolve();
           else
@@ -122,19 +118,25 @@ it.each(["plain", "all-cancel", "mixed-fd", "opaque-peer"] as const)(
     });
     onTestFinished(async () => {
       file?.allow();
-      await scope.close();
-      await stop().catch((cause: unknown) => {
-        if (
-          !(cause instanceof ProcessCaptureInspectionFailure) &&
-          !(cause instanceof ProcessCaptureSamplingFailure)
-        )
-          throw cause;
-      });
-      vi.restoreAllMocks();
-      if (platform !== undefined)
-        Object.defineProperty(process, "platform", platform);
+      try {
+        try {
+          await scope.close();
+        } finally {
+          await stop().catch((cause: unknown) => {
+            if (
+              !(cause instanceof ProcessCaptureInspectionFailure) &&
+              !(cause instanceof ProcessCaptureSamplingFailure)
+            )
+              throw cause;
+          });
+        }
+      } finally {
+        vi.restoreAllMocks();
+        if (platform !== undefined)
+          Object.defineProperty(process, "platform", platform);
+      }
     });
-    await ready;
+    await waitFor(() => expect(environment).toHaveBeenCalledOnce());
     const outcome = stop();
     if (kind === "opaque-peer") {
       const failure: unknown = await outcome.catch((cause: unknown) => cause);
@@ -174,6 +176,5 @@ it.each(["plain", "all-cancel", "mixed-fd", "opaque-peer"] as const)(
         throw new Error("Expected batch");
       expect(original.observations).toBe(observations);
     }
-    expect(environment).toHaveBeenCalledOnce();
   },
 );

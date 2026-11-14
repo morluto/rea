@@ -81,9 +81,15 @@ it("downloads with redirects refused and the 30 s timeout by default", async () 
     });
     expect(DEFAULT_STATE_INTAKE.timeoutMs).toBe(30_000);
   } finally {
-    await responses.close();
-    await files.close();
-    fetched.mockRestore();
+    try {
+      await responses.close();
+    } finally {
+      try {
+        await files.close();
+      } finally {
+        fetched.mockRestore();
+      }
+    }
   }
 });
 

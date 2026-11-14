@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-export const WINDOWS_GHIDRA_BYTE_SEARCH_FIXTURE = Object.freeze({
+const WINDOWS_GHIDRA_BYTE_SEARCH_FIXTURE = Object.freeze({
   pattern: "a0 ?? c0",
   mask: "f0 ff f0",
   startFileOffset: 0x380,

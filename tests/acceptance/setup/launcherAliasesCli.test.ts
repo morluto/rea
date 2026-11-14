@@ -161,7 +161,6 @@ cliTest.skipIf(process.platform === "win32").for([
           XDG_CONFIG_HOME: join(home, ".config"),
           PATH: process.env.PATH ?? "",
         },
-        timeoutMs: 30_000,
       });
 
     const setup = await run(registered, [
@@ -296,7 +295,6 @@ cliTest.skipIf(process.platform === "win32")(
           XDG_CONFIG_HOME: join(home, ".config"),
           PATH: process.env.PATH ?? "",
         },
-        timeoutMs: 30_000,
       });
     const uninstall = await run(["uninstall", "--json"]);
     expect(uninstall.exitCode, uninstall.stderr).toBe(0);

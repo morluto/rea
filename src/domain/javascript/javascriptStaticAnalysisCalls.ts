@@ -51,7 +51,7 @@ import {
 import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
-} from "./javascriptSemanticAmbientWrites.js";
+} from "./javascriptSemanticGlobalReference.js";
 import {
   evaluateSemanticExpression,
   evaluateSemanticExpressionProvenance,

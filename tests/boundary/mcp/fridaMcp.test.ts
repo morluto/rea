@@ -10,7 +10,7 @@ import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaP
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { fridaSessionStatusSchema } from "../../../src/domain/fridaSessionStatus.js";
 import { evidenceBundleSummarySchema } from "../../../src/domain/evidenceRecordSummary.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -226,12 +226,11 @@ it("delivers Frida status summaries with complete retained Evidence for both tru
       arguments: { session_id: id, detail: "complete" },
     });
     expect(explicit.structuredContent).toEqual(parent);
-    const summary = await client.callTool({
-      name: tool.name,
-      arguments: { session_id: id, detail: "summary" },
-    });
+    const summary = await client.callTool(
+      { name: tool.name, arguments: { session_id: id, detail: "summary" } },
+      { toolDefinition: tool },
+    );
     expect(summary.isError).not.toBe(true);
-    expect(ajv.validate(outputSchema, summary.structuredContent)).toBe(true);
     const evidence = toolContract("frida_session_status").outputSchema.parse(
       summary.structuredContent,
     );
@@ -426,17 +425,19 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
   const outputSchema: Record<string, unknown> = advertised.outputSchema;
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
-  const response = await client.callTool({
-    name: "list_frida_devices",
-    arguments: {
-      remote: { address: "127.0.0.1:27042", token: "synthetic-secret-token" },
+  const response = await client.callTool(
+    {
+      name: "list_frida_devices",
+      arguments: {
+        remote: { address: "127.0.0.1:27042", token: "synthetic-secret-token" },
+      },
     },
-  });
+    { toolDefinition: advertised },
+  );
   expect(response.isError).not.toBe(true);
   expect(JSON.stringify(response.structuredContent)).not.toContain(
     "synthetic-secret-token",
   );
-  expect(ajv.validate(outputSchema, response.structuredContent)).toBe(true);
   expect(
     toolContract("list_frida_devices").outputSchema.parse(
       response.structuredContent,

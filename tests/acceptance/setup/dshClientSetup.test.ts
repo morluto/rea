@@ -200,7 +200,6 @@ cliTest(
         arguments: [...args, "--json"],
         cwd: home,
         environment,
-        timeoutMs: 20_000,
       });
     const plan = await run(["setup", "--client", "dsh", "--dry-run"]);
     expect(plan.exitCode).toBe(0);

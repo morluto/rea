@@ -28,7 +28,11 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
-import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import {
+  controller,
+  type Answer,
+  type ControlledComputer,
+} from "../../desktop/BuildComputerController.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import {
   endedCapture,
@@ -37,12 +41,10 @@ import {
 } from "./DesktopBuildCaptureFailure.js";
 import {
   adapterError,
-  controller,
   errorText,
   refused,
   runRea,
   WORK,
-  type Answer,
 } from "./DesktopBuildCommands.js";
 import {
   exportBuild,
@@ -234,10 +236,6 @@ type CheckpointTaken = Omit<
   readonly changed_files: string[] | null;
   readonly more_changed_files: number | null;
 };
-
-/** The capture's progress event in a line the controller waited for. */
-const eventOf = (line: string): DesktopCaptureEvent | undefined =>
-  captureProgressEvent(line);
 
 /**
  * One capture in the computer. `unreleased` is a capture that may be
@@ -441,7 +439,8 @@ export class DesktopBuildCapture {
         ),
         answer,
       });
-    const event = answer.line === undefined ? undefined : eventOf(answer.line);
+    const event =
+      answer.line === undefined ? undefined : captureProgressEvent(answer.line);
     if (event?.kind !== "window_open")
       return err({
         failure: await endedCapture(
@@ -501,7 +500,9 @@ export class DesktopBuildCapture {
         { timeoutS: 600, signal },
       );
       const event =
-        answer.line === undefined ? undefined : eventOf(answer.line);
+        answer.line === undefined
+          ? undefined
+          : captureProgressEvent(answer.line);
       if (event?.kind === "checkpoint_refused")
         return err(refused(MARK, event.reason, "Use another checkpoint name."));
       if (event?.kind !== "checkpoint")

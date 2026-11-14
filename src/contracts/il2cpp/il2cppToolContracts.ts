@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { il2cppMetadataSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { il2cppMetadataSummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import {
   il2cppMetadataSchema,
   inspectIl2cppMetadataInputSchema,

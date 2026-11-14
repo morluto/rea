@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { denoElf } from "../../../src/artifacts/deno/DenoStandalone.fixture.js";
-import { artifactInventorySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { artifactInventorySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";

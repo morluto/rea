@@ -7,7 +7,10 @@ import {
 } from "../EvidenceBundleFiles.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
 
-import { retainSavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
+import {
+  retainSavedAnalysisSnapshot,
+  type SavedAnalysisSnapshot,
+} from "../../domain/savedAnalysisSnapshot.js";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
@@ -39,7 +42,6 @@ import type {
   BinarySessionPort,
   BinaryOpenResult,
   OpenSelectionReceipt,
-  SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import {
@@ -54,7 +56,10 @@ import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { recordEvidenceSources } from "../investigation/recordEvidenceSources.js";
 import { recoverProviderSourceFailure } from "../investigation/sourcePublicationRecovery.js";
 import { BinarySessionRecords } from "./BinarySessionRecords.js";
-import { binarySessionStatus } from "./BinarySessionStatus.js";
+import {
+  binarySessionStatus,
+  currentRouteCapability,
+} from "./BinarySessionStatus.js";
 import { SessionRuntimeAvailability } from "./SessionRuntimeAvailability.js";
 import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
@@ -1396,11 +1401,6 @@ export class BinarySession
       : structuredClone(this.#active.target);
   }
 
-  activeBundleResourceRoot(): ResolvedAppBundleResourceRoot | undefined {
-    const root = this.#activeBundleResources?.root;
-    return root === undefined ? undefined : structuredClone(root);
-  }
-
   override exportAnalysisSnapshot() {
     if (this.#activeBundleResources !== undefined)
       return err(new ResourceSnapshotMismatchError("export"));
@@ -1567,6 +1567,8 @@ export class BinarySession
       parameters: arguments_,
       snapshotContext: options?.snapshotContext,
       nativeSourceAdmitted: this.#active?.nativeSourceAdmitted === true,
+      isOperationAvailable: (operation) => this.#currentlyAvailable(operation),
+      isOperationAdvertised: options?.isOperationAdvertised,
       unboundOperationError: (operation, route) =>
         this.#providerRouter.unboundOperationError(operation, route),
       lookupSnapshot: (target, profile, operation, parameters) =>
@@ -1705,6 +1707,20 @@ export class BinarySession
     return execution;
   }
 
+  /** Whether the active route can run an operation now, as status reports it. */
+  #currentlyAvailable(operation: string): boolean {
+    const active = this.#active;
+    const descriptor = active?.route.capabilities.get(operation);
+    return (
+      descriptor !== undefined &&
+      currentRouteCapability(
+        descriptor,
+        active?.target,
+        this.#runtimeAvailability.entries,
+      ).available
+    );
+  }
+
   #clearRuntimeAvailability(): void {
     if (this.#runtimeAvailability.clear()) this.#emitAvailabilityChanged();
   }
@@ -1740,22 +1756,16 @@ export class BinarySession
     this.#transitionPending += 1;
     // Later calls wait for this transition and must not be included in its drain.
     const admittedThrough = this.#transitionGeneration++;
-    const result = this.#transition.then(
-      () => operation(admittedThrough),
-      () => operation(admittedThrough),
-    );
+    const perform = (): Promise<T> => operation(admittedThrough);
+    const result = this.#transition.then(perform, perform);
     this.#transition = result.then(
       () => undefined,
       () => undefined,
     );
-    void result.then(
-      () => {
-        this.#transitionPending -= 1;
-      },
-      () => {
-        this.#transitionPending -= 1;
-      },
-    );
+    const finish = (): void => {
+      this.#transitionPending -= 1;
+    };
+    void result.then(finish, finish);
     return result;
   }
 
@@ -1850,32 +1860,19 @@ export class BinarySession
         );
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      transition.then(
-        () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(
-            signal.aborted
-              ? err(
-                  new AnalysisCancelledError(operation, {
-                    cause: signal.reason,
-                  }),
-                )
-              : ok(undefined),
-          );
-        },
-        () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(
-            signal.aborted
-              ? err(
-                  new AnalysisCancelledError(operation, {
-                    cause: signal.reason,
-                  }),
-                )
-              : ok(undefined),
-          );
-        },
-      );
+      const finish = (): void => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(
+          signal.aborted
+            ? err(
+                new AnalysisCancelledError(operation, {
+                  cause: signal.reason,
+                }),
+              )
+            : ok(undefined),
+        );
+      };
+      transition.then(finish, finish);
     });
   }
 }

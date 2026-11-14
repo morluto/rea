@@ -21,10 +21,8 @@ import {
   semanticDefiniteEffectPrecedesReference,
   semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
-import {
-  semanticIterationSources,
-  type SemanticIterationSource,
-} from "./javascriptSemanticIterationSources.js";
+import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
+import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
 import {
   joinSemanticPropertyPaths,
   semanticPropertyPathKeyMatches,
@@ -34,8 +32,6 @@ import {
   GLOBAL_OBJECT_NAMES,
   globalObjectName,
   globalReferenceNamespace,
-  isUnmodifiedGlobalReference,
-  isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticGlobalReference.js";
 import { readSemanticRequireLoader } from "./javascriptSemanticRequireOriginSlot.js";
 import {
@@ -43,11 +39,6 @@ import {
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
-
-export {
-  isUnmodifiedGlobalReference,
-  isUnmodifiedImportMetaUrl,
-} from "./javascriptSemanticGlobalReference.js";
 
 /** Global self references retain object identity, rather than adding a property. */
 const canonicalAmbientPath = (
@@ -963,22 +954,15 @@ const createGlobalPathRead = (
       };
       byNamespace.set(namespace, effects);
     }
-    // The call that escapes a receiver contains the callee being identified.
-    // That escape cannot have replaced the callee before the call selects it.
-    const escapePrecedesRead = effects.escapes.some((effect) => {
-      const escape = effect.node;
+    const escapePrecedesRead = effects.escapes.some(({ node }) => {
+      // Selecting this callee precedes exposing its own receiver. Other reads,
+      // including arguments, need activation-aware ordering across repetitions.
       if (
-        escape !== undefined &&
-        escape !== site &&
-        typeof escape.start === "number" &&
-        typeof escape.end === "number" &&
-        typeof site.start === "number" &&
-        typeof site.end === "number" &&
-        site.start >= escape.start &&
-        site.end <= escape.end
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        node.callee === site
       )
         return false;
-      return semanticEffectTiming(site, escape, state) !== "after";
+      return semanticEffectTiming(site, node, state) !== "after";
     });
     if (
       (escapesCovered && effects.escapes.length === 0) ||

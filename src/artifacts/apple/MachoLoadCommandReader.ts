@@ -19,16 +19,14 @@ import type {
   MachoImageFacts,
   MachoSlice,
 } from "../../domain/apple/dylibResolution.js";
-import {
-  machoArchitectureName,
-  machoCpuSubtypeBase,
-} from "../../domain/apple/machoCpuIdentity.js";
+import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
 import {
   legacyMachoPlatform,
   type MachoVersionMinPlatform,
 } from "../../domain/apple/machoPlatform.js";
 import {
   classifyFatContainerIdentity,
+  fatSliceOverlapReason,
   findOverlappingFatSlices,
   hasMachoMagic,
   readFatContainerHeader,
@@ -52,13 +50,13 @@ export const MAX_LOAD_COMMAND_BYTES = 16 * 1024 * 1024;
  * byte cap alone would retain about a million dependency results. Stop before
  * those results are kept or traced.
  */
-export const MAX_LAZY_INFO_DEPENDENCIES = 1024;
+const MAX_LAZY_INFO_DEPENDENCIES = 1024;
 /**
  * Symbol names are validated and then discarded. Distinct one-byte strings
  * stay under the 16 MiB byte budgets while retaining one cache entry per
  * offset, so stop before that map and those decodes grow.
  */
-export const MAX_LAZY_INFO_SYMBOL_REFERENCES = 64 * 1024;
+const MAX_LAZY_INFO_SYMBOL_REFERENCES = 64 * 1024;
 
 const LC_SEGMENT = 0x1;
 const LC_SEGMENT_64 = 0x19;
@@ -220,7 +218,7 @@ export const readMachoContainer = async (
       return {
         kind: "issue",
         status: "malformed",
-        reason: overlapReason(overlap),
+        reason: fatSliceOverlapReason(overlap),
       };
     // Identity is only malformed through a slice range issue, which the
     // returned rangeIssues retain.
@@ -299,11 +297,6 @@ const rangeValidSlices = (
 ): FatSliceDeclaration[] =>
   header.slices.filter((_, index) => header.rangeIssues[index] === null);
 
-const overlapReason = (
-  overlap: NonNullable<ReturnType<typeof findOverlappingFatSlices>>,
-): string =>
-  `Mach-O slices ${overlap[0].index} and ${overlap[1].index} overlap.`;
-
 /**
  * Apple lipo stores one hidden ARM64 row after the declared 32-bit FAT table.
  * It is only admitted from the single table-to-first-slice slot cctools
@@ -340,7 +333,7 @@ const readAppleHiddenArm64Row = async (
     rangeIssue:
       overlap === null
         ? validateFatSlice(declaration, fileSize, end)
-        : overlapReason(overlap),
+        : fatSliceOverlapReason(overlap),
   };
 };
 

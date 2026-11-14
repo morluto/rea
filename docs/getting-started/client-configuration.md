@@ -536,11 +536,11 @@ that were not already present.
 
 Gemini CLI uses `$GEMINI_CLI_HOME/.gemini/settings.json` when that home override
 is nonempty, including its shared personal skills at
-`$GEMINI_CLI_HOME/.agents/skills`. Automatic detection uses Gemini settings,
-runtime state or trusted-folder records; the shared `.gemini` directory alone
-does not identify Gemini CLI, because Antigravity also creates it. Explicit
-`--client gemini_cli` remains available before these markers exist. Setup and
-doctor check MCP allow/exclude
+`$GEMINI_CLI_HOME/.agents/skills`. Automatic detection uses Gemini CLI's own
+settings, trusted-folder records or `.gemini/tmp` session state; the `.gemini`
+directory alone does not identify it, because Antigravity keeps its
+configuration there too. Select `--client gemini_cli` explicitly before those
+files exist. Setup and doctor check MCP allow/exclude
 policies from system defaults, user settings, trusted workspace settings, and
 system overrides. Workspace trust follows `GEMINI_CLI_TRUST_WORKSPACE`,
 `GEMINI_RESTRICTED_MODE`, the effective `security.folderTrust.enabled` setting,

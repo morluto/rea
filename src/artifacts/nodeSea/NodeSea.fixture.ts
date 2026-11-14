@@ -81,9 +81,7 @@ export const buildNodeSeaBlob = (
   return Buffer.concat(parts);
 };
 
-export const nodeSeaFuseBytes = (
-  state: NodeSeaFuseFixture = "absent",
-): Buffer => {
+const nodeSeaFuseBytes = (state: NodeSeaFuseFixture = "absent"): Buffer => {
   if (state === "absent") return Buffer.alloc(0);
   const sentinel = (digit: string, hash = NODE_SEA_FUSE_HASH): Buffer =>
     Buffer.from(`\0NODE_SEA_FUSE_${hash}:${digit}\0`, "latin1");

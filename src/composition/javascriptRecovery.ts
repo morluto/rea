@@ -1,11 +1,6 @@
 import type { JavaScriptRecoveryPort } from "../application/javascript/JavaScriptRecoveryPort.js";
 import { WakaruProvider } from "../javascript/recovery/WakaruProvider.js";
-import {
-  wakaruHostSupported,
-  type WakaruLauncher,
-} from "../javascript/recovery/WakaruCommand.js";
-
-export { wakaruHostSupported };
+import type { WakaruLauncher } from "../javascript/recovery/WakaruCommand.js";
 
 /** Construct optional recovery without acquiring tools, processes or workspaces. */
 export const createJavaScriptRecoveryProvider = (

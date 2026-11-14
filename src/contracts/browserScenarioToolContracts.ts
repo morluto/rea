@@ -4,7 +4,7 @@ import {
   analysisDetailOutputSchemaOf,
   analysisDetailSchema,
 } from "./analysisDetail.js";
-import { browserScenarioSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
+import { browserScenarioSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
 import { browserScenarioInputSchema } from "../domain/browserScenario.js";
 import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.js";
 import type { JsonValue } from "../domain/jsonValue.js";

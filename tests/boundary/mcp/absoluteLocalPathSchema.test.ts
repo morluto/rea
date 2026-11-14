@@ -353,3 +353,75 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
     await close();
   }
 });
+
+// advertisedPatternsVMode.test.ts proves no schema profile advertises the
+// surrogate escape; this case proves the handlers still refuse such paths.
+it("rejects unpaired surrogates through in-memory MCP handlers", async () => {
+  const firmwareCalls: string[] = [];
+  const { client, close } = await createMcp(firmwareCalls);
+  try {
+    const absolute = resolve("rea-absolute-input");
+    const cases = inputCases(absolute, `${absolute}\ud800`);
+    const checked: string[] = [];
+    for (const { name, field, invalid, issuePath } of cases) {
+      const result = await client.callTool({ name, arguments: invalid });
+      expect(result.isError, `${name}.${field}`).toBe(true);
+      expect(parseMcpToolError(result).error, `${name}.${field}`).toMatchObject(
+        {
+          code: "invalid_request",
+          details: {
+            operation: name,
+            issues: [
+              {
+                path: issuePath,
+                reason: "invalid_format",
+                expected: "regex",
+                message:
+                  "Local filesystem paths must contain well-formed Unicode",
+              },
+            ],
+          },
+        },
+      );
+      checked.push(`${name}.${field}`);
+    }
+    expect(checked).toEqual(
+      expect.arrayContaining([
+        "open_binary.path",
+        "open_binary.snapshot_path",
+        "extract_firmware.path",
+        "extract_firmware.output_directory",
+        "inspect_analysis_view.source.path",
+        "capture_browser_scenario.browser.executable_path",
+        "capture_electron_scenario.application_root",
+      ]),
+    );
+
+    // Disassembly symbols share the rule and its correction shape.
+    const symbol = await client.callTool({
+      name: "inspect_with_objdump",
+      arguments: {
+        path: absolute,
+        operation: "disassemble",
+        symbol: "main\ud800",
+      },
+    });
+    expect(symbol.isError).toBe(true);
+    expect(parseMcpToolError(symbol).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["symbol"],
+            reason: "invalid_format",
+            expected: "regex",
+            message: "Symbol must be well-formed Unicode.",
+          },
+        ],
+      },
+    });
+    expect(firmwareCalls).toEqual([]);
+  } finally {
+    await close();
+  }
+});

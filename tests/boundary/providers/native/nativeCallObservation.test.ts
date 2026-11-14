@@ -13,7 +13,6 @@ import type { AnalysisError } from "../../../../src/domain/analysisErrorBase.js"
 import { EvidenceIntegrityError } from "../../../../src/domain/evidenceErrors.js";
 import { nativeCallPartialObservationSchema } from "../../../../src/domain/native/nativeCallPartialObservation.js";
 import { nativeCallObservationResultSchema } from "../../../../src/domain/native/nativeCallObservation.js";
-import { NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION } from "../../../../src/native/NativeCallObservation.js";
 import { err, ok, type Result } from "../../../../src/domain/result.js";
 import type {
   NativeCallTrace,
@@ -295,8 +294,12 @@ describe("observe_native_calls projection: keeps locations within the metadata b
     const result = nativeCallObservationResultSchema.parse(
       observed.value.result,
     );
-    expect(result.limitations).toContain(
-      NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION,
+    expect(result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /breakpoint location list is incomplete.*location_count.*full matching count/iu,
+        ),
+      ]),
     );
   });
 });
@@ -352,8 +355,12 @@ describe("observe_native_calls projection: bounded breakpoint metadata", () => {
         "capture_limits.breakpoint_location_bytes (1024 bytes)",
       ),
     );
-    expect(result.limitations).not.toContain(
-      NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION,
+    expect(result.limitations).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /breakpoint location list is incomplete.*location_count.*full matching count/iu,
+        ),
+      ]),
     );
     expect(result.limitations.join(" ")).not.toContain("process was killed");
   });
