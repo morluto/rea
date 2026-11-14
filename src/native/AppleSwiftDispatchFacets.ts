@@ -187,6 +187,16 @@ export interface SwiftDispatchReaders {
 
 const hex = (value: bigint) => `0x${value.toString(16)}`;
 const decoded = { status: "decoded" as const, reason: null };
+
+/**
+ * Conformance flags admitted for static witness table decoding:
+ * - Type-reference kind: bits 3..5 (0x38)
+ * - Retroactive conformance: bit 6 (0x40)
+ *
+ * Conditional requirements (bits 8..15), generic witness tables (bit 17),
+ * and resilient witness flags (bit 16) remain unadmitted.
+ */
+const SWIFT_STATIC_WITNESS_FLAGS_MASK = 0x78;
 /** Create a Swift ABI signed-relative pointer decoder that records relative_pointers. */
 export const createSwiftRelativeReader = (input: {
   bytes: Buffer;
@@ -392,7 +402,7 @@ export const decodeSwiftDispatchFacets = (input: {
           protocol !== null &&
           protocolFacts.readable &&
           typeReference.staticWitnessIdentity &&
-          (flags & ~0x38) === 0;
+          (flags & ~SWIFT_STATIC_WITNESS_FLAGS_MASK) === 0;
         staticWitness &&=
           typeReference.kind === 2 || typeReference.generic === false;
         let witnessReason: string | null = staticWitness

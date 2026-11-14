@@ -48,7 +48,8 @@ import {
   NATIVE_AOT_MAX_REPORT_BYTES,
   NATIVE_AOT_MAX_SOURCE_BYTES,
   NATIVE_AOT_MAX_WORKING_MEMORY_BYTES,
-  NATIVE_AOT_MAX_WORK_UNITS,
+  NATIVE_AOT_BASE_WORK_UNITS,
+  NATIVE_AOT_WORK_UNITS_PER_SOURCE_BYTE,
   NATIVE_AOT_PROFILE_CONTRACT_REVISION,
 } from "../domain/native/nativeAotPe.js";
 
@@ -301,7 +302,9 @@ export const resolveGhidraAnalysisProfile = async (
               native_aot_metadata: {
                 contract_revision: NATIVE_AOT_PROFILE_CONTRACT_REVISION,
                 source_bytes: NATIVE_AOT_MAX_SOURCE_BYTES,
-                work_units: NATIVE_AOT_MAX_WORK_UNITS,
+                base_work_units: NATIVE_AOT_BASE_WORK_UNITS,
+                work_units_per_source_byte:
+                  NATIVE_AOT_WORK_UNITS_PER_SOURCE_BYTE,
                 working_memory_bytes: NATIVE_AOT_MAX_WORKING_MEMORY_BYTES,
                 report_bytes: NATIVE_AOT_MAX_REPORT_BYTES,
               },
