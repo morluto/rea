@@ -191,6 +191,8 @@ Load commands are parsed in TypeScript from Mach-O and FAT headers, including
 the `dylib_use_command` encoding newer linkers emit for flags such as delayed
 initialization, and `LC_LAZY_LOAD_DYLIB_INFO` (`0x3a`). That command stores its
 install name in a linkedit payload rather than in the load command itself.
+`LC_BUILD_VERSION` must contain exactly its declared number of tool records.
+A command whose size disagrees with that count leaves the image unparsed.
 Its flag and chain-start image offsets must lie in the slice VM range, which
 is dyld's one-page floor extended by every segment except `__LINKEDIT`,
 measured from the `__TEXT` vmaddr. Payload strings must start after the 24-byte
