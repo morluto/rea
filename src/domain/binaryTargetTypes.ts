@@ -303,6 +303,7 @@ export type BinaryTarget =
           | "uf2"
           | "dfuse"
           | "fit"
+          | "windows-prefetch"
           | "ntfs-mft";
       })
   | (BinaryTargetIdentity &

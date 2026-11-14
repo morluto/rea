@@ -135,6 +135,7 @@ const TARGETS: TargetFixtures = {
     espFlash: { selected: true, flashOffset: null, partitionTableOffset: null },
   },
   fit: { ...archive, format: "fit" },
+  "windows-prefetch": { ...archive, format: "windows-prefetch" },
   "ntfs-mft": { ...archive, format: "ntfs-mft" },
   plist: { ...artifact, format: "plist" },
   javascript: { ...artifact, format: "javascript" },

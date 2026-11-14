@@ -160,6 +160,7 @@ the exact commit messages and references from the release they describe.
 - [Testing lanes and provider verification](testing-lanes.md)
 - [UF2 and DfuSe images](uf2-dfuse.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
+- [Windows Prefetch files](windows-prefetch.md)
 - [Binary hardening](binary-hardening.md)
 - [Desktop application capture](desktop-application-capture.md)
 - [Desktop application export](desktop-application-export.md)

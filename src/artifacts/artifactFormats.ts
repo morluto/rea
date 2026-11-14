@@ -29,6 +29,7 @@ import {
 } from "./EspFlashImageArtifactReader.js";
 import { EspImageArtifactReader } from "./EspImageArtifactReader.js";
 import { FitArtifactReader } from "./FitArtifactReader.js";
+import { WindowsPrefetchArtifactReader } from "./WindowsPrefetchArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader, INES_LIMITATION } from "./InesArtifactReader.js";
@@ -465,6 +466,15 @@ const NON_ZIP_FORMATS = {
       "FIT inventory reports each /images node's stored bytes and its declared type, architecture, OS, compression, load and entry. Image data is not decompressed or decrypted, signatures are not verified, nothing is executed, and load and entry addresses are declarations.",
     createReader: (path, options) =>
       new FitArtifactReader(path, sourceOf(options)),
+  }),
+  "windows-prefetch": container("windows-prefetch", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Windows Prefetch inventory reports the recorded executable name, its name hash, the declared file size beside the observed size, the recorded run count and whether a last-run timestamp is present. The timestamp value, the volume list and the read-ahead file list are not decoded; MAM-compressed containers are identified without being decoded, and nothing is executed or read from a live endpoint.",
+    createReader: (path, options) =>
+      new WindowsPrefetchArtifactReader(path, sourceOf(options)),
   }),
   "ntfs-mft": described("ntfs-mft", {
     ...plain,
