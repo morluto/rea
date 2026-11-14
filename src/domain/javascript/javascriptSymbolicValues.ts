@@ -32,6 +32,15 @@ export interface SymbolicMetadata {
   readonly conditionUnresolved?: true;
 }
 
+export interface SymbolicMemberWrites {
+  /**
+   * Members the binding this value was read through visibly writes. Writes
+   * are not ordered against reads, so these members are enumerable but their
+   * values stay unresolved.
+   */
+  readonly overwrittenMembers?: ReadonlySet<string>;
+}
+
 export interface SymbolicFunction extends SymbolicMetadata {
   readonly kind: "function";
   readonly node: t.Function;
@@ -42,7 +51,12 @@ export interface SymbolicFunction extends SymbolicMetadata {
 }
 
 export type SymbolicValue = (
-  | { readonly kind: "unknown"; readonly reason: string }
+  | {
+      readonly kind: "unknown";
+      readonly reason: string;
+      /** Stands for an unknown number of further elements, as a spread may. */
+      readonly unknownCount?: true;
+    }
   | {
       readonly kind: "literal";
       readonly value: string | number | boolean | null | undefined;
@@ -82,12 +96,22 @@ export type SymbolicValue = (
     }
   | SymbolicFunction
 ) &
-  SymbolicMetadata;
+  SymbolicMetadata &
+  SymbolicMemberWrites;
 
 export const symbolicUnknown = (reason: string): SymbolicValue => ({
   kind: "unknown",
   reason,
 });
+/** The unknown rest of an argument list or array, such as an unknown spread. */
+export const symbolicUnknownCount = (reason: string): SymbolicValue => ({
+  kind: "unknown",
+  reason,
+  unknownCount: true,
+});
+export const symbolicHasUnknownCount = (
+  value: SymbolicValue | undefined,
+): boolean => value?.kind === "unknown" && value.unknownCount === true;
 export const symbolicVariants = (
   value: SymbolicValue,
 ): readonly SymbolicValue[] =>

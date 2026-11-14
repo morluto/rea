@@ -37,8 +37,10 @@ import {
 } from "./javascriptSemanticState.js";
 import {
   symbolicCondition,
+  symbolicHasUnknownCount,
   symbolicUnion,
   symbolicUnknown,
+  symbolicUnknownCount,
   symbolicVariants,
   symbolicTruth,
   type SymbolicCondition,
@@ -83,9 +85,44 @@ const containsOwnedReturn = (root: t.Node): boolean => {
   return found;
 };
 
+/**
+ * Elements a read of a rest parameter's array observes after its writes.
+ * Writes are not ordered against reads, so a written index is unknown. A
+ * written length or an index past the known elements leaves the count
+ * unknown from that point, which one unknown-count element stands for.
+ */
+const writtenArrayElements = (
+  elements: readonly SymbolicValue[],
+  members: ReadonlySet<string>,
+): readonly SymbolicValue[] => {
+  if (members.has("length"))
+    return [symbolicUnknownCount("overwritten array length")];
+  const open = symbolicHasUnknownCount(elements.at(-1));
+  const known = open ? elements.length - 1 : elements.length;
+  const written = [...elements];
+  let grows = false;
+  for (const member of members) {
+    const index = semanticArrayIndex(member);
+    if (index === null) continue;
+    if (index < known)
+      written[index] = symbolicUnknown("overwritten object members");
+    else grows = true;
+  }
+  if (grows && !open)
+    written.push(symbolicUnknownCount("overwritten array length"));
+  return written;
+};
+
 /** Demand-driven substitutions for local bindings, closures and literal module tables. */
 export class JavaScriptSymbolicBindings {
   readonly #writes = new Map<string, PropertyWrite[]>();
+  /** Each binding's written top-level members; null when a write replaces it. */
+  readonly #writtenMembers = new Map<string, ReadonlySet<string> | null>();
+  /** Each bound value as read through a binding that writes its members. */
+  readonly #writtenViews = new WeakMap<
+    SymbolicValue,
+    Map<string, SymbolicValue>
+  >();
   readonly #environments = new WeakMap<t.Node, SymbolicEnvironment>();
   readonly #cache = new WeakMap<
     SymbolicEnvironment,
@@ -366,6 +403,8 @@ export class JavaScriptSymbolicBindings {
     key: string,
     read?: SymbolicPropertyRead,
   ): SymbolicValue {
+    if (value.overwrittenMembers?.has(key))
+      return symbolicUnknown("overwritten object members");
     if (value.kind === "external") {
       const path = [...value.path, key];
       if (
@@ -505,6 +544,17 @@ export class JavaScriptSymbolicBindings {
     value: SymbolicValue,
     active = new Set<SymbolicValue>(),
   ): readonly string[] {
+    const members = this.#representedMembers(value, active);
+    // A written member is enumerable even when the bound value lacked it.
+    return value.overwrittenMembers === undefined
+      ? members
+      : [...new Set([...members, ...value.overwrittenMembers])];
+  }
+
+  #representedMembers(
+    value: SymbolicValue,
+    active: Set<SymbolicValue>,
+  ): readonly string[] {
     if (active.has(value)) return [];
     if (!this.#admitEvaluation()) return [];
     active.add(value);
@@ -616,6 +666,14 @@ export class JavaScriptSymbolicBindings {
     caller?: SymbolicEnvironment,
   ): SymbolicEnvironment {
     const values = new Map<string, SymbolicValue>();
+    // Arguments ending in an unknown count leave every later rest unknown.
+    const last = args.at(-1);
+    const restOf = (index: number): readonly SymbolicValue[] =>
+      index >= args.length &&
+      last !== undefined &&
+      symbolicHasUnknownCount(last)
+        ? [last]
+        : args.slice(index);
     runtimeFunctionParameters(fn.node).forEach((param, index) => {
       const target = t.isRestElement(param) ? param.argument : param;
       if (!t.isIdentifier(target)) return;
@@ -628,7 +686,7 @@ export class JavaScriptSymbolicBindings {
         values.set(
           binding.bindingId,
           t.isRestElement(param)
-            ? { kind: "array", values: args.slice(index) }
+            ? { kind: "array", values: restOf(index) }
             : (args[index] ?? symbolicUnknown("runtime parameter")),
         );
     });
@@ -650,13 +708,22 @@ export class JavaScriptSymbolicBindings {
     node: t.CallExpression | t.OptionalCallExpression,
     env: SymbolicEnvironment,
   ): readonly SymbolicValue[] {
-    return node.arguments.flatMap((a) => {
-      if (!t.isSpreadElement(a)) return [this.evaluate(a, env)];
+    const values: SymbolicValue[] = [];
+    for (const a of node.arguments) {
+      if (!t.isSpreadElement(a)) {
+        values.push(this.evaluate(a, env));
+        continue;
+      }
       const value = this.evaluate(a.argument, env);
-      return value.kind === "array"
-        ? value.values
-        : [symbolicUnknown("dynamic spread arguments")];
-    });
+      const spread =
+        value.kind === "array"
+          ? value.values
+          : [symbolicUnknownCount("dynamic spread arguments")];
+      for (const element of spread) values.push(element);
+      // Arguments after a spread of unknown length have unknown positions.
+      if (symbolicHasUnknownCount(spread.at(-1))) break;
+    }
+    return values;
   }
 
   #evaluate(node: t.Node, env: SymbolicEnvironment): SymbolicValue {
@@ -815,7 +882,10 @@ export class JavaScriptSymbolicBindings {
       return symbolicUnknown("dynamic member writes");
     for (let e: SymbolicEnvironment | undefined = env; e; e = e.parent) {
       const value = e.values.get(binding.bindingId);
-      if (value) return value;
+      if (value)
+        return electronOrigin === undefined
+          ? this.#withMemberWrites(value, binding.bindingId)
+          : value;
     }
     if (electronOrigin === undefined && this.#writes.has(binding.bindingId))
       return symbolicUnknown("overwritten object members");
@@ -847,6 +917,74 @@ export class JavaScriptSymbolicBindings {
       });
     }
     return value;
+  }
+
+  /**
+   * A bound value, such as a parameter's argument, read through a binding
+   * that visibly writes some of its members. Only those members lose the
+   * bound value, and the result carries them through aliases and calls.
+   * Every read of one bound value through the binding shares one view.
+   */
+  #withMemberWrites(value: SymbolicValue, bindingId: string): SymbolicValue {
+    const members = this.#writtenMembersOf(bindingId);
+    if (members === undefined) return value;
+    if (members === null) return symbolicUnknown("overwritten object members");
+    const views =
+      this.#writtenViews.get(value) ?? new Map<string, SymbolicValue>();
+    const cached = views.get(bindingId);
+    if (cached !== undefined) return cached;
+    const variants = symbolicVariants(value);
+    // Charge each copy, merged member set and rewritten element list before
+    // allocating it.
+    const cost = variants.reduce(
+      (sum, variant) =>
+        sum +
+        1 +
+        (variant.overwrittenMembers === undefined
+          ? 0
+          : variant.overwrittenMembers.size + members.size) +
+        (variant.kind === "array" ? variant.values.length + members.size : 0),
+      0,
+    );
+    if (cost > this.#remainingEvaluations) {
+      this.#remainingEvaluations = 0;
+      this.truncated = true;
+      return symbolicUnknown("symbolic resource limit");
+    }
+    this.#remainingEvaluations -= cost;
+    const view = symbolicUnion(
+      variants.map((variant) => {
+        if (variant.kind === "unknown") return variant;
+        const overwrittenMembers =
+          variant.overwrittenMembers === undefined
+            ? members
+            : new Set([...variant.overwrittenMembers, ...members]);
+        // A spread or index read of a rest parameter observes its writes too.
+        return variant.kind === "array"
+          ? {
+              ...variant,
+              overwrittenMembers,
+              values: writtenArrayElements(variant.values, members),
+            }
+          : { ...variant, overwrittenMembers };
+      }),
+    );
+    views.set(bindingId, view);
+    this.#writtenViews.set(value, views);
+    return view;
+  }
+
+  /** A binding's written top-level members, collected once from its writes. */
+  #writtenMembersOf(bindingId: string): ReadonlySet<string> | null | undefined {
+    const cached = this.#writtenMembers.get(bindingId);
+    if (cached !== undefined) return cached;
+    const writes = this.#writes.get(bindingId);
+    if (writes === undefined) return undefined;
+    const members = writes.some((write) => write.path.length === 0)
+      ? null
+      : new Set(writes.map((write) => write.path[0]!));
+    this.#writtenMembers.set(bindingId, members);
+    return members;
   }
 
   #readBoundary(
