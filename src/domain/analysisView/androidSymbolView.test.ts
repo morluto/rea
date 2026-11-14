@@ -24,7 +24,7 @@ const projectAndroidSymbolSummary = (
 type Operation = "inspect_android_class" | "inspect_android_method";
 const engine = {
   name: "jadx",
-  version: "0.7.1",
+  version: "9.9.9",
   artifact_sha256: "e".repeat(64),
   source_revision: null,
   worker_count: 1,
@@ -141,7 +141,7 @@ const methodReport = () => ({
 const fixture = (operation: Operation, report: unknown, rawMetadata = "") => {
   const evidence = createEvidence(
     { path: "/retained/selected.apk", sha256: "a".repeat(64), format: "apk" },
-    { id: "jadx", name: "JADX", version: "0.7.1" },
+    { id: "jadx", name: "JADX", version: "9.9.9" },
     {
       operation,
       parameters: {
