@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { writeFileSync } from "node:fs";
+import { statSync, utimesSync, writeFileSync } from "node:fs";
 import { buffer } from "node:stream/consumers";
 import { createReader } from "./inventory/reader.js";
 import {
@@ -1136,7 +1136,13 @@ it.each(["valid replacement", "malformed blob"] as const)(
     await expect(
       scanCanonicalArtifactInventory(path, {}, (...args) => {
         expect(args[1]).toBe("node-sea");
+        const before = statSync(args[0]);
         writeFileSync(args[0], replacement);
+        // The replacement keeps the carrier size, and filesystems with coarse
+        // timestamps can leave mtime unchanged within one tick. Move mtime 10 s
+        // forward (more than a 2 s FAT tick) so the mutation is observable
+        // independently of timestamp granularity.
+        utimesSync(args[0], before.atime, new Date(before.mtimeMs + 10_000));
         const reader = createReader(...args);
         if (reader instanceof NodeSeaArtifactReader) created = reader;
         return reader;

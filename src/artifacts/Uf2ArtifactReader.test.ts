@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -156,7 +156,13 @@ it("rejects a forged region entry and a changed carrier", async () => {
     await expect(
       reader.open({ ...entry, adapterKey: "uf2:1" }),
     ).rejects.toMatchObject({ reason: "integrity" });
+    const before = await stat(path);
     await writeFile(path, uf2File(uf2Image(RP2040_FAMILY, 0, APP)));
+    // The replacement keeps the carrier size, and filesystems with coarse
+    // timestamps can leave mtime unchanged within one tick. Move mtime 10 s
+    // forward (more than a 2 s FAT tick) so the mutation is observable
+    // independently of timestamp granularity.
+    await utimes(path, before.atime, new Date(before.mtimeMs + 10_000));
     await expect(reader.open(entry)).rejects.toMatchObject({
       reason: "integrity",
     });
