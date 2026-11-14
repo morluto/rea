@@ -49,6 +49,25 @@ describe("flattened devicetree", () => {
     },
   );
   it.each([
+    { version: 16, field: "node name", paddingOffset: 5 },
+    { version: 17, field: "node name", paddingOffset: 5 },
+    { version: 16, field: "property value", paddingOffset: 22 },
+    { version: 17, field: "property value", paddingOffset: 22 },
+  ])(
+    "rejects nonzero $field padding in v$version",
+    ({ version, paddingOffset }) => {
+      const bytes = devicetreeFixture(
+        { name: "", properties: { model: Buffer.from([0x78, 0]) } },
+        version,
+      );
+      expect(parse(bytes).summary.model).toBe("x");
+      bytes[bytes.readUInt32BE(8) + paddingOffset] = 0xff;
+      expect(() => parse(bytes)).toThrow(
+        expect.objectContaining({ kind: "malformed" }),
+      );
+    },
+  );
+  it.each([
     ["truncated header", (b: Buffer) => b.subarray(0, 32)],
     [
       "overlapping blocks",

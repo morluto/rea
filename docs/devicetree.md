@@ -4,7 +4,10 @@
 engine, target execution or external tools. It supports FDT versions 16 and 17;
 other versions return `unsupported_target`. Corrupt recognized blobs return
 `invalid_request`, and exhausted budgets return `resource_constraint` without
-partial success.
+partial success. Structure alignment padding after node names and property
+values must contain only zero bytes, as specified by [DTSpec §5.4.1].
+
+[DTSpec §5.4.1]: https://devicetree-specification.readthedocs.io/en/stable/flattened-format.html#lexical-structure
 
 ```bash
 rea inspect-devicetree /artifacts/board.dtb --json
