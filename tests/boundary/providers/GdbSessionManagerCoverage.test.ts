@@ -2219,7 +2219,8 @@ it.each([
           return Reflect.apply(originalWrite, stdin, arguments_);
         if (failure === "callback") {
           const callback = arguments_[2] as
-            ((error?: Error | null) => void) | undefined;
+            | ((error?: Error | null) => void)
+            | undefined;
           queueMicrotask(() =>
             callback?.(new Error("simulated callback error")),
           );
