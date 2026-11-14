@@ -341,7 +341,7 @@
     "src/domain/gamecubeDol.ts": 6,
     "src/domain/godotPckFormat.ts": 5,
     "src/domain/il2cpp/il2cppMetadataHeaderPrefix.ts": 3,
-    "src/domain/inesContainer.ts": 5,
+    "src/domain/inesContainer.ts": 1,
     "src/domain/managed/managedCliHeaderPrefix.ts": 5,
     "src/domain/native/elfNoteLayout.ts": 3,
     "src/domain/native/nativeAotPe.ts": 37,

@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { err, ok, type Result } from "./result.js";
 
+/** The one reader of header bytes; callers index inside the admitted prefix. */
+const headerByte = (prefix: Buffer, index: number): number =>
+  prefix.readUInt8(index);
+
 /** Byte signatures select a container family, never an executable architecture. */
 export const nesContainerFormat = (
   prefix: Buffer,
@@ -8,7 +12,7 @@ export const nesContainerFormat = (
   if (prefix.subarray(0, 4).equals(Buffer.from("UNIF"))) return "unif";
   if (!prefix.subarray(0, 4).equals(Buffer.from([0x4e, 0x45, 0x53, 0x1a])))
     return undefined;
-  return prefix.length >= 8 && (prefix.readUInt8(7) & 0x0c) === 0x08
+  return prefix.length >= 8 && (headerByte(prefix, 7) & 0x0c) === 0x08
     ? "nes-2.0"
     : "ines";
 };
@@ -137,10 +141,10 @@ const mirroring = (flags6: number): InesHeader["mirroring"] =>
 const classicDeclaration = (
   prefix: Buffer,
 ): Result<HeaderDeclaration, string> => {
-  const prgUnits = prefix.readUInt8(4);
-  const chrUnits = prefix.readUInt8(5);
-  const flags6 = prefix.readUInt8(6);
-  const flags7 = prefix.readUInt8(7);
+  const prgUnits = headerByte(prefix, 4);
+  const chrUnits = headerByte(prefix, 5);
+  const flags6 = headerByte(prefix, 6);
+  const flags7 = headerByte(prefix, 7);
   if ((flags7 & 0x0c) !== 0) return err("unsupported iNES header variant");
   // Dirty legacy headers make the upper mapper bits ambiguous. Do not repair
   // them or claim a mapper that the observed header cannot establish.
@@ -182,7 +186,7 @@ const declaredRamBytes = (shift: number): number =>
  * bits are refused rather than interpreted.
  */
 const nes2Declaration = (prefix: Buffer): Result<HeaderDeclaration, string> => {
-  const byte = (index: number) => prefix.readUInt8(index);
+  const byte = (index: number) => headerByte(prefix, index);
   const flags6 = byte(6);
   const flags7 = byte(7);
   const consoleType = twoBits(flags7);
