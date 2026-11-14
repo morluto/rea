@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { processTest } from "../../support/process/processFixture.js";
 
 const launcher = fileURLToPath(
   new URL("../../../scripts/plugin-mcp-launcher.mjs", import.meta.url),
@@ -159,6 +160,70 @@ it.skipIf(process.platform === "win32")(
       code: 0,
       stdout: "ready",
       stderr: "cleaned",
+    });
+  },
+);
+
+const configPrinter = fileURLToPath(
+  new URL("../../../scripts/print-mcp-config.mjs", import.meta.url),
+);
+
+processTest(
+  "prints a startup config with explicit loader arguments",
+  async ({ processes }) => {
+    const result = await processes.run(process.execPath, [
+      configPrinter,
+      "--kind",
+      "database",
+      "example",
+      "--loader-args",
+      '["-l","a b"]',
+    ]);
+    expect(result.exitCode, result.stderr).toBe(0);
+    const { env } = JSON.parse(result.stdout).mcpServers.rea;
+    expect(env.HOPPER_TARGET_KIND).toBe("database");
+    expect(JSON.parse(env.HOPPER_LOADER_ARGS_JSON)).toEqual(["-l", "a b"]);
+  },
+);
+
+processTest(
+  "invalid config invocations cannot print an apparently usable registration",
+  async ({ processes }) => {
+    for (const args of [
+      [],
+      ["a", "b"],
+      ["target", "--knid", "database"],
+      ["target", "--kind"],
+      ["target", "--kind", "unknown"],
+      ["target", "--kind", "database", "--kind", "executable"],
+      ["target", "--loader-args", "invalid"],
+      ["target", "--loader-args", "[1]"],
+      ["target", "--loader-args", '["a\\u0000b"]'],
+    ]) {
+      const result = await processes.run(process.execPath, [
+        configPrinter,
+        ...args,
+      ]);
+      expect(result, JSON.stringify(args)).toMatchObject({
+        exitCode: 1,
+        stdout: "",
+        stderr: expect.stringMatching(/Usage:/),
+      });
+    }
+  },
+);
+
+processTest(
+  "config help describes the generator without emitting a registration",
+  async ({ processes }) => {
+    const result = await processes.run(process.execPath, [
+      configPrinter,
+      "--help",
+    ]);
+    expect(result).toMatchObject({
+      exitCode: 0,
+      stdout: expect.stringMatching(/^Usage:/),
+      stderr: "",
     });
   },
 );
