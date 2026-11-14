@@ -17,7 +17,7 @@ const installCliRuntime = async (
   await workspace.mkdir("dist");
   // The bundle's entrypoints and shared chunks form one emitted runtime. The
   // one-shot owner and its output admission stay production code; only the
-  // command runtime and result output are replaced below.
+  // command runtime, its recorded registrars, and result output are replaced.
   await cp("dist/cli-runtime", workspace.path("dist/cli-runtime"), {
     recursive: true,
   });
@@ -43,6 +43,11 @@ const installCliRuntime = async (
     ),
     workspace.write("dist/cli-runtime/cli.js", cliSource),
     workspace.write("dist/cli-runtime/cliResultOutput.js", resultOutput),
+    // Without a recording, every command loads the replaced complete CLI.
+    workspace.write(
+      "dist/recordedCliCommandRegistrations.js",
+      "export const RECORDED_CLI_COMMAND_REGISTRATIONS = undefined;\n",
+    ),
   ]);
 };
 
