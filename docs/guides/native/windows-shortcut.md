@@ -36,7 +36,9 @@ decoded as `normal`, as specified.
 file offset, size, and type byte. Root-folder, volume, and file-entry items
 are decoded when those layouts match documented shell-item headers, including
 the 8.3 short name on a file entry. Every other item is `raw` with a SHA-256
-of its payload. Unknown items are not guessed.
+of its payload. Unknown items are not guessed. Bytes between the TerminalID
+and the declared end of the list produce partial coverage at the first
+trailing byte. Later sections are read from their declared positions.
 
 `link_info` reports volume drive type, serial, label, local base path, and
 common network relative link names, with Unicode variants when the header
