@@ -54,7 +54,10 @@ export interface CliFieldProjection {
  * from the contract input schema: each field keeps its own schema, so the
  * CLI admits what the contract admits.
  */
-export interface CliContractProjection<Field extends string> {
+export interface CliContractProjection<
+  Field extends string,
+  CliOptions extends CliOptionShape = CliOptionShape,
+> {
   readonly command: string;
   readonly description: string;
   /** Fields taken as positional arguments, in argv order. */
@@ -95,7 +98,29 @@ export interface CliContractProjection<Field extends string> {
    * target is opened.
    */
   readonly viewDelivery?: CliViewDelivery;
+  /**
+   * Options no contract field owns, keyed by their CLI key. Each is admitted
+   * by its own schema and takes effect in the command handler, never in the
+   * contract input; for example, an exit status chosen from the result.
+   */
+  readonly cliOptions?: CliOptions;
+  /**
+   * `dependentRequired` entries over CLI keys that the CLI-only options add
+   * to the contract's own. Help and `--schema` advertise them; the handler
+   * enforces them.
+   */
+  readonly cliOptionDependencies?: Readonly<
+    Partial<Record<keyof CliOptions & string, readonly string[]>>
+  >;
 }
+
+/** Schemas of the CLI-only options of one command, keyed by CLI key. */
+export type CliOptionShape = Readonly<Record<string, z.ZodType>>;
+
+/** Parsed values of the CLI-only options of one command. */
+export type CliOptionValues<CliOptions extends CliOptionShape> = {
+  readonly [Key in keyof CliOptions]: z.output<CliOptions[Key]>;
+};
 
 /** How a contract command takes its `view` selection. */
 export interface CliViewDelivery {
@@ -199,6 +224,10 @@ export interface ContractCliDescription {
   readonly callerInputs: (
     values: Readonly<Record<string, unknown>>,
   ) => Readonly<Record<string, string>>;
+  /** The parsed values of the projection's CLI-only options. */
+  readonly cliOptionValues: (
+    values: Readonly<Record<string, unknown>>,
+  ) => Readonly<Record<string, unknown>>;
   /**
    * The selected delivery, for a projection with `evidenceDelivery`, refused
    * before any target is opened when it is not admitted.
@@ -368,9 +397,9 @@ const projectObjectConstraints = (
   contract: ProjectedContract,
   rename: (field: string) => string,
   deliveryFields: ReadonlySet<string>,
+  cliOptionDependencies: Readonly<Record<string, readonly string[]>>,
 ): Record<string, unknown> | undefined => {
-  const metadata = contract.inputSchema.meta();
-  if (metadata === undefined) return undefined;
+  const metadata = contract.inputSchema.meta() ?? {};
   for (const keyword of Object.keys(metadata))
     if (
       !ROOT_ANNOTATIONS.has(keyword) &&
@@ -396,6 +425,11 @@ const projectObjectConstraints = (
           )
         : renameConstraint(contract.name, value, rename);
   }
+  if (Object.keys(cliOptionDependencies).length > 0)
+    projected.dependentRequired = {
+      ...(projected.dependentRequired as object | undefined),
+      ...cliOptionDependencies,
+    };
   return Object.keys(projected).length === 0 ? undefined : projected;
 };
 
@@ -434,9 +468,12 @@ const inputFields = (
 };
 
 /** Derive the CLI parameters of one contract from its input schema and projection. */
-export const describeContractCommand = <Contract extends ProjectedContract>(
+export const describeContractCommand = <
+  Contract extends ProjectedContract,
+  CliOptions extends CliOptionShape = CliOptionShape,
+>(
   contract: Contract,
-  projection: CliContractProjection<ContractField<Contract>>,
+  projection: CliContractProjection<ContractField<Contract>, CliOptions>,
 ): ContractCliDescription => {
   const evidenceDelivery = projection.evidenceDelivery === true;
   const { viewDelivery } = projection;
@@ -532,13 +569,17 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
       (field) => !positionals.includes(field) && !Object.hasOwn(omitted, field),
     ),
   ].map(parameter);
-  const cliOnlyOptions: readonly CliOnlyOption[] = Object.entries(
-    evidenceDelivery
-      ? Object.hasOwn(shape, "detail")
-        ? { evidence_output: analysisEvidenceDeliveryOptions.evidence_output }
-        : analysisEvidenceDeliveryOptions
-      : {},
-  ).map(([key, schema]: [string, z.ZodType]) => ({
+  const cliOptions: CliOptionShape = projection.cliOptions ?? {};
+  const cliOnlyOptions: readonly CliOnlyOption[] = [
+    ...Object.entries(
+      evidenceDelivery
+        ? Object.hasOwn(shape, "detail")
+          ? { evidence_output: analysisEvidenceDeliveryOptions.evidence_output }
+          : analysisEvidenceDeliveryOptions
+        : {},
+    ),
+    ...Object.entries(cliOptions),
+  ].map(([key, schema]: [string, z.ZodType]) => ({
     key,
     description: schema.description,
     schema,
@@ -549,6 +590,15 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
   ]);
   if (keys.size !== parameters.length + cliOnlyOptions.length)
     throw new Error(`${contract.name} projects two fields to one CLI key`);
+  const cliOptionDependencies = Object.fromEntries(
+    Object.entries(projection.cliOptionDependencies ?? {}).filter(
+      (entry): entry is [string, readonly string[]] => entry[1] !== undefined,
+    ),
+  );
+  for (const [key, required] of Object.entries(cliOptionDependencies))
+    for (const dependency of [key, ...required])
+      if (!keys.has(dependency))
+        throw new Error(`${contract.name} has no CLI option ${dependency}`);
   const keyOf = new Map(parameters.map(({ field, key }) => [field, key]));
   const rename = (field: string): string => keyOf.get(field) ?? field;
 
@@ -611,6 +661,7 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
       contract,
       rename,
       deliveryFields,
+      cliOptionDependencies,
     ),
     checkOptions,
     toContractInput,
@@ -622,6 +673,12 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
             ? [[field, value]]
             : [];
         }),
+      ),
+    cliOptionValues: (values) =>
+      Object.fromEntries(
+        Object.keys(cliOptions).flatMap((key) =>
+          values[key] === undefined ? [] : [[key, values[key]]],
+        ),
       ),
     delivery: evidenceDelivery
       ? (values) => {
