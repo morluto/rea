@@ -579,6 +579,29 @@ for name, text in json.load(sys.stdin):
   return { python, rea };
 };
 
+it("retains the same bounded text prefix and complete count in both readers", () => {
+  const files = [
+    ["empty.txt", ""],
+    ["blank.txt", "\n"],
+    ["mixed.txt", "one\r\ntwo\n\n"],
+    ["literal.txt", "one\rtwo\u2028three\u0085four\r"],
+    ["many.txt", "event\r\n".repeat(20_000) + "last\r"],
+  ] as const;
+  const views = textViews(files, desktopViewPolicy({ text_lines: 2 }));
+  expect(views.python).toEqual(views.rea);
+  expect(views.rea.map((view) => view.view)).toEqual([
+    { lines: [], line_count: 0, truncated: false },
+    { lines: [""], line_count: 1, truncated: false },
+    { lines: ["one", "two"], line_count: 3, truncated: true },
+    {
+      lines: ["one\rtwo\u2028three\u0085four\r"],
+      line_count: 1,
+      truncated: false,
+    },
+    { lines: ["event", "event"], line_count: 20_001, truncated: true },
+  ]);
+});
+
 it("applies the selected desktop view budgets equally in TypeScript and emitted Python", () => {
   const files = [
     ["lines.txt", "one\ntwo\nthree"],
