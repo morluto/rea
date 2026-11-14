@@ -212,13 +212,13 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     pair.add(FloatDataType.dataType);
     pair.add(FloatDataType.dataType);
     VariableStorage[] storage =
-        model.getStorageLocations(
+        ReaGhidraStorageLocations.of(
+            model,
             currentProgram,
             new DataType[] {
               DoubleDataType.dataType, FloatDataType.dataType, DoubleDataType.dataType,
               IntegerDataType.dataType, pair, Float16DataType.dataType
             },
-            false,
             false);
     VariableStorage quad = storage[storage.length - 1];
     if (quad.size() != currentProgram.getDefaultPointerSize() || quad.getRegister() == null)
