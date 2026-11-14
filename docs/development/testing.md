@@ -279,7 +279,12 @@ operation name rather than array position.
 
 Check advertised schemas after SDK conversion for every supported schema
 profile. Meta-schema validity does not establish client acceptance or useful
-rendered declarations. Keep canonical rejection checks separate from the
+rendered declarations. `src/contracts/advertisedDialect.ts` owns the portable
+advertised dialect: the keyword allowlist, size and depth limits, and the regex
+grammar that compiles in V8, Python, RE2 and Rust. `advertisedDialect.test.ts`
+lists every input, output and catalog profile combination and compares the
+violation counts with `advertisedDialectBaseline.ts`, which may only shrink;
+the packaged catalog check applies the same rules to the default profiles. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
 

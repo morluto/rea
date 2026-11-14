@@ -6,11 +6,19 @@ import { Ajv2020 } from "ajv/dist/2020.js";
  * Only this operation needs built contracts; path checks remain source-only.
  */
 export const verifyCompleteToolCatalog = async (client, options) => {
-  const [{ requireMcpLifecycleResult, sortVerifierNames }, { TOOL_CONTRACTS }] =
-    await Promise.all([
-      import("./mcp-verifier-results.mjs"),
-      import("../../dist/contracts/toolContracts.js"),
-    ]);
+  const [
+    { requireMcpLifecycleResult, sortVerifierNames },
+    { TOOL_CONTRACTS },
+    dialect,
+    { ADVERTISED_INPUT_DIALECT_BASELINE, ADVERTISED_OUTPUT_DIALECT_BASELINE },
+    { resolveMcpInputSchemaProfile },
+  ] = await Promise.all([
+    import("./mcp-verifier-results.mjs"),
+    import("../../dist/contracts/toolContracts.js"),
+    import("../../dist/contracts/advertisedDialect.js"),
+    import("../../dist/contracts/advertisedDialectBaseline.js"),
+    import("../../dist/config/mcpInputSchemaProfile.js"),
+  ]);
   const listed = await client.listTools(undefined, options);
   const canonical = sortVerifierNames(TOOL_CONTRACTS.map(({ name }) => name));
   const observed = sortVerifierNames(listed.tools.map(({ name }) => name));
@@ -36,6 +44,28 @@ export const verifyCompleteToolCatalog = async (client, options) => {
         );
     }
   }
+  // Packaged servers run the default profiles. One advertised construct
+  // outside the portable dialect can make a client refuse every tool.
+  const regressions = [
+    ...dialect.advertisedDialectRegressions(
+      dialect.countAdvertisedDialectViolations(
+        listed.tools.flatMap(dialect.advertisedInputDialectViolations),
+      ),
+      ADVERTISED_INPUT_DIALECT_BASELINE[
+        resolveMcpInputSchemaProfile(undefined)
+      ],
+    ),
+    ...dialect.advertisedDialectRegressions(
+      dialect.countAdvertisedDialectViolations(
+        listed.tools.flatMap(dialect.advertisedOutputPatternViolations),
+      ),
+      ADVERTISED_OUTPUT_DIALECT_BASELINE.full,
+    ),
+  ];
+  if (regressions.length > 0)
+    throw new Error(
+      `packaged MCP advertises constructs outside the portable schema dialect: ${regressions.join("; ")}`,
+    );
   const sessionDefinition = listed.tools.find(
     ({ name }) => name === "binary_session",
   );
