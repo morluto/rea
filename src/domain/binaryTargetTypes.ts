@@ -8,6 +8,7 @@ export const BINARY_ARCHITECTURES = [
   "arm",
   "arm64",
   "arm64_32",
+  "loongarch",
   "mips",
   "6502",
   "riscv",
@@ -49,6 +50,7 @@ export interface PeCodeViewRecord {
 
 /** Families whose parsed target variant carries `ElfFamilyMetadata`. */
 export const ELF_METADATA_ARCHITECTURES = [
+  "loongarch",
   "mips",
   "riscv",
   "powerpc",
@@ -67,6 +69,33 @@ export type HeaderArchitecture = Exclude<
   BinaryArchitecture,
   ElfMetadataArchitecture | RawOnlyArchitecture | "hexagon" | "arm64_32"
 >;
+
+/**
+ * Declared LoongArch floating-point argument ABI from `e_flags` bits 0-2.
+ * `unspecified` means the modifier is zero; `reserved` covers 4-7, which the
+ * psABI leaves undefined.
+ */
+export type LoongArchFloatAbi =
+  | "soft"
+  | "single"
+  | "double"
+  | "unspecified"
+  | "reserved";
+
+/**
+ * Raw LoongArch ELF declarations; family recognition does not establish that a
+ * provider models this floating-point ABI or object ABI version.
+ */
+export interface LoongArchElfMetadata extends ElfFamilyMetadata {
+  readonly floatAbi: LoongArchFloatAbi;
+  /**
+   * `EF_LARCH_OBJABI_V1` (0x40) selects object ABI v1; its absence is object
+   * ABI v0. The flag never marks v0 explicitly.
+   */
+  readonly objectAbiVersion: 0 | 1;
+  /** Declared `e_flags` bits outside the fields above. */
+  readonly undeclaredFlags: number;
+}
 
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */
 export interface MipsElfMetadata extends ElfFamilyMetadata {
@@ -176,6 +205,16 @@ type ExecutableTarget = BinaryTargetIdentity & {
  * Each variant carries only metadata established for that exact file kind.
  */
 export type BinaryTarget =
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
+      readonly format: "elf";
+      readonly architecture: "loongarch";
+      readonly availableArchitectures: readonly "loongarch"[];
+      /** Declared ABI fields; family identity alone selects no language. */
+      readonly loongarch: LoongArchElfMetadata;
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
   | (BinaryTargetIdentity & {
       readonly kind: "executable";
       readonly format: "elf";

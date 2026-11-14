@@ -1686,7 +1686,7 @@ language for Cortex-M analysis. While the variable is set, it applies to every
 Ghidra import in the REA server:
 
 - raw-binary, DOS, GameCube DOL and PSP opens are refused, as are opens in
-  lanes that reject a different language, such as RISC-V;
+  lanes that reject a different language, such as LoongArch and RISC-V;
 - REA asks Ghidra to import everything else in the selected ARM language,
   including x86, x86-64, arm64, PowerPC and Hexagon ELF files and PE and
   Mach-O files, because it does not check that the override's processor

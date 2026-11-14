@@ -115,6 +115,10 @@ import {
   ghidraRiscvCallingConventionLimitations,
   ghidraRiscvLimitations,
 } from "./GhidraRiscvProfile.js";
+import {
+  ghidraLoongArchLimitations,
+  ghidraLoongArchProfileMismatchReason,
+} from "./GhidraLoongArchProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
 import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher, GhidraLaunchError } from "./GhidraLauncher.js";
@@ -476,6 +480,19 @@ export const createGhidraProviderClient = (input: {
     );
   // Both caller-selected and provider-pinned languages use the validated
   // committed slot; the profile cannot supply its own applicability proof.
+  const loongarchProfileMismatch = ghidraLoongArchProfileMismatchReason(
+    target,
+    committedProfile.parameters,
+    project !== undefined &&
+      committedProfile.parameters.import_mode ===
+        "existing-project-private-copy-v1",
+  );
+  if (loongarchProfileMismatch !== null)
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: { reason: loongarchProfileMismatch },
+      }),
+    );
   const mipsProfileMismatch = ghidraMipsProfileMismatchReason(
     target,
     committedProfile.parameters,
@@ -559,6 +576,7 @@ export const createGhidraProviderClient = (input: {
           "Static analysis does not emulate reset vectors, memory-mapped I/O, or firmware boot sequences.",
         ]
       : []),
+    ...ghidraLoongArchLimitations(target),
     ...(target.architecture === "mips" ? (target.mips.limitations ?? []) : []),
     ...(committedProfile.parameters.mips_abi_basis ===
     "inferred-o32-assumption-v1"

@@ -27,6 +27,19 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   values and provenance; the ARM lane also injects an unavailable provider
   value. The `ghidra-bridge-sources` CI job runs both processor families. The
   input bytes are never executed.
+- `../c/loongarch.c` and `loongarch-probe.S` produce source-owned ELF64
+  little-endian LoongArch images: a shared object (`ET_DYN`) with an
+  `R_LARCH_64` data relocation and an `R_LARCH_JUMP_SLOT` call, a fixed-address
+  executable (`ET_EXEC`), and a copy of the shared object whose `e_flags`
+  clears `EF_LARCH_OBJABI_V1` to declare the old-world object ABI. Only that
+  ELF element changes in the copied fixture; instruction bytes stay the
+  new-world toolchain's output, and fixture code is never executed. `npm run
+  verify:ghidra:loongarch` compares GNU readelf facts with the REA target
+  resolver, the effective Ghidra language, applied relocations, fixed probe
+  bytes and listing text, relocated global bytes, folded pseudocode, CLI/MCP
+  and snapshot identity, and owned cleanup. It requires BYO Ghidra 12.1.4/JDK
+  21+, a LoongArch GNU cross toolchain and GNU readelf; `REA_LOONGARCH_GCC` and
+  `REA_LOONGARCH_READELF` select existing commands.
 - `ReaDecodeProbe.java` decodes source-owned instruction bytes from a
   language's default context and checks each mnemonic, length and optional
   complete operand. The `ghidra-bridge-sources` CI job runs it for `ARM:LE:32:Cortex`,
