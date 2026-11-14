@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -31,13 +31,10 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createSessionMcpHarness } from "./sessionMcpHarness.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
-let directory: string | undefined;
 
+// createTestTempDirectory owns each directory's removal.
 afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
 });
 
 const identity = {
@@ -132,7 +129,7 @@ describe("native dispatch availability at the public MCP boundary", () => {
   it.each(scenarios)(
     "preserves $name capability semantics",
     async (scenario) => {
-      directory = await createTestTempDirectory(
+      const directory = await createTestTempDirectory(
         "rea-native-dispatch-availability-",
       );
       const calls: Operation[] = [];
@@ -190,7 +187,9 @@ describe("native dispatch availability at the public MCP boundary", () => {
   );
 
   it("keeps the binary reader refusal when the symbol fallback is unavailable", async () => {
-    directory = await createTestTempDirectory("rea-native-dispatch-fallback-");
+    const directory = await createTestTempDirectory(
+      "rea-native-dispatch-fallback-",
+    );
     const path = join(directory, "armv7");
     // A complete thin 32-bit armv7 MH_EXECUTE header with no load commands.
     const header = Buffer.alloc(28);
@@ -240,7 +239,9 @@ describe("native dispatch availability at the public MCP boundary", () => {
   });
 
   it("reports a target requirement before probing provider operations", async () => {
-    directory = await createTestTempDirectory("rea-native-dispatch-no-target-");
+    const directory = await createTestTempDirectory(
+      "rea-native-dispatch-no-target-",
+    );
     const calls: Operation[] = [];
     const { mcp } = await createSessionMcpHarness(
       directory,
