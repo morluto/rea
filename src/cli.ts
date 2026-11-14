@@ -80,6 +80,7 @@ import {
   presentCliArgumentErrors,
 } from "./cli/argumentErrors.js";
 import { completionHelpNote, createCliCompletions } from "./cli/completions.js";
+import { expandReaHelp } from "./cli/cliHelpExpansion.js";
 import { reportUnknownMcpSubcommand } from "./cli/mcpBuiltinCommands.js";
 import {
   closeCliGuidanceResources,
@@ -256,17 +257,45 @@ export const createCli = (
     cli as unknown as Parameters<typeof createCliCompletions>[0],
     environment,
   );
+  /**
+   * Expand Incur's global format help to the formats REA supports. The
+   * pinned dependency does not know about csv/tsv, so no REA-built flag page
+   * may print the five-format list. Output business paths (JSON envelopes,
+   * command parsing) stay byte-identical; only help-shaped writes change.
+   */
+  type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
+  type ServeArguments = Parameters<CliInstance["serve"]>[0];
+  const serveExpanded = (
+    options: ServeOptions | undefined,
+    arguments_: ServeArguments,
+  ): ServeOptions => {
+    const help =
+      arguments_ !== undefined &&
+      arguments_.some(
+        (argument: string) => argument === "--help" || argument === "-h",
+      );
+    const writer =
+      options?.stdout ?? ((text: string) => process.stdout.write(text));
+    if (!help) return options ?? {};
+    return {
+      ...options,
+      stdout: (text: string) => writer(expandReaHelp(text)),
+    };
+  };
+
   cli.serve = (arguments_ = process.argv.slice(2), options) => {
-    if (complete(arguments_, options ?? {})) return Promise.resolve();
+    const writer = options?.stdout;
+    options = serveExpanded(options, arguments_);
+    if (complete(arguments_, options)) return Promise.resolve();
     const normalized = normalizeCliArguments(arguments_);
     const registration = serveMcpRegistration(
       normalized,
       environment,
       defaultRegistration,
-      options ?? {},
+      options,
     );
     if (registration !== undefined) return registration;
-    const result = serveStrict(normalized, options ?? {}, (tokens, selected) =>
+    const result = serveStrict(normalized, options, (tokens, selected) =>
       serveDeclared(tokens, selected, (declared, declaredOptions) =>
         reportUnknownMcpSubcommand(cli.name, declared, declaredOptions)
           ? Promise.resolve()
@@ -276,8 +305,7 @@ export const createCli = (
     const note = completionHelpNote(normalized);
     if (note === undefined) return result;
     return result.then(() => {
-      const write =
-        options?.stdout ?? ((text: string) => process.stdout.write(text));
+      const write = writer ?? ((text: string) => process.stdout.write(text));
       write(`\n${note}`);
     });
   };
