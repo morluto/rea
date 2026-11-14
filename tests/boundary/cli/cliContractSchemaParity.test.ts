@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import { CLI_COMMAND_TOOL_ALIASES } from "./cliContractAliases.js";
 
 /**
  * Report-only parity between each CLI command's own field schemas and the MCP
@@ -23,21 +24,6 @@ const BASELINE_URL = new URL(
   "./cliContractSchemaParity.baseline.json",
   import.meta.url,
 );
-
-/** CLI commands whose name differs from the one contract they reach. */
-const COMMAND_CONTRACT_ALIASES: Readonly<Record<string, string>> = {
-  "environment-build": "export_environment_bundle",
-  analyze: "binary_overview",
-  inspect: "binary_overview",
-  decompile: "procedure_pseudo_code",
-  function: "analyze_function",
-  instructions: "read_function_instructions",
-  trace: "trace_feature",
-  "capture-process": "capture_process_scenario",
-  compare: "compare_bundles",
-  "debug-with-gdb": "gdb_console",
-  "debug-with-rizin": "rizin_debug_command",
-};
 
 type Probe = {
   readonly id: string;
@@ -80,16 +66,34 @@ const NUMERIC_SPELLINGS = [
 /** Probes that exercise refusals of one contract field. */
 const probesFor = (contract: z.ZodType): readonly Probe[] => {
   const probes: Probe[] = [];
+  let unwrapped: unknown = contract;
+  for (
+    let depth = 0;
+    depth < 8 && !(unwrapped instanceof z.ZodString);
+    depth += 1
+  ) {
+    const def = (unwrapped as { _zod?: { def?: Record<string, unknown> } })
+      ?._zod?.def;
+    unwrapped = def?.["in"] ?? def?.["innerType"] ?? def?.["schema"];
+    if (unwrapped === undefined) break;
+  }
   const text = admits(contract, "x")
     ? "x"
     : admits(contract, ABSOLUTE)
       ? ABSOLUTE
       : undefined;
+  if (unwrapped instanceof z.ZodString && !admits(contract, ""))
+    probes.push({ id: "empty", value: "", expect: "refused" });
+  if (
+    unwrapped instanceof z.ZodString &&
+    !admits(contract, `${text ?? "x"}\u0000`)
+  )
+    probes.push({
+      id: "nul",
+      value: `${text ?? "x"}\u0000`,
+      expect: "refused",
+    });
   if (text !== undefined) {
-    if (!admits(contract, ""))
-      probes.push({ id: "empty", value: "", expect: "refused" });
-    if (!admits(contract, `${text}\u0000`))
-      probes.push({ id: "nul", value: `${text}\u0000`, expect: "refused" });
     if (text === ABSOLUTE && refusesAsRelativeHostPath(contract))
       probes.push({ id: "relative", value: RELATIVE, expect: "resolved" });
   }
@@ -144,53 +148,82 @@ const collectParity = () => {
     TOOL_CONTRACTS.map((contract) => [contract.name, contract.inputSchema]),
   );
   const mismatches: string[] = [];
+  const uncomparable: string[] = [];
   let compared = 0;
   let commandsCompared = 0;
   let unmatchedFields = 0;
   for (const [name, entry] of commands) {
     if ("_alias" in entry) continue;
-    const contractName = COMMAND_CONTRACT_ALIASES[name] ?? snake(name);
-    const contract = contracts.get(contractName);
-    if (contract === undefined) continue;
-    const shape = contractShape(contract);
-    if (shape === undefined) continue;
-    commandsCompared += 1;
-    for (const group of ["args", "options"] as const) {
-      const declared = (entry as unknown as Record<string, unknown>)[group];
-      const fields: Readonly<Record<string, z.ZodType>> =
-        declared instanceof z.ZodObject
-          ? (declared.shape as Record<string, z.ZodType>)
-          : {};
-      for (const [fieldName, cliField] of Object.entries(fields)) {
-        const contractField = shape[snake(fieldName)];
-        if (contractField === undefined) {
-          unmatchedFields += 1;
-          continue;
-        }
-        for (const probe of probesFor(contractField)) {
-          compared += 1;
-          const cliValue = cliAdmittedValue(cliField, probe.value);
-          const mismatch =
-            probe.expect === "resolved"
-              ? !cliValue.admitted
-              : cliValue.admitted && !admits(contractField, cliValue.value);
-          if (mismatch)
-            mismatches.push(`${name} ${group}.${fieldName} ${probe.id}`);
+    const contractNames: readonly string[] = CLI_COMMAND_TOOL_ALIASES[
+      name as keyof typeof CLI_COMMAND_TOOL_ALIASES
+    ] ?? [snake(name)];
+    for (const contractName of contractNames) {
+      const contract = contracts.get(contractName);
+      if (contract === undefined) {
+        uncomparable.push(`${name}: no contract ${contractName}`);
+        continue;
+      }
+      const shape = contractShape(contract);
+      if (shape === undefined) {
+        uncomparable.push(`${name}: no object shape ${contractName}`);
+        continue;
+      }
+      commandsCompared += 1;
+      for (const group of ["args", "options"] as const) {
+        const declared = (entry as unknown as Record<string, unknown>)[group];
+        const fields: Readonly<Record<string, z.ZodType>> =
+          declared instanceof z.ZodObject
+            ? (declared.shape as Record<string, z.ZodType>)
+            : {};
+        for (const [fieldName, cliField] of Object.entries(fields)) {
+          const contractField = shape[snake(fieldName)];
+          if (contractField === undefined) {
+            unmatchedFields += 1;
+            continue;
+          }
+          for (const probe of probesFor(contractField)) {
+            compared += 1;
+            const cliValue = cliAdmittedValue(cliField, probe.value);
+            const mismatch =
+              probe.expect === "resolved"
+                ? !cliValue.admitted
+                : cliValue.admitted && !admits(contractField, cliValue.value);
+            if (mismatch)
+              mismatches.push(`${name} ${group}.${fieldName} ${probe.id}`);
+          }
         }
       }
     }
   }
   return {
-    mismatches: mismatches.sort(),
+    mismatches: [...new Set(mismatches)].sort(),
     compared,
     commandsCompared,
     unmatchedFields,
+    uncomparable,
   };
 };
 
 describe("CLI and contract field admission parity", () => {
+  it("probes constrained strings without needing a valid sample", () => {
+    const probes = probesFor(z.string().regex(/^[a-f0-9]{64}$/u));
+    expect(probes.map(({ id }) => id)).toEqual(["empty", "nul"]);
+  });
   it("admits no new value the contract refuses, and the baseline only shrinks", () => {
-    const { mismatches, compared, commandsCompared } = collectParity();
+    const { mismatches, compared, commandsCompared, uncomparable } =
+      collectParity();
+    // CLI-only commands and non-object contract unions require a different comparison.
+    expect(uncomparable).toEqual(
+      JSON.parse(
+        readFileSync(
+          new URL(
+            "./cliContractSchemaParity.uncomparable.json",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      ),
+    );
     // Guard against a vacuous run, such as a CLI that registers nothing.
     expect(commandsCompared).toBeGreaterThan(100);
     expect(compared).toBeGreaterThan(500);
