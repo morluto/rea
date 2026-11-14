@@ -99,4 +99,10 @@ it.each(["direct", "transferred"] as const)(
       });
     }
   },
+  // Each case runs about 22 s of CPU-bound projection on a typical hosted
+  // runner. The 60 s capacity deadline bounds a projection regression
+  // without waiting for the looser built-project hang-detection deadline.
+  // Restored after the shared-analysis rework dropped the deadline #10417
+  // set; see #10381.
+  60_000,
 );
