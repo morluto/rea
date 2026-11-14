@@ -1,4 +1,5 @@
 import type { JsonValue } from "../domain/jsonValue.js";
+import { utf8TailExcerpt } from "../domain/utf8Excerpt.js";
 import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
 import type {
   ProviderProcessOutputSince,
@@ -9,6 +10,12 @@ import type { GhidraTransportKind } from "./GhidraTransport.js";
 
 /** Aggregate in-memory retention budget for this provider's launcher output. */
 export const GHIDRA_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Bytes of each retained stream an error carries: the latest output, where a
+ * failure is reported. The 8 MiB retention stays for scanning, not delivery.
+ */
+export const GHIDRA_DIAGNOSTIC_EXCERPT_BYTES = 64 * 1024;
 
 /** JVM error class located in all launcher output, beyond the retention budget. */
 export const GHIDRA_JVM_OOME_MARKER = "java.lang.OutOfMemoryError";
@@ -159,10 +166,18 @@ export const ghidraFailureOutput = (
 export const ghidraDiagnosticStream = (
   stream: ProviderProcessSnapshot["stdout"],
   token: string | undefined,
-): JsonValue => ({
-  text: redactCapturedTransportCredential(stream, token, "[REDACTED]"),
-  // Preserve the historical total-byte counter; text is now bounded separately.
-  bytes: stream.observedBytes,
-  retained_bytes: stream.bytes,
-  ...(stream.invalidUtf8 === true ? { invalid_utf8: true } : {}),
-});
+): JsonValue => {
+  // Redact the whole retained text first, so the cut cannot expose part of a token.
+  const excerpt = utf8TailExcerpt(
+    redactCapturedTransportCredential(stream, token, "[REDACTED]"),
+    GHIDRA_DIAGNOSTIC_EXCERPT_BYTES,
+  );
+  return {
+    text: excerpt.text,
+    // Preserve the historical total-byte counter; text is now bounded separately.
+    bytes: stream.observedBytes,
+    retained_bytes: stream.bytes,
+    ...(excerpt.truncated ? { text_bytes: excerpt.bytes } : {}),
+    ...(stream.invalidUtf8 === true ? { invalid_utf8: true } : {}),
+  };
+};
