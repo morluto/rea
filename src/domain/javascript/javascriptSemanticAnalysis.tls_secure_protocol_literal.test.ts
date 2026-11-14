@@ -67,6 +67,10 @@ it.each([
     `tls.connect({ port: 80, secureProtocol: "TLSv1_2_method", maxVersion: "TLSv1.3" })`,
   ],
   [
+    "a template method name beside a version",
+    'tls.connect({ port: 80, secureProtocol: `TLS_method`, minVersion: "TLSv1.2" })',
+  ],
+  [
     "a truthy non-string method beside a version",
     `tls.connect({ port: 80, secureProtocol: 5, minVersion: "TLSv1.2" })`,
   ],
