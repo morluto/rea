@@ -482,7 +482,7 @@ it("bounds rejected-slice caching across thousands of distinct NUL slices withou
   });
 });
 
-it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and honors region and section cancellation", () => {
+const buildIndexedLiterals = () => {
   const count = 25_000;
   const slotBytes = 16;
   const bytes = Buffer.alloc((count + 1) * slotBytes);
@@ -547,6 +547,12 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
     zero_fills: [],
     sections,
   };
+  return { count, bytes, literal, literalBytes, validHeaderOffset, container };
+};
+
+it("indexes 25,000 Mach-O load regions and sections without quadratic stalls", () => {
+  const { count, bytes, literal, literalBytes, validHeaderOffset, container } =
+    buildIndexedLiterals();
 
   const recovered = recoverGoStringLiterals(bytes, container);
   expect(recovered.items).toEqual([
@@ -560,7 +566,7 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
 
   // Each region and section is read a bounded number of times, so 25,000 of
   // them cost linear work rather than the quadratic rewrite this guards.
-  const reads = { loadRegions: 0, sections: 0 };
+  const reads = { loadRegions: 0, sections: 0, comparisons: 0 };
   const counting = <Item>(items: readonly Item[], key: keyof typeof reads) =>
     new Proxy(items, {
       get(target, property, receiver) {
@@ -569,15 +575,33 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
         return Reflect.get(target, property, receiver);
       },
     });
-  recoverGoStringLiterals(bytes, {
-    ...container,
-    load_regions: counting(loadRegions, "loadRegions"),
-    sections: counting(sections, "sections"),
-  });
+  recoverGoStringLiterals(
+    bytes,
+    {
+      ...container,
+      load_regions: counting(container.load_regions ?? [], "loadRegions"),
+      sections: counting(container.sections ?? [], "sections"),
+    },
+    GO_ANALYSIS_BUDGET_DEFAULTS,
+    undefined,
+    () => {
+      reads.comparisons += 1;
+    },
+  );
   expect(reads.loadRegions).toBeGreaterThan(0);
   expect(reads.loadRegions).toBeLessThanOrEqual(count * 4);
   expect(reads.sections).toBeGreaterThan(0);
   expect(reads.sections).toBeLessThanOrEqual(count * 4);
+  // Every section check searches the merged region bounds, so a linear scan
+  // would cost count * count comparisons instead of count * log2(count).
+  expect(reads.comparisons).toBeGreaterThan(0);
+  expect(reads.comparisons).toBeLessThanOrEqual(count * 32);
+});
+
+it("honors region and section cancellation during index construction", () => {
+  const { count, bytes, container } = buildIndexedLiterals();
+  const loadRegions = container.load_regions ?? [];
+  const sections = container.sections ?? [];
 
   let inRegionLoop = false;
   let observedRegions = 0;

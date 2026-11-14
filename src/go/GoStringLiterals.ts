@@ -48,6 +48,7 @@ export const recoverGoStringLiterals = (
   container: BinaryContainer,
   budgets: GoAnalysisBudgets = GO_ANALYSIS_BUDGET_DEFAULTS,
   checkActive?: () => void,
+  countWork?: () => void,
 ): GoStringLiterals => {
   const limitsReached = new Set<GoStringBudgetKey>();
   const maxItems = budgets.max_string_literals;
@@ -60,6 +61,7 @@ export const recoverGoStringLiterals = (
   const readableRegions = createReadableLoadRegionIndex(
     container.load_regions,
     checkActive,
+    countWork,
   );
   const targets = selectTargetSpans(
     bytes,
@@ -290,6 +292,7 @@ interface ReadableLoadRegionIndex {
 const createReadableLoadRegionIndex = (
   loadRegions: readonly LoadRegion[] | undefined,
   checkActive?: () => void,
+  countWork?: () => void,
 ): ReadableLoadRegionIndex => {
   if (loadRegions === undefined || loadRegions.length === 0)
     return { contains: () => false };
@@ -337,7 +340,7 @@ const createReadableLoadRegionIndex = (
   return {
     contains: (address, size) => {
       if (size <= 0) return false;
-      const index = lastBigIntAtOrBelow(starts, address);
+      const index = lastBigIntAtOrBelow(starts, address, countWork);
       return index >= 0 && address + BigInt(size) <= (ends[index] as bigint);
     },
   };
@@ -576,10 +579,12 @@ const normalizeHeaderScanSpans = (
 const lastBigIntAtOrBelow = (
   sorted: readonly bigint[],
   value: bigint,
+  countWork?: () => void,
 ): number => {
   let low = 0;
   let high = sorted.length;
   while (low < high) {
+    countWork?.();
     const middle = (low + high) >>> 1;
     if ((sorted[middle] as bigint) <= value) low = middle + 1;
     else high = middle;
