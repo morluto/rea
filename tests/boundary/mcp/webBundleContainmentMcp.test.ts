@@ -157,4 +157,4 @@ it("retains timeout Evidence and recovers on the same MCP server", async () => {
   });
   await client.ping();
   expect(browser.activeConnectionCount()).toBe(0);
-}, 60_000);
+});

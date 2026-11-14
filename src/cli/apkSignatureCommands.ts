@@ -1,12 +1,11 @@
+import { parseCliJsonOption } from "./cliJsonOption.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 import { APK_SIGNATURE_PROVIDER_IDENTITY } from "../apkSignature/ApkSignatureRelease.js";
 import { apkSignatureModule } from "../composition/apkSignature.js";
 import { inspectApkSignatureInputSchema } from "../domain/apkSignature/apkSignatureQuery.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { safeParseJson } from "../domain/safeJson.js";
 import { logCliCommand } from "../cliLogging.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -41,24 +40,13 @@ export const registerApkSignatureCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, apkSignatureModule.cliCommand, async () => {
-          const decoded =
-            options.view === undefined
-              ? { ok: true as const, value: undefined }
-              : safeParseJson(options.view);
-          if (!decoded.ok)
-            return projectAnalysisError(
-              new AnalysisInputError(
-                "inspect_apk_signature",
-                { cause: decoded.cause },
-                [
-                  {
-                    path: ["view"],
-                    reason: "invalid_format",
-                    message: "view must be a JSON APK signature selection",
-                  },
-                ],
-              ),
-            );
+          const decoded = parseCliJsonOption(
+            "inspect_apk_signature",
+            "view",
+            options.view,
+            "view must be a JSON APK signature selection",
+          );
+          if (!decoded.ok) return projectAnalysisError(decoded.error);
           const input = inspectApkSignatureInputSchema.safeParse({
             path: absoluteCallerPath(args.path),
             detail: options.detail,

@@ -1,6 +1,6 @@
 import { err, ok, type Result } from "../domain/result.js";
 
-export class DetachedPgpSignatureError extends Error {
+class DetachedPgpSignatureError extends Error {
   readonly _tag = "DetachedPgpSignatureError";
   constructor(
     readonly reason: "invalid_signature" | "wrong_publisher" | "cancelled",

@@ -34,8 +34,6 @@ import {
   GLOBAL_OBJECT_NAMES,
   globalObjectName,
   globalReferenceNamespace,
-  isUnmodifiedGlobalReference,
-  isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticGlobalReference.js";
 import { readSemanticRequireLoader } from "./javascriptSemanticRequireOriginSlot.js";
 import {

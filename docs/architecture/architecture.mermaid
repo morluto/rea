@@ -65,7 +65,7 @@ graph TD
     subgraph "Provider Process Foundation"
         PROCESS["src/process/<br/>owned process groups, private roots<br/>deadlines, bounded file reads and diagnostics, cleanup"]
         WINDOWS["src/windows/<br/>Windows host boundary adapters<br/>package loader, opaque handles, owned jobs and private runtimes"]
-        WINDOWS_NATIVE["native/windows/src/<br/>Node-API implementation<br/>NTFS admission, protected DACLs and atomic Job Object assignment"]
+        WINDOWS_NATIVE["native/windows/src/<br/>Node-API implementation<br/>NTFS/ReFS admission, protected DACLs and atomic Job Object assignment"]
         FILESYSTEM["src/filesystem/<br/>owned file and directory handles<br/>stable reads, staged output, caller paths"]
     end
 

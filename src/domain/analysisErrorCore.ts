@@ -254,6 +254,11 @@ export class AnalysisCapabilityUnavailableError extends AnalysisError {
   readonly siblingReasons: Readonly<Record<string, string>> | undefined;
   /** Incomplete cleanup must settle before the operation can be retried. */
   readonly retryable: boolean;
+  /**
+   * Operations the caller can run now that observe part of what this one
+   * would answer; the remediation states what they do not establish.
+   */
+  readonly alternatives: readonly string[];
 
   constructor(
     readonly providerId: string,
@@ -266,6 +271,7 @@ export class AnalysisCapabilityUnavailableError extends AnalysisError {
       readonly siblingOperations?: readonly string[];
       readonly siblingReasons?: Readonly<Record<string, string>>;
       readonly retryable?: boolean;
+      readonly alternatives?: readonly string[];
     },
   ) {
     super(
@@ -278,6 +284,7 @@ export class AnalysisCapabilityUnavailableError extends AnalysisError {
     this.siblingOperations = options?.siblingOperations;
     this.siblingReasons = options?.siblingReasons;
     this.retryable = options?.retryable === true && !this.cleanupIncomplete;
+    this.alternatives = Object.freeze([...(options?.alternatives ?? [])]);
   }
 }
 

@@ -1,13 +1,13 @@
 import { expect, it, vi } from "vitest";
 import * as t from "@babel/types";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import {
   completeSemanticSteps,
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
 import { JavaScriptSymbolicBindings } from "./javascriptSymbolicBindings.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import {
   symbolicTruth,
   symbolicVariants,

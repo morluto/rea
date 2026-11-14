@@ -218,10 +218,24 @@ it.each([
     try {
       const failed = await commands.prepare();
       if (failed.ok) throw new Error("Expected allocation failure");
-      expect(failed.error.cause).toBe(reason);
-      expect(failed.error.cleanupIncomplete).toBe(false);
-      expect(failed.error.cleanupResources).toEqual([]);
+      if (reason instanceof ProviderCleanupError) {
+        expect(failed.error).toBe(reason);
+        expect(reason.cleanupIncomplete).toBe(true);
+        expect(reason.cleanupResources).toEqual(["foreign-owner"]);
+      } else {
+        expect(failed.error.cause).toBe(reason);
+        expect(failed.error.cleanupIncomplete).toBe(false);
+        expect(failed.error.cleanupResources).toEqual([]);
+      }
       roots.mockRestore();
+      if (reason instanceof ProviderCleanupError) {
+        expect((await commands.prepare()).ok).toBe(false);
+        reason.resolveCleanup();
+        // Observe the settled cached failure before admitting a fresh allocation.
+        const settled = await commands.prepare();
+        expect(settled).toEqual({ ok: false, error: reason });
+        expect(reason.cleanupIncomplete).toBe(false);
+      }
       expect((await commands.prepare()).ok).toBe(true);
     } finally {
       roots.mockRestore();

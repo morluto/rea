@@ -1,6 +1,5 @@
 import { expect, it } from "vitest";
 import {
-  DEFAULT_NATIVE_INITIALIZER_PAGE,
   inspectNativeInitializersInputSchema,
   nativeInitializersSchema,
   NATIVE_INITIALIZER_LIMITATIONS,
@@ -11,7 +10,7 @@ it("applies paging defaults and rejects relative paths and extra arguments", () 
     inspectNativeInitializersInputSchema.parse({ path: "/artifacts/app" }),
   ).toMatchObject({
     offset: 0,
-    limit: DEFAULT_NATIVE_INITIALIZER_PAGE,
+    limit: 64,
     max_file_bytes: 67108864,
   });
   for (const input of [

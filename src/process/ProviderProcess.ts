@@ -1,10 +1,8 @@
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import {
   processInspectionCleanupFailures,
   type ProcessInspectionCleanupFailure,
-  type ProcessInspectionCleanupLease,
 } from "./ProcessInspectionCleanup.js";
 import { assertProcessOwnershipInspectionActive } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
@@ -443,7 +441,6 @@ export class ProviderProcessSupervisor {
     {
       readonly failure: ProcessInspectionCleanupFailure;
       readonly origin: unknown;
-      readonly lease?: AnalysisCleanupLease;
       cause: unknown;
     }
   >();
@@ -687,34 +684,15 @@ export class ProviderProcessSupervisor {
     }
   }
 
-  /** Adopt a normalized inspection's existing close authority, keeping its originating fact. */
-  retainInspectionCleanup(
-    origin: unknown,
-    cleanup: ProcessInspectionCleanupLease,
-  ): void {
-    const { failure, lease } = cleanup;
-    if (lease.released || this.#inspectionCleanup.has(lease)) return;
-    this.#inspectionCleanup.set(lease, {
-      failure,
-      origin,
-      lease,
-      cause:
-        failure instanceof DarwinProcessOwnershipInspectionError
-          ? (failure.cleanupFailure ?? failure)
-          : failure.cleanupCause,
-    });
-  }
-
   async #retryInspectionCleanup(): Promise<void> {
     for (const [key, retained] of this.#inspectionCleanup) {
       const owner =
         retained.failure instanceof DarwinProcessOwnershipInspectionError
           ? retained.failure.cleanupOwner
           : retained.failure.owner;
-      if (owner === undefined && retained.lease === undefined) continue;
+      if (owner === undefined) continue;
       try {
-        if (retained.lease !== undefined) await retained.lease.release();
-        else if (owner !== undefined) await owner.close();
+        await owner.close();
         this.#inspectionCleanup.delete(key);
       } catch (cause: unknown) {
         retained.cause = cause;

@@ -29,11 +29,11 @@ import {
 import { createValueTraceBudget } from "./NativeValueTraceBudget.js";
 
 /** The located unknown where unconfirmed provider cleanup stopped a trace. */
-export const CLEANUP_STOPPED_VALUE_TRACE =
+const CLEANUP_STOPPED_VALUE_TRACE =
   "Trace stopped because the provider did not confirm cleanup of resources it owns";
 
 /** Fallback when a dossier has no native value-flow facet for this procedure. */
-export const UNRECORDED_NATIVE_VALUE_FLOW =
+const UNRECORDED_NATIVE_VALUE_FLOW =
   "Native def-use was not recorded for this procedure.";
 
 /** Compose bounded high-p-code def-use graphs across exactly referenced call destinations. */

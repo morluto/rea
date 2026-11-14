@@ -15,6 +15,7 @@ export interface RecordedMcpCatalog {
   readonly capabilities: ServerCapabilities;
   readonly instructions: string;
   readonly identity: ReturnType<typeof createCatalogIdentity>;
+  /** Output projections precede the SDK's negotiated root-result codec. */
   readonly tools: readonly Tool[];
   /** Tool names derived from canonical Evidence-input declarations at build time. */
   readonly evidenceReferenceAlternatives: readonly string[];

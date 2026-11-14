@@ -250,6 +250,48 @@ describe("Windows Ghidra doctor authority", () => {
     });
   });
 
+  it("reports the verified NTFS and ReFS native authority boundary", async () => {
+    vi.mocked(nativeLoader.systemWindowsNativeAuthority).mockReturnValue({
+      available: true,
+      authority: {
+        inspection: {
+          abiVersion: 1,
+          nodeApiVersion: 8,
+          architecture: "x64",
+          filesystem: {
+            requestedPath: "D:\\probe",
+            finalPath: "D:\\probe",
+            filesystem: "ReFS",
+            volumeSerial: "0".repeat(16),
+            fileId: "0".repeat(32),
+            size: 0,
+            directory: true,
+          },
+          privateDacl: true,
+          privateBridgeDescriptorAccess: true,
+          atomicJobAssignment: true,
+          killOnOwnerClose: true,
+        },
+        call: () => {
+          throw new Error("Unexpected native call");
+        },
+      },
+    });
+    const projected = projectGhidraDoctorInspection(
+      await inspection({
+        installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+        platform: "win32",
+      }),
+    );
+    expect(projected.checks).toContainEqual(
+      expect.objectContaining({
+        name: "native_authority",
+        ok: true,
+        detail: expect.stringContaining("local NTFS/ReFS only"),
+      }),
+    );
+  });
+
   it("fails provider-scoped Windows readiness without blaming installation", async () => {
     const ghidra = await inspection({
       installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
@@ -475,15 +517,11 @@ describe("Windows Ghidra temporary directory check", () => {
     );
   });
 
-  it("does not probe when no Windows installation was selected", async () => {
-    const probe = vi.fn(() => Promise.reject(new Error("unexpected probe")));
+  it("omits the temporary directory check when no Windows installation was selected", async () => {
     const projected = await inspectSystemGhidraProvider(
       {},
       inspectionResources.owner,
-      undefined,
-      probe,
     );
-    expect(probe).not.toHaveBeenCalled();
     expect(projected.checks.map(({ name }) => name)).not.toContain(
       "temp_directory",
     );

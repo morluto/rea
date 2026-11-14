@@ -1089,14 +1089,18 @@ it("leaves GNU property rows unknown behind a compressed note section", () => {
   });
 });
 
-it("admits a hostile section table without rescanning every span", () => {
-  const started = performance.now();
-  const image = readElfHardening(
-    elfHardeningFixture({ disjointNoteSections: 65000 }),
-  );
-  expect(performance.now() - started).toBeLessThan(5000);
-  expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("unknown");
-}, 60000);
+it(
+  "admits a hostile section table without rescanning every span",
+  { tags: ["long-running"] },
+  () => {
+    const started = performance.now();
+    const image = readElfHardening(
+      elfHardeningFixture({ disjointNoteSections: 65000 }),
+    );
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("unknown");
+  },
+);
 
 it("cites a non-ASCII import name by its source bytes", () => {
   const name = "__\u00ff_chk";
@@ -1106,6 +1110,19 @@ it("cites a non-ASCII import name by its source bytes", () => {
   expect(row).toMatchObject({ state: "enabled", location: { bytes: 7 } });
   const at = row.location?.offset ?? 0;
   expect(bytes.subarray(at, at + 7).toString("latin1")).toBe(name);
+});
+
+it("treats the __chk_fail handler import as a FORTIFY sign", () => {
+  const bytes = elfHardeningFixture({
+    fortify: true,
+    fortifyName: "__chk_fail",
+  });
+  const image = readElfHardening(bytes);
+  const row = findRow(image.rows, "fortify");
+  expect(row).toMatchObject({ state: "enabled", location: { bytes: 10 } });
+  expect(row.basis).toContain("__chk_fail");
+  const at = row.location?.offset ?? 0;
+  expect(bytes.subarray(at, at + 10).toString("latin1")).toBe("__chk_fail");
 });
 
 it("keeps malformed name offsets malformed in both formats", async () => {

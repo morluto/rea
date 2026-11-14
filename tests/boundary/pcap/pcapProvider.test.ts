@@ -129,6 +129,29 @@ it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
   expect(result.coverage).toBe("complete");
 });
 
+it("retains DNS answers and exposes declared truncation as partial coverage", async () => {
+  const { provider, root } = await providerWith({
+    dnsJson: TSHARK_DNS_JSON.replace("00018180", "00018380"),
+  });
+  const result = await provider.execute({
+    operation: "inspect_pcap_capture",
+    input: { path: await captureFixture(root) },
+  });
+  if (!result.ok) throw new Error(result.error.message);
+  expect(result.value.result).toMatchObject({
+    coverage: "partial",
+    dns_queries: [
+      { query: "api.example.com", response_addresses: ["93.184.216.34"] },
+    ],
+  });
+  expect(result.value.limitations).toContain(
+    "DNS wire parsing: DNS message declares truncation (TC); captured records are incomplete",
+  );
+  expect(result.value.limitations).toContainEqual(
+    expect.stringContaining("DNS messages declare truncation"),
+  );
+});
+
 it.each([0, 1])(
   "preserves packet-count mismatch facts while accepting an empty capture: capinfos=%s",
   async (count) => {

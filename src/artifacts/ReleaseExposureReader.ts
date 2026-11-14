@@ -2551,7 +2551,7 @@ const embeddedPackageFormat = async (
   nativeFormat: NativeFormat,
   state: ScanState,
   context: ScanContext,
-  location = filePath,
+  location: string,
   expectedSha256?: string,
 ): Promise<EmbeddedPackageProbe> => {
   try {
