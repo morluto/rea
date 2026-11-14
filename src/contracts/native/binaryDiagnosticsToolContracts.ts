@@ -322,7 +322,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_pe_resources"),
     kind: "native-provider",
     description:
-      "Inspect a local PE32/PE32+ resource tree without execution: type/name/language identities, empty branches, UTF-16 names, payload RVA/file ranges/digests and static group-icon candidates. Language fallback, image decoding and actual UI loading remain unknown. Malformed/ambiguous mappings, non-identical overlaps or exhausted budgets fail without partial success. No Windows SDK or disassembler required.",
+      "Inspect a local PE32/PE32+ resource tree without execution: type/name/language identities, empty branches, UTF-16 names, payload RVA/file ranges/digests, static group-icon candidates and statically decoded Delphi/C++Builder binary forms (TPF0/TPF1 RT_RCDATA) with class/component names, filer flags, property value types and byte offsets. Language fallback, image decoding, form class semantics and actual UI loading remain unknown. Malformed/ambiguous mappings, non-identical overlaps or exhausted budgets fail without partial success. No Windows SDK or disassembler required.",
     inputSchema: inspectPeResourcesInputSchema,
     outputSchema: evidenceResultOf(peResourcesSchema),
     examples: [
