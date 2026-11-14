@@ -8,7 +8,6 @@ import { expect, it, vi } from "vitest";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   createTestProcessRegistry,
-  processTest,
   remainingProcessDeadline,
 } from "../../support/process/processFixture.js";
 
@@ -291,24 +290,30 @@ it("derives a child deadline from the test deadline, keeping a reporting reserve
   expect(remainingProcessDeadline(0, 0)).toBeUndefined();
 });
 
-processTest(
-  "stops a hung child before its test deadline and reports its output",
+it(
+  "stops a hung child before its running test's deadline and reports its output",
   // The test deadline is the behavior under test: the child gets what remains.
   { timeout: 8_000 },
-  async ({ processes }) => {
+  async () => {
+    // processTest uses this registry, so one registry covers both entry points.
+    const processes = createTestProcessRegistry();
     const started = performance.now();
-    const failure: unknown = await processes
-      .run(process.execPath, [
-        "-e",
-        "process.stdout.write('started'); setInterval(() => {}, 1_000);",
-      ])
-      .catch((error: unknown) => error);
-    expect(failure).toMatchObject({
-      message: expect.stringMatching(
-        /^Test process exceeded its \d+ms deadline$/u,
-      ),
-      cause: { stdout: "started" },
-    });
-    expect(performance.now() - started).toBeLessThan(6_000);
+    try {
+      const failure: unknown = await processes
+        .run(process.execPath, [
+          "-e",
+          "process.stdout.write('started'); setInterval(() => {}, 1_000);",
+        ])
+        .catch((error: unknown) => error);
+      expect(failure).toMatchObject({
+        message: expect.stringMatching(
+          /^Test process exceeded its \d+ms deadline$/u,
+        ),
+        cause: { stdout: "started" },
+      });
+      expect(performance.now() - started).toBeLessThan(6_000);
+    } finally {
+      await processes.shutdown();
+    }
   },
 );
