@@ -237,11 +237,10 @@ const runSetupInTty = async (
     ["scripts/rea.mjs", "setup", ...arguments_],
     {
       cwd: process.cwd(),
+      // Client locations such as CODEX_HOME must follow the temporary home.
       env: {
         ...process.env,
-        HOME: home,
-        USERPROFILE: home,
-        XDG_CONFIG_HOME: join(home, ".config"),
+        ...isolatedSetupEnvironment(home),
         REA_LOG_LEVEL: "silent",
         NO_COLOR: "1",
         ...environment,
@@ -376,6 +375,22 @@ describe("TTY setup dry run", () => {
     ).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("prints the applied result for a non-interactive TTY setup", async () => {
+    const home = await createTestTempDirectory("rea-cli-setup-yes-");
+    const { exitCode, output } = await runSetupInTty(home, [
+      "--yes",
+      "--client",
+      "codex",
+      "--skill=false",
+    ]);
+
+    expect(exitCode, output).toBe(0);
+    expect(output).toContain("Restart Codex to load REA.");
+    await expect(
+      access(join(home, ".codex/config.toml")),
+    ).resolves.toBeUndefined();
   });
 
   it("shows the refusal instead of a blocked skill plan for a TTY dry run", async () => {
