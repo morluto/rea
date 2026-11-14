@@ -45,8 +45,12 @@ import tables remain inspectable. A recognized machine whose width contradicts
 the optional header is malformed.
 
 Each `imports[]` item reports the DLL name, descriptor RVAs, and named or
-ordinal functions with ILT/IAT RVAs. `delay_imports[]` reports RVA-based
-delay-load descriptors separately. `imphash` is pefile's `get_imphash()` over
+ordinal functions with ILT/IAT RVAs. `delay_imports[]` reports delay-load descriptors separately, including legacy
+PE32 descriptors whose address fields and named thunks are virtual addresses.
+Following the [Microsoft PE format](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#delay-load-import-tables-image-only),
+these addresses are normalized against the preferred image base into the existing
+RVA fields. Descriptor attributes, file locations, and raw `thunk_hex` values
+remain available. Zero optional pointers remain zero. `imphash` is pefile's `get_imphash()` over
 the standard import table only; delay-load rows do not participate. Ordinal
 imports use pefile's ordinal name tables and otherwise its `ord<decimal>`
 fallback.
@@ -76,8 +80,17 @@ the declared directory size are reported as partial coverage with `issues`. A
 descriptor whose required table RVA is zero (a
 standard `FirstThunk`, or a delay-load import address or name table) is
 reported as `malformed_entry` with no functions, never as a complete empty
-inventory. Delay-load descriptors that store virtual addresses rather than RVAs
-are recorded as `unsupported_form` and are not decoded.
+inventory. Legacy virtual addresses below the preferred image base produce
+partial coverage with a field-specific issue instead of wrapping into an RVA.
+The affected delay-descriptor RVA is `null` (unknown), distinct from an encoded
+zero (absent). Other readable descriptor fields and imports are retained. An
+invalid DLL-name pointer leaves the name unknown; an invalid required import
+table pointer leaves functions undecoded. Invalid optional module-handle, bound,
+or unload pointers do not prevent reading the import tables. Consumers must
+handle nullable delay-descriptor RVAs. Historical numeric values remain valid.
+PE32+
+descriptors using the legacy virtual-address form remain `unsupported_form`;
+only the PE32 legacy form is decoded.
 
 This workflow does not resolve bound imports, loaded IAT contents, or
 export-forward names in another DLL.
