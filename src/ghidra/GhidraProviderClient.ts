@@ -75,6 +75,8 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   reattributedResourceConstraint,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
@@ -590,8 +592,7 @@ export const createGhidraProviderClient = (input: {
         : [];
   if (input.signal.aborted)
     return err(
-      new AnalysisCancelledError("create_analysis_client", {
-        cause: input.signal.reason,
+      cancelledBy("create_analysis_client", input.signal, {
         diagnostics: ghidraInstallationDiagnostics(installation),
       }),
     );
@@ -1497,14 +1498,18 @@ const projectPrimarySessionError = (
   if (
     failure.kind === "cancelled" ||
     (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
-  )
-    return new AnalysisCancelledError(operation, {
-      ...context,
-      cause:
+  ) {
+    const { cause: _failure, ...cancellationContext } = context;
+    return cancelledBy(
+      operation,
+      carriedReason(
         failure.cancellation === undefined
           ? failure
           : failure.cancellation.reason,
-    });
+      ),
+      cancellationContext,
+    );
+  }
   if (failure.kind === "remote" && failure.remoteCode === "decompile_failed")
     return new ProviderAdapterError("ghidra", operation, {
       ...context,
