@@ -28,7 +28,9 @@ void rea_loader_writer(void) {
 }
 
 extern rea_loader_word rea_external(int value);
-extern rea_loader_word rea_external_value;
+/* Weak so -fPIE code reads it through a RELRO GOT entry. A strong reference
+ * lets GCC use a copy relocation into writable .bss instead. */
+extern rea_loader_word rea_external_value __attribute__((weak));
 
 __attribute__((noinline, used, visibility("default")))
 rea_loader_word rea_loader_got_caller(rea_loader_word value) {

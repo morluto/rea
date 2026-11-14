@@ -221,9 +221,7 @@ async function buildProvider(compiler, source, output) {
 async function buildFixture(compiler, source, provider, output) {
   const arguments_ = [
     "-O0",
-    // -fPIC makes the external data read go through a RELRO GOT entry; -fPIE
-    // lets GCC use a copy relocation into writable .bss instead.
-    "-fPIC",
+    "-fPIE",
     "-fno-plt",
     "-pie",
     "-nostdlib",
