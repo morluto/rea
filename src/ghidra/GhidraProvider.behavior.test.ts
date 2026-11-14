@@ -883,6 +883,21 @@ describe("Ghidra platform support", () => {
     ).toBe("read-only-relocation-limitations-v1");
   });
 
+  it("keeps Windows annotation mutation unavailable independently of native controls", () => {
+    const ghidra = provider(installationHost("win32"));
+    expect(
+      ghidra
+        .capabilities()
+        .find(({ operation }) => operation === "annotate_native_function"),
+    ).toMatchObject({
+      available: false,
+      reason: "Windows Ghidra P0 does not admit database mutation.",
+      availabilityCode: "unsupported_host",
+    });
+  });
+});
+
+describe("Ghidra PE analysis profile identity", () => {
   it("commits the PE role and managed classification to profile identity", async () => {
     const ghidra = provider(installationHost("win32"));
     const application = peTarget("x86_64");
@@ -904,9 +919,10 @@ describe("Ghidra platform support", () => {
         executable_role: target.executableRole,
         managed: target.managed,
         native_aot_metadata: {
-          contract_revision: "rtr-9.1-x64-pe-read-only-v10",
+          contract_revision: "rtr-9.1-x64-pe-read-only-v11",
           source_bytes: 128 * 1024 * 1024,
-          work_units: 64 * 1024 * 1024,
+          base_work_units: 64 * 1024 * 1024,
+          work_units_per_source_byte: 8,
           working_memory_bytes: 64 * 1024 * 1024,
           report_bytes: 4 * 1024 * 1024,
         },
@@ -922,19 +938,6 @@ describe("Ghidra platform support", () => {
     expect(nonPe.value.profile.parameters).not.toHaveProperty(
       "native_aot_metadata",
     );
-  });
-
-  it("keeps Windows annotation mutation unavailable independently of native controls", () => {
-    const ghidra = provider(installationHost("win32"));
-    expect(
-      ghidra
-        .capabilities()
-        .find(({ operation }) => operation === "annotate_native_function"),
-    ).toMatchObject({
-      available: false,
-      reason: "Windows Ghidra P0 does not admit database mutation.",
-      availabilityCode: "unsupported_host",
-    });
   });
 });
 
