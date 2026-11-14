@@ -161,9 +161,15 @@ const assessNativeDecompiler = (
   return {
     status: "incompatible",
     detail: `${path} reports ${observed}, but ${platform}/${architecture} requires ${expected}`,
-    remediation: `Provide an executable Ghidra/Features/Decompiler/os/${nativeDirectory ?? "<platform>"}/${executable} built for ${expected}, or its build/os equivalent. REA does not build or install native tools.`,
+    remediation: `Provide an executable Ghidra/Features/Decompiler/os/${nativeDirectory ?? "<platform>"}/${executable} built for ${expected}, or its build/os equivalent.${nativeBuildNativesLine(platform)} REA does not build or install native tools.`,
   };
 };
+
+/** macOS hint shared by missing/incompatible native-decompiler remediations. */
+const nativeBuildNativesLine = (platform: NodeJS.Platform): string =>
+  platform === "darwin"
+    ? " On macOS, first run `<GHIDRA_INSTALL_DIR>/support/buildNatives` from the Ghidra installation root (requires the Command Line Tools toolchain), then restart REA."
+    : "";
 
 /** Caller-owned paths and host coordinates used for one installation probe. */
 export interface GhidraInstallationOptions {
@@ -972,7 +978,7 @@ const nativeDecompilerCheck = ({
     remediation:
       compatibility?.status === "incompatible"
         ? compatibility.remediation
-        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent. REA does not build or install native tools.`,
+        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent.${nativeBuildNativesLine(platform)} REA does not build or install native tools.`,
   });
 };
 
