@@ -11,6 +11,9 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
+  type CancellationReason,
 } from "../domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -90,7 +93,7 @@ export async function mapHopperFileOffset(
       "The selected database digest does not identify its original executable bytes. Open that executable to verify original-file coordinates; read_bytes still exposes the database's native bytes.",
     );
   const signal = ownership.signal;
-  if (signal?.aborted) return err(cancelled(partial, signal.reason));
+  if (signal?.aborted) return err(cancelled(partial, signal));
   const publish = (marker: ProviderCleanupError): ProviderCleanupError => {
     ownership.onCleanupMarker(marker);
     return marker;
@@ -136,7 +139,7 @@ export async function mapHopperFileOffset(
         );
       return err(
         retainSnapshot(
-          cancelled(partial, cause.reason),
+          cancelled(partial, carriedReason(cause.reason)),
           captured.value,
           verification.observation,
           verified.fileOffset,
@@ -180,10 +183,9 @@ const isSourceRead = (
 
 const cancelled = (
   partial: (reason: string) => FileOffsetPartialObservation,
-  cause?: unknown,
+  reason: CancellationReason,
 ): AnalysisCancelledError =>
-  new AnalysisCancelledError(OPERATION, {
-    ...(cause === undefined ? {} : { cause }),
+  cancelledBy(OPERATION, reason, {
     partialObservation: partial("Source verification was cancelled"),
   });
 
@@ -203,7 +205,7 @@ const sourceAccessFailure = (
   partial: (reason: string) => FileOffsetPartialObservation,
 ): AnalysisError => {
   if (cause instanceof RegularFileOperationCancelled)
-    return cancelled(partial, cause.reason);
+    return cancelled(partial, carriedReason(cause.reason));
   const reason = `Cannot verify original source bytes: ${cause instanceof Error ? cause.message : String(cause)}`;
   const code =
     typeof cause === "object" && cause !== null && "code" in cause
@@ -285,7 +287,10 @@ const cleanupAfterSnapshot = (
     return err(
       withCleanup(
         retainSnapshot(
-          cancelled(partial, failure.completionCancellation.reason),
+          cancelled(
+            partial,
+            carriedReason(failure.completionCancellation.reason),
+          ),
           captured.value,
           verification.observation,
           verified.fileOffset,

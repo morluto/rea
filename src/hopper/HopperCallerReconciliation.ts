@@ -5,6 +5,8 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -168,8 +170,9 @@ async function buildIndex(
     bytes = 0;
   const began = performance.now();
   let stop: HopperCallerScanStop = { code: "complete" };
+  // Called only after the caller's signal aborted.
   const cancelled = (): AnalysisCancelledError =>
-    new AnalysisCancelledError(operation, { cause: options?.signal?.reason });
+    cancelledBy(operation, carriedReason(options?.signal?.reason));
   const fail = (
     error: AnalysisError,
     failureStop: HopperCallerScanStop,
@@ -494,12 +497,10 @@ export const reconcileHopperCallers = async (
     );
   if (options?.signal?.aborted)
     return err(
-      retainNative(
-        new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
-        }),
-        { scan: null, destinations: null },
-      ),
+      retainNative(cancelledBy(operation, options.signal), {
+        scan: null,
+        destinations: null,
+      }),
     );
   const selected = targetSchema.safeParse(targetResponse.value);
   if (!selected.success)
