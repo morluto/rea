@@ -2669,10 +2669,14 @@ const probePackagedImage = async (
   nativeFormat: NativeFormat,
   context: ScanContext,
 ): Promise<void> => {
+  const bytesReadBefore = state.memberBytesRead;
   const allowance = context.maxFileBytes - state.packagedProbeBytes;
   const image = allowance > 0 ? await member.read(allowance) : null;
   if (image?.kind !== "bytes") {
-    state.packagedProbeBytes = context.maxFileBytes;
+    state.packagedProbeBytes += Math.min(
+      Math.max(allowance, 0),
+      state.memberBytesRead - bytesReadBefore,
+    );
     state.unprobedImages += 1;
     noteUnexaminedPackage(state);
     pushLimitation(
