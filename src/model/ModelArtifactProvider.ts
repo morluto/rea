@@ -21,9 +21,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
-import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -48,6 +46,7 @@ import {
 } from "./ModelFormat.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
@@ -109,40 +108,33 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       );
     } catch (cause) {
       const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
+      const capacity =
+        primary instanceof ParseFailureError
+          ? modelCapacityLimitOf(primary)
+          : undefined;
+      const formatError = parseFailureAnalysisError(
+        OPERATION,
+        input.path,
+        primary,
+      );
       let error: AnalysisError;
       if (origin === "owned-or-classified" && primary instanceof AnalysisError)
         error = primary;
+      else if (primary instanceof ParseFailureError && capacity !== undefined)
+        // A model allowance names its own recovery.
+        error = new AnalysisResourceConstraintError(
+          OPERATION,
+          "memory",
+          primary.message,
+          modelCapacityReportedLimits(capacity),
+          {
+            cause,
+            retryable: false,
+            remediationAction: modelCapacityRemediation(capacity),
+          },
+        );
+      else if (formatError !== undefined) error = formatError;
       else if (
-        primary instanceof ParseFailureError &&
-        (primary.kind !== "limit" ||
-          modelCapacityLimitOf(primary) !== undefined)
-      ) {
-        const limit = modelCapacityLimitOf(primary);
-        error =
-          limit !== undefined
-            ? new AnalysisResourceConstraintError(
-                OPERATION,
-                "memory",
-                primary.message,
-                modelCapacityReportedLimits(limit),
-                {
-                  cause,
-                  retryable: false,
-                  remediationAction: modelCapacityRemediation(limit),
-                },
-              )
-            : primary.kind === "unsupported"
-              ? new AnalysisUnsupportedTargetError(
-                  OPERATION,
-                  input.path,
-                  primary.message,
-                  { cause },
-                )
-              : new BinaryTargetError(input.path, primary.message, {
-                  cause,
-                  constraint: "file_format_rejected",
-                });
-      } else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"

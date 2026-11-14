@@ -25,6 +25,14 @@ import {
   safetensorsFixture,
 } from "../../fixtures/model/model.js";
 
+/** A malformed model header is an invalid `path`, like every format failure. */
+const INVALID_FORMAT = {
+  _tag: "AnalysisInputError",
+  issues: [
+    expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
+  ],
+} as const;
+
 const hash = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
 const providerAt = async (bytes: Buffer) => {
@@ -82,8 +90,7 @@ it("continues refusing the unsupported big-endian GGUF v2 layout", async () => {
   const result = await provider.inspect({ path, hash: "header" });
   if (result.ok) throw new Error("Big-endian GGUF v2 admitted");
   expect(result.error).toMatchObject({
-    _tag: "BinaryTargetError",
-    constraint: "file_format_rejected",
+    ...INVALID_FORMAT,
   });
 });
 
@@ -212,7 +219,7 @@ it.each([
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Expected format refusal");
     expect(result.error).toMatchObject({
-      constraint: "file_format_rejected",
+      ...INVALID_FORMAT,
     });
   },
 );
@@ -263,8 +270,7 @@ it.each([0, 1, 2, 4, 12])(
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Invalid alignment accepted");
     expect(result.error).toMatchObject({
-      _tag: "BinaryTargetError",
-      constraint: "file_format_rejected",
+      ...INVALID_FORMAT,
     });
   },
 );
@@ -289,8 +295,7 @@ it.each([
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Invalid metadata key accepted");
     expect(result.error).toMatchObject({
-      _tag: "BinaryTargetError",
-      constraint: "file_format_rejected",
+      ...INVALID_FORMAT,
     });
   },
 );
@@ -383,7 +388,7 @@ it("separates impossible string lengths from nesting capacity", async () => {
   const invalid = await providerAt(oversized.bytes);
   expect(
     await invalid.provider.inspect({ path: invalid.path, hash: "header" }),
-  ).toMatchObject({ ok: false, error: { _tag: "BinaryTargetError" } });
+  ).toMatchObject({ ok: false, error: INVALID_FORMAT });
   for (const [label, bytes, allowance] of [
     ["nesting", deep.bytes, "32 array frames"],
   ] as const) {
@@ -660,8 +665,13 @@ it.each(ggufKLayouts)(
     const rejected = await provider.inspect({ path, hash: "header" });
     if (rejected.ok) throw new Error("Incomplete common K row admitted");
     expect(rejected.error).toMatchObject({
-      constraint: "file_format_rejected",
-      reason: expect.stringContaining("multiple of 64 elements"),
+      ...INVALID_FORMAT,
+      issues: [
+        expect.objectContaining({
+          reason: "invalid_format",
+          message: expect.stringContaining("multiple of 64 elements"),
+        }),
+      ],
     });
   },
 );
@@ -782,8 +792,7 @@ it("validates booleans beyond an array preview without allocating the full value
   const result = await provider.inspect({ path, hash: "header" });
   if (result.ok) throw new Error("Invalid omitted boolean was accepted");
   expect(result.error).toMatchObject({
-    _tag: "BinaryTargetError",
-    constraint: "file_format_rejected",
+    ...INVALID_FORMAT,
   });
 });
 
@@ -865,9 +874,13 @@ it.each([
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Invalid omitted UTF-8 string was accepted");
     expect(result.error).toMatchObject({
-      _tag: "BinaryTargetError",
-      constraint: "file_format_rejected",
-      message: expect.stringContaining("GGUF string is not valid UTF-8"),
+      ...INVALID_FORMAT,
+      issues: [
+        expect.objectContaining({
+          reason: "invalid_format",
+          message: expect.stringContaining("GGUF string is not valid UTF-8"),
+        }),
+      ],
     });
   },
 );
@@ -1120,14 +1133,13 @@ const malformed = [
   ],
 ] as const;
 it.each(malformed)(
-  "rejects %s with typed file_format_rejected",
+  "rejects %s as an invalid_format path",
   async (_name, make) => {
     const { provider, path } = await providerAt(make());
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Malformed model was accepted");
     expect(result.error).toMatchObject({
-      _tag: "BinaryTargetError",
-      constraint: "file_format_rejected",
+      ...INVALID_FORMAT,
     });
   },
 );
@@ -1176,8 +1188,7 @@ it("retains GGUF declarations and metadata when storage overlap is refused", asy
   const result = await provider.inspect({ path, hash: "header" });
   if (result.ok) throw new Error("Overlapping tensors admitted");
   expect(result.error).toMatchObject({
-    _tag: "BinaryTargetError",
-    constraint: "file_format_rejected",
+    ...INVALID_FORMAT,
   });
   const evidence = parseEvidence(result.error.partialObservation);
   expect(evidence.subject).toBeNull();
@@ -1326,8 +1337,7 @@ it("reports a truncated safetensors header whose length resembles a pickle marke
   const result = await provider.inspect({ path, hash: "header" });
   if (result.ok) throw new Error("Truncated model was accepted");
   expect(result.error).toMatchObject({
-    _tag: "BinaryTargetError",
-    constraint: "file_format_rejected",
+    ...INVALID_FORMAT,
   });
 });
 
@@ -1337,7 +1347,7 @@ it("bounds expansion before allocation and distinguishes unsupported pickle and 
   const { provider, path, root } = await providerAt(fixture.bytes);
   const huge = await provider.inspect({ path, hash: "header" });
   if (huge.ok) throw new Error("Huge count admitted");
-  expect(huge.error._tag).toBe("BinaryTargetError");
+  expect(huge.error).toMatchObject(INVALID_FORMAT);
   await writeFile(path, Buffer.from([0x80, 4, 0, 0]));
   const pickle = await provider.inspect({ path, hash: "header" });
   if (pickle.ok) throw new Error("Pickle admitted");
@@ -1589,7 +1599,7 @@ it.each([false, true])(
       const { provider, path } = await providerAt(bytes);
       expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
         ok: false,
-        error: { _tag: "BinaryTargetError" },
+        error: INVALID_FORMAT,
       });
     }
   },
@@ -1610,7 +1620,7 @@ it("rejects impossible safetensors header and data extents before numeric conver
     const { provider, path } = await providerAt(bytes);
     expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
       ok: false,
-      error: { _tag: "BinaryTargetError" },
+      error: INVALID_FORMAT,
     });
   }
 });
@@ -1624,7 +1634,7 @@ it("rejects a tensor directory whose old 20-byte estimate fits but fixed fields 
   await truncate(path, 24 + 65537 * 20);
   expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
     ok: false,
-    error: { _tag: "BinaryTargetError" },
+    error: INVALID_FORMAT,
   });
 });
 
