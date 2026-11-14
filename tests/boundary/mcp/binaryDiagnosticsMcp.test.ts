@@ -30,7 +30,7 @@ import {
 } from "../../fixtures/binaryDiagnostics/layout.js";
 import {
   elfExportImage,
-  peExportImage,
+  peStoredExportTableImage,
   peRepeatedExportNamesImage,
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { parseNativeExports } from "../../../src/native/exports/NativeExportParser.js";
@@ -64,7 +64,7 @@ it("reports the exhausted native export allowance through MCP", async () => {
     },
     {
       filename: "count-limit.dll",
-      bytes: peExportImage({ functions: [], declaredFunctions: 0x40001 }),
+      bytes: peStoredExportTableImage(0x40001),
       maximum: 262144,
       expected: "fixed count",
       excluded: "fixed byte allowance",
