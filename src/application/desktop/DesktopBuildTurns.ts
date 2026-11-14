@@ -1,5 +1,5 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import { err, type Result } from "../../domain/result.js";
 import { ABORTED, waitForAbortable } from "../../process/AbortablePromise.js";
 
@@ -28,7 +28,7 @@ export class DesktopBuildTurns {
     if ((await waitForAbortable(previous, turn)) === ABORTED || turn.aborted) {
       // A call that never ran keeps its place until the one before it ends, so the next still waits for that one.
       void previous.then(release);
-      return err(new AnalysisCancelledError(operation, { cause: turn.reason }));
+      return err(cancelledBy(operation, turn));
     }
     try {
       return await work(turn);

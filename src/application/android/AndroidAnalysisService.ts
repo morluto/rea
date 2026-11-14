@@ -8,7 +8,7 @@ import {
   androidRequestSchema,
   type AndroidOperation,
 } from "../../domain/android/androidAnalysis.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
@@ -29,9 +29,7 @@ export class AndroidAnalysisService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(operation, options.signal));
     const request = androidRequestSchema.safeParse({ operation, input });
     if (!request.success)
       return err(

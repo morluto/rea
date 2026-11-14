@@ -1,3 +1,4 @@
+import { isAborted } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   createHistoricalSourceGraph,
@@ -46,8 +47,6 @@ const cancelled = (
   ...(signal?.aborted === true ? { cause: signal.reason } : {}),
   ...(partial === undefined ? {} : { partial }),
 });
-
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 
 const deduplicateRelationships = (
   relationships: HistoricalSourceGraphInput["relationships"],

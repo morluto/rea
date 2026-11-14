@@ -17,8 +17,8 @@ import {
   type AnalysisCapturedOutput,
 } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -144,8 +144,7 @@ const failure = (
   signal: AbortSignal,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (signal.aborted)
-    return new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal.aborted) return cancelledBy(operation, signal);
   return new ProviderAdapterError(AGENTENV_PROVIDER, operation, {
     userMessage: cause instanceof Error ? cause.message : String(cause),
     cause,
@@ -367,7 +366,6 @@ const startFailure = (
 ): AnalysisError => {
   if (cause instanceof AnalysisError && kept.release.verified) return cause;
   const options = {
-    cause,
     ...(output === undefined ? {} : { capturedOutput: output }),
     ...(kept.release.verified
       ? {}
@@ -380,11 +378,7 @@ const startFailure = (
           remediationAction: `REA keeps this computer's teardown as ${kept.id}; once the reported problem is fixed, call close_build_computer with that computer_id.`,
         }),
   };
-  if (signal.aborted)
-    return new AnalysisCancelledError(START, {
-      ...options,
-      cause: signal.reason,
-    });
+  if (signal.aborted) return cancelledBy(START, signal, options);
   return new ProviderAdapterError(AGENTENV_PROVIDER, START, {
     ...(cause instanceof ComputerStartFailure &&
     cause.remediation !== undefined &&
@@ -393,6 +387,7 @@ const startFailure = (
       : {}),
     userMessage: cause instanceof Error ? cause.message : String(cause),
     ...options,
+    cause,
   });
 };
 

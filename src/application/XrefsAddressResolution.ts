@@ -2,9 +2,9 @@ import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import { addressedValueSchema } from "../domain/native/nativeInventory.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisOperationPort } from "./AnalysisProvider.js";
@@ -46,8 +46,7 @@ export const resolveXrefsName = async (
   signal?: AbortSignal,
   operation: "xrefs" | "find_xrefs_to_name" = "xrefs",
 ): Promise<Result<string | null, AnalysisError>> => {
-  if (signal?.aborted)
-    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
   const inventory = await analysis.execute(
     "list_names",
     {},
@@ -73,8 +72,7 @@ export const resolveXrefsName = async (
       );
     return inventory;
   }
-  if (signal?.aborted)
-    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
   if (!Array.isArray(inventory.value.result))
     return err(
       new AnalysisOutputError(

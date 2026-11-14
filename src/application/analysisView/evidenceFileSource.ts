@@ -4,9 +4,9 @@ import { authenticateEvidenceBundleValue } from "../EvidenceBundleFiles.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   type AnalysisInputIssue,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../../domain/analysisView/analysisViewErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -158,12 +158,10 @@ export const readEvidenceFileSource = async (
   const { operation } = site;
   const resolveSelected =
     site.resolveSelected ?? ((selected: Evidence) => ok(selected));
-  if (signal?.aborted)
-    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
   const loaded = await readJsonFile(path, signal, resources, operation);
   if (!loaded.ok) return loaded;
-  if (signal?.aborted)
-    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
   const value = loaded.value;
   if (
     typeof value === "object" &&

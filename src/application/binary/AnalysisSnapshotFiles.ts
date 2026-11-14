@@ -15,7 +15,10 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
 import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../../domain/analysisErrorCore.js";
 import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -81,9 +84,7 @@ export const readAnalysisSnapshot = async (
     return ok(snapshot);
   } catch (cause: unknown) {
     if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(READ_OPERATION, { cause: signal.reason }),
-      );
+      return err(cancelledBy(READ_OPERATION, signal));
     return err(
       new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
     );

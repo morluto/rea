@@ -16,7 +16,7 @@ import {
   NATIVE_FUNCTION_MATCHING_PREDICATE,
 } from "../../domain/native/functionMatching.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { EvidenceLookup } from "../EvidenceInputResolver.js";
@@ -208,9 +208,7 @@ const matchingFailure = (
 ): Result<never, AnalysisError> => {
   if (cause instanceof RegularFileCleanupFailure) throw cause;
   if (options?.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-    );
+    return err(cancelledBy(OPERATION, options.signal));
   if (cause instanceof AnalysisError) return err(cause);
   throw cause;
 };

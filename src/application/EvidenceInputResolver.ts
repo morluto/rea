@@ -12,7 +12,7 @@ import {
 } from "../domain/evidenceInputContract.js";
 import { retainedEvidenceReferenceSchema } from "../domain/evidenceReference.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { EvidenceReferenceError } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -92,11 +92,7 @@ export function resolveEvidenceRequest(
     parsed.value,
     (input, path) => {
       if (options.signal?.aborted)
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: options.signal.reason,
-          }),
-        );
+        return err(cancelledBy(operation, options.signal));
       let selected = input;
       if (typeof input === "object" && input !== null && "kind" in input) {
         const reference = retainedEvidenceReferenceSchema.safeParse(input);
@@ -147,9 +143,7 @@ export function resolveEvidenceRequest(
     },
   );
   if (result.ok && options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-    );
+    return err(cancelledBy(operation, options.signal));
   return result.ok
     ? ok({
         input: result.value,

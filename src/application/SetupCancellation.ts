@@ -1,4 +1,4 @@
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 
 /** Preserve the caller's exact reason while setup unwinds its resource owners. */
 export const assertSetupActive = (
@@ -6,10 +6,9 @@ export const assertSetupActive = (
   failure?: string,
 ): void => {
   if (signal?.aborted)
-    throw new AnalysisCancelledError("setup", {
-      cause: signal.reason,
-      ...(failure === undefined
-        ? {}
-        : { diagnostics: { setup_failure: failure } }),
-    });
+    throw cancelledBy(
+      "setup",
+      signal,
+      failure === undefined ? {} : { diagnostics: { setup_failure: failure } },
+    );
 };

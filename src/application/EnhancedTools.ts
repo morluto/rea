@@ -25,8 +25,9 @@ import {
   type EnhancedToolName,
 } from "../contracts/enhancedInputs.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  isAborted,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -841,18 +842,13 @@ export class EnhancedTools {
     signal?: AbortSignal,
     selectorOrigin?: ExecutionOptions["selectorOrigin"],
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    if (isAborted(signal))
-      return err(new AnalysisCancelledError(name, { cause: signal?.reason }));
+    if (isAborted(signal)) return err(cancelledBy(name, signal));
     const execution = await this.analysis.execute(name, arguments_, {
       ...(signal === undefined ? {} : { signal }),
       ...(selectorOrigin === undefined ? {} : { selectorOrigin }),
     });
     if (!execution.ok) return execution;
-    if (isAborted(signal))
-      return err(new AnalysisCancelledError(name, { cause: signal?.reason }));
+    if (isAborted(signal)) return err(cancelledBy(name, signal));
     return execution;
   }
 }
-
-const isAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;

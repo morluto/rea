@@ -7,7 +7,10 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -118,8 +121,7 @@ export const registerMcpClient = async (
   let configured = false;
   const checkCancellation = (): void => {
     if (signal?.aborted === true)
-      throw new AnalysisCancelledError("MCP registration", {
-        cause: signal.reason,
+      throw cancelledBy("MCP registration", signal, {
         diagnostics: {
           client: client.id,
           settings_path: settingsPath,
@@ -212,9 +214,7 @@ export const registerMcpClient = async (
     if (signal?.aborted === true)
       analysisErrorWithCancellation(
         failure,
-        new AnalysisCancelledError("MCP registration", {
-          cause: signal.reason,
-        }),
+        cancelledBy("MCP registration", signal),
       );
     return err(failure);
   }

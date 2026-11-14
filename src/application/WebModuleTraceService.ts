@@ -7,10 +7,10 @@ import {
   type AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
@@ -157,11 +157,7 @@ export class WebModuleTraceService {
     let resolutionFailure: AnalysisError | undefined;
     if (literals.length > 0) {
       if (options?.signal?.aborted)
-        return incomplete(
-          new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-          }),
-        );
+        return incomplete(cancelledBy(OPERATION, options.signal));
       const request = {
         importerUrl,
         importMap:

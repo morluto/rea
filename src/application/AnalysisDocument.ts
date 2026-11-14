@@ -5,8 +5,8 @@ import type {
 } from "./AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { parseDocuments } from "../domain/native/nativeDocument.js";
@@ -23,9 +23,7 @@ export const resolveAnalysisDocument = async (
 ): Promise<Result<string, AnalysisError>> => {
   if (document !== undefined) return ok(document);
   if (signal?.aborted === true)
-    return err(
-      new AnalysisCancelledError("current_document", { cause: signal.reason }),
-    );
+    return err(cancelledBy("current_document", signal));
   const current = await analysis.execute(
     "current_document",
     {},
@@ -33,12 +31,7 @@ export const resolveAnalysisDocument = async (
   );
   if (!current.ok) {
     if (!permitsCapabilityFallback(current.error)) return current;
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("current_document", {
-          cause: signal.reason,
-        }),
-      );
+    if (signal?.aborted) return err(cancelledBy("current_document", signal));
     const listed = await analysis.execute(
       "list_documents",
       {},
@@ -101,8 +94,7 @@ const completeSelection = (
 ): Result<string, AnalysisError> => {
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
+      cancelledBy(operation, signal, {
         partialObservation: createAnalysisExecutionEvidence(
           operation,
           {},

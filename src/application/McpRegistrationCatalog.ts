@@ -2,7 +2,10 @@ import {
   kiloLocation,
   kiloProjectLocation,
 } from "./McpRegistrationKiloLocations.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import { dirname, join, win32 } from "node:path";
 
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -389,10 +392,7 @@ export interface McpRegistrationSelection {
 
 type CatalogFailure = ConfigurationError | AnalysisCancelledError;
 const checkCancellation = (signal: AbortSignal | undefined): void => {
-  if (signal?.aborted)
-    throw new AnalysisCancelledError("MCP registration selection", {
-      cause: signal.reason,
-    });
+  if (signal?.aborted) throw cancelledBy("MCP registration selection", signal);
 };
 
 const selectedIds = (agents: readonly string[]): McpRegistrationClientId[] => {
@@ -611,9 +611,7 @@ export const resolveMcpRegistrationClients = async (
     if (selection.signal?.aborted === true)
       analysisErrorWithCancellation(
         failure,
-        new AnalysisCancelledError("MCP registration selection", {
-          cause: selection.signal.reason,
-        }),
+        cancelledBy("MCP registration selection", selection.signal),
       );
     return err(failure);
   }
