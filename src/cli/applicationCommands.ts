@@ -4,7 +4,8 @@ import { registerNtfsJournalCommand } from "./ntfsJournalCommand.js";
 import { Cli, z } from "incur";
 
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
+import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -65,12 +66,17 @@ export const registerApplicationCommands = (
     name: CLI_COMMANDS.compareApplicationVersions,
     operation: "compare_application_versions",
     description:
-      "Compare two authenticated JavaScript Application Graph versions",
-    workflow: async (input, lookup, signal) => {
+      'Compare two authenticated JavaScript Application Graph versions named as {left, right}: complete Evidence, {kind:"evidence-file",path,evidence_id?}, or {kind:"retained-evidence",evidence_id} with --evidence-bundle',
+    callerPaths: [
+      ["left", "path"],
+      ["right", "path"],
+    ],
+    workflow: async (input, lookup, signal, resources) => {
       const { compareApplicationVersionsEvidence } =
         await import("../application/javascript/JavaScriptApplicationWorkflowService.js");
-      const result = compareApplicationVersionsEvidence(input, lookup, {
+      const result = await compareApplicationVersionsEvidence(input, lookup, {
         signal,
+        resources,
       });
       return result.ok ? { ok: true, value: result.value.evidence } : result;
     },
@@ -239,6 +245,7 @@ const registerEvidenceJsonCommand = ({
   name,
   operation,
   description,
+  callerPaths = [],
   workflow,
 }: {
   readonly cli: CliInstance;
@@ -246,10 +253,13 @@ const registerEvidenceJsonCommand = ({
   readonly name: string;
   readonly operation: string;
   readonly description: string;
+  /** Evidence-file paths resolved against the operator's working directory. */
+  readonly callerPaths?: readonly (readonly string[])[];
   readonly workflow: (
     input: unknown,
     lookup: EvidenceLookup | undefined,
     signal: AbortSignal,
+    resources: ArtifactResourceScope,
   ) => Promise<Result<Evidence, AnalysisError>>;
 }): void => {
   cli.command(name, {
@@ -263,11 +273,12 @@ const registerEvidenceJsonCommand = ({
         logCliCommand(logger, name, async () => {
           const input = await parseCliJsonInput(args.inputJson, name, signal);
           if (!input.ok) return input.error;
+          const value = resolveCliJsonPaths(input.value, callerPaths);
           const result = await runEvidenceInputCommand(
             operation,
             options.evidenceBundle,
             signal,
-            (lookup) => workflow(input.value, lookup, signal),
+            (lookup, resources) => workflow(value, lookup, signal, resources),
           );
           return result.ok
             ? result.value

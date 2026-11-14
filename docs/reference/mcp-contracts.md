@@ -29,8 +29,9 @@ can be passed directly to `compare_functions`, and `inspect_artifact` Evidence
 to `compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
 retained session history or an explicit bundle for transfer.
 
-`compare_artifacts` does not need that Evidence sent back. Name each side once
-with a source that `inspect_analysis_view` also accepts:
+`compare_artifacts` and `compare_application_versions` do not need that
+Evidence sent back. Name each side once with a source that
+`inspect_analysis_view` also accepts:
 `{"kind": "retained-evidence", "evidence_id": "<id>"}` for a record retained in
 this session, or `{"kind": "evidence-file", "path": "/absolute/evidence.json"}`
 for a saved record or bundle. Add `evidence_id` to select one record from a
@@ -947,18 +948,18 @@ complete inline Evidence or an exact reference to a record already retained by
 the current connection. This applies to individual sources, optional sources,
 arrays and nested sources declared by the tool's input schema:
 
-| Workflows                                                                                                   | Retained-reference inputs                                                                                             |
-| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `compare_functions`, `compare_process_captures`, `compare_wasm_interfaces`                                  | `left`, `right`                                                                                                       |
-| `match_native_functions`                                                                                    | `left`, `right`, `left_observations[]`, `right_observations[]`                                                        |
-| `trace_application_feature`, `trace_javascript_semantics`, `compare_source_to_bundle`                       | `application`; feature tracing also accepts `native_observations[]`                                                   |
-| `compare_application_versions`, `compare_javascript_export_shapes`                                          | `left`, `right`; version comparison also accepts both native-observation arrays                                       |
-| `compare_static_and_observed_endpoints`                                                                     | `application`, `capture`; summary retains the complete comparison for `endpoint-comparison` pages                     |
-| `reconcile_javascript_runtime`                                                                              | `static_layers[].analysis`, `runtime_observations[]`                                                                  |
-| `compare_managed_members`, `verify_managed_native_boundaries`, `import_managed_reconstruction`              | Comparison `left`/`right`; verification `managed_boundaries`/`native_observations[]`; reconstruction `static_members` |
-| `project_managed_application_graph`                                                                         | `managed_artifact`, `managed_members`, `managed_native_boundaries`                                                    |
-| `project_android_application_graph`, `project_apple_application_graph`, `project_harmony_application_graph` | `inventory_evidence[]`                                                                                                |
-| `build_call_path`, `find_changed_behavior`, `correlate_static_and_runtime`                                  | `functions[]`, `comparisons[]`, or `static_comparisons[]`/`runtime_comparisons[]`, respectively                       |
+| Workflows                                                                                                   | Retained-reference inputs                                                                                               |
+| ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `compare_functions`, `compare_process_captures`, `compare_wasm_interfaces`                                  | `left`, `right`                                                                                                         |
+| `match_native_functions`                                                                                    | `left`, `right`, `left_observations[]`, `right_observations[]`                                                          |
+| `trace_application_feature`, `trace_javascript_semantics`, `compare_source_to_bundle`                       | `application`; feature tracing also accepts `native_observations[]`                                                     |
+| `compare_application_versions`, `compare_javascript_export_shapes`                                          | `left`, `right`; version comparison also accepts both native-observation arrays, and `evidence-file` for `left`/`right` |
+| `compare_static_and_observed_endpoints`                                                                     | `application`, `capture`; summary retains the complete comparison for `endpoint-comparison` pages                       |
+| `reconcile_javascript_runtime`                                                                              | `static_layers[].analysis`, `runtime_observations[]`                                                                    |
+| `compare_managed_members`, `verify_managed_native_boundaries`, `import_managed_reconstruction`              | Comparison `left`/`right`; verification `managed_boundaries`/`native_observations[]`; reconstruction `static_members`   |
+| `project_managed_application_graph`                                                                         | `managed_artifact`, `managed_members`, `managed_native_boundaries`                                                      |
+| `project_android_application_graph`, `project_apple_application_graph`, `project_harmony_application_graph` | `inventory_evidence[]`                                                                                                  |
+| `build_call_path`, `find_changed_behavior`, `correlate_static_and_runtime`                                  | `functions[]`, `comparisons[]`, or `static_comparisons[]`/`runtime_comparisons[]`, respectively                         |
 
 For example:
 

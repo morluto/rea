@@ -8,7 +8,10 @@ import { z } from "zod";
 import { recordedBrowserOriginSchema } from "../../domain/browserObservation.js";
 import { endpointComparisonViewRequestSchema } from "../../domain/analysisView/endpointComparisonView.js";
 
-import { evidenceInputSchema } from "../../domain/evidenceReference.js";
+import {
+  evidenceInputSchema,
+  evidenceSourceInputSchema,
+} from "../../domain/evidenceReference.js";
 import { compareJavaScriptExportShapesInputSchema } from "../../domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { traceApplicationFeatureInputSchema } from "../../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { traceJavaScriptSemanticsInputSchema } from "../../domain/javascript/javascriptSemanticTraceSchemas.js";
@@ -78,8 +81,15 @@ export const compareStaticObservedEndpointsRequestSchema =
       ),
   });
 
-/** Application comparison request accepting inline or same-session application Evidence. */
+/** Application comparison request: inline, same-session or Evidence-file application Evidence. */
 export const compareApplicationVersionsRequestSchema = z.strictObject({
+  ...compareApplicationVersionsFacts,
+  left: evidenceSourceInputSchema,
+  right: evidenceSourceInputSchema,
+});
+
+/** The same request after Evidence-file sides are read; resolution owns inline and retained inputs. */
+export const compareApplicationVersionsResolvedRequestSchema = z.strictObject({
   ...compareApplicationVersionsFacts,
   left: evidenceInputSchema,
   right: evidenceInputSchema,

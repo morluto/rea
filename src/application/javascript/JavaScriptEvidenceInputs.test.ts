@@ -213,13 +213,13 @@ it("resolves feature native arrays without changing source identity or unknowns"
   expect(lookup).toHaveBeenCalledTimes(2);
 });
 
-it("resolves per-side native observations with one lookup per repeated exact ID", () => {
+it("resolves per-side native observations with one lookup per repeated exact ID", async () => {
   const input = {
     ...JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
     left_native_observations: [native],
     right_native_observations: [native],
   };
-  const inline = compareApplicationVersionsEvidence(input);
+  const inline = await compareApplicationVersionsEvidence(input);
   const records = new Map(
     [input.left, input.right, native].map((record) => [
       record.evidence_id,
@@ -227,7 +227,7 @@ it("resolves per-side native observations with one lookup per repeated exact ID"
     ]),
   );
   const lookup = vi.fn((id: string) => records.get(id));
-  const retained = compareApplicationVersionsEvidence(
+  const retained = await compareApplicationVersionsEvidence(
     {
       left: reference(input.left),
       right: reference(input.right),

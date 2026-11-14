@@ -1,4 +1,8 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { afterAll, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
@@ -199,6 +203,72 @@ it("runs the same trace/compare workflows with inline and retained application E
     arguments: { left: pair.left, right: retained(pair.right.evidence_id) },
   });
   expect(mixed.isError).not.toBe(true);
+});
+
+it("compares application Evidence read from a single-record file and a bundle selection", async () => {
+  const { client, session } = await connect();
+  const root = await createTestTempDirectory("rea-application-version-files-");
+  const leftFile = join(root, "left.json");
+  const bundleFile = join(root, "bundle.json");
+  await writeFile(leftFile, JSON.stringify(pair.left));
+  await writeFile(
+    bundleFile,
+    JSON.stringify(createEvidenceBundle([pair.left, pair.right])),
+  );
+  const files = {
+    left: { kind: "evidence-file", path: leftFile },
+    right: {
+      kind: "evidence-file",
+      path: bundleFile,
+      evidence_id: pair.right.evidence_id,
+    },
+  };
+  const { tools } = await client.listTools();
+  const tool = tools.find(
+    ({ name }) => name === "compare_application_versions",
+  );
+  if (tool === undefined) throw new Error("missing advertised tool");
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  expect(ajv.compile(tool.inputSchema)(files)).toBe(true);
+  const inline = await client.callTool({
+    name: tool.name,
+    arguments: { left: pair.left, right: pair.right },
+  });
+  expect(inline.isError).not.toBe(true);
+  const fromFiles = await client.callTool({
+    name: tool.name,
+    arguments: files,
+  });
+  expect(fromFiles.isError, JSON.stringify(fromFiles)).not.toBe(true);
+  expect(fromFiles.structuredContent).toEqual(inline.structuredContent);
+  expect(
+    session
+      .exportEvidenceBundle()
+      .records.map(({ evidence_id }) => evidence_id),
+  ).toEqual(
+    expect.arrayContaining([pair.left.evidence_id, pair.right.evidence_id]),
+  );
+
+  // A bundle holding two records needs an explicit selection.
+  const unselected = await client.callTool({
+    name: tool.name,
+    arguments: { ...files, right: { kind: "evidence-file", path: bundleFile } },
+  });
+  expect(unselected.isError).toBe(true);
+  expect(parseMcpToolError(unselected)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      details: {
+        operation: "compare_application_versions",
+        issues: [expect.objectContaining({ path: ["right", "evidence_id"] })],
+      },
+    },
+  });
+  const relative = await client.callTool({
+    name: tool.name,
+    arguments: { ...files, left: { kind: "evidence-file", path: "left.json" } },
+  });
+  expect(relative.isError).toBe(true);
 });
 
 it("keeps references connection-scoped through close and expires them on explicit investigation reset", async () => {
