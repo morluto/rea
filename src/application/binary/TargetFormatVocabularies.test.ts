@@ -135,6 +135,7 @@ const TARGETS: TargetFixtures = {
     espFlash: { selected: true, flashOffset: null, partitionTableOffset: null },
   },
   fit: { ...archive, format: "fit" },
+  "compound-file": { ...archive, format: "compound-file" },
   "ntfs-mft": { ...archive, format: "ntfs-mft" },
   plist: { ...artifact, format: "plist" },
   javascript: { ...artifact, format: "javascript" },

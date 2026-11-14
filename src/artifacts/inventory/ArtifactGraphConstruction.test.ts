@@ -576,6 +576,21 @@ it("classifies nested UF2 by block magics and DfuSe by prefix and suffix", () =>
   ).toMatchObject({ format: "file" });
 });
 
+it("classifies a compound file by its signature, under any name", () => {
+  const container = Buffer.alloc(2_048);
+  Buffer.from("d0cf11e0a1b11ae1", "hex").copy(container, 0);
+  for (const path of [
+    "evidence/sample.automaticDestinations-ms",
+    "evidence/custom.customDestinations-ms",
+    "evidence/Thumbs.db",
+    "evidence/blob.bin",
+  ])
+    expect(classifyArtifactBytesAtPath(path, container)).toEqual({
+      kind: "container",
+      format: "compound-file",
+    });
+});
+
 it("classifies a $MFT stream by its FILE record header, under any name", () => {
   const mft = Buffer.alloc(2_048);
   mft.write("FILE", 0, "latin1");

@@ -365,6 +365,30 @@ export const ntfsMftMetadataSchema = z.strictObject({
 });
 
 /**
+ * Compound file container facts: the header, the allocation tables it declares
+ * and the directory entries their chains reach. Stream contents are not
+ * interpreted in this step.
+ */
+export const compoundFileMetadataSchema = z.strictObject({
+  kind: z.literal("compound-file"),
+  major_version: uint32,
+  sector_bytes: offset,
+  mini_sector_bytes: offset,
+  fat_sector_count: offset,
+  difat_sector_count: offset,
+  directory_entry_count: offset,
+  stream_count: offset,
+  storage_count: offset,
+  root_storage_count: offset,
+  unallocated_entry_count: offset,
+  orphan_entry_count: offset,
+  unreadable_entry_count: offset,
+  broken_chain_count: offset,
+  unlisted_fat_sector_count: offset,
+});
+export type CompoundFileMetadata = z.infer<typeof compoundFileMetadataSchema>;
+
+/**
  * U-Boot FIT root facts. Configuration references are declared names; a
  * reference that names no image is reported as a limitation, not removed.
  */
@@ -958,6 +982,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espFlashPartitionMetadataSchema,
   fitMetadataSchema,
   fitImageMetadataSchema,
+  compoundFileMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -1141,6 +1166,10 @@ const declarationsByKind: {
   fit: {
     notCompared:
       "Its fields come from the FIT's own bytes, which content comparison covers.",
+  },
+  "compound-file": {
+    notCompared:
+      "Its counts and offsets come from the file's own header, allocation tables and directory entries, which content comparison covers.",
   },
   /**
    * Payload interpretation and sharing declarations, independent of FIT

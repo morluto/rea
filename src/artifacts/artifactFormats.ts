@@ -20,6 +20,7 @@ import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
 import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
 import { DenoStandaloneArtifactReader } from "./DenoStandaloneArtifactReader.js";
 import { DfuSeArtifactReader } from "./DfuSeArtifactReader.js";
+import { CompoundFileArtifactReader } from "./CompoundFileArtifactReader.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
 import { DotnetBundleArtifactReader } from "./DotnetBundleArtifactReader.js";
@@ -465,6 +466,16 @@ const NON_ZIP_FORMATS = {
       "FIT inventory reports each /images node's stored bytes and its declared type, architecture, OS, compression, load and entry. Image data is not decompressed or decrypted, signatures are not verified, nothing is executed, and load and entry addresses are declarations.",
     createReader: (path, options) =>
       new FitArtifactReader(path, sourceOf(options)),
+  }),
+  "compound-file": container("compound-file", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Compound file inventory lists each directory entry's name, type, declared size and allocation location. Stream contents are not interpreted: a Jump List's DestList, a shell link's target and thumbnail or document bytes stay opaque, mini-stream contents are not resolved, and a non-contiguous chain is reported without a byte range.",
+    createReader: (path, options) =>
+      new CompoundFileArtifactReader(path, sourceOf(options)),
   }),
   "ntfs-mft": described("ntfs-mft", {
     ...plain,
