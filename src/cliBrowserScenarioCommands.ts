@@ -21,9 +21,12 @@ import {
 import { err, ok, type Result } from "./domain/result.js";
 import type { BrowserScenarioCapturePort } from "./application/BrowserScenarioCapturePort.js";
 import type { JsonValue } from "./domain/jsonValue.js";
+import { jsonInputArgument } from "./cli/jsonInputArgument.js";
 import type { Logger } from "pino";
 
 const OPERATION = "capture_browser_scenario";
+const browserScenarioJsonDescription =
+  "Inline browser scenario JSON, JSON file path, or '-' for stdin";
 
 /** Register controlled browser execution and offline validation commands. */
 export const registerBrowserScenarioCommands = (
@@ -40,11 +43,10 @@ export const registerBrowserScenarioCommands = (
     description:
       "Run one bounded Playwright browser scenario and return Evidence",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "Inline browser scenario JSON, JSON file path, or '-' for stdin",
-        ),
+      inputJson: jsonInputArgument(
+        browserScenarioJsonDescription,
+        browserScenarioSchema,
+      ),
     }),
     options: z.object(analysisEvidenceDeliveryOptions),
     run: ({ args, options: delivery }) =>
@@ -110,11 +112,10 @@ const registerBrowserScenarioValidationCommand = (
     description:
       "Validate one browser scenario without launching or attaching to a browser",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "Inline browser scenario JSON, JSON file path, or '-' for stdin",
-        ),
+      inputJson: jsonInputArgument(
+        browserScenarioJsonDescription,
+        browserScenarioSchema,
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
