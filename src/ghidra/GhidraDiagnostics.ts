@@ -141,7 +141,7 @@ export const ghidraFailureOutput = (
   stdout: ghidraDiagnosticStream(scoped.snapshot.stdout, token),
   stderr: ghidraDiagnosticStream(scoped.snapshot.stderr, token),
   complete: scoped.complete && !drainIncomplete,
-  observed_launcher_lines: observedLauncherLines(scoped, token),
+  launcher_failures: observedLauncherFailures(scoped, token),
   observed_oome: (scoped.markers ?? []).map((marker) => {
     const bytes = Buffer.byteLength(marker.line, "utf8");
     return {
@@ -165,33 +165,99 @@ export const ghidraFailureOutput = (
   }),
 });
 
-/** Keep bounded, credential-redacted launcher failure lines before cutting stream tails. */
-const observedLauncherLines = (
+/** Ghidra's headless refusal when `-process` names no program in the project. */
+const GHIDRA_MISSING_PROGRAM = "Requested project program file(s) not found: ";
+
+/**
+ * The JVM's access-denied refusal to open `java_home.save` (Win32 error 5).
+ * Only a line naming that file and the denial counts.
+ */
+const JAVA_HOME_SAVE_DENIED =
+  /FileNotFoundException:\s*(.*?java_home\.save)\s*\(Access is denied\)/iu;
+
+/** A launcher failure recognized in one output line, with that line as evidence. */
+export type GhidraLauncherFailure =
+  | {
+      readonly kind: "missing_program";
+      readonly stream: "stdout" | "stderr";
+      readonly line: string;
+      /** The text after Ghidra's refusal marker: the requested program list. */
+      readonly requested: string;
+    }
+  | {
+      readonly kind: "java_home_save_denied";
+      readonly stream: "stdout" | "stderr";
+      readonly line: string;
+      readonly path: string;
+    };
+
+/**
+ * Recognize a launcher failure in one line of output. This is the only parser
+ * of these lines; error projection reads its facts, never the raw streams.
+ */
+export const ghidraLauncherFailure = (
+  stream: "stdout" | "stderr",
+  line: string,
+): GhidraLauncherFailure | undefined => {
+  const marker = line.indexOf(GHIDRA_MISSING_PROGRAM);
+  if (marker !== -1)
+    return {
+      kind: "missing_program",
+      stream,
+      line,
+      requested: line.slice(marker + GHIDRA_MISSING_PROGRAM.length),
+    };
+  const path = JAVA_HOME_SAVE_DENIED.exec(line)?.[1]?.trim();
+  return path === undefined || path === ""
+    ? undefined
+    : { kind: "java_home_save_denied", stream, line, path };
+};
+
+/**
+ * Whether a missing-program refusal names exactly the program REA passed to
+ * `-process`, so a longer program name cannot be read as this refusal.
+ */
+export const ghidraMissingProgramNames = (
+  failure: Extract<GhidraLauncherFailure, { kind: "missing_program" }>,
+  programName: string,
+): boolean =>
+  failure.requested === programName ||
+  failure.requested.startsWith(`${programName} `);
+
+const LAUNCHER_FAILURE_LIMIT = Math.floor(
+  GHIDRA_DIAGNOSTIC_EXCERPT_BYTES / LAUNCHER_LINE_CHARACTERS,
+);
+
+/**
+ * Parse every retained, credential-redacted line once, before the streams are
+ * cut to their delivered excerpt, and keep a bounded list of the failures.
+ */
+const observedLauncherFailures = (
   scoped: ProviderProcessOutputSince,
   token: string | undefined,
 ): JsonValue => {
-  const lines: string[] = [];
+  const failures: GhidraLauncherFailure[] = [];
   let truncated = false;
-  for (const stream of [scoped.snapshot.stdout, scoped.snapshot.stderr]) {
-    const text = redactCapturedTransportCredential(stream, token, "[REDACTED]");
+  for (const stream of ["stdout", "stderr"] as const) {
+    const text = redactCapturedTransportCredential(
+      scoped.snapshot[stream],
+      token,
+      "[REDACTED]",
+    );
     for (const line of text.split(/\r?\n/u)) {
-      if (
-        !line.includes("Requested project program file(s) not found: ") &&
-        !(line.includes("java_home.save") && line.includes("Access is denied"))
-      )
-        continue;
+      const failure = ghidraLauncherFailure(stream, line);
+      if (failure === undefined) continue;
       if (
         line.length > LAUNCHER_LINE_CHARACTERS ||
-        lines.length >=
-          GHIDRA_DIAGNOSTIC_EXCERPT_BYTES / LAUNCHER_LINE_CHARACTERS
+        failures.length >= LAUNCHER_FAILURE_LIMIT
       ) {
         truncated = true;
         continue;
       }
-      lines.push(line);
+      failures.push(failure);
     }
   }
-  return { lines, truncated };
+  return { failures, truncated };
 };
 
 export const ghidraDiagnosticStream = (

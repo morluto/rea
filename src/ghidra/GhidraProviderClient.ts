@@ -24,10 +24,11 @@ import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js"
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import {
-  GHIDRA_RESTRICTED_TEMP_REMEDIATION,
-  ghidraJavaHomeSaveDenial,
-} from "./GhidraTemporaryDirectory.js";
+  ghidraMissingProgramNames,
+  type GhidraLauncherFailure,
+} from "./GhidraDiagnostics.js";
 
 import {
   createAnalysisExecution,
@@ -1636,7 +1637,7 @@ const projectPrimarySessionError = (
             "Ghidra's output for this operation is incomplete. No OutOfMemoryError was confirmed; a memory cause cannot be ruled out.",
           ]
         : []),
-      ...(output?.launcherLinesTruncated === true
+      ...(output?.launcherFailuresTruncated === true
         ? [
             "The launcher failure-line summary is incomplete; a more specific cause may be omitted.",
           ]
@@ -1645,15 +1646,20 @@ const projectPrimarySessionError = (
   if (memoryFailure !== undefined) return memoryFailure;
   if (
     programName !== undefined &&
-    output?.text.some((text) => reportsMissingProgram(text, programName))
+    output?.launcherFailures.some(
+      (observed) =>
+        observed.kind === "missing_program" &&
+        ghidraMissingProgramNames(observed, programName),
+    )
   )
     return missingProjectProgram(
       programName,
       limits.ghidraExistingProject?.programName !== undefined,
       context,
     );
-  const javaHomeSave =
-    output === undefined ? undefined : ghidraJavaHomeSaveDenial(output.text);
+  const javaHomeSave = output?.launcherFailures.find(
+    (observed) => observed.kind === "java_home_save_denied",
+  );
   if (javaHomeSave !== undefined)
     return new ProviderAdapterError("ghidra", operation, {
       ...context,
@@ -1714,25 +1720,31 @@ const observedJvmFailureSchema = z.object({
 interface GhidraFailureOutputView {
   readonly oomText: string | undefined;
   readonly complete: boolean | undefined;
-  readonly launcherLinesTruncated: boolean;
-  readonly text: readonly string[];
+  readonly launcherFailures: readonly GhidraLauncherFailure[];
+  readonly launcherFailuresTruncated: boolean;
 }
 
-/** Ghidra's headless refusal when `-process` names no program in the project. */
-const GHIDRA_MISSING_PROGRAM = "Requested project program file(s) not found: ";
-
-/**
- * Match only the exact name REA passed to `-process`, so a longer program name
- * or unrelated output cannot be read as this refusal.
- */
-const reportsMissingProgram = (text: string, programName: string): boolean =>
-  text.split(/\r?\n/u).some((line) => {
-    const needle = `${GHIDRA_MISSING_PROGRAM}${programName}`;
-    const at = line.indexOf(needle);
-    if (at === -1) return false;
-    const next = line.charAt(at + needle.length);
-    return next === "" || next === " ";
-  });
+const launcherFailureEvidence = {
+  stream: z.enum(["stdout", "stderr"]),
+  line: z.string().min(1),
+};
+const launcherFailuresSchema = z.object({
+  failures: z.array(
+    z.discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("missing_program"),
+        ...launcherFailureEvidence,
+        requested: z.string(),
+      }),
+      z.object({
+        kind: z.literal("java_home_save_denied"),
+        ...launcherFailureEvidence,
+        path: z.string().min(1),
+      }),
+    ]),
+  ),
+  truncated: z.boolean(),
+});
 
 /** Guidance for a `-process` name that selects no root program in the project. */
 export const ghidraMissingProgramGuidance = (
@@ -1781,34 +1793,20 @@ const readGhidraFailureOutput = (
         return parsed.success ? [parsed.data.line] : [];
       })
     : [];
+  const launcherFailures = launcherFailuresSchema.safeParse(
+    scoped.launcher_failures,
+  );
   return {
     oomText: observedLines.length === 0 ? undefined : observedLines.join("\n"),
     complete:
       typeof scoped.complete === "boolean" ? scoped.complete : undefined,
-    launcherLinesTruncated:
-      scoped.observed_launcher_lines !== null &&
-      typeof scoped.observed_launcher_lines === "object" &&
-      !Array.isArray(scoped.observed_launcher_lines) &&
-      scoped.observed_launcher_lines.truncated === true,
-    text: [scoped.stdout, scoped.stderr]
-      .flatMap((stream) =>
-        stream !== null &&
-        typeof stream === "object" &&
-        !Array.isArray(stream) &&
-        typeof stream.text === "string"
-          ? [stream.text]
-          : [],
-      )
-      .concat(
-        scoped.observed_launcher_lines !== null &&
-          typeof scoped.observed_launcher_lines === "object" &&
-          !Array.isArray(scoped.observed_launcher_lines) &&
-          Array.isArray(scoped.observed_launcher_lines.lines)
-          ? scoped.observed_launcher_lines.lines.filter(
-              (line): line is string => typeof line === "string",
-            )
-          : [],
-      ),
+    launcherFailures: launcherFailures.success
+      ? launcherFailures.data.failures
+      : [],
+    // An unreadable failure list is not evidence that no launcher failure occurred.
+    launcherFailuresTruncated: launcherFailures.success
+      ? launcherFailures.data.truncated
+      : scoped.launcher_failures !== undefined,
   };
 };
 

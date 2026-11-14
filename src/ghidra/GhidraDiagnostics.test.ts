@@ -3,9 +3,10 @@ import {
   GHIDRA_DIAGNOSTIC_EXCERPT_BYTES,
   ghidraDiagnosticStream,
   ghidraFailureOutput,
+  ghidraLauncherFailure,
   createGhidraDiagnostics,
 } from "./GhidraDiagnostics.js";
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 it("keeps request output and provenance without projecting launcher history", () => {
   const output = { text: "launcher output", bytes: 15, observedBytes: 15 };
@@ -152,9 +153,14 @@ it("retains bounded, redacted launcher failure lines before clipping output", ()
     false,
   );
   expect(output).toMatchObject({
-    observed_launcher_lines: {
-      lines: [
-        "java.io.FileNotFoundException: /tmp/[REDACTED]/java_home.save (Access is denied)",
+    launcher_failures: {
+      failures: [
+        {
+          kind: "java_home_save_denied",
+          stream: "stderr",
+          line: "java.io.FileNotFoundException: /tmp/[REDACTED]/java_home.save (Access is denied)",
+          path: "/tmp/[REDACTED]/java_home.save",
+        },
       ],
       truncated: false,
     },
@@ -219,4 +225,74 @@ it("keeps short launcher output whole", () => {
       undefined,
     ),
   ).toEqual({ text: "ok\n", bytes: 3, retained_bytes: 3 });
+});
+
+describe("Ghidra launcher failure lines", () => {
+  it("extracts the denied java_home.save path from JVM output", () => {
+    const line =
+      "java.io.FileNotFoundException: C:\\Users\\a b\\Temp\\rea-provider-1\\config\\ghidra\\ghidra_12.1.4_PUBLIC\\java_home.save (Access is denied)";
+    expect(ghidraLauncherFailure("stderr", line)).toEqual({
+      kind: "java_home_save_denied",
+      stream: "stderr",
+      line,
+      path: "C:\\Users\\a b\\Temp\\rea-provider-1\\config\\ghidra\\ghidra_12.1.4_PUBLIC\\java_home.save",
+    });
+  });
+
+  it.each([
+    [
+      "another denied path",
+      "java.io.FileNotFoundException: C:\\x\\other.txt (Access is denied)",
+    ],
+    [
+      "a different failure for the file",
+      "java.io.FileNotFoundException: C:\\x\\java_home.save (The system cannot find the path specified)",
+    ],
+    ["only a mention", "Reading java_home.save failed"],
+    ["no output", ""],
+  ])("does not classify %s", (_label, line) => {
+    expect(ghidraLauncherFailure("stderr", line)).toBeUndefined();
+  });
+
+  it("keeps a differently cased denial that falls outside the delivered excerpt", () => {
+    const line =
+      "java.io.FileNotFoundException: C:\\x\\java_home.save (ACCESS IS DENIED)";
+    const text = `${line}\n${"later output\n".repeat(7000)}`;
+    const stream = {
+      text,
+      bytes: Buffer.byteLength(text),
+      observedBytes: Buffer.byteLength(text),
+    };
+    const empty = { text: "", bytes: 0, observedBytes: 0 };
+    const output = ghidraFailureOutput(
+      {
+        snapshot: { stdout: empty, stderr: stream, exitCode: 1, signal: null },
+        complete: true,
+      },
+      undefined,
+      false,
+    ) as {
+      stderr: { text: string };
+      launcher_failures: { failures: unknown[] };
+    };
+    expect(output.stderr.text).not.toContain("java_home.save");
+    expect(output.launcher_failures.failures).toEqual([
+      expect.objectContaining({
+        kind: "java_home_save_denied",
+        path: "C:\\x\\java_home.save",
+      }),
+    ]);
+  });
+
+  it("records the requested program list after Ghidra's refusal marker", () => {
+    expect(
+      ghidraLauncherFailure(
+        "stdout",
+        "ERROR Requested project program file(s) not found: target.bin (HeadlessAnalyzer)",
+      ),
+    ).toMatchObject({
+      kind: "missing_program",
+      requested: "target.bin (HeadlessAnalyzer)",
+    });
+  });
 });
