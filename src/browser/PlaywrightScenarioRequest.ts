@@ -38,7 +38,7 @@ type PageResponse =
   | { readonly error: string };
 
 /** A request step that could not be sent or did not answer as expected. */
-export class ScenarioRequestError extends Error {
+class ScenarioRequestError extends Error {
   override readonly name = "ScenarioRequestError";
 }
 

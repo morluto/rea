@@ -238,7 +238,9 @@ broad changes or diagnosing CI, rather than after every edit. Package/install
 changes additionally need package verification; provider changes need actual
 provider evidence.
 
-Vitest projects use up to two workers, bounded by host parallelism.
+Vitest projects use up to two workers, bounded by host parallelism. GitHub
+Actions jobs own their runner and use up to four; see
+[test deadlines](#developer-commands) for how deadlines scale there.
 `process-boundary` runs later with serial files because process-tree sampling
 shares host resources. Acceptance and process-global cases use isolated forks
 without serial scheduling. Pure domain/service, composition, conformance,
@@ -283,7 +285,7 @@ coverage. Ordinary CI also exhausted the former 384 MiB budget after earlier
 files loaded the shared source/contract graph, while later command registration
 and schema/help rendering still needed transient allocation space. This is a
 measured capacity control, not a suite-wide speedup claim. The worker count
-remains bounded at two, and spawned REA processes retain their own heap settings.
+remains bounded, and spawned REA processes retain their own heap settings.
 Coverage enablement still controls instrumentation, test deadlines and coverage
 thresholds; explicitly disabling it or selecting only a provider does not enable
 instrumentation.
@@ -298,6 +300,21 @@ and profile a bounded representative case before retrying. Separate production
 work from fixture generation, schema compilation, subprocess startup and cleanup.
 Choose elapsed, CPU and process-family memory limits before the run; a worker
 count or test timeout alone does not enforce those limits.
+
+A test deadline turns a hang into a named failure; it is not a performance
+assertion. `vitest.config.ts` applies the deadlines in
+`tests/support/testDeadlines.ts` per project: 30 seconds for source projects
+and 120 seconds for built projects, with hooks sharing their project's
+deadline. Coverage doubles every deadline, and so does hosted CI, where
+CPU-bound cases share every core with other workers and their subprocesses.
+Do not pass a per-test timeout to fit a slow host. A child run through a
+test process registry (`processTest`, `cli.run`, or `createTestProcessRegistry`)
+gets the running test's remaining deadline less a reporting reserve, so a hung
+child fails with its captured output. Pass `timeoutMs` only when the child's deadline is itself under test. Tag a bounded workload that needs longer with
+`{ tags: ["long-running"] }`, or a whole file with
+`// @module-tag long-running`. Assert elapsed time explicitly when speed is the
+behavior under test. Derive an explicit deadline only when a test must outlive
+an operation deadline whose diagnostics it checks.
 
 Keep capacity fixtures intact when diagnosing a test failure. For byte equality
 of large buffers, use `Buffer.equals` or `Buffer.compare`; a generic structural
@@ -343,11 +360,17 @@ The process restarts when the environment changes, after 32 commands, or when
 the worker reports a resident set of at least 1 GiB. A fatal worker failure
 or a broken session frame retires that process and waits for it to exit before
 the next command starts.
-`cli.run` still starts a fresh process, including stdin and explicit deadlines.
-`runFileCli` uses the file session for commands that have neither. Go binary,
-IL2CPP metadata, and dylib-resolution commands use that session. File teardown
-stops the shared CLI process, including startup still in flight, and does not
-open another after close.
+In a `cliTest` file, `cli.run` uses that shared process when it reports the
+command exactly as a fresh `rea` process would. Both run the same one-shot
+owner (`src/cliOneShot.ts`), and the shared process presents the launcher's
+entrypoint. A command starts a fresh process instead when it supplies stdin or
+an explicit deadline, enters MCP or the MCP doctor (which the launcher routes
+first), sets `NODE_OPTIONS`, or enables logging, which writes outside the
+per-command capture. Pass `freshProcess: true` for process-level facts such as
+startup, signals, or exit, and keep one fresh check beside reused cases where
+dispatch itself is under test. `createTestCli` drivers always start a fresh
+process. File teardown stops the shared CLI process, including startup still in
+flight, and does not open another after close.
 `exportedFunctionBindingsCli.test.ts` uses the shared compiled CLI session for
 its file and compares its JSON command results with the MCP session. It selects
 20-second startup and command deadlines; other callers retain their existing
@@ -1077,32 +1100,12 @@ existing four-minute timing collection plus the bounded diagnostic stages.
 
 Fast built shards target under ten minutes of uncontended shard-job execution.
 That figure is the `test-shard` job. The job waits for classification and the
-build, and the portable-test merge runs after the slowest shard. On 2026-10-20,
-run `39451548945` measured those surrounding jobs with runner queue excluded:
-classification 15 seconds, build 49 seconds, and the portable-test merge 29
-seconds. Shard 1/5 of that run spent 22 seconds before built Vitest and 3
-seconds after it, including `npm ci` at 9 seconds. `node_modules` is about 674
-MiB, so publishing it as a shared artifact would transfer more data than that
-install saves. The npm download cache stays the setup cache.
-
-File timings from that run put the built suite at 7944 seconds of module time.
-The sequencer keeps each file's full duration on one worker. Extra workers
-overlap other files in the same sequence group, and `process-boundary` runs
-after that group. Scheduling the unsplit inventory onto five shards peaks at
-820 seconds of tests. That run's slowest built shard job lasted 925 seconds
-(shard 4/5), and shard 1/5 spent 874 seconds in built Vitest, so hosted job
-time sits above the file schedule. Six shards of the same inventory peak at
-684 seconds of tests. Eight shards, after the 578-second loader file is split
-by case count (54 cases stay in that file and 46 move into each of three
-files), peak at 513 seconds of tests. With the measured 25-second shard setup,
-that shard job is about 538 seconds. Adding the measured classification, build,
-and merge makes an uncontended portable critical path of about 631 seconds,
-still before the gap between this file schedule and hosted Vitest. Runner queue
-is separate and grows when more shard jobs compete for runners.
+build, and the portable-test merge runs after the slowest shard. Runner queue is
+separate and grows when more shard jobs compete for runners. The npm download
+cache stays the setup cache rather than a shared `node_modules` artifact.
 `process-boundary` stays serial because process-tree sampling shares the host.
-Raising the worker cap from two to four on this four-core host cut a six-file
-acceptance sample from 96–101 seconds to 71 seconds and did not remove the
-single-file floor, so the cap stays two. Full qualification keeps six covered
+Hosted CI jobs use four workers; other hosts stay at two
+because they are shared with other checks. Full qualification keeps six covered
 shards; its longer instrumentation is outside this fast budget.
 
 The separate `CI timings` workflow batches recent completed CI and Release runs

@@ -6,7 +6,7 @@ import {
 } from "./javascriptSemanticAnalysis.js";
 import { onlyCallable } from "./javascriptSemanticAnalysis.fixture.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import {
   completeSemanticSteps,

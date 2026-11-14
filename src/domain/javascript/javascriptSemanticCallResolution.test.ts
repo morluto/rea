@@ -3,9 +3,9 @@ import { expect, it, vi } from "vitest";
 
 import {
   analyzeJavaScriptSemantics,
-  indexJavaScriptBindingsSteps,
   indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import {
   resolveLocalCallables,
   type LocalCallableResolution,

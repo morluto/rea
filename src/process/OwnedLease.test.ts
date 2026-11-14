@@ -10,6 +10,7 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { HopperStartError } from "../domain/hopperErrors.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 // Unix socket paths have a short platform limit; the canonical system temp path can exceed it.
 const createTestTempDirectory = async (prefix: string): Promise<string> => {
   const directory = await mkdtemp(join("/tmp", prefix));
@@ -121,18 +122,21 @@ describe.skipIf(process.platform === "win32")(
       const first = acquired.lease.release().then(() => {
         firstFinished = true;
       });
-      await started.promise;
-      const second = acquired.lease.release().then(() => {
-        secondFinished = true;
-      });
+      let second: Promise<void> | undefined;
       try {
+        await awaitAcknowledgement(started.promise, first, "lease close");
+        second = acquired.lease.release().then(() => {
+          secondFinished = true;
+        });
         await new Promise<void>((resolve) => setImmediate(resolve));
         expect(firstFinished).toBe(false);
         expect(secondFinished).toBe(false);
       } finally {
         finish.resolve();
-        await Promise.all([first, second]);
+        await Promise.allSettled([first, ...(second ? [second] : [])]);
       }
+      await first;
+      await second;
       expect(firstFinished).toBe(true);
       expect(secondFinished).toBe(true);
     });

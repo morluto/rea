@@ -1,9 +1,9 @@
 import {
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   type StableArtifactSnapshot,
@@ -19,7 +19,6 @@ import type { KernelModulePort } from "../../application/binaryDiagnostics/Kerne
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
@@ -204,20 +203,13 @@ const kernelModuleFailurePrimary = (
         ],
       );
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected kernel module could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "kernel module",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ArtifactOperationError(
     OPERATION,
     origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure

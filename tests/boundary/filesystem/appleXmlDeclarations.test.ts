@@ -40,7 +40,7 @@ it("preflights repeated unterminated quoted declarations without suffix rescans"
     expected: number;
   };
   expect(result.observed.estimatedBytes).toBe(result.expected);
-}, 10000);
+});
 
 const fixture = async (declaration: string) => {
   const bundlePath = await createTestTempDirectory("rea-xml-declaration-");

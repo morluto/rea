@@ -56,6 +56,7 @@ import {
   type AnalysisCleanupRetry,
 } from "../domain/analysisErrorRecovery.js";
 import { isBundleResourceOperation } from "./binary/BundleResourceSession.js";
+import { offeredOperationAlternatives } from "./OperationAlternatives.js";
 
 const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
   FRIDA_TOOL_CONTRACTS.map(({ name }) => name),
@@ -126,6 +127,8 @@ export type AvailabilityPolicy = {
 type AvailabilityFacts = {
   readonly defaultModeAvailable?: boolean;
   readonly modes?: readonly ToolAvailabilityMode[];
+  /** Advertised operations the current provider offers for part of the question. */
+  readonly alternatives?: readonly AnalysisOperation[];
 };
 type Availability = AvailabilityFacts &
   (
@@ -162,6 +165,7 @@ type AvailabilityContext = {
   readonly targetFormat: string | undefined;
   readonly descriptors: ReadonlyMap<string, ProviderDescriptor>;
   readonly policy: AvailabilityPolicy;
+  readonly isToolAdvertised: (name: string) => boolean;
 };
 
 type EnhancedContractName = Extract<
@@ -322,10 +326,15 @@ const ADDRESS_CONTEXT_EFFECT_COMPOSITION: ModeComposition = {
   ],
 };
 
-/** Build stable per-operation availability for discovery and tool visibility. */
+/**
+ * Build stable per-operation availability for the caller's advertised tools.
+ * Each tool's availability still derives from the complete provider facts;
+ * advertisement narrows only the reported tools and the alternatives named.
+ */
 export const buildCapabilityInventory = (
   sessionStatus: JsonValue,
   policy: AvailabilityPolicy,
+  isToolAdvertised: (name: string) => boolean = () => true,
 ): readonly ToolAvailability[] => {
   const status = statusSchema.parse(sessionStatus);
   const descriptors = new Map<string, ProviderDescriptor>(
@@ -345,6 +354,7 @@ export const buildCapabilityInventory = (
       targetFormat: status.format,
       descriptors,
       policy,
+      isToolAdvertised,
     });
     const effects = composedEffects(
       contract.name,
@@ -398,8 +408,13 @@ export const buildCapabilityInventory = (
           available: false,
           reason: availability.reason,
           remediation: availability.remediation,
+          ...(availability.alternatives === undefined
+            ? {}
+            : { alternatives: [...availability.alternatives] }),
         };
-  }).sort((left, right) => compareUnicodeCodePoints(left.name, right.name));
+  })
+    .filter(({ name }) => isToolAdvertised(name))
+    .sort((left, right) => compareUnicodeCodePoints(left.name, right.name));
 };
 
 type ClientRequirements = ToolAvailability["client_requirements"];
@@ -445,6 +460,9 @@ export function compactToolAvailability(
         ? {}
         : { default_mode_available: entry.default_mode_available }),
       ...(entry.modes === undefined ? {} : { modes: [...entry.modes] }),
+      ...(entry.available || entry.alternatives === undefined
+        ? {}
+        : { alternatives: [...entry.alternatives] }),
       ...(JSON.stringify(entry.client_requirements) ===
       JSON.stringify(clientRequirements)
         ? {}
@@ -730,7 +748,7 @@ const workflowAvailabilityFor = (
                 : "provider_missing",
           remediation:
             policy.androidAnalysisAvailability?.remediation ??
-            "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp 0.7.1 JAR and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
+            "Set REA_JADX_MCP_JAR to the jadx-headless-mcp 0.7.1 release JAR (rea doctor --provider jadx names its download URL and SHA-256) and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
         };
   if (kind === "adb-provider")
     return ownerProbeAvailability(
@@ -959,6 +977,7 @@ const providerAvailability = ({
   kind,
   name,
   policy,
+  isToolAdvertised,
 }: AvailabilityContext): Availability => {
   if (kind === "enhanced") return composedAvailability(name, descriptors);
   const launchFailure =
@@ -976,12 +995,20 @@ const providerAvailability = ({
       kind === "native-provider")
   )
     return { reason: "available", remediation: null };
-  if (descriptor === undefined)
+  if (descriptor === undefined) {
+    const offered = offeredOperationAlternatives(
+      name,
+      (alternative) =>
+        descriptors.get(alternative)?.available === true &&
+        isToolAdvertised(alternative),
+    );
     return {
       reason: "provider_missing",
       remediation:
         "Install or configure a provider that declares this operation.",
+      ...(offered === undefined ? {} : { alternatives: offered.operations }),
     };
+  }
   return descriptor.available
     ? { reason: "available", remediation: null }
     : {

@@ -1,30 +1,15 @@
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { afterAll, beforeAll, expect } from "vitest";
+import { join } from "node:path";
+import { expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { fileLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const client = new Client({ name: "literal-budget-boundary", version: "1" });
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [resolve("scripts/rea.mjs"), "mcp"],
-  cwd: process.cwd(),
-  env: { PATH: process.env.PATH ?? "" },
-  stderr: "pipe",
-});
-beforeAll(async () => {
-  await client.connect(transport);
-  transport.stderr?.on("data", () => undefined);
-});
-afterAll(async () => {
-  await Promise.all([client.close(), transport.close()]);
-});
+const mcp = fileLocalToolsMcp();
 
 const large = "x".repeat(200_000);
 for (const scenario of [
@@ -61,13 +46,12 @@ for (const scenario of [
       const digest = createHash("sha256").update(source).digest("hex");
       const cliResponse = await cli.run({
         arguments: ["analyze-javascript-application", root, "--json"],
-        timeoutMs: 60_000,
       });
       expect(cliResponse.exitCode).toBe(0);
       const cliEvidence = toolContract(
         "analyze_javascript_application",
       ).outputSchema.parse(cliResponse.json);
-      const response = await client.callTool({
+      const response = await mcp.client.callTool({
         name: "analyze_javascript_application",
         arguments: { input_path: root },
       });
@@ -131,7 +115,7 @@ for (const scenario of [
         ).toMatchObject({ sha256: digest });
       }
       expect(await readFile(path, "utf8")).toBe(source);
-      await client.ping();
+      await mcp.client.ping();
     },
   );
 }

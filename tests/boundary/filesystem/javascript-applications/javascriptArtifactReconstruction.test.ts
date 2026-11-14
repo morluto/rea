@@ -27,7 +27,7 @@ import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGrap
 import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import type { JavaScriptModuleSemanticIr } from "../../../../src/domain/javascript/javascriptModuleSemanticIr.js";
 import type { JavaScriptStaticAnalysis } from "../../../../src/domain/javascript/javascriptStaticAnalysisTypes.js";
-import { analyzeJavaScriptStaticSource } from "../../../../src/domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../fixtures/javascriptStaticAnalysis.js";
 import type { JavaScriptArtifactFile } from "../../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { completeJavaScriptAnalysisSteps } from "../../../../src/application/javascript/JavaScriptAnalysisControl.js";
 import { buildImmutableJavaScriptArtifactGraphSteps } from "../../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";

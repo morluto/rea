@@ -94,5 +94,4 @@ const assertReturns = (fields: JavaScriptReturnFields): void => {
 cliTest(
   "does not report stale literals after storing references in member slots",
   ({ cli }) => verifyJavaScriptReturnShapes(cli, source, assertReturns),
-  120_000,
 );

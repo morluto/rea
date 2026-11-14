@@ -36,7 +36,7 @@ const runJson = async (
   await writeFile(path, JSON.stringify(input));
   // These JSON commands share no provider state; reuse the fixture-owned CLI
   // process so the matrix measures validation rather than repeated startup.
-  const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+  const run = cli.run.bind(cli);
   return run({
     arguments: [
       command,

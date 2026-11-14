@@ -65,7 +65,7 @@ for (const target of [
         }),
       );
 
-      const cliOut = await cli.sharedCliRun!({
+      const cliOut = await cli.run({
         arguments: ["inspect-elf-notes", path, "--json"],
       });
       expect(cliOut.exitCode, cliOut.stderr).toBe(0);

@@ -5,10 +5,10 @@ import {
   environmentManifestCaptureFixture,
 } from "../../../tests/fixtures/analysisView.js";
 import {
-  analysisViewRequestSchema,
   projectAnalysisView,
   type AnalysisViewRequest,
 } from "./analysisView.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 type ManifestView = Extract<
   AnalysisViewRequest,

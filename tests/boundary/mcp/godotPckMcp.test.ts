@@ -40,7 +40,7 @@ const viewValidators = async (client: Client) => {
   const outputSchema: Record<string, unknown> = contract.outputSchema;
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
-  return { ajv, inputSchema, outputSchema };
+  return { ajv, inputSchema, toolDefinition: contract };
 };
 
 const retainedInventoryView =
@@ -58,17 +58,13 @@ const retainedInventoryView =
       validators.ajv.validate(validators.inputSchema, arguments_),
       JSON.stringify(validators.ajv.errors),
     ).toBe(true);
-    const reply = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: arguments_,
-    });
+    const reply = await client.callTool(
+      { name: "inspect_analysis_view", arguments: arguments_ },
+      { toolDefinition: validators.toolDefinition },
+    );
     expect(reply.isError, JSON.stringify(reply.structuredContent)).not.toBe(
       true,
     );
-    expect(
-      validators.ajv.validate(validators.outputSchema, reply.structuredContent),
-      JSON.stringify(validators.ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(reply.structuredContent);
     expect(evidence.evidence_links).toContain(evidenceId);
     return analysisViewResultSchema.parse(evidence.normalized_result);

@@ -9,7 +9,7 @@ import { historicalHar } from "../../fixtures/historicalHar.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
   "omits HAR extension payloads from capture previews while retaining complete records",
@@ -166,10 +166,10 @@ cliTest(
           "--json",
         ],
       };
-      const output =
-        label === "null-timings"
-          ? await cli.run(invocation)
-          : await runFileCli(cli, invocation);
+      const output = await cli.run({
+        ...invocation,
+        freshProcess: label === "null-timings",
+      });
       expect(output.exitCode).toBe(1);
       const expected = {
         code: "invalid_request",

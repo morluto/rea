@@ -1,6 +1,12 @@
 import { accessSync, constants, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  productionMcpDoctorArguments,
+  splitIncurBuiltinArguments,
+} from "../../../src/cliBuiltinArguments.js";
+import { DEFAULT_INFO_LOGGING_COMMANDS } from "../../../src/cliCommandNames.js";
+import { parseLogLevel } from "../../../src/config/processStart.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 
 import {
@@ -24,6 +30,11 @@ export interface CliInvocation {
   readonly environment?: NodeJS.ProcessEnv;
   readonly input?: string | Uint8Array;
   readonly timeoutMs?: number;
+  /**
+   * Start a new process even when the file's shared process could serve the
+   * command. Use it for process-level facts such as startup or exit.
+   */
+  readonly freshProcess?: boolean;
 }
 
 /** Normalized result from the compiled REA CLI. */
@@ -40,18 +51,17 @@ export type SharedMcpCall = Awaited<
 
 /** Compiled REA CLI driver owned by one test. */
 export interface TestCli {
+  /**
+   * Run one command. `cliTest` drivers use the file's shared process when it
+   * reports the command exactly as a fresh process would, and start a fresh
+   * process otherwise. Drivers from `createTestCli` always start one.
+   */
   run(invocation: CliInvocation): Promise<CliResult>;
   /**
    * File-scoped stdio MCP caller. Present on `cliTest` drivers and absent for
    * drivers created with `createTestCli` alone.
    */
   sharedMcpCall?(): Promise<SharedMcpCall>;
-  /**
-   * File-scoped compiled CLI process for commands with no stdin. Present on
-   * `cliTest` drivers. A different environment restarts the process. Stdin and
-   * explicit deadlines stay on `run`, which starts a fresh process.
-   */
-  sharedCliRun?(invocation: CliInvocation): Promise<CliResult>;
 }
 
 /** One file-scoped stdio MCP session. */
@@ -268,10 +278,10 @@ const isExecutable = (path: string): boolean => {
 };
 
 /** Child environment for one compiled CLI process, without the parent environment. */
-export const cliProcessEnvironment = async (
+export const cliProcessEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
   compileCache?: string,
-): Promise<NodeJS.ProcessEnv> => ({
+): NodeJS.ProcessEnv => ({
   PATH: hideReaAliasDirectories(process.env.PATH ?? ""),
   // Native Windows APIs need the system root and a writable temporary
   // directory even when the command's application environment is empty.
@@ -307,17 +317,45 @@ export const cliCompileCacheEnvironment = (
 });
 
 /**
- * Run one command on the file-scoped compiled CLI. Stdin and explicit
- * deadlines stay on `TestCli.run`, which starts a fresh process.
+ * Whether the file's shared process reports this command exactly as a fresh
+ * `rea` process would. Stdin and deadlines belong to a process; the launcher
+ * routes MCP and its doctor before the shared one-shot path; Node options
+ * change the process itself; and enabled logging, whether selected or a
+ * command default, writes outside the
+ * per-command output capture.
  */
-export const runFileCli = (
-  cli: TestCli,
-  invocation: CliInvocation,
-): Promise<CliResult> => {
-  const run = cli.sharedCliRun;
-  if (run === undefined)
-    throw new Error("cliTest did not provide a shared CLI session");
-  return run(invocation);
+const sharedProcessCanServe = ({
+  arguments: arguments_,
+  environment,
+  input,
+  timeoutMs,
+  freshProcess,
+}: CliInvocation): boolean =>
+  freshProcess !== true &&
+  input === undefined &&
+  timeoutMs === undefined &&
+  arguments_[0] !== "mcp" &&
+  arguments_[0] !== "--mcp" &&
+  productionMcpDoctorArguments([...arguments_]) === undefined &&
+  environment?.NODE_OPTIONS === undefined &&
+  !enablesLogging(environment?.REA_LOG_LEVEL) &&
+  !logsByDefault(arguments_, environment?.REA_LOG_LEVEL);
+
+/** A command that logs at info by default unless REA_LOG_LEVEL selects otherwise. */
+const logsByDefault = (
+  arguments_: readonly string[],
+  level: string | undefined,
+): boolean =>
+  level === undefined &&
+  DEFAULT_INFO_LOGGING_COMMANDS.has(
+    splitIncurBuiltinArguments([...arguments_]).command[0] ?? "",
+  );
+
+/** A valid level other than silent; an invalid level is a captured refusal. */
+const enablesLogging = (level: string | undefined): boolean => {
+  if (level === undefined) return false;
+  const parsed = parseLogLevel(level);
+  return parsed.ok && parsed.value !== "silent";
 };
 
 /** Create a compiled CLI driver backed by the supplied process registry. */
@@ -337,7 +375,7 @@ export const createTestCli = (
       [resolve("scripts/rea.mjs"), ...arguments_],
       {
         cwd: cwd ?? process.cwd(),
-        env: await cliProcessEnvironment(environment, compileCache),
+        env: cliProcessEnvironment(environment, compileCache),
         ...(input === undefined ? {} : { input }),
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
       },
@@ -393,25 +431,17 @@ export const cliTest = processTest.extend<{
   ) => {
     const cli = createTestCli(processes, cliCompileCache);
     await use({
-      ...cli,
+      run: (invocation) =>
+        sharedProcessCanServe(invocation)
+          ? cliCommandSession.run({
+              arguments: invocation.arguments,
+              cwd: invocation.cwd ?? process.cwd(),
+              environment: definedCliEnvironment(
+                cliProcessEnvironment(invocation.environment, cliCompileCache),
+              ),
+            })
+          : cli.run(invocation),
       sharedMcpCall: () => mcpSession.call(),
-      sharedCliRun: async (invocation) => {
-        if (
-          invocation.input !== undefined ||
-          invocation.timeoutMs !== undefined
-        )
-          return cli.run(invocation);
-        return cliCommandSession.run({
-          arguments: invocation.arguments,
-          cwd: invocation.cwd ?? process.cwd(),
-          environment: definedCliEnvironment(
-            await cliProcessEnvironment(
-              invocation.environment,
-              cliCompileCache,
-            ),
-          ),
-        });
-      },
     });
   },
 });

@@ -8,7 +8,7 @@ import {
   MCP_CONNECTION_LOST,
   MCP_TRANSPORT_ERROR,
   MCP_CONNECTION_START_FAILED,
-  MCP_HTTP_LISTEN_FAILED,
+  mcpHttpListenFailed,
   MCP_SHUTDOWN_FAILED,
   SERVER_START_FAILED,
 } from "../../../src/main/messages.js";
@@ -251,7 +251,9 @@ describe("MCP runtime HTTP transport errors", () => {
         }),
       ),
     ).toBe(1);
-    expect(output).toEqual([`${refused.remediationAction}\n`]);
+    expect(output).toEqual([
+      `${mcpHttpListenFailed(refused.remediationAction)}\n`,
+    ]);
     expect(output[0]).toContain("Set MCP_ALLOWED_HOSTS");
     expect(output[0]).not.toContain("Choose another --port");
   });
@@ -273,6 +275,38 @@ describe("MCP runtime HTTP transport errors", () => {
         }),
       ),
     ).toBe(1);
-    expect(output).toEqual([`${MCP_HTTP_LISTEN_FAILED}\n`]);
+    expect(output).toHaveLength(1);
+    expect(output[0]).toMatch(
+      /^REA could not listen for MCP HTTP connections\./u,
+    );
+    expect(output[0]).not.toContain("SECRET");
   });
+
+  it.each([
+    ["ENOTFOUND", /host name resolution/u],
+    ["EADDRNOTAVAIL", /address assigned to this machine/u],
+    ["EACCES", /permitted to bind/u],
+    ["EADDRINUSE", /another --port or MCP_PORT/u],
+  ])(
+    "reports %s listener recovery from its parsed failure",
+    async (code, recovery) => {
+      const output: string[] = [];
+      const cause = Object.assign(new Error(`SECRET ${code}`), { code });
+      expect(
+        await run(
+          dependencies({
+            serve: () => Promise.reject(new StreamableHttpListenError(cause)),
+            output,
+            shutdown: [],
+            exitCodes: [],
+          }),
+        ),
+      ).toBe(1);
+      expect(output).toHaveLength(1);
+      expect(output[0]).toMatch(recovery);
+      expect(output[0]).not.toContain("SECRET");
+      if (code !== "EADDRINUSE")
+        expect(output[0]).not.toContain("Choose another --port");
+    },
+  );
 });

@@ -28,11 +28,13 @@ describe.skipIf(process.platform !== "darwin")(
             "",
           ].join("\n"),
         );
-        const compiled = await processes.run(
-          "/usr/bin/xcrun",
-          ["clang", "-c", source, "-o", object],
-          { timeoutMs: 30_000 },
-        );
+        const compiled = await processes.run("/usr/bin/xcrun", [
+          "clang",
+          "-c",
+          source,
+          "-o",
+          object,
+        ]);
         expect(compiled.exitCode, compiled.stderr).toBe(0);
         const result = await cli.run({
           arguments: ["inspect-macho", object, "--json"],

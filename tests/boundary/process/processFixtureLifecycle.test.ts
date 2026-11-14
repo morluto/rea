@@ -6,7 +6,10 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { expect, it, vi } from "vitest";
 
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
-import { createTestProcessRegistry } from "../../support/process/processFixture.js";
+import {
+  createTestProcessRegistry,
+  remainingProcessDeadline,
+} from "../../support/process/processFixture.js";
 
 const within = async <T>(
   operation: Promise<T>,
@@ -248,7 +251,7 @@ it("times out when a real descendant holds the exited leader's output open", asy
       );
     }
   }
-}, 17_000);
+});
 
 it("terminates a stalled real child at its deadline while retaining captured output", async () => {
   const processes = createTestProcessRegistry();
@@ -277,3 +280,40 @@ it("terminates a stalled real child at its deadline while retaining captured out
     await processes.shutdown();
   }
 });
+
+it("derives a child deadline from the test deadline, keeping a reporting reserve", () => {
+  expect(remainingProcessDeadline(120_000, 0)).toBe(108_000);
+  expect(remainingProcessDeadline(30_000, 20_000)).toBe(5_000);
+  // The reserve never drops below five seconds, nor the deadline below one.
+  expect(remainingProcessDeadline(8_000, 0)).toBe(3_000);
+  expect(remainingProcessDeadline(8_000, 7_500)).toBe(1_000);
+  expect(remainingProcessDeadline(0, 0)).toBeUndefined();
+});
+
+it(
+  "stops a hung child before its running test's deadline and reports its output",
+  // The test deadline is the behavior under test: the child gets what remains.
+  { timeout: 8_000 },
+  async () => {
+    // processTest uses this registry, so one registry covers both entry points.
+    const processes = createTestProcessRegistry();
+    const started = performance.now();
+    try {
+      const failure: unknown = await processes
+        .run(process.execPath, [
+          "-e",
+          "process.stdout.write('started'); setInterval(() => {}, 1_000);",
+        ])
+        .catch((error: unknown) => error);
+      expect(failure).toMatchObject({
+        message: expect.stringMatching(
+          /^Test process exceeded its \d+ms deadline$/u,
+        ),
+        cause: { stdout: "started" },
+      });
+      expect(performance.now() - started).toBeLessThan(6_000);
+    } finally {
+      await processes.shutdown();
+    }
+  },
+);

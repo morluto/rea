@@ -249,7 +249,6 @@ for (const scenario of cases) {
       ],
       {
         cwd: project,
-        timeoutMs: 15_000,
       },
     );
     expect(result.signal, result.stderr).toBeNull();
@@ -294,7 +293,7 @@ export const unnecessary = /\!/;
         "--fix",
         applicationSource,
       ],
-      { cwd: project, timeoutMs: 15_000 },
+      { cwd: project },
     );
     expect(result.signal, result.stderr).toBeNull();
     expect(result.exitCode, result.stderr || result.stdout).toBe(0);

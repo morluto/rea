@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 const scenarios = [
   {
@@ -78,7 +78,6 @@ const scenarios = [
 
 cliTest.for(["full", "compact"] as const)(
   "projects browser scenario input diagnostics over stdio MCP (%s)",
-  { timeout: 60_000 },
   async (profile, { cli }) => {
     const home = await createTestTempDirectory(
       "rea-browser-scenario-mcp-home-",
@@ -127,7 +126,7 @@ cliTest.for(["full", "compact"] as const)(
           `${scenario.name}: ${JSON.stringify(validate.errors)}`,
         ).toBe(scenario.fullSchemaValid || profile === "compact");
 
-        const cliResult = await runFileCli(cli, {
+        const cliResult = await cli.run({
           arguments: [
             "capture-browser-scenario",
             JSON.stringify(input),

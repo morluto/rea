@@ -44,7 +44,7 @@ export type PyzArchive =
     };
 
 /** Bound the transient marshal table allocation independently of image expansion. */
-export const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
+const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
 
 interface PyzHeaderFacts {
   readonly signatureMatches: boolean;

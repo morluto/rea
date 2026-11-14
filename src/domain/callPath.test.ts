@@ -275,7 +275,7 @@ describe("call path topology and capacity", () => {
     expect(result.status).toBe("unknown");
     expect(result.search_scope.exhaustive).toBe(false);
     expect(result.limitations).toEqual(limitations);
-  }, 30_000);
+  });
 
   it("retains every shortest path through merging branches and cycles", () => {
     const result = run([

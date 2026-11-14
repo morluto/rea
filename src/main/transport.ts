@@ -12,7 +12,7 @@ import type { OptionalProviderLoadResult } from "../application/OptionalObservat
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
 import {
   MCP_CONNECTION_START_FAILED,
-  MCP_HTTP_LISTEN_FAILED,
+  mcpHttpListenFailed,
 } from "./messages.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
 
@@ -181,10 +181,7 @@ export const startMcpTransport = async (
     if (!cancelled) {
       const startFailure =
         cause instanceof StreamableHttpListenError
-          ? cause.classification.ok &&
-            cause.classification.value.kind === "host_allowlist"
-            ? cause.remediationAction
-            : MCP_HTTP_LISTEN_FAILED
+          ? mcpHttpListenFailed(cause.remediationAction)
           : MCP_CONNECTION_START_FAILED;
       serverLogger.error(
         {

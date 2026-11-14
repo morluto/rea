@@ -54,9 +54,7 @@ const jsIncompatible = (detail: string): AnalysisError =>
   ]);
 
 /** Every exact module path or original source-map reference retained by a node. */
-export const javascriptModulePaths = (
-  node: ApplicationNode,
-): readonly string[] => {
+const javascriptModulePaths = (node: ApplicationNode): readonly string[] => {
   if (node.identity.strategy === "canonical-path") return [node.identity.path];
   if (node.identity.strategy === "source-map-original")
     return [node.identity.original_source];

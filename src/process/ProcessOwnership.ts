@@ -110,6 +110,11 @@ export type ProcessIdentityObservation =
        * truncated. It names a process in diagnostics; never identity or lookup.
        */
       readonly name?: string;
+      /**
+       * Linux PF_KTHREAD from the same `/proc/<pid>/stat` record as `identity`.
+       * A kernel thread cannot carry a run token. Only a Linux stat read sets it.
+       */
+      readonly kernelThread?: true;
     }
   | {
       readonly state: "absent";
@@ -1434,8 +1439,8 @@ const processOwnershipFailures = async (
   members: readonly ProcessTableEntry[],
   ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost,
-  expectedIdentities: ReadonlyMap<number, string | null> = new Map(),
-  exitSettlement: ProcessExitSettlementBudget = { deadline: undefined },
+  expectedIdentities: ReadonlyMap<number, string | null>,
+  exitSettlement: ProcessExitSettlementBudget,
 ): Promise<{
   readonly failures: readonly ProcessOwnershipValidationFailure[];
   readonly validatedMembers: readonly ProcessTableEntry[];
@@ -1666,9 +1671,9 @@ const scanTokenOwnedProcesses = async (
   processes: readonly ProcessTableEntry[],
   runId: string,
   host: ProcessOwnershipHost,
-  captureBaseline?: ProcessOwnershipBaseline,
-  relation?: OwnershipSweepRelation,
-  exitSettlement: ProcessExitSettlementBudget = { deadline: undefined },
+  captureBaseline: ProcessOwnershipBaseline | undefined,
+  relation: OwnershipSweepRelation | undefined,
+  exitSettlement: ProcessExitSettlementBudget,
 ): Promise<TokenOwnedProcessScan> => {
   if (host.processIdentities !== undefined)
     return scanWithOwnershipEvidence(
@@ -1911,13 +1916,17 @@ const scanWithOwnershipEvidence = async (
       fact.identityAfter.state === "readable"
         ? fact.identityAfter
         : undefined;
+    // A kernel thread has no user environment, so it cannot carry this run's
+    // token. Procfs can fail its environment read (for example with ESRCH)
+    // while it stays live, and root callers see no credential restriction.
     if (
       knownUnrelated &&
-      environmentWithheldFromInspection(
-        fact.token.reason,
-        observed?.effectiveUid,
-        observed?.environmentRestriction,
-      )
+      (observed?.kernelThread === true ||
+        environmentWithheldFromInspection(
+          fact.token.reason,
+          observed?.effectiveUid,
+          observed?.environmentRestriction,
+        ))
     ) {
       unverified.push({
         pid: fact.process.pid,

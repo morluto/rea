@@ -306,7 +306,6 @@ cliTest(
         XDG_CONFIG_HOME: join(root, "xdg-config"),
         XDG_CACHE_HOME: join(root, "xdg-cache"),
       },
-      timeoutMs: 20_000,
     });
 
     expect(result.exitCode, result.stderr).toBe(0);
@@ -352,7 +351,6 @@ for (const group of groups) {
           arguments: arguments_,
           cwd: home,
           environment,
-          timeoutMs: 20_000,
         });
       const planned = await run([
         "setup",
@@ -470,7 +468,6 @@ cliTest("uninstall names each retained skill directory", async ({ cli }) => {
       USERPROFILE: home,
       CLAUDE_CONFIG_DIR: join(home, ".claude"),
     },
-    timeoutMs: 20_000,
   });
 
   expect(result.exitCode, result.stderr).toBe(0);

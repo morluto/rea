@@ -106,10 +106,13 @@ it.each(cases)(
       ).toHaveLength(2);
       expect(scope.hasPending).toBe(false);
     } finally {
-      await scope.close();
-      observation.mockRestore();
-      close.mockRestore();
-      release.mockRestore();
+      try {
+        await scope.close();
+      } finally {
+        observation.mockRestore();
+        close.mockRestore();
+        release.mockRestore();
+      }
     }
   },
 );
@@ -146,8 +149,11 @@ it.each(cases)(
       await expect(stat(output)).rejects.toMatchObject({ code: "ENOENT" });
       expect(scope.hasPending).toBe(false);
     } finally {
-      await scope.close();
-      close.mockRestore();
+      try {
+        await scope.close();
+      } finally {
+        close.mockRestore();
+      }
     }
   },
 );
@@ -295,8 +301,11 @@ it.each(cases)(
       expect(closes).toBe(2);
       expect(scope.hasPending).toBe(false);
     } finally {
-      await scope.close();
-      close.mockRestore();
+      try {
+        await scope.close();
+      } finally {
+        close.mockRestore();
+      }
     }
   },
 );
@@ -378,8 +387,11 @@ it.each(
       }
       expect(scope.hasPending).toBe(false);
     } finally {
-      await scope.close();
-      close.mockRestore();
+      try {
+        await scope.close();
+      } finally {
+        close.mockRestore();
+      }
     }
   },
 );

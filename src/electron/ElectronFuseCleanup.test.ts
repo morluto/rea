@@ -514,12 +514,13 @@ it("joins shutdown during preflight and refuses any later launch or capture", as
     application_root: root,
   };
   const running = provider.capture(input);
-  await entered.promise;
   let closed = false;
-  const closing = provider.close().then(() => {
-    closed = true;
-  });
+  let closing: Promise<void> | undefined;
   try {
+    await awaitAcknowledgement(entered.promise, running, "preflight read");
+    closing = provider.close().then(() => {
+      closed = true;
+    });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
     release.resolve();
@@ -531,7 +532,8 @@ it("joins shutdown during preflight and refuses any later launch or capture", as
   } finally {
     release.resolve();
     await running;
-    await closing;
+    if (closing !== undefined) await closing;
+    else await provider.close();
   }
 });
 
