@@ -1,9 +1,17 @@
 import { z } from "zod";
 
+import { readRecordedRequestBody } from "../../domain/analysisView/recordedExchangeBody.js";
 import {
   isJsonLike,
   mediaTypeEssence,
 } from "../../domain/analysisView/recordedMediaType.js";
+import {
+  hasXssiGuardPrefix,
+  isXssiEligibleMediaType,
+  parseXssiOrExactJson,
+  selectRpcOperationFromText,
+  XSSI_RESPONSE_BODY_LIMIT_BYTES,
+} from "../../domain/analysisView/rpcOperationSelector.js";
 
 import {
   analysisViewResultSchema,
@@ -27,7 +35,6 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { safeParseImmutableEvidence } from "../../domain/evidenceValidation.js";
-import { parseExactJson } from "../../domain/exactJsonNumber.js";
 import { projectInputIssues } from "../../domain/inputIssueProjection.js";
 import { immutableJsonSnapshotMember } from "../../domain/immutableJson.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -54,6 +61,8 @@ export interface RecordedExchange extends RecordedResponseBody {
   readonly query: string | null;
   readonly status: number | null;
   readonly contentType: string | null;
+  /** Set when the recorded request carried a Google `batchexecute` RPC envelope or `rpcids` query. */
+  readonly batchexecuteRequest?: true;
 }
 
 /** Replayed bodies larger than this are cut at a UTF-8 boundary and flagged. */
@@ -97,10 +106,17 @@ export const replayedBody = (exchange: RecordedExchange): ReplayedBody => {
     Buffer.byteLength(text, "utf8") > REPLAY_BODY_LIMIT_BYTES
   )
     return { kind: "cut", text };
+  const essence =
+    exchange.contentType === null
+      ? null
+      : mediaTypeEssence(exchange.contentType);
+  const isJson = exchange.contentType !== null && isJsonLike(essence);
   const value =
-    exchange.contentType !== null &&
-    isJsonLike(mediaTypeEssence(exchange.contentType))
-      ? parseExactJson(text)
+    isJson ||
+    (isXssiEligibleMediaType(essence) &&
+      hasXssiGuardPrefix(text) &&
+      Buffer.byteLength(text, "utf8") <= XSSI_RESPONSE_BODY_LIMIT_BYTES)
+      ? parseXssiOrExactJson(text)
       : undefined;
   return value === undefined ? { kind: "text", text } : { kind: "json", value };
 };
@@ -175,6 +191,27 @@ const schemaInputError = (
     })),
   );
 
+const hasBatchExecuteRequest = (
+  record: WebNetworkCaptureRecord,
+  line: Extract<RecordedRequestLine, { readonly kind: "line" }>,
+): boolean => {
+  if (line.method !== "POST") return false;
+  const facts = readRecordedRequestBody(record.reported);
+  const postData =
+    facts.kind === "request" && facts.postData.kind === "object"
+      ? facts.postData
+      : undefined;
+  return (
+    selectRpcOperationFromText({
+      method: line.method,
+      path: line.path,
+      query: line.query,
+      mimeType: postData?.mimeType,
+      bodyText: postData?.text,
+    })?.kind === "batchexecute"
+  );
+};
+
 /** Combine an already parsed request line with its record's retained response body. */
 export const recordedExchange = (
   record: WebNetworkCaptureRecord,
@@ -185,6 +222,9 @@ export const recordedExchange = (
   query: line.query === undefined || line.query === "" ? null : line.query,
   status: line.status,
   contentType: line.rawMime === "" ? null : line.rawMime,
+  ...(hasBatchExecuteRequest(record, line)
+    ? { batchexecuteRequest: true }
+    : {}),
   ...readRecordedResponseBody(record, REPLAY_BODY_LIMIT_BYTES),
 });
 

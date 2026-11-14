@@ -588,15 +588,52 @@ Pass retained HAR Evidence to `inspect_analysis_view` with
 `view: {"kind":"environment-manifest"}` to project one application's recorded
 request lines into a replayable tool surface: the environment manifest that an
 agent environment later serves from retained Evidence. The view reuses the
-api-surface grouping, then keeps the groups on the primary origin, the origin
+api-surface grouping, plus bounded single-operation RPC discrimination on
+`POST` requests, then keeps the groups on the primary origin, the origin
 with the most JSON-like records (`application/json`, `application/*+json`,
-`text/plain`, `text/markdown`), whose path starts with `/api/` or `/apis/` or
-whose content types are JSON-like, and the write groups answered with no body
+`text/plain`, `text/markdown`, plus XSSI-guarded JSON responses of at most
+64 KiB of decoded UTF-8 text prefixed with `)]}'\n` or `)]}',\n` on JSON-like,
+`text/javascript`, `application/javascript` or
+`application/x-javascript`, or empty response media types), whose path starts
+with `/api/` or `/apis/` or whose responses are JSON-like (including bounded
+XSSI JSON, admitted before static-asset media-type or path-extension
+exclusion), and the write groups answered with no body
 (a bodiless `204 DELETE`). Empty retained response text establishes a bodiless
 write only when its encoding is understood and unredacted; an opaque or hidden
 encoding leaves the body unknown. Every other group is listed under
 `excluded` with reason `other-origin`, `ui-page-or-asset` or `non-json`, and
 retained records without a usable request line are counted in a limitation.
+
+Multiplexed `POST` endpoints group requests by operation when a request within
+the 64 KiB raw UTF-8 body limit (and 8 KiB query limit for `batchexecute`
+`rpcids`) identifies one bounded operation name (`1`–`128` characters):
+
+- `graphql`: a JSON object body (`application/json`, `application/*+json`,
+  `application/graphql`, `text/plain`, `text/markdown` or omitted media type)
+  carrying a GraphQL `Name` `operationName` alongside a `query` string (at most
+  64 KiB UTF-8), an `extensions` object, or a path segment containing
+  `graphql`.
+- `json-rpc`: a JSON object body with `jsonrpc: "2.0"` and a non-empty
+  printable ASCII `method`.
+- `batchexecute`: a form-encoded body (`f.req` decoded with `URLSearchParams`,
+  including percent-encoded field names, after valid JSON bodies on non-form
+  media types are handled as JSON) whose outer call array names one RPC
+  ID (repeated calls of that same ID qualify; mixed RPC IDs or malformed
+  `f.req` payloads stay undispatched without falling back to `?rpcids=`), or,
+  when `f.req` is absent on a `/batchexecute` path, one unambiguous `rpcids`
+  query value. Setting `include_query_parameter_names: false` omits query names
+  from the manifest without merging query-identified `batchexecute` operations.
+
+Requests exceeding those limits, batching distinct operations, omitting an
+operation name or failing validation form an undispatched group without an
+operation discriminator. After template rules run, a `POST` group emits
+`rpc_operation` and appends operation words to `name` only when another `POST`
+group in the manifest has an equal or overlapping `path_template` (for example,
+two RPC operations on `/graphql`, or `/api/orgs/org-1/graphql` alongside
+`/api/orgs/{org_id}/graphql`); a `POST` group whose `path_template` overlaps no
+other `POST` group keeps its ordinary `(method, path_template)` tool name and
+omits `rpc_operation`, while `environment-state` still recognizes read-only
+single-operation `POST` RPC calls from the recorded requests.
 
 The parent may instead be `capture_browser_scenario` Evidence whose scenario
 selected response bodies or header values: each network transaction is then
@@ -627,10 +664,14 @@ a scenario records no file. See
 primary host with dots and ports replaced by hyphens, `grafana-example` for
 `http://grafana.example`. Each tool carries a deterministic `name`, `method`,
 `path_template`, `api_surface_template` (the four-rule template of its
-earliest record), `params`, `query_parameter_names`, `body_shape`,
-`statuses`, `content_types` and `record_ordinals`. `records` lists one pointer
+earliest record), optional `rpc_operation` (`{kind, name}` for discriminated
+`graphql`, `json-rpc` and `batchexecute` `POST` tools when another `POST` group
+shares an equal or overlapping `path_template`), `params`,
+`query_parameter_names`, `body_shape`, `statuses`, `content_types` and
+`record_ordinals`. `records` lists one pointer
 `{ordinal, method, path, status, content_type}` per record a tool cites and
-never a header, cookie or body. Tools sort by template then method.
+never a header, cookie or body. Tools sort by template, method, then
+`rpc_operation` (`kind` and `name`).
 
 Without `template_rules`, every `path_template` equals the api-surface
 template and `params` carry the four format rules with names `id`, `uuid`,
@@ -657,9 +698,12 @@ and `/api/teams/search` stays its own tool. Opt-in placeholders use the
 parameter name; format-rule placeholders keep their api-surface spelling. Tool names are
 `<method>_<literals>` with `api`, `apis`, `namespaces`, `default`, `v`-prefixed
 version tokens and a `uid` literal before a parameter dropped, dotted literals
-cut to their first label, `_by_<params>` appended when parameters exist,
+cut to their first label, every word of `rpc_operation.name` appended when
+`rpc_operation` is present (camelCase, PascalCase and punctuation split into
+snake_case words), `_by_<params>` appended when parameters exist,
 sanitized to `[a-z0-9_]`, at most 60 characters and made unique with numeric
-suffixes: `get_dashboards_by_uid`, `get_plugins_settings_by_plugin_id`.
+suffixes: `get_dashboards_by_uid`, `get_plugins_settings_by_plugin_id`,
+`post_graphql_get_viewer`.
 
 `prefix-variance` runs last so it can share the parameters the other rules
 produce: with `sibling-variance`, a `PATCH` or `DELETE` of the one entity a
@@ -732,7 +776,11 @@ order when any start time is missing (`timeline`), as for a
 `capture_browser_scenario` parent. A `POST`, `PUT`, `PATCH` or `DELETE` with a
 2xx or 3xx status, or no status, may change state, unless it is a `POST` whose
 path has a segment such as `search`, `query`, `list`, `find`, `fuzzy`,
-`count` or `stats`, which queries state instead. A type's state comes from its
+`count` or `stats`, or whose calls the capture shows only reading (including a
+GraphQL `query` operation selected by `operationName` across multi-definition
+and fragment-bearing documents, or a persisted GraphQL request with no `query`
+field whose `operationName` names a read, while mutations, subscriptions and
+conflicting or non-string `query` fields remain writes), which queries state instead. A type's state comes from its
 successful reads that finished before the first such write under the same root:
 the path's API base (the literal segments every tool sharing its first segment
 has), any `v1`-style version segments, then one more segment. A read that
@@ -817,7 +865,9 @@ more than one query) and `rendered-oversize` (a document value whose JSON
 renders to more than 256 KiB). A document holds the value of its one `path`, so for such
 a template it says nothing about the template's other paths. A body is usable
 when its content type is
-JSON-like, it is UTF-8 text of at most 256 KiB, and every number survives native
+JSON-like (or XSSI-guarded JSON prefixed with `)]}'\n` or `)]}',\n` on a
+JSON-like, JavaScript or empty media type, including length-framed
+`batchexecute` chunks), it is UTF-8 text of at most 256 KiB (64 KiB for XSSI-guarded responses on non-JSON-like media types), and every number survives native
 conversion exactly. JSON member names, including `__proto__`, remain ordinary
 own data members through extraction and serving.
 

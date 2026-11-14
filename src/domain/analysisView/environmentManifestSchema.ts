@@ -1,9 +1,17 @@
 import { z } from "zod";
 import { jsonRecordSchema } from "../jsonRecord.js";
 import { TEMPLATE_RULES } from "./environmentManifestRules.js";
+import {
+  RPC_OPERATION_KINDS,
+  RPC_OPERATION_NAME_LIMIT,
+} from "./rpcOperationSelector.js";
 import { ROUTE_RULES } from "./webNetworkRouteTemplates.js";
 
 const manifestRuleSchema = z.enum([...ROUTE_RULES, ...TEMPLATE_RULES]);
+const rpcOperationSchema = z.strictObject({
+  kind: z.enum(RPC_OPERATION_KINDS),
+  name: z.string().min(1).max(RPC_OPERATION_NAME_LIMIT),
+});
 const jsonTypeNameSchema = z.enum([
   "string",
   "number",
@@ -38,6 +46,11 @@ const toolSchema = z.strictObject({
   statuses: z.array(z.number()),
   content_types: z.array(z.string()),
   record_ordinals: z.array(z.number().int().nonnegative()),
+  rpc_operation: rpcOperationSchema
+    .exactOptional()
+    .describe(
+      "Sub-route RPC operation discriminator for multiplexed POST endpoints.",
+    ),
 });
 export const environmentManifestFields = {
   origin: z

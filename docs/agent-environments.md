@@ -374,7 +374,9 @@ recorded again.
 ## What a manifest is
 
 An environment manifest is a projection of one application's recorded request
-lines into a tool surface: one tool per method and path template on the
+lines into a tool surface: one tool per method, path template and optional
+`POST` `rpc_operation` (`graphql`, `json-rpc` or `batchexecute`, emitted when
+another `POST` group shares an equal or overlapping `path_template`) on the
 primary origin, with inferred path parameters, observed query parameter
 names, value-free body shapes and pointers to the parent records each tool
 cites. It carries no bodies and no headers. The manifest's
@@ -455,7 +457,10 @@ interpretation uses the full recorded media type.
 When no record matches, the tool still answers from the tool's first cited
 record and reports `exact_match: false`. `body` is parsed JSON when the
 recorded content type is JSON-like (`application/json`, `application/*+json`,
-`text/plain`, `text/markdown`) and the text parses with safe numeric conversion; otherwise
+`text/plain`, `text/markdown`) — or XSSI-guarded JSON prefixed with `)]}'\n` or
+`)]}',\n` (including length-prefixed `batchexecute` JSON frames) on a
+JSON-like, JavaScript (`text/javascript`, `application/javascript`,
+`application/x-javascript`) or empty media type — and the text within 256 KiB (64 KiB for XSSI-guarded responses on non-JSON-like media types) parses with safe numeric conversion; otherwise
 it is the recorded text. Large integer IDs and other numbers that would lose
 information stay in the original JSON text. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
 text with `truncated: true`. `body_recorded` is false when the capture kept the
@@ -587,7 +592,8 @@ connecting to `/mcp`. A replay environment's card reads:
 
 `capabilities.tools` lists the same names, descriptions and input schemas that
 `tools/list` advertises over MCP. After the catalog warning, each description
-names the method and path template, then what the tool returns, one level deep:
+names the method and path template (plus `(<kind> "<name>")` when
+`rpc_operation` is present), then what the tool returns, one level deep:
 `returns a JSON object with fields …`, `returns a JSON array of objects with
 fields …` or `returns a JSON object whose <member> lists objects with fields …`,
 where a list is an array of objects found by the
@@ -623,7 +629,10 @@ values (sampled within the list budget above; the manifest keeps them all);
 query parameter names accept an optional string, number or boolean (a number or
 boolean is sent as its JSON text) or array of strings (for repeated values in
 captured order); write methods accept an
-optional `body` object described by the recorded top-level key types. Each
+optional `body` object described by the recorded top-level key types, or a
+string-or-object `body` (`oneOf: [{"type": "string"}, {"type": "object"}]`) for
+`batchexecute` `POST` tools (including single-operation `/batchexecute` tools
+that omit `rpc_operation`) whose requests send form-encoded `f.req` strings. Each
 input keeps its own argument: a query name equal to a path parameter's name is
 advertised as `query_<name>`, a query name longer than 64 characters as
 `query_<n>` (its position) with the captured name sampled in its description,
@@ -654,7 +663,12 @@ the manifest's `template_rules` in the same order, exactly as
 Evidence id it reports is the one that projection produces. The view's own
 budget and refusals apply, and the result is checked like the view's Evidence
 for this manifest: extracted from the served capture, with the manifest's
-rules, naming only manifest tools. The server keeps one live state, shared by
+rules and origin, naming only manifest tools in its views and writes. When a
+saved manifest built before RPC sub-route and XSSI discrimination carries no
+`rpc_operation` fields and current extraction names operation or XSSI tools
+absent from that manifest (or selects another origin), derivation falls back to
+pre-discrimination extraction so existing saved bundles keep their state and
+confirmed writes. The server keeps one live state, shared by
 every MCP session and the data plane, starting from the derived state.
 
 A state that is unavailable does not stop the server: it logs a warning naming
@@ -1085,9 +1099,9 @@ rea environment-compare manifest.json --evidence capture.json \
 Each `--probe` is capture Evidence (`inspect-web-network-capture` of a HAR, or `capture-browser-scenario`) of one call
 sequence made against the live application, seeded as it was for the capture and reset before the sequence. The command
 makes no network call: whoever records the probes drives the application with its own credentials. For each probe it
-resets the environment's state, takes the requests in the order they were made (record order when any lacks a start time), matches each to the manifest tool of the
+resets the environment's state, takes the requests in the order they were made (record order when any lacks a start time), keeps each request's raw recorded text alongside its parsed body, and matches each request to the manifest tool of the
 same method whose path template fits with the most literal segments (a format-rule parameter must fit its format once
-percent-decoded). A path argument is the raw segment, which the environment decodes once.
+percent-decoded); when any fitting `POST` tool carries `rpc_operation`, the raw request text is evaluated under the manifest's 64 KiB UTF-8 body and 8 KiB query limits to select the matching `rpc_operation` tool with the most literal segments (or the highest-literal-count undispatched `POST` fallback tool when the request carries no single bounded operation). A path argument is the raw segment, which the environment decodes once.
 It answers the call as the served environment would, and compares that answer with the application's.
 
 A re-seeded application holds the same entities under other ids, so the comparison maps them. Objects in the two answers
@@ -1179,7 +1193,7 @@ The difference categories are:
 
 What a probe did not observe is not counted as the application's behaviour. A record without a usable request line,
 such as a redacted URL or a transaction the capture cannot attribute, is not replayed, nor is a request to an origin different
-from the application's (`other-origin`: the probe's origin with the most JSON-like records, as the manifest
+from the application's (`other-origin`: the probe's origin with the most JSON-like or bounded 64 KiB XSSI JSON records, as the manifest
 chooses its own), and a request with no recorded
 answer is made, since it may have changed the application, but not compared: each probe lists them under `unobserved` with the reason, and the summary counts them. A live
 body the probe did not record compares by status only and is counted as `unobserved_bodies`, unless the answer never

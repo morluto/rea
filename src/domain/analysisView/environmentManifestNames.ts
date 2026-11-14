@@ -3,6 +3,8 @@ import {
   compositeKey,
 } from "../unicodeCodePointOrder.js";
 import { VERSION_TOKEN, type RoutePart } from "./environmentManifestRules.js";
+import { identifierWords } from "./environmentStateWords.js";
+import type { RpcOperation } from "./rpcOperationSelector.js";
 import { ROUTE_RULES } from "./webNetworkRouteTemplates.js";
 
 const DROPPED_NAME_LITERALS = new Set(["api", "apis", "namespaces", "default"]);
@@ -95,12 +97,13 @@ export const toolNameRegistry = (): ToolNameRegistry => ({
   used: new Set(),
   nextSuffix: new Map(),
 });
-/** Deterministic tool name from the method and route literals, unique within a manifest. */
+/** Deterministic tool name from the method, route literals and optional RPC operation, unique within a manifest. */
 export const toolName = (
   method: string,
   parts: readonly RoutePart[],
   names: readonly string[],
   registry: ToolNameRegistry,
+  rpcOperation?: RpcOperation,
 ): string => {
   const literals = parts.flatMap((part, index) => {
     if (part.kind !== "literal") return [];
@@ -114,11 +117,14 @@ export const toolName = (
       return [];
     return [value.split(".")[0] ?? ""];
   });
+  const operationTokens =
+    rpcOperation === undefined ? [] : identifierWords(rpcOperation.name);
   const base =
     sanitizeToken(
       [
         method.toLowerCase(),
         ...literals,
+        ...operationTokens,
         ...(names.length > 0 ? ["by", ...names] : []),
       ].join("_"),
     ) || "tool";
@@ -149,9 +155,20 @@ export const toolName = (
   return candidate;
 };
 
-/** Sort tools by template then method with locale-independent ordering. */
+/** Sort tools by template, method and optional RPC operation with locale-independent ordering. */
 export const compareTools = (
-  left: { readonly template: string; readonly method: string },
-  right: { readonly template: string; readonly method: string },
+  left: {
+    readonly template: string;
+    readonly method: string;
+    readonly rpcOperation?: RpcOperation;
+  },
+  right: {
+    readonly template: string;
+    readonly method: string;
+    readonly rpcOperation?: RpcOperation;
+  },
 ): number =>
-  compare(left.template, right.template) || compare(left.method, right.method);
+  compare(left.template, right.template) ||
+  compare(left.method, right.method) ||
+  compare(left.rpcOperation?.kind ?? "", right.rpcOperation?.kind ?? "") ||
+  compare(left.rpcOperation?.name ?? "", right.rpcOperation?.name ?? "");

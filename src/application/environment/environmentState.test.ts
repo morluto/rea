@@ -15,6 +15,8 @@ import {
   environmentStateServeFixture,
   environmentStateServeInputs,
 } from "../../../tests/fixtures/environmentServe.js";
+import { BOOK_ROWS } from "../../../tests/fixtures/environmentStateWrites.js";
+import { EnvironmentManifestAccumulator } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -795,5 +797,302 @@ it("keeps missing fields distinct from invalid JSON field contents", () => {
   expect(firstProblem(document)).toEqual({
     path: "rea_state/entities/0/fields",
     message: "is required",
+  });
+});
+
+describe("saved pre-RPC manifest state compatibility", () => {
+  it("preserves derived state and confirmed REST writes when serving a saved manifest without rpc_operation", () => {
+    const capture = timedCaptureEvidence([
+      ...BOOK_ROWS,
+      [
+        "POST",
+        "/graphql",
+        { data: { viewer: { id: "u1" } } },
+        200,
+        {
+          operationName: "GetViewer",
+          query: "query GetViewer { viewer { id } }",
+        },
+      ],
+      [
+        "POST",
+        "/graphql",
+        { data: { projects: [{ id: "p1" }] } },
+        200,
+        {
+          operationName: "ListProjects",
+          query: "query ListProjects { projects { id } }",
+        },
+      ],
+    ]);
+    const legacyManifest = inspectAnalysisViewValidated(
+      {
+        source: { kind: "retained-evidence", evidence_id: capture.evidence_id },
+        view: {
+          kind: "environment-manifest",
+          template_rules: [],
+          include_query_parameter_names: true,
+        },
+      },
+      (id) => (id === capture.evidence_id ? capture : undefined),
+      {
+        manifest: new EnvironmentManifestAccumulator(
+          undefined,
+          true,
+          [],
+          "Environment-manifest",
+          false,
+        ),
+      },
+    );
+    if (!legacyManifest.ok) throw legacyManifest.error;
+    const legacySource = loadEnvironmentSource(legacyManifest.value, capture);
+    if (!legacySource.ok) throw legacySource.error;
+    expect(
+      legacySource.value.manifest.tools.map((tool) => tool.name),
+    ).toContain("post_graphql");
+    expect(
+      legacySource.value.manifest.tools.every(
+        (tool) => tool.rpc_operation === undefined,
+      ),
+    ).toBe(true);
+
+    const served = prepareServedState(legacySource.value, capture);
+    expect(served.report.served).toBe(true);
+    expect(served.state?.views.get("get_books")?.shape).toBe("list");
+    expect(served.state?.writes.get("post_graphql")?.tool).toBe("post_graphql");
+    expect(served.state?.writes.get("post_books")?.served).toBe(true);
+  });
+
+  it("refuses a supplied state whose write plans name a tool absent from the manifest", () => {
+    const booksFixture = environmentStateServeFixture(
+      timedCaptureEvidence(BOOK_ROWS),
+    );
+    const booksSource = loadEnvironmentSource(
+      booksFixture.manifest,
+      booksFixture.capture,
+    );
+    if (!booksSource.ok) throw booksSource.error;
+    const narrowed = {
+      ...booksSource.value,
+      manifest: {
+        ...booksSource.value.manifest,
+        tools: booksSource.value.manifest.tools.filter(
+          (tool) => tool.name !== "post_books",
+        ),
+      },
+    };
+    const refused = refusal(booksFixture.state, narrowed);
+    expect(refused.details).toMatchObject({
+      issues: [
+        {
+          path: [
+            "state",
+            "normalized_result",
+            "writes",
+            expect.any(Number),
+            "tool",
+          ],
+        },
+      ],
+    });
+  });
+});
+
+const xssiEntry = (input: {
+  readonly index: number;
+  readonly method: string;
+  readonly path: string;
+  readonly responseMime: string;
+  readonly responseText: string;
+  readonly status?: number;
+  readonly requestMime?: string;
+  readonly requestText?: string;
+}): JsonValue => ({
+  startedDateTime: new Date(
+    Date.parse("2026-10-17T18:01:00.000Z") + input.index * 1000,
+  ).toISOString(),
+  time: 5,
+  request: {
+    method: input.method,
+    url: `http://app.example${input.path}`,
+    bodySize:
+      input.requestText === undefined
+        ? 0
+        : Buffer.byteLength(input.requestText),
+    ...(input.requestText === undefined
+      ? {}
+      : {
+          postData: {
+            mimeType: input.requestMime ?? "application/json",
+            text: input.requestText,
+          },
+        }),
+  },
+  response: {
+    status: input.status ?? 200,
+    content: { mimeType: input.responseMime, text: input.responseText },
+  },
+});
+
+const legacySourceFromEntries = (entries: readonly JsonValue[]) => {
+  const capture = analysisViewCaptureEvidence(
+    environmentManifestCaptureFixture(entries),
+  );
+  const legacyManifest = inspectAnalysisViewValidated(
+    {
+      source: { kind: "retained-evidence", evidence_id: capture.evidence_id },
+      view: {
+        kind: "environment-manifest",
+        template_rules: [],
+        include_query_parameter_names: true,
+      },
+    },
+    (id) => (id === capture.evidence_id ? capture : undefined),
+    {
+      manifest: new EnvironmentManifestAccumulator(
+        undefined,
+        true,
+        [],
+        "Environment-manifest",
+        false,
+      ),
+    },
+  );
+  if (!legacyManifest.ok) throw legacyManifest.error;
+  const loaded = loadEnvironmentSource(legacyManifest.value, capture);
+  if (!loaded.ok) throw loaded.error;
+  return { capture, source: loaded.value };
+};
+
+describe("saved pre-RPC manifest state compatibility with XSSI captures", () => {
+  it("falls back cleanly without stateMismatch when a saved pre-PR bundle excluded non-/api/ XSSI endpoints", () => {
+    const baseEntries = (
+      timedCaptureEvidence(BOOK_ROWS).normalized_result as {
+        records: { reported: JsonValue }[];
+      }
+    ).records.map((record) => record.reported);
+    const { capture, source: legacySource } = legacySourceFromEntries([
+      ...baseEntries,
+      xssiEntry({
+        index: 0,
+        method: "GET",
+        path: "/_/AppUi/data/init",
+        responseMime: "",
+        responseText: ')]}\'\n{"theme":"dark"}',
+      }),
+      xssiEntry({
+        index: 1,
+        method: "GET",
+        path: "/_/AppUi/data/config",
+        responseMime: "application/javascript",
+        responseText: ')]}\'\n{"ready":true}',
+      }),
+      xssiEntry({
+        index: 2,
+        method: "POST",
+        path: "/_/AppUi/data/batchexecute?rpcids=SavePref",
+        requestMime: "application/x-www-form-urlencoded",
+        requestText: "f.req=%5B%5B%5B%22SavePref%22%2C%22%7B%7D%22%5D%5D%5D",
+        responseMime: "application/x-javascript",
+        responseText:
+          ')]}\'\n[[["wrb.fr","SavePref","{}",null,null,null,"1"]]]',
+      }),
+    ]);
+
+    expect(legacySource.manifest.excluded).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path_template: "/_/AppUi/data/init",
+          reason: "non-json",
+        }),
+        expect.objectContaining({
+          path_template: "/_/AppUi/data/config",
+          reason: "ui-page-or-asset",
+        }),
+      ]),
+    );
+    const derived = deriveEnvironmentState(legacySource, capture);
+    expect(derived.ok).toBe(true);
+    const served = prepareServedState(legacySource, capture);
+    expect(served.report.served).toBe(true);
+    expect(served.state?.views.get("get_books")?.shape).toBe("list");
+    expect(served.state?.writes.get("post_books")?.served).toBe(true);
+  });
+
+  it("derives state without stateMismatch when a saved pre-PR bundle recorded text/plain and /api/ XSSI reads and POST XSSI writes", () => {
+    const baseEntries = (
+      timedCaptureEvidence(BOOK_ROWS).normalized_result as {
+        records: { reported: JsonValue }[];
+      }
+    ).records.map((record) => record.reported);
+    const xssiReadAndWriteEntries = [
+      xssiEntry({
+        index: 0,
+        method: "GET",
+        path: "/_/AppUi/data/flags",
+        responseMime: "text/plain",
+        responseText: ')]}\'\n{"flags":["alpha"]}',
+      }),
+      xssiEntry({
+        index: 1,
+        method: "GET",
+        path: "/api/notes",
+        responseMime: "text/plain",
+        responseText: ')]}\'\n[{"id":10,"title":"Initial"}]',
+      }),
+      xssiEntry({
+        index: 2,
+        method: "POST",
+        path: "/api/notes",
+        status: 201,
+        requestText: JSON.stringify({ title: "Added" }),
+        responseMime: "text/plain",
+        responseText: ')]}\'\n{"id":11,"title":"Added"}',
+      }),
+      xssiEntry({
+        index: 3,
+        method: "GET",
+        path: "/api/notes",
+        responseMime: "text/plain",
+        responseText:
+          ')]}\'\n[{"id":10,"title":"Initial"},{"id":11,"title":"Added"}]',
+      }),
+    ];
+
+    const direct = legacySourceFromEntries([
+      ...baseEntries,
+      ...xssiReadAndWriteEntries,
+    ]);
+    const directDerived = deriveEnvironmentState(direct.source, direct.capture);
+    expect(directDerived.ok).toBe(true);
+    if (!directDerived.ok) throw directDerived.error;
+    expect(directDerived.value.views.get("get_appui_data_flags")?.shape).toBe(
+      "document",
+    );
+    expect(directDerived.value.views.get("get_notes")?.shape).toBe("list");
+    expect(directDerived.value.writes.get("post_notes")?.served).toBe(true);
+
+    const withExcludedXssi = legacySourceFromEntries([
+      ...baseEntries,
+      ...xssiReadAndWriteEntries,
+      xssiEntry({
+        index: 4,
+        method: "GET",
+        path: "/_/AppUi/data/init",
+        responseMime: "",
+        responseText: ')]}\'\n{"init":true}',
+      }),
+    ]);
+    const fallbackServed = prepareServedState(
+      withExcludedXssi.source,
+      withExcludedXssi.capture,
+    );
+    expect(fallbackServed.report.served).toBe(true);
+    expect(fallbackServed.state?.views.get("get_books")?.shape).toBe("list");
+    expect(fallbackServed.state?.views.get("get_notes")?.shape).toBe(
+      "recorded",
+    );
+    expect(fallbackServed.state?.writes.get("post_books")?.served).toBe(true);
   });
 });

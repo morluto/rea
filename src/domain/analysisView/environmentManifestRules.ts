@@ -4,7 +4,13 @@ import {
   spellingSummary,
   type SpellingSummary,
 } from "./environmentManifestSpelling.js";
-import type { RouteRule } from "./webNetworkRouteTemplates.js";
+import { decodedSegment, pathSegmentMatches } from "./environmentStateRules.js";
+import type { RpcOperation } from "./rpcOperationSelector.js";
+import {
+  ROUTE_RULES,
+  segmentRule,
+  type RouteRule,
+} from "./webNetworkRouteTemplates.js";
 
 /** Opt-in template rules applied after the four exact format rules. */
 export const TEMPLATE_RULES = [
@@ -63,6 +69,7 @@ export interface ToolGroup {
   readonly contentTypes: ReadonlySet<string>;
   readonly queryNames: ReadonlySet<string>;
   readonly bodyShape: BodyShape | null;
+  readonly rpcOperation?: RpcOperation;
 }
 
 const OPAQUE_TOKEN = /^(?=.*\d)(?=.*[a-z])[a-z0-9]{12,}$/u;
@@ -149,6 +156,9 @@ const mergeGroups = (
     contentTypes: new Set(groups.flatMap((group) => [...group.contentTypes])),
     queryNames: new Set(groups.flatMap((group) => [...group.queryNames])),
     bodyShape: primary.bodyShape,
+    ...(primary.rpcOperation === undefined
+      ? {}
+      : { rpcOperation: primary.rpcOperation }),
   };
 };
 
@@ -162,6 +172,8 @@ const rebucket = (
     const key = compositeKey([
       group.method,
       group.origin,
+      group.rpcOperation?.kind ?? null,
+      group.rpcOperation?.name ?? null,
       ...group.parts.map(keyOf),
     ]);
     const bucket = buckets.get(key);
@@ -290,6 +302,8 @@ const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
       const key = compositeKey([
         group.method,
         group.origin,
+        group.rpcOperation?.kind ?? null,
+        group.rpcOperation?.name ?? null,
         group.parts.length,
         ...group.parts.map((part, index) =>
           index === position ? null : partKey(part),
@@ -384,6 +398,8 @@ const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
       const key = compositeKey([
         group.method,
         group.origin,
+        group.rpcOperation?.kind ?? null,
+        group.rpcOperation?.name ?? null,
         group.parts.length,
         ...group.parts.map((part, index) =>
           index === position || index === position + 1 ? null : partKey(part),
@@ -562,4 +578,312 @@ export const applyTemplateRules = (
   if (rules.has("prefix-variance"))
     current = withinSegmentLimit(current, mergePrefixVariance);
   return current;
+};
+
+const FORMAT_ROUTE_RULES: ReadonlySet<string> = new Set(ROUTE_RULES);
+
+const literalMatchesParam = (value: string, param: ParamPart): boolean => {
+  if (value === "") return false;
+  if (!FORMAT_ROUTE_RULES.has(param.rule)) return true;
+  return (
+    segmentRule(value) === param.rule ||
+    segmentRule(decodedSegment(value)) === param.rule
+  );
+};
+
+const partsCanMatchSameSegment = (
+  left: RoutePart,
+  right: RoutePart,
+): boolean => {
+  if (left.kind === "literal")
+    return right.kind === "literal"
+      ? pathSegmentMatches(left.value, right.value)
+      : literalMatchesParam(left.value, right);
+  if (right.kind === "literal") return literalMatchesParam(right.value, left);
+  return (
+    !FORMAT_ROUTE_RULES.has(left.rule) ||
+    !FORMAT_ROUTE_RULES.has(right.rule) ||
+    left.rule === right.rule
+  );
+};
+
+const routePartsOverlap = (
+  left: readonly RoutePart[],
+  right: readonly RoutePart[],
+): boolean =>
+  left.length === right.length &&
+  left.every((part, index) => partsCanMatchSameSegment(part, right[index]!));
+
+type ParamOverlapKind = RouteRule | "any";
+
+const paramOverlapKind = (part: ParamPart): ParamOverlapKind =>
+  part.rule === "numeric" ||
+  part.rule === "uuid" ||
+  part.rule === "hex" ||
+  part.rule === "iso-date"
+    ? part.rule
+    : "any";
+
+interface RouteOverlapTrieNode<Entry> {
+  exactLiterals?: Map<string, RouteOverlapTrieNode<Entry>>;
+  decodedLiterals?: Map<string, Set<RouteOverlapTrieNode<Entry>>>;
+  formatLiterals?: Map<RouteRule, Set<RouteOverlapTrieNode<Entry>>>;
+  params?: Map<ParamOverlapKind, RouteOverlapTrieNode<Entry>>;
+  firstEntry?: Entry;
+  hasMultipleEntries: boolean;
+}
+
+interface TrieFrame<Entry> {
+  readonly nextIndex: number;
+  readonly children: Iterator<RouteOverlapTrieNode<Entry>>;
+}
+
+const createTrieNode = <Entry>(): RouteOverlapTrieNode<Entry> => ({
+  hasMultipleEntries: false,
+});
+
+const markTrieNodeEntry = <Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  entry: Entry,
+): void => {
+  if (node.firstEntry === undefined) node.firstEntry = entry;
+  else if (node.firstEntry !== entry) node.hasMultipleEntries = true;
+};
+
+const nodeHasPeer = <Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  self: Entry,
+): boolean =>
+  node.hasMultipleEntries ||
+  (node.firstEntry !== undefined && node.firstEntry !== self);
+
+const addTrieNodeSet = <Key, Entry>(
+  map: Map<Key, Set<RouteOverlapTrieNode<Entry>>>,
+  key: Key,
+  node: RouteOverlapTrieNode<Entry>,
+): void => {
+  const set = map.get(key);
+  if (set === undefined) map.set(key, new Set([node]));
+  else set.add(node);
+};
+
+const stepLiteralTrieChild = <Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  value: string,
+): RouteOverlapTrieNode<Entry> => {
+  node.exactLiterals ??= new Map();
+  const existing = node.exactLiterals.get(value);
+  if (existing !== undefined) return existing;
+  const child = createTrieNode<Entry>();
+  node.exactLiterals.set(value, child);
+  const decoded = value.includes("%") ? decodedSegment(value) : value;
+  if (decoded !== value) {
+    node.decodedLiterals ??= new Map();
+    addTrieNodeSet(node.decodedLiterals, decoded, child);
+  }
+  if (value !== "") {
+    const rawRule = segmentRule(value);
+    if (rawRule !== null) {
+      node.formatLiterals ??= new Map();
+      addTrieNodeSet(node.formatLiterals, rawRule, child);
+    }
+    if (decoded !== value) {
+      const decodedRule = segmentRule(decoded);
+      if (decodedRule !== null) {
+        node.formatLiterals ??= new Map();
+        addTrieNodeSet(node.formatLiterals, decodedRule, child);
+      }
+    }
+  }
+  return child;
+};
+
+const insertRouteInTrie = <Entry>(
+  root: RouteOverlapTrieNode<Entry>,
+  parts: readonly RoutePart[],
+  entry: Entry,
+): void => {
+  let node = root;
+  markTrieNodeEntry(node, entry);
+  for (const part of parts) {
+    if (part.kind === "literal") {
+      node = stepLiteralTrieChild(node, part.value);
+    } else {
+      const kind = paramOverlapKind(part);
+      node.params ??= new Map();
+      let child = node.params.get(kind);
+      if (child === undefined) {
+        child = createTrieNode<Entry>();
+        node.params.set(kind, child);
+      }
+      node = child;
+    }
+    markTrieNodeEntry(node, entry);
+  }
+};
+
+function* matchingLiteralTrieChildren<Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  value: string,
+): Generator<RouteOverlapTrieNode<Entry>> {
+  const exact = node.exactLiterals?.get(value);
+  if (exact !== undefined) yield exact;
+  const decoded = value.includes("%") ? decodedSegment(value) : value;
+  if (decoded !== value) {
+    const onceDecoded = node.exactLiterals?.get(decoded);
+    if (onceDecoded !== undefined) yield onceDecoded;
+  }
+  const encodedMatches = node.decodedLiterals?.get(value);
+  if (encodedMatches !== undefined) yield* encodedMatches;
+  if (value === "" || node.params === undefined) return;
+  const anyParam = node.params.get("any");
+  if (anyParam !== undefined) yield anyParam;
+  const rawRule = segmentRule(value);
+  if (rawRule !== null) {
+    const rawParam = node.params.get(rawRule);
+    if (rawParam !== undefined) yield rawParam;
+  }
+  if (decoded !== value) {
+    const decodedRule = segmentRule(decoded);
+    if (decodedRule !== null && decodedRule !== rawRule) {
+      const decodedParam = node.params.get(decodedRule);
+      if (decodedParam !== undefined) yield decodedParam;
+    }
+  }
+}
+
+function* matchingParamTrieChildren<Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  part: ParamPart,
+): Generator<RouteOverlapTrieNode<Entry>> {
+  const kind = paramOverlapKind(part);
+  if (kind === "any") {
+    if (node.params !== undefined) yield* node.params.values();
+    if (node.exactLiterals !== undefined)
+      for (const [literal, child] of node.exactLiterals)
+        if (literal !== "") yield child;
+    return;
+  }
+  const sameRuleParam = node.params?.get(kind);
+  if (sameRuleParam !== undefined) yield sameRuleParam;
+  const anyParam = node.params?.get("any");
+  if (anyParam !== undefined) yield anyParam;
+  const matchingLiterals = node.formatLiterals?.get(kind);
+  if (matchingLiterals !== undefined) yield* matchingLiterals;
+}
+
+const matchingTrieChildren = <Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  part: RoutePart,
+): Iterator<RouteOverlapTrieNode<Entry>> =>
+  part.kind === "literal"
+    ? matchingLiteralTrieChildren(node, part.value)
+    : matchingParamTrieChildren(node, part);
+
+const trieHasOverlappingPeer = <Entry>(
+  root: RouteOverlapTrieNode<Entry>,
+  parts: readonly RoutePart[],
+  self: Entry,
+): boolean => {
+  if (!nodeHasPeer(root, self)) return false;
+  const firstPart = parts[0];
+  if (firstPart === undefined) return true;
+  const targetLength = parts.length;
+  const seen = new Set<RouteOverlapTrieNode<Entry>>([root]);
+  const stack: TrieFrame<Entry>[] = [
+    { nextIndex: 1, children: matchingTrieChildren(root, firstPart) },
+  ];
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    if (frame === undefined) break;
+    const step = frame.children.next();
+    if (step.done) {
+      stack.pop();
+      continue;
+    }
+    const child = step.value;
+    if (!nodeHasPeer(child, self) || seen.has(child)) continue;
+    if (frame.nextIndex === targetLength) return true;
+    const nextPart = parts[frame.nextIndex];
+    if (nextPart === undefined) continue;
+    seen.add(child);
+    stack.push({
+      nextIndex: frame.nextIndex + 1,
+      children: matchingTrieChildren(child, nextPart),
+    });
+  }
+  return false;
+};
+
+const isPlainLiteralRoute = (parts: readonly RoutePart[]): boolean =>
+  parts.every((part) => part.kind === "literal" && !part.value.includes("%"));
+
+const addOverlappingRpcBucket = (
+  bucket: readonly ToolGroup[],
+  rpcCandidates: readonly ToolGroup[],
+  overlapping: Set<ToolGroup>,
+): void => {
+  if (bucket.length === 2) {
+    const [first, second] = bucket;
+    if (
+      first !== undefined &&
+      second !== undefined &&
+      first !== second &&
+      routePartsOverlap(first.parts, second.parts)
+    ) {
+      for (const candidate of rpcCandidates) overlapping.add(candidate);
+    }
+    return;
+  }
+  if (bucket.every((group) => isPlainLiteralRoute(group.parts))) {
+    const byLiteralPath = new Map<string, ToolGroup[]>();
+    for (const group of bucket) {
+      const key = compositeKey(
+        group.parts.map((part) => (part.kind === "literal" ? part.value : "")),
+      );
+      const list = byLiteralPath.get(key);
+      if (list === undefined) byLiteralPath.set(key, [group]);
+      else list.push(group);
+    }
+    for (const candidate of rpcCandidates) {
+      const key = compositeKey(
+        candidate.parts.map((part) =>
+          part.kind === "literal" ? part.value : "",
+        ),
+      );
+      if ((byLiteralPath.get(key)?.length ?? 0) > 1) overlapping.add(candidate);
+    }
+    return;
+  }
+  const root = createTrieNode<ToolGroup>();
+  for (const group of bucket) insertRouteInTrie(root, group.parts, group);
+  for (const candidate of rpcCandidates)
+    if (trieHasOverlappingPeer(root, candidate.parts, candidate))
+      overlapping.add(candidate);
+};
+
+/**
+ * Identify RPC-annotated groups whose templated route parts overlap at least one other
+ * same-method group, indexing literal segments before traversing wildcard branches.
+ */
+export const selectGroupsWithOverlappingRpcPeers = (
+  groups: readonly ToolGroup[],
+): ReadonlySet<ToolGroup> => {
+  const byMethodAndDepth = new Map<string, ToolGroup[]>();
+  for (const group of groups) {
+    const key = compositeKey([group.method, group.parts.length]);
+    const bucket = byMethodAndDepth.get(key);
+    if (bucket === undefined) byMethodAndDepth.set(key, [group]);
+    else bucket.push(group);
+  }
+  const overlapping = new Set<ToolGroup>();
+  for (const bucket of byMethodAndDepth.values()) {
+    if (bucket.length <= 1) continue;
+    const rpcCandidates = bucket.filter(
+      (group) => group.rpcOperation !== undefined,
+    );
+    if (rpcCandidates.length > 0)
+      addOverlappingRpcBucket(bucket, rpcCandidates, overlapping);
+  }
+  return overlapping;
 };
