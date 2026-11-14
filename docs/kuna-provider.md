@@ -61,7 +61,7 @@ workflows. Early single-function results have their own source limitation.
 
 A single-function decompile, inventory, string, graph or xref run that exceeds its deadline fails as `provider_timeout`, naming the setting that owns the deadline. Change the reported budget for newly accepted operations with `update_analysis_settings` using `kuna.function_timeout_ms` or `kuna.project_timeout_ms`. A project export that exceeds `REA_KUNA_PROJECT_TIMEOUT_MS` is an export failure instead: requests that need the export report `capability_unavailable` with the export's own retry guidance.
 
-Windows is not supported yet. Supported targets are ELF and thin Mach-O executables for x86-64, AArch64 and ARM; PE and universal Mach-O are rejected with a typed reason.
+Supported targets are ELF and thin Mach-O executables for x86-64, AArch64 and ARM, and PE executables (including Windows executables) for x86-64 only. Universal Mach-O is rejected with a typed reason because slice selection is not verified yet. PE support is verified with Kuna 1.906, against a source-owned image: inventory, single-function pseudocode and the project export (C, header and assembly) all resolve absolute image addresses. PE on other architectures, and managed PE images such as .NET assemblies and normalized ReadyToRun images, are refused with a typed reason until they get their own verified run.
 
 ## What Kuna answers
 
