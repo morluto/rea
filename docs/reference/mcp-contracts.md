@@ -1344,6 +1344,43 @@ as one JSON log line on stderr (`"msg":"MCP transport listening"` with `url`)
 at every `REA_LOG_LEVEL`, because an ephemeral port is otherwise unreachable;
 stdout stays unused.
 
+Every transport also announces itself on stderr, because a client host that
+starts this process shows nothing else it could inspect. These are human
+banners, not log records: each is one newline-terminated line that leads with
+the `[rea]` project tag, so it reads beside the `[jcalculator]` and
+`[dependancythang]` banners other MCP servers print into the same inherited
+stream. A banner is written at every `REA_LOG_LEVEL`, `silent` included:
+`REA_LOG_LEVEL` governs the structured log, and suppressing the banner would
+leave the one channel a client host shows empty.
+
+```text
+[rea] MCP server ready — REA 6.8.0, 252 tools, stdio (analysis runtime deferred)
+[rea] MCP analysis runtime ready — stdio, optional tools: packetCaptureEnabled, …; providers: browserObservation, …; failed: none
+```
+
+- `MCP server ready` states the product, version and what this entry serves, and
+  appears once the transport accepts connections. The default stdio entry adds
+  `(analysis runtime deferred)`: discovery is served from the recorded catalog,
+  and the analysis runtime composes on the first tool call. An entry that
+  composes eagerly writes no such line, because its runtime line below arrives at
+  startup anyway.
+- `MCP analysis runtime ready` appears once, when this process first composes an
+  analysis runtime: at startup when it composes eagerly over stdio, on the first
+  tool call when the stdio entry defers it, and when the first `--http` session
+  composes one — later sessions on a live listener do not repeat it. It names the
+  transport, the enabled optional tool flags that `binary_session` also reports
+  as capability availability, the optional observation adapters that constructed,
+  and the ones whose module failed to load, whose reasons stay in their own
+  structured warning records. A listener's banner may reach stderr before its
+  buffered `MCP transport listening` log record, so a reader must not take stream
+  order as lifecycle order.
+
+These banners report what composition observed. They are not a functional probe
+of the selected executables, which each tool performs when it runs, so an
+enabled optional feature does not assert that its tool is usable. The listener's
+own `MCP transport listening` record above stays one JSON log line, because a
+host or script must parse the bound URL out of it.
+
 This endpoint uses plain HTTP without TLS or client authentication. Use it only
 within a trusted local or isolated environment; an explicit non-loopback bind
 makes the same tools and active analysis state reachable at that address. It

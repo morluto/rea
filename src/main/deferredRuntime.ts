@@ -21,6 +21,10 @@ import type { McpServerHandle, RuntimeDependencies } from "./types.js";
 import { SERVER_START_FAILED } from "./messages.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
+import {
+  announceDeferredStdioStartup,
+  type AdvertisedCatalog,
+} from "./startupAnnouncement.js";
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
 const readCatalog = (profile: McpInputSchemaProfile): RecordedMcpCatalog => {
@@ -136,7 +140,14 @@ export const runDeferred = async (
     layer: "server",
   });
   const profile = resolveMcpInputSchemaProfile(config.mcpInputSchemaProfile);
-  let firstCatalog: RecordedMcpCatalog | undefined = readCatalog(profile);
+  const catalog = readCatalog(profile);
+  let firstCatalog: RecordedMcpCatalog | undefined = catalog;
+  // What this entry advertises before any analysis runtime exists, which is the
+  // one thing the start-up banner can state without composing anything.
+  const advertisedCatalog: AdvertisedCatalog =
+    config.mcpToolCatalogProfile === "hot-cold"
+      ? { profile: "hot-cold" }
+      : { profile: "full", toolCount: catalog.tools.length };
   const servers = new OwnedMcpServers<DeferredEvidenceMcpServer>();
   let handle: McpServerHandle | undefined;
   let attempt: Promise<void> | undefined;
@@ -257,6 +268,9 @@ export const runDeferred = async (
     dependencies.writeStderr(`${SERVER_START_FAILED}\n`);
     return 1;
   }
+  // A server already asked to close never reports itself ready to a client host.
   if (closing) await close();
+  else
+    announceDeferredStdioStartup(dependencies.writeStderr, advertisedCatalog);
   return 0;
 };

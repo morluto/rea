@@ -1095,8 +1095,9 @@ that connects while another session is open takes it over, so a client that
 exited without ending its session needs no restart. The listener runs until
 SIGINT or SIGTERM and does not stop when stdin closes. See
 [transports](../reference/mcp-contracts.md#transports) for the session, `Host` header and
-shutdown contract. Client registrations written by setup and the MCP registry
-entry keep stdio.
+shutdown contract, and for the `[rea] MCP analysis runtime ready` banner that
+reports the optional tools and providers each served session detected. Client
+registrations written by setup and the MCP registry entry keep stdio.
 
 ## Serve an environment manifest
 

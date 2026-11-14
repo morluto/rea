@@ -15,6 +15,10 @@ import {
   MCP_HTTP_LISTEN_FAILED,
 } from "./messages.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
+import {
+  announceAnalysisRuntimeReady,
+  type StartupTransport,
+} from "./startupAnnouncement.js";
 
 interface ServerContext {
   readonly analysisSettings?: AnalysisSettings;
@@ -122,6 +126,11 @@ export const startMcpTransport = async (
     await optionalProviderClose;
   };
   let handle: McpServerHandle;
+  // The transport composes one analysis runtime per process, whatever number of
+  // servers the SDK creates for it; a discovery probe announces nothing on its own.
+  let runtimeAnnounced = false;
+  const startupTransport: StartupTransport =
+    dependencies.transport === "http" ? "streamable-http" : "stdio";
   try {
     if (serverContext.signal?.aborted) throw serverContext.signal.reason;
     handle = await dependencies.serve(
@@ -153,6 +162,15 @@ export const startMcpTransport = async (
               androidAnalysis: android,
             },
           );
+          if (!runtimeAnnounced) {
+            runtimeAnnounced = true;
+            announceAnalysisRuntimeReady(dependencies.writeStderr, {
+              transport: startupTransport,
+              availability: server.capabilityAvailability,
+              providers: observationProviders,
+              providerLoadFailures: optionalProviderLoadFailures,
+            });
+          }
           return server;
         }),
       {
