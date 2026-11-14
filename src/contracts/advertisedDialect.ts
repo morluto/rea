@@ -106,8 +106,9 @@ export const ADVERTISED_INPUT_SCHEMA_MAX_BYTES = 13 * 1024;
 //
 // pattern := "^" alt "$"   (llama.cpp grammars require both anchors)
 // atom    := literal | escape | class | "(?:" alt ")" | "(" alt ")"
-// quant   := * + ? {n} {n,} {n,m}  with n, m <= 1000 and no lazy or possessive suffix
-// escape  := "\" one of ^$\.*+?()[]{}|/  | \t \n \r \f \v | \x[0-7][0-9A-Fa-f]
+// quant   := * + ? {n} {n,} {n,m}  with n, m <= 1000, no leading zeros and no
+//            lazy or possessive suffix
+// escape  := "\" one of ^$\.*+?()[]{}|  | \t \n \r \f \v | \x[0-7][0-9A-Fa-f]
 // class   := "[" "^"? item+ "]"  where "-" is a range only between two
 //            endpoints, "-" elsewhere is escaped, and no punctuator repeats.
 // Excluded: ".", \d \w \s \b and negations (portable syntax, different
@@ -115,8 +116,8 @@ export const ADVERTISED_INPUT_SCHEMA_MAX_BYTES = 13 * 1024;
 // octal, inline flags, \A \z \Q..\E, non-ASCII literals.
 
 const ALNUM = /^[A-Za-z0-9]$/u;
-const ESCAPABLE_OUTSIDE_CLASS = new Set("^$\\.*+?()[]{}|/");
-const ESCAPABLE_IN_CLASS = new Set("^$\\.*+?()[]{}|/-");
+const ESCAPABLE_OUTSIDE_CLASS = new Set("^$\\.*+?()[]{}|");
+const ESCAPABLE_IN_CLASS = new Set("^$\\.*+?()[]{}|-");
 const LITERAL_IN_CLASS = new Set("!#%&,:;<=>@`~'\" _.+*?$");
 const LITERAL_OUTSIDE_CLASS = new Set("_ !#%&,:;<=>@`~'\"-/");
 const CONTROL_ESCAPES = new Set("tnrfv");
@@ -159,9 +160,12 @@ export const portablePatternViolations = (
   }
   const at = (index: number): string => pattern[index] ?? "";
   let index = 0;
+  const groups = [1];
+  let lastAtom = 1;
   while (index < pattern.length) {
     const character = at(index);
     if (character === "\\") {
+      lastAtom = 1;
       const escaped = at(index + 1);
       if (escaped === "") {
         found.add("trailing-escape");
@@ -185,6 +189,7 @@ export const portablePatternViolations = (
       continue;
     }
     if (character === "[") {
+      lastAtom = 1;
       let cursor = index + 1;
       if (at(cursor) === "^") cursor++;
       if (at(cursor) === "]") found.add("empty-or-leading-bracket-class");
@@ -254,6 +259,7 @@ export const portablePatternViolations = (
       continue;
     }
     if (character === "(") {
+      groups.push(1);
       if (pattern.startsWith("(?:", index)) {
         index += 3;
         continue;
@@ -270,6 +276,15 @@ export const portablePatternViolations = (
       index++;
       continue;
     }
+    if (character === ")") {
+      lastAtom = groups.length > 1 ? groups.pop()! : 1;
+      groups[groups.length - 1] = Math.max(
+        groups[groups.length - 1]!,
+        lastAtom,
+      );
+      index++;
+      continue;
+    }
     if ("*+?".includes(character)) {
       if ("?+".includes(at(index + 1)) && at(index + 1) !== "")
         found.add("lazy-or-possessive");
@@ -283,10 +298,24 @@ export const portablePatternViolations = (
         index++;
         continue;
       }
+      // Go reads a bound with a leading zero, such as `{01}`, as literal text.
+      if (
+        [repeat[1], repeat[2]].some(
+          (bound) => bound !== undefined && /^0\d/u.test(bound),
+        )
+      )
+        found.add("repeat-leading-zero");
       const lower = Number(repeat[1]);
       const upper =
         repeat[2] === undefined || repeat[2] === "" ? lower : Number(repeat[2]);
       if (Math.max(lower, upper) > 1000) found.add("repeat-above-1000");
+      const nested = lastAtom;
+      lastAtom *= Math.max(lower, upper);
+      if (nested > 1 && lastAtom > 1000) found.add("nested-repeat-above-1000");
+      groups[groups.length - 1] = Math.max(
+        groups[groups.length - 1]!,
+        lastAtom,
+      );
       index += repeat[0].length;
       if ("?+".includes(at(index)) && at(index) !== "")
         found.add("lazy-or-possessive");
@@ -299,6 +328,7 @@ export const portablePatternViolations = (
       !LITERAL_OUTSIDE_CLASS.has(character)
     )
       found.add(`other-character:${character}`);
+    if (!"^$|".includes(character)) lastAtom = 1;
     index++;
   }
   return [...found].sort();

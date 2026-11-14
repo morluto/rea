@@ -5,13 +5,17 @@ import { Ajv2020 } from "ajv/dist/2020.js";
  * Verify canonical names, converted JSON Schemas, and session catalog metadata.
  * Only this operation needs built contracts; path checks remain source-only.
  */
-export const verifyCompleteToolCatalog = async (client, options) => {
+export const verifyCompleteToolCatalog = async (
+  client,
+  options,
+  environment = {},
+) => {
   const [
     { requireMcpLifecycleResult, sortVerifierNames },
     { TOOL_CONTRACTS },
     dialect,
     { ADVERTISED_INPUT_DIALECT_BASELINE },
-    { resolveMcpInputSchemaProfile },
+    { mcpInputSchemaProfileSchema },
   ] = await Promise.all([
     import("./mcp-verifier-results.mjs"),
     import("../../dist/contracts/toolContracts.js"),
@@ -44,16 +48,16 @@ export const verifyCompleteToolCatalog = async (client, options) => {
         );
     }
   }
-  // Packaged servers run the default profiles. One advertised construct
-  // outside the portable dialect can make a client refuse every tool.
+  // Compare the advertisement with the profiles actually passed to the server.
+  const inputProfile = mcpInputSchemaProfileSchema.parse(
+    environment.REA_MCP_INPUT_SCHEMA_PROFILE ?? "compact",
+  );
   const regressions = [
     ...dialect.advertisedDialectRegressions(
       dialect.countAdvertisedDialectViolations(
         listed.tools.flatMap(dialect.advertisedInputDialectViolations),
       ),
-      ADVERTISED_INPUT_DIALECT_BASELINE[
-        resolveMcpInputSchemaProfile(undefined)
-      ],
+      ADVERTISED_INPUT_DIALECT_BASELINE[inputProfile],
     ),
     ...dialect.advertisedDialectRegressions(
       dialect.countAdvertisedDialectViolations(
