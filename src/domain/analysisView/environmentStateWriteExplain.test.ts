@@ -937,8 +937,23 @@ it("explains many copied and slugged fields of a wide body without searching it 
       value(index),
     ]),
   );
-  const started = performance.now();
-  const copied = explainCreate(created({ id: 1, ...copies }, nested));
+  // Explaining reads each member in a few passes over the body. Searching the
+  // body again for each field reads all n members per field; the count stops
+  // such a search at the bound instead of letting it run on.
+  const allowed = 16 * n;
+  const counted = (body: JsonObject) => {
+    const reads = { count: 0 };
+    const proxy = new Proxy(body, {
+      get: (target, key) => {
+        if (++reads.count > allowed) throw new Error("body searched again");
+        return Reflect.get(target, key);
+      },
+    });
+    return { proxy, reads };
+  };
+  const nestedBody = counted(nested);
+  const copied = explainCreate(created({ id: 1, ...copies }, nestedBody.proxy));
+  expect(nestedBody.reads.count).toBeLessThanOrEqual(allowed);
   expect(ruleFor(copied.rules, `c${String(n - 1)}`)).toEqual({
     field: `c${String(n - 1)}`,
     rule: "copy",
@@ -957,16 +972,16 @@ it("explains many copied and slugged fields of a wide body without searching it 
       `x${String(index)}`,
     ]),
   );
+  const flatBody = counted(flat);
   const slugged = explainCreate(
-    created({ id: 1, ...others, s: "member-7" }, flat),
+    created({ id: 1, ...others, s: "member-7" }, flatBody.proxy),
   );
+  expect(flatBody.reads.count).toBeLessThanOrEqual(allowed);
   expect(ruleFor(slugged.rules, "s")).toEqual({
     field: "s",
     rule: "slug",
     from: "m7",
   });
-  // Searching the body again for each field is quadratic in its members.
-  expect(performance.now() - started).toBeLessThan(5_000);
 });
 
 it("searches a wide request body for a copied value in linear time", () => {

@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
+import { ManagedDecodeBudget } from "./ManagedDecodeBudget.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import {
@@ -20,6 +21,29 @@ const metadataLayoutFor = (bytes: Buffer) => {
     pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "cli.metadata"),
     pe.cli.metadata.size,
   );
+};
+
+/** Inspect while counting TypeDef row decodes, stopping at the first past `allowed`. */
+const inspectCountingTypeRows = (bytes: Buffer, allowed: number) => {
+  const reserveRow = ManagedDecodeBudget.prototype.reserveRow;
+  let typeRowReads = 0;
+  // Every metadata row cursor reserves its row before decoding it.
+  const rowReads = vi
+    .spyOn(ManagedDecodeBudget.prototype, "reserveRow")
+    .mockImplementation(function (this: ManagedDecodeBudget, ...args) {
+      if (args[0] === 2 && ++typeRowReads > allowed)
+        throw new Error("TypeDef rows were decoded again");
+      reserveRow.apply(this, args);
+    });
+  try {
+    const artifact = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    return { artifact, typeRowReads };
+  } finally {
+    rowReads.mockRestore();
+  }
 };
 
 const resizedOptionalHeader = (
@@ -566,13 +590,13 @@ describe("managed artifact coded indexes", () => {
       methodFlags: 0x1886,
       methodSignature: Buffer.from([0x20, 0x01, 0x01, 0x0e]),
     });
-    const start = performance.now();
-    const artifact = inspectManagedArtifactBytes(
-      bytes,
-      managedPeFixtureTarget(bytes),
-    );
+    // Member lists decode each TypeDef row once and naming the owner decodes
+    // its row again. Scanning the rows for each attribute decodes 16,000 x
+    // 16,001 of them.
+    const allowed = 2 * (metadataLayoutFor(bytes).table(2)?.rowCount ?? 0);
+    const { artifact, typeRowReads } = inspectCountingTypeRows(bytes, allowed);
 
-    expect(performance.now() - start).toBeLessThan(2000);
+    expect(typeRowReads).toBeLessThanOrEqual(allowed);
     expect(artifact.coverage).toEqual({ state: "complete", issues: [] });
     expect(artifact.attributes).toHaveLength(16_000);
     expect(
