@@ -696,6 +696,9 @@ it.each([
   { source: "bad%zz.js", historicalPath: "maps.js/bad%zz.js" },
   { source: "\\\\bad host\\share\\a.js", historicalPath: "share/a.js" },
   { source: "../../outside/a.js", historicalPath: "outside/a.js" },
+  // Leaving the root and re-entering through a same-named directory.
+  { source: "../../source/a.js", historicalPath: "source/a.js" },
+  { source: "../../%73ource/a.js", historicalPath: "source/a.js" },
 ])(
   "declines source references without a trustworthy file path: $source",
   async ({ source, historicalPath }) => {
