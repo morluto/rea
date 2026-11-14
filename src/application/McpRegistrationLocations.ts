@@ -1,7 +1,6 @@
 import { lstat } from "node:fs/promises";
 import { dirname, join, posix, win32 } from "node:path";
 
-import { resolveClineCliSettingsPath } from "./ClineCliLocation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { SetupClient, SupportedClientName } from "./SupportedClients.js";
@@ -120,14 +119,6 @@ export const clineLocation = async (
       "cline_mcp_settings.json",
     ),
   );
-export const clineCliLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> => {
-  const selected = resolveClineCliSettingsPath(context);
-  if (!selected.ok) throw selected.error;
-  const pathApi = context.platform === "win32" ? win32 : posix;
-  return location(selected.value, pathApi.dirname(selected.value));
-};
 export const gooseLocation = async (
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationGlobalLocation> => {

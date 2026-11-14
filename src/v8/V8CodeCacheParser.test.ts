@@ -118,6 +118,9 @@ it("keeps the function and module flags distinct", () => {
   expect(
     parse(withHeaderWord(script, 2, 0x40000000 | length)).header.producer,
   ).toBe("module");
+  // V8 before 13.4 (Node 22's 12.4) marks a module with bit 31: `0x80000017` on Electron 30.
+  const legacy = parse(withHeaderWord(script, 2, 0x80000000 | length)).header;
+  expect([legacy.producer, legacy.source_length]).toEqual(["module", length]);
   // Both bits set is not a shape V8 produces; the module flag wins so the reported
   // family stays one of the three observed kinds.
   expect(

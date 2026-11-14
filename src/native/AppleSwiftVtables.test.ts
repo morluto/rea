@@ -356,6 +356,195 @@ it("returns a located issue for an emitted unresolved witness slot", () => {
   });
 });
 
+it("decodes a retroactive static witness slot when flags include retroactive bit 0x40", () => {
+  const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
+  const values = new Map<bigint, number>([
+    [0x20cn, 0x48], // kind 1 (0x08) + retroactive conformance (0x40)
+    [0x500n, 3], // protocol descriptor kind
+    [0x800n, 0], // module context
+    [0x50cn, 0], // signature count
+    [0x510n, 1], // witness requirement count
+    [0x2b0n, 16], // nominal type descriptor kind
+    [0x518n, 1], // synchronous function witness requirement
+  ]);
+  const budget: DispatchRecordBudget = {
+    truncated: false,
+    isFull: () => false,
+    markTruncated: () => {
+      budget.truncated = true;
+    },
+    admit: () => true,
+  };
+  const facts = decodeSwiftDispatchFacets({
+    sections: [{ name: "__swift5_proto", address: 0x100n, size: 4 }],
+    segments: [
+      {
+        address: 0x900n,
+        size: 0x100n,
+        offset: 0x900,
+        executable: true,
+      },
+    ],
+    readers: {
+      u32: (address) => values.get(address) ?? 0,
+      pointer: (address) => (address === 0x380n ? 0x200n : 0x900n),
+      resolvePointer: (address) => ({
+        kind: "raw",
+        target:
+          address === 0x2a0n ? 0x2b0n : address === 0x380n ? 0x200n : 0x900n,
+      }),
+      string: (address) => (address === 0x600n ? "Proto" : "Widget"),
+      location: (address) => ({
+        address: `0x${address.toString(16)}`,
+        file_offset: Number(address),
+      }),
+      targetLocation: (address) => ({
+        address: `0x${address.toString(16)}`,
+        file_offset: Number(address),
+      }),
+      evidence: (address, description) => [
+        {
+          kind: "binary_metadata",
+          description,
+          location: {
+            address: `0x${address.toString(16)}`,
+            file_offset: Number(address),
+          },
+          artifact_path: "/fixture",
+          artifact_sha256: "a".repeat(64),
+        },
+      ],
+      offset: (address) => Number(address),
+    },
+    relative: (field) => ({
+      kind: "target",
+      target:
+        new Map<bigint, bigint>([
+          [0x100n, 0x200n],
+          [0x200n, 0x500n],
+          [0x508n, 0x600n],
+          [0x504n, 0x800n],
+          [0x808n, 0x820n],
+          [0x204n, 0x2a0n], // indirect pointer to type descriptor
+          [0x2b8n, 0x700n],
+          [0x208n, 0x380n],
+        ]).get(field) ?? 0n,
+    }),
+    budget,
+    result,
+  });
+
+  expect(result.swift_conformances[0]).toMatchObject({
+    type_name: "Widget",
+    protocol_name: "Proto",
+    decode: { status: "decoded", reason: null },
+  });
+  expect(result.swift_dispatch_slots).toHaveLength(1);
+  expect(result.swift_dispatch_slots[0]).toMatchObject({
+    slot_index: 1,
+    implementation_address: "0x900",
+    decode: { status: "decoded", reason: null },
+  });
+  expect(facts).toMatchObject({
+    facet: "swift_conformances_static_witness_slots",
+    exhaustive: true,
+    examined: 1,
+    decoded: 1,
+    issues: [],
+  });
+});
+
+it("retains partial coverage for retroactive conformance when conditional requirement flags are set", () => {
+  const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
+  const values = new Map<bigint, number>([
+    [0x20cn, 0x148], // kind 1 (0x08) + retroactive (0x40) + conditional requirements (0x100)
+    [0x500n, 3], // protocol descriptor kind
+    [0x800n, 0], // module context
+    [0x50cn, 0], // signature count
+    [0x510n, 1], // witness requirement count
+    [0x2b0n, 16], // nominal type descriptor kind
+  ]);
+  const budget: DispatchRecordBudget = {
+    truncated: false,
+    isFull: () => false,
+    markTruncated: () => {},
+    admit: () => true,
+  };
+  const facts = decodeSwiftDispatchFacets({
+    sections: [{ name: "__swift5_proto", address: 0x100n, size: 4 }],
+    segments: [],
+    readers: {
+      u32: (address) => values.get(address) ?? 0,
+      pointer: () => 0n,
+      resolvePointer: (address) => ({
+        kind: "raw",
+        target: address === 0x2a0n ? 0x2b0n : 0x200n,
+      }),
+      string: (address) => (address === 0x600n ? "Proto" : "Widget"),
+      location: (address) => ({
+        address: `0x${address.toString(16)}`,
+        file_offset: Number(address),
+      }),
+      targetLocation: (address) => ({
+        address: `0x${address.toString(16)}`,
+        file_offset: Number(address),
+      }),
+      evidence: (address, description) => [
+        {
+          kind: "binary_metadata",
+          description,
+          location: {
+            address: `0x${address.toString(16)}`,
+            file_offset: Number(address),
+          },
+          artifact_path: "/fixture",
+          artifact_sha256: "a".repeat(64),
+        },
+      ],
+      offset: (address) => Number(address),
+    },
+    relative: (field) => ({
+      kind: "target",
+      target:
+        new Map<bigint, bigint>([
+          [0x100n, 0x200n],
+          [0x200n, 0x500n],
+          [0x508n, 0x600n],
+          [0x504n, 0x800n],
+          [0x808n, 0x820n],
+          [0x204n, 0x2a0n],
+          [0x2b8n, 0x700n],
+          [0x208n, 0x380n],
+        ]).get(field) ?? 0n,
+    }),
+    budget,
+    result,
+  });
+
+  expect(result.swift_conformances[0]).toMatchObject({
+    decode: {
+      status: "partial",
+      reason:
+        "Conditional, generic, resilient or missing static witness table is not decoded",
+    },
+  });
+  expect(result.swift_dispatch_slots).toHaveLength(0);
+  expect(facts).toMatchObject({
+    facet: "swift_conformances_static_witness_slots",
+    exhaustive: false,
+    examined: 1,
+    decoded: 0,
+    issues: [
+      {
+        code: "conformance_decode_partial",
+        message:
+          "Conditional, generic, resilient or missing static witness table is not decoded",
+        location: "0x200",
+      },
+    ],
+  });
+});
+
 describe("Swift vtable coverage facts: unsupported pointer fixup coverage", () => {
   it("marks pointer fixup coverage partial for an unsupported format with no decoded pointers", () => {
     const result = objcSwiftMetadataSchema.parse({ db_save_result: null });

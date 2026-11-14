@@ -84,3 +84,26 @@ export const devicetreeFixture = (
   reservations.writeBigUInt64BE(0x1000n, 8);
   return Buffer.concat([header, reservations, body, namesBlock]);
 };
+
+/** Minimal valid FDT whose empty strings range starts at the reservation map. */
+export const emptyStringsAtReservationBoundaryFixture = (
+  version: 16 | 17,
+): Buffer => {
+  const bytes = Buffer.alloc(72);
+  const write = (offset: number, value: number) =>
+    bytes.writeUInt32BE(value, offset);
+  write(0, 0xd00dfeed);
+  write(4, bytes.length);
+  write(8, 40);
+  write(12, 56);
+  write(16, 56);
+  write(20, version);
+  write(24, 16);
+  write(32, 0);
+  if (version === 17) write(36, 16);
+  write(40, 1);
+  write(44, 0);
+  write(48, 2);
+  write(52, 9);
+  return bytes;
+};
