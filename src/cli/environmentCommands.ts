@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { localPathStringSchema } from "../domain/localPath.js";
+import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { EnvironmentBuildCaptureInput } from "../application/environment/environmentBuild.js";
 import type {
@@ -379,10 +380,16 @@ const inspectBuildHar = async (
       error: "Application workflow failed",
       ...inspected.error,
     });
+  // Retain the caller's capture path on the evidence so environment-build
+  // writes the same caller_input_path as the three-step CLI path (#9681).
+  const evidence = withEvidenceCallerInputPath(
+    inspected.value,
+    callerInputPath,
+  );
   const file = await environmentExportEvidenceFile(
     "evidence",
     capturePath,
-    inspected.value,
+    evidence,
     ENVIRONMENT_BUILD_OPERATION,
   );
   return file.ok ? file : err(cliError(file.error));
