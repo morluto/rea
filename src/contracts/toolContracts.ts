@@ -17,6 +17,7 @@ import { V8_CODE_CACHE_TOOL_CONTRACTS } from "./v8/v8CodeCacheToolContracts.js";
 import { SQLITE_TOOL_CONTRACTS } from "./sqlite/sqliteToolContracts.js";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "./analysisViewToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "./native/binaryDiagnosticsToolContracts.js";
+import { CANONICALIZE_TOOL_CONTRACTS } from "./canonicalize/canonicalizeToolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "./native/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 import { RELEASE_EXPOSURE_TOOL_CONTRACTS } from "./releaseExposureToolContracts.js";
@@ -54,6 +55,7 @@ export const TOOL_CONTRACTS = [
   ...ENHANCED_TOOL_CONTRACTS,
   ...NATIVE_TOOL_CONTRACTS,
   ...BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  ...CANONICALIZE_TOOL_CONTRACTS,
   ...ANALYSIS_VIEW_TOOL_CONTRACTS,
   ...ARTIFACT_TOOL_CONTRACTS,
   ...RELEASE_EXPOSURE_TOOL_CONTRACTS,

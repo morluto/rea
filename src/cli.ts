@@ -25,6 +25,7 @@ import { registerV8CodeCacheCommands } from "./cli/v8CodeCacheCommands.js";
 import { registerSqliteCommands } from "./cli/sqliteCommands.js";
 import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
+import { registerCanonicalizeCommands } from "./cli/canonicalizeCommands.js";
 import { registerFridaCommands } from "./cli/fridaCommands.js";
 import type { FridaInstrumentationPort } from "./application/frida/FridaInstrumentationPort.js";
 import { Cli, z } from "incur";
@@ -188,6 +189,7 @@ export const createCli = (
       registerCutterCommands(cli, logger, environment);
       registerUtilityCommands(cli, logger, environment, analysis);
       registerBinaryDiagnosticsCommands(cli, logger, environment);
+      registerCanonicalizeCommands(cli, logger, environment);
     },
     artifact: () => {
       registerWasmCommands(cli, logger, environment);

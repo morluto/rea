@@ -462,6 +462,22 @@ The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
 
+Canonicalize an artifact that may be hardened against analysis, without
+executing it:
+
+```bash
+rea antidote /absolute/path/to/app.asar --json
+rea antidote /absolute/path/to/core.wasm --format wasm --json
+```
+
+The antidote pass recognizes WASM, Electron `.asar` or structured JSON (`--format`
+defaults to `auto`), drops non-semantic padding and unreferenced decoys to an
+exemplar, a count and a digest, keeps behavior-relevant and link-relevant
+structure, and reports truncated or unverified state explicitly. It is lossless
+for behavior-relevant data and bounds its own work with `--max-file-bytes`,
+`--max-facts` and `--max-depth`. See
+[antidote canonicalization](../specs/antidote-canonicalize/spec.md).
+
 List ELF and Mach-O initializer and finalizer functions without executing the
 image:
 

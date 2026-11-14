@@ -701,6 +701,32 @@ Coverage describes examined declarations and does not establish runtime behavior
 or full specification/operation validity. See [offline API contracts](../api-contracts.md)
 for source identities, parser allowances, supported scope and CLI publication.
 
+## Artifact canonicalization (antidote)
+
+`canonicalize_artifact` (CLI `rea antidote`) is a deterministic, execution-free
+preprocessing pass that neutralizes the class of decoy, padding and
+anti-instrumentation shields that harden an artifact against AI analysis without
+changing its runtime behavior. It reads one explicitly selected local file
+through the shared stable artifact reader and never executes, imports or mutates
+it. It is not an active-target tool and starts no deep provider.
+
+A pluggable, config-driven set of per-format normalizers recognizes the input
+(`format` is `auto` by default, or an explicit `wasm`, `asar` or `json`) and
+emits bounded, structured facts instead of raw bytes, so adversarial content
+never reaches a token budget. `normalized_result` separates behavior-relevant
+`core` facts (WASM core and link-relevant sections, entries reachable from
+`package.json`) from `collapsed` non-semantic padding and unreferenced decoys,
+each retained as an exemplar, a byte count and a SHA-256 so the reduction is
+lossless by reference. `reductions` record what was collapsed and why; `coverage`
+reports `complete` or `partial` with an explicit `truncated` flag; and a region
+the pass cannot prove is reported as `unverified` rather than confabulated. The
+pass bounds its own read budget (`max_file_bytes`), exemplar budget (`max_facts`)
+and structural depth (`max_depth`) so an inflated input cannot exhaust the pass
+itself. The canonicalization is lossless for behavior-relevant data: it only
+changes what the analyzer ingests, never the target. See
+[antidote canonicalization](../specs/antidote-canonicalize/spec.md) for
+the normalizer interface and per-format coverage.
+
 ## Retained application Evidence inputs
 
 `analyze_javascript_application`, `inspect_binary_layout`, `inspect_artifact`,

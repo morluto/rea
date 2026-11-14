@@ -60,6 +60,13 @@ export const ELF_NOTES_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for the execution-free antidote canonicalization engine. */
+export const CANONICALIZE_PROVIDER = Object.freeze({
+  id: "rea-canonicalize",
+  name: "REA antidote canonicalizer",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free ELF unwind-table decoding. */
 export const ELF_UNWIND_RANGES_PROVIDER = Object.freeze({
   id: "rea-elf-unwind-ranges",
