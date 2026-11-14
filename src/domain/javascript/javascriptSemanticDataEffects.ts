@@ -28,6 +28,7 @@ import {
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   builtinDataEffectIdentity,
+  semanticDefaultHttpProtocol,
   dataEffectArgumentBindingId as argumentBindingId,
   dataEffectLiteralString as literalString,
   dataEffectMemberCallee as memberCallee,
@@ -260,6 +261,20 @@ const collectRequests = (
     if (identity === null) return;
     const method = identity.method;
     const endpoint = requestEndpoint(node);
+    // An options object may replace both protocol and agent. A callback cannot.
+    const options = node.arguments[1];
+    if (
+      endpoint !== null &&
+      URL.canParse(endpoint) &&
+      (method === "get" || method === "request") &&
+      (options === undefined ||
+        t.isFunctionExpression(options) ||
+        t.isArrowFunctionExpression(options))
+    ) {
+      const protocol = semanticDefaultHttpProtocol(node.callee, context.state);
+      if (protocol !== undefined && new URL(endpoint).protocol !== protocol)
+        return;
+    }
     // `http.get`/`http.request` parse a string target with `new URL` before the
     // request exists, so a literal that is not an absolute URL throws
     // `ERR_INVALID_URL` synchronously — an options object cannot rescue it.
