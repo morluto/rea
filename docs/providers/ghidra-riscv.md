@@ -300,7 +300,10 @@ passes a type the prototype misplaces:
   `struct { char c; unsigned : 1; float f; }` in `a0` and `a1`, and its DWARF
   lists only `c` and `f`, so the lane admits it with the float in `fa0`.
   Refusing every padded value with a float would also refuse common layouts
-  such as `struct { char c; float f; }`, which takes `a0` and `fa0`.
+  such as `struct { char c; float f; }`, which takes `a0` and `fa0`. A C++
+  empty class, which Ghidra imports as a one-byte structure without members,
+  is its own storage: GCC 14.2 and Clang 21.1.8 ignore it as a member and pass
+  `struct { E e; char c; float f; }` in `a0` and `fa0`, so it is admitted.
 - a union parameter that may be a transparent union taking a float register.
   A transparent union passes as its first member, and DWARF does not record
   the attribute, so Ghidra sees an ordinary union in integer registers: Clang
@@ -432,8 +435,9 @@ assembly sources:
   unnamed bit-field DWARF omits, a function that passes a GNU vector, a
   function that passes `float _Complex` alone, in a structure and in an over-aligned structure, and, from `riscv-float-abi-empty.cpp`, a function that passes a structure with an
   array of one empty class. It also adds functions that pass a structure of one
-  `float[2]`, a `float` beside a one-bit field of a 64-bit type, and two
-  `float _Complex` fields, which the policy admits.
+  `float[2]`, a `float` beside a one-bit field of a 64-bit type, two
+  `float _Complex` fields, and, from `riscv-float-abi-empty.cpp`, an empty
+  class beside a `char` and a `float`, which the policy admits.
 
 Independent LLVM readelf observations establish ELF declarations,
 `Tag_RISCV_arch` and symbol addresses. Public CLI and stdio MCP workflows verify

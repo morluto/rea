@@ -171,6 +171,9 @@ const verifyUnmodelledRefusal = async () => {
   assert.ok(!error.includes("rea_riscv_abi_elements"), error);
   assert.ok(!error.includes("rea_riscv_abi_bits"), error);
   assert.ok(!error.includes("rea_riscv_abi_complexes"), error);
+  // A direct C++ empty-class member is ignored when flattening, so its byte
+  // is storage, not an omitted field.
+  assert.ok(!error.includes("rea_riscv_abi_member"), error);
   // Clang ignores transparent_union for a float first member and for members
   // of another size, and an integer first member keeps a0: ordinary unions.
   assert.ok(!error.includes("rea_riscv_abi_float_first"), error);

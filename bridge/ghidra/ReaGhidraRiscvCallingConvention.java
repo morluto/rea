@@ -639,6 +639,8 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
    * Whether a structure, or one nested in it, has bytes that neither a member nor the padding
    * that natural alignment adds before a member or at the end accounts for. Over-alignment, such
    * as `__attribute__((aligned(8)))`, counts too: it cannot be told apart from an omitted field.
+   * A C++ empty class, which Ghidra imports as a one-byte structure without components, is that
+   * byte of storage, not an omitted field: GCC and Clang ignore it as a member when they flatten.
    */
   private boolean unexplainedBytes(DataType type) {
     type = strip(type);
@@ -646,7 +648,8 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     if (known != null) return known;
     boolean result = false;
     if (type instanceof Array array) result = unexplainedBytes(array.getDataType());
-    else if (type instanceof Structure structure) {
+    else if (type instanceof Structure structure
+        && !(structure.getNumDefinedComponents() == 0 && structure.getLength() == 1)) {
       long end = 0;
       long alignment = 1;
       for (DataTypeComponent component : structure.getDefinedComponents()) {
