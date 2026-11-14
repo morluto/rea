@@ -38,7 +38,7 @@ import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
-import { cliDecimalField } from "./options.js";
+import { cliDecimalField, publishArgvInput } from "./options.js";
 
 /** Same envelope label as the other JSON-input commands and `parseCliJsonInput`. */
 const cliError = (error: AnalysisError): JsonValue => ({
@@ -689,11 +689,13 @@ export const registerEnvironmentCommands = (
       host: mcpHttpHostSchema
         .optional()
         .describe("Listener address; default MCP_HOST, else 127.0.0.1"),
-      port: mcpHttpPortSchema
-        .optional()
-        .describe(
-          "Listener port; default MCP_PORT, else 0 for an ephemeral port",
-        ),
+      port: publishArgvInput(
+        mcpHttpPortSchema
+          .optional()
+          .describe(
+            "Listener port; default MCP_PORT, else 0 for an ephemeral port",
+          ),
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

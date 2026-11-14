@@ -24,13 +24,6 @@ type DecimalWrapper =
       readonly kind: "optional" | "exactOptional" | "nullable" | "readonly";
     };
 
-/** Parse decimal integer tokens before Number coercion can erase their syntax. */
-export const cliIntegerArgument = (min: number) =>
-  z
-    .string()
-    .regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer")
-    .pipe(z.coerce.number<string>().safe().min(min));
-
 /** A number field, or a set of non-negative integer literals such as Rizin's widths. */
 type NumericCore = z.ZodNumber | z.ZodLiteral<number>;
 
@@ -74,10 +67,12 @@ const unwrapSchema = (field: { unwrap: () => unknown }): z.ZodType =>
   field.unwrap() as z.ZodType;
 
 /**
- * Incur advertises Zod's output view. Publish the input view so the decimal
- * token guard survives `--schema` and other SDK conversions.
+ * Incur advertises Zod's output view. Publish the input view so an argv token
+ * grammar that transforms text survives `--schema` and other SDK conversions.
  */
-const publishDecimalInput = (field: z.ZodType): z.ZodType => {
+export const publishArgvInput = <Field extends z.ZodType>(
+  field: Field,
+): Field => {
   const { $schema: _dialect, ...inputSchema } = z.toJSONSchema(field, {
     io: "input",
   });
@@ -188,7 +183,7 @@ export const cliDecimalField = <Field extends z.ZodType>(
     numeric.description === undefined
       ? admitted
       : admitted.describe(numeric.description);
-  return publishDecimalInput(described) as z.ZodType<z.output<Field>>;
+  return publishArgvInput(described) as z.ZodType<z.output<Field>>;
 };
 
 /** Adapt each numeric property of a shared shape; other properties stay unchanged. */

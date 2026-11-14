@@ -16,10 +16,11 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { cliDecimalField, cliIntegerArgument } from "./options.js";
+import { cliDecimalField } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 
 const sourceMapSelection = webSourceLocationInputSchema.shape.source_map;
+const generatedPosition = webSourceLocationInputSchema.shape.generated_position;
 
 /** Expose the same explicit selected map/point contract through the CLI. */
 export const registerWebSourceLocationCommands = (
@@ -33,14 +34,20 @@ export const registerWebSourceLocationCommands = (
       "Trace one retained script position through an explicitly selected local source map",
     args: z.object({
       manifestPath: webSourceLocationInputSchema.shape.manifest_path,
-      scriptIndex: cliIntegerArgument(0).describe(
-        "Zero-based manifest script index",
+      scriptIndex: cliDecimalField(
+        webSourceLocationInputSchema.shape.script_index.describe(
+          "Zero-based manifest script index",
+        ),
       ),
       sourceMapPath: sourceMapSelection.shape.path,
       sourceMapUrl: sourceMapSelection.shape.url,
-      line: cliIntegerArgument(1).describe("One-based generated line"),
-      column: cliIntegerArgument(0).describe(
-        "Zero-based UTF-16 generated column",
+      line: cliDecimalField(
+        generatedPosition.shape.line.describe("One-based generated line"),
+      ),
+      column: cliDecimalField(
+        generatedPosition.shape.column.describe(
+          "Zero-based UTF-16 generated column",
+        ),
       ),
     }),
     options: z.object({

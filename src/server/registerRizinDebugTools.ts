@@ -3,7 +3,10 @@ import type { Logger } from "pino";
 
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import {
+  RIZIN_DEBUG_SESSION_TOOLS,
+  unknownDebuggerSessionError,
+} from "../domain/debuggerSessionErrors.js";
 import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import {
   runOwnedCleanupWithExternalMutationAdmission,
@@ -99,7 +102,13 @@ export const registerRizinDebugTools = (
       const result = manager.status(input.session_id);
       if (result === undefined)
         return delivery.toCallToolResult(
-          { ok: false, error: new AnalysisInputError(status.name) },
+          {
+            ok: false,
+            error: unknownDebuggerSessionError(
+              RIZIN_DEBUG_SESSION_TOOLS,
+              status.name,
+            ),
+          },
           status,
         );
       return delivery.toCallToolResult(
