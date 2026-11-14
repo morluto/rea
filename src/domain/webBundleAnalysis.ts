@@ -1,3 +1,4 @@
+import { PARENT_HEAP_NODE_OPTIONS } from "./processHeapControl.js";
 import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
 import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
 import { z } from "zod";
@@ -236,8 +237,7 @@ export const webBundleResultAdmissionFailure = (input: {
   return {
     kind: "host-capacity",
     reason: `The CLI/MCP host heap has no remaining reserved capacity for another web-bundle result (host result capacity ${String(input.hostCapacityBytes)} bytes). The fixed ${String(input.fixedBudgetBytes)}-byte result budget still has ${String(input.fixedRemainingBytes)} bytes available. This is host memory pressure, not exhaustion of that fixed allowance.`,
-    remediationAction:
-      "Retry when the CLI/MCP process has more heap headroom. On Node, set NODE_OPTIONS (for example --max-old-space-size=<MiB>) in the environment that starts the CLI or MCP server, then restart that process, to raise this host heap. Raising max_heap_mb changes the isolated analyzer, not this host admission. The fixed result budget is separate and was not exhausted.",
+    remediationAction: `Retry when the CLI/MCP process has more heap headroom. ${PARENT_HEAP_NODE_OPTIONS} to raise this host heap. Raising max_heap_mb changes the isolated analyzer, not this host admission. The fixed result budget is separate and was not exhausted.`,
     reportedLimits: {
       result_bytes: input.fixedBudgetBytes,
       result_budget_remaining_bytes: input.fixedRemainingBytes,

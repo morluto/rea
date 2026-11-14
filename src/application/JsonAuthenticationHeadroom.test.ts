@@ -95,6 +95,9 @@ describe("JSON authentication headroom", () => {
       error: {
         resource: "memory",
         reportedLimits: { authentication_bytes: total },
+        remediationAction: expect.stringMatching(
+          /CLI\/MCP process, not in a worker\. It needs about 1 MiB more heap headroom[^]*NODE_OPTIONS \(for example --max-old-space-size=<MiB>\)/,
+        ),
       },
     });
     expect(

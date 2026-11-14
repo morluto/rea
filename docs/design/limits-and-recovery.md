@@ -153,7 +153,9 @@ Host memory and `NODE_OPTIONS` do not raise a REA admission unless that
 admission's recovery says so. The JavaScript parent result budget is one that
 does: its recovery says to set `NODE_OPTIONS` (for example
 `--max-old-space-size=<MiB>`) on the process that starts REA, then restart
-that process. `max_heap_mb` does not raise it.
+that process. `max_heap_mb` does not raise it. Evidence authentication
+headroom is another: reading a large Evidence file or bundle runs in the CLI/MCP
+process, and its recovery names the same control and the estimated shortfall.
 
 ## Runtime settings through MCP
 

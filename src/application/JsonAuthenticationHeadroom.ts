@@ -1,10 +1,19 @@
 import { jsonStringCodeUnits } from "../domain/jsonSerialization.js";
 import { getHeapStatistics } from "node:v8";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { PARENT_HEAP_NODE_OPTIONS } from "../domain/processHeapControl.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Authentication clones parsed JSON and hashes its canonical commitment. */
 const AUTHENTICATION_COPIES = 2;
+const MEBIBYTE = 1024 * 1024;
+
+/**
+ * Authentication runs in the CLI/MCP process, so its heap is the only control.
+ * The shortfall is the live estimate, not a guarantee for a later attempt.
+ */
+const authenticationHeadroomRemediation = (shortfallBytes: number): string =>
+  `This authentication runs in the CLI/MCP process, not in a worker. It needs about ${String(Math.ceil(shortfallBytes / MEBIBYTE))} MiB more heap headroom than is available now. ${PARENT_HEAP_NODE_OPTIONS} with a limit at least that much above the current one, if the host has the memory. Otherwise analyze less input to produce a smaller Evidence file.`;
 
 /** Incremental storage of a string or null appended to an already measured array. */
 export const estimateJsonArrayScalarEntry = (
@@ -143,6 +152,11 @@ export const requireAuthenticationHeadroom = (
         serialized_json_utf16_bytes: serializedUtf16Bytes,
         authentication_bytes: requiredBytes,
         available_heap_bytes: availableBytes,
+      },
+      {
+        remediationAction: authenticationHeadroomRemediation(
+          requiredBytes - availableBytes,
+        ),
       },
     ),
   );

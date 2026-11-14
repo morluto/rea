@@ -64,6 +64,9 @@ describe("evidence bundle import headroom", () => {
           input_path: path,
           available_heap_bytes: 1024,
         },
+        remediationAction: expect.stringContaining(
+          "set NODE_OPTIONS (for example --max-old-space-size=<MiB>) in the environment that starts the CLI or MCP server",
+        ),
       },
     });
   });
