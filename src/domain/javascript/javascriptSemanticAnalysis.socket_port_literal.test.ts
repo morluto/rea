@@ -13,6 +13,8 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
  *   net.connect(65536) / -1 / 1.5     -> THREW ERR_SOCKET_BAD_PORT
  *   net.connect(NaN) / Infinity       -> THREW ERR_SOCKET_BAD_PORT
  *   net.connect(0n) / true / null     -> THREW ERR_INVALID_ARG_TYPE
+ *   net.connect(-0n) / ~0n / -(1n)    -> THREW ERR_INVALID_ARG_TYPE
+ *   net.connect(+0n)                  -> THREW TypeError (before the call)
  *   net.connect("")                   -> THREW ERR_SOCKET_BAD_PORT
  *   net.connect("/tmp/x.sock")        -> Socket created (Unix socket path)
  *   net.connect({ port: 80 })         -> Socket created
@@ -32,6 +34,10 @@ it.each([
   ["an Infinity port", `net.connect(Infinity)`],
   ["an overflowing numeric port", `net.connect(1e400)`],
   ["a BigInt port", `net.connect(0n)`],
+  ["a negated BigInt port", `net.connect(-0n)`],
+  ["a bitwise-not BigInt port", `net.connect(~0n)`],
+  ["a parenthesized negated BigInt port", `net.connect(-(1n))`],
+  ["a unary plus BigInt port", `tls.connect(+0n)`],
   ["a boolean port", `net.connect(true)`],
   ["a null port", `net.connect(null)`],
   ["an empty path", `net.connect("")`],
