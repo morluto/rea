@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, it } from "vitest";
 import { runOwnedCommand } from "../../../src/process/OwnedCommand.js";
+import { runningTestDeadline } from "../../support/runningTestDeadline.js";
 
 it.each([
   "experiments/command-scope.node.mjs",
@@ -16,7 +17,11 @@ it.each([
       hostEnvironment: process.env,
       runId: `rea-ui-experiment-tests-${randomUUID()}`,
     },
-    { timeoutMs: 90_000, diagnosticBytes: 128 * 1024, acceptNonZeroExit: true },
+    {
+      timeoutMs: runningTestDeadline() ?? null,
+      diagnosticBytes: 128 * 1024,
+      acceptNonZeroExit: true,
+    },
   );
   expect(result.exitCode, result.stdout.text + result.stderr.text).toBe(0);
 });
