@@ -9,6 +9,7 @@ import {
   semanticOpaqueBindingEffects,
   semanticBindingCanBeRebound,
   semanticOpaqueBindingReadMayHaveChanged,
+  semanticBindingMayHaveOpaqueEffect,
 } from "./javascriptSemanticOpaqueEffects.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import * as t from "@babel/types";
@@ -1138,9 +1139,16 @@ const electronRequireOrigin = (
   semanticRequireOrigin(node, state) ??
   semanticBundledRequireOrigin(node, state);
 
+/**
+ * General provenance only knows literal `require`, so a bundled external held
+ * in one binding and destructured from another (`const s=n(K);const{X}=s`)
+ * is followed here through stable lexical aliases. Like provenance, a hop
+ * stops at a rebindable binding that direct eval may have changed.
+ */
 const bindingOrigin = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
+  visited: ReadonlySet<string> = new Set(),
 ): JavaScriptModuleOrigin | undefined => {
   if (binding.directOrigins.length > 0)
     return binding.directOrigins.length === 1
@@ -1148,7 +1156,29 @@ const bindingOrigin = (
       : undefined;
   const initializer = semanticStableInitializer(binding, state);
   if (initializer === undefined) return undefined;
-  const origin = electronRequireOrigin(initializer.node, state)?.origin;
+  const source = unwrapJavaScriptExpression(initializer.node).node;
+  const alias =
+    t.isIdentifier(source) &&
+    !semanticResolutionBlocked(state, source, source.name)
+      ? resolveSemanticBindingState(state, source, source.name)
+      : undefined;
+  // The alias walk shares the caller-selectable alias budget; running out is a
+  // reported resource limit, not a silent absence of the origin.
+  const exhausted =
+    alias !== undefined && visited.size >= state.precision.alias_selections;
+  if (exhausted) state.valueResourceLimits.add("alias-selections");
+  const origin =
+    alias === undefined
+      ? electronRequireOrigin(initializer.node, state)?.origin
+      : visited.has(alias.bindingId) ||
+          exhausted ||
+          [binding, alias].some(
+            (hop) =>
+              semanticBindingCanBeRebound(hop) &&
+              semanticBindingMayHaveOpaqueEffect(hop, state),
+          )
+        ? undefined
+        : bindingOrigin(alias, state, new Set([...visited, binding.bindingId]));
   const projection = initializer.projection;
   return origin === undefined ||
     !projection.every((key): key is string => typeof key === "string")
