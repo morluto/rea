@@ -22,13 +22,13 @@ export const PYTHON_IMPORTS = `from __future__ import annotations
 from array import array
 import binascii
 import contextlib
-import errno
 import copy
 import hashlib
 import io
 import json
 import math
 import os
+import errno
 import re
 import sqlite3
 import struct
@@ -177,7 +177,7 @@ def _ensure_state_aliases(home: Path) -> None:
         link.symlink_to(destination)
 
 
-def _dconf(arguments: list, environment: dict, cwd: Path | None = None) -> str:
+def _dconf(arguments: list, environment: dict, stdin=None) -> str:
     child_environment = {**os.environ, **environment}
     refusal = None
     missing = None
@@ -187,7 +187,7 @@ def _dconf(arguments: list, environment: dict, cwd: Path | None = None) -> str:
             command = os.path.join(os.getcwd(), command)
         try:
             child = subprocess.Popen([command, *arguments], env=child_environment,
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd)
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=stdin)
         except OSError as error:
             # Popen identifies an exec failure with the executable filename;
             # parent capacity, pipe setup and cwd failures are not PATH misses.
@@ -232,8 +232,11 @@ def _load_dconf(home: Path) -> None:
             keyfiles.mkdir()
             if database.is_file():
                 profile = Path(scratch, "profile")
-                profile.write_text("file-db:./user\n")
-                existing = _dconf(["dump", "/"], {"DCONF_PROFILE": str(profile.resolve())}, cwd=database.parent)
+                profile.write_text("file-db:/dev/fd/0\n")
+                with database.open("rb") as source:
+                    # Missing descriptor paths must not become a successful empty dump.
+                    os.stat(f"/dev/fd/{source.fileno()}")
+                    existing = _dconf(["dump", "/"], {"DCONF_PROFILE": str(profile.resolve())}, stdin=source)
                 (keyfiles / "00-existing").write_text(existing)
             (keyfiles / "01-captured").write_text(_respelled(DCONF, home))
             _dconf(["compile", str(Path(scratch, "user")), str(keyfiles)], {})

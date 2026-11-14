@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { expect, it } from "vitest";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -148,15 +148,28 @@ for (const name of ["ordinary", "hash#directory", "line\nbreak"]) {
           "_load_dconf(Path(sys.argv[1]))",
         ].join("\n"),
       );
+      const launch = join(root, "launch:original");
+      const tools = join(launch, "tools");
+      await mkdir(tools, { recursive: true });
+      await symlink("/bin/sh", join(tools, "sh"));
+      await writeFile(
+        join(tools, "dconf"),
+        '#!/usr/bin/env sh\nexec dconf-helper "$@"\n',
+        { mode: 0o755 },
+      );
+      await writeFile(
+        join(tools, "dconf-helper"),
+        `#!/bin/sh\nexec '${dconf.replaceAll("'", "'\\''")}' "$@"\n`,
+        { mode: 0o755 },
+      );
       const verification = join(root, "verification-profile");
       await writeFile(verification, "file-db:./user\n");
       for (let replay = 0; replay < 2; replay += 1) {
         const result = await execFileOutput(python, ["-I", helper, home], {
           timeout: 10_000,
           maxBuffer: 64 * 1024,
-          ...(name === "ordinary"
-            ? { env: { PATH: relative(process.cwd(), dirname(dconf)) } }
-            : {}),
+          cwd: launch,
+          env: { PATH: "tools" },
         });
         expect(result.stderr).toBe("");
         const { stdout } = await runDconf(["dump", "/"], {
@@ -200,10 +213,16 @@ for (const searchPath of [
       ]);
       await writeFile(
         join(selected, "dconf"),
-        `#!/bin/sh
+        `#!/usr/bin/env sh
 [ "$PATH" = '${searchPath}' ] || exit 19
-printf '[org/notes]\\nselected=true\\n'
+dconf-helper
 `,
+        { mode: 0o755 },
+      );
+      await symlink("/bin/sh", join(selected, "sh"));
+      await writeFile(
+        join(selected, "dconf-helper"),
+        "#!/bin/sh\nprintf '[org/notes]\\nselected=true\\n'\n",
         { mode: 0o755 },
       );
       await writeFile(
@@ -292,7 +311,7 @@ printf '[org/notes]\\nselected=true\\n'
             (line) => !line.includes("agentenv_protocol"),
           ),
           PYTHON_HELPERS,
-          'print(_dconf(["dump", "/"], {}, cwd=Path(sys.argv[1])), end="")',
+          'print(_dconf(["dump", "/"], {}), end="")',
         ].join("\n"),
       );
       const pending = execFileOutput(python, ["-I", helper, staged], {

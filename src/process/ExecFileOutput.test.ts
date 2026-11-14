@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -89,6 +89,38 @@ it.each([undefined, "SIGTERM"] as const)(
     expect(result.stdout).toBe("input closed");
   },
 );
+
+it.each([false, true])(
+  "borrows file input without taking the parent descriptor (lifetime pipe %s)",
+  async (lifetimePipe) => {
+    const root = await createTestTempDirectory("rea-exec-input-");
+    const input = join(root, "selected");
+    await writeFile(input, "selected bytes");
+    const source = await open(input, "r");
+    try {
+      const result = await execFileOutput(
+        process.execPath,
+        ["-e", 'process.stdout.write(require("node:fs").readFileSync(0))'],
+        {
+          stdinFile: source.fd,
+          stopSignal: "SIGTERM",
+          lifetimePipe,
+          timeout: 2_000,
+        },
+      );
+      expect(result.stdout).toBe("selected bytes");
+      expect((await source.stat()).isFile()).toBe(true);
+    } finally {
+      await source.close();
+    }
+  },
+);
+
+it("requires owned settlement for borrowed file input", async () => {
+  await expect(
+    execFileOutput(process.execPath, [], { stdinFile: 0 }),
+  ).rejects.toThrow("stdinFile requires stopSignal");
+});
 
 it("rejects a lifetime pipe without a stoppable command", async () => {
   await expect(
@@ -207,7 +239,6 @@ describe("execFileOutput", () => {
         await execution;
       }
     },
-    10_000,
   );
 
   it.skipIf(process.platform === "win32")(
@@ -562,7 +593,7 @@ describe.skipIf(process.platform === "win32")(
         killFailure = await stopOwnedDescendant(pid, finished);
       }
       if (killFailure !== undefined) throw killFailure;
-    }, 15_000);
+    });
 
     it("keeps scratch files until an inherited-pipe descendant closes them", async () => {
       const directory = await createTestTempDirectory("rea-exec-inherited-");
