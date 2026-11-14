@@ -293,21 +293,15 @@ try {
     }
   }
   const fixtureExited =
-    child === undefined ||
-    child.exitCode !== null ||
-    child.signalCode !== null ||
-    (await Promise.race([
-      childExit.then(() => true),
-      new Promise((resolve) =>
-        setTimeout(() => resolve(false), FIXTURE_EXIT_GRACE_MS),
-      ),
-    ]));
+    child === undefined || (await openExitedWithFixture(child, childExit));
   if (fixtureExited) await rm(root, { recursive: true, force: true });
   else {
     // The app may have been reparented away from `open`; stopping `open`
     // does not prove the fixture exited, so its root stays in place.
-    child.kill("SIGTERM");
-    await childExit;
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+      await childExit;
+    }
     retainedRoot = root;
     process.stderr.write(
       `Source-owned UI fixture exit was not observed; retained ${root}\n`,
@@ -319,3 +313,20 @@ if (retainedRoot !== undefined)
     `Source-owned UI fixture exit was not observed; retained ${retainedRoot}`,
   );
 process.stdout.write(`${JSON.stringify(report)}\n`);
+
+// `open -W` exits on its own only after the app exits (or never launched it).
+// A signaled `open`, or none within the grace period, leaves the app unproven.
+async function openExitedWithFixture(launcher, exit) {
+  if (launcher.exitCode === null && launcher.signalCode === null) {
+    let timer;
+    const exited = await Promise.race([
+      exit.then(() => true),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), FIXTURE_EXIT_GRACE_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (!exited) return false;
+  }
+  return launcher.exitCode !== null && launcher.signalCode === null;
+}
