@@ -19,11 +19,16 @@ interface ParsedDyldExport extends ParsedDyldSymbolFields {
   readonly sourceSymbol?: string;
 }
 
-/** Decode Apple's literal import framing; request nm facts for competing names. */
+/**
+ * Decode Apple's literal import framing. Competing readings of a chained row
+ * are settled by the import-table name at the row's ordinal when the caller
+ * supplies the table, otherwise by symbol-table names, requested when needed.
+ */
 export const parseDyldImports = (
   output: string,
   hasChainedFixups: boolean,
   knownImportNames?: ReadonlySet<string>,
+  chainedImportTable?: readonly (string | null)[],
 ): {
   readonly items: ParsedDyldImport[];
   readonly needsNameInventory: boolean;
@@ -64,12 +69,25 @@ export const parseDyldImports = (
             source,
           });
         }
-      if (readings.length > 1 && knownImportNames === undefined)
+      // A chained row's ordinal indexes the slice's own import table.
+      const tableName =
+        ordinal === null || chainedImportTable === undefined
+          ? undefined
+          : chainedImportTable[Number(ordinal[0].trimEnd())];
+      if (
+        readings.length > 1 &&
+        knownImportNames === undefined &&
+        tableName === undefined
+      )
         needsNameInventory = true;
       const matching =
-        readings.length > 1 && knownImportNames !== undefined
-          ? readings.filter(({ name }) => knownImportNames.has(name))
-          : readings;
+        readings.length <= 1
+          ? readings
+          : tableName !== undefined
+            ? readings.filter(({ name }) => name === tableName)
+            : knownImportNames !== undefined
+              ? readings.filter(({ name }) => knownImportNames.has(name))
+              : readings;
       const reading = matching.length === 1 ? matching[0] : undefined;
       const ambiguousSuffix =
         reading !== undefined &&
