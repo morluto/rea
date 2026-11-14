@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
+import { boundedDecimalTokenPattern } from "../../../src/cli/options.js";
 import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
@@ -742,7 +743,7 @@ describe("reference-source outline-depth input schema", () => {
     expect(outlineDepth).toMatchObject({
       anyOf: [
         { type: "integer", minimum: 0 },
-        { type: "string", pattern: "^[0-9]+$" },
+        { type: "string", pattern: boundedDecimalTokenPattern(0, Number.MAX_SAFE_INTEGER) },
       ],
     });
 
