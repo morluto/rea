@@ -2,6 +2,15 @@
 export const SUPPORTED_GHIDRA_VERSION = "12.2";
 /** Verified JDK major; admission uses the installation's declared bounds. */
 export const SUPPORTED_GHIDRA_JAVA_MAJOR = 21;
+/**
+ * JDK major this release's Ghidra installation needs to launch. Ghidra 12.2
+ * declares `application.java.min=25`, so the installed JDK must be at least
+ * this (the installation's own bounds still govern admission). Distinct from
+ * {@link SUPPORTED_GHIDRA_JAVA_MAJOR}, which is the `--release` target the
+ * bridge sources are compiled for: the sources target 21 while the SDK runs on
+ * 25.
+ */
+export const SUPPORTED_GHIDRA_RUNTIME_JAVA_MAJOR = 25;
 /** Oldest accepted release line on this major; earlier releases stay unsupported. */
 export const SUPPORTED_GHIDRA_FLOOR_VERSION = "12.1";
 
@@ -101,15 +110,7 @@ export const ghidraReleaseAccepted = (
   return status === "verified" || status === "compatible";
 };
 
-const verifiedGhidraRelease = (): GhidraReleaseVersion => {
-  const version = parseGhidraRelease(SUPPORTED_GHIDRA_VERSION);
-  if (version === undefined)
-    throw new TypeError(
-      `SUPPORTED_GHIDRA_VERSION ${SUPPORTED_GHIDRA_VERSION} is not a Ghidra release`,
-    );
-  return version;
-};
-
+/** Parsed {@link SUPPORTED_GHIDRA_FLOOR_VERSION}: the oldest admitted release. */
 const supportedGhidraFloor = (): GhidraReleaseVersion => {
   const version = parseGhidraRelease(SUPPORTED_GHIDRA_FLOOR_VERSION);
   if (version === undefined)

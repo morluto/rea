@@ -19,6 +19,7 @@ import { z } from "zod";
 import { GHIDRA_BRIDGE_SOURCES } from "../../../src/ghidra/GhidraBridgeSources.js";
 import {
   SUPPORTED_GHIDRA_JAVA_MAJOR,
+  SUPPORTED_GHIDRA_RUNTIME_JAVA_MAJOR,
   SUPPORTED_GHIDRA_VERSION,
 } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -270,6 +271,19 @@ it("binds the workflow SDK pin and verified compile mode to the canonical releas
   expect(job.steps.some((step) => step.run?.includes("--verified-sdk"))).toBe(
     true,
   );
+  // The SDK this job downloads declares its own minimum JDK, and Ghidra's
+  // launcher refuses to start below it. Selecting the bridge's compile target
+  // (Java 21) as the runner JDK made every probe fail to launch once the pin
+  // moved to 12.2, so the steps must select the runtime major instead.
+  const javaHomeSelections = job.steps
+    .map((step) => step.run ?? "")
+    .flatMap((run) => run.match(/JAVA_HOME_\$\{[A-Z_]+\}_X64/gu) ?? []);
+  expect(javaHomeSelections.length).toBeGreaterThan(0);
+  expect(
+    javaHomeSelections.every(
+      (selection) => selection === "JAVA_HOME_${GHIDRA_RUNTIME_JAVA_MAJOR}_X64",
+    ),
+  ).toBe(true);
   const command = [
     "scripts/verify-ghidra-bridge-sources.mjs",
     "--check-sdk-pin",
@@ -279,7 +293,9 @@ it("binds the workflow SDK pin and verified compile mode to the canonical releas
       env: { ...process.env, ...job.env },
     }),
   ).resolves.toMatchObject({
-    stdout: `GHIDRA_JAVA_MAJOR=${SUPPORTED_GHIDRA_JAVA_MAJOR}\n`,
+    stdout:
+      `GHIDRA_JAVA_MAJOR=${SUPPORTED_GHIDRA_JAVA_MAJOR}\n` +
+      `GHIDRA_RUNTIME_JAVA_MAJOR=${SUPPORTED_GHIDRA_RUNTIME_JAVA_MAJOR}\n`,
   });
   for (const env of [
     {

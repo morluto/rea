@@ -17,6 +17,7 @@ import { parseGhidraJavaProperties } from "../src/ghidra/GhidraJavaProperties.ts
 import {
   SUPPORTED_GHIDRA_VERSION,
   SUPPORTED_GHIDRA_JAVA_MAJOR,
+  SUPPORTED_GHIDRA_RUNTIME_JAVA_MAJOR,
   ghidraReleaseAccepted,
   ghidraReleaseLine,
 } from "../src/ghidra/GhidraReleasePolicy.ts";
@@ -51,7 +52,15 @@ if (args[0] === "--check-sdk-pin") {
     fail(
       `SDK URL and SHA256 must match verified Ghidra ${SUPPORTED_GHIDRA_VERSION}`,
     );
+  // Two separate facts: the compiler target the bridge sources must stay
+  // compatible with, and the JDK a Ghidra installation of this release needs to
+  // launch at all. Ghidra 12.2 declares application.java.min=25, so a 21-only
+  // runner cannot start the 12.2 probes even though the sources still compile
+  // at --release 21.
   console.log(`GHIDRA_JAVA_MAJOR=${SUPPORTED_GHIDRA_JAVA_MAJOR}`);
+  console.log(
+    `GHIDRA_RUNTIME_JAVA_MAJOR=${SUPPORTED_GHIDRA_RUNTIME_JAVA_MAJOR}`,
+  );
   process.exit(0);
 }
 

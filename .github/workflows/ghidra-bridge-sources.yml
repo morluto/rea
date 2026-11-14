@@ -43,13 +43,13 @@ jobs:
       - name: Compile bridge sources with the verified runner JDK
         shell: bash
         run: |
-          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          java_home_variable="JAVA_HOME_${GHIDRA_RUNTIME_JAVA_MAJOR}_X64"
           test -n "${!java_home_variable}"
           JAVA_HOME="${!java_home_variable}" npm run verify:ghidra:bridge-sources -- --verified-sdk
       - name: Inspect real ARM, Thumb and MIPS instruction context through the bridge
         shell: bash
         run: |
-          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          java_home_variable="JAVA_HOME_${GHIDRA_RUNTIME_JAVA_MAJOR}_X64"
           export JAVA_HOME="${!java_home_variable}"
           probe_root="${RUNNER_TEMP}/rea-arm-context"
           mkdir -p "${probe_root}/project"
@@ -80,7 +80,7 @@ jobs:
       - name: Decode M-profile ARM and Xtensa bytes in their default context
         shell: bash
         run: |
-          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          java_home_variable="JAVA_HOME_${GHIDRA_RUNTIME_JAVA_MAJOR}_X64"
           export JAVA_HOME="${!java_home_variable}"
           probe_root="${RUNNER_TEMP}/rea-decode"
           mkdir -p "${probe_root}"
@@ -112,7 +112,7 @@ jobs:
       - name: Keep computed-call targets non-exhaustive in callee coverage
         shell: bash
         run: |
-          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          java_home_variable="JAVA_HOME_${GHIDRA_RUNTIME_JAVA_MAJOR}_X64"
           export JAVA_HOME="${!java_home_variable}"
           probe_root="${RUNNER_TEMP}/rea-computed-call"
           mkdir -p "${probe_root}/project"

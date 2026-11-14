@@ -12,7 +12,10 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ghidraReleaseLineAccepted as ghidraReleaseLineAcceptedByLine } from "./lib/ghidra-nativeaot-release-gate.mjs";
+import {
+  ghidraReleaseAccepted,
+  ghidraReleaseLine,
+} from "../src/ghidra/GhidraReleasePolicy.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = resolve(
@@ -22,16 +25,16 @@ const source = resolve(
 const install = process.env.GHIDRA_INSTALL_DIR;
 if (!install)
   throw new Error(
-    "NativeAOT build lane requires existing GHIDRA_INSTALL_DIR (Ghidra 12.x, >=12.1).",
+    `NativeAOT build lane requires existing GHIDRA_INSTALL_DIR (Ghidra ${ghidraReleaseLine()}).`,
   );
 const properties = await readFile(
   join(install, "Ghidra/application.properties"),
   "utf8",
 );
 const ghidraVersion = propertyValue(properties, "application.version");
-if (!ghidraReleaseLineAccepted(ghidraVersion))
+if (!ghidraReleaseAccepted(ghidraVersion))
   throw new Error(
-    `NativeAOT build lane accepts Ghidra 12.x (>=12.1) (verified with 12.2). Observed application.version=${ghidraVersion ?? "missing"}.`,
+    `NativeAOT build lane accepts Ghidra ${ghidraReleaseLine()}. Observed application.version=${ghidraVersion ?? "missing"}.`,
   );
 const output = resolve(
   process.env.REA_NATIVEAOT_BUILD_ROOT ??
@@ -157,15 +160,6 @@ function propertyValue(content, name) {
     return value.length === 0 ? null : value;
   }
   return null;
-}
-
-/** Release line supported by the separately pinned NativeAOT integration.
- *
- * Delegates to `scripts/lib` so the boundary suite exercises the same
- * predicate this build runs.
- */
-function ghidraReleaseLineAccepted(raw) {
-  return ghidraReleaseLineAcceptedByLine(raw);
 }
 
 function capture(command, args) {
