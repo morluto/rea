@@ -822,15 +822,31 @@ describe("production MCP doctor child lifecycle", () => {
       },
       { timeout: 10_000 },
     );
-    await vi.advanceTimersByTimeAsync(60_000);
-    const result = await vi.waitFor(() => pending, { timeout: 10_000 });
-    vi.useRealTimers();
-    // The launcher exits at once, so only owned cleanup can stop the descendant;
-    // a joined SDK close would leave it running and report no cleanup failure.
-    expect(result.healthy).toBe(false);
-    expect(result.checks.map(({ name }) => name)).toEqual(["transport"]);
-    expectDoctorDeadline(result.checks[0]?.detail, 60_000);
-    await expect(waitForExit(pids.descendant)).resolves.toBeUndefined();
+    // The PID file lands before the launcher exits; advancing the doctor's
+    // deadline must not race a still-live launcher.
+    await vi.waitFor(async () => {
+      expect(await processHasExited(pids.launcher)).toBe(true);
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+      vi.useRealTimers();
+      // The launcher exits at once, so only owned cleanup can stop the descendant;
+      // a joined SDK close would leave it running and report no cleanup failure.
+      expect(result.healthy).toBe(false);
+      expect(result.checks.map(({ name }) => name)).toEqual(["transport"]);
+      expectDoctorDeadline(result.checks[0]?.detail, 60_000);
+      await expect(waitForExit(pids.descendant)).resolves.toBeUndefined();
+    } finally {
+      // A regression must not leave the descendant running with inherited
+      // streams; the doctor's own cleanup makes this a no-op on success.
+      vi.useRealTimers();
+      try {
+        process.kill(pids.descendant, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }
   });
 });
 
@@ -934,15 +950,37 @@ const runNoisyDoctorChild = async (body: string) => {
   });
 };
 
-const waitForExit = async (pid: number): Promise<void> => {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+/** True when the process is gone, including a zombie a container init may not reap. */
+const processHasExited = async (pid: number): Promise<boolean> => {
+  if (process.platform === "linux") {
     try {
-      process.kill(pid, 0);
+      const stat = await readFile(`/proc/${String(pid)}/stat`, "utf8");
+      // The comm field may contain spaces and parentheses; the state letter
+      // follows the closing parenthesis.
+      const state = stat
+        .slice(stat.lastIndexOf(")") + 1)
+        .trimStart()
+        .at(0);
+      return state === "Z" || state === "X" || state === "x";
     } catch (cause: unknown) {
-      if (cause instanceof Error && "code" in cause && cause.code === "ESRCH")
-        return;
+      if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+        return true;
       throw cause;
     }
+  }
+  try {
+    process.kill(pid, 0);
+  } catch (cause: unknown) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ESRCH")
+      return true;
+    throw cause;
+  }
+  return false;
+};
+
+const waitForExit = async (pid: number): Promise<void> => {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (await processHasExited(pid)) return;
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
   }
   throw new Error(`MCP doctor fixture process ${String(pid)} remained alive`);
