@@ -187,9 +187,17 @@ const mismatchedRecordCopies = files.filter(({ path, content }) => {
     named !== 0 || bodies !== (RECORD_PREDICATE_COPIES.includes(path) ? 1 : 0)
   );
 });
+const pathsWithRecordCopies = new Set(files.map(({ path }) => path));
+const missingRecordCopies = RECORD_PREDICATE_COPIES.filter(
+  (path) => !pathsWithRecordCopies.has(path),
+);
 if (mismatchedRecordCopies.length > 0)
   failures.push(
     `local non-array record predicate count changed (import isRecord and update the baseline):\n${mismatchedRecordCopies.map(({ path }) => `  ${path}`).join("\n")}`,
+  );
+if (missingRecordCopies.length > 0)
+  failures.push(
+    `record predicate baseline references missing files; remove those entries:\n${missingRecordCopies.map((path) => `  ${path}`).join("\n")}`,
   );
 // Counted baselines record the remaining copies of a pattern that has one
 // owner. A file may not gain copies and a baseline may not grow; when copies
