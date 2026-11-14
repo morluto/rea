@@ -24,7 +24,7 @@
 
 [Pornire rapidă](#pornire-rapidă) · [Cum funcționează REA](#cum-funcționează-rea) · [Ce poți analiza](#ce-poți-analiza) · [Studii de caz](#studii-de-caz) · [Construiește medii RL](#build-rl-environments) · [Întrebări frecvente](#întrebări-frecvente) · [Documentație](#documentație)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.9.0 setup</code>
 
 </div>
 
@@ -80,7 +80,7 @@ pentru a verifica dacă procesele îi aparțin. Pașii de remediere sunt în
 Cu Node.js și npm instalate, rulează:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@6.9.0 setup
 ```
 
 Alege agenții, verifică modificările propuse și aprobă-le. Configurarea adaugă
@@ -117,7 +117,7 @@ construiește o funcționalitate similară pentru proiectul meu.
 Inspectează directorul extras al unei aplicații JavaScript/Electron sau o arhivă ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@6.9.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Rezultatul include modulele, importurile, delimitările dintre componentele Electron
@@ -165,12 +165,12 @@ configurare afișată de programul de actualizare.
 Dacă folosești `npx`, actualizează configurarea agentului cu:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
 Verifică modificările de configurare și repornește agentul. Pentru comenzi CLI
-ocazionale, folosește `npx rea-agents@latest` urmat de comandă. Cu Bun, folosește
-`bunx rea-agents@latest` în loc de `npx rea-agents@latest`.
+ocazionale, folosește `npx rea-agents@6.9.0` urmat de comandă. Cu Bun, folosește
+`bunx rea-agents@6.9.0` în loc de `npx rea-agents@6.9.0`.
 
 ## Cum funcționează REA
 
@@ -380,7 +380,7 @@ Consultă [pornirea Hopper și depanarea](../getting-started/installation.md#lau
 <details>
 <summary><strong>Ce face instalarea skill-ului de pe skills.sh?</strong></summary>
 
-Skill-ul oferă agentului instrucțiuni de investigare. Folosește `npx rea-agents setup`
+Skill-ul oferă agentului instrucțiuni de investigare. Folosește `npx rea-agents@6.9.0 setup`
 pentru a înregistra serverul MCP REA și a instala instrucțiunile corespunzătoare,
 apoi repornește agentul. Consultă [instalarea doar a skill-ului](../getting-started/installation.md#skill-only-installation).
 
@@ -418,7 +418,7 @@ rea update
 Pentru configurarea agentului prin `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
 Dacă folosești un agent, finalizează [actualizarea configurării](#actualizează-rea)

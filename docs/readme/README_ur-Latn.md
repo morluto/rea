@@ -24,7 +24,7 @@
 
 [Jaldi shuru karein](#jaldi-shuru-karein) · [REA kaise kaam karta hai](#rea-kaise-kaam-karta-hai) · [Kya kuch analyze kar sakte hain](#kya-kuch-analyze-kar-sakte-hain) · [Amli misaalein](#amli-misaalein) · [RL environments banayein](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.9.0 setup</code>
 
 </div>
 
@@ -80,7 +80,7 @@ ke "Linux owned-process prerequisite" section mein hain.
 Node.js aur npm installed hon to yeh command chalayein:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@6.9.0 setup
 ```
 
 Apne agents select karein, proposed changes dekhein aur approve karein. Setup
@@ -117,7 +117,7 @@ Notes ki jagah apni target app aur jis feature ko samajhna hai uska naam likhein
 Extract ki hui JavaScript/Electron app directory ya ASAR inspect karein:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@6.9.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Natije mein modules, imports, Electron boundaries aur unke saboot milte hain.
@@ -164,12 +164,12 @@ di hui setup command chalayein.
 Agar aap `npx` use karte hain to agent setup is tarah update karein:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
 Setup changes review karein aur agent restart karein. Ek dafa chalane wali CLI
-commands ke liye `npx rea-agents@latest` ke baad command likhein. Bun ke saath
-`npx rea-agents@latest` ki jagah `bunx rea-agents@latest` use karein.
+commands ke liye `npx rea-agents@6.9.0` ke baad command likhein. Bun ke saath
+`npx rea-agents@6.9.0` ki jagah `bunx rea-agents@6.9.0` use karein.
 
 ## REA kaise kaam karta hai
 
@@ -384,7 +384,7 @@ dekhein.
 
 Skill aapke agent ko jaanch karne ki instructions deti hai. REA ka MCP server
 register karne aur matching instructions install karne ke liye
-`npx rea-agents setup` use karein, phir agent restart karein.
+`npx rea-agents@6.9.0 setup` use karein, phir agent restart karein.
 [Sirf skill ki installation](../getting-started/installation.md#skill-only-installation) dekhein.
 
 </details>
@@ -421,7 +421,7 @@ rea update
 `npx` se agent setup ke liye:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
 Agar agent use kar rahe hain to [setup refresh](#rea-update-karein) complete
