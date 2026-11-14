@@ -364,6 +364,51 @@ export const ntfsMftMetadataSchema = z.strictObject({
   attribute_incomplete_record_count: offset.exactOptional(),
 });
 
+/** Android binary XML document facts from the chunk stream, not decoded values. */
+export const axmlMetadataSchema = z.strictObject({
+  kind: z.literal("axml"),
+  string_count: offset,
+  style_count: offset,
+  utf8: z.boolean(),
+  resource_map_count: offset,
+  element_count: offset,
+  attribute_count: offset,
+  namespace_count: offset,
+  declared_size: offset,
+});
+export type AxmlMetadata = z.infer<typeof axmlMetadataSchema>;
+
+/** Android compiled resource table facts from the chunk stream. */
+export const arscMetadataSchema = z.strictObject({
+  kind: z.literal("arsc"),
+  package_count: offset,
+  type_count: offset,
+  entry_count: offset,
+  string_count: offset,
+  declared_size: offset,
+});
+export type ArscMetadata = z.infer<typeof arscMetadataSchema>;
+
+/** The decoded resource-table XML region; counts describe the projection. */
+export const arscDocumentMetadataSchema = z.strictObject({
+  kind: z.literal("arsc-document"),
+  package_count: offset,
+  type_count: offset,
+  entry_count: offset,
+  string_count: offset,
+  length: offset,
+});
+
+/** The decoded XML text region; counts describe the rendered document. */
+export const axmlDocumentMetadataSchema = z.strictObject({
+  kind: z.literal("axml-document"),
+  element_count: offset,
+  attribute_count: offset,
+  namespace_count: offset,
+  string_count: offset,
+  length: offset,
+});
+
 /**
  * U-Boot FIT root facts. Configuration references are declared names; a
  * reference that names no image is reported as a limitation, not removed.
@@ -944,6 +989,10 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   nodeSeaEntryMetadataSchema,
   hexRecordsMetadataSchema,
   hexRecordRegionMetadataSchema,
+  axmlMetadataSchema,
+  axmlDocumentMetadataSchema,
+  arscMetadataSchema,
+  arscDocumentMetadataSchema,
   uImageMetadataSchema,
   uImageEntryMetadataSchema,
   espImageMetadataSchema,
@@ -1067,6 +1116,22 @@ const declarationsByKind: {
   "hex-record-region": {
     notCompared:
       "start_address and end_address restate the region's path, and length follows from them; record and line counts are layout.",
+  },
+  axml: {
+    notCompared:
+      "Its fields come from the document's own chunk stream, which content comparison covers.",
+  },
+  "axml-document": {
+    notCompared:
+      "The counts describe the decoded document, and length follows from them; the region's bytes are compared by content.",
+  },
+  arsc: {
+    notCompared:
+      "Its fields come from the table's own chunk stream, which content comparison covers.",
+  },
+  "arsc-document": {
+    notCompared:
+      "The counts describe the decoded table projection, and length follows from them; the region's bytes are compared by content.",
   },
   uimage: {
     notCompared:

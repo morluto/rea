@@ -77,6 +77,8 @@ const formatSchema = z.enum([
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "axml",
+  "arsc",
   "dmg",
   "pkg",
   "intel-hex",

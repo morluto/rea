@@ -292,6 +292,28 @@ Plaintext packages retain header, table and member facts with verbatim member
 bytes. `V1MMWX` packages are detected as encrypted coverage and refused on
 extraction. See [wxapkg](../wxapkg.md) for layout and coverage boundaries.
 
+Decode an Android binary XML document without apktool or JADX:
+
+```sh
+rea inspect-artifact AndroidManifest.xml --detail summary --evidence_output evidence.json --json
+rea extract-artifact AndroidManifest.xml --json
+```
+
+The decoded `document.xml` region retains pool, element and attribute counts
+with the rendered XML text. See [AXML](../axml.md) for chunk layout and
+coverage boundaries.
+
+Decode a compiled Android resource table the same way:
+
+```sh
+rea inspect-artifact resources.arsc --detail summary --evidence_output evidence.json --json
+rea extract-artifact resources.arsc --json
+```
+
+The decoded `resources.xml` region names every package, type and entry with
+its decoded configuration qualifier and literal value. See
+[arsc](../arsc.md) for the projection layout and resource bounds.
+
 Inspect an ESP32-family app or bootloader image without esptool:
 
 ```sh
