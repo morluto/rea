@@ -711,3 +711,64 @@ export const machoSparseBindInitializers = (count: number): Buffer => {
   stream.copy(image, bindOffset);
   return image;
 };
+
+/**
+ * ELF32 object (ET_REL, EM_386) whose `.init_array` holds three relocation
+ * addends pointing at `marker` at `.text+1`: `marker-1`, `marker+1`, `marker`.
+ * Relocations are R_386_32 (type 1) rather than RELA, so the addend lives in
+ * the three in-place words 0xffffffff, 0x00000001, 0x00000000. The intended
+ * section-relative values are 0, 2 and 1.
+ */
+export const elf32RelInitializersAddendWrap = (): Buffer => {
+  const file = Buffer.alloc(0x500);
+  const strtab = cStringTable(["marker"]);
+  const shstr = cStringTable([
+    ".text",
+    ".init_array",
+    ".rel.init_array",
+    ".symtab",
+    ".strtab",
+    ".shstrtab",
+  ]);
+  elfIdent(file, 32, 1, 3);
+  file.writeUInt32LE(0x280, 32); // e_shoff
+  file.writeUInt16LE(52, 40); // e_ehsize
+  file.writeUInt16LE(32, 42); // e_phentsize
+  file.writeUInt16LE(0, 44); // e_phnum
+  file.writeUInt16LE(40, 46); // e_shentsize
+  file.writeUInt16LE(7, 48); // e_shnum (including the implicit section 0)
+  file.writeUInt16LE(6, 50); // e_shstrndx = section 6 (.shstrtab)
+  file.writeUInt32LE(0x90909090, 0x100); // .text at 0x100
+  // .init_array at 0x110
+  file.writeUInt32LE(0xffffffff, 0x110);
+  file.writeUInt32LE(0x00000001, 0x114);
+  file.writeUInt32LE(0x00000000, 0x118);
+  const R_386_32 = 1;
+  const rel = (at: number, offset: number): void => {
+    file.writeUInt32LE(offset, at);
+    file.writeUInt32LE((1 << 8) | R_386_32, at + 4); // r_info: sym index 1, type R_386_32
+  };
+  rel(0x120, 0);
+  rel(0x128, 4);
+  rel(0x130, 8);
+  // .symtab at 0x140: UNDEF then marker
+  file.writeUInt32LE(strtab.offsets[0] ?? 1, 0x150); // marker's st_name
+  file.writeUInt32LE(1, 0x154); // st_value = .text + 1
+  file.writeUInt32LE(0, 0x158); // st_size
+  file.writeUInt8(0x00, 0x15c); // STB_LOCAL STT_NOTYPE
+  file.writeUInt8(0x00, 0x15d);
+  file.writeUInt16LE(1, 0x15e); // st_shndx = .text (section index 1)
+  strtab.bytes.copy(file, 0x160);
+  shstr.bytes.copy(file, 0x1a0);
+  const name = (index: number): number => shstr.offsets[index] ?? 0;
+  shdr32(file, 1, name(0), 1, 0x6, 0, 0x100, 4, 0, 0); // PROGBITS, AX, .text
+  shdr32(file, 2, name(1), 14, 0x3, 0, 0x110, 12, 0, 4); // SHT_INIT_ARRAY, WA
+  shdr32(file, 3, name(2), 9, 0x2, 0, 0x120, 24, 4, 8); // SHT_REL, ALLOC, link=.symtab (4), entsize 8
+  // .rel.init_array is section index 3; its sh_info must name the target section (.init_array = 2).
+  file.writeUInt32LE(2, 0x280 + 3 * 40 + 28);
+  file.writeUInt32LE(1, 0x280 + 4 * 40 + 28); // symtab sh_info: index of first non-local symbol
+  shdr32(file, 4, name(3), 2, 0x0, 0, 0x140, 32, 5, 16); // SHT_SYMTAB, link=.strtab (5), entsize 16, sh_info 1 (first non-local index)
+  shdr32(file, 5, name(4), 3, 0x0, 0, 0x160, strtab.bytes.length); // SHT_STRTAB
+  shdr32(file, 6, name(5), 3, 0x0, 0, 0x1a0, shstr.bytes.length); // SHT_STRTAB
+  return file;
+};
