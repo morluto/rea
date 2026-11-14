@@ -10,7 +10,7 @@ import type { CdpEndpointTarget } from "./CdpEndpoint.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
   parseCdpWorkerTarget,
   workerTargetOwnership,
@@ -95,7 +95,5 @@ export const captureElectronWorkers = async (input: {
 
 const throwIfElectronWorkerCaptureCancelled = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("inspect_electron_page", {
-      cause: signal.reason,
-    });
+    throw cancelledBy("inspect_electron_page", signal);
 };

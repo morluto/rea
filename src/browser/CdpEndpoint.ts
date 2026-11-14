@@ -9,7 +9,11 @@ import {
   cdpDiscoveryTimeoutRecovery,
   noRuntimeOverrideSentence,
 } from "../domain/browserDeadline.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
@@ -202,7 +206,7 @@ export const withCdpDiscoveryDeadline = async <T>(
   } catch (cause: unknown) {
     if (cause === abortReason) {
       if (abortSource === "caller")
-        throw new AnalysisCancelledError(operation, { cause: abortReason });
+        throw cancelledBy(operation, carriedReason(abortReason));
       if (abortSource === "deadline")
         throw discoveryTimeout(operation, timeoutMs, "browser-socket");
     }
@@ -463,7 +467,7 @@ export const readCdpJson = async (
 ): Promise<unknown> =>
   await new Promise((resolve, reject) => {
     if (signal?.aborted === true) {
-      reject(new AnalysisCancelledError(operation, { cause: signal.reason }));
+      reject(cancelledBy(operation, signal));
       return;
     }
     let response: IncomingMessage | undefined;
@@ -484,8 +488,7 @@ export const readCdpJson = async (
       } else resolve(value);
     };
     const onAbort = (): void => {
-      if (signal?.aborted === true)
-        finish(new AnalysisCancelledError(operation, { cause: signal.reason }));
+      if (signal?.aborted === true) finish(cancelledBy(operation, signal));
     };
     request_ = request(
       url,
@@ -583,8 +586,7 @@ const endpointFailure = (
   signal?: AbortSignal,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (signal?.aborted === true)
-    return new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted === true) return cancelledBy(operation, signal);
   return new BrowserObservationError(operation, "endpoint_unreachable", {
     cause,
   });

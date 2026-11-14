@@ -13,7 +13,6 @@ import type { WebBundleScriptAnalysis } from "../domain/webBundleScriptAnalysis.
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
   AnalysisOutputError,
@@ -310,8 +309,7 @@ export class IsolatedWebBundleAnalyzer {
       deadline.dispose();
     }
     if (caller.aborted && deadline.interruption !== "timeout") {
-      const cancelled = new AnalysisCancelledError("analyze_web_bundle", {
-        cause: caller.reason,
+      const cancelled = cancelledBy("analyze_web_bundle", caller, {
         partialObservation: partial ?? inspection,
       });
       failure = hasPrimaryFailure

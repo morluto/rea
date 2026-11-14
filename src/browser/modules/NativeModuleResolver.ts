@@ -18,10 +18,10 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
@@ -128,9 +128,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
     options?: ExecutionOptions,
   ): ReturnType<WebModuleResolutionPort["resolve"]> {
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     const pending = await this.#retryCleanup();
     if (pending !== undefined) return err(pending);
     const executable = this.environment.REA_BROWSER_EXECUTABLE;
@@ -159,9 +157,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
     let interruption: AnalysisError | undefined;
     const interrupted = (): AnalysisError =>
       deadline.interruption === "cancelled"
-        ? new AnalysisCancelledError(OPERATION, {
-            cause: deadline.signal.reason,
-          })
+        ? cancelledBy(OPERATION, deadline.signal)
         : new AnalysisTimeoutError(OPERATION, TIMEOUT_MS);
     const assertActive = (): void => {
       if (!deadline.signal.aborted) return;
@@ -288,14 +284,15 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
       result = err(
         analysisErrorWithCancellation(
           result.ok ? undefined : result.error,
-          new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-            ...(result.ok
+          cancelledBy(
+            OPERATION,
+            options.signal,
+            result.ok
               ? {
                   partialObservation: completedObservation(input, result.value),
                 }
-              : {}),
-          }),
+              : {},
+          ),
         ),
       );
     if (cleanupError !== undefined)

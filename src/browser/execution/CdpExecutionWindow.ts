@@ -1,4 +1,4 @@
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { WebExecution } from "../../domain/webExecution.js";
 import type { CdpEvent } from "../CdpConnection.js";
@@ -94,9 +94,7 @@ export class CdpExecutionWindow {
       const signal = this.session.options.signal;
       const abort = (): void => {
         this.fail(
-          new AnalysisCancelledError(this.session.operation, {
-            cause: signal?.reason,
-          }),
+          cancelledBy(this.session.operation, carriedReason(signal?.reason)),
         );
       };
       this.#removeAbort = () => signal?.removeEventListener("abort", abort);

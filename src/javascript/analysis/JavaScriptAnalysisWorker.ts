@@ -39,6 +39,7 @@ import {
   AnalysisTimeoutError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -331,8 +332,7 @@ export class JavaScriptAnalysisWorker {
       JavaScriptSourceAnalysisFailure
     >;
     try {
-      if (signal?.aborted === true)
-        throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+      if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
       if (!file.text.included || file.kind !== "javascript")
         throw new TypeError(
           "JavaScript analysis worker requires included JavaScript text",
@@ -565,8 +565,7 @@ export class JavaScriptAnalysisWorker {
       if (deadline?.interruption === "cancelled")
         analysisErrorWithCancellation(
           error,
-          new AnalysisCancelledError(OPERATION, {
-            cause: deadline.signal.reason,
+          cancelledBy(OPERATION, deadline.signal, {
             capturedOutput: this.#captured(),
           }),
         );
@@ -615,8 +614,7 @@ export class JavaScriptAnalysisWorker {
         const primary = signal?.aborted
           ? analysisErrorWithCancellation(
               previous,
-              new AnalysisCancelledError(OPERATION, {
-                cause: signal.reason,
+              cancelledBy(OPERATION, signal, {
                 capturedOutput: this.#captured(),
               }),
             )
@@ -634,10 +632,7 @@ export class JavaScriptAnalysisWorker {
     if (signal?.aborted === true) {
       const error = analysisErrorWithCancellation(
         result.ok ? undefined : result.error.error,
-        new AnalysisCancelledError(OPERATION, {
-          cause: signal.reason,
-          capturedOutput: this.#captured(),
-        }),
+        cancelledBy(OPERATION, signal, { capturedOutput: this.#captured() }),
       );
       if (result.ok) this.#lastFailure = error;
       result = err({ error, javascript, module, projection });
@@ -1220,8 +1215,7 @@ export class JavaScriptAnalysisWorker {
           remediationAction:
             "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms through MCP, or use rea analyze-javascript-application <input_path> --analysis-timeout-ms <milliseconds> on the CLI. Alternatively, reduce semantic limits or select exact inventoried source_paths (CLI: --source-path on that command). Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
         })
-      : new AnalysisCancelledError(OPERATION, {
-          cause: deadline.signal.reason,
+      : cancelledBy(OPERATION, deadline.signal, {
           capturedOutput: this.#captured(),
         });
   }

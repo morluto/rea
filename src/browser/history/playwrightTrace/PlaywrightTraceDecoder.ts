@@ -13,8 +13,8 @@ import { assertArtifactFileSelectedSource } from "../../../artifacts/ArtifactFil
 import { hashStableRootArtifactHandle } from "../../../artifacts/inventory/hashStableRootArtifact.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisCancelledError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
 } from "../../../domain/analysisErrorCore.js";
 import { err, ok } from "../../../domain/result.js";
 import {
@@ -203,8 +203,7 @@ class TraceArchiveRead {
       reader,
     });
     if (outcome.kind === "completed" && this.signal?.aborted) {
-      const cancellation = new AnalysisCancelledError(operation, {
-        cause: this.signal.reason,
+      const cancellation = cancelledBy(operation, this.signal, {
         partialObservation: this.complete ?? this.identity,
       });
       this.primary = cancellation;
@@ -226,10 +225,7 @@ export class PlaywrightTraceDecoder implements PlaywrightTracePort {
   #running = false;
   constructor(readonly resources: ArtifactResourceScope) {}
   async inspect(path: string, signal?: AbortSignal) {
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy(operation, signal));
     if (this.#running)
       return err(
         new AnalysisResourceConstraintError(

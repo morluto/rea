@@ -28,6 +28,8 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import {
   NonRegularFileReadError,
@@ -109,19 +111,23 @@ const scanRecoveryFile = async (
   } catch (cause: unknown) {
     if (cause instanceof ArtifactFileCleanupFailure) throw cause;
     if (cause instanceof ArtifactFileCancelled)
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: cause.fileCancellation.reason,
-        partialObservation: fileSnapshotPartialObservationSchema.parse(
-          Object.assign({}, cause.fileCancellation.outcome.value, {
-            kind: "file-snapshot-hash",
-            path,
-          }),
-        ),
-      });
+      throw cancelledBy(
+        OPERATION,
+        carriedReason(cause.fileCancellation.reason),
+        {
+          partialObservation: fileSnapshotPartialObservationSchema.parse(
+            Object.assign({}, cause.fileCancellation.outcome.value, {
+              kind: "file-snapshot-hash",
+              path,
+            }),
+          ),
+        },
+      );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      throw cancelledBy(
+        OPERATION,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (
       cause instanceof Error &&
       "code" in cause &&
@@ -482,8 +488,7 @@ export const recoveryFailureMessage = (cause: unknown): string =>
 
 /** Cancellation remains distinct from malformed source or provider output. */
 export const checkRecoveryCancellation = (signal?: AbortSignal): void => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+  if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
 };
 
 /** Keep both tool invocations within one operation's execution budget. */

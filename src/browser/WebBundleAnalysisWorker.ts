@@ -37,6 +37,8 @@ import {
   AnalysisTimeoutError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -298,17 +300,13 @@ export class WebBundleAnalysisWorker {
     ): Result<WebBundleScriptAnalysis, WebBundleScriptAnalysisFailure> =>
       err({
         error: signal?.aborted
-          ? analysisErrorWithCancellation(
-              error,
-              new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-            )
+          ? analysisErrorWithCancellation(error, cancelledBy(OPERATION, signal))
           : error,
         completed,
         ...(continuation === undefined ? {} : { continuation }),
       });
     try {
-      if (signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+      if (signal?.aborted) throw cancelledBy(OPERATION, signal);
       const admitted = this.#admittedResultBudget();
       if (!admitted.ok) {
         continuation = "result_capacity_exhausted";
@@ -466,16 +464,15 @@ export class WebBundleAnalysisWorker {
         interruptionApplies && deadline?.interruption === "timeout"
           ? scriptTimeout(timeoutMs, cause)
           : cancellationCause !== undefined
-            ? new AnalysisCancelledError(OPERATION, {
-                cause: cancellationCause.reason,
-              })
+            ? cancelledBy(OPERATION, carriedReason(cancellationCause.reason))
             : interruptionApplies &&
                 (deadline?.interruption === "cancelled" || signal?.aborted)
-              ? new AnalysisCancelledError(OPERATION, {
-                  cause: signal?.aborted
-                    ? signal.reason
-                    : deadline?.signal.reason,
-                })
+              ? cancelledBy(
+                  OPERATION,
+                  carriedReason(
+                    signal?.aborted ? signal.reason : deadline?.signal.reason,
+                  ),
+                )
               : undefined;
       const observedFailure =
         this.#observedFailure === undefined
@@ -549,17 +546,13 @@ export class WebBundleAnalysisWorker {
       const primary = signal?.aborted
         ? analysisErrorWithCancellation(
             previous,
-            new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+            cancelledBy(OPERATION, signal),
           )
         : previous;
       return failed(this.#cleanupFailure(cause, primary));
     }
     if (signal?.aborted)
-      return failed(
-        result.ok
-          ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-          : result.error,
-      );
+      return failed(result.ok ? cancelledBy(OPERATION, signal) : result.error);
     return result.ok ? result : failed(result.error);
   }
 
@@ -710,9 +703,7 @@ export class WebBundleAnalysisWorker {
       if (deadline.interruption === "timeout")
         throw scriptTimeout(deadline.timeoutMs);
       if (deadline.interruption === "cancelled")
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: deadline.signal.reason,
-        });
+        throw cancelledBy(OPERATION, deadline.signal);
       const frame = this.#frames.shift();
       if (frame !== undefined) return frame;
       if (this.#runtime.inputFailure !== undefined)
@@ -743,9 +734,7 @@ export class WebBundleAnalysisWorker {
           if (completedFrame !== undefined) return completedFrame;
           throw deadline.interruption === "timeout"
             ? scriptTimeout(deadline.timeoutMs)
-            : new AnalysisCancelledError(OPERATION, {
-                cause: deadline.signal.reason,
-              });
+            : cancelledBy(OPERATION, deadline.signal);
         }
         const completedFrame = this.#frames.shift();
         if (completedFrame !== undefined) return completedFrame;
