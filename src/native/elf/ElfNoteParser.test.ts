@@ -941,6 +941,78 @@ it("decodes Linux core dump notes for 32-bit big-endian", () => {
   ]);
 });
 
+it("decodes a 32-bit prpsinfo whose ABI gives pr_uid 32 bits", () => {
+  // `pr_uid`/`pr_gid` are `__kernel_uid_t`, which is 16-bit only on i386, ARM, m68k and sparc32.
+  // MIPS o32, PowerPC-32 and s390 take the asm-generic `unsigned int`, so the kernel writes
+  // `sizeof(struct elf_prpsinfo)` == 128 and every member after `pr_flag` sits four bytes later.
+  const report = parse(
+    elfNoteFixture({
+      bits: 32,
+      machine: 8,
+      type: 4,
+      ownership: "program",
+      notes: corePrpsinfoNote({
+        bits: 32,
+        idWidth: 4,
+        state: 1,
+        uid: 70_000,
+        gid: 80_000,
+        pid: 4242,
+        ppid: 1,
+        pgrp: 4242,
+        sid: 4242,
+        fname: "mips-proc",
+        psargs: "./mips-proc --serve",
+      }),
+    }),
+  );
+  expect(report.entries[0]?.core?.prpsinfo).toEqual({
+    state: 1,
+    pid: 4242,
+    ppid: 1,
+    pgrp: 4242,
+    sid: 4242,
+    uid: 70_000,
+    gid: 80_000,
+    filename: "mips-proc",
+    psargs: "./mips-proc --serve",
+  });
+});
+
+it("still decodes the 124-byte 32-bit prpsinfo with 16-bit ids", () => {
+  // The i386/ARM form must not shift: its descriptor is four bytes shorter.
+  const report = parse(
+    elfNoteFixture({
+      bits: 32,
+      machine: 3,
+      type: 4,
+      ownership: "program",
+      notes: corePrpsinfoNote({
+        bits: 32,
+        state: 1,
+        uid: 500,
+        gid: 600,
+        pid: 4242,
+        ppid: 1,
+        pgrp: 4242,
+        sid: 4242,
+        fname: "i386-proc",
+        psargs: "./i386-proc --serve",
+      }),
+    }),
+  );
+  expect(report.entries[0]?.core?.prpsinfo).toEqual({
+    state: 1,
+    pid: 4242,
+    ppid: 1,
+    pgrp: 4242,
+    sid: 4242,
+    uid: 500,
+    gid: 600,
+    filename: "i386-proc",
+    psargs: "./i386-proc --serve",
+  });
+});
 it("tolerates malformed core notes by returning null without throwing", () => {
   const truncatedPrpsinfo = elfNote("CORE", 3, Buffer.alloc(20)); // requires 136 for 64-bit
   const truncatedFile = elfNote(
