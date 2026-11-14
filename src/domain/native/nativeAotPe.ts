@@ -26,22 +26,39 @@ const FROZEN_OBJECT_REGION = 206;
 export const NATIVE_AOT_MAX_SOURCE_BYTES = 128 * 1024 * 1024;
 /** Bound one parser-produced JSON report independently of any transport. */
 export const NATIVE_AOT_MAX_REPORT_BYTES = 4 * 1024 * 1024;
-export const NATIVE_AOT_MAX_WORK_UNITS = 64 * 1024 * 1024;
+/** Work every image may use, covering headers, directories and sections. */
+export const NATIVE_AOT_BASE_WORK_UNITS = 64 * 1024 * 1024;
+/**
+ * Work added per admitted source byte, so discovery is not starved on larger
+ * images. bflat 8.0.2's 26,180,096-byte win-x64 NativeAOT image completes with
+ * 71,645,819 units (about 2.7 per byte), past the former fixed 64 Mi budget.
+ */
+export const NATIVE_AOT_WORK_UNITS_PER_SOURCE_BYTE = 8;
 export const NATIVE_AOT_MAX_WORKING_MEMORY_BYTES = 64 * 1024 * 1024;
 /** Version of the built-in read-only PE metadata interpretation in profiles. */
 export const NATIVE_AOT_PROFILE_CONTRACT_REVISION =
-  "rtr-9.1-x64-pe-read-only-v10";
+  "rtr-9.1-x64-pe-read-only-v11";
 
 export type NativeAotParserLimits = {
   readonly sourceBytes: number;
   readonly workUnits: number;
   readonly workingMemoryBytes: number;
 };
-export const DEFAULT_NATIVE_AOT_PARSER_LIMITS: NativeAotParserLimits = {
+/** Limits for one admitted image; the work budget follows its size. */
+export const nativeAotParserLimitsFor = (
+  sourceBytes: number,
+): NativeAotParserLimits => ({
   sourceBytes: NATIVE_AOT_MAX_SOURCE_BYTES,
-  workUnits: NATIVE_AOT_MAX_WORK_UNITS,
+  workUnits:
+    NATIVE_AOT_BASE_WORK_UNITS +
+    Math.min(Math.max(sourceBytes, 0), NATIVE_AOT_MAX_SOURCE_BYTES) *
+      NATIVE_AOT_WORK_UNITS_PER_SOURCE_BYTE,
   workingMemoryBytes: NATIVE_AOT_MAX_WORKING_MEMORY_BYTES,
-};
+});
+
+/** The scaled limits at the source-byte ceiling. */
+export const DEFAULT_NATIVE_AOT_PARSER_LIMITS: NativeAotParserLimits =
+  nativeAotParserLimitsFor(NATIVE_AOT_MAX_SOURCE_BYTES);
 
 class NativeAotParserBudget {
   workUnits = 0;
@@ -1395,7 +1412,7 @@ export const parseNativeAotPe = (
   expectedSha256: string,
   maximumSummaryBytes: number,
   loadedImageBase?: string,
-  limits = DEFAULT_NATIVE_AOT_PARSER_LIMITS,
+  limits = nativeAotParserLimitsFor(bytes.byteLength),
 ): NativeAotPeResult => {
   if (!Number.isSafeInteger(maximumSummaryBytes) || maximumSummaryBytes < 0)
     throw new AnalysisInputError("parse_native_aot_pe", undefined, [
