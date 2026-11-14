@@ -418,6 +418,64 @@ const collectAcquisitions = (
   return output;
 };
 
+/**
+ * Best-effort static name for the member a statement writes, e.g. `destroy`
+ * in `s.destroy = fn` or `s["destroy"] = fn`. Returns null for shapes whose
+ * target member is not exactly a known identifier/string (computed unknowns,
+ * spreads, calls): those cases never disqualify the release, keeping its
+ * precision when nothing checkable happened.
+ */
+const staticWritePropertyName = (
+  property: t.Node,
+  computed: boolean,
+): string | null => {
+  if (!computed) return t.isIdentifier(property) ? property.name : null;
+  const unwrapped = unwrapJavaScriptExpression(property).node;
+  if (t.isStringLiteral(unwrapped)) return unwrapped.value;
+  if (
+    t.isTemplateLiteral(unwrapped) &&
+    unwrapped.expressions.length === 0 &&
+    unwrapped.quasis[0] !== undefined &&
+    unwrapped.quasis[0].value.cooked !== undefined
+  )
+    return unwrapped.quasis[0].value.cooked ?? null;
+  return null;
+};
+
+const assignedMemberWriteName = (node: t.Node | undefined): string | null => {
+  if (node === undefined) return null;
+  let current: t.Node | undefined = node;
+  if (t.isExpressionStatement(current)) current = current.expression;
+  const via = (member: t.Node | null | undefined): string | null =>
+    member !== null && t.isMemberExpression(member)
+      ? staticWritePropertyName(member.property, member.computed)
+      : null;
+  if (current === undefined) return null;
+  if (t.isAssignmentExpression(current) || t.isLogicalExpression(current))
+    return via(current.left);
+  if (t.isUpdateExpression(current)) return via(current.argument);
+  if (t.isUnaryExpression(current, { operator: "delete" }))
+    return via(current.argument);
+  return null;
+};
+
+/** The release call's target method was overwritten on this receiver before the call. */
+const replacedMethodBeforeRelease = (
+  binding: JavaScriptSemanticBindingState,
+  method: string,
+  releaseNode: t.CallExpression | t.OptionalCallExpression,
+): boolean => {
+  const releasedAt = releaseNode.start;
+  for (const write of binding.memberWrites) {
+    const name = assignedMemberWriteName(write.node);
+    if (name !== method) continue;
+    const writtenAt = write.node?.start;
+    if (releasedAt == null || writtenAt == null || writtenAt <= releasedAt)
+      return true;
+  }
+  return false;
+};
+
 const collectReleases = (
   program: t.Program,
   context: DataEffectTraversalContext,
@@ -477,6 +535,7 @@ const collectReleases = (
     // No linked acquisition exposes this release method, so the call is not a
     // release of it at all: Node throws at the call site instead.
     if (linked.length === 0) return;
+    const replacedMethod = replacedMethodBeforeRelease(binding, method, node);
     output.push({
       resourceId: `resource:release:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "release",
@@ -491,6 +550,7 @@ const collectReleases = (
       resolution:
         !opaqueReceiver &&
         linked.length === 1 &&
+        !replacedMethod &&
         (binding.kind !== "parameter" ||
           semanticBindingAtRead(binding, member.object, context.state)
             .hasDefiniteInitializer) &&
