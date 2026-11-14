@@ -32,6 +32,20 @@ adds capture-scoped targets, frames, scripts, workers, and inferred
 verification remains a separate later layer. The domain graph itself never
 reaches outward to obtain any of those facts.
 
+## Semantic property stores
+
+The semantic analyzer owns post-declaration property values. A direct, unconditional
+module-level store of an object or array into a proven receiver can retain its
+literal descendants, including function-owned properties such as
+`Game.config = { ACCEL: 0.001 }`. The graph projects those immutable facts and
+connects their property slots to reads and returns.
+
+This is bounded final-state analysis, not a claim that a store ran. Conditional,
+repeating, overlapping or unresolved writers stay unknown. Escaped aliases,
+unresolved descriptors and known reads before a store also prevent attributing
+the later literal to that slot. Earlier copied primitive values remain tied to
+their own capture.
+
 ## Stored record
 
 A stored graph has this top-level shape:

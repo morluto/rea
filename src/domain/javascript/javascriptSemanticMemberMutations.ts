@@ -1111,6 +1111,12 @@ export function* collectSemanticMemberMutationsSteps(
         // combination of exclusions through branch diamonds is exponential.
         // Preserve paths that can change observed slots or Array prototype
         // effects; canonicalize suffixes that cannot distinguish lattice facts.
+        if (effect === "write" && assignedSources !== undefined)
+          observablePaths.retainStoredSources(
+            binding.bindingId,
+            current.path,
+            assignedSources,
+          );
         let path = observablePaths.normalize(
           binding.bindingId,
           current.path,
@@ -2172,7 +2178,7 @@ type MutationObservableOrigin =
   | "array-prototype"
   | "typed-array"
   | "typed-array-element"
-  | "function"
+  | t.Function
   | "opaque";
 
 interface MutationObserverNode {
@@ -2200,6 +2206,11 @@ const observableMutationPaths = (
     base: PropertyPath,
     segment: PropertyPath,
   ) => boolean;
+  readonly retainStoredSources: (
+    bindingId: string,
+    path: PropertyPath,
+    sources: readonly SemanticIterationSource[],
+  ) => void;
 } => {
   const ambientPaths = createAmbientPathResolver(state, false);
   const bindingNodes = new Map<string, MutationObserverNode>();
@@ -2208,6 +2219,8 @@ const observableMutationPaths = (
     readonly expression: t.Node;
     readonly observer: MutationObserverNode;
   }[] = [];
+  const storedSlots = new WeakMap<t.Node, Map<string, MutationObserverNode>>();
+  const allocationReads = new WeakMap<t.Node, Set<MutationObserverNode>>();
   const pending: MutationObserverNode[] = [];
   const queued = new Set<MutationObserverNode>();
   const schedule = (node: MutationObserverNode): void => {
@@ -2308,7 +2321,7 @@ const observableMutationPaths = (
         if (t.isFunction(expression))
           // Keep own-member writes precise without replacing the existing
           // links to references handed to a function's eventual caller.
-          (observer.origins ??= new Set()).add("function");
+          (observer.origins ??= new Set()).add(expression);
         // Keep class/getter projections distinct so cycle pruning does not
         // discard observable escapes through a shared getter result.
         if (
@@ -2426,6 +2439,14 @@ const observableMutationPaths = (
               )
                 add("array-prototype");
             } else {
+              const readers =
+                allocationReads.get(origin) ?? new Set<MutationObserverNode>();
+              readers.add(observer);
+              allocationReads.set(origin, readers);
+              const stored = storedSlots.get(origin)?.get(String(key));
+              if (stored !== undefined) link(stored, observer);
+              // Function result sources are not own-property declarations.
+              if (t.isFunction(origin)) continue;
               for (const reference of referencedValues(
                 origin,
                 [key],
@@ -2531,5 +2552,57 @@ const observableMutationPaths = (
     repeated.set(key, result);
     return result;
   };
-  return { normalize, repeatsUnpruned };
+  const retainStoredSources = (
+    bindingId: string,
+    path: PropertyPath,
+    sources: readonly SemanticIterationSource[],
+  ): void => {
+    const owner = state.bindingsById.get(bindingId);
+    const binding = bindingNodes.get(bindingId);
+    const key = path.at(-1);
+    const source = sources.length === 1 ? sources[0] : undefined;
+    if (
+      owner === undefined ||
+      owner.referenceInitializers.length > 0 ||
+      owner.initializers.length !== 1 ||
+      path.some((part) => part === null || typeof part === "object") ||
+      binding === undefined ||
+      key === undefined ||
+      source === undefined ||
+      source.projection.length !== 0
+    )
+      return;
+    const initial = unwrapJavaScriptExpression(
+      owner.initializers[0]!.node,
+    ).node;
+    const assigned = unwrapJavaScriptExpression(source.node).node;
+    // Only direct allocations own these slots. Copy projections have distinct identities.
+    if (
+      (!t.isObjectExpression(initial) &&
+        !t.isArrayExpression(initial) &&
+        !t.isFunction(initial)) ||
+      (!t.isObjectExpression(assigned) && !t.isArrayExpression(assigned))
+    )
+      return;
+    const receiver = project(binding, path.slice(0, -1));
+    settle();
+    for (const origin of receiver.origins ?? []) {
+      if (typeof origin === "string") continue;
+      const slots =
+        storedSlots.get(origin) ?? new Map<string, MutationObserverNode>();
+      const identity = String(key);
+      let stored = slots.get(identity);
+      if (stored === undefined) {
+        stored = create();
+        slots.set(identity, stored);
+        storedSlots.set(origin, slots);
+      }
+      const sourceNode = expressionNode(assigned);
+      if (stored.sources?.has(sourceNode)) continue;
+      link(sourceNode, stored);
+      repeated.clear();
+      for (const reader of allocationReads.get(origin) ?? []) schedule(reader);
+    }
+  };
+  return { normalize, repeatsUnpruned, retainStoredSources };
 };
