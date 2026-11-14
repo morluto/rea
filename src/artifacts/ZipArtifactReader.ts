@@ -180,7 +180,7 @@ export class ZipArtifactReader implements ArtifactReader {
   readonly #source: NodeFileReader;
   readonly #reader: ZipReader<string>;
   readonly #streams = new Map<Readable, Promise<void>>();
-  readonly #enumerations = new Set<AsyncGenerator<Entry, void>>();
+  readonly #enumerations = new Set<AsyncGenerator<ArtifactEntry, void>>();
   #closing = false;
   #closePromise: Promise<void> | undefined;
   readonly #entries = new Map<
@@ -200,10 +200,28 @@ export class ZipArtifactReader implements ArtifactReader {
     this.#reader = new ZipReader(this.#source, ZIP_READER_OPTIONS);
   }
 
-  async *entries(
+  entries(
     signal?: AbortSignal,
     options?: ArtifactTraversalOptions,
   ): AsyncIterable<ArtifactEntry> {
+    const pending = this.#enumerate(signal, options);
+    const owners = this.#enumerations;
+    let owned!: AsyncGenerator<ArtifactEntry, void>;
+    owned = (async function* (): AsyncGenerator<ArtifactEntry, void> {
+      try {
+        yield* pending;
+      } finally {
+        owners.delete(owned);
+      }
+    })();
+    owners.add(owned);
+    return owned;
+  }
+
+  async *#enumerate(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncGenerator<ArtifactEntry, void> {
     this.#assertOpen(signal);
     let index = 0;
     // A traversal owns its accounting, including overlapping or repeated passes.
@@ -213,7 +231,6 @@ export class ZipArtifactReader implements ArtifactReader {
     const enumeration = typedZipFailures(
       this.#reader.getEntriesGenerator({ decodeText: decodeZipEntryText }),
     );
-    this.#enumerations.add(enumeration);
     try {
       for await (const entry of enumeration) {
         await this.#source.verify();
@@ -221,6 +238,9 @@ export class ZipArtifactReader implements ArtifactReader {
         records.push({
           offset: entry.offset,
           compressedSize: entry.compressedSize,
+          uncompressedSize: entry.uncompressedSize,
+          crc32: entry.crc32,
+          zip64: entry.zip64,
           dataDescriptor: entry.bitFlag?.dataDescriptor ?? false,
         });
         // ZIP member identity is its directory occurrence, not its filename.
@@ -280,7 +300,7 @@ export class ZipArtifactReader implements ArtifactReader {
       this.#assertOpen(signal);
       options?.onCoverage?.(zipListingCoverage(account));
     } finally {
-      this.#enumerations.delete(enumeration);
+      await enumeration.return();
     }
   }
 

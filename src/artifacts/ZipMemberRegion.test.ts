@@ -9,6 +9,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import type { ArtifactReaderTraversal } from "./ArtifactReader.js";
 import { scanReader } from "./inventory/scanReader.js";
 import { ZipArtifactReader } from "./ZipArtifactReader.js";
+import { accountZipMemberRegion } from "./ZipMemberRegion.js";
 
 interface Member {
   readonly name: string;
@@ -125,6 +126,72 @@ const HIDDEN_ENTRY_BYTES = 30 + 10 + 16;
 const A_ENTRY_BYTES = 30 + 5 + 11;
 
 describe("ZIP listing coverage against the member region", () => {
+  it("counts a missing header's uncovered region only once", async () => {
+    const valid = localEntry(member("a.txt"));
+    const bytes = Buffer.concat([Buffer.alloc(200), valid]);
+    const records = [
+      {
+        offset: 100,
+        compressedSize: 0,
+        uncompressedSize: 0,
+        crc32: 0,
+        zip64: false,
+        dataDescriptor: false,
+      },
+      {
+        offset: 200,
+        compressedSize: member("a.txt").data.length,
+        uncompressedSize: member("a.txt").data.length,
+        crc32: crc32(member("a.txt").data),
+        zip64: false,
+        dataDescriptor: false,
+      },
+    ];
+    expect(
+      await accountZipMemberRegion(records, bytes.length, async (at, length) =>
+        bytes.subarray(at, at + length),
+      ),
+    ).toMatchObject({
+      unaccountedBytes: 200,
+      unaccountedRanges: 1,
+      firstUnaccountedOffset: 0,
+      unlocatedHeaders: 1,
+    });
+  });
+
+  it("accounts for a validated data descriptor before an unlisted entry", async () => {
+    const first = member("a.txt");
+    const local = localEntry(first);
+    const descriptor = Buffer.alloc(16);
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(crc32(first.data), 4);
+    descriptor.writeUInt32LE(first.data.length, 8);
+    descriptor.writeUInt32LE(first.data.length, 12);
+    const hidden = localEntry(member("hidden.txt", false));
+    const bytes = Buffer.concat([local, descriptor, hidden]);
+    const records = [
+      {
+        offset: 0,
+        compressedSize: first.data.length,
+        uncompressedSize: first.data.length,
+        crc32: crc32(first.data),
+        zip64: false,
+        dataDescriptor: true,
+      },
+    ];
+    expect(
+      await accountZipMemberRegion(records, bytes.length, async (at, length) =>
+        bytes.subarray(at, at + length),
+      ),
+    ).toMatchObject({
+      unaccountedBytes: hidden.length,
+      unaccountedRanges: 1,
+      firstUnaccountedOffset: local.length + descriptor.length,
+    });
+  });
+});
+
+describe("ZIP listing coverage from the central directory", () => {
   it("declares complete coverage when directory records cover every byte", async () => {
     expect(await list(zip([member("a.txt"), member("b.txt")]))).toEqual({
       paths: ["a.txt", "b.txt"],
@@ -197,6 +264,22 @@ describe("ZIP listing coverage against the member region", () => {
     expect((await list(zip([member("a.txt")], { gap }))).coverage).toEqual([
       unaccounted(gap.length, 1, A_ENTRY_BYTES),
     ]);
+  });
+
+  it("does not hide an unlisted local entry inside malformed signing-block framing", async () => {
+    const hidden = localEntry(member("hidden.txt", false));
+    const size = BigInt(hidden.length + 24);
+    const framing = Buffer.alloc(8);
+    framing.writeBigUInt64LE(size);
+    const block = Buffer.concat([
+      framing,
+      hidden,
+      framing,
+      Buffer.from("APK Sig Block 42"),
+    ]);
+    expect(
+      (await list(zip([member("a.txt")], { gap: block }))).coverage,
+    ).toEqual([unaccounted(block.length, 1, A_ENTRY_BYTES)]);
   });
 
   it("carries the unaccounted region into the artifact inventory", async () => {

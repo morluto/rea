@@ -3,6 +3,9 @@ export interface ZipLocalRecord {
   /** Offset of the record's local file header. */
   readonly offset: number;
   readonly compressedSize: number;
+  readonly uncompressedSize: number;
+  readonly crc32: number | undefined;
+  readonly zip64: boolean;
   /** The general-purpose flag that places a data descriptor after the data. */
   readonly dataDescriptor: boolean;
 }
@@ -18,8 +21,7 @@ export interface ZipMemberRegionAccount {
 
 const LOCAL_HEADER_BYTES = 30;
 const LOCAL_HEADER_SIGNATURE = 0x04034b50;
-/** CRC and sizes, with or without a signature, with 32- or 64-bit sizes. */
-const DATA_DESCRIPTOR_BYTES: ReadonlySet<number> = new Set([12, 16, 20, 24]);
+const DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
 /** The APK Signature Scheme v2+ block sits between the last member and the directory. */
 const APK_SIGNING_BLOCK_MAGIC = "APK Sig Block 42";
 const APK_SIGNING_BLOCK_FOOTER_BYTES = 24;
@@ -66,17 +68,43 @@ export const accountZipMemberRegion = async (
   let firstUnaccountedOffset: number | undefined;
   let unlocatedHeaders = 0;
   let cursor = 0;
-  let descriptorMayFollow = false;
-  const gap = (end: number) => {
+  let descriptor: ZipLocalRecord | undefined;
+  const gap = async (end: number) => {
+    if (end <= cursor) return;
+    if (
+      descriptor !== undefined &&
+      descriptor.crc32 !== undefined &&
+      end - cursor >= 12
+    ) {
+      const signature =
+        (await view(cursor, 4)).getUint32(0, true) ===
+        DATA_DESCRIPTOR_SIGNATURE;
+      const size = (descriptor.zip64 ? 20 : 12) + (signature ? 4 : 0);
+      if (end - cursor >= size) {
+        const data = await view(cursor, size);
+        const start = signature ? 4 : 0;
+        const compressed = descriptor.zip64
+          ? data.getBigUint64(start + 4, true)
+          : BigInt(data.getUint32(start + 4, true));
+        const uncompressed = descriptor.zip64
+          ? data.getBigUint64(start + 12, true)
+          : BigInt(data.getUint32(start + 8, true));
+        if (
+          data.getUint32(start, true) === descriptor.crc32 &&
+          compressed === BigInt(descriptor.compressedSize) &&
+          uncompressed === BigInt(descriptor.uncompressedSize)
+        )
+          cursor += size;
+      }
+    }
+    descriptor = undefined;
     const size = end - cursor;
-    if (size <= 0 || (descriptorMayFollow && DATA_DESCRIPTOR_BYTES.has(size)))
-      return;
+    if (size <= 0) return;
     unaccountedBytes += size;
     unaccountedRanges += 1;
     firstUnaccountedOffset ??= cursor;
   };
   for (const record of [...records].sort((a, b) => a.offset - b.offset)) {
-    gap(record.offset);
     if (record.offset + LOCAL_HEADER_BYTES > directoryOffset) {
       unlocatedHeaders += 1;
       continue;
@@ -86,6 +114,7 @@ export const accountZipMemberRegion = async (
       unlocatedHeaders += 1;
       continue;
     }
+    await gap(record.offset);
     const end =
       record.offset +
       LOCAL_HEADER_BYTES +
@@ -95,10 +124,10 @@ export const accountZipMemberRegion = async (
     // Overlapping records are refused when their data is read.
     if (end > cursor) {
       cursor = end;
-      descriptorMayFollow = record.dataDescriptor;
+      descriptor = record.dataDescriptor ? record : undefined;
     }
   }
-  gap(await apkSigningBlockStart(cursor, directoryOffset, view));
+  await gap(await apkSigningBlockStart(cursor, directoryOffset, view));
   return {
     unaccountedBytes,
     unaccountedRanges,
@@ -124,10 +153,25 @@ const apkSigningBlockStart = async (
   );
   if (magic !== APK_SIGNING_BLOCK_MAGIC) return directoryOffset;
   const size = footer.getBigUint64(0, true);
+  if (size < 24n) return directoryOffset;
   const start = BigInt(directoryOffset) - size - 8n;
   if (start < BigInt(cursor)) return directoryOffset;
   const header = await view(Number(start), 8);
-  return header.getBigUint64(0, true) === size
-    ? Number(start)
-    : directoryOffset;
+  if (header.getBigUint64(0, true) !== size) return directoryOffset;
+  let offset = Number(start) + 8;
+  const pairsEnd = directoryOffset - APK_SIGNING_BLOCK_FOOTER_BYTES;
+  let count = 0;
+  while (offset < pairsEnd) {
+    if (pairsEnd - offset < 8 || count++ >= APK_SIGNING_BLOCK_MAX_PAIRS)
+      return directoryOffset;
+    const length = (await view(offset, 8)).getBigUint64(0, true);
+    const next = apkSigningPairEnd(length, offset, pairsEnd);
+    if (next === undefined) return directoryOffset;
+    offset = next;
+  }
+  return Number(start);
 };
+import {
+  apkSigningPairEnd,
+  APK_SIGNING_BLOCK_MAX_PAIRS,
+} from "../domain/apkSignature/apkSigningBlock.js";
