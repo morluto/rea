@@ -27,11 +27,18 @@ import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
 import { registerFridaCommands } from "./cli/fridaCommands.js";
 import type { FridaInstrumentationPort } from "./application/frida/FridaInstrumentationPort.js";
-import { Cli, z } from "incur";
+import { estimateTokenCount } from "tokenx";
+import { sliceTextByTokenWindow } from "./cli/tokenWindow.js";
+import { Cli, Schema, z } from "incur";
 import {
   adaptCliOutputArgumentsForIncur,
   normalizeCliArguments,
+  splitIncurBuiltinArguments,
 } from "./cliBuiltinArguments.js";
+import {
+  parseCliOutputArguments,
+  renderCliDocument,
+} from "./cliOutput.js";
 
 import { createLogger } from "./logger.js";
 import { parseLogLevel } from "./config/processStart.js";
@@ -64,7 +71,10 @@ import { registerAdvancedBrowserCommands } from "./cli/browserAdvancedCommands.j
 import { registerBrowserScenarioCommands } from "./cliBrowserScenarioCommands.js";
 import { registerElectronCommands } from "./cli/electronCommands.js";
 import { registerJavaScriptRuntimeObservationCommands } from "./cli/javascriptRuntimeCommands.js";
-import { registerApplicationCommands } from "./cli/applicationCommands.js";
+import {
+  jsonCommandSchemas,
+  registerApplicationCommands,
+} from "./cli/applicationCommands.js";
 import { presentOmittableDefaults } from "./cli/omittableDefaults.js";
 import type { CliInstance } from "./cli/types.js";
 import {
@@ -103,6 +113,108 @@ export const closeCliResources = async (): Promise<void> => {
     throw new AggregateError(failures, "CLI resource cleanup failed");
 };
 
+/** Global options schema, shared by registration and `--schema` documents. */
+const cliGlobalsSchema = z.object({
+  timings: z
+    .boolean()
+    .default(false)
+    .describe("Write measured command timing to stderr."),
+});
+
+/**
+ * Convert an input-document schema the way the MCP tool contracts do: a
+ * field with a default is optional for the caller supplying the document.
+ * Incur's own conversion uses output semantics, which would mark those
+ * fields required and reject valid inputs.
+ */
+const toInputJsonSchema = (schema: z.ZodType): Record<string, unknown> => {
+  const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(schema, {
+    io: "input",
+  });
+  return jsonSchema;
+};
+
+/**
+ * Answer `--schema` for JSON-input commands from their registered input
+ * schemas. Incur derives `--schema` from a command's positional `args`,
+ * which for these commands is only the `inputJson: string` wrapper, so
+ * callers would never see the document the command actually accepts. The
+ * document is JSON Schema even without `--json`: callers ask for a
+ * machine-readable schema, and Incur's default TOON rendering is not one.
+ * Help, version, and manifest flags keep Incur's precedence. Token controls
+ * are applied by the executable's SDK-document handling when a result
+ * output exists: arming it here lets it capture this write exactly like
+ * Incur's own schema output. Without one (in-process use), the controls
+ * are applied here with the same rules — a count wins over a window, and
+ * a window only reaches this point for formats the output controls allow
+ * it on (JSON, YAML, and JSONL windows are rejected before dispatch).
+ */
+const writeJsonCommandSchema = (
+  arguments_: readonly string[],
+  options:
+    | { readonly stdout?: ((text: string) => void) | undefined }
+    | undefined,
+  resultOutput?: CliResultOutput | undefined,
+): boolean => {
+  const { command, flags } = splitIncurBuiltinArguments(arguments_);
+  if (!flags.has("--schema")) return false;
+  if (
+    flags.has("--help") ||
+    flags.has("-h") ||
+    flags.has("--version") ||
+    flags.has("--llms") ||
+    flags.has("--llms-full") ||
+    flags.has("--mcp") ||
+    flags.has("--update")
+  )
+    return false;
+  const builtin = command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
+  const name = command[builtin];
+  if (name === undefined) return false;
+  const entry = jsonCommandSchemas.get(name);
+  if (entry === undefined) return false;
+  const output = parseCliOutputArguments(arguments_);
+  if (!output.validation.ok) return false;
+  if (output.format === "csv" || output.format === "tsv") return false;
+  const document: Record<string, unknown> = {
+    args: toInputJsonSchema(entry.inputSchema),
+    ...(entry.optionsSchema === undefined
+      ? {}
+      : { options: Schema.toJsonSchema(entry.optionsSchema) }),
+    globals: Schema.toJsonSchema(cliGlobalsSchema),
+  };
+  const format = output.formatExplicit ? output.format : "json";
+  const text = renderCliDocument(
+    document,
+    format,
+    process.stdout.isTTY === true,
+  );
+  const write =
+    options?.stdout ?? ((value: string) => process.stdout.write(value));
+  if (output.tokenCount || output.tokenWindow) {
+    if (resultOutput !== undefined) {
+      resultOutput.sdkArguments(arguments_);
+    } else if (output.tokenCount) {
+      write(`${estimateTokenCount(text)}\n`);
+      return true;
+    } else if (output.tokenWindow) {
+      const window = sliceTextByTokenWindow(
+        text,
+        output.tokenOffset ?? 0,
+        output.tokenLimit,
+      );
+      write(
+        window.truncated
+          ? `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]\n`
+          : text,
+      );
+      return true;
+    }
+  }
+  write(text.endsWith("\n") ? text : `${text}\n`);
+  return true;
+};
+
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
  * Analysis commands acquire and close their own sessions; bare `mcp` and
@@ -133,12 +245,7 @@ export const createCli = (
   const timedCli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
     version: PRODUCT_IDENTITY.packageVersion,
     description: "Reverse engineer anything from your terminal or agent.",
-    globals: z.object({
-      timings: z
-        .boolean()
-        .default(false)
-        .describe("Write measured command timing to stderr."),
-    }),
+    globals: cliGlobalsSchema,
     mcp: {
       instructions:
         "Ask what software, artifact, protocol, or behavior the user wants to understand, then choose the available investigation capabilities that can produce evidence.",
@@ -266,6 +373,8 @@ export const createCli = (
       options ?? {},
     );
     if (registration !== undefined) return registration;
+    if (writeJsonCommandSchema(normalized, options, resultOutput))
+      return Promise.resolve();
     const result = serveStrict(normalized, options ?? {}, (tokens, selected) =>
       serveDeclared(tokens, selected, (declared, declaredOptions) =>
         reportUnknownMcpSubcommand(cli.name, declared, declaredOptions)
