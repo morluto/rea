@@ -2853,60 +2853,32 @@ it("publishes a capped UTF-8 preview that splits a multibyte sequence", async ()
 });
 
 it("rejects a capped string whose text exceeds its source range", async () => {
-  const report = await reportWithFormPrefix(0);
-  const index = report.resources.findIndex(
-    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  const report = await reportForPayload(
+    delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty("Long", delphiLString("A".repeat(129))),
+      ]),
+    ),
   );
-  const resource = report.resources[index]!;
-  resource.code_page = 0;
-  const pages = codePageFields(0);
-  const name = label("Long", 8, pages.code_page);
-  const valueOffset = name.location.offset + name.location.bytes + 1;
-  const declared = 129;
-  const propertyEnd = valueOffset + 4 + declared;
-  resource.payload.location = { offset: 0, bytes: propertyEnd };
-  report.artifact.bytes = propertyEnd;
+  const form = report.delphi_forms[0];
+  const property = form?.root.properties[0];
+  if (form === undefined || property?.value.kind !== "string")
+    throw new Error("Missing long string");
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
   report.delphi_forms = [
     {
-      resource_index: index,
-      signature: "TPF0",
-      version: "boVersion0",
-      signature_location: { offset: 0, bytes: 4 },
-      prefix: null,
-      ...pages,
+      ...form,
       root: {
-        location: { offset: 4, bytes: propertyEnd - 4 },
-        flags: [],
-        child_position: null,
-        class_name: label("A", 4, pages.code_page),
-        component_name: label("B", 6, pages.code_page),
+        ...form.root,
         properties: [
           {
-            name,
-            value_type: "vaLString",
+            ...property,
             value: {
-              kind: "string",
+              ...property.value,
               text: "A".repeat(1024 * 1024),
-              bytes_hex: "41".repeat(128),
-              code_page: pages.code_page,
-              declared_bytes: declared,
-              truncated: true,
-              decode_truncated: false,
-              location: { offset: valueOffset, bytes: 4 + declared },
-            },
-            location: {
-              offset: name.location.offset,
-              bytes: propertyEnd - name.location.offset,
             },
           },
         ],
-        children: [],
-        unknown: {
-          reason: "suffix",
-          bytes_hex: "",
-          truncated: false,
-          location: { offset: propertyEnd, bytes: 0 },
-        },
       },
     },
   ];
