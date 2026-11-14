@@ -162,7 +162,7 @@ it.each([
   "merges wide %s script results without overflowing call arguments",
   (collection) => {
     const count = 130_000;
-    const scriptKey = "script-0";
+    const scriptKey = `scr_${"a".repeat(64)}`;
     const captured = createWebPageInspection([
       {
         source: "export {};\n",
