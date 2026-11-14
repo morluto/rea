@@ -34,9 +34,7 @@ export const parseProductionReachabilityReport = (text) =>
   reportSchema.parse(JSON.parse(text));
 
 /** Run production reachability without turning candidates into failures. */
-export const recordProductionReachabilityReport = async (
-  root = process.cwd(),
-) => {
+const recordProductionReachabilityReport = async (root = process.cwd()) => {
   const reportDirectory = join(root, ".cache", "static-checks");
   const reportPath = join(reportDirectory, "production-reachability.json");
 

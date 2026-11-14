@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { expect, it } from "vitest";
 
-import { regexMatchingDeadlineRecovery } from "../../../src/config/regexMatchingDeadline.js";
+import { regexMatchingDeadlineContinuingRecovery } from "../../../src/config/regexMatchingDeadline.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE_MS,
   MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
@@ -18,7 +18,6 @@ import {
   matchRegexValues,
   REGEX_MATCHING_LIMITATION,
   regexMatchingDeadlineError,
-  regexMatchingLimitation,
   regexWorkerHeapError,
   execArgvFromCommandLine,
   resolveLaunchRegexWorkerHeap,
@@ -73,7 +72,21 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     readLaunchExecArgv(),
     readLaunchNodeOptions(),
   );
-  expect(REGEX_MATCHING_LIMITATION).toBe(regexMatchingLimitation(heap));
+  expect(REGEX_MATCHING_LIMITATION).toMatch(
+    /5000 ms matching deadline \(source default\)/iu,
+  );
+  expect(REGEX_MATCHING_LIMITATION).toMatch(
+    /128 MiB worker heap request \(source default\)/iu,
+  );
+  expect(REGEX_MATCHING_LIMITATION).toMatch(
+    /regex\.matching_deadline_ms.*regex\.worker_heap_request_mib/iu,
+  );
+  if (heap.kind === "effective")
+    expect(REGEX_MATCHING_LIMITATION).toContain(`effective ${heap.mib} MiB`);
+  else
+    expect(REGEX_MATCHING_LIMITATION).toMatch(
+      /effective old-generation heap.*not established/iu,
+    );
   const deadline = projectAnalysisError(
     regexMatchingDeadlineError("search_procedures"),
   );
@@ -457,10 +470,14 @@ it("stops a slow match at the configured deadline and names the setting", async 
     effective_value: 100,
     source: "setting",
     agent_editable: true,
-    rea_restart_required: false,
+    update_mode: "runtime",
+    pending_restart: false,
   });
   expect(projected.remediation.action).toContain(
-    regexMatchingDeadlineRecovery({ deadlineMs: 100, source: "setting" }),
+    regexMatchingDeadlineContinuingRecovery({
+      deadlineMs: 100,
+      source: "setting",
+    }),
   );
   expect(matched.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",

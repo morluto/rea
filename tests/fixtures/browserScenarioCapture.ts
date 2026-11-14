@@ -1,4 +1,5 @@
-import { analysisViewRequestSchema } from "../../src/domain/analysisView/analysisView.js";
+import { jsonValueSchema } from "../../src/domain/jsonValue.js";
+import { analysisViewRequestSchema } from "../../src/domain/analysisView/analysisViewRequest.js";
 import { createHash } from "node:crypto";
 
 import { inspectAnalysisViewValidated } from "../../src/application/analysisView/AnalysisViewService.js";
@@ -36,7 +37,7 @@ export interface ScenarioExchange {
   readonly responseHeaders?: readonly ScenarioHeader[];
 }
 
-export interface ScenarioHeader {
+interface ScenarioHeader {
   readonly name: string;
   readonly value: string | null;
 }
@@ -335,7 +336,7 @@ export const scenarioCaptureEvidence = (
         { step_id: "browse", action: "wait_for_timeout", duration_ms: 1 },
       ],
     }),
-    capture,
+    { source: jsonValueSchema.parse(capture), facts: capture },
     { id: "fixture", name: "fixture", version: "1" },
   );
 

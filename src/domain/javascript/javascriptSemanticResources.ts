@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { rejectsSemanticEventListener } from "./javascriptSemanticAsyncEffects.js";
 
 import {
   BUILTIN_RESOURCE_SPECIFIERS,
@@ -10,24 +11,31 @@ import type {
   JavaScriptSemanticResourceOperation,
 } from "./javascriptSemanticIr.js";
 import {
+  readExactJavaScriptLiteral,
+  isObjectPrototypeSetter,
+  primitiveOwnKeys,
   semanticStaticPropertyName,
+  staticJavaScriptTruthiness,
+  staticObjectPropertyReader,
+  staticObjectCopyPropertyReader,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
+import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
-  builtinDataEffectMethod,
+  builtinDataEffectIdentity,
   dataEffectMemberCallee,
   outerDataEffectBinding,
   traverseDataEffects,
   type DataEffectTraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
 import { FS_OPEN_FLAGS, range } from "./javascriptStaticAnalysisHelpers.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 const RELEASE_METHODS = ["close", "destroy", "end"] as const;
 
@@ -46,11 +54,14 @@ const releaseMethodsFor = (
 };
 
 interface ResourceCandidate {
+  readonly builtinAuthority?: "candidate";
   readonly node: t.CallExpression | t.OptionalCallExpression;
   readonly specifier: string;
   readonly method: JavaScriptSemanticResourceOperation["method"];
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
+  /** The initial result is the opening Promise; later writes may replace it. */
+  readonly resultIsPromise: boolean;
 }
 
 /** Recover built-in filesystem/network acquisition and local release handles. */
@@ -68,12 +79,41 @@ export const collectJavaScriptSemanticResources = (
   const acquisitions = collectAcquisitions(program, context).filter(
     (candidate) =>
       !socketPortInFirstArgument(candidate) ||
-      !rejectsSocketPortLiteral(candidate.node, context),
+      (!rejectsSocketLiteralArguments(
+        candidate.node,
+        candidate.specifier,
+        context,
+      ) &&
+        !rejectsTlsProtocolVersionLiteral(
+          candidate.node,
+          candidate.specifier,
+          context.state,
+        )),
   );
   return [
     ...acquisitions.map(immutableAcquisition),
     ...collectReleases(program, context, acquisitions),
   ];
+};
+
+/** These expressions have typeof "function", including a class constructor. */
+const isFunctionValuedSyntax = (value: t.Node): boolean =>
+  t.isFunctionExpression(value) ||
+  t.isArrowFunctionExpression(value) ||
+  t.isClassExpression(value);
+
+/** Literal kinds Node rejects for both open flags and modes. */
+const rejectsFlagOrModeLiteral = (value: t.Node): boolean => {
+  return (
+    isFunctionValuedSyntax(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value) ||
+    (t.isUnaryExpression(value) &&
+      t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node))
+  );
 };
 
 /**
@@ -86,6 +126,7 @@ export const collectJavaScriptSemanticResources = (
 const rejectsOpenFlagLiteral = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: DataEffectTraversalContext,
+  callbackForm: boolean,
 ): boolean => {
   // A spread before the flag slot shifts the runtime position, so argument 1 is
   // not provably the flag. `openSync(...args, "0600")` with
@@ -94,6 +135,16 @@ const rejectsOpenFlagLiteral = (
   const flag = node.arguments[1];
   if (flag === undefined || t.isSpreadElement(flag)) return false;
   const value = unwrapJavaScriptExpression(flag).node;
+  // fs.open(path, callback) defaults the flags. Later spreads may all be
+  // empty; a fixed third argument is needed to exclude that overload.
+  if (
+    callbackForm &&
+    isFunctionValuedSyntax(value) &&
+    node.arguments.every(
+      (argument, index) => index < 2 || t.isSpreadElement(argument),
+    )
+  )
+    return false;
   // A no-expression template literal is exactly readable, so it is the same flag
   // string Node receives.
   const flagText = t.isStringLiteral(value)
@@ -117,15 +168,7 @@ const rejectsOpenFlagLiteral = (
   if (isNonFiniteNumber(value, context)) return true;
   // BigInt, boolean, object and array literals all fail Node's flag check. A
   // unary operator over a BigInt literal is a BigInt too.
-  return (
-    t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value) ||
-    t.isRegExpLiteral(value) ||
-    t.isObjectExpression(value) ||
-    t.isArrayExpression(value) ||
-    (t.isUnaryExpression(value) &&
-      t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node))
-  );
+  return rejectsFlagOrModeLiteral(value);
 };
 
 /**
@@ -265,6 +308,7 @@ const isNonFiniteNumber = (
 const rejectsOpenModeLiteral = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: DataEffectTraversalContext,
+  callbackForm: boolean,
 ): boolean => {
   // A spread before the mode slot shifts the runtime position.
   if (
@@ -275,6 +319,8 @@ const rejectsOpenModeLiteral = (
   const mode = node.arguments[2];
   if (mode === undefined || t.isSpreadElement(mode)) return false;
   const value = unwrapJavaScriptExpression(mode).node;
+  // Only callback-form fs.open treats a function in this slot as its callback.
+  if (callbackForm && isFunctionValuedSyntax(value)) return false;
   // `null`, `undefined` and `void <expr>` all default the mode.
   if (t.isNullLiteral(value)) return false;
   // A no-expression template literal is exactly readable, so it is the same
@@ -306,15 +352,7 @@ const rejectsOpenModeLiteral = (
   // BigInt, boolean, object and array literals all fail Node's mode check. A
   // unary operator over a BigInt literal is a BigInt too, and the range helpers
   // above only price numeric operands.
-  return (
-    t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value) ||
-    t.isRegExpLiteral(value) ||
-    t.isObjectExpression(value) ||
-    t.isArrayExpression(value) ||
-    (t.isUnaryExpression(value) &&
-      t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node))
-  );
+  return rejectsFlagOrModeLiteral(value);
 };
 
 /** `fs.open`, `fs.openSync` and `fs/promises.open` take the flag in slot 1. */
@@ -322,6 +360,21 @@ const openFlagInFirstArgument = (reference: AcquisitionReference): boolean =>
   reference.method === "open" || reference.method === "openSync"
     ? reference.specifier === "fs" || reference.specifier === "fs/promises"
     : false;
+
+/** Node normalizes fs.open's callback before validating its function type. */
+const rejectsOpenCallbackLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): boolean => {
+  // A spread can change both arity and which operand is the callback.
+  if (node.arguments.some((argument) => t.isSpreadElement(argument)))
+    return false;
+  if (node.arguments.length < 3)
+    return rejectsSemanticEventListener(node.arguments[1]);
+  // A function-valued mode is the callback; an unknown mode may be one too.
+  // Both can supersede a missing or invalid fourth operand.
+  if (!rejectsSemanticEventListener(node.arguments[2])) return false;
+  return rejectsSemanticEventListener(node.arguments[3]);
+};
 
 const collectAcquisitions = (
   program: t.Program,
@@ -332,16 +385,34 @@ const collectAcquisitions = (
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const reference = acquisitionMethod(node.callee, context.state);
     if (reference === null) return;
-    if (openFlagInFirstArgument(reference)) {
-      if (rejectsOpenFlagLiteral(node, context)) return;
-      if (rejectsOpenModeLiteral(node, context)) return;
+    if (
+      openFlagInFirstArgument(reference) &&
+      reference.builtinAuthority !== "candidate"
+    ) {
+      const callbackForm =
+        reference.specifier === "fs" && reference.method === "open";
+      if (callbackForm && rejectsOpenCallbackLiteral(node)) return;
+      if (rejectsOpenFlagLiteral(node, context, callbackForm)) return;
+      if (rejectsOpenModeLiteral(node, context, callbackForm)) return;
     }
     output.push({
       node,
       specifier: reference.specifier,
       method: reference.method,
+      ...(reference.builtinAuthority === undefined
+        ? {}
+        : { builtinAuthority: reference.builtinAuthority }),
       ownerCallableId: context.callableStack.at(-1) ?? null,
       resultBindingId: outerDataEffectBinding(node, context),
+      resultIsPromise:
+        reference.builtinAuthority === undefined &&
+        reference.specifier === "fs/promises" &&
+        reference.method === "open" &&
+        !context.ancestors.some(
+          (parent) =>
+            t.isAwaitExpression(parent) &&
+            unwrapJavaScriptExpression(parent.argument).node === node,
+        ),
     });
   });
   return output;
@@ -378,8 +449,30 @@ const collectReleases = (
     const candidates =
       binding === undefined ? [] : (byBinding.get(binding.bindingId) ?? []);
     if (binding === undefined || candidates.length === 0) return;
-    const linked = candidates.filter((acquisition) =>
-      releaseMethodsFor(acquisition).includes(method),
+    const opaqueReceiver = semanticOpaqueBindingReadMayHaveChanged(
+      binding,
+      member.object,
+      context.state,
+    );
+    const receiver = candidates.some(({ resultIsPromise }) => resultIsPromise)
+      ? semanticBindingAtRead(binding, member.object, context.state).binding
+      : binding;
+    const knownAcquisitions = new Set<t.Node>(
+      candidates
+        .filter(({ builtinAuthority }) => builtinAuthority === undefined)
+        .map(({ node }) => node),
+    );
+    const linked = candidates.filter(
+      (acquisition) =>
+        releaseMethodsFor(acquisition).includes(method) &&
+        (!acquisition.resultIsPromise ||
+          opaqueReceiver ||
+          mayReceiveFulfilledHandle(
+            receiver,
+            acquisition,
+            knownAcquisitions,
+            context.state,
+          )),
     );
     // No linked acquisition exposes this release method, so the call is not a
     // release of it at all: Node throws at the call site instead.
@@ -392,8 +485,15 @@ const collectReleases = (
       ownerCallableId: context.callableStack.at(-1) ?? null,
       resultBindingId: binding.bindingId,
       linkedResourceIds: linked.map(resourceCandidateId).sort(),
+      ...(linked.some((value) => value.builtinAuthority === "candidate")
+        ? { builtinAuthority: "candidate" as const }
+        : {}),
       resolution:
+        !opaqueReceiver &&
         linked.length === 1 &&
+        (binding.kind !== "parameter" ||
+          semanticBindingAtRead(binding, member.object, context.state)
+            .hasDefiniteInitializer) &&
         holdsOnlyAcquisitions(binding, linked, context.state)
           ? "complete"
           : "partial",
@@ -401,6 +501,34 @@ const collectReleases = (
   });
   return output;
 };
+
+/** Unwrap only direct awaits; a standalone await does not write its operand. */
+const resourceInitializer = (node: t.Node) => {
+  let value = unwrapJavaScriptExpression(node).node;
+  let awaited = false;
+  while (t.isAwaitExpression(value)) {
+    awaited = true;
+    value = unwrapJavaScriptExpression(value.argument).node;
+  }
+  return { value, awaited };
+};
+
+/** Unknown receiver writes retain a candidate; known other acquisitions do not alias it. */
+const mayReceiveFulfilledHandle = (
+  binding: JavaScriptSemanticBindingState,
+  acquisition: ResourceCandidate,
+  knownAcquisitions: ReadonlySet<t.Node>,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  [...binding.initializers, ...binding.referenceInitializers].some(
+    ({ node, projection }) => {
+      if (projection.length > 0) return true;
+      const { value, awaited } = resourceInitializer(node);
+      if (value === acquisition.node) return awaited;
+      if (isNullishPlaceholder(value, state)) return false;
+      return !knownAcquisitions.has(value);
+    },
+  );
 
 /**
  * A lexical handle identifies its acquisition only while every value written
@@ -417,9 +545,7 @@ const holdsOnlyAcquisitions = (
   [...binding.initializers, ...binding.referenceInitializers].every(
     ({ node, projection }) => {
       if (projection.length > 0) return false;
-      let value = unwrapJavaScriptExpression(node).node;
-      if (t.isAwaitExpression(value))
-        value = unwrapJavaScriptExpression(value.argument).node;
+      const { value } = resourceInitializer(node);
       return (
         isNullishPlaceholder(value, state) ||
         linked.some((acquisition) => acquisition.node === value)
@@ -441,6 +567,9 @@ const immutableAcquisition = (
   resourceId: resourceCandidateId(candidate),
   kind: "acquire",
   method: candidate.method,
+  ...(candidate.builtinAuthority === undefined
+    ? {}
+    : { builtinAuthority: candidate.builtinAuthority }),
   location: range(candidate.node),
   ownerCallableId: candidate.ownerCallableId,
   resultBindingId: candidate.resultBindingId,
@@ -449,6 +578,7 @@ const immutableAcquisition = (
 });
 
 interface AcquisitionReference {
+  readonly builtinAuthority?: "candidate";
   readonly specifier: string;
   readonly method: JavaScriptSemanticResourceOperation["method"];
 }
@@ -458,7 +588,9 @@ const acquisitionMethod = (
   state: JavaScriptSemanticAnalysisState,
 ): AcquisitionReference | null => {
   for (const specifier of BUILTIN_RESOURCE_SPECIFIERS) {
-    const method = builtinDataEffectMethod(callee, state, [specifier]);
+    const identity = builtinDataEffectIdentity(callee, state, [specifier]);
+    const method =
+      identity?.path.length === 1 ? (identity.path[0] ?? null) : null;
     if (
       method !== null &&
       (
@@ -469,6 +601,9 @@ const acquisitionMethod = (
     )
       return {
         specifier,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
         method: method as JavaScriptSemanticResourceOperation["method"],
       };
   }
@@ -477,170 +612,283 @@ const acquisitionMethod = (
 const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
 
-/** One exactly evaluated first argument of a `net`/`tls` socket call. */
-type ExactSocketArgument =
-  | { readonly kind: "number"; readonly value: number }
-  | { readonly kind: "string"; readonly value: string }
-  | { readonly kind: "boolean"; readonly value: boolean }
-  | { readonly kind: "null" }
-  | { readonly kind: "undefined" }
-  | { readonly kind: "bigint" };
-
-/** ECMAScript ToBoolean of an exact argument; a BigInt's digits are not read. */
-const socketArgumentTruthiness = (
-  operand: ExactSocketArgument,
-): boolean | undefined => {
-  switch (operand.kind) {
-    case "number":
-      return operand.value !== 0 && !Number.isNaN(operand.value);
-    case "string":
-      return operand.value.length > 0;
-    case "boolean":
-      return operand.value;
-    case "null":
-    case "undefined":
-      return false;
-    case "bigint":
-      return undefined;
-  }
-};
-
-/** ECMAScript ToNumber of an exact argument; strings and BigInts stay undecided. */
-const socketArgumentNumber = (
-  operand: ExactSocketArgument,
-): number | undefined => {
-  switch (operand.kind) {
-    case "number":
-      return operand.value;
-    case "boolean":
-      return Number(operand.value);
-    case "null":
-      return 0;
-    case "undefined":
-      return NaN;
-    case "string":
-    case "bigint":
-      return undefined;
-  }
+/**
+ * Whether a chain of `-`, `+` or `~` ends on a BigInt literal, such as `-0n`.
+ * The chain is read to the same depth as `unaryOperandNumber`.
+ */
+const isNumericUnaryOverBigInt = (value: t.Node, depth: number): boolean => {
+  if (depth > 8 || !t.isUnaryExpression(value)) return false;
+  if (
+    value.operator !== "-" &&
+    value.operator !== "+" &&
+    value.operator !== "~"
+  )
+    return false;
+  const operand = unwrapJavaScriptExpression(value.argument).node;
+  return (
+    t.isBigIntLiteral(operand) || isNumericUnaryOverBigInt(operand, depth + 1)
+  );
 };
 
 /**
- * Apply one unary operator with runtime semantics: `-0` stays negative zero,
- * `~` truncates to a signed 32-bit integer, `!` and `typeof` change the type,
- * and `void` yields `undefined`. `-` and `~` keep a BigInt a BigInt, while `+`
- * on a BigInt throws before the call and `delete`/`throw` are not evaluated;
- * those stay undecided.
+ * `net` and `tls` validate a numeric port before creating a socket, so a
+ * literal port outside `[0, 65535]`, a fractional, non-finite, BigInt, boolean
+ * or `null` first argument throws synchronously and no socket exists. A string
+ * is a Unix socket path and an object may carry a path, so only an exactly
+ * readable non-port literal is decided. `""` is a path with no length, which
+ * Node also rejects.
+ *
+ * `net` also rejects an omitted or undefined port, before it returns a socket.
+ * TLS merges later options, so an undefined first argument alone cannot decide
+ * its admission. Object arguments and spread positions remain undecided here.
  */
-const unarySocketArgument = (
-  operator: t.UnaryExpression["operator"],
-  operand: ExactSocketArgument,
-): ExactSocketArgument | undefined => {
-  switch (operator) {
-    case "!": {
-      const truthy = socketArgumentTruthiness(operand);
-      return truthy === undefined
-        ? undefined
-        : { kind: "boolean", value: !truthy };
-    }
-    case "typeof":
-      return {
-        kind: "string",
-        value: operand.kind === "null" ? "object" : operand.kind,
-      };
-    case "void":
-      return { kind: "undefined" };
-    case "-":
-    case "+":
-    case "~": {
-      if (operand.kind === "bigint")
-        return operator === "+" ? undefined : operand;
-      const value = socketArgumentNumber(operand);
-      if (value === undefined) return undefined;
-      return {
-        kind: "number",
-        value: operator === "-" ? -value : operator === "~" ? ~value : value,
-      };
-    }
-    default:
-      return undefined;
-  }
-};
-
-/**
- * Evaluate a socket call's first argument only when its syntax commits to one
- * runtime value: a literal, an unshadowed `NaN` or `Infinity`, or a unary
- * operator over such a value. Everything else stays undecided.
- */
-const exactSocketArgument = (
-  node: t.Node,
+const rejectsSocketLiteralArguments = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  specifier: string,
   context: DataEffectTraversalContext,
-  depth: number,
-): ExactSocketArgument | undefined => {
-  const unwrapped = unwrapJavaScriptExpression(node);
-  const remaining = depth - unwrapped.depth - 1;
-  if (remaining < 0) {
-    context.state.valueResourceLimits.add("expression-depth");
-    return undefined;
-  }
-  const value = unwrapped.node;
-  if (t.isStringLiteral(value)) return { kind: "string", value: value.value };
-  if (t.isNumericLiteral(value)) return { kind: "number", value: value.value };
-  if (t.isBooleanLiteral(value)) return { kind: "boolean", value: value.value };
-  if (t.isNullLiteral(value)) return { kind: "null" };
-  if (t.isBigIntLiteral(value)) return { kind: "bigint" };
+): boolean => {
+  const port = node.arguments[0];
+  if (port === undefined) return specifier === "net";
+  if (t.isSpreadElement(port)) return false;
+  const value = unwrapJavaScriptExpression(port).node;
+  if (
+    specifier === "net" &&
+    (t.isUnaryExpression(value, { operator: "void" }) ||
+      isUnmodifiedGlobalReference(value, context.state, "undefined"))
+  )
+    return true;
+  if (t.isStringLiteral(value)) return value.value.length === 0;
+  if (
+    t.isNullLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value)
+  )
+    return true;
+  if (t.isNumericLiteral(value))
+    return (
+      !Number.isInteger(value.value) || value.value < 0 || value.value > 65535
+    );
   // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
   if (
     t.isIdentifier(value) &&
     (value.name === "NaN" || value.name === "Infinity") &&
     isUnmodifiedGlobalReference(value, context.state, value.name)
   )
-    return { kind: "number", value: value.name === "NaN" ? NaN : Infinity };
+    return true;
+  // Numeric unary operators are judged by their result: `-0` is port zero,
+  // and `~(-1.5)` is zero too. `typeof` instead yields a nonempty IPC path.
   if (t.isUnaryExpression(value)) {
-    const operand = exactSocketArgument(value.argument, context, remaining);
-    return operand === undefined
-      ? undefined
-      : unarySocketArgument(value.operator, operand);
+    if (value.operator === "!" || value.operator === "delete") return true;
+    // `-0n` and `~0n` are still BigInts, which Node rejects as a port, and `+0n`
+    // throws before the call. Either way no socket exists.
+    if (isNumericUnaryOverBigInt(value, 0)) return true;
+    const number = unaryOperandNumber(value, context, 0);
+    return (
+      number !== undefined &&
+      (!Number.isInteger(number) || number < 0 || number > 65535)
+    );
   }
-  return undefined;
+  return false;
 };
 
 /**
- * `net` and `tls` validate the first argument before creating a socket, so an
- * exactly known value that Node rejects means no socket exists: a number that
- * is fractional, non-finite or outside `[0, 65535]`, a boolean, `null` or
- * BigInt, or `""` (a path with no length). Negative zero is the accepted port
- * `0`. A non-empty string is a Unix socket path and an object may carry a
- * path, so those stay undecided, as does `undefined`, whose `ERR_MISSING_ARGS`
- * is a missing option rather than a bad port.
+ * The TLS protocol version names Node accepts for `minVersion` and `maxVersion`.
+ *
+ * Measured on Node 24.22.1: `"TLSv1"`, `"TLSv1.1"`, `"TLSv1.2"` and `"TLSv1.3"` connect
+ * while `"TLSv1.0"`, `"tlsv1"`, `"tlsv1.2"`, `"TLSv1.4"`, `"nope"` and `""` throw
+ * `ERR_TLS_INVALID_PROTOCOL_VERSION`. The set is exact and case-sensitive, so it is a
+ * closed list rather than a pattern.
  */
-const rejectsSocketPortLiteral = (
+const TLS_PROTOCOL_VERSIONS = new Set([
+  "TLSv1",
+  "TLSv1.1",
+  "TLSv1.2",
+  "TLSv1.3",
+]);
+
+/** Select Node's merge target and source without conflating typeof with own keys. */
+const tlsOptionMerge = (
   node: t.CallExpression | t.OptionalCallExpression,
-  context: DataEffectTraversalContext,
+  state: JavaScriptSemanticAnalysisState,
+):
+  | {
+      readonly target: t.ObjectExpression | "fresh" | "unknown";
+      readonly source: t.Node | undefined;
+    }
+  | undefined => {
+  if (node.arguments.some((argument) => t.isSpreadElement(argument)))
+    return undefined;
+  const argument = (index: number): t.Node | undefined => {
+    const value = node.arguments[index];
+    return value === undefined
+      ? undefined
+      : unwrapJavaScriptExpression(value as t.Node).node;
+  };
+  const objectKind = (
+    value: t.Node | undefined,
+  ): "object" | "non-object" | "unknown" => {
+    if (value === undefined) return "non-object";
+    if (
+      t.isObjectExpression(value) ||
+      t.isArrayExpression(value) ||
+      t.isRegExpLiteral(value) ||
+      t.isNewExpression(value)
+    )
+      return "object";
+    if (
+      t.isFunctionExpression(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isClassExpression(value) ||
+      primitiveOwnKeys(value, (child) => isNullishPlaceholder(child, state)) !==
+        null
+    )
+      return "non-object";
+    return "unknown";
+  };
+  const first = argument(0);
+  const firstKind = objectKind(first);
+  const second = argument(1);
+  const secondKind = objectKind(second);
+  if (firstKind === "unknown" || secondKind === "unknown") return undefined;
+  return {
+    target:
+      firstKind === "non-object"
+        ? "fresh"
+        : t.isObjectExpression(first)
+          ? first
+          : "unknown",
+    source: secondKind === "object" ? second : argument(2),
+  };
+};
+
+/**
+ * Whether a `tls` call carries a protocol version Node rejects.
+ *
+ * `tls.connect` resolves the version before it opens a socket, so a bad literal throws
+ * from the call itself and no socket exists. Measured on Node 24.22.1: `null` and
+ * `undefined` are accepted as "not given", every other non-string value throws
+ * `ERR_TLS_INVALID_PROTOCOL_VERSION` (a BigInt throws `TypeError`), and a string is
+ * accepted only when it is one of `TLS_PROTOCOL_VERSIONS`.
+ *
+ * A truthy `secureContext` bypasses version parsing — Node uses
+ * `options.secureContext || tls.createSecureContext(options)` — while a falsy one does
+ * not, so only a truthy context ends the check.
+ *
+ * The answer stays undecided, which keeps the acquisition, whenever an accessor could
+ * have written the member first. Measured on Node 24.22.1,
+ * `{get side() { this.minVersion = "TLSv1.2"; }, minVersion: "nope"}` connects because
+ * the getter runs during Node's own copy, and a `set minVersion` in an earlier argument
+ * absorbs a later write. Both are bodies this reader does not run.
+ *
+ * Only `tls` reads these members, so `net` is not consulted.
+ */
+const rejectsTlsProtocolVersionLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  specifier: string,
+  state: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  const port = node.arguments[0];
-  if (port === undefined || t.isSpreadElement(port)) return false;
-  const argument = exactSocketArgument(
-    port,
-    context,
-    SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+  if (specifier !== "tls") return false;
+  const merge = tlsOptionMerge(node, state);
+  if (merge === undefined || merge.target === "unknown") return false;
+  const isNullish = (value: t.Node) => isNullishPlaceholder(value, state);
+  const target = merge.target === "fresh" ? undefined : merge.target;
+  // A known source value proves the final option only when target writes are
+  // ordinary. Target prototypes and copied __proto__ can absorb later writes.
+  if (
+    target?.properties.some(
+      (property) =>
+        !t.isSpreadElement(property) &&
+        isObjectPrototypeSetter(property) &&
+        t.isObjectProperty(property) &&
+        primitiveOwnKeys(property.value, isNullish) === null,
+    )
+  )
+    return false;
+  const sourceReader = staticObjectCopyPropertyReader(merge.source, isNullish);
+  const copiedPrototype = sourceReader("__proto__");
+  if (
+    copiedPrototype.status === "dynamic" ||
+    (copiedPrototype.status === "explicit" &&
+      primitiveOwnKeys(copiedPrototype.value, isNullish) === null)
+  )
+    return false;
+  const objects = [target, merge.source].filter(
+    (value): value is t.ObjectExpression => t.isObjectExpression(value),
   );
-  if (argument === undefined) return false;
-  switch (argument.kind) {
-    case "number":
-      return (
-        !Number.isInteger(argument.value) ||
-        argument.value < 0 ||
-        argument.value > 65535
-      );
-    case "string":
-      return argument.value.length === 0;
-    case "undefined":
-      return false;
-    case "boolean":
-    case "null":
-    case "bigint":
+  const accessorWritten = objects.some((options) =>
+    options.properties.some(
+      (property) => t.isObjectMethod(property) && property.kind !== "method",
+    ),
+  );
+  const readers = [staticObjectPropertyReader(target, isNullish), sourceReader];
+  const effective = (member: string): t.Node | "unknown" | undefined => {
+    let read: t.Node | "unknown" | undefined;
+    for (const reader of readers) {
+      const property = reader(member);
+      if (property.status === "missing") continue;
+      read =
+        property.status !== "explicit" || accessorWritten
+          ? "unknown"
+          : property.value;
+    }
+    return read;
+  };
+  // A truthy context means Node never parses the members at all. The shared owner
+  // already treats `-0` as falsy. Measured on Node 24.22.1,
+  // `{secureContext: -0, minVersion: "nope"}` throws while a real context connects.
+  const context = effective("secureContext");
+  if (context === "unknown") return false;
+  if (
+    context !== undefined &&
+    !isNullishPlaceholder(context, state) &&
+    staticJavaScriptTruthiness(context) !== false
+  )
+    return false;
+  const rejectsValue = (value: t.Node): boolean => {
+    const read = unwrapJavaScriptExpression(value).node;
+    // `null` and `undefined` mean "not given", which Node accepts.
+    if (isNullishPlaceholder(read, state)) return false;
+    if (t.isStringLiteral(read)) return !TLS_PROTOCOL_VERSIONS.has(read.value);
+    if (t.isTemplateLiteral(read) && read.expressions.length === 0) {
+      const cooked = read.quasis[0]?.value.cooked;
+      if (cooked === null || cooked === undefined) return false;
+      return !TLS_PROTOCOL_VERSIONS.has(cooked);
+    }
+    // Numeric, boolean and typeof results cannot equal an admitted version
+    // string. `void` is the accepted undefined/default case.
+    if (t.isUnaryExpression(read)) return read.operator !== "void";
+    // `NaN` and `Infinity` are unshadowed globals and neither is a version name, the
+    // same way the adjacent port filter treats them.
+    if (
+      t.isIdentifier(read) &&
+      (read.name === "NaN" || read.name === "Infinity") &&
+      isUnmodifiedGlobalReference(read, state, read.name)
+    )
       return true;
+    if (readExactJavaScriptLiteral(read).found) return true;
+    // Every other statically known shape is truthy and not a string, so the call throws.
+    if (
+      t.isObjectMethod(read) ||
+      t.isNumericLiteral(read) ||
+      t.isBooleanLiteral(read) ||
+      t.isBigIntLiteral(read) ||
+      t.isObjectExpression(read) ||
+      t.isArrayExpression(read) ||
+      t.isRegExpLiteral(read) ||
+      t.isArrowFunctionExpression(read) ||
+      t.isFunctionExpression(read) ||
+      t.isClassExpression(read) ||
+      t.isNewExpression(read)
+    )
+      return true;
+    return false;
+  };
+  for (const member of ["minVersion", "maxVersion"] as const) {
+    const read = effective(member);
+    if (read === undefined || read === "unknown") continue;
+    if (rejectsValue(read)) return true;
   }
+  return false;
 };
 
 /** Only `net`/`tls` sockets take a port in argument 0. */

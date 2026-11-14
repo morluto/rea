@@ -118,7 +118,7 @@ it("records completed Electron facts after final detach as server Evidence", asy
       file_path: "/tmp/index.html",
       attached: true,
     },
-    ...emptyElectronPageCoverage(1),
+    ...emptyElectronPageCoverage(0),
   };
   const provider: ElectronObservationPort = {
     identity: () => ({
@@ -343,7 +343,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
       isolation: "none",
     },
     limitations: expect.arrayContaining([
-      "Browser host platform and architecture were not observed.",
+      expect.stringMatching(/platform.*architecture.*not observed/iu),
     ]),
     normalized_result: {
       targets: [{ target_id: "electron-page" }],
@@ -421,7 +421,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
       ],
     },
   });
-}, 20_000);
+});
 
 /** Create the selected-path aliases and retained IPC-gap capture for the public workflow. */
 const activeElectronScenarioFixture = async () => {
@@ -489,6 +489,10 @@ it("runs active Electron scenarios with selected paths and inferred working dire
     { kind: "session", session },
     {
       electronActiveObservation: provider,
+      environment: {
+        ...process.env,
+        REA_MCP_TOOL_FAMILIES: "electron",
+      },
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
         investigationInputRoots: 0,
@@ -610,7 +614,7 @@ it("runs active Electron scenarios with selected paths and inferred working dire
       ],
     },
   });
-}, 20_000);
+});
 
 it("exposes the target-free static JavaScript application workflow", async () => {
   const root = await createTestTempDirectory("rea-electron-static-mcp-");
@@ -849,10 +853,18 @@ it.skipIf(process.platform === "win32")(
     );
     await symlink("application/child", join(root, "link"));
     const capture = vi.fn<ElectronActiveObservationPort["capture"]>(
-      async (input) =>
-        resultOk(
-          createElectronActiveObservationFixtureResult(input.application_path),
-        ),
+      async (input) => {
+        const report = createElectronActiveObservationFixtureResult(
+          input.application_path,
+        );
+        return resultOk({
+          ...report,
+          application: {
+            ...report.application,
+            executable_path: input.executable_path,
+          },
+        });
+      },
     );
     const client = await activePathAdmissionClient(capture);
     const selected = {

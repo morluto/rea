@@ -39,11 +39,8 @@ import {
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
-import {
-  ARTIFACT_EXPANSION_RATIO,
-  artifactExpansionBudgetBytes,
-  MINIMUM_ARTIFACT_EXPANDED_BYTES,
-} from "../domain/artifactExpansionBudget.js";
+import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
+import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
@@ -52,6 +49,14 @@ const ZIP_UTF8_DECODER = new TextDecoder("utf-8", {
   fatal: true,
   ignoreBOM: true,
 });
+
+/** Fixed method-93 decoder window: 2^27 bytes, matching the ELF/GPU decoders. */
+const ZIP_ZSTANDARD_WINDOW_LOG_MAX = 27;
+
+const ZIP_ZSTANDARD_WINDOW_ALLOWANCE = `${String(2 ** (ZIP_ZSTANDARD_WINDOW_LOG_MAX - 20))} MiB`;
+
+/** A frame above the window cap is a deliberate resource refusal, not damage. */
+const ZIP_ZSTANDARD_WINDOW_LIMIT = `ZIP Zstandard member requires a decoder window above REA's fixed ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE} allowance; the archive is not necessarily corrupt, and this limit cannot be raised at runtime. Recompress the member with a window of at most ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE}, or decompress it with a tool that admits larger windows, then retry.`;
 
 /** Keep zip.js's framing, CRC, size checks and backpressure for method 93. */
 class ZipZstandardDecompressionStream {
@@ -63,7 +68,9 @@ class ZipZstandardDecompressionStream {
       createZstdDecompress({
         chunkSize: options?.chunkSize,
         // Match the existing ELF/GPU Zstandard decoder's 128 MiB window cap.
-        params: { [constants.ZSTD_d_windowLogMax]: 27 },
+        params: {
+          [constants.ZSTD_d_windowLogMax]: ZIP_ZSTANDARD_WINDOW_LOG_MAX,
+        },
       }),
     );
     this.readable = stream.readable;
@@ -179,6 +186,7 @@ export class ZipArtifactReader implements ArtifactReader {
     format: ZipPackageFormat,
     maximumMetadataReadBytes?: number,
     admitted?: StableRegularFileDescriptor,
+    private readonly expandedBytes?: number,
   ) {
     this.format = format;
     this.#source = new NodeFileReader(path, maximumMetadataReadBytes, admitted);
@@ -189,7 +197,7 @@ export class ZipArtifactReader implements ArtifactReader {
     this.#assertOpen(signal);
     let index = 0;
     // A traversal owns its accounting, including overlapping or repeated passes.
-    let declaredFileBytes = 0;
+    let declaredFileBytes = 0n;
     const enumeration = typedZipFailures(
       this.#reader.getEntriesGenerator({ decodeText: decodeZipEntryText }),
     );
@@ -210,12 +218,16 @@ export class ZipArtifactReader implements ArtifactReader {
           Number.isSafeInteger(metadata.declaredSize) &&
           metadata.declaredSize >= 0
         ) {
-          declaredFileBytes += metadata.declaredSize;
-          const budget = artifactExpansionBudgetBytes(this.#source.size);
-          if (declaredFileBytes > budget)
-            throw new ArtifactReaderFailure(
-              "limit",
-              `ZIP entries declare ${String(declaredFileBytes)} uncompressed bytes, exceeding this archive's ${String(budget)}-byte decompression budget (${String(MINIMUM_ARTIFACT_EXPANDED_BYTES)}-byte minimum, ${String(ARTIFACT_EXPANSION_RATIO)}x archive size); a small archive cannot expand this far`,
+          declaredFileBytes += BigInt(metadata.declaredSize);
+          const budget =
+            this.expandedBytes ??
+            artifactExpansionBudgetBytes(this.#source.size);
+          if (declaredFileBytes > BigInt(budget))
+            throw artifactReaderLimitFailure(
+              "artifact_limits.expanded_bytes",
+              budget,
+              "bytes",
+              declaredFileBytes,
             );
         }
         const stored = this.#entries.get(metadata.adapterKey);
@@ -234,7 +246,9 @@ export class ZipArtifactReader implements ArtifactReader {
           });
         yield metadata;
       }
+      this.#assertOpen(signal);
       await this.#source.verify();
+      this.#assertOpen(signal);
     } finally {
       this.#enumerations.delete(enumeration);
     }
@@ -525,6 +539,14 @@ const typedZipFailure = (
       "ZIP archive uses an unsupported Zstandard dictionary",
       { cause },
     );
+  if (
+    compressionMethod === 93 &&
+    code === "ZSTD_error_frameParameter_windowTooLarge"
+  )
+    return new ArtifactReaderFailure("limit", ZIP_ZSTANDARD_WINDOW_LIMIT, {
+      cause,
+      boundary: "memory",
+    });
   const invalidZstandard =
     compressionMethod === 93 &&
     (code === "ZSTD_error_prefix_unknown" ||
@@ -532,7 +554,6 @@ const typedZipFailure = (
       code === "ZSTD_error_corruption_detected" ||
       code === "ZSTD_error_dictionary_corrupted" ||
       code === "ZSTD_error_frameParameter_unsupported" ||
-      code === "ZSTD_error_frameParameter_windowTooLarge" ||
       code === "Z_BUF_ERROR");
   const reason =
     ZIP_FAILURE_REASONS.get(cause.message) ??

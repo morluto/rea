@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
-  inspectRecordedDateTime,
+  addOffsetDateTimeMilliseconds,
   offsetDateTimeSchema,
   readRecordedDateTime,
   readRecordedStart,
@@ -11,16 +11,32 @@ import {
 } from "./offsetDateTime.js";
 
 it.each([
-  ["2026-02-30T09:00:00Z", "invalid"],
-  ["1900-02-29 09:00:00", "invalid"],
-  ["2026-10-20T24:00:00Z", "invalid"],
-  ["2026-10-20T09:00:00+24:00", "invalid"],
-  ["2026-10-20 09:00:00.0000000001", "valid"],
-  ["Tue, 20 Oct 2026 09:00:00 GMT", "unrecognized"],
-  ["2026-10-20", "unrecognized"],
-])("classifies recorded spelling %s as %s", (text, kind) => {
-  expect(inspectRecordedDateTime(text).kind).toBe(kind);
-});
+  ["000001", 0, 10, "000001"],
+  ["999999", 0.001, 11, ""],
+  ["999999", 0.001001, 11, "000000001"],
+  ["1234567890123456789", 1000.001, 11, "1234577890123456789"],
+  ["", 1e-7, 10, "0000000001"],
+  ["", 999.9999999999999, 10, "9999999999999999"],
+])(
+  "adds duration %s + %sms without losing decimal precision",
+  (fraction, duration, epochSecond, expectedFraction) => {
+    expect(
+      addOffsetDateTimeMilliseconds({ epochSecond: 10, fraction }, duration),
+    ).toEqual({ epochSecond, fraction: expectedFraction });
+  },
+);
+
+it.each([-1, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_VALUE])(
+  "keeps unsupported recorded duration %s unknown",
+  (duration) => {
+    expect(
+      addOffsetDateTimeMilliseconds(
+        { epochSecond: 10, fraction: "" },
+        duration,
+      ),
+    ).toBeUndefined();
+  },
+);
 
 const ACCEPTED: readonly (readonly [string, string])[] = [
   ["a UTC timestamp", "2026-10-09T04:00:00Z"],
@@ -251,6 +267,7 @@ it.each([
   "Tue, 20 Oct 2026 09:00:00 GMT",
   "Tue, 20 Oct 2026 14:30:00 GMT+0530",
   "October 20, 2026 09:00:00",
+  "2026-10-20",
 ])("preserves native start interpretation for %s", (value) => {
   const milliseconds = Date.parse(value);
   expect(Number.isFinite(milliseconds)).toBe(true);
@@ -264,6 +281,7 @@ it.each([
   "2026-02-30T09:00:00Z",
   "1900-02-29 09:00:00",
   "2026-10-20T24:00:00Z",
+  "2026-10-20T09:00:00+24:00",
   "not a recorded start",
 ])("keeps invalid start %s unknown without native rollover", (value) => {
   expect(readRecordedStart(value)).toBeUndefined();

@@ -44,7 +44,7 @@ const deferred = () => {
 const waitForBoundary = (
   boundary: Promise<void>,
   running: Promise<Outcome<unknown>>,
-) => awaitAcknowledgement(boundary, running, "terminal lifecycle", 5_000);
+) => awaitAcknowledgement(boundary, running, "terminal lifecycle");
 
 const terminalFixture = async () => {
   const parent = await createTestTempDirectory("rea-verifier-terminal-");

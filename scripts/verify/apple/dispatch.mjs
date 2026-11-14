@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseBinaryTarget } from "../../../dist/application/BinaryTargetResolver.js";
-import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import { withVerifierArtifactScope } from "../../lib/verifier-artifact-scope.mjs";
 import { inspectAppleDispatchMetadata } from "../../../dist/native/AppleDispatchMetadata.js";
 import {
   artifactCliEvidence,
@@ -57,8 +57,7 @@ const fixupCoverage = (metadata) =>
 const inspect = async (path) => {
   const target = await parseBinaryTarget(path);
   if (!target.ok) throw target.error;
-  const resources = new ArtifactResourceScope();
-  try {
+  return withVerifierArtifactScope(async (resources) => {
     return {
       target: target.value,
       metadata: (
@@ -67,10 +66,7 @@ const inspect = async (path) => {
         )
       ).result,
     };
-  } finally {
-    // Retry any descriptor whose close failed, surfacing unresolved cleanup.
-    await resources.close();
-  }
+  });
 };
 
 const checkObjc = (metadata, mode) => {
@@ -394,7 +390,7 @@ try {
     } catch (cause) {
       assert.equal(cause.code, 1);
       cliFailure = analysisErrorProjectionSchema.parse(
-        cliOperationFailurePayload(JSON.parse(cause.stdout)),
+        cliOperationFailurePayload(JSON.parse(cause.snapshot.stdout.text)),
       );
     }
     assert.equal(cliFailure.code, "unsupported_target");

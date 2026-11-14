@@ -10,8 +10,14 @@ import { join } from "node:path";
 
 import { expect, it as test } from "vitest";
 
+import { runWithAnalysisOperationSnapshot } from "../../../../src/domain/analysisOperationSnapshot.js";
+
 import { kunaInstallationCancellation } from "../../../../src/kuna/KunaInstallation.js";
-import { readKunaConfiguration } from "../../../../src/kuna/KunaConfiguration.js";
+import {
+  readKunaConfiguration,
+  kunaFunctionDeadline,
+  kunaProjectDeadline,
+} from "../../../../src/kuna/KunaConfiguration.js";
 import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaResourceScope.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
@@ -246,6 +252,44 @@ it("parses cache, timeout and job settings at the configuration boundary", () =>
       ok: false,
       error: { code: "open_options_invalid", setting },
     });
+  const overridden = runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: {
+        "kuna.project_timeout_ms": 4000,
+        "kuna.function_timeout_ms": 250,
+      },
+    },
+    () => {
+      const parsed = readKunaConfiguration(
+        {
+          ...environment,
+          REA_KUNA_PROJECT_TIMEOUT_MS: "0",
+          REA_KUNA_TIMEOUT_MS: "-1",
+        },
+        "linux",
+      );
+      if (!parsed.ok) throw new Error(parsed.error.reason);
+      return {
+        project: kunaProjectDeadline(parsed.value),
+        function: kunaFunctionDeadline(parsed.value),
+      };
+    },
+  );
+  expect(overridden).toMatchObject({
+    project: { ms: 4000, source: "runtime" },
+    function: { ms: 250, source: "runtime" },
+  });
+  expect(
+    runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "kuna.function_timeout_ms": 250 } },
+      () =>
+        readKunaConfiguration({ ...environment, REA_KUNA_JOBS: "33" }, "linux"),
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: { setting: "REA_KUNA_JOBS" },
+  });
 });
 
 it("stops a version probe that ignores SIGTERM instead of waiting on it", async () => {
@@ -273,7 +317,7 @@ it("stops a version probe that ignores SIGTERM instead of waiting on it", async 
   expect(Date.now() - started).toBeLessThan(10_000);
   const pid = (await fakeKunaCalls(kuna))[0]?.pid ?? 0;
   expect(() => process.kill(pid, 0)).toThrow();
-}, 20_000);
+});
 
 it("keeps a version deadline ahead of cancellation during its joined stop", async () => {
   const root = await createTestTempDirectory("rea-kuna-deadline-first-");
@@ -330,13 +374,11 @@ setTimeout(() => process.exit(9), 10000).unref();
   );
   try {
     await expect
-      .poll(
-        () =>
-          readFile(stopped).then(
-            () => true,
-            () => false,
-          ),
-        { timeout: 5000 },
+      .poll(() =>
+        readFile(stopped).then(
+          () => true,
+          () => false,
+        ),
       )
       .toBe(true);
     controller.abort({ request: "late doctor cancellation" });

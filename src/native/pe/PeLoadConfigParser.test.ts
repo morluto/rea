@@ -1,3 +1,4 @@
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { describe, expect, it } from "vitest";
 import {
   inspectPeLoadConfigInputSchema,
@@ -33,6 +34,10 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
     const report = await parse({ bits });
     expect(peLoadConfigSchema.safeParse(report).success).toBe(true);
     expect(report.tls?.callbacks).toHaveLength(3);
+    // The callback array starts at file offset 0x800 and includes its null slot.
+    expect(report.tls?.callback_array_locations).toEqual([
+      { offset: 0x800, bytes: bits === 32 ? 16 : 32 },
+    ]);
     expect(report.tls?.callbacks[0]).toMatchObject({
       rva: 0x2000,
       file_offset: 0x1600,
@@ -127,14 +132,17 @@ it("preserves pointer precision and unknown flag bits", async () => {
 
 it("honors cancellation before parsing", async () => {
   const bytes = peLoadConfigImage();
-  await expect(
-    parsePeLoadConfig(
-      bytes,
-      { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-      inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-      AbortSignal.abort(),
-    ),
-  ).rejects.toThrow();
+  const reason = { caller: "before PE load config parsing" };
+  const failure = await parsePeLoadConfig(
+    bytes,
+    { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
+    inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
+    AbortSignal.abort(reason),
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "cancelled" });
+  if (!(failure instanceof ArtifactReaderFailure)) throw failure;
+  expect(failure.cause).toBe(reason);
 });
 
 it("retains a callback in virtual-only section storage with unknown file offset", async () => {

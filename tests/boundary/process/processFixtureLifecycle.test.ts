@@ -248,4 +248,60 @@ it("times out when a real descendant holds the exited leader's output open", asy
       );
     }
   }
-}, 17_000);
+});
+
+it("terminates a stalled real child at its deadline while retaining captured output", async () => {
+  const processes = createTestProcessRegistry();
+  try {
+    const result = await processes
+      .run(
+        process.execPath,
+        [
+          "-e",
+          'process.stdout.write("ready\\n"); setInterval(() => {}, 1000);',
+        ],
+        { timeoutMs: 1000 },
+      )
+      .catch((cause: unknown) => cause);
+    expect(result).toMatchObject({
+      message: "Test process exceeded its 1000ms deadline",
+      cause: {
+        exitCode: null,
+        signal: expect.stringMatching(/^SIG(?:TERM|KILL)$/u),
+        stdout: "ready\n",
+        stderr: "",
+      },
+    });
+    await expect(processes.shutdown()).resolves.toBeUndefined();
+  } finally {
+    await processes.shutdown();
+  }
+});
+
+it(
+  "stops a hung child before its running test's deadline and reports its output",
+  // The test deadline is the behavior under test: the child gets what remains.
+  { timeout: 8_000 },
+  async () => {
+    // processTest uses this registry, so one registry covers both entry points.
+    const processes = createTestProcessRegistry();
+    const started = performance.now();
+    try {
+      const failure: unknown = await processes
+        .run(process.execPath, [
+          "-e",
+          "process.stdout.write('started'); setInterval(() => {}, 1_000);",
+        ])
+        .catch((error: unknown) => error);
+      expect(failure).toMatchObject({
+        message: expect.stringMatching(
+          /^Test process exceeded its \d+ms deadline$/u,
+        ),
+        cause: { stdout: "started" },
+      });
+      expect(performance.now() - started).toBeLessThan(6_000);
+    } finally {
+      await processes.shutdown();
+    }
+  },
+);

@@ -35,6 +35,7 @@ export const CLI_COMMANDS = Object.freeze({
   annotateNativeFunction: "annotate-native-function",
   inspectNativeApi: "inspect-native-api",
   instructions: "instructions",
+  procedureReferences: "procedure-references",
   search: "search",
   importReferenceSource: "import-reference-source",
   inspectArtifact: "inspect-artifact",
@@ -65,23 +66,30 @@ export const CLI_COMMANDS = Object.freeze({
   debugWithRizin: "debug-with-rizin",
 
   inspectDesktopApplication: "inspect-desktop-application",
+  auditReleaseExposure: "audit-release-exposure",
   inspectGoBinary: "inspect-go-binary",
   inspectIl2cppMetadata: "inspect-il2cpp-metadata",
   inspectModelArtifact: "inspect-model-artifact",
   inspectApiContract: "inspect-api-contract",
+  inspectNtfsJournal: "inspect-ntfs-journal",
   inspectPlaywrightTrace: "inspect-playwright-trace",
   inspectGpuCodeObjects: "inspect-gpu-code-objects",
   inspectRustBinary: "inspect-rust-binary",
   inspectPythonPyc: "inspect-python-pyc",
   inspectErlangBeam: "inspect-erlang-beam",
+  inspectV8CodeCache: "inspect-v8-code-cache",
   inspectPeResources: "inspect-pe-resources",
   inspectPeCertificates: "inspect-pe-certificates",
   inspectPeImports: "inspect-pe-imports",
+  inspectWindowsShortcut: "inspect-windows-shortcut",
   inspectNativeExports: "inspect-native-exports",
   inspectDevicetree: "inspect-devicetree",
   inspectElfNotes: "inspect-elf-notes",
+  inspectNativeInitializers: "inspect-native-initializers",
+  inspectElfUnwindRanges: "inspect-elf-unwind-ranges",
   inspectAppleIps: "inspect-apple-ips",
   inspectKernelModule: "inspect-kernel-module",
+  inspectKernelBuildConfig: "inspect-kernel-build-config",
   inspectPeLoadConfig: "inspect-pe-load-config",
   inspectBinaryHardening: "inspect-binary-hardening",
   inspectAnalysisView: "inspect-analysis-view",
@@ -193,3 +201,12 @@ export const CLI_COMMANDS = Object.freeze({
 
 /** Ordered primary CLI inventory; aliases are intentionally excluded. */
 export const CLI_COMMAND_NAMES = Object.freeze(Object.values(CLI_COMMANDS));
+
+/**
+ * Commands that announce their progress at info level when REA_LOG_LEVEL is
+ * unset, like `rea mcp --http`. Their logger writes to stderr directly.
+ */
+export const DEFAULT_INFO_LOGGING_COMMANDS: ReadonlySet<string> = new Set([
+  CLI_COMMANDS.environmentServe,
+  CLI_COMMANDS.environmentBuild,
+]);

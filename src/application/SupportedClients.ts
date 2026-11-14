@@ -1,4 +1,8 @@
-import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
+import type {
+  ClientRegistrationConnectionProfile,
+  ClientRegistrationProfile,
+} from "./ClientRegistrationProfile.js";
+import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { err, ok, type Result } from "../domain/result.js";
@@ -9,6 +13,7 @@ import {
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { resolveWindowsClaudeDesktopLocation } from "./ClaudeDesktopConfigLocation.js";
+import { resolveClineCliSettingsPath } from "./ClineCliLocation.js";
 import {
   type MsixPackageView,
   windowsAppDataRoots,
@@ -17,6 +22,7 @@ import {
 /** One supported client configuration location. */
 export interface SetupClient {
   readonly name: string;
+  readonly registrationProfile: ClientRegistrationProfile;
   readonly displayName?: string;
   readonly configPath: string;
   /** User configuration files in increasing precedence, including the write target. */
@@ -91,25 +97,25 @@ interface ClientLocation {
   readonly msixPackage?: MsixPackageView;
 }
 
-type ClientDefinition = ClientDefinitionBase &
-  (
-    | {
-        readonly configPath: ClientPath;
-        readonly markerPath: ClientPath;
-        readonly location?: undefined;
-      }
-    | {
-        /** Resolve configuration and marker together when they share probes. */
-        readonly location: (
-          context: ClientPathContext,
-        ) => Result<ClientLocation, ClientPathFailure>;
-        readonly configPath?: undefined;
-        readonly markerPath?: undefined;
-      }
-  );
+type ClientDefinition = ClientDefinitionBase & ClientDefinitionLocation;
+type ClientDefinitionLocation =
+  | {
+      readonly configPath: ClientPath;
+      readonly markerPath: ClientPath;
+      readonly location?: undefined;
+    }
+  | {
+      /** Resolve configuration and marker together when they share probes. */
+      readonly location: (
+        context: ClientPathContext,
+      ) => Result<ClientLocation, ClientPathFailure>;
+      readonly configPath?: undefined;
+      readonly markerPath?: undefined;
+    };
 
 interface ClientDefinitionBase {
   readonly name: string;
+  readonly registrationProfile: ClientRegistrationProfile;
   readonly displayName: string;
   readonly discoveryPaths?: (context: ClientPathContext) => readonly string[];
   readonly sharedRegistration?: true;
@@ -554,10 +560,37 @@ const devinDirectory = ({ home, platform, env }: ClientPathContext): string =>
 const freebuffProfileDirectory = ({ home }: ClientPathContext): string =>
   join(home, ".config", "freebuff-desktop");
 
+type ClientDefinitionInput = Omit<ClientDefinitionBase, "registrationProfile"> &
+  ClientDefinitionLocation & {
+    readonly registrationConnection: ClientRegistrationConnectionProfile;
+  };
+
+/** Bind native identity once while retaining the original definition's literal name. */
+const defineClient = <const Definition extends ClientDefinitionInput>(
+  definition: Definition,
+) => {
+  const { registrationConnection, ...metadata } = definition;
+  return {
+    ...metadata,
+    registrationProfile: {
+      nativeClient: definition.name,
+      connection: registrationConnection,
+    },
+  };
+};
+
 /** Stable product metadata used to derive setup discovery and documentation. */
 export const SUPPORTED_CLIENT_DEFINITIONS = [
-  {
+  defineClient({
     name: "claude_code",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Claude Code",
     skillPath: (context: ClientPathContext) =>
       join(claudeCodeMarkerDirectory(context), "skills"),
@@ -565,153 +598,302 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(claudeCodeConfigDirectory(context), ".claude.json"),
     markerPath: claudeCodeMarkerDirectory,
     format: "claude_code",
-  },
-  {
+  }),
+  defineClient({
     name: "claude_desktop",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type"],
+      stdio: [{ kind: "optional-enum", field: "type", values: ["stdio"] }],
+    },
     displayName: "Claude Desktop",
     location: claudeDesktopLocation,
     quitBeforeSetup: true,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "codex",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "non-nullish", field: "url" }],
+    },
     displayName: "Codex",
     configPath: (context: ClientPathContext) =>
       appendCallerPath(codexDirectory(context), "config.toml"),
     markerPath: codexDirectory,
     format: "toml",
-  },
-  {
+  }),
+  defineClient({
     name: "cursor",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Cursor",
     configPath: [".cursor", "mcp.json"],
     markerPath: [".cursor"],
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "codebuddy",
+    registrationConnection: {
+      kind: "stdio-only",
+      documentedFields: ["env", "type"],
+    },
     displayName: "CodeBuddy",
     skillPath: [".codebuddy", "skills"],
     configPath: [".codebuddy", "mcp.json"],
     markerPath: [".codebuddy"],
     format: "json",
-  },
-  {
+  }),
+  defineClient({
+    // Cline discovers the shared ~/.agents/skills directory. Keep REA's
+    // existing shared destination instead of managing another skill copy.
+    name: "cline",
+    registrationConnection: { kind: "cline" },
+    displayName: "Cline CLI",
+    location: ({ home, env, platform }: ClientPathContext) => {
+      const selected = resolveClineCliSettingsPath({
+        home,
+        platform,
+        environment: env,
+      });
+      const pathApi = platform === "win32" ? win32 : posix;
+      return selected.ok
+        ? ok({
+            configPath: selected.value,
+            markerPath: pathApi.dirname(selected.value),
+          })
+        : err({ path: "", message: selected.error.message });
+    },
+    format: "json",
+  }),
+  defineClient({
     name: "gemini_cli",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url", "httpUrl"],
+      stdio: [
+        { kind: "truthy", field: "httpUrl" },
+        { kind: "truthy", field: "url" },
+      ],
+    },
     displayName: "Gemini CLI",
     geminiSettings,
     configPath: ({ home, env }: ClientPathContext) =>
       join(env.GEMINI_CLI_HOME || home, ".gemini", "settings.json"),
     markerPath: ({ home, env }: ClientPathContext) =>
       join(env.GEMINI_CLI_HOME || home, ".gemini"),
+    // Antigravity keeps its configuration under the same .gemini directory,
+    // so the directory alone does not show Gemini CLI. Its own settings,
+    // trusted-folder records and session state do.
+    discoveryPaths: (context: ClientPathContext) => {
+      const root = join(context.env.GEMINI_CLI_HOME || context.home, ".gemini");
+      return [
+        join(root, "settings.json"),
+        geminiSettings(context).trustedFoldersPath,
+        join(root, "tmp"),
+      ];
+    },
     skillPath: ({ home, env }: ClientPathContext) =>
       join(env.GEMINI_CLI_HOME || home, ".agents", "skills"),
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "windsurf",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["serverUrl", "url"],
+      stdio: [
+        { kind: "present", field: "serverUrl" },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Windsurf",
     configPath: [".codeium", "windsurf", "mcp_config.json"],
     markerPath: [".codeium", "windsurf"],
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "devin",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url", "transport"],
+      stdio: [
+        { kind: "optional-enum", field: "transport", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Devin",
     configPath: ({ home, platform, env }: ClientPathContext) =>
       join(devinDirectory({ home, platform, env }), "mcp_config.json"),
     markerPath: devinDirectory,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "opencode",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "required-enum", field: "type", values: ["local"] }],
+    },
     displayName: "OpenCode",
     configPath: existingOpenCodeConfigPath,
     configPaths: openCodeConfigurationPaths,
     markerPath: opencodeDirectory,
     format: "opencode",
-  },
-  {
+  }),
+  defineClient({
     name: "antigravity",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["serverUrl", "url"],
+      stdio: [
+        { kind: "present", field: "serverUrl" },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Antigravity",
     skillPath: [".gemini", "config", "skills"],
     configPath: [".gemini", "config", "mcp_config.json"],
     markerPath: [".gemini", "config"],
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "copilot_cli",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio", "local"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "GitHub Copilot CLI",
     configPath: (context: ClientPathContext) =>
       join(copilotDirectory(context), "mcp-config.json"),
     markerPath: copilotDirectory,
     format: "copilot_cli",
-  },
-  {
+  }),
+  defineClient({
     name: "commandcode",
+    registrationConnection: { kind: "commandcode" },
     displayName: "Command Code",
     configPath: (context: ClientPathContext) =>
       join(commandCodeDirectory(context), "mcp.json"),
     markerPath: commandCodeDirectory,
     format: "commandcode",
-  },
-  {
+  }),
+  defineClient({
     name: "qwen_code",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "httpUrl", "url"],
+      stdio: [
+        { kind: "truthy", field: "httpUrl" },
+        { kind: "truthy", field: "url" },
+        { kind: "equals", field: "type", value: "sdk" },
+      ],
+    },
     displayName: "Qwen Code",
     configPath: (context: ClientPathContext) =>
       join(qwenCodeDirectory(context), "settings.json"),
     markerPath: qwenCodeDirectory,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "kimi",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url", "transport"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "optional-enum", field: "transport", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Kimi Code",
     configPath: (context: ClientPathContext) =>
       join(kimiDirectory(context), "mcp.json"),
     markerPath: kimiDirectory,
     format: "kimi",
-  },
-  {
+  }),
+  defineClient({
     name: "vscode",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url", "transport"],
+      stdio: [
+        { kind: "required-enum", field: "type", values: ["stdio"] },
+        { kind: "optional-enum", field: "transport", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "VS Code",
     configPath: (context: ClientPathContext) =>
       join(vscodeUserDirectory(context), "mcp.json"),
     markerPath: vscodeUserDirectory,
     format: "vscode",
-  },
-  {
+  }),
+  defineClient({
     name: "trae",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
     displayName: "Trae",
     skillPath: [".trae", "skills"],
     configPath: (context: ClientPathContext) =>
       join(traeUserDirectory(context), "mcp.json"),
     markerPath: traeUserDirectory,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "workbuddy",
+    registrationConnection: { kind: "stdio-only", documentedFields: ["env"] },
     displayName: "WorkBuddy",
     skillPath: [".workbuddy", "skills"],
     configPath: [".workbuddy", "mcp.json"],
     markerPath: [".workbuddy"],
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "lm_studio",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
     displayName: "LM Studio",
     location: lmStudioLocation,
     format: "lm_studio",
-  },
-  {
+  }),
+  defineClient({
     name: "grok_build",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "non-nullish", field: "url" }],
+    },
     displayName: "Grok Build",
     configPath: (context: ClientPathContext) =>
       join(grokDirectory(context), "config.toml"),
     markerPath: grokDirectory,
     format: "grok",
-  },
-  {
+  }),
+  defineClient({
     name: "omp",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "optional-enum", field: "type", values: ["stdio"] }],
+    },
     displayName: "OMP",
     configPath: (context: ClientPathContext) => {
       const directory = ompAgentDirectory(context);
@@ -719,9 +901,23 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     },
     markerPath: ompAgentDirectory,
     format: "omp",
-  },
-  {
+  }),
+  defineClient({
     name: "pi",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        {
+          kind: "all",
+          conditions: [
+            { kind: "missing", field: "type" },
+            { kind: "string", field: "url" },
+          ],
+        },
+      ],
+    },
     displayName: "Pi",
     configPath: (context: ClientPathContext) =>
       (context.platform === "win32" ? win32 : { join }).join(
@@ -730,9 +926,17 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       ),
     markerPath: piAgentDirectory,
     format: "pi",
-  },
-  {
+  }),
+  defineClient({
     name: "hermes",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url", "transport"],
+      stdio: [
+        { kind: "optional-enum", field: "transport", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Hermes",
     skillPath: (context: ClientPathContext) =>
       appendCallerPath(hermesDirectory(context), "skills"),
@@ -740,9 +944,19 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       appendCallerPath(hermesDirectory(context), "config.yaml"),
     markerPath: hermesDirectory,
     format: "hermes",
-  },
-  {
+  }),
+  defineClient({
     name: "qoder",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url", "qoder_url", "tcp"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+        { kind: "present", field: "qoder_url" },
+        { kind: "present", field: "tcp" },
+      ],
+    },
     displayName: "Qoder",
     skillPath: (context: ClientPathContext) =>
       join(qoderDirectory(context), "skills"),
@@ -750,9 +964,17 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(qoderDirectory(context), "settings.json"),
     markerPath: qoderDirectory,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "droid",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "Factory Droid",
     skillPath: (context: ClientPathContext) =>
       join(factoryDirectory(context), "skills"),
@@ -760,9 +982,17 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(factoryDirectory(context), "mcp.json"),
     markerPath: factoryDirectory,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "zcode",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     zcodeFallbackPath: ({ home }: ClientPathContext) =>
       join(home, ".agents", "mcp.json"),
     displayName: "ZCode",
@@ -773,9 +1003,14 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(home, ".zcode", "cli"),
     ],
     format: "zcode",
-  },
-  {
+  }),
+  defineClient({
     name: "dsh",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "required-enum", field: "transport", values: ["stdio"] }],
+    },
     displayName: "DeepSeek Harness",
     // The home Cordis patch applies to every profile; the skill directory is
     // shared agent storage Harness discovers.
@@ -784,9 +1019,17 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     configPath: dshPatchDirectory,
     markerPath: dshHomeDirectory,
     format: "dsh",
-  },
-  {
+  }),
+  defineClient({
     name: "freebuff",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
     displayName: "FreeBuff",
     // FreeBuff discovers personal skills in the shared user agents directory.
     skillPath: ({ home }: ClientPathContext) => join(home, ".agents", "skills"),
@@ -801,15 +1044,35 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     // proves neither product is installed; see clientOwnershipEvidencePaths.
     sharedRegistration: true,
     format: "json",
-  },
-  {
+  }),
+  defineClient({
     name: "grok_bot",
+    registrationConnection: {
+      kind: "unavailable",
+      reason:
+        "Grok Bot has no supported configuration writer. Configure its MCP connection manually.",
+    },
     displayName: "Grok Bot",
     configPath: grokBotDirectory,
     markerPath: grokBotDirectory,
     format: "unsupported",
-  },
+  }),
 ] as const satisfies readonly ClientDefinition[];
+
+export type SupportedClientName =
+  (typeof SUPPORTED_CLIENT_DEFINITIONS)[number]["name"];
+
+/** Setup and registration consume the same already-bound native profile object. */
+export const supportedClientRegistrationProfile = (
+  name: SupportedClientName,
+): ClientRegistrationProfile => {
+  const definition = SUPPORTED_CLIENT_DEFINITIONS.find(
+    (candidate) => candidate.name === name,
+  );
+  if (definition === undefined)
+    throw new Error(`No supported client definition for ${name}`);
+  return definition.registrationProfile;
+};
 
 /**
  * Paths whose presence means the product itself is applicable, so doctor and
@@ -909,6 +1172,7 @@ export const supportedClients = (
       if (!location.ok)
         return {
           name: definition.name,
+          registrationProfile: definition.registrationProfile,
           displayName: definition.displayName,
           format: definition.format,
           configPath: location.error.path,
@@ -920,6 +1184,7 @@ export const supportedClients = (
       const { configPath, markerPath, msixPackage } = location.value;
       return {
         name: definition.name,
+        registrationProfile: definition.registrationProfile,
         displayName: definition.displayName,
         configPath,
         ...(definition.geminiSettings === undefined
@@ -952,6 +1217,7 @@ export const supportedClients = (
       if (cause instanceof HermesClientPathError)
         return {
           name: definition.name,
+          registrationProfile: definition.registrationProfile,
           displayName: definition.displayName,
           format: definition.format,
           configPath: cause.path,
@@ -960,6 +1226,7 @@ export const supportedClients = (
       if (definition.name !== "pi") throw cause;
       return {
         name: definition.name,
+        registrationProfile: definition.registrationProfile,
         displayName: definition.displayName,
         format: definition.format,
         configPath: env.PI_CODING_AGENT_DIR ?? "",

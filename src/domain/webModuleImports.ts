@@ -1,11 +1,12 @@
-import { isStringLiteral, isTemplateLiteral } from "@babel/types";
 import type { Node } from "@babel/types";
+import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "./javascript/javascriptSourceParser.js";
 import type { WebModuleImport } from "./webModuleTrace.js";
 import type { ExportedWebScript } from "./webScriptExport.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
+  TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION,
   semanticStaticModuleSource,
 } from "./javascript/javascriptModuleDeclaration.js";
 
@@ -36,11 +37,9 @@ export const collectWebModuleImports = (
       expression.loc === undefined
     )
       return;
-    const specifier = isStringLiteral(expression)
-      ? expression.value
-      : isTemplateLiteral(expression) && expression.expressions.length === 0
-        ? (expression.quasis[0]?.value.cooked ?? null)
-        : null;
+    const literal = readExactJavaScriptLiteral(expression);
+    const specifier =
+      literal.found && typeof literal.value === "string" ? literal.value : null;
     imports.push({
       kind,
       specifier,
@@ -76,9 +75,7 @@ export const collectWebModuleImports = (
     diagnostics: [
       ...(ast.errors?.map((error) => error.message) ?? []),
       ...(hasUncertainTypeOnlyModuleSideEffect(ast.program)
-        ? [
-            "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
-          ]
+        ? [TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION]
         : []),
     ],
   };

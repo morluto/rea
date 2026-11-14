@@ -47,6 +47,7 @@ import {
 } from "./ModelFormat.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
   isSelectedRegularFileError,
   sameRegularFileState,
@@ -178,7 +179,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           { cause: primary },
         );
       else if (isSelectedRegularFileError(primary))
-        error = new BinaryTargetError(input.path, primary.message, { cause });
+        error = selectedFileTargetError(input.path, primary, cause);
       else
         error = new ProviderAdapterError(this.identity.id, OPERATION, {
           cause,
@@ -213,6 +214,8 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         error.partialObservation === undefined &&
         partialProgress !== undefined &&
         (partialProgress.coverage.header === "complete" ||
+          partialProgress.declared_metadata_count !== null ||
+          partialProgress.declared_tensor_count !== null ||
           partialProgress.metadata.length > 0 ||
           partialProgress.tensor_declarations.length > 0 ||
           partialProgress.tensors.length > 0)
@@ -237,8 +240,8 @@ export class ModelArtifactProvider implements ModelArtifactPort {
   async #read(
     file: FileHandle,
     input: ModelArtifactInput,
-    signal?: AbortSignal,
-    retainProgress?: (progress: ModelArtifactPartial) => void,
+    signal: AbortSignal | undefined,
+    retainProgress: (progress: ModelArtifactPartial) => void,
   ): Promise<ModelArtifact> {
     const initial = await file.stat({ bigint: true });
     if (initial.size > BigInt(Number.MAX_SAFE_INTEGER))
@@ -279,7 +282,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         "No model behavior or tensor payload values were interpreted.",
       ],
     };
-    retainProgress?.(partial);
+    retainProgress(partial);
     const parsed =
       format === "gguf"
         ? await new GgufHeader(reader).read({

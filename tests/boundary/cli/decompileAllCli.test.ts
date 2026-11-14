@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 
+import { decompileDirectoryIndexSchema } from "../../../src/contracts/decompileDirectory.js";
 import { elf } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -97,6 +98,50 @@ describe("decompile-all CLI", () => {
           counts: { selected: 2, written: 1, skipped: 1, remaining: 0 },
         },
       });
+      // Kuna lacks procedure_info, so every retained record keeps an
+      // unavailable body. A resume that writes nothing still summarizes them.
+      const bodyCaveat = expect.stringMatching(
+        /^2 exported function record.*procedure_info is unavailable/u,
+      );
+      expect(resumed.json).toMatchObject({
+        normalized_result: { limitations: [bodyCaveat] },
+      });
+      const noop = await cli.run({
+        arguments: [
+          "decompile-all",
+          target,
+          "--provider",
+          "kuna",
+          "--output",
+          "out",
+          "--resume",
+          "--address-start",
+          "0X1000",
+          "--address-end",
+          "0X1040",
+          "--format",
+          "json",
+        ],
+        cwd: root,
+        environment,
+      });
+      expect(noop.exitCode, JSON.stringify(noop.json)).toBe(0);
+      expect(noop.json).toMatchObject({
+        normalized_result: {
+          counts: { selected: 2, requested: 0, skipped: 2 },
+          limitations: [bodyCaveat],
+        },
+      });
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(join(root, "out", "decompile-index.json"), "utf8"),
+        ),
+      );
+      expect(index.limitations).toEqual([bodyCaveat]);
+      expect(index.functions.map((record) => record.body.available)).toEqual([
+        false,
+        false,
+      ]);
     },
   );
 });

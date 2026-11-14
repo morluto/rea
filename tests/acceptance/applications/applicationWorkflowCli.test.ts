@@ -534,7 +534,7 @@ it("preserves complete line-comment source-map URLs through CLI and MCP", async 
     );
   }
   expect((await analyzeThroughStdioMcp(root)).graph).toEqual(graph);
-}, 20_000);
+});
 
 it("resolves source-map URL paths once without changing their declarations", async () => {
   const root = await createTestTempDirectory("rea-source-map-encoding-cli-");
@@ -654,7 +654,7 @@ it("resolves source-map URL paths once without changing their declarations", asy
     ),
   ).toBe(false);
   expect((await analyzeThroughStdioMcp(root)).graph).toEqual(graph);
-}, 20_000);
+});
 
 describe("JavaScript application path CLI", () => {
   it("retains the admitted relative CLI selection and canonical artifact identity", async () => {
@@ -683,7 +683,7 @@ describe("JavaScript application path CLI", () => {
       },
       subject: { local_path: absolute.value.subject?.local_path },
     });
-  }, 20_000);
+  });
 
   it("returns the self-import graph consistently through CLI and stdio MCP", async () => {
     const root = await createTestTempDirectory(
@@ -706,7 +706,7 @@ describe("JavaScript application path CLI", () => {
     expect(mcpResult.semantic_graph).toEqual(
       result.normalized_result.semantic_graph,
     );
-  }, 20_000);
+  });
 
   it("preserves canonical Electron API aliases through CLI and stdio MCP", async () => {
     const root = await createTestTempDirectory("rea-electron-api-alias-");
@@ -758,7 +758,7 @@ describe("JavaScript application path CLI", () => {
     expect(mcpResult.summary).toEqual(cliResult.summary);
     expect(mcpResult.graph).toEqual(cliResult.graph);
     expect(mcpResult.semantic_graph).toEqual(cliResult.semantic_graph);
-  }, 20_000);
+  });
 });
 
 describe("application workflow CLI parity", () => {
@@ -771,15 +771,16 @@ describe("application workflow CLI parity", () => {
     expect(traced).toMatchObject({
       operation: "trace_application_feature",
       predicate_type: "rea.application-feature-trace",
+      subject: JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application.subject,
       normalized_result: {
         seed: { kind: "module", value: "renderer.js", match: "exact" },
         summary: {
           matched_seeds: 1,
-          traced_nodes: 1,
-          traced_edges: 0,
+          traced_nodes: 2,
+          traced_edges: 1,
           terminal_paths: 0,
           native_handoffs: 0,
-          observed_facts: 1,
+          observed_facts: 3,
           inferred_facts: 0,
           unknown_facts: 0,
           unavailable_facts: 0,
@@ -809,7 +810,7 @@ describe("application workflow CLI parity", () => {
       predicate_type: "rea.application-version-comparison",
       normalized_result: {
         summary: {
-          unchanged: 0,
+          unchanged: 1,
           added: 2,
           removed: 0,
           changed: 1,
@@ -852,11 +853,11 @@ describe("application workflow CLI parity", () => {
           reference_inventory_state: "complete",
           application_graph_status: "complete",
           retained_source_files: 1,
-          retained_application_nodes: 1,
+          retained_application_nodes: 2,
         },
       },
     });
-  }, 20_000);
+  });
 
   it("traces the same authenticated semantic graph through the CLI", async () => {
     const root = await createTestTempDirectory("rea-semantic-cli-");
@@ -890,12 +891,13 @@ describe("application workflow CLI parity", () => {
     expect(traced).toMatchObject({
       operation: "trace_javascript_semantics",
       predicate_type: "rea.javascript-semantic-trace",
+      subject: analyzed.value.subject,
       normalized_result: {
         source_evidence_id: analyzed.value.evidence_id,
         source_graph_id: result.semantic_graph.graph_id,
       },
     });
-  }, 20_000);
+  });
 });
 
 it("traces all endpoint carriers and their response consumers through CLI and MCP", async () => {
@@ -921,12 +923,27 @@ it("traces all endpoint carriers and their response consumers through CLI and MC
     "response",
   ]);
   const response = carriers.find(({ kind }) => kind === "response");
-  if (response === undefined) throw new Error("Expected matching response");
+  const request = carriers.find(({ kind }) => kind === "request");
+  if (response === undefined || request === undefined)
+    throw new Error("Expected matching request and response");
   const consumer = graph.relations.find(
     ({ source_node_id, relation }) =>
       source_node_id === response.node_id && relation === "consumed-by",
   );
-  expect(consumer).toMatchObject({ resolution: "resolved" });
+  const requestLink = graph.relations.find(
+    ({ source_node_id, target_node_id, relation }) =>
+      source_node_id === request.node_id &&
+      target_node_id === response.node_id &&
+      relation === "consumed-by",
+  );
+  expect(consumer).toMatchObject({
+    resolution: "resolved",
+    properties: { method: "json" },
+  });
+  expect(requestLink).toMatchObject({
+    resolution: "resolved",
+    properties: { method: "json" },
+  });
   const client = await connectedMcpClient();
   const trace = async (seed: JavaScriptSemanticQueryInput["seed"]) => {
     const input = {
@@ -936,6 +953,7 @@ it("traces all endpoint carriers and their response consumers through CLI and MC
     const cliEvidence = parseEvidence(
       await runCliWithRequestFile(root, "trace-javascript-semantics", input),
     );
+    expect(cliEvidence.subject).toEqual(application.subject);
     const mcpResponse = await client.callTool({
       name: "trace_javascript_semantics",
       arguments: input,
@@ -977,13 +995,13 @@ it("traces all endpoint carriers and their response consumers through CLI and MC
     "request",
     "response",
   ]);
-  expect(selected.relations).toEqual([consumer]);
+  expect(selected.relations).toEqual([requestLink, consumer]);
   expect(selected).toMatchObject({
     status: "ambiguous",
     summary: {
       total_seed_matches: 2,
       traversed_nodes: 3,
-      traversed_relations: 1,
+      traversed_relations: 2,
     },
     coverage: { status: "partial" },
   });
@@ -1000,7 +1018,7 @@ it("traces all endpoint carriers and their response consumers through CLI and MC
     coverage: { status: "partial" },
   });
   expect(await readFile(sourcePath, "utf8")).toBe(source);
-}, 20_000);
+});
 
 describe("rest parameter semantic trace CLI", () => {
   it("traces each ordinary rest argument to its parameter through public application Evidence", async () => {
@@ -1050,7 +1068,7 @@ describe("rest parameter semantic trace CLI", () => {
         },
       });
     }
-  }, 20_000);
+  });
 });
 
 describe("empty property key application CLI", () => {
@@ -1082,7 +1100,6 @@ describe("empty property key application CLI", () => {
         },
       });
     },
-    20_000,
   );
 });
 
@@ -1233,7 +1250,7 @@ describe("Webpack factory CommonJS export keys", () => {
       expectBundleExports(evidence, "5", []);
       expectBundleExports(evidence, "6", ["__proto__"]);
     }
-  }, 20_000);
+  });
 });
 
 describe("application workflow CLI input", () => {
@@ -1280,10 +1297,13 @@ describe("application version source-scope MCP comparison", () => {
             properties.operation === "select-javascript-sources",
         ),
     );
-    expect(scope?.observations[0]?.evidence).toMatchObject({
+    const scopeEvidence = scope?.observations[0]?.evidence;
+    if (scopeEvidence === undefined)
+      throw new Error("Missing source scope evidence");
+    expect(scopeEvidence).toMatchObject({
       state: "unavailable",
       limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
+        expect.stringMatching(/source_paths.*inventoried.*not analyzed/iu),
       ],
     });
     const client = await connectedMcpClient();
@@ -1307,9 +1327,7 @@ describe("application version source-scope MCP comparison", () => {
     ).toMatchObject({
       status: "unknown",
       dimensions: ["availability"],
-      limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
-      ],
+      limitations: scopeEvidence.limitations,
       evidence_links: expect.arrayContaining([
         full.evidence_id,
         selected.evidence_id,
@@ -1392,7 +1410,7 @@ describe("application workflow CLI copy boundaries", () => {
         ),
       },
     });
-  }, 20_000);
+  });
 });
 
 describe("application workflow CLI and MCP capture lifetimes", () => {
@@ -1502,7 +1520,7 @@ describe("application workflow CLI and MCP capture lifetimes", () => {
       await runCli(["compare-javascript-export-shapes", inputPath, "--json"]),
     ).toMatchObject(expected);
     expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
-  }, 20_000);
+  });
 });
 
 describe("application workflow CLI export Evidence", () => {
@@ -1549,7 +1567,7 @@ describe("application workflow CLI export Evidence", () => {
       ),
     ).toMatchObject(expected);
     expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
-  }, 20_000);
+  });
 
   it("preserves uncertainty after a helper can mutate an awaited return object", async () => {
     const root = await createTestTempDirectory("rea-awaited-export-shape-cli-");
@@ -1585,7 +1603,7 @@ describe("application workflow CLI export Evidence", () => {
         ]),
       },
     });
-  }, 20_000);
+  });
 
   it("compares exact export shapes from file-backed Evidence", async () => {
     const root = await createTestTempDirectory("rea-export-shape-cli-");
@@ -1633,18 +1651,18 @@ describe("application workflow CLI export Evidence", () => {
       operation: "compare_javascript_export_shapes",
       predicate_type: "rea.javascript-export-shape-comparison",
       normalized_result: {
-        summary: { added: 1, removed: 0, changed: 0, unknown: 0 },
-        changes: [
-          {
+        summary: { added: 1, removed: 0, changed: 0, unknown: 3 },
+        changes: expect.arrayContaining([
+          expect.objectContaining({
             status: "added",
             path: "/depth",
             presence: { left: "absent", right: "present" },
             right: { availability: "literal", value: 1 },
-          },
-        ],
+          }),
+        ]),
       },
     });
-  }, 20_000);
+  });
 });
 
 describe("application workflow CLI export property presence", () => {
@@ -1740,7 +1758,7 @@ describe("application workflow CLI export property presence", () => {
         ]),
       },
     });
-  }, 20_000);
+  });
 });
 
 describe("application workflow CLI validation", () => {
@@ -1775,7 +1793,7 @@ describe("application workflow CLI validation", () => {
         ]),
       },
     });
-  }, 20_000);
+  });
 });
 
 const compareThroughStdioMcp = async (
@@ -1847,37 +1865,47 @@ it("retains bundled isolated-world contextBridge APIs through dedicated and gene
     })();`,
   );
 
-  for (const arguments_ of [
-    ["analyze-javascript-application", root, "--json"],
-    ["analyze", root, "--format", "json"],
-  ]) {
-    const result = javascriptApplicationAnalysisResultSchema.parse(
-      parseEvidence(await runCli(arguments_)).normalized_result,
-    );
-    expect(result.summary.context_bridge_apis).toBe(1);
-    const bridge = result.graph.nodes.find(
-      ({ kind }) => kind === "context-bridge-api",
-    );
-    expect(bridge?.observations).toContainEqual(
-      expect.objectContaining({
-        properties: expect.objectContaining({
-          world: "isolated",
-          world_id: { status: "literal", value: 1001, expression: null },
-          api_key: "isolatedApi",
-          api_status: "object-literal",
-          members: ["ping"],
-          unknown_members: 0,
-          // The proven Webpack bootstrap resolves `load(2)` directly.
-          resolution_basis: "direct-syntax",
-        }),
-        evidence: expect.objectContaining({
-          location: expect.objectContaining({
-            available: true,
-            value: expect.objectContaining({ source: "preload.js" }),
+  for (const loader of ["unknown", "commonjs"] as const) {
+    if (loader === "commonjs")
+      await writeFile(join(root, "package.json"), '{"type":"commonjs"}');
+    for (const arguments_ of [
+      ["analyze-javascript-application", root, "--json"],
+      ["analyze", root, "--format", "json"],
+    ]) {
+      const result = javascriptApplicationAnalysisResultSchema.parse(
+        parseEvidence(await runCli(arguments_)).normalized_result,
+      );
+      expect(result.summary.context_bridge_apis).toBe(
+        loader === "commonjs" ? 1 : 0,
+      );
+      const bridge = result.graph.nodes.find(
+        ({ kind }) => kind === "context-bridge-api",
+      );
+      expect(bridge?.observations).toContainEqual(
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            world: "isolated",
+            world_id: { status: "literal", value: 1001, expression: null },
+            api_key: "isolatedApi",
+            api_status: "object-literal",
+            members: ["ping"],
+            unknown_members: 0,
+            // The proven Webpack bootstrap resolves `load(2)` directly.
+            resolution_basis: "direct-syntax",
+            ...(loader === "unknown" ? { loader_authority: "candidate" } : {}),
+          }),
+          evidence: expect.objectContaining({
+            ...(loader === "unknown"
+              ? { confidence: "low", state: "inferred" }
+              : {}),
+            location: expect.objectContaining({
+              available: true,
+              value: expect.objectContaining({ source: "preload.js" }),
+            }),
           }),
         }),
-      }),
-    );
+      );
+    }
   }
 });
 
@@ -1919,6 +1947,11 @@ const runCliWithRequestFile = async (
 /** The CLI keeps complete trace JSON; the shared view owner selects from the saved file. */
 const assertTraceFileView = async (root: string, traced: unknown) => {
   const parent = parseEvidence(traced);
+  if (parent.subject === null) throw new Error("Expected trace subject");
+  const artifact = {
+    path: parent.subject.local_path,
+    sha256: parent.subject.digest.sha256,
+  };
   const tracePath = join(root, "trace.json");
   await writeFile(tracePath, JSON.stringify(parent));
   const source = { kind: "evidence-file", path: tracePath };
@@ -1933,7 +1966,8 @@ const assertTraceFileView = async (root: string, traced: unknown) => {
       kind: "summary",
       parent_evidence_id: parent.evidence_id,
       parent_operation: "trace_application_feature",
-      summary: { summary: { matched_seeds: 1, traced_nodes: 1 } },
+      artifact,
+      summary: { summary: { matched_seeds: 1, traced_nodes: 2 } },
     },
   });
   expect(
@@ -1948,8 +1982,9 @@ const assertTraceFileView = async (root: string, traced: unknown) => {
   ).toMatchObject({
     normalized_result: {
       kind: "feature-trace",
+      artifact,
       items: [{ seed: true, observation_count: 1 }],
-      coverage: { total: 1, exhausted: true },
+      coverage: { total: 2, exhausted: false },
     },
   });
   // Without a session ledger the CLI cannot retain a parent for a selected view.

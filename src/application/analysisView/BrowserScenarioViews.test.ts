@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { z } from "zod";
+
+import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../../contracts/analysisViewToolContracts.js";
 
 import { describe, expect, it } from "vitest";
 
@@ -11,7 +15,7 @@ import { inspectAnalysisView } from "./AnalysisViewService.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
 import type { BrowserScenarioCapture } from "../../domain/browserScenarioCapture.js";
-import type { AnalysisViewRequest } from "../../domain/analysisView/analysisView.js";
+import type { AnalysisViewRequest } from "../../domain/analysisView/analysisViewRequest.js";
 import { projectBrowserScenarioView } from "../../domain/analysisView/browserScenarioView.js";
 
 const tree = (text: string) => ({
@@ -79,6 +83,57 @@ const view = async (
   return projected.value.normalized_result as Record<string, unknown>;
 };
 
+it("summarizes every three-digit status bucket within the advertised output contract", async () => {
+  const contract = ANALYSIS_VIEW_TOOL_CONTRACTS.find(
+    ({ name }) => name === "inspect_analysis_view",
+  );
+  if (contract === undefined)
+    throw new Error("Missing inspect_analysis_view contract");
+  const validateOutput = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+    inlineRefs: false,
+    code: { optimize: false },
+  }).compile(z.toJSONSchema(contract.outputSchema));
+  for (const [status, statusClass] of [
+    [100, "1xx"],
+    [200, "2xx"],
+    [300, "3xx"],
+    [400, "4xx"],
+    [599, "5xx"],
+    [600, "6xx"],
+    [700, "7xx"],
+    [800, "8xx"],
+    [999, "9xx"],
+  ] as const) {
+    const capture = scenarioCaptureFixture([
+      { method: "GET", url: "/status", status },
+    ]);
+    const original = JSON.stringify(capture);
+    const result = await inspectAnalysisView({
+      source: { kind: "inline", evidence: scenarioCaptureEvidence(capture) },
+      view: { kind: "summary" },
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.normalized_result).toMatchObject({
+      summary: {
+        network: {
+          by_status_class: [{ status_class: statusClass, transactions: 1 }],
+        },
+      },
+    });
+    expect(contract.outputSchema.safeParse(result.value).success).toBe(true);
+    expect(
+      validateOutput(result.value),
+      JSON.stringify(validateOutput.errors),
+    ).toBe(true);
+    expect(JSON.stringify(capture)).toBe(original);
+    expect(capture.events.items).toContainEqual(
+      expect.objectContaining({ kind: "response", status }),
+    );
+  }
+});
+
 describe("browser scenario analysis views", () => {
   it("counts inherited Evidence limitations alongside capture-local caveats", async () => {
     const capture = scenarioCaptureFixture();
@@ -86,8 +141,8 @@ describe("browser scenario analysis views", () => {
     const summary = await view(capture, { kind: "summary" });
     expect(summary).toMatchObject({
       limitations: [
-        "Artifact identity is unavailable for this observation.",
-        "Browser host platform and architecture were not observed.",
+        expect.stringMatching(/artifact identity.*unavailable/iu),
+        expect.stringMatching(/platform.*architecture.*not observed/iu),
       ],
       summary: { limitation_count: 2 },
     });
@@ -262,8 +317,10 @@ describe("browser scenario analysis view pages", () => {
       },
     };
     const summary = await view(dropped, { kind: "summary" });
-    expect(summary.unknowns).toContain(
-      "3 events were dropped by capture budgets; counts and pages cover retained events only.",
+    expect(summary.unknowns).toContainEqual(
+      expect.stringMatching(
+        /3 events.*dropped.*counts and pages.*retained events only/iu,
+      ),
     );
     expect(summary).toMatchObject({
       summary: {
@@ -549,7 +606,70 @@ describe("browser scenario text and selection boundaries", () => {
         reason: "capture budget",
         text: null,
       },
-      coverage: { status: "empty", exhausted: true },
+      coverage: { status: "unavailable", total: null, exhausted: false },
     });
+  });
+});
+
+it("keeps scenario text pages on Unicode boundaries and distinguishes unavailable from captured empty text", async () => {
+  const capture = quizCapture("completed");
+  capture.steps[1]!.artifacts.accessibility = tree("A💡B");
+  const original = JSON.stringify(capture);
+  const request = {
+    kind: "browser-scenario" as const,
+    collection: "text" as const,
+    step_index: 1,
+    artifact: "accessibility" as const,
+    offset: 0,
+    limit: 2,
+  };
+  const first = await view(capture, request);
+  expect(first).toMatchObject({
+    items: { text: "A", sha256: tree("A💡B").value.sha256 },
+    coverage: { examined: 1, total: 4, next_offset: 1, exhausted: false },
+  });
+  expect(await view(capture, { ...request, offset: 1 })).toMatchObject({
+    items: { text: "💡" },
+    coverage: { examined: 2, total: 4, next_offset: 3 },
+  });
+  for (const selection of [
+    { offset: 2, limit: 2 },
+    { offset: 1, limit: 1 },
+  ]) {
+    const result = await inspectAnalysisView({
+      source: { kind: "inline", evidence: scenarioCaptureEvidence(capture) },
+      view: { ...request, ...selection },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+  }
+  expect(JSON.stringify(capture)).toBe(original);
+  for (const artifact of [
+    { state: "not_requested" as const },
+    { state: "missing" as const, reason: "page closed" },
+    {
+      state: "truncated" as const,
+      observed: 100,
+      retained: 40,
+      reason: "capture budget",
+    },
+  ]) {
+    capture.steps[1]!.artifacts.accessibility = artifact;
+    expect(await view(capture, request)).toMatchObject({
+      items: { state: artifact.state, text: null },
+      coverage: {
+        status: "unavailable",
+        total: null,
+        exhausted: false,
+        next_offset: null,
+      },
+    });
+  }
+  capture.steps[1]!.artifacts.accessibility = tree("");
+  expect(await view(capture, request)).toMatchObject({
+    items: { state: "captured", text: "" },
+    coverage: { status: "empty", total: 0, exhausted: true },
   });
 });

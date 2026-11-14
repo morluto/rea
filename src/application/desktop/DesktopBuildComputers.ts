@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import type { BuildSource } from "../../domain/desktop/appBuild.js";
+import {
+  extraPackagesOf,
+  type BuildSource,
+} from "../../domain/desktop/appBuild.js";
+import { counted } from "../../domain/desktop/appExportUnowned.js";
+import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
 import {
   driverCall,
   type ComputerAction,
@@ -21,7 +26,9 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   AgentEnvComputer,
+  AppDataRefusal,
   ComputerStartFailure,
+  computerFailedOnReadiness,
   type DriverResult,
 } from "../../desktop/AgentEnvComputer.js";
 import {
@@ -29,22 +36,53 @@ import {
   ComputerHelper,
   type ComputerRelease,
 } from "../../desktop/AgentEnvComputerHelper.js";
+import {
+  resolveBuildComputerEnvironment,
+  type BuildComputerDefaults,
+} from "../../desktop/BuildComputerEnvironment.js";
+import { buildSecretsDirectory } from "../../desktop/BuildSecretFiles.js";
 import type { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import type { ProgressReporter } from "../ProgressReporter.js";
 import {
   BuildComputerActionLog,
   type ReadonlyActionLog,
 } from "./DesktopBuildActionLog.js";
-import { writeRequestBundle } from "./DesktopBuildBundle.js";
+import { seededLockFiles, writeRequestBundle } from "./DesktopBuildBundle.js";
+import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
+import { DesktopBuildOwnedWork } from "./DesktopBuildOwnedWork.js";
+import {
+  measureInFreshComputers,
+  type MeasuredTask,
+  type MeasureRequest,
+} from "./DesktopBuildSolves.js";
+import {
+  DesktopBuildSecrets,
+  settingsEnvironment,
+  typeSecret,
+} from "./DesktopBuildSecrets.js";
+import type { BuildSettle } from "./DesktopBuildSettle.js";
+import { DesktopBuildTurns } from "./DesktopBuildTurns.js";
+import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
+import { ScreenJudgeProcess } from "../../desktop/ScreenJudgeProcess.js";
 
 const START = "start_build_computer";
 const ACT = "act_on_build_computer";
 const CLOSE = "close_build_computer";
+const MEASURE = "measure_build_task";
 
 /** A result with the driver's content blocks, delivered after REA's own. */
 export interface ForwardedResult<Value> {
   readonly value: Value;
   readonly content: DriverResult["content"];
 }
+
+/** What an action answers: its place in the log and the driver's structured result. */
+type Acted = ForwardedResult<{
+  readonly computer_id: string;
+  readonly action: ComputerAction;
+  readonly action_index: number;
+  readonly result: Readonly<Record<string, JsonValue>> | null;
+}>;
 
 /** What later stages read of a live build computer: its action log and recording hooks. */
 export interface BuildComputerSession {
@@ -62,13 +100,35 @@ interface HeldComputer {
   readonly release: (() => Promise<ComputerRelease>) | undefined;
   readonly workspace: PrivateRuntimeRoot | undefined;
   readonly actions: BuildComputerActionLog;
+  /** REA's capture of the app and the task's witness, on a live computer. */
+  readonly steps: BuildComputerSteps | undefined;
+  /** Every action, step and close on the computer takes its turn here. */
+  readonly turns: DesktopBuildTurns;
+  readonly cleanup: {
+    resources: readonly string[];
+    errors: Set<WeakRef<AnalysisError>>;
+  };
   closing: boolean;
 }
 
-/** A start still in progress, which shutdown cancels and joins. */
-interface PendingStart {
-  readonly settled: Promise<unknown>;
-  readonly stop: AbortController;
+/** Bind every returned teardown failure to the computer retained for retry. */
+const bindCleanupFailure = (held: HeldComputer, error: AnalysisError): void => {
+  error.bindCleanupResourceOwner({
+    get cleanupResources() {
+      return held.cleanup.resources;
+    },
+  });
+  for (const reference of held.cleanup.errors)
+    if (reference.deref() === undefined) held.cleanup.errors.delete(reference);
+  held.cleanup.errors.add(new WeakRef(error));
+};
+
+/** What the build step tools work on: a live computer, its capture, its witness and the turns they take. */
+export interface BuildComputerSteps {
+  readonly computer: AgentEnvComputer;
+  readonly capture: DesktopBuildCapture;
+  readonly witness: DesktopBuildWitness;
+  readonly turns: DesktopBuildTurns;
 }
 
 const unknownComputer = (operation: string) =>
@@ -90,6 +150,209 @@ const failure = (
     userMessage: cause instanceof Error ? cause.message : String(cause),
     cause,
   });
+};
+
+/** The text of a driver's answer, such as a refusal's message. */
+const driverMessage = (content: DriverResult["content"]): string =>
+  content
+    .flatMap((block) => (typeof block.text === "string" ? [block.text] : []))
+    .join(" ");
+
+/**
+ * What a reset did. `data/reset` completing is the observation that the seed
+ * was restored; readiness and a screenshot after it can still fail or be
+ * cancelled without erasing that observation.
+ */
+type ResetCall =
+  | { readonly kind: "unfinished"; readonly cause: unknown }
+  | { readonly kind: "interrupted"; readonly cause: unknown }
+  | { readonly kind: "done"; readonly result: DriverResult };
+
+/**
+ * Restore the app's data to its seed with `data/reset`, which relaunches the
+ * app, and wait until the computer reports ready again; a screenshot after,
+ * when asked.
+ */
+const reset = async (
+  computer: AgentEnvComputer,
+  fields: Readonly<Record<string, JsonValue>>,
+  signal: AbortSignal,
+): Promise<ResetCall> => {
+  const startedAt = Date.now();
+  try {
+    await computer.appData("data/reset", signal);
+  } catch (cause: unknown) {
+    return { kind: "unfinished", cause };
+  }
+  try {
+    await computer.waitUntilReady(signal);
+    const ready = { reset: true, ready_ms: Date.now() - startedAt };
+    if (fields.screenshot !== true)
+      return {
+        kind: "done",
+        result: { isError: false, content: [], structured: ready },
+      };
+    // The reset has happened: a screenshot that fails after it is reported beside it, and only an abort propagates.
+    const shot = await computer
+      .callTool("computer_screenshot", {}, signal)
+      .catch((cause: unknown) => {
+        if (signal.aborted) throw cause;
+        return cause instanceof Error ? cause.message : String(cause);
+      });
+    if (typeof shot === "string" || shot.isError)
+      return {
+        kind: "done",
+        result: {
+          isError: false,
+          content: [],
+          structured: {
+            ...ready,
+            screenshot_error:
+              typeof shot === "string" ? shot : driverMessage(shot.content),
+          },
+        },
+      };
+    return {
+      kind: "done",
+      result: {
+        isError: false,
+        content: shot.content,
+        structured: { ...ready, frame: shot.structured },
+      },
+    };
+  } catch (cause: unknown) {
+    return { kind: "interrupted", cause };
+  }
+};
+
+/** What every computer of one server shares: how checks settle and the secrets typed on them. */
+interface SharedSettings {
+  readonly settle: BuildSettle;
+  readonly secrets: DesktopBuildSecrets;
+}
+
+/** A live computer as REA holds it: its action log, its capture and witness, and the turns all its calls take. */
+const liveComputer = (
+  computer: AgentEnvComputer,
+  workspace: PrivateRuntimeRoot | undefined,
+  source: BuildSource,
+  { settle, secrets }: SharedSettings,
+  judge: ScreenJudgeProcess,
+): HeldComputer => {
+  const actions = new BuildComputerActionLog(secrets.redact);
+  const turns = new DesktopBuildTurns();
+  const capture = new DesktopBuildCapture(
+    computer,
+    source.kind === "request" ? source : undefined,
+    {
+      all: (signal) => secrets.all(signal),
+      keep: (handle, bytes) => secrets.keep(handle, bytes),
+      redact: secrets.redact,
+      get hasDeclaredSecret() {
+        return secrets.hasDeclaredSecret;
+      },
+    },
+  );
+  const witness = new DesktopBuildWitness(computer, actions, settle, {
+    bundle:
+      source.kind === "bundle"
+        ? { path: source.path, judge: judge.judge }
+        : undefined,
+    redact: secrets.redactJson,
+  });
+  let closedComputer: Extract<ComputerRelease, { verified: true }> | undefined;
+  const attempt = async (
+    release: () => Promise<ComputerRelease>,
+  ): Promise<ComputerRelease> => {
+    try {
+      return await release();
+    } catch (cause: unknown) {
+      return {
+        verified: false,
+        reason: cause instanceof Error ? cause.message : String(cause),
+        resources: [],
+      };
+    }
+  };
+  return {
+    computer,
+    release: async () => {
+      const [commands, readers, judgeResult] = await Promise.all([
+        attempt(() => capture.longRuns.release()),
+        attempt(() => witness.readers.release()),
+        attempt(() => judge.close()),
+      ]);
+      if (!commands.verified || !readers.verified) {
+        const failed = [commands, readers, judgeResult].filter(
+          (result) => !result.verified,
+        );
+        return {
+          verified: false,
+          reason: failed.map((result) => result.reason).join("; "),
+          resources: [...new Set(failed.flatMap((result) => result.resources))],
+        };
+      }
+      const computerResult =
+        closedComputer === undefined
+          ? await attempt(() => computer.close())
+          : closedComputer;
+      if (computerResult.verified) closedComputer = computerResult;
+      const failed = [judgeResult, computerResult].filter(
+        (result) => !result.verified,
+      );
+      if (failed.length === 0 && computerResult.verified) return computerResult;
+      return {
+        verified: false,
+        reason: failed.map((result) => result.reason).join("; "),
+        resources: [...new Set(failed.flatMap((result) => result.resources))],
+      };
+    },
+    workspace,
+    actions,
+    steps: {
+      computer,
+      capture,
+      witness,
+      turns,
+    },
+    turns,
+    cleanup: { resources: [], errors: new Set() },
+    closing: false,
+  };
+};
+
+/**
+ * A bundle's start that failed on readiness, naming the lock files its seed
+ * holds, which an app that finds its profile or document in use may never
+ * start past; any other failure as it is. Readiness is `reason`, not the
+ * message.
+ */
+/** The start failure's notice that the bundle seed still holds lock files. */
+const seededLockStartNotice = (locks: readonly string[]): string =>
+  `The bundle's seed holds lock files, which can keep the app from starting when it finds its profile or document in use: ${counted(locks)}. Delete them from the bundle, or export it again, which leaves them out, and start again.`;
+
+const withSeededLocks = async (
+  source: BuildSource,
+  cause: unknown,
+): Promise<unknown> => {
+  if (source.kind !== "bundle" || !computerFailedOnReadiness(cause))
+    return cause;
+  const { locks, unreadable } = await seededLockFiles(source.path);
+  const notices = [
+    ...(locks.length === 0 ? [] : [seededLockStartNotice(locks)]),
+    ...(unreadable.length === 0
+      ? []
+      : [
+          `REA could not check these seed folders for lock files: ${unreadable.map(({ path, reason }) => `${path}: ${reason}`).join("; ")}. Other lock files remain unknown.`,
+        ]),
+  ];
+  return notices.length === 0
+    ? cause
+    : new ComputerStartFailure(
+        `${cause.message} ${notices.join(" ")}`,
+        cause.remediation,
+        { cause, reason: cause.reason },
+      );
 };
 
 /**
@@ -142,10 +405,23 @@ const startFailure = (
  */
 export class DesktopBuildComputers {
   readonly #computers = new Map<string, HeldComputer>();
-  readonly #starts = new Set<PendingStart>();
-  #closed = false;
+  readonly #work = new DesktopBuildOwnedWork();
+  readonly #secrets: DesktopBuildSecrets;
+  readonly #shared: SharedSettings;
 
-  constructor(private readonly environment: Readonly<NodeJS.ProcessEnv>) {}
+  constructor(
+    private readonly environment: Readonly<NodeJS.ProcessEnv>,
+    settle: BuildSettle = SETTLE_TIMING,
+    private readonly defaults: BuildComputerDefaults = {},
+  ) {
+    this.#secrets = new DesktopBuildSecrets(buildSecretsDirectory(environment));
+    this.#shared = { settle, secrets: this.#secrets };
+  }
+
+  /** How results show the secrets typed on this server's computers. */
+  get redaction(): Pick<DesktopBuildSecrets, "redact" | "redactJson"> {
+    return this.#secrets;
+  }
 
   async start(
     input: {
@@ -153,39 +429,54 @@ export class DesktopBuildComputers {
       readonly screenshot?: ScreenshotOptions | undefined;
     },
     signal: AbortSignal,
+    progress?: ProgressReporter,
   ): Promise<
     Result<
       ForwardedResult<{
         readonly computer_id: string;
         readonly sandbox_id: string;
         readonly environment: string;
+        readonly extra_packages: string[];
         readonly screenshot: Readonly<Record<string, JsonValue>> | null;
       }>,
       AnalysisError
     >
   > {
-    if (this.#closed)
-      return err(
-        new AnalysisCancelledError(START, {
-          cause: new Error("REA is closing its build computers"),
-        }),
-      );
-    const stop = new AbortController();
-    const settled = this.#start(input, AbortSignal.any([signal, stop.signal]));
-    const pending = { settled, stop };
-    this.#starts.add(pending);
-    try {
-      return await settled;
-    } finally {
-      this.#starts.delete(pending);
-    }
+    return this.#work.run(START, signal, (stopping) =>
+      this.#start(input, stopping, progress),
+    );
+  }
+
+  /** Measure a bundle's task in fresh computers of its own; closing REA stops it, tearing the solve's computer down. */
+  measure(
+    input: MeasureRequest,
+    signal: AbortSignal,
+    progress?: ProgressReporter,
+  ): Promise<Result<MeasuredTask, AnalysisError>> {
+    return this.#work.run(MEASURE, signal, (stopping) =>
+      measureInFreshComputers(
+        input,
+        {
+          environment: this.environment,
+          defaults: this.defaults,
+          retainCleanup: (owner) => this.#work.retain(owner),
+          resources: this.#work.resources,
+        },
+        stopping,
+        progress,
+      ),
+    );
   }
 
   async #start(
     input: Parameters<DesktopBuildComputers["start"]>[0],
     signal: AbortSignal,
+    progress: ProgressReporter | undefined,
   ): ReturnType<DesktopBuildComputers["start"]> {
     const { source } = input;
+    const resolved = await this.#environment(source);
+    if (!resolved.ok) return resolved;
+    const environment = resolved.value;
     let target: {
       readonly bundle: string;
       readonly name: string;
@@ -195,7 +486,7 @@ export class DesktopBuildComputers {
       target =
         source.kind === "bundle"
           ? { bundle: source.path, name: source.path }
-          : await writeRequestBundle(source, this.environment);
+          : await writeRequestBundle(source, environment, this.#work.resources);
     } catch (cause: unknown) {
       return err(failure(START, cause, signal));
     }
@@ -205,31 +496,49 @@ export class DesktopBuildComputers {
     try {
       helper = await ComputerHelper.spawn({
         bundle: target.bundle,
-        environment: this.environment,
+        environment,
         signal,
         operation: START,
       });
-      computer = await AgentEnvComputer.connect(helper, signal);
+      const connected = await AgentEnvComputer.connect(
+        helper,
+        signal,
+        progress === undefined
+          ? undefined
+          : (message) => {
+              void progress
+                .report({ phase: START, completed: 0, total: null, message })
+                .catch(() => undefined);
+            },
+      );
+      computer = connected.computer;
       const shot = driverCall("screenshot", input.screenshot ?? {});
       if (!shot.ok) throw new TypeError("screenshot options are its own");
-      const taken = await computer.callTool(
-        shot.value.tool,
-        shot.value.arguments,
-        signal,
+      // The caller's region, format or quality apply to the drawn frame.
+      const taken =
+        Object.keys(shot.value.arguments).length === 0
+          ? connected.frame
+          : await computer.callTool(
+              shot.value.tool,
+              shot.value.arguments,
+              signal,
+            );
+      this.#computers.set(
+        id,
+        liveComputer(
+          computer,
+          target.workspace,
+          source,
+          this.#shared,
+          new ScreenJudgeProcess(environment),
+        ),
       );
-      const live = computer;
-      this.#computers.set(id, {
-        computer: live,
-        release: () => live.close(),
-        workspace: target.workspace,
-        actions: new BuildComputerActionLog(),
-        closing: false,
-      });
       return ok({
         value: {
           computer_id: id,
-          sandbox_id: live.sandboxId,
+          sandbox_id: computer.sandboxId,
           environment: target.name,
+          extra_packages: [...extraPackagesOf(source)],
           screenshot: taken.isError ? null : taken.structured,
         },
         content: taken.content,
@@ -246,11 +555,26 @@ export class DesktopBuildComputers {
               ? undefined
               : () => owner.release(),
         workspace: target.workspace,
-        actions: new BuildComputerActionLog(),
+        actions: new BuildComputerActionLog(this.#secrets.redact),
+        steps: undefined,
+        turns: new DesktopBuildTurns(),
+        cleanup: { resources: [], errors: new Set() },
         closing: true,
       });
       const release = await this.#retire(id);
-      return err(startFailure(cause, signal, owner?.output(), { id, release }));
+      const failed = signal.aborted
+        ? cause
+        : await withSeededLocks(source, cause);
+      const error = startFailure(failed, signal, owner?.output(), {
+        id,
+        release,
+      });
+      const retained = this.#computers.get(id);
+      if (!release.verified && retained !== undefined) {
+        retained.cleanup.resources = release.resources;
+        bindCleanupFailure(retained, error);
+      }
+      return err(error);
     }
   }
 
@@ -258,17 +582,7 @@ export class DesktopBuildComputers {
   async act(
     input: ComputerActionInput,
     signal: AbortSignal,
-  ): Promise<
-    Result<
-      ForwardedResult<{
-        readonly computer_id: string;
-        readonly action: ComputerAction;
-        readonly action_index: number;
-        readonly result: Readonly<Record<string, JsonValue>> | null;
-      }>,
-      AnalysisError
-    >
-  > {
+  ): Promise<Result<Acted, AnalysisError>> {
     const { computer_id: id, action, ...fields } = input;
     const held = this.#computers.get(id);
     const computer = held?.computer;
@@ -280,29 +594,71 @@ export class DesktopBuildComputers {
         new AnalysisInputError(
           ACT,
           {
-            userMessage: `${action} does not take ${call.error.field}; it takes ${call.error.accepted.join(", ")}.`,
+            userMessage:
+              call.error.missing === true
+                ? `${action} needs ${call.error.field}.`
+                : `${action} does not take ${call.error.field}; it takes ${call.error.accepted.join(", ")}.`,
           },
           [
             {
               path: [call.error.field],
-              reason: "unknown_argument",
+              reason:
+                call.error.missing === true
+                  ? "missing_argument"
+                  : "unknown_argument",
               expected: [...call.error.accepted],
             },
           ],
         ),
       );
-    const logged = held.actions.begin(
-      action,
-      call.value.tool,
-      call.value.arguments,
+    return held.turns.run(ACT, signal, (turn) =>
+      this.#forward(held, computer, { id, action, ...call.value }, turn),
     );
+  }
+
+  /** Log and send one action on its turn, so the log holds no action still pending while another call runs. */
+  async #forward(
+    held: HeldComputer,
+    computer: AgentEnvComputer,
+    call: {
+      readonly id: string;
+      readonly action: ComputerAction;
+      readonly tool: string;
+      readonly arguments: Readonly<Record<string, JsonValue>>;
+    },
+    signal: AbortSignal,
+  ): Promise<Result<Acted, AnalysisError>> {
+    const { id, action } = call;
+    // A secret is logged by its handle; only the computer receives its value.
+    const logged = held.actions.begin(action, call.tool, call.arguments);
+    if (action === "type_secret") {
+      const handle = String(call.arguments.secret);
+      const typed = await typeSecret(this.#secrets, computer, handle, signal);
+      logged.settle(typed.outcome);
+      return typed.answer(id, logged.index);
+    }
     let result: DriverResult;
     try {
-      result = await computer.callTool(
-        call.value.tool,
-        call.value.arguments,
-        signal,
-      );
+      if (action === "reset") {
+        const outcome = await reset(computer, call.arguments, signal);
+        if (outcome.kind === "unfinished") {
+          // A tagged app refusal is a failed reset. Any other lost reply,
+          // including a dropped connection after the seed was restored, stays
+          // unknown and blocks a near miss that would treat it as absent.
+          logged.settle("failed", {
+            unsettled: !(outcome.cause instanceof AppDataRefusal),
+          });
+          return err(failure(ACT, outcome.cause, signal));
+        }
+        // The seed restore is already observed. A later cancel or readiness
+        // failure must not make the witness treat that restore as absent.
+        logged.settle("applied");
+        if (outcome.kind === "interrupted")
+          return err(failure(ACT, outcome.cause, signal));
+        result = outcome.result;
+      } else {
+        result = await computer.callTool(call.tool, call.arguments, signal);
+      }
     } catch (cause: unknown) {
       logged.settle("failed");
       return err(failure(ACT, cause, signal));
@@ -311,11 +667,7 @@ export class DesktopBuildComputers {
     if (result.isError)
       return err(
         new AnalysisInputError(ACT, {
-          userMessage: `The computer refused the ${action}: ${result.content
-            .flatMap((block) =>
-              typeof block.text === "string" ? [block.text] : [],
-            )
-            .join(" ")}`,
+          userMessage: `The computer refused the ${action}: ${driverMessage(result.content)}`,
           remediationAction:
             "Follow the computer's message; actions on frame coordinates need a screenshot first.",
           conformsToInputContract: true,
@@ -332,6 +684,20 @@ export class DesktopBuildComputers {
     });
   }
 
+  /** The helper's environment: the build settings, then each variable a bundle's withheld settings read, from its secret. */
+  async #environment(
+    source: BuildSource,
+  ): Promise<Result<Readonly<NodeJS.ProcessEnv>, AnalysisError>> {
+    const settings = await settingsEnvironment(this.#secrets, source);
+    if (!settings.ok) return settings;
+    const environment = await resolveBuildComputerEnvironment(
+      this.environment,
+      process.platform,
+      this.defaults,
+    );
+    return ok({ ...environment, ...settings.value });
+  }
+
   /** Bring a computer down; one whose teardown is not confirmed stays held so close can be retried. */
   async close(id: string): Promise<
     Result<
@@ -342,18 +708,26 @@ export class DesktopBuildComputers {
       AnalysisError
     >
   > {
-    if (!this.#computers.has(id)) return err(unknownComputer(CLOSE));
-    const release = await this.#retire(id);
-    return release.verified
-      ? ok({ computer_id: id, teardown: release.teardown })
-      : err(
-          new ProviderCleanupError(
-            AGENTENV_PROVIDER,
-            release.resources,
-            { reason: release.reason },
-            { operation: CLOSE, remediationAction: release.reason },
-          ),
-        );
+    const held = this.#computers.get(id);
+    if (held === undefined) return err(unknownComputer(CLOSE));
+    held.closing = true;
+    // Tear down only once the call it cancels has ended; the calls waiting are refused.
+    const release = await held.turns.close(() => this.#retire(id));
+    held.cleanup.resources = release.verified ? [] : release.resources;
+    if (release.verified) {
+      for (const reference of held.cleanup.errors)
+        reference.deref()?.resolveCleanup();
+      held.cleanup.errors.clear();
+      return ok({ computer_id: id, teardown: release.teardown });
+    }
+    const failure = new ProviderCleanupError(
+      AGENTENV_PROVIDER,
+      release.resources,
+      { reason: release.reason },
+      { operation: CLOSE, remediationAction: release.reason },
+    );
+    bindCleanupFailure(held, failure);
+    return err(failure);
   }
 
   /** Release a held computer and its bundle folder; it stays held while either is unconfirmed. */
@@ -381,22 +755,34 @@ export class DesktopBuildComputers {
 
   /** Cancel and join the starts in progress, then bring every held computer down, as the server closes. */
   async closeAll(): Promise<void> {
-    this.#closed = true;
-    const starts = [...this.#starts];
-    for (const start of starts)
-      start.stop.abort(new Error("REA is closing its build computers"));
-    await Promise.allSettled(starts.map((start) => start.settled));
-    const results = await Promise.all(
+    const failures = await this.#work.close();
+    for (const result of await Promise.all(
       [...this.#computers.keys()].map((id) => this.close(id)),
-    );
-    const failures = results.flatMap((result) =>
-      result.ok ? [] : [result.error],
-    );
+    ))
+      if (!result.ok) failures.push(result.error);
+    try {
+      await this.#secrets.close();
+    } catch (cause: unknown) {
+      failures.push(
+        cause instanceof AnalysisError
+          ? cause
+          : new ProviderAdapterError(AGENTENV_PROVIDER, "close_build_secrets", {
+              cause,
+              userMessage: "Could not close build secret files.",
+            }),
+      );
+    }
     if (failures.length > 0)
       throw new AggregateError(
         failures,
         "Build computer teardown is incomplete",
       );
+  }
+
+  /** A live computer's capture and witness, for the build step tools; undefined for an unknown or closing id. */
+  steps(id: string): BuildComputerSteps | undefined {
+    const held = this.#computers.get(id);
+    return held === undefined || held.closing ? undefined : held.steps;
   }
 
   /** A live computer's action log and recording hooks, for the witness. */

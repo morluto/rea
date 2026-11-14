@@ -5,7 +5,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../../../src/contracts/analysisViewToolContracts.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import {
   createEvidence,
@@ -129,28 +129,28 @@ const connect = async (
   );
   onTestFinished(() => harness.close());
   const { tools } = await harness.mcp.listTools();
-  const outputSchemas = new Map(
+  const advertisedTools = new Map(
     ADVERTISED_OUTPUTS.map((name) => {
-      const advertised = tools.find((tool) => tool.name === name)?.outputSchema;
-      if (advertised === undefined)
+      const advertised = tools.find((tool) => tool.name === name);
+      if (advertised?.outputSchema === undefined)
         throw new Error(`${name} advertises no output schema`);
-      const schema: Record<string, unknown> = advertised;
-      return [name, schema] as const;
+      return [name, advertised] as const;
     }),
   );
-  const reply = async (name: string, args: Record<string, unknown>) =>
-    z
+  const reply = async (name: string, args: Record<string, unknown>) => {
+    const toolDefinition = advertisedTools.get(name);
+    return z
       .custom<CallToolResult>()
-      .parse(await harness.mcp.callTool({ name, arguments: args }));
+      .parse(
+        await harness.mcp.callTool(
+          { name, arguments: args },
+          toolDefinition === undefined ? {} : { toolDefinition },
+        ),
+      );
+  };
   const call = async (name: string, args: Record<string, unknown>) => {
     const result = await reply(name, args);
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
-    const schema = outputSchemas.get(name);
-    if (schema !== undefined)
-      expect(
-        schemaValidation.assertions.validate(schema, result.structuredContent),
-        JSON.stringify(schemaValidation.assertions.errors),
-      ).toBe(true);
     return { evidence: parseEvidence(result.structuredContent), result };
   };
   return { ...harness, calls, reply, call };
@@ -195,6 +195,7 @@ const readBody = async (
 ) => {
   let text = "";
   let pages = 0;
+  const nextOffsets: (number | null)[] = [];
   let offset: number | null = 0;
   while (offset !== null) {
     const page = await view(harness, parentId, {
@@ -207,9 +208,10 @@ const readBody = async (
     offset = z
       .looseObject({ next_offset: z.number().nullable() })
       .parse(page.coverage).next_offset;
+    nextOffsets.push(offset);
     pages++;
   }
-  return { text, pages };
+  return { text, pages, nextOffsets };
 };
 
 /** A typed refusal whose issue names the rejected selection. */
@@ -263,12 +265,10 @@ it.each(["full", "compact"] as const)(
         },
       },
     });
-    expect(summary.unknowns).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("1 items have unknown procedure identity"),
-        expect.stringContaining("not attributed to one successful item"),
-      ]),
-    );
+    expect(summary.unknowns).toEqual([
+      expect.stringContaining("1 items have unknown procedure identity"),
+      expect.stringContaining("Evidence limitations aggregate"),
+    ]);
     const callsAfterBatch = harness.calls.count;
 
     // The same summary is reachable later through the retained parent.
@@ -408,7 +408,8 @@ it("pages one body exactly without splitting a Unicode character", async () => {
   expect(JSON.stringify(evidence.normalized_result)).toContain("int main");
 
   // A limit ending inside a surrogate pair stops before it, so pages rebuild the text.
-  const { text, pages } = await readBody(harness, parent, 3, 30);
+  const { text, pages, nextOffsets } = await readBody(harness, parent, 3, 31);
+  expect(nextOffsets[0]).toBe(30);
   expect(text).toBe(EMOJI_BODY);
   expect(pages).toBeGreaterThan(1);
   expect(

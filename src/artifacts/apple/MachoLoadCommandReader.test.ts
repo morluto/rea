@@ -24,8 +24,6 @@ import {
   versionMinCommand,
 } from "./MachoImage.fixture.js";
 import {
-  MAX_LAZY_INFO_DEPENDENCIES,
-  MAX_LAZY_INFO_SYMBOL_REFERENCES,
   MAX_LOAD_COMMAND_BYTES,
   readMachoImage,
 } from "./MachoLoadCommandReader.js";
@@ -34,6 +32,10 @@ import { traceDylibResolution } from "./DylibResolutionReader.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
+
+// Independently exercise the dependency and reference budgets.
+const MAX_LAZY_INFO_DEPENDENCIES = 1024;
+const MAX_LAZY_INFO_SYMBOL_REFERENCES = 64 * 1024;
 
 const read = (bytes: Uint8Array) =>
   readMachoImage(readerOf(bytes), bytes.length);
@@ -1865,12 +1867,12 @@ describe("Mach-O load command reader failures", () => {
   });
 
   it("accepts FAT tables up to 128 records that name a Mach-O CPU", async () => {
-    const slices = Array.from({ length: 24 }, () => ({
+    const slices = Array.from({ length: 128 }, () => ({
       cpu: CPU.arm64,
       bytes: machoImage({}),
     }));
     const facts = await read(fatImage(slices));
-    expect(facts.status === "parsed" && facts.slices).toHaveLength(24);
+    expect(facts.status === "parsed" && facts.slices).toHaveLength(128);
     // An empty table is not a Java class file, whose major version is nonzero.
     for (const magic of [
       [0xca, 0xfe, 0xba, 0xbe],
@@ -1889,7 +1891,9 @@ describe("Mach-O load command reader failures", () => {
     view.setUint32(4, 8, true);
     expect(await read(machoImage({ commands: [short] }))).toMatchObject({
       status: "malformed",
-      reason: "load command 0 is too short to hold a string offset",
+      reason: expect.stringMatching(
+        /load command 0\b.*too short.*string offset/iu,
+      ),
     });
     view.setUint32(0, LC.CODE_SIGNATURE, true);
     expect(await read(machoImage({ commands: [short] }))).toMatchObject({
@@ -1943,7 +1947,9 @@ describe("Mach-O load command reader failures", () => {
     const fat = fatImage([{ cpu: CPU.arm64, bytes: machoImage({}) }]);
     expect(await read(fat.subarray(0, 4100))).toMatchObject({
       status: "malformed",
-      reason: "FAT architecture 0 slice range extends beyond the file",
+      reason: expect.stringMatching(
+        /FAT architecture 0\b.*slice range.*beyond.*file/iu,
+      ),
     });
   });
 
@@ -1968,7 +1974,9 @@ describe("Mach-O load command reader defect precedence", () => {
     new DataView(unsized.buffer).setUint32(0, LC.RPATH, true);
     const decodeFirst = {
       status: "malformed",
-      reason: "load command 0 is too short to hold a string offset",
+      reason: expect.stringMatching(
+        /load command 0\b.*too short.*string offset/iu,
+      ),
     };
     // An earlier command's decode defect wins over a later framing defect,
     expect(await read(machoImage({ commands: [shortRpath, unsized] }))).toEqual(
@@ -2019,7 +2027,9 @@ describe("Mach-O load command reader defect precedence", () => {
     new DataView(ranged.buffer).setUint32(8 + 20 + 12, ranged.length, false);
     expect(await read(ranged)).toEqual({
       status: "unsupported",
-      reason: "FAT architecture 0 alignment exponent 53 is unsupported",
+      reason: expect.stringMatching(
+        /FAT architecture 0\b.*alignment exponent 53\b.*unsupported/iu,
+      ),
     });
   });
 });

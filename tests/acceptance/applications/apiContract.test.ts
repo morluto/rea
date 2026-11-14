@@ -12,7 +12,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { apiContractSchema } from "../../../src/domain/apiContract/apiContract.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 
 type McpCall = Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"];
 const fixture = new URL(
@@ -131,7 +131,7 @@ const checkCliPublication = async (
   },
 ) => {
   const { root, path, parent, summary, selected } = context;
-  const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+  const run = cli.run.bind(cli);
   const complete = await run({
     arguments: ["inspect-api-contract", path, "--json"],
   });
@@ -395,7 +395,7 @@ cliTest(
       coverage: { total: 3 },
       source_coverage: { status: "partial" },
     });
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const cliResult = await run({
       arguments: ["inspect-api-contract", path, "--json"],
     });
@@ -442,7 +442,7 @@ cliTest(
       details: { partial_observation: snapshot },
     });
     expect(JSON.stringify(response)).not.toContain("u:p@h");
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const result = await run({
       arguments: ["inspect-api-contract", path, "--json"],
     });

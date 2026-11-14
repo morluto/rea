@@ -27,18 +27,18 @@ import {
   semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
-  builtinDataEffectMethod as builtinMethod,
+  builtinDataEffectIdentity,
   dataEffectArgumentBindingId as argumentBindingId,
   dataEffectLiteralString as literalString,
   dataEffectMemberCallee as memberCallee,
-  isSemanticProcessObject as isProcessObject,
+  semanticProcessObjectIdentity,
   outerDataEffectBinding as outerAssignedBinding,
   assignedSemanticResultBindings,
   semanticProjectedBindingFacts,
   traverseDataEffects as traverseWithContext,
   type DataEffectTraversalContext as TraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
@@ -103,6 +103,9 @@ const collectConfigurations = (
       key: details.key,
       sourceConfigId: null,
       value: null,
+      ...(details.builtinAuthority === undefined
+        ? {}
+        : { builtinAuthority: details.builtinAuthority }),
       resolution: details.resolution,
     };
     output.push({ node, operation });
@@ -116,6 +119,7 @@ const configurationDetails = (
 ): {
   readonly kind: "environment" | "argv" | "file";
   readonly key: string | null;
+  readonly builtinAuthority?: "candidate";
   readonly resolution: "complete" | "partial";
 } | null => {
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
@@ -124,19 +128,32 @@ const configurationDetails = (
   }
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return null;
-  const fsMethod = builtinMethod(node.callee, context.state, ["fs", "node:fs"]);
+  const fs = builtinDataEffectIdentity(node.callee, context.state, [
+    "fs",
+    "node:fs",
+  ]);
+  const fsMethod = fs?.path.length === 1 ? fs.path[0] : null;
+  const promises =
+    fsMethod === null
+      ? builtinDataEffectIdentity(node.callee, context.state, [
+          "fs/promises",
+          "node:fs/promises",
+        ])
+      : null;
   const isFileRead =
     fsMethod === "readFile" ||
     fsMethod === "readFileSync" ||
     (fsMethod === null &&
-      builtinMethod(node.callee, context.state, [
-        "fs/promises",
-        "node:fs/promises",
-      ]) === "readFile");
+      promises?.path.length === 1 &&
+      promises.path[0] === "readFile");
   return isFileRead
     ? {
         kind: "file",
         key: literalString(node.arguments[0]),
+        ...((fsMethod === null ? promises : fs)?.builtinAuthority ===
+        "candidate"
+          ? { builtinAuthority: "candidate" as const }
+          : {}),
         resolution:
           literalString(node.arguments[0]) === null ? "partial" : "complete",
       }
@@ -149,6 +166,7 @@ const processConfigurationMember = (
 ): {
   readonly kind: "environment" | "argv";
   readonly key: string | null;
+  readonly builtinAuthority?: "candidate";
   readonly resolution: "complete" | "partial";
 } | null => {
   const object = node.object;
@@ -159,10 +177,19 @@ const processConfigurationMember = (
   // `process.env[""]` names an exact (empty) key; only a dynamic key is unknown.
   const key = semanticStaticPropertyKey(node.property, node.computed);
   if (family === "argv" && key !== null && !isArrayIndexKey(key)) return null;
-  if (!isProcessObject(object.object, state, family, key)) return null;
+  const processIdentity = semanticProcessObjectIdentity(
+    object.object,
+    state,
+    family,
+    key,
+  );
+  if (processIdentity === null) return null;
   return {
     kind: family === "env" ? "environment" : "argv",
     key,
+    ...(processIdentity.builtinAuthority === undefined
+      ? {}
+      : { builtinAuthority: processIdentity.builtinAuthority }),
     resolution: key === null ? "partial" : "complete",
   };
 };
@@ -193,7 +220,7 @@ const collectDefaults = (
     if (candidate === undefined) return;
     const literal = readExactJavaScriptLiteral(node.right);
     const value: JavaScriptSemanticValue = literal.found
-      ? semanticPrimitiveSet([literal.value])
+      ? semanticPrimitiveSet([literal.value], context.state.precision)
       : { status: "unknown", reason: "Default is not an exact primitive." };
     recordSemanticValueLimit(context.state, value);
     output.push({
@@ -203,6 +230,9 @@ const collectDefaults = (
       ownerCallableId: context.callableStack.at(-1) ?? null,
       resultBindingId: outerAssignedBinding(node, context),
       key: candidate.operation.key,
+      ...(candidate.operation.builtinAuthority === undefined
+        ? {}
+        : { builtinAuthority: candidate.operation.builtinAuthority }),
       sourceConfigId: candidate.operation.configId,
       value: value.status === "literal" ? value.value : null,
       ...(value.status === "unknown" && value.resourceLimit !== undefined
@@ -226,8 +256,9 @@ const collectRequests = (
       !t.isNewExpression(node)
     )
       return;
-    const method = requestMethod(node, context.state);
-    if (method === null) return;
+    const identity = requestMethod(node, context.state);
+    if (identity === null) return;
+    const method = identity.method;
     const endpoint = requestEndpoint(node);
     // `http.get`/`http.request` parse a string target with `new URL` before the
     // request exists, so a literal that is not an absolute URL throws
@@ -246,6 +277,9 @@ const collectRequests = (
         requestId: `request:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
         kind: "request",
         method,
+        ...(identity.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
         location: range(node),
         ownerCallableId: context.callableStack.at(-1) ?? null,
         resultBindingId: outerAssignedBinding(node, context),
@@ -478,7 +512,10 @@ const boundaryDetails = (
 const requestMethod = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticRequestOperation["method"] | null => {
+): {
+  readonly method: JavaScriptSemanticRequestOperation["method"];
+  readonly builtinAuthority?: "candidate";
+} | null => {
   if (t.isIdentifier(node.callee)) {
     const name = node.callee.name;
     const unbound =
@@ -490,15 +527,23 @@ const requestMethod = (
       name === global &&
       isUnmodifiedGlobalReference(node.callee, state, name)
     )
-      return global;
+      return { method: global };
   }
-  const method = builtinMethod(node.callee, state, [
+  const identity = builtinDataEffectIdentity(node.callee, state, [
     "http",
     "https",
     "node:http",
     "node:https",
   ]);
-  return method === "request" || method === "get" ? method : null;
+  const method = identity?.path.length === 1 ? identity.path[0] : null;
+  return method === "request" || method === "get"
+    ? {
+        method,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
+      }
+    : null;
 };
 
 const requestFields = (

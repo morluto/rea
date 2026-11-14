@@ -1,3 +1,4 @@
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   AnalysisCleanupLeaseGroup,
   AnalysisCleanupLease,
@@ -120,6 +121,7 @@ vi.mock("./PlaywrightScenarioEvents.js", () => ({
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { PlaywrightScenarioSession } from "./PlaywrightScenarioSession.js";
 import { PlaywrightScenarioBrowserCleanupOwner } from "./PlaywrightScenarioBrowser.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const scenario = browserScenarioSchema.parse({
   browser: { mode: "launch", executable_path: process.execPath },
@@ -550,24 +552,34 @@ it("transfers cancellation to a no-stop cleanup already in progress", async () =
   });
 
   const firstClose = session.close(false);
-  await started;
-  cancellation.abort();
-  const retry = session.close();
-  finishRestoration();
-  await expect(Promise.all([firstClose, retry])).resolves.toEqual([
-    "disconnected-external",
-    "disconnected-external",
-  ]);
+  try {
+    await awaitAcknowledgement(started, firstClose, "policy restoration");
+    cancellation.abort();
+    const retry = session.close();
+    finishRestoration();
+    await expect(Promise.all([firstClose, retry])).resolves.toEqual([
+      "disconnected-external",
+      "disconnected-external",
+    ]);
 
-  const policyStops = mocks.policySend.mock.calls.filter(
-    ([method]) => method === "Page.stopLoading",
-  ).length;
-  const frameStops = page.evaluate.mock.calls.filter(
-    ([script]) => script === "globalThis.stop()",
-  ).length;
-  expect(policyStops + frameStops).toBe(1);
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
-  expect(browserWasOpenAtStop).toBe(true);
+    const policyStops = mocks.policySend.mock.calls.filter(
+      ([method]) => method === "Page.stopLoading",
+    ).length;
+    const frameStops = page.evaluate.mock.calls.filter(
+      ([script]) => script === "globalThis.stop()",
+    ).length;
+    expect(policyStops + frameStops).toBe(1);
+    expect(cleanup.close).toHaveBeenCalledTimes(1);
+    expect(browserWasOpenAtStop).toBe(true);
+  } finally {
+    cancellation.abort();
+    finishRestoration();
+    try {
+      await firstClose;
+    } finally {
+      await session.close();
+    }
+  }
 });
 
 it("does not repeat a stop confirmed by storage during a late retry", async () => {
@@ -591,27 +603,37 @@ it("does not repeat a stop confirmed by storage during a late retry", async () =
   });
 
   const firstClose = session.close(false);
-  await started;
-  cancellation.abort();
-  const retry = session.close();
-  finishRestoration();
-  await expect(Promise.all([firstClose, retry])).resolves.toEqual([
-    "disconnected-external",
-    "disconnected-external",
-  ]);
+  try {
+    await awaitAcknowledgement(started, firstClose, "policy restoration");
+    cancellation.abort();
+    const retry = session.close();
+    finishRestoration();
+    await expect(Promise.all([firstClose, retry])).resolves.toEqual([
+      "disconnected-external",
+      "disconnected-external",
+    ]);
 
-  expect(storage?.close).toHaveBeenCalledWith(false);
-  expect(
-    mocks.policySend.mock.calls.filter(
-      ([method]) => method === "Page.stopLoading",
-    ),
-  ).toHaveLength(0);
-  expect(
-    page.evaluate.mock.calls.filter(
-      ([script]) => script === "globalThis.stop()",
-    ),
-  ).toHaveLength(0);
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
+    expect(storage?.close).toHaveBeenCalledWith(false);
+    expect(
+      mocks.policySend.mock.calls.filter(
+        ([method]) => method === "Page.stopLoading",
+      ),
+    ).toHaveLength(0);
+    expect(
+      page.evaluate.mock.calls.filter(
+        ([script]) => script === "globalThis.stop()",
+      ),
+    ).toHaveLength(0);
+    expect(cleanup.close).toHaveBeenCalledTimes(1);
+  } finally {
+    cancellation.abort();
+    finishRestoration();
+    try {
+      await firstClose;
+    } finally {
+      await session.close();
+    }
+  }
 });
 
 it.each(["block", "allow"] as const)(
@@ -724,14 +746,11 @@ it("retries a failed connected-page stop when service workers are allowed", asyn
   cancellation.abort();
   const concurrentClose = session.close();
   finishEvents();
-  await expect(
-    Promise.allSettled([firstClose, concurrentClose]),
-  ).resolves.toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ status: "rejected" }),
-      expect.objectContaining({ status: "rejected" }),
-    ]),
-  );
+  const outcomes = await Promise.allSettled([firstClose, concurrentClose]);
+  expect(outcomes.map(({ status }) => status)).toEqual([
+    "rejected",
+    "rejected",
+  ]);
 
   expect(cleanup.browserClosed).toBe(false);
   await expect(session.close()).resolves.toBe("disconnected-external");
@@ -941,18 +960,19 @@ it("does not await policy initialization after its child target detaches", async
     },
     sessionId: "policy-session",
   });
-  await started;
-  const closing = session.close();
-  mocks.policyEvent?.({
-    method: "Target.detachedFromTarget",
-    params: { sessionId: "child-session" },
-  });
   try {
+    await awaitAcknowledgement(started, held, "child policy admission");
+    const closing = session.close();
+    mocks.policyEvent?.({
+      method: "Target.detachedFromTarget",
+      params: { sessionId: "child-session" },
+    });
     await expect(closing).resolves.toBe("disconnected-external");
+    expect(cleanup.close).toHaveBeenCalledTimes(1);
   } finally {
     releaseChild();
+    await session.close();
   }
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 
 it("skips policy restoration for a child without a committed document", async () => {
@@ -1188,6 +1208,68 @@ it("finishes initialization cleanup independently of request cancellation", asyn
   expect(retainCleanup).not.toHaveBeenCalled();
 });
 
+it.each([false, true])(
+  "joins pending cookie setup before releasing an attached browser (late rejection: %s)",
+  async (rejectCookies) => {
+    const { context, cleanup, storage } = fixture();
+    const controller = new AbortController();
+    const reason = { stop: "during cookie setup" };
+    const started = deferred();
+    const cookies = deferred();
+    context.addCookies.mockImplementationOnce(async () => {
+      started.resolve();
+      await cookies.promise;
+      if (rejectCookies)
+        throw new Error("cookie setup rejected after cancellation");
+    });
+    const input = browserScenarioSchema.parse({
+      ...connectedScenario("allow"),
+      storage: {
+        cookies: [
+          {
+            name: "session",
+            http_only: true,
+            secure: true,
+            same_site: "Lax",
+            value: { source: "literal", value: "selected" },
+            destination: { url: "https://storage.example.test/" },
+          },
+        ],
+      },
+    });
+    const provider = new PlaywrightBrowserScenarioProvider(
+      (scenario, options) =>
+        PlaywrightScenarioSession.open(scenario, {}, options),
+    );
+    const result = provider.captureScenario(input, {
+      signal: controller.signal,
+    });
+    try {
+      await awaitAcknowledgement(
+        started.promise,
+        result,
+        "cookie initialization",
+      );
+      controller.abort(reason);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(cleanup.close).not.toHaveBeenCalled();
+      cookies.resolve();
+      const outcome = await result;
+      if (outcome.ok)
+        throw new Error("Expected cancelled cookie initialization");
+      expect(outcome.error._tag).toBe("AnalysisCancelledError");
+      expect(outcome.error.cause).toBe(reason);
+      expect(outcome.error.cleanupIncomplete).toBe(false);
+      expect(cleanup.close).toHaveBeenCalledOnce();
+      expect(storage?.initialize).not.toHaveBeenCalled();
+    } finally {
+      cookies.resolve();
+      await result;
+      await provider.close();
+    }
+  },
+);
+
 it("can retry cleanup of a browser that opened after request cancellation", async () => {
   const { opened } = fixture();
   const closeBrowser = vi
@@ -1223,7 +1305,7 @@ it("can retry cleanup of a browser that opened after request cancellation", asyn
   controller.abort();
   await cancelled;
   resolveOpening?.(lateOpened);
-  await vi.waitFor(() => expect(closeBrowser).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(closeBrowser).toHaveBeenCalledTimes(1));
   expect(retained).toHaveLength(1);
   await expect(retained[0]?.release()).resolves.toBeUndefined();
   expect(closeBrowser).toHaveBeenCalledTimes(2);
@@ -1341,14 +1423,21 @@ it("cancels a stalled policy preflight without allowing late setup", async () =>
   const outcome = expect(opening).rejects.toMatchObject({
     _tag: "AnalysisCancelledError",
   });
-  await started;
-  cancellation.abort();
-  await outcome;
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
-  expect(cleanup.close.mock.calls[0]).toHaveLength(1);
-  release();
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(mocks.policySend).not.toHaveBeenCalled();
+  try {
+    await awaitAcknowledgement(started, opening, "policy preflight");
+    cancellation.abort();
+    await outcome;
+    expect(cleanup.close).toHaveBeenCalledTimes(1);
+    expect(cleanup.close.mock.calls[0]).toHaveLength(1);
+    release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(mocks.policySend).not.toHaveBeenCalled();
+  } finally {
+    cancellation.abort();
+    release();
+    await opening.catch(() => undefined);
+    await outcome.catch(() => undefined);
+  }
 });
 
 it("waits for a pending registration installation before cancelled cleanup", async () => {
@@ -1372,25 +1461,32 @@ it("waits for a pending registration installation before cancelled cleanup", asy
   const outcome = expect(opening).rejects.toMatchObject({
     _tag: "AnalysisCancelledError",
   });
-  await started;
-  cancellation.abort();
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(cleanup.close).not.toHaveBeenCalled();
-  expect(page.evaluate).toHaveBeenCalledTimes(1);
-  releaseInstallation();
-  await outcome;
-  const restoration = mocks.policySend.mock.calls.find(
-    ([method]) => method === "Runtime.evaluate",
-  )?.[1];
-  expect(restoration).toMatchObject({
-    expression: expect.stringContaining("policy_owned"),
-  });
-  expect(mocks.policySend).toHaveBeenCalledWith(
-    "Page.stopLoading",
-    {},
-    "policy-session",
-  );
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
+  try {
+    await awaitAcknowledgement(started, opening, "policy installation");
+    cancellation.abort();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(cleanup.close).not.toHaveBeenCalled();
+    expect(page.evaluate).toHaveBeenCalledTimes(1);
+    releaseInstallation();
+    await outcome;
+    const restoration = mocks.policySend.mock.calls.find(
+      ([method]) => method === "Runtime.evaluate",
+    )?.[1];
+    expect(restoration).toMatchObject({
+      expression: expect.stringContaining("policy_owned"),
+    });
+    expect(mocks.policySend).toHaveBeenCalledWith(
+      "Page.stopLoading",
+      {},
+      "policy-session",
+    );
+    expect(cleanup.close).toHaveBeenCalledTimes(1);
+  } finally {
+    cancellation.abort();
+    releaseInstallation();
+    await opening.catch(() => undefined);
+    await outcome.catch(() => undefined);
+  }
 });
 
 it("rejects attached block when caller-owned registrations already exist", async () => {
@@ -1523,7 +1619,7 @@ it("retains late opening failure cleanup after cancellation until the exact prof
     const pending = provider.captureScenario(scenario, {
       signal: caller.signal,
     });
-    await started;
+    await awaitAcknowledgement(started, pending, "browser launch start");
     caller.abort(reason);
     const result = await pending;
     if (result.ok) throw new Error("Expected cancelled opening");
@@ -1545,6 +1641,7 @@ it("retains late opening failure cleanup after cancellation until the exact prof
     });
     expect(failure.cleanupIncomplete).toBe(false);
   } finally {
+    caller.abort(reason);
     denied = false;
     finishOpening();
     await provider.close();

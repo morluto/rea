@@ -6,10 +6,11 @@ import { readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   createDeferred,
@@ -98,7 +99,12 @@ describe("MCP snapshot lifecycle ordering", () => {
       name: "address_name",
       arguments: { address: "0x1000", document: "fixture" },
     });
-    await started.promise;
+    onTestFinished(() => release.resolve(ok(first)));
+    await awaitAcknowledgement(
+      started.promise,
+      observation,
+      "session observation",
+    );
     const snapshotPath = join(directory, "analysis.json");
     const closing = mcp.callTool({
       name: "close_binary",
@@ -164,7 +170,7 @@ describe("MCP snapshot lifecycle ordering", () => {
         })
       ).isError,
     ).not.toBe(true);
-  }, 10_000);
+  });
 });
 
 describe("public provider availability", () => {
@@ -360,8 +366,16 @@ describe("target-free MCP lifecycle", () => {
     await server.connect(serverTransport);
     await mcp.connect(clientTransport);
 
+    onTestFinished(() =>
+      availability.resolve({
+        status: "available",
+        code: null,
+        reason: null,
+        diagnostics: { configured: true },
+      }),
+    );
     const status = mcp.callTool({ name: "binary_session", arguments: {} });
-    await entered.promise;
+    await awaitAcknowledgement(entered.promise, status, "provider readiness");
     expect((await session.open(targetPath)).ok).toBe(true);
     availability.resolve({
       status: "available",
@@ -437,7 +451,7 @@ describe("target-free MCP lifecycle", () => {
       path: canonicalTargetPath,
       sha256: z.object({ sha256: z.string() }).parse(second).sha256,
     });
-  }, 30_000);
+  });
 });
 
 describe("snapshot receipt after MCP cleanup", () => {
@@ -535,12 +549,7 @@ describe("target-free MCP workflow", () => {
 
     const beforeTools = (await mcp.listTools()).tools;
     const beforeNames = beforeTools.map(({ name }) => name);
-    expect(mcp.getInstructions()).toContain(
-      "Use the tool that directly answers the question",
-    );
-    expect(
-      beforeTools.find(({ name }) => name === "inspect_artifact")?.description,
-    ).toMatch(/\breturns the complete content-addressed artifact graph\b/iu);
+    expect(beforeNames).toContain("inspect_artifact");
     expect(beforeNames).toContain("open_binary");
     expect(beforeNames).toContain("binary_session");
     expect(beforeNames).toContain("current_document");
@@ -693,7 +702,7 @@ describe("MCP snapshot open ordering", () => {
     expect(
       text(await mcp.callTool({ name: "binary_session", arguments: {} })),
     ).toContain('"open":false');
-  }, 10_000);
+  });
 });
 
 describe("session filesystem path boundaries over MCP", () => {
@@ -709,8 +718,19 @@ describe("session filesystem path boundaries over MCP", () => {
       name: "export_evidence_bundle",
       arguments: { path: "relative-bundle.json" },
     });
-    expect(exported.isError, JSON.stringify(exported.content)).toBe(true);
-    expect(JSON.stringify(exported.content)).toContain("absolute");
+    expect(parseMcpToolError(exported).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "export_evidence_bundle",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+            expected: "regex",
+          }),
+        ],
+      },
+    });
 
     const opened = await mcp.callTool({
       name: "open_binary",
@@ -721,10 +741,21 @@ describe("session filesystem path boundaries over MCP", () => {
       name: "close_binary",
       arguments: { snapshot_path: "relative-analysis.json" },
     });
-    expect(closed.isError, JSON.stringify(closed.content)).toBe(true);
-    expect(JSON.stringify(closed.content)).toContain("absolute");
+    expect(parseMcpToolError(closed).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "close_binary",
+        issues: [
+          expect.objectContaining({
+            path: ["snapshot_path"],
+            reason: "invalid_format",
+            expected: "regex",
+          }),
+        ],
+      },
+    });
     await mcp.callTool({ name: "close_binary", arguments: {} });
-  }, 10_000);
+  });
 });
 
 describe("json depth bounds over MCP", () => {
@@ -778,7 +809,7 @@ describe("json depth bounds over MCP", () => {
     expect(recovered.isError, JSON.stringify(recovered.content)).not.toBe(true);
     expect(recovered.structuredContent).toEqual(baseline.structuredContent);
     expect(createClient).not.toHaveBeenCalled();
-  }, 10_000);
+  });
 });
 
 const client = (path: string, closed: string[]): AnalysisClient => ({

@@ -2,6 +2,7 @@ import {
   ArtifactInventoryCarrierError,
   parseArtifactInventoryEvidence,
 } from "./artifactInventoryEvidence.js";
+import { compareArtifacts } from "./artifactComparison.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { comparisonSourceEvidenceSides } from "./comparisonSourceEvidence.js";
@@ -15,7 +16,16 @@ import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
 import { readEvidencePayload } from "./evidenceValidation.js";
 import { functionDossierSchema } from "./native/functionDossier.js";
 import { assessFunctionCallCoverage } from "./functionCallCoverage.js";
-import { processCaptureSchema } from "./process/processCapture.js";
+import {
+  processCaptureSchema,
+  type UnverifiedProcessCapture,
+} from "./process/processCapture.js";
+import { processSourceTruncated } from "./process/processCaptureCoverage.js";
+import {
+  PROCESS_COMPARISON_DIMENSIONS,
+  type ProcessComparisonDimension,
+} from "./process/processComparison.js";
+import type { ProcessObservationSource } from "./process/processObservation.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   reconstructionClaimResultSchema,
@@ -45,6 +55,19 @@ interface FunctionSourceFacts {
   readonly callCoverageDiagnostics: readonly string[];
 }
 
+interface ValidatedSourceFacts {
+  readonly functions: readonly FunctionSourceFacts[];
+  readonly processes: readonly {
+    readonly evidence_id: string;
+    readonly capture: UnverifiedProcessCapture;
+  }[];
+}
+
+type ArtifactReplay = Pick<
+  ReturnType<typeof compareArtifacts>,
+  "status" | "left_manifest_id" | "right_manifest_id"
+>;
+
 /** Verify only explicitly declared claims; no global equivalence is inferred. */
 export const verifyReconstruction = (
   specificationInput: unknown,
@@ -70,8 +93,11 @@ export const verifyReconstruction = (
     bundle.records.map((item) => [item.evidence_id, item]),
   );
   const heads = reconstructionUnknownHeads(bundle.unknowns);
+  const artifactReplays = new Map<string, ArtifactReplay>();
   const results = specification.claims
-    .map((claim, index) => evaluateClaim(claim, index, records, heads))
+    .map((claim, index) =>
+      evaluateClaim(claim, index, records, heads, artifactReplays),
+    )
     .sort((left, right) =>
       compareUnicodeCodePoints(left.claim_id, right.claim_id),
     );
@@ -117,6 +143,7 @@ const evaluateClaim = (
   claimIndex: number,
   records: ReadonlyMap<string, Evidence>,
   heads: ReadonlyMap<string, ResidualUnknown>,
+  artifactReplays: Map<string, ArtifactReplay>,
 ): ClaimResult => {
   const comparison = records.get(claim.comparison_evidence_id);
   if (comparison === undefined)
@@ -144,17 +171,27 @@ const evaluateClaim = (
       );
     return source;
   });
-  const functionSourceFacts = readValidatedSourceFacts(claim, sources);
+  const sourceFacts = readValidatedSourceFacts(claim, sources);
   const observation = comparisonObservation(claim, comparison);
   const observed = observation.status;
   const callCoverage = sourceCallCoverage(
     claim,
-    functionSourceFacts,
+    sourceFacts.functions,
     observation.hasIndependentFunctionChange === true,
   );
   const blockers = [
     ...authorityLimitations(claim, sources, sides),
     ...callCoverage.blockers,
+    ...sourceProcessCoverage(claim, sourceFacts.processes, observed),
+    ...(claim.kind === "structural-artifact"
+      ? assessArtifactSourceComparison(
+          sides,
+          records,
+          comparison,
+          observed,
+          artifactReplays,
+        )
+      : []),
   ];
   const relevantUnknowns = reconstructionClaimUnknowns(
     heads,
@@ -186,10 +223,80 @@ const evaluateClaim = (
   });
 };
 
+const assessArtifactSourceComparison = (
+  sides: {
+    readonly left: readonly string[];
+    readonly right: readonly string[];
+  },
+  records: ReadonlyMap<string, Evidence>,
+  comparison: Evidence,
+  observed: ObservedStatus,
+  replays: Map<string, ArtifactReplay>,
+): string[] => {
+  const parsed = readComparisonResult(comparison, "compare_artifacts");
+  if (!parsed.ok) throw parsed.error;
+  let leftManifest: string;
+  let rightManifest: string;
+  let corroborated = true;
+  try {
+    const left = sides.left.map((id) => records.get(id)!);
+    const right = sides.right.map((id) => records.get(id)!);
+    if (
+      observed === "unchanged" ||
+      observed === "changed" ||
+      observed === "added" ||
+      observed === "removed" ||
+      observed === "contradiction"
+    ) {
+      const key = JSON.stringify([sides.left, sides.right]);
+      let actual = replays.get(key);
+      if (actual === undefined) {
+        const result = compareArtifacts(left, right);
+        actual = {
+          status: result.status,
+          left_manifest_id: result.left_manifest_id,
+          right_manifest_id: result.right_manifest_id,
+        };
+        replays.set(key, actual);
+      }
+      leftManifest = actual.left_manifest_id;
+      rightManifest = actual.right_manifest_id;
+      corroborated = actual.status === observed;
+    } else {
+      leftManifest =
+        parseArtifactInventoryEvidence(left).inventory.manifest.manifest_id;
+      rightManifest =
+        parseArtifactInventoryEvidence(right).inventory.manifest.manifest_id;
+    }
+  } catch (cause: unknown) {
+    if (
+      !(cause instanceof AnalysisInputError) &&
+      !(cause instanceof ArtifactInventoryCarrierError)
+    )
+      throw cause;
+    throw new EvidenceIntegrityError(cause.message, {
+      cause,
+      userMessage: cause.message,
+    });
+  }
+  if (
+    parsed.value.result.left_manifest_id !== leftManifest ||
+    parsed.value.result.right_manifest_id !== rightManifest
+  )
+    throw new EvidenceIntegrityError(
+      "Artifact comparison manifest identities disagree with its sources",
+    );
+  return corroborated
+    ? []
+    : [
+        "Artifact source inventories do not corroborate the claimed comparison status.",
+      ];
+};
+
 const readValidatedSourceFacts = (
   claim: Claim,
   sources: readonly Evidence[],
-): readonly FunctionSourceFacts[] => {
+): ValidatedSourceFacts => {
   const isExpectedType = (source: Evidence): boolean => {
     if (claim.kind === "behavioral")
       return (
@@ -216,6 +323,7 @@ const readValidatedSourceFacts = (
       },
     );
   const functionSources: FunctionSourceFacts[] = [];
+  const processSources: ValidatedSourceFacts["processes"][number][] = [];
   for (const source of sources) {
     if (claim.kind === "behavioral") {
       const capture = readEvidencePayload(
@@ -223,6 +331,10 @@ const readValidatedSourceFacts = (
         source.normalized_result,
       );
       if (!capture.ok) throw capture.error;
+      processSources.push({
+        evidence_id: source.evidence_id,
+        capture: capture.value,
+      });
     } else if (claim.kind === "structural-function") {
       const parsedDossier = readEvidencePayload(
         functionDossierSchema,
@@ -236,7 +348,10 @@ const readValidatedSourceFacts = (
       );
       functionSources.push({
         evidence_id: source.evidence_id,
-        callCoverageBlockers: callCoverage.blockers,
+        callCoverageBlockers: [
+          ...callCoverage.blockers,
+          ...callCoverage.discoveryLimitations,
+        ],
         callCoverageDiagnostics: callCoverage.diagnostics,
       });
     } else {
@@ -253,7 +368,7 @@ const readValidatedSourceFacts = (
       }
     }
   }
-  return functionSources;
+  return { functions: functionSources, processes: processSources };
 };
 
 const validateComparisonIdentity = (
@@ -399,6 +514,44 @@ const authorityLimitations = (
       );
   }
   return limitations;
+};
+
+const processObservationSourceByDimension: Readonly<
+  Record<ProcessComparisonDimension, ProcessObservationSource>
+> = {
+  terminal: "terminal_rendered",
+  interaction: "interaction",
+  exit: "lifecycle",
+  filesystem: "filesystem",
+  process: "process",
+};
+
+const sourceProcessCoverage = (
+  claim: Claim,
+  sources: ValidatedSourceFacts["processes"],
+  observed: ObservedStatus,
+): string[] => {
+  if (
+    claim.kind !== "behavioral" ||
+    ["changed", "added", "removed", "contradiction"].includes(observed)
+  )
+    return [];
+  const dimensions =
+    claim.dimension === "overall"
+      ? PROCESS_COMPARISON_DIMENSIONS
+      : [claim.dimension];
+  return sources.flatMap(({ evidence_id, capture }) =>
+    dimensions.flatMap((dimension) =>
+      processSourceTruncated(
+        capture,
+        processObservationSourceByDimension[dimension],
+      )
+        ? [
+            `Source ${evidence_id}: ${dimension} observation coverage is incomplete.`,
+          ]
+        : [],
+    ),
+  );
 };
 
 const sourceCallCoverage = (

@@ -64,6 +64,28 @@ const sqliteHeader = Buffer.concat([
   Buffer.alloc(84),
 ]);
 
+it("gives the UTF-8 flag precedence over a Unicode Path for names and formats", async () => {
+  const storedName = "legacy.txt";
+  const unicodeName = Buffer.from("café.json");
+  const extra = Buffer.alloc(9 + unicodeName.length);
+  extra.writeUInt16LE(0x7075);
+  extra.writeUInt16LE(extra.length - 4, 2);
+  extra[4] = 1;
+  extra.writeUInt32LE(crc32(Buffer.from(storedName)), 5);
+  unicodeName.copy(extra, 9);
+  const archive = zipArchive([
+    { name: storedName, data: "42", flags: 0x800, centralExtra: extra },
+    { name: "other.txt", data: "42", centralExtra: extra },
+  ]);
+
+  expect(await sameView(archive)).toMatchObject({
+    entries: [
+      { name: storedName, format: "text" },
+      { name: "other.txt", format: "text" },
+    ],
+  });
+});
+
 describe("zip views in the exported module", () => {
   it("lists entries in archive order with the formats and views REA reads", async () => {
     const members: ZipMember[] = [
@@ -334,7 +356,7 @@ describe("zip entries the exported module cannot fully read", () => {
     );
     // Parsing the 4,200,004-byte entry before refusing it traced about 110 MB here.
     expect(peak).toBeLessThan(4 * objects.length);
-  }, 60_000);
+  });
 
   it("keeps a JSON entry nested too deeply on that entry and reads its siblings, as REA does", async () => {
     const nested = (levels: number) =>

@@ -12,6 +12,7 @@ import { execFileSync } from "node:child_process";
 import { createServer as createNetServer } from "node:net";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
 import {
   desktopApplicationSchema,
@@ -714,7 +715,6 @@ it("retains complete observations through cancellation during directory finaliza
     { path: root },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error).toMatchObject({ reason: "cancelled", cause: reason });
   const retained = parseEvidence(result.error.partialObservation);
@@ -779,7 +779,7 @@ it("bounds simultaneous directory scans without cancelling the admitted caller",
   );
   const first = service.inspect({ path: root });
   try {
-    await started;
+    await awaitAcknowledgement(started, first, "desktop directory scan");
     const second = await service.inspect({ path: root });
     expect(second.ok).toBe(false);
     if (!second.ok)
@@ -788,15 +788,20 @@ it("bounds simultaneous directory scans without cancelling the admitted caller",
         resource: "capacity",
         retryable: true,
       });
+    release();
+    const result = await first;
+    if (!result.ok) throw result.error;
+    expect(
+      desktopApplicationSchema.parse(result.value.normalized_result).files,
+    ).toHaveLength(1);
   } finally {
     release();
+    try {
+      await first;
+    } finally {
+      await service.close();
+    }
   }
-  const result = await first;
-  if (!result.ok) throw result.error;
-  expect(
-    desktopApplicationSchema.parse(result.value.normalized_result).files,
-  ).toHaveLength(1);
-  await service.close();
 });
 
 it("keeps directory-only marker identities separate across installation roots", async () => {

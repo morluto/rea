@@ -23,24 +23,22 @@ cliTest.skipIf(process.platform !== "darwin")(
     const directory = await createTestTempDirectory("rea-foreign-fat-cli-");
     const thin = join(directory, "thin");
     const universal = join(directory, "universal");
-    const compiled = await processes.run(
-      "/usr/bin/xcrun",
-      [
-        "clang",
-        "-arch",
-        foreign.name,
-        resolve("tests/conformance/c/fixture.c"),
-        "-o",
-        thin,
-      ],
-      { timeoutMs: 30_000 },
-    );
+    const compiled = await processes.run("/usr/bin/xcrun", [
+      "clang",
+      "-arch",
+      foreign.name,
+      resolve("tests/conformance/c/fixture.c"),
+      "-o",
+      thin,
+    ]);
     expect(compiled.exitCode, compiled.stderr).toBe(0);
-    const created = await processes.run(
-      "/usr/bin/xcrun",
-      ["lipo", "-create", thin, "-output", universal],
-      { timeoutMs: 30_000 },
-    );
+    const created = await processes.run("/usr/bin/xcrun", [
+      "lipo",
+      "-create",
+      thin,
+      "-output",
+      universal,
+    ]);
     expect(created.exitCode, created.stderr).toBe(0);
 
     const result = await cli.run({
@@ -65,7 +63,6 @@ cliTest.skipIf(process.platform !== "darwin")(
       evidence.normalized_result.architectures.items[0]?.file_offset,
     ).toBeGreaterThan(0);
   },
-  60_000,
 );
 
 cliTest.skipIf(process.platform === "darwin")(

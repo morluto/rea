@@ -1,8 +1,14 @@
+import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
+import { ArtifactFileSource } from "./ArtifactFileSource.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import * as hexRecordDecoding from "../domain/firmware/hexRecords.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
@@ -21,14 +27,37 @@ const writeImage = async (name: string, text: string): Promise<string> => {
   return path;
 };
 
+it.each(["close", "cancel"] as const)(
+  "does not complete a decoded-region inventory after %s while paused",
+  async (interruption) => {
+    const path = await writeImage(
+      "image.hex",
+      `${intelHexRecord(0, 0, [1])}\n:00000001FF\n`,
+    );
+    const reader = new HexRecordArtifactReader(path, "intel-hex");
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
+
 it("reports unknown coverage and termination facts as limitations", async () => {
   const truncated = await scanCanonicalArtifactInventory(
     await writeImage("truncated.s19", SREC_S19.replace("S9030000FC\n", "")),
   );
   expect(truncated.manifest.root_format).toBe("srec");
   expect(truncated.coverage.status).toBe("unknown");
-  expect(truncated.limitations).toContain(
-    "S-record has no termination record; the file may be truncated.",
+  expect(truncated.limitations).toContainEqual(
+    expect.stringMatching(/no termination record.*may be truncated/iu),
   );
   expect(truncated.occurrences.map((row) => row.logical_path).sort()).toEqual([
     ".",
@@ -41,8 +70,10 @@ it("reports unknown coverage and termination facts as limitations", async () => 
     ),
   );
   expect(mismatched.coverage.status).toBe("complete");
-  expect(mismatched.limitations).toContain(
-    "S-record termination S7 does not match the address width of S1 data records.",
+  expect(mismatched.limitations).toContainEqual(
+    expect.stringMatching(
+      /termination.*S7.*does not match.*address width.*S1/iu,
+    ),
   );
 });
 
@@ -58,7 +89,13 @@ it("fails closed on over-limit records", async () => {
     scanCanonicalArtifactInventory(
       await writeImage("runs.hex", `${runs.join("\n")}\n`),
     ),
-  ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
+  ).rejects.toMatchObject({
+    reason: "limit",
+    boundary: "capacity",
+    message: expect.stringContaining(
+      "more than 65536 address-discontiguous record runs",
+    ),
+  });
 });
 
 it("leaves an invalid first record to plain file classification", async () => {
@@ -154,6 +191,72 @@ it("settles an active region stream when closed", async () => {
   }
 });
 
+it("retries decoded-region preparation cancelled while reading", async () => {
+  const path = await writeImage("retry.hex", INTEL_HEX_I32_GAP);
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new HexRecordArtifactReader(path, "intel-hex", admitted);
+  const controller = new AbortController();
+  const reason = { stage: "decoded region read" };
+  const nativeRead = admitted.handle.read.bind(admitted.handle);
+  const read = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+    ...args: unknown[]
+  ) => {
+    const result = await Reflect.apply(nativeRead, admitted.handle, args);
+    controller.abort(reason);
+    return result;
+  }) as typeof admitted.handle.read);
+  try {
+    await expect(
+      reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    read.mockRestore();
+    expect(
+      (await reader.entries()[Symbol.asyncIterator]().next()).value,
+    ).toMatchObject({ kind: "file" });
+  } finally {
+    read.mockRestore();
+    await reader.close();
+    await admitted.handle.close();
+  }
+});
+
+it("does not publish decoded regions when final source verification fails", async () => {
+  const path = await writeImage("partial.hex", INTEL_HEX_I32_GAP);
+  const control = new HexRecordArtifactReader(path, "intel-hex");
+  const reader = new HexRecordArtifactReader(path, "intel-hex");
+  const expected = (await control.entries()[Symbol.asyncIterator]().next())
+    .value!;
+  const nativeRead = ArtifactFileSource.prototype.read;
+  const physical = Object.assign(
+    new Error("final source verification failed"),
+    { code: "EIO" },
+  );
+  let calls = 0;
+  const read = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementation(function (this: ArtifactFileSource, ...args) {
+      calls += 1;
+      if (calls === 2) return Promise.reject(physical);
+      return nativeRead.apply(this, args);
+    });
+  try {
+    await expect(reader.entries()[Symbol.asyncIterator]().next()).rejects.toBe(
+      physical,
+    );
+    await expect(reader.open(expected)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+    read.mockRestore();
+    expect(
+      (await reader.entries()[Symbol.asyncIterator]().next()).value,
+    ).toMatchObject({ path: expected.path });
+  } finally {
+    read.mockRestore();
+    await reader.close();
+    await control.close();
+  }
+});
+
 it("honors cancellation before admitting a file with the exact reason", async () => {
   const reader = new HexRecordArtifactReader(
     await writeImage("cancel.hex", INTEL_HEX_I32_GAP),
@@ -193,23 +296,61 @@ it.each(["cancel", "close"] as const)(
     const controller = new AbortController();
     const reason = { stage: "decoding" };
     let completion: Promise<void> | undefined;
+    let pending: Promise<unknown> | undefined;
+    let decoded = 0;
+    let acknowledge = (): void => undefined;
+    const decoding = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const create = hexRecordDecoding.createHexRecordDecoder;
+    const observer = vi
+      .spyOn(hexRecordDecoding, "createHexRecordDecoder")
+      .mockImplementation((encoding, bytes) => {
+        const result = create(encoding, bytes);
+        if (!result.ok) return result;
+        const decoder = result.value;
+        return {
+          ok: true,
+          value: {
+            write: (chunk) => {
+              const written = decoder.write(chunk);
+              decoded += 1;
+              acknowledge();
+              return written;
+            },
+            finish: () => decoder.finish(),
+          },
+        };
+      });
     try {
-      const pending = reader
+      pending = reader
         .entries(controller.signal)
         [Symbol.asyncIterator]()
         .next();
-      setImmediate(() => {
-        if (action === "cancel") controller.abort(reason);
-        else completion = reader.close();
-      });
-      await expect(pending).rejects.toMatchObject(
+      await awaitAcknowledgement(decoding, pending, "HEX record decoding");
+      const requestedAt = decoded;
+      if (action === "cancel") controller.abort(reason);
+      else completion = reader.close();
+      const failure = await pending.catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      expect(failure).toMatchObject(
         action === "cancel"
           ? { reason: "cancelled", cause: reason }
           : { reason: "unavailable" },
       );
+      if (action === "cancel") {
+        if (!(failure instanceof ArtifactReaderFailure)) throw failure;
+        expect(failure.cause).toBe(reason);
+      }
       await completion;
+      expect(decoded).toBe(requestedAt);
     } finally {
-      await reader.close();
+      try {
+        await reader.close();
+      } finally {
+        await pending?.catch(() => undefined);
+        observer.mockRestore();
+      }
     }
   },
 );
@@ -293,4 +434,10 @@ it("bounds copied region chunks and isolates cached bytes across opens", async (
   } finally {
     await reader.close();
   }
+});
+
+artifactPreparationRecoveryCases({
+  image: () => Buffer.from(INTEL_HEX_I32_GAP),
+  createReader: (path, admitted) =>
+    new HexRecordArtifactReader(path, "intel-hex", admitted),
 });

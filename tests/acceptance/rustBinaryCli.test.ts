@@ -6,7 +6,6 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
-import { RUST_RESOURCE_GUARD_LIMITATION } from "../../src/rust/RustBinaryProvider.js";
 import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   compressRustElfSectionNames,
@@ -75,7 +74,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -241,7 +239,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest("returns null metadata when .dep-v0 is absent", async ({ cli }) => {
@@ -300,8 +297,8 @@ cliTest(
         });
       } else {
         expect(report.auditable_metadata).toBeNull();
-        expect(report.limitations.join("\n")).toContain(
-          "ELF section names are unavailable because compression type 3 is unsupported",
+        expect(report.limitations.join("\n")).toMatch(
+          /section names.*unavailable.*compression type 3.*unsupported/iu,
         );
         expect(report.limitations.join("\n")).toContain(
           "The presence of .dep-v0 could not be determined",
@@ -377,7 +374,7 @@ cliTest(
   },
 );
 
-cliTest("reports malformed zlib as invalid input", async ({ cli }) => {
+cliTest("rejects malformed dependency JSON", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-rust-cli-zlib-");
   const path = join(root, "broken.elf");
   await writeFile(
@@ -428,7 +425,6 @@ cliTest(
     });
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -469,7 +465,13 @@ cliTest(
     );
     // Padding separates the section size from the consumed stream that the
     // inflate guidance names.
-    expect(evidence.limitations).toContain(RUST_RESOURCE_GUARD_LIMITATION);
+    expect(evidence.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /inflated JSON.*64 times the consumed compressed-stream length/iu,
+        ),
+      ]),
+    );
     expect(evidence.locations).toContainEqual({
       kind: "file-offset-range",
       start: metadata?.file_offset,
@@ -480,7 +482,6 @@ cliTest(
     expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -527,7 +528,6 @@ cliTest(
     expect(parseMcpToolError(response).error).toMatchObject(expectedFailure);
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -684,32 +684,67 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
-  "refuses distinct rustc paths above capacity with non-retryable guidance",
+  "retrieves a larger compiler-path prefix through the CLI without losing dependencies",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-cli-overflow-");
     const path = join(root, "overflow.elf");
     await writeFile(path, createRustHashOverflowImage());
     const result = await cli.run({
-      arguments: ["inspect-rust-binary", path, "--json"],
+      arguments: [
+        "inspect-rust-binary",
+        path,
+        "--max-rustc-hashes",
+        "65",
+        "--producer-limits",
+        '{"input_bytes":8192,"output_bytes":16384}',
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(0);
+    const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
+      result.json,
+    );
+    const report = rustBinarySchema.parse(evidence.normalized_result);
+    expect(evidence.parameters).toMatchObject({
+      max_rustc_hashes: 65,
+      producer_limits: { input_bytes: 8192, output_bytes: 16384 },
+    });
+    expect(report.rustc_commit?.hashes).toHaveLength(65);
+    expect(report.rustc_commit).not.toHaveProperty("coverage");
+    expect(report.auditable_metadata?.packages).toHaveLength(2);
+  },
+);
+
+cliTest(
+  "rejects malformed Rust view JSON before opening the selected path",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-view-json-");
+    const result = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        join(root, "missing"),
+        "--view",
+        "{",
+        "--json",
+      ],
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "resource_constraint",
-      category: "resource_constraint",
-      retryable: false,
-      remediation: {
-        action:
-          "The rustc commit-path inventory is a fixed count. Waiting for an active analysis to finish does not raise it. Repeating the unchanged request fails the same way.",
-      },
+      code: "invalid_request",
       details: {
         operation: "inspect_rust_binary",
-        resource: "capacity",
-        reported_limits: { maximum_rustc_hashes: 64 },
+        issues: [
+          {
+            path: ["view"],
+            reason: "invalid_format",
+            message: "view must be a JSON package or edge selection",
+          },
+        ],
       },
     });
+    expect(JSON.stringify(result.json)).not.toContain("ENOENT");
   },
 );

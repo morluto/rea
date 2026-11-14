@@ -3,6 +3,12 @@
 These source-owned fixtures are compiled at verification time; generated
 binaries and Ghidra projects are never committed.
 
+For the one-shot function bundle handoff, run `npm run build:cached` and then
+`node scripts/verify-real-ghidra-function-bundle.mjs` with `GHIDRA_INSTALL_DIR`
+and `JAVA_HOME` set. The verifier compiles its own target, creates a project
+with a synthetic history report, and exercises complete, summary, and
+no-overwrite CLI delivery. It checks the target and project files for changes.
+
 - `../c/riscv.c` and `riscv-probe.S` produce source-owned RV32/RV64 ELF images
   with double-float ABI declarations and an independently known instruction.
   `../c/riscv-float-abi.c`, `riscv-probe.S` and `riscv-isa-probe.S` produce
@@ -15,10 +21,25 @@ binaries and Ghidra projects are never committed.
   Clang/LLD/LLVM readelf/LLVM objdump; `REA_RISCV_CLANG`, `REA_RISCV_LLD`,
   `REA_RISCV_READELF` and `REA_RISCV_OBJDUMP` select existing tool commands.
 
+- `ReaInstructionContextProbe.java` inspects source-owned ARM, Thumb, MIPS32
+  and MIPS16 instructions through the production bridge in an ephemeral,
+  read-only Ghidra project. It checks exact decoder-context register names,
+  values and provenance; the ARM lane also injects an unavailable provider
+  value. The `ghidra-bridge-sources` CI job runs both processor families. The
+  input bytes are never executed.
 - `ReaDecodeProbe.java` decodes source-owned instruction bytes from a
   language's default context and checks each mnemonic, length and optional
   complete operand. The `ghidra-bridge-sources` CI job runs it for `ARM:LE:32:Cortex`,
   `ARM:LE:32:v8-m` and `Xtensa:LE:32:default`; the bytes are never executed.
+- `ReaComputedCallCoverageProbe.java` decodes source-owned x86-64 calls
+  through a writable slot, a register and a direct target, injects only the
+  slot call's recorded `COMPUTED_CALL` target, and reads callees through the
+  production bridge. The recorded target stays an observed callee while callee
+  coverage is `partial` and names the call site; the targetless call stays
+  `partial` without that candidate limitation, and the direct call stays
+  `complete`. The `ghidra-bridge-sources` CI job runs it; the bytes are never
+  executed. It does not establish which references Ghidra's own analysis
+  records for other slot shapes.
 - `inventory.c` produces separate x86-64 debug and stripped ELF executables.
   It covers imports, an external `puts` function, linker thunks, source symbols,
   direct calls, a targetless callback call, two referenced strings, and a
@@ -69,6 +90,19 @@ binaries and Ghidra projects are never committed.
   budgets 1 MiB for generated C source and derives the maximum branch count
   from the worst-case line size before allocating the source. Larger or
   invalid counts are rejected before installation inspection or compilation.
+
+- `loader-relocation.c`, `loader-relocation-provider.c` and
+  `ReaLoaderRelocationProbe.java` exercise the production `ReaGhidraBridge`
+  against a real imported Linux full-RELRO PIE ELF and a small shared library.
+  The fixture's `.data.rel.ro` pointer is populated by an importer-created
+  relocation. The probe proves that the `ET_DYN` program is marked relocatable
+  by Ghidra but is still protected, checks the relocation byte range and
+  read/write reference handling, and compares baseline/protected pseudocode.
+  It also checks that a `-fno-plt` GOT caller retains identical pseudocode when
+  its relocation blocks become volatile. Source `FileBytes` and block
+  permissions must remain unchanged. `npm run
+  verify:ghidra:loader-relocation` requires Linux, BYO Ghidra/JDK with its
+  native decompiler, and a C compiler; the fixture is never executed.
 
 `scripts/verify-real-ghidra.mjs` uses `cc`, `clang`, and `lld-link` by default;
 `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can select alternate commands. The

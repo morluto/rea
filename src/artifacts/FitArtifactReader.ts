@@ -1,4 +1,5 @@
-import { Readable, Transform, pipeline } from "node:stream";
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
+import { Readable, Transform } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
 import type { FitMetadata } from "../domain/artifactFormatMetadata.js";
@@ -13,6 +14,7 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
@@ -30,11 +32,11 @@ const FDT_HEADER_BYTES = 40;
 export class FitArtifactReader implements ArtifactReader {
   readonly format = "fit" as const;
   readonly #scope = new ArtifactResourceScope();
-  readonly #entries = new Map<string, ArtifactEntry>();
+  #entries = new Map<string, ArtifactEntry>();
   readonly #streams = new Set<Readable>();
   readonly #path: string;
   readonly #source: ArtifactFileSource;
-  #prepared: Promise<void> | undefined;
+  readonly #preparation = new ArtifactPreparation();
   #metadata: FitMetadata | undefined;
   #coverage: ArtifactReaderTraversal | undefined;
   #closing = false;
@@ -66,8 +68,11 @@ export class FitArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
       await this.#source.read(signal);
     });
     if (this.#coverage !== undefined)
@@ -111,45 +116,13 @@ export class FitArtifactReader implements ArtifactReader {
               cancellationFailure,
             });
       const output = this.#imageStream(stored, signal);
-      output.on("error", () => undefined);
-      this.#streams.add(output);
-      let producerComplete = false;
-      const onAbort = (): void => {
-        // Active I/O and final validation own failure precedence. Buffered
-        // readable bytes still belong to the caller after they finish.
-        if (!producerComplete || output.destroyed) return;
-        output.destroy(cancellationFailure(signal?.reason));
-      };
-      const retired = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          this.#streams.delete(output);
-          signal?.removeEventListener("abort", onAbort);
-          resolve();
-        });
+      ownArtifactStream(source, output, {
+        scope: this.#scope,
+        streams: this.#streams,
+        signal,
+        cancellationFailure,
+        label: "FIT",
       });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-      void this.#scope
-        .run(async () => {
-          // Retain both producer work and the unconsumed readable stream.
-          await Promise.all([
-            new Promise<void>((resolve) =>
-              pipeline(source, output, () => {
-                producerComplete = true;
-                if (signal?.aborted) onAbort();
-                resolve();
-              }),
-            ),
-            retired,
-          ]);
-        })
-        .catch((cause: unknown) =>
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error("FIT stream ownership failed", { cause }),
-          ),
-        );
       return output;
     });
   }
@@ -207,6 +180,7 @@ export class FitArtifactReader implements ArtifactReader {
       this.#path,
       initial.size,
     );
+    const entries = new Map<string, ArtifactEntry>();
     let index = 0;
     for (const image of structure.images) {
       if (index % 256 === 0) await setImmediate();
@@ -228,15 +202,17 @@ export class FitArtifactReader implements ArtifactReader {
         adapterKey: `fit:${String(image.index)}`,
         formatMetadata: image.metadata,
       } satisfies ArtifactEntry;
-      this.#entries.set(entry.adapterKey, entry);
+      entries.set(entry.adapterKey, entry);
     }
+    await this.#source.read(signal);
+    this.#assertOpen(signal);
+    this.#entries = entries;
     this.#metadata = structure.metadata;
     if (structure.limitations.length > 0)
       this.#coverage = {
         status: "complete",
         limitations: structure.limitations,
       };
-    await this.#source.read(signal);
   }
 
   /** One streamed pass per image feeds every supported digest. */

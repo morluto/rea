@@ -59,19 +59,26 @@ const sharedAnalysisSemantics = {
   load_image_observations: "source-mappings-entry-context-relocation-symbol-v3",
   function_body_evidence: "complete-inclusive-ranges-v1",
   function_references: "complete-body-and-entry-reference-manager-v3",
-  call_relationship_coverage: "function-body-call-coverage-v5",
+  call_relationship_coverage: "observed-call-inventory-and-discovery-v7",
   function_dossier_coverage: "observed-facets-and-call-relationships-v1",
+  native_value_flow_projection: "accepted-runtime-budgets-v1",
+  value_flow_effect_scope: "pcode-load-store-explicit-v1",
   string_inventory_evidence: "defined-data-coverage-v1",
+  inventory_search_projection: "provider-inventory-facts-v1",
   data_type_observations: "bit-field-base-and-lookup-v1",
   location_resolution: "explicit-address-exact-entry-symbol-first-v3",
   procedure_search: "primary-and-exact-entry-symbol-names-v1",
   procedure_file_offset_resolution:
     "address-first-unique-target-source-mapping-v2",
   instruction_flow_evidence: "decoded-return-pcode-v1",
-  instruction_status: "unlisted-address-without-decode-v1",
+  instruction_status: "unlisted-and-containing-code-data-v3",
   instruction_references: "exact-address-incoming-without-synthetic-entry-v3",
-  function_boundary_observations: "ghidra-function-boundary-limitations-v4",
+  byte_search_coverage: "separate-loaded-overlays-v1",
+  function_boundary_observations: "ghidra-function-boundary-limitations-v5",
 } as const;
+const loaderRelocationSemantics = "volatile-unapplied-relocation-blocks-v1";
+// Read-only sessions record relocation limitations without marking blocks volatile.
+const readOnlyLoaderRelocationSemantics = "read-only-relocation-limitations-v1";
 
 /**
  * The processor language REA pins for this target, or undefined when Ghidra may
@@ -320,6 +327,11 @@ export const resolveGhidraAnalysisProfile = async (
             }
           : {}),
         ...sharedAnalysisSemantics,
+        // Windows P0 has no database-mutation authority: limitations only.
+        loader_relocation_semantics:
+          installation.platform === "win32"
+            ? readOnlyLoaderRelocationSemantics
+            : loaderRelocationSemantics,
         no_return_repair:
           installation.platform === "win32"
             ? "disabled-windows-p0"
@@ -485,7 +497,9 @@ export const existingGhidraAnalysisProfile = (
     ...(mipsElf === undefined ? {} : { mips_elf: mipsElf }),
     import_mode: "existing-project-private-copy-v1",
     ...sharedAnalysisSemantics,
+    selected_project_relationship_coverage: "prior-analysis-unknown-v1",
     annotation_policy: "read-only-existing-project-v1",
+    loader_relocation_semantics: readOnlyLoaderRelocationSemantics,
     existing_project: project,
     original_analysis: { completeness: "unknown", settings: "unknown" },
     no_return_repair: "disabled-existing-project",

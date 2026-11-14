@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  chainedImportNames,
   decodeChainedPointer,
-  parsePointerFixups,
 } from "./AppleMachoFixups.js";
+import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
 import type { Segment } from "./AppleMachoSelection.js";
 
 const BASE = 0x100000000n;
@@ -149,6 +150,26 @@ const chainedData = (format: 1 | 2 | 3): Buffer => {
   return data;
 };
 
+describe("chained import names", () => {
+  it.each([1, 2, 3] as const)(
+    "reads format %i import-table names without resolving libraries",
+    (format) => {
+      // Ordinals 1 and 2 name dependencies that this reader does not need.
+      expect(chainedImportNames(chainedData(format))).toEqual([
+        "_OBJC_CLASS_$_NSObject",
+        "_free",
+      ]);
+    },
+  );
+
+  it("rejects a malformed import table", () => {
+    const data = chainedData(1);
+    data.writeUInt32LE(4, 20);
+    expect(() => chainedImportNames(data)).toThrow(RangeError);
+    expect(() => chainedImportNames(Buffer.alloc(0))).toThrow(RangeError);
+  });
+});
+
 const SEGMENTS: Segment[] = [
   { address: BASE, size: 0x4000n, offset: 0, executable: true },
   { address: BASE + 0x4000n, size: 0x4000n, offset: 0x4000, executable: false },
@@ -211,6 +232,7 @@ it.each(["bind", "weak", "lazy"] as const)(
       "base64",
     );
     const opcodes = Buffer.from([
+      0x51,
       0x11,
       0x40,
       ...Buffer.from("_first\0"),
@@ -356,6 +378,7 @@ it.each(["bind", "weak", "lazy"] as const)(
     ]);
     const literalName = "_OBJC_CLASS_$_�";
     const opcodes = Buffer.from([
+      0x51,
       0x11,
       0x71,
       0x08,
@@ -562,9 +585,9 @@ it("retains unaligned pointer locations accepted by dyld's rebase state checks",
     kind: "rebase",
     target: 0x1234n,
   });
-  expect(fixups.decode(BASE + 0x100n, 0n)).toEqual({
-    kind: "raw",
-    target: 0n,
+  expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
+    kind: "unsupported",
+    reason: "A legacy fixup partially overlaps the pointer slot",
   });
 });
 
@@ -574,6 +597,87 @@ it("rejects count expansion outside the selected file-backed segment without exp
   );
 
   expect(fixups.unreadRebaseBytes).toBeGreaterThan(0);
+  expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
+    kind: "unknown",
+    reason: expect.stringContaining("leaves its file-backed segment"),
+  });
+});
+
+// ULEB encodings of 64-bit two's-complement backward steps.
+const MINUS_0X10 = [0xf0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
+const MINUS_0X18 = [0xe8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
+const MINUS_0X200 = [
+  0x80, 0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01,
+];
+
+it("wraps a backward ADD_ADDR_ULEB rebase step at 64 bits like dyld", () => {
+  // SET_TYPE(pointer), SET_SEGMENT(offset 0x100), DO once,
+  // ADD_ADDR(-0x10), DO once, DONE. dyld's uint64 cursor lands on 0xf8.
+  const { fixups } = legacyRebaseInput(
+    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x51, 0x30, ...MINUS_0X10, 0x51, 0]),
+  );
+
+  expect(fixups.decode(BASE + 0x100n, 0x200n)).toEqual({
+    kind: "rebase",
+    target: 0x200n,
+  });
+  expect(fixups.decode(BASE + 0xf8n, 0x300n)).toEqual({
+    kind: "rebase",
+    target: 0x300n,
+  });
+  expect(fixups.issues).toEqual([]);
+  expect(fixups.unreadRebaseBytes).toBe(0);
+});
+
+it("wraps backward rebase-and-advance and single-slot skip steps", () => {
+  // SET_TYPE(pointer), SET_SEGMENT(offset 0x100),
+  // DO_REBASE_ADD_ADDR(-0x18) → 0xf0, DO 1 skipping -0x18 → 0xe0, DO once.
+  const { fixups } = legacyRebaseInput(
+    Buffer.from([
+      0x11,
+      0x20,
+      0x80,
+      0x02,
+      0x70,
+      ...MINUS_0X18,
+      0x80,
+      0x01,
+      ...MINUS_0X18,
+      0x51,
+      0,
+    ]),
+  );
+
+  for (const offset of [0x100n, 0xf0n, 0xe0n])
+    expect(fixups.decode(BASE + offset, 0x200n)).toEqual({
+      kind: "rebase",
+      target: 0x200n,
+    });
+  expect(fixups.decode(BASE + 0xe8n, 0n)).toEqual({ kind: "raw", target: 0n });
+  expect(fixups.issues).toEqual([]);
+});
+
+it("still refuses a wrapped rebase cursor that leaves the segment", () => {
+  // SET_SEGMENT(offset 0x100), ADD_ADDR(-0x200) wraps below the segment start.
+  const { fixups } = legacyRebaseInput(
+    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x30, ...MINUS_0X200, 0x51, 0]),
+  );
+
+  expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
+    kind: "unknown",
+    reason: expect.stringContaining("leaves its file-backed segment"),
+  });
+  expect(fixups.issues).toMatchObject([
+    { code: "rebase_stream_decode_failed" },
+  ]);
+});
+
+it("still refuses a multi-slot run with a backward skip", () => {
+  // DO 2 skipping -0x18 would revisit earlier slots; this bounded decoder refuses that run.
+  const { fixups } = legacyRebaseInput(
+    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x80, 0x02, ...MINUS_0X18, 0]),
+  );
+
   expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
     kind: "unknown",
     reason: expect.stringContaining("leaves its file-backed segment"),
@@ -727,6 +831,7 @@ describe("incomplete legacy bind applicability", () => {
 
   it("retains a positive bind prefix while leaving unmatched slots unknown", () => {
     const opcodes = Buffer.from([
+      0x51,
       0x11,
       0x40,
       ...Buffer.from("_x\0"),
@@ -1006,11 +1111,20 @@ describe("parsed chained pointer membership", () => {
         target: BASE + 0x4321n,
       },
     );
-    const plain = data.readBigUInt64LE(0x400b);
-    expect(fixups.decode(BASE + 0x400bn, plain)).toEqual({
-      kind: "raw",
-      target: plain,
-    });
+    for (const offset of [0x4002, 0x400b, 0x4012])
+      expect(
+        fixups.decode(BASE + BigInt(offset), data.readBigUInt64LE(offset)),
+      ).toEqual({
+        kind: "unsupported",
+        reason: "A chained fixup partially overlaps the pointer slot",
+      });
+    for (const offset of [0x4000, 0x4019]) {
+      const plain = data.readBigUInt64LE(offset);
+      expect(fixups.decode(BASE + BigInt(offset), plain)).toEqual({
+        kind: "raw",
+        target: plain,
+      });
+    }
   });
 
   it.each(["shared", "exhausted"])(
@@ -1149,7 +1263,7 @@ describe("bounded chained page facts", () => {
       {
         facet: "pointer_fixups",
         code: "chained_pointer_walk_failed",
-        message: "Chained pointer link leaves its file-backed page",
+        message: expect.stringContaining("file-backed page"),
         location: "0x100004000",
       },
     ]);
@@ -1351,7 +1465,7 @@ describe("malformed chained pointer coverage", () => {
       {
         facet: "pointer_fixups",
         code: "chained_pointer_walk_failed",
-        message: "Chained pointer link leaves its file-backed page",
+        message: expect.stringContaining("file-backed page"),
         location: "0x100005000",
       },
     ]);
@@ -1508,6 +1622,111 @@ describe("chained import library identity", () => {
     },
   );
 });
+it("keeps both pointer slots unresolved when a legacy bind overlaps them", () => {
+  const opcodes = Buffer.from([
+    0x11,
+    0x40,
+    ...Buffer.from("_foo\0"),
+    0x51,
+    0x71,
+    0x04,
+    0x90,
+    0x00,
+  ]);
+  const fixups = parsePointerFixups(
+    opcodes,
+    {
+      chained: null,
+      binds: [{ offset: 0, size: opcodes.length, stream: "bind" }],
+      rebases: [],
+      dylibs: ["/lib"],
+    },
+    SEGMENTS,
+    BASE,
+  );
+  expect(fixups.decode(BASE + 0x4000n, 123n).kind).toBe("unsupported");
+  expect(fixups.decode(BASE + 0x4008n, 456n).kind).toBe("unsupported");
+});
+
+describe("legacy bind write types", () => {
+  it.each([2, 3])(
+    "keeps four-byte bind type %i unresolved without claiming writes to adjacent bytes",
+    (type) => {
+      const opcodes = Buffer.from([
+        0x50 | type,
+        0x11,
+        0x40,
+        ...Buffer.from("_text\0"),
+        0x71,
+        0x08,
+        0x90,
+        0x51,
+        0x90,
+        0,
+      ]);
+      const bytes = Buffer.alloc(0x8000);
+      opcodes.copy(bytes, 0x7000);
+      const fixups = parsePointerFixups(
+        bytes,
+        {
+          chained: null,
+          rebases: [],
+          binds: [{ offset: 0x7000, size: opcodes.length, stream: "bind" }],
+          dylibs: ["/library"],
+        },
+        SEGMENTS,
+        BASE,
+      );
+      expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
+        kind: "unsupported",
+        reason: "Legacy non-pointer bind is not a 64-bit metadata pointer",
+      });
+      expect(fixups.decode(BASE + 0x400cn, 0x1234n)).toEqual({
+        kind: "unsupported",
+        reason: "A legacy fixup partially overlaps the pointer slot",
+      });
+      expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x400bn, 1)).toBe(true);
+      expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x400cn, 4)).toBe(false);
+      expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
+        kind: "bind",
+        symbol: "_text",
+      });
+      expect(fixups.issues).toMatchObject([{ code: "non_pointer_bind" }]);
+      expect(fixups.decoded).toBe(1);
+    },
+  );
+
+  it.each(["bind", "weak", "lazy"] as const)(
+    "preserves %s type defaults instead of inventing a pointer bind",
+    (stream) => {
+      const opcodes = Buffer.from([
+        0x11,
+        0x40,
+        ...Buffer.from("_x\0"),
+        0x71,
+        0x08,
+        0x90,
+        0,
+      ]);
+      const fixups = parsePointerFixups(
+        opcodes,
+        {
+          chained: null,
+          rebases: [],
+          binds: [{ offset: 0, size: opcodes.length, stream }],
+          dylibs: ["/library"],
+        },
+        SEGMENTS,
+        BASE,
+      );
+      expect(fixups.decode(BASE + 0x4008n, 0n).kind).toBe(
+        stream === "lazy" ? "bind" : "unknown",
+      );
+      expect(fixups.decoded).toBe(stream === "lazy" ? 1 : 0);
+    },
+  );
+});
+
 describe("legacy pointer fixup streams", () => {
   it("interprets legacy bind, weak-bind and lazy-bind opcodes", () => {
     const opcodes = Buffer.from([
@@ -1580,6 +1799,7 @@ describe("legacy pointer fixup streams", () => {
     // The unsigned 64-bit encoding of -8 revisits the current pointer slot.
     const back = [0xf8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
     const opcodes = Buffer.from([
+      0x51,
       0x11, // SET_DYLIB_ORDINAL_IMM 1
       0x40,
       ...Buffer.from("__ZdlPv\0"),
@@ -1619,6 +1839,7 @@ describe("legacy pointer fixup streams", () => {
 
   it("retains weak-bind stream provenance independently from its default ordinal", () => {
     const opcodes = Buffer.from([
+      0x51,
       0x40,
       ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
       0x71,
@@ -1649,6 +1870,7 @@ describe("legacy pointer fixup streams", () => {
 describe("legacy bind operand decoding", () => {
   const addendStream = (addend: readonly number[]) =>
     Buffer.from([
+      0x51,
       0x11, // SET_DYLIB_ORDINAL_IMM 1
       0x40,
       ...Buffer.from("_x\0"),
@@ -1754,6 +1976,7 @@ describe("legacy bind operand decoding", () => {
 
   const addressStream = (operand: readonly number[]) =>
     Buffer.from([
+      0x51,
       0x40,
       ...Buffer.from("_x\0"),
       0x71,
@@ -1802,6 +2025,7 @@ it("preserves classic special ordinals and returns unsupported at invalid bind l
   const parseOrdinal = (ordinal: number, dylibs: readonly string[]) => {
     const immediate = ordinal < 0 ? ordinal + 16 : ordinal;
     const opcodes = Buffer.from([
+      0x51,
       ordinal > 0 ? 0x10 | ordinal : 0x30 | immediate,
       0x40,
       ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
@@ -1850,6 +2074,7 @@ it("preserves classic special ordinals and returns unsupported at invalid bind l
   }
   encoded.push(Number(remaining));
   const oversizedStream = Buffer.from([
+    0x51,
     0x20,
     ...encoded,
     0x40,

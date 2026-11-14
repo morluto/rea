@@ -16,15 +16,18 @@ import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
-  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
-import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
+import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
+import {
+  semanticOpaqueGlobalMayHaveChanged,
+  semanticOpaqueNameMayHaveChanged,
+} from "./javascriptSemanticOpaqueEffects.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
-  builtinDataEffectMethod,
+  builtinDataEffectIdentity,
   dataEffectArgumentBindingId,
   dataEffectLiteralString,
   dataEffectMemberCallee,
@@ -68,12 +71,31 @@ const TIMER_CANCEL_METHODS = [
   "clearImmediate",
 ] as const;
 
+/**
+ * Node keeps two timer handle families. `clearTimeout` and `clearInterval` are
+ * aliases that act only on a `Timeout` from `setTimeout` or `setInterval`, and
+ * `clearImmediate` acts only on an `Immediate` from `setImmediate`. Clearing
+ * within a family always cancels. Clearing across the families is
+ * runtime-dependent: `setImmediate` then `clearTimeout`/`clearInterval` never
+ * cancels, but `setTimeout` then `clearImmediate` reports as cancelled on some
+ * supported Node versions and fires on others. The analysis therefore treats a
+ * cross-family clear as unresolved rather than as proof that the timer kept
+ * running.
+ */
+const timerHandleFamily = (
+  method: JavaScriptSemanticTimerOperation["method"],
+): "timeout" | "immediate" =>
+  method === "setImmediate" || method === "clearImmediate"
+    ? "immediate"
+    : "timeout";
+
 interface AsyncEffectAnalysis {
   readonly eventOperations: readonly JavaScriptSemanticEventOperation[];
   readonly timerOperations: readonly JavaScriptSemanticTimerOperation[];
 }
 
 interface TimerCandidate {
+  readonly builtinAuthority?: "candidate";
   readonly node: t.CallExpression | t.OptionalCallExpression;
   readonly method: JavaScriptSemanticTimerOperation["method"];
   readonly kind: JavaScriptSemanticTimerOperation["kind"];
@@ -91,6 +113,10 @@ interface TimerCollectionInput {
   readonly ownerCallableId: string | null;
   readonly state: JavaScriptSemanticAnalysisState;
   readonly output: TimerCandidate[];
+  readonly delayConstructors: ReadonlyMap<
+    string,
+    ReturnType<typeof createGlobalReferenceReader>
+  >;
   readonly ancestors: readonly t.Node[];
 }
 
@@ -102,6 +128,10 @@ export const collectJavaScriptSemanticAsyncEffects = (
 ): AsyncEffectAnalysis => {
   const events: JavaScriptSemanticEventOperation[] = [];
   const timers: TimerCandidate[] = [];
+  const delayConstructors = new Map([
+    ["Symbol", createGlobalReferenceReader(state, ["Symbol"])],
+    ["BigInt", createGlobalReferenceReader(state, ["BigInt"])],
+  ]);
   const callableIds = new Set(callables.map(({ callableId }) => callableId));
   const callableStack = createSemanticCallableIdStack(callableIds);
   const ancestors: t.Node[] = [];
@@ -116,6 +146,7 @@ export const collectJavaScriptSemanticAsyncEffects = (
           ownerCallableId,
           state,
           output: timers,
+          delayConstructors,
           ancestors,
         });
       }
@@ -141,7 +172,10 @@ export const collectJavaScriptSemanticAsyncEffects = (
  *
  * A class expression passes Node's own `typeof` check, so it is kept.
  */
-const rejectsEventListener = (listener: t.Node): boolean => {
+export const rejectsSemanticEventListener = (
+  listener: t.Node | undefined,
+): boolean => {
+  if (listener === undefined) return true;
   if (t.isSpreadElement(listener)) return false;
   const value = unwrapJavaScriptExpression(listener).node;
   if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
@@ -185,9 +219,9 @@ const collectEvent = (
   // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
   // trailing `1`.
   if (
+    EVENT_LISTENER_METHODS.includes(method) &&
     !t.isSpreadElement(eventArgument) &&
-    listenerArgument !== undefined &&
-    rejectsEventListener(listenerArgument)
+    rejectsSemanticEventListener(listenerArgument)
   )
     return;
   const emitter = emitterIdentity(member.object, state);
@@ -288,20 +322,25 @@ const emitterIdentity = (
 };
 
 /**
- * A timer proven to come from the Node `timers` module rather than a bare
- * global. Browser and Electron renderer sources reach this analysis without a
- * Node/browser distinction, and there `setTimeout("refresh()", 0)` is a real
+ * A timer associated with the Node `timers` module, either proven or
+ * conditional, rather than a bare global. Browser and Electron renderer sources
+ * reach this analysis without a Node/browser distinction, and there `setTimeout("refresh()", 0)` is a real
  * timer: the string is evaluated by the host. Node's callback rule therefore
- * applies only when the timer is imported from `node:timers`, where that form
- * cannot exist.
+ * applies when interpreting the call as `node:timers`, where that form
+ * cannot create a Node timer even if the module identity is conditional.
  */
 const nodeBuiltinTimerMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticTimerOperation["method"] | null =>
-  admittedTimerMethod(
-    builtinDataEffectMethod(callee, state, ["timers", "node:timers"]) ?? "",
+): JavaScriptSemanticTimerOperation["method"] | null => {
+  const identity = builtinDataEffectIdentity(callee, state, [
+    "timers",
+    "node:timers",
+  ]);
+  return admittedTimerMethod(
+    identity?.path.length === 1 ? (identity.path[0] ?? "") : "",
   );
+};
 
 /**
  * A schedule imported from Node's `timers` module requires a function in
@@ -350,14 +389,49 @@ const schedulesWithNonFunctionCallback = (
   return t.isUnaryExpression(value);
 };
 
+// Node converts timeout and interval delays to numbers before creating a handle.
+// BigInt and Symbol values throw there. A spread can shift the delay slot, and
+// shadowed or replaced constructors cannot establish the argument's type.
+const schedulesWithInvalidDelay = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
+  delayConstructors: TimerCollectionInput["delayConstructors"],
+): boolean => {
+  if (
+    node.arguments.slice(0, 2).some((argument) => t.isSpreadElement(argument))
+  )
+    return false;
+  const argument = node.arguments[1];
+  if (argument === undefined) return false;
+  const value = unwrapJavaScriptExpression(argument).node;
+  if (t.isBigIntLiteral(value)) return true;
+  if (
+    t.isUnaryExpression(value) &&
+    ["+", "-", "~"].includes(value.operator) &&
+    t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node)
+  )
+    return true;
+  return (
+    t.isCallExpression(value) &&
+    t.isIdentifier(value.callee) &&
+    delayConstructors.get(value.callee.name)?.(value.callee).status ===
+      "unmodified" &&
+    !semanticOpaqueNameMayHaveChanged(value.callee, state) &&
+    !semanticOpaqueGlobalMayHaveChanged(value.callee, state)
+  );
+};
+
 const collectTimer = (input: TimerCollectionInput): void => {
   const { node, ownerCallableId, state, output, ancestors } = input;
-  const method = timerMethod(node.callee, state);
-  if (method === null) return;
+  const identity = timerMethod(node.callee, state);
+  if (identity === null) return;
+  const { method, builtinAuthority } = identity;
   if (
     TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method) &&
     nodeBuiltinTimerMethod(node.callee, state) !== null &&
-    schedulesWithNonFunctionCallback(node, input.state)
+    (schedulesWithNonFunctionCallback(node, state) ||
+      ((method === "setTimeout" || method === "setInterval") &&
+        schedulesWithInvalidDelay(node, state, input.delayConstructors)))
   )
     return;
   const kind = TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method)
@@ -403,6 +477,7 @@ const collectTimer = (input: TimerCollectionInput): void => {
   output.push({
     node,
     method,
+    ...(builtinAuthority === undefined ? {} : { builtinAuthority }),
     kind,
     ownerCallableId,
     handleBindingId:
@@ -435,12 +510,24 @@ const resolveTimers = (
     const linked =
       candidate.handleRead?.origins.flatMap((origin) => {
         const schedule = schedules.get(origin);
-        return schedule === undefined ? [] : [schedule];
+        // A handle always clears its own family. Clearing across families is
+        // runtime-dependent, so it establishes no link in either direction.
+        if (
+          schedule === undefined ||
+          timerHandleFamily(schedule.method) !==
+            timerHandleFamily(candidate.method)
+        )
+          return [];
+        return [schedule];
       }) ?? [];
     const incompleteOrigins =
       candidate.handleRead !== null &&
       candidate.handleRead.origins.length !== linked.length;
     return {
+      ...(candidate.builtinAuthority === "candidate" ||
+      linked.some((item) => item.builtinAuthority === "candidate")
+        ? { builtinAuthority: "candidate" as const }
+        : {}),
       timerId: timerId(candidate),
       kind: candidate.kind,
       method: candidate.method,
@@ -473,7 +560,10 @@ const resolveTimers = (
 const timerMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticTimerOperation["method"] | null => {
+): {
+  readonly method: JavaScriptSemanticTimerOperation["method"];
+  readonly builtinAuthority?: "candidate";
+} | null => {
   if (t.isIdentifier(callee)) {
     const binding = resolveSemanticBindingState(state, callee, callee.name);
     if (binding === undefined) {
@@ -482,12 +572,24 @@ const timerMethod = (
       return semanticResolutionBlocked(state, callee, callee.name) ||
         !isUnmodifiedGlobalReference(callee, state, callee.name)
         ? null
-        : method;
+        : { method };
     }
   }
-  return admittedTimerMethod(
-    builtinDataEffectMethod(callee, state, ["timers", "node:timers"]) ?? "",
+  const identity = builtinDataEffectIdentity(callee, state, [
+    "timers",
+    "node:timers",
+  ]);
+  const method = admittedTimerMethod(
+    identity?.path.length === 1 ? (identity.path[0] ?? "") : "",
   );
+  return method === null
+    ? null
+    : {
+        method,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
+      };
 };
 const admittedTimerMethod = (
   value: string,

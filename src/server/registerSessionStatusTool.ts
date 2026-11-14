@@ -9,6 +9,8 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { JebAnalysisAvailability } from "../application/jeb/JebAnalysisPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   buildCapabilityInventory,
   compactToolAvailability,
@@ -42,7 +44,7 @@ export interface SessionStatusToolOptions extends CapabilityAvailabilityProbes {
  * the established not-configured shape instead of launching probes whose tools
  * cannot appear in the response.
  */
-const probeSessionAvailability = (
+const probeSessionAvailability = async (
   probes: CapabilityAvailabilityProbes,
   signal: AbortSignal,
   advertisesFamily: (family: ToolFamilyId) => boolean,
@@ -52,30 +54,45 @@ const probeSessionAvailability = (
   readonly apktool: ProviderAvailability | undefined;
   readonly jeb: JebAnalysisAvailability | undefined;
   readonly evmLimiter: ProviderAvailability | undefined;
-}> =>
-  Promise.all([
-    advertisesFamily("android")
-      ? probes.androidAnalysisAvailability(signal)
-      : undefined,
-    advertisesFamily("adb")
-      ? (probes.adbAnalysisAvailability?.(signal) ?? undefined)
-      : undefined,
-    advertisesFamily("apktool")
-      ? (probes.apktoolAnalysisAvailability?.(signal) ?? undefined)
-      : undefined,
-    advertisesFamily("jeb")
-      ? (probes.jebAnalysisAvailability?.(signal) ?? undefined)
-      : undefined,
-    advertisesFamily("artifact")
-      ? (probes.evmLimiterAvailability?.(signal) ?? undefined)
-      : undefined,
-  ] as const).then(([android, adb, apktool, jeb, evmLimiter]) => ({
-    android,
-    adb,
-    apktool,
-    jeb,
-    evmLimiter,
-  }));
+}> => {
+  const probe = <T>(family: ToolFamilyId, run: () => Promise<T> | undefined) =>
+    advertisesFamily(family) ? Promise.resolve().then(run) : undefined;
+  const pending = [
+    probe("android", () => probes.androidAnalysisAvailability(signal)),
+    probe("adb", () => probes.adbAnalysisAvailability?.(signal)),
+    probe("apktool", () => probes.apktoolAnalysisAvailability?.(signal)),
+    probe("jeb", () => probes.jebAnalysisAvailability?.(signal)),
+    probe("artifact", () => probes.evmLimiterAvailability?.(signal)),
+  ] as const;
+  try {
+    const [android, adb, apktool, jeb, evmLimiter] = await Promise.all(pending);
+    return { android, adb, apktool, jeb, evmLimiter };
+  } catch (cause: unknown) {
+    const settled = await Promise.allSettled(pending);
+    let failure = cause;
+    for (const result of settled) {
+      if (
+        result.status !== "rejected" ||
+        result.reason === cause ||
+        !(result.reason instanceof AnalysisError) ||
+        !result.reason.cleanupIncomplete
+      )
+        continue;
+      const primary =
+        failure instanceof AnalysisError
+          ? failure
+          : new ProviderAdapterError("rea", "binary_session", {
+              cause: failure,
+            });
+      failure = analysisErrorWithCleanupFailure(
+        primary,
+        result.reason,
+        "binary_session",
+      ).bindCleanupDependencies([primary, result.reason]);
+    }
+    throw failure;
+  }
+};
 
 /** Register the read-only provider and target status operation. */
 export const registerSessionStatusTool = (
@@ -103,33 +120,38 @@ export const registerSessionStatusTool = (
         status = await session.status({
           signal: context.mcpReq.signal,
           detail: input.detail,
+          refreshCandidates: input.refresh_candidates,
         });
       } catch (cause) {
         if (!(cause instanceof AnalysisError)) throw cause;
         return server.delivery.toCallToolResult(err(cause), contract);
       }
       const statusObject = jsonObjectSchema.parse(status);
-      // Availability must be derived from the complete provider facts: an
+      // Availability is derived from the complete provider facts: an
       // advertised composed tool still depends on direct operations the
-      // registration hides. Narrow the public report only after this.
-      const toolAvailability = buildCapabilityInventory(status, {
-        ...availabilityPolicy(),
-        ...(availabilityResults.android === undefined
-          ? {}
-          : { androidAnalysisAvailability: availabilityResults.android }),
-        ...(availabilityResults.adb === undefined
-          ? {}
-          : { adbAnalysisAvailability: availabilityResults.adb }),
-        ...(availabilityResults.apktool === undefined
-          ? {}
-          : { apktoolAnalysisAvailability: availabilityResults.apktool }),
-        ...(availabilityResults.jeb === undefined
-          ? {}
-          : { jebAnalysisAvailability: availabilityResults.jeb }),
-        ...(availabilityResults.evmLimiter === undefined
-          ? {}
-          : { evmLimiterAvailability: availabilityResults.evmLimiter }),
-      }).filter(({ name }) => server.advertisesTool(name));
+      // registration hides. Advertisement narrows only the public report.
+      const toolAvailability = buildCapabilityInventory(
+        status,
+        {
+          ...availabilityPolicy(),
+          ...(availabilityResults.android === undefined
+            ? {}
+            : { androidAnalysisAvailability: availabilityResults.android }),
+          ...(availabilityResults.adb === undefined
+            ? {}
+            : { adbAnalysisAvailability: availabilityResults.adb }),
+          ...(availabilityResults.apktool === undefined
+            ? {}
+            : { apktoolAnalysisAvailability: availabilityResults.apktool }),
+          ...(availabilityResults.jeb === undefined
+            ? {}
+            : { jebAnalysisAvailability: availabilityResults.jeb }),
+          ...(availabilityResults.evmLimiter === undefined
+            ? {}
+            : { evmLimiterAvailability: availabilityResults.evmLimiter }),
+        },
+        (name) => server.advertisesTool(name),
+      );
       const serverIdentity = createServerIdentity({
         startedAt,
         commandPath: CURRENT_ENTRYPOINT_PATH,

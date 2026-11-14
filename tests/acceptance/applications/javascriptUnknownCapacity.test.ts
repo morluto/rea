@@ -1,10 +1,9 @@
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -58,35 +57,15 @@ cliTest(
         0,
       ),
     ).toBe(29);
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [resolve("scripts/rea.mjs"), "mcp"],
-      cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
-      stderr: "pipe",
+    const { client } = await connectLocalToolsMcp();
+    const response = await client.callTool({
+      name: contract.name,
+      arguments: { input_path: root, detail: "complete", ...options },
     });
-    const client = new Client({
-      name: "unknown-capacity-regression",
-      version: "1",
-    });
-    try {
-      await client.connect(transport);
-      const response = await client.callTool({
-        name: contract.name,
-        arguments: { input_path: root, detail: "complete", ...options },
-      });
-      expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      const mcp = contract.outputSchema.parse(response.structuredContent);
-      expect(mcp.parameters).toEqual(evidence.parameters);
-      expect(mcp.evidence_id).toBe(evidence.evidence_id);
-      expect(mcp.normalized_result).toEqual(evidence.normalized_result);
-    } finally {
-      try {
-        await client.close();
-      } finally {
-        await transport.close();
-      }
-    }
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const mcp = contract.outputSchema.parse(response.structuredContent);
+    expect(mcp.parameters).toEqual(evidence.parameters);
+    expect(mcp.evidence_id).toBe(evidence.evidence_id);
+    expect(mcp.normalized_result).toEqual(evidence.normalized_result);
   },
-  30_000,
 );

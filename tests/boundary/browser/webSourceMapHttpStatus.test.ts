@@ -9,7 +9,7 @@ import {
   analyzeWebBundleInputSchema,
   webSourceMapsSchema,
 } from "../../../src/domain/webBundleAnalysis.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/webSourceLocation.js";
+import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/sourceMapLimits.js";
 
 it.each([
   { status: 300, followsRedirect: false },
@@ -147,10 +147,12 @@ it.each(["invalid JSON", "invalid UTF-8", "HTTP failure", "response limit"])(
         target_id: "page",
         allowed_origins: [origin],
         fetch_source_maps: true,
+        ...(failure === "response limit"
+          ? { source_map_limits: { fetch_bytes: 1 } }
+          : {}),
       }),
       undefined,
       {
-        ...(failure === "response limit" ? { maxResponseBytes: 1 } : {}),
         fetch: (url) =>
           Promise.resolve(
             String(url) === declaredUrl
@@ -248,18 +250,22 @@ it.each([
     );
     if (cancellationFails) {
       const result = await pending;
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          _tag: "AnalysisResourceConstraintError",
-          message: expect.stringContaining("Expanded source-map evidence"),
-          cleanupIncomplete: true,
-          cleanupResources: ["source-map-response"],
-          cause: expect.objectContaining({
-            errors: expect.arrayContaining([reason]),
-          }),
-        },
-      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected output admission failure");
+      expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(result.error.message).toContain("Expanded source-map evidence");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources.length).toBe(1);
+      expect(result.error.cleanupResources[0] === fetchedUrl).toBe(true);
+      await expect
+        .poll(() =>
+          result.error.secondaryFailures.some((failure) =>
+            failure.secondaryFailures.some(
+              (secondary) => secondary.cause === reason,
+            ),
+          ),
+        )
+        .toBe(true);
     } else {
       await expect(pending).resolves.toMatchObject({
         ok: true,

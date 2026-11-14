@@ -17,11 +17,12 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { androidPackageDeliverySchema } from "../domain/android/androidPackageQuery.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { parseCliJsonOption } from "./cliJsonOption.js";
 import { parseAnalysisInput } from "../application/AnalysisInput.js";
 import { androidJniSelectionSchema } from "../domain/android/androidJniBindings.js";
 import { androidJniDeliverySchema } from "../domain/android/androidJniQuery.js";
-import { cliIntegerArgument } from "./options.js";
+import { androidInputSchemas } from "../domain/android/androidAnalysis.js";
+import { cliDecimalField } from "./options.js";
 
 /** Expose the same explicit APK requests through one-shot CLI commands. */
 export const registerAndroidCommands = (
@@ -66,14 +67,10 @@ export const registerAndroidCommands = (
         ).then(projectCliAnalysisResult);
       }),
     );
-  const path = z.string().describe("Local standalone APK path");
-  const className = z.string().describe("Exact fully qualified class name");
-  const mappingPath = z
-    .string()
-    .optional()
-    .describe(
-      "Absolute local R8/ProGuard mapping.txt; names are annotated, never replaced",
-    );
+  const path = androidInputSchemas.inspect_android_package.shape.path;
+  const className = androidInputSchemas.inspect_android_class.shape.class_name;
+  const mappingPath =
+    androidInputSchemas.inspect_android_class.shape.mapping_path;
   const mappingInput = (path: string | undefined) =>
     path === undefined ? {} : { mapping_path: path };
   cli.command(CLI_COMMANDS.inspectAndroidJniBindings, {
@@ -108,21 +105,14 @@ export const registerAndroidCommands = (
               androidJniDeliverySchema,
             );
             if (!delivery.ok) return projectAnalysisError(delivery.error);
-            let query: unknown = {};
-            try {
-              if (options.query !== undefined)
-                query = JSON.parse(options.query);
-            } catch (cause: unknown) {
-              return projectAnalysisError(
-                new AnalysisInputError(operation, { cause }, [
-                  {
-                    path: ["query"],
-                    reason: "invalid_format",
-                    message: "query must be a JSON selection object.",
-                  },
-                ]),
-              );
-            }
+            const decoded = parseCliJsonOption(
+              operation,
+              "query",
+              options.query,
+              "query must be a JSON selection object.",
+            );
+            if (!decoded.ok) return projectAnalysisError(decoded.error);
+            const query = decoded.value === undefined ? {} : decoded.value;
             const selected = parseAnalysisInput(
               operation,
               query,
@@ -195,11 +185,7 @@ export const registerAndroidCommands = (
     description: "Search APK class names; empty query inventories all classes",
     args: z.object({
       path,
-      query: z
-        .string()
-        .describe(
-          "Case-sensitive class-name substring; empty lists all classes",
-        ),
+      query: androidInputSchemas.search_android_classes.shape.query,
     }),
     run: ({ args }) =>
       execute(
@@ -231,14 +217,17 @@ export const registerAndroidCommands = (
     args: z.object({
       path,
       className,
-      methodName: z.string().describe("Exact declared method name"),
+      methodName:
+        androidInputSchemas.inspect_android_method.shape.method_name.describe(
+          "Exact declared method name",
+        ),
     }),
     options: z.object({
-      overloadIndex: cliIntegerArgument(0)
-        .optional()
-        .describe(
+      overloadIndex: cliDecimalField(
+        androidInputSchemas.inspect_android_method.shape.overload_index.describe(
           "Explicit zero-based index among same-name methods; required when ambiguous",
         ),
+      ),
       mappingPath,
       ...analysisEvidenceDeliveryOptions,
     }),
@@ -264,17 +253,13 @@ export const registerAndroidCommands = (
       "Trace APK using nodes for a defined class/method or an externally invoked DEX method",
     args: z.object({ path, className }),
     options: z.object({
-      methodName: z
-        .string()
-        .optional()
-        .describe(
-          "Defined or directly referenced external method; omit for APK class references",
-        ),
-      overloadIndex: cliIntegerArgument(0)
-        .optional()
-        .describe(
+      methodName:
+        androidInputSchemas.trace_android_references.shape.method_name,
+      overloadIndex: cliDecimalField(
+        androidInputSchemas.trace_android_references.shape.overload_index.describe(
           "Index among defined methods or observed external prototypes listed by an ambiguous query",
         ),
+      ),
     }),
     run: ({ args, options }) =>
       execute(

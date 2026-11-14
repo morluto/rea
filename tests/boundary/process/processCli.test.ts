@@ -77,7 +77,10 @@ describe("documented process CLI workflow", () => {
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-process-cli-");
       const guide = await readFile(
-        new URL("../../../docs/process-capture.md", import.meta.url),
+        new URL(
+          "../../../docs/guides/runtime/process-capture.md",
+          import.meta.url,
+        ),
         "utf8",
       );
       const recipe = /```sh\nrea capture-process ([^\n]+)\n```/u.exec(
@@ -118,7 +121,6 @@ describe("documented process CLI workflow", () => {
         operation: "compare_process_captures",
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -146,9 +148,7 @@ describe("process CLI cleanup errors", () => {
       try {
         // A retained PTY can keep its CLI process alive. Read the completed
         // compiled command result before releasing the child and joining exit.
-        if (cli.sharedCliRun === undefined)
-          throw new Error("Expected the compiled CLI command session");
-        const result = await cli.sharedCliRun({
+        const result = await cli.run({
           arguments: ["capture-process", scenario, "--json"],
           environment: {
             TMPDIR: root,
@@ -202,14 +202,12 @@ describe("process CLI cleanup errors", () => {
           expect(Number.isSafeInteger(targetPid) && targetPid > 0).toBe(true);
           await expect
             .poll(() => observeProcessStartIdentity(targetPid), {
-              timeout: 7_000,
               interval: 25,
             })
             .toBeUndefined();
         }
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -276,25 +274,20 @@ describe("process CLI errors", () => {
         true,
       );
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
-  it(
-    "exits unsuccessfully without writing failure-shaped evidence",
-    async () => {
-      await expect(
-        execFileAsync(
-          process.execPath,
-          ["scripts/rea.mjs", "capture-process", "/missing/scenario.json"],
-          { cwd: process.cwd() },
-        ),
-      ).rejects.toMatchObject({
-        code: 1,
-        stdout: expect.stringContaining("category: invalid_input"),
-      });
-    },
-    CLI_INTEGRATION_TIMEOUT_MS,
-  );
+  it("exits unsuccessfully without writing failure-shaped evidence", async () => {
+    await expect(
+      execFileAsync(
+        process.execPath,
+        ["scripts/rea.mjs", "capture-process", "/missing/scenario.json"],
+        { cwd: process.cwd() },
+      ),
+    ).rejects.toMatchObject({
+      code: 1,
+      stdout: expect.stringContaining("category: invalid_input"),
+    });
+  });
 
   it("rejects NUL arguments before process launch", async () => {
     const root = await createTestTempDirectory("rea-process-cli-");
@@ -315,8 +308,9 @@ describe("process CLI errors", () => {
             path: ["arguments", 0],
             reason: "invalid_format",
             expected: "regex",
-            message:
-              "Values passed to operating-system APIs cannot contain NUL",
+            message: expect.stringMatching(
+              /operating.system.*cannot contain NUL/i,
+            ),
           },
         ],
       },
@@ -451,8 +445,9 @@ describe("process CLI evidence validation", () => {
       code: "invalid_request",
       retryable: false,
       category: "invalid_input",
-      message:
-        "Capture evidence is not from the current process-capture workflow. Create new capture evidence, then try again.",
+      message: expect.stringMatching(
+        /capture evidence.*not from.*process-capture.*create new capture evidence/i,
+      ),
       details: {
         operation: "compare_process_captures",
         issues: [{ path: ["left"], reason: "invalid_value" }],
@@ -484,43 +479,33 @@ describe("process CLI evidence validation", () => {
   });
 });
 
-it(
-  "reports the JSON depth constraint through the compiled comparison CLI",
-  async () => {
-    const root = await createTestTempDirectory("rea-process-cli-");
-    const left = join(root, "left.json");
-    const right = join(root, "right.json");
-    const input = INVESTIGATION_EXAMPLES.compare_process_captures.input;
-    await writeFile(left, JSON.stringify(input.left));
-    await writeFile(right, JSON.stringify(input.right));
-    const cli = fileURLToPath(
-      new URL("../../../scripts/rea.mjs", import.meta.url),
-    );
-    const cliArguments = [
-      cli,
-      "compare-process-captures",
-      left,
-      right,
-      "--json",
-    ];
-    const baseline = await execFileAsync(process.execPath, cliArguments);
-    expect(JSON.parse(baseline.stdout)).toMatchObject({
-      operation: "compare_process_captures",
-    });
-    const nested = '{"nested":'.repeat(10_000) + "1" + "}".repeat(10_000);
-    await writeFile(
-      left,
-      JSON.stringify({
-        ...input.left,
-        parameters: { attack: "depth-placeholder" },
-      }).replace('"depth-placeholder"', nested),
-    );
-    await expect(
-      execFileAsync(process.execPath, cliArguments),
-    ).rejects.toMatchObject({
-      code: 1,
-      stdout: expect.stringContaining("maximum nesting depth"),
-    });
-  },
-  CLI_INTEGRATION_TIMEOUT_MS,
-);
+it("reports the JSON depth constraint through the compiled comparison CLI", async () => {
+  const root = await createTestTempDirectory("rea-process-cli-");
+  const left = join(root, "left.json");
+  const right = join(root, "right.json");
+  const input = INVESTIGATION_EXAMPLES.compare_process_captures.input;
+  await writeFile(left, JSON.stringify(input.left));
+  await writeFile(right, JSON.stringify(input.right));
+  const cli = fileURLToPath(
+    new URL("../../../scripts/rea.mjs", import.meta.url),
+  );
+  const cliArguments = [cli, "compare-process-captures", left, right, "--json"];
+  const baseline = await execFileAsync(process.execPath, cliArguments);
+  expect(JSON.parse(baseline.stdout)).toMatchObject({
+    operation: "compare_process_captures",
+  });
+  const nested = '{"nested":'.repeat(10_000) + "1" + "}".repeat(10_000);
+  await writeFile(
+    left,
+    JSON.stringify({
+      ...input.left,
+      parameters: { attack: "depth-placeholder" },
+    }).replace('"depth-placeholder"', nested),
+  );
+  await expect(
+    execFileAsync(process.execPath, cliArguments),
+  ).rejects.toMatchObject({
+    code: 1,
+    stdout: expect.stringContaining("maximum nesting depth"),
+  });
+});

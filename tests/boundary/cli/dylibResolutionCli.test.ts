@@ -17,11 +17,7 @@ import {
 import { dylibResolutionResultSchema } from "../../../src/domain/apple/dylibResolution.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  cliTest,
-  runFileCli,
-  type TestCli,
-} from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 const ENVIRONMENT = { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" };
 
@@ -50,7 +46,7 @@ const expectRootInputError = async (
     readonly message: string;
   },
 ): Promise<void> => {
-  const rejected = await runFileCli(cli, {
+  const rejected = await cli.run({
     arguments: ["trace-dylib-resolution", app, "--root", root, "--json"],
     environment: ENVIRONMENT,
   });
@@ -121,7 +117,7 @@ cliTest.skipIf(process.platform !== "linux")(
       ]),
       machoImage({}),
     );
-    const observed = await runFileCli(cli, {
+    const observed = await cli.run({
       arguments: ["trace-dylib-resolution", app, "--json"],
       environment: ENVIRONMENT,
     });
@@ -141,7 +137,7 @@ cliTest(
   async ({ cli }) => {
     const app = await fixtureApp();
     await symlink("unexamined", join(app, "Contents", "LinkedResources"));
-    const observed = await runFileCli(cli, {
+    const observed = await cli.run({
       arguments: ["trace-dylib-resolution", app, "--json"],
       environment: ENVIRONMENT,
     });
@@ -179,7 +175,7 @@ cliTest(
         ],
       }),
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["trace-dylib-resolution", app, "--json"],
       environment: ENVIRONMENT,
     });
@@ -271,10 +267,202 @@ cliTest(
   },
 );
 
+const loadedSiblingFixture = async (
+  dependency: "eager" | "lazy" | "none" | "conditional",
+) => {
+  const uncertain = dependency === "conditional";
+  const nested = dependency === "eager" || uncertain;
+  const app = await createTestTempDirectory("rea-dyld-sibling-chain-");
+  const root = "App";
+  await writeFiles(app, {
+    [root]: machoImage({
+      commands: [
+        buildVersionCommand(1),
+        rpathCommand("@executable_path/fallback"),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/A.dylib"),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/B.dylib"),
+      ],
+    }),
+    "A.dylib": machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [
+        buildVersionCommand(1),
+        ...(uncertain
+          ? [rpathCommand("@loader_path/search"), rpathCommand("@loader_path")]
+          : []),
+        rpathCommand("@loader_path/private"),
+        ...(dependency === "none"
+          ? []
+          : [
+              dylibCommand(
+                nested ? LC.LOAD_DYLIB : LC.LAZY_LOAD_DYLIB,
+                uncertain ? "@rpath/B.dylib" : "@loader_path/B.dylib",
+              ),
+            ]),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/C.dylib"),
+      ],
+    }),
+    "B.dylib": machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [
+        buildVersionCommand(1),
+        ...(uncertain
+          ? [dylibCommand(LC.ID_DYLIB, "@rpath/cached-B.dylib")]
+          : []),
+        dylibCommand(LC.LOAD_DYLIB, "@rpath/leaf.dylib"),
+        // The cycle must not expand B's dependencies a second time.
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/A.dylib"),
+        ...(uncertain
+          ? [
+              dylibCommand(LC.LOAD_DYLIB, "@rpath/missing.dylib"),
+              dylibCommand(LC.LOAD_DYLIB, "@rpath/fallback-leaf.dylib"),
+            ]
+          : []),
+      ],
+    }),
+    "private/leaf.dylib": machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [buildVersionCommand(1)],
+    }),
+    "fallback/leaf.dylib": machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [buildVersionCommand(1)],
+    }),
+    "C.dylib": machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [
+        buildVersionCommand(1),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/fallback/other.dylib"),
+        ...(uncertain
+          ? [dylibCommand(LC.LOAD_DYLIB, "@rpath/cached-B.dylib")]
+          : []),
+      ],
+    }),
+    "fallback/other.dylib": machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [buildVersionCommand(1)],
+    }),
+  });
+  if (uncertain) {
+    await writeFiles(app, {
+      // Unknown platform compatibility prevents ruling this candidate out.
+      "search/B.dylib": machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(999)],
+      }),
+      "fallback/fallback-leaf.dylib": machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      }),
+      "search/leaf.dylib": machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      }),
+    });
+  }
+  return { app, root, nested, uncertain };
+};
+
+for (const dependency of ["eager", "lazy", "none", "conditional"] as const) {
+  cliTest(
+    `uses the first expansion chain for a loaded sibling (${dependency} nested dependency)`,
+    async ({ cli }) => {
+      const { app, root, nested, uncertain } =
+        await loadedSiblingFixture(dependency);
+      const output = await cli.run({
+        arguments: ["trace-dylib-resolution", join(app, root), "--json"],
+        environment: ENVIRONMENT,
+      });
+      expect(output.exitCode, JSON.stringify(output.json)).toBe(0);
+      const trace = dylibResolutionResultSchema.parse(
+        parseEvidence(output.json).normalized_result,
+      );
+      expect(trace.edges.map(({ loader }) => loader)).toEqual([
+        root,
+        root,
+        ...(dependency === "none" ? [] : ["A.dylib"]),
+        "A.dylib",
+        ...(nested
+          ? [
+              "B.dylib",
+              "B.dylib",
+              ...(uncertain ? ["B.dylib", "B.dylib"] : []),
+              "C.dylib",
+            ]
+          : ["C.dylib", "B.dylib", "B.dylib"]),
+        ...(uncertain ? ["C.dylib"] : []),
+      ]);
+      const leaf = trace.edges.find(
+        (edge) => edge.install_name === "@rpath/leaf.dylib",
+      );
+      expect(leaf).toMatchObject({
+        loader: "B.dylib",
+        loader_conditional: uncertain,
+        via: nested ? [root, "A.dylib", "B.dylib"] : [root, "B.dylib"],
+        resolution: {
+          status: "resolved",
+          image: uncertain
+            ? "search/leaf.dylib"
+            : nested
+              ? "private/leaf.dylib"
+              : "fallback/leaf.dylib",
+        },
+        candidates: [
+          expect.objectContaining({
+            rpath_owner: nested ? "A.dylib" : root,
+          }),
+        ],
+      });
+      if (uncertain) {
+        expect(
+          trace.edges.find(
+            (edge) =>
+              edge.loader === "A.dylib" &&
+              edge.install_name === "@rpath/B.dylib",
+          ),
+        ).toMatchObject({
+          resolution: { status: "conditional", image: "B.dylib" },
+          candidates: [
+            expect.objectContaining({ outcome: "undetermined" }),
+            expect.objectContaining({ outcome: "resolved" }),
+          ],
+        });
+        expect(trace.edges[1]).toMatchObject({
+          loader: root,
+          loader_conditional: false,
+          resolution: { status: "resolved", image: "B.dylib" },
+        });
+        for (const [name, kind] of [
+          ["@rpath/missing.dylib", "required-load-unresolved"],
+          ["@rpath/fallback-leaf.dylib", "earlier-rpath-candidate-absent"],
+        ]) {
+          const finding = trace.findings.find(
+            (item) =>
+              item.kind === kind &&
+              trace.edges[item.edge_index ?? -1]?.install_name === name,
+          );
+          expect(finding?.explanation).toContain("dependency-expansion chain");
+          expect(finding?.explanation).not.toContain(
+            "loads only conditionally",
+          );
+        }
+        // B itself was loaded definitively by App. Its uncertain expansion
+        // chain must not contaminate later install-name reuse from C.
+        expect(trace.edges.at(-1)).toMatchObject({
+          loader: "C.dylib",
+          loader_conditional: false,
+          resolution: { status: "resolved", image: "B.dylib" },
+          candidates: [expect.objectContaining({ source: "already-loaded" })],
+        });
+      }
+    },
+  );
+}
+
 describe("trace-dylib-resolution CLI", () => {
   cliTest("traces every executable root of an app bundle", async ({ cli }) => {
     const app = await fixtureApp();
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["trace-dylib-resolution", app, "--json"],
       environment: ENVIRONMENT,
     });
@@ -325,7 +513,7 @@ describe("trace-dylib-resolution CLI", () => {
     "narrows roots and architecture, and rejects escaping roots",
     async ({ cli }) => {
       const app = await fixtureApp();
-      const narrowed = await runFileCli(cli, {
+      const narrowed = await cli.run({
         arguments: [
           "trace-dylib-resolution",
           app,
@@ -381,7 +569,7 @@ describe("trace-dylib-resolution CLI", () => {
         }),
         "unrelated.txt": "not traversed",
       });
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [
           "trace-dylib-resolution",
           join(directory, "tool"),
@@ -406,7 +594,7 @@ describe("trace-dylib-resolution CLI", () => {
     async ({ cli }) => {
       const app = await fixtureApp();
       await withBrokenHelper(app);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["trace-dylib-resolution", app, "--json"],
         environment: ENVIRONMENT,
       });
@@ -457,7 +645,7 @@ cliTest(
       });
     }
 
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["trace-dylib-resolution", app, "--json"],
       environment: ENVIRONMENT,
     });
@@ -514,7 +702,7 @@ cliTest(
         commands: [buildVersionCommand(1)],
       }),
     });
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["trace-dylib-resolution", join(directory, "tool"), "--json"],
       environment: ENVIRONMENT,
     });
@@ -564,7 +752,7 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
         });
         await chmod(join(directory, "libsecret.dylib"), 0o000);
         try {
-          const result = await runFileCli(cli, {
+          const result = await cli.run({
             arguments: [
               "trace-dylib-resolution",
               join(directory, "tool"),
@@ -612,7 +800,7 @@ cliTest(
           ],
         }),
       });
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [
           "trace-dylib-resolution",
           app,
@@ -685,7 +873,7 @@ cliTest(
           { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
         ]),
       });
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [
           "trace-dylib-resolution",
           app,
@@ -739,7 +927,7 @@ cliTest(
         commands: [buildVersionCommand(1)],
       }),
     });
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: [
         "trace-dylib-resolution",
         app,
@@ -767,9 +955,12 @@ cliTest(
       )?.slices[0]?.dyld_environment,
     ).toEqual(settings);
     expect(
-      trace.findings.find(({ kind }) => kind === "dyld-environment-present")
-        ?.explanation,
-    ).toContain("entries in this non-executable root are observations");
+      trace.findings.find(({ kind }) => kind === "dyld-environment-present"),
+    ).toMatchObject({
+      image: "Contents/Frameworks/libcore.dylib",
+      basis: "derived",
+      explanation: expect.stringContaining(settings[0]!),
+    });
   },
 );
 
@@ -793,7 +984,7 @@ cliTest(
           ],
         }),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["trace-dylib-resolution", path, "--json"],
         environment: ENVIRONMENT,
       });
@@ -841,7 +1032,7 @@ describe("trace-dylib-resolution root enumeration", () => {
     "classifies every Mach-O among more files than one batch of magic reads",
     async ({ cli }) => {
       const app = await crowdedApp();
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["trace-dylib-resolution", app, "--json"],
         environment: ENVIRONMENT,
       });
@@ -872,7 +1063,7 @@ describe("trace-dylib-resolution root enumeration", () => {
       await writeFile(secret, "x");
       await chmod(secret, 0o000);
       try {
-        const result = await runFileCli(cli, {
+        const result = await cli.run({
           arguments: ["trace-dylib-resolution", app, "--json"],
           environment: ENVIRONMENT,
         });

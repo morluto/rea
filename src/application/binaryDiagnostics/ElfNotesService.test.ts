@@ -1,7 +1,11 @@
+import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { ElfNotesService } from "./ElfNotesService.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
-import type { ElfNotes } from "../../domain/native/elfNotes.js";
+import { createHash } from "node:crypto";
+import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
+import { elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
+import { parseElfNotes } from "../../native/elf/ElfNoteParser.js";
 import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
@@ -10,22 +14,17 @@ import {
 } from "../../domain/analysisErrorCore.js";
 
 const identity = ELF_NOTES_PROVIDER;
-const report: ElfNotes = {
-  artifact: {
-    path: "/artifacts/app",
-    sha256: "a".repeat(64),
-    bytes: 512,
+const path = "/artifacts/app";
+const bytes = elfNoteFixture({ ownership: "none" });
+const report = parseElfNotes(
+  bytes,
+  {
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
   },
-  format: "elf64",
-  byte_order: "little",
-  machine: 62,
-  type: 3,
-  type_name: "shared",
-  tables: [],
-  entries: [],
-  coverage: { status: "complete", examined_tables: 0, examined_entries: 0 },
-  limitations: ["No PT_NOTE program header or SHT_NOTE section was declared."],
-};
+  inspectElfNotesInputSchema.parse({ path }),
+);
 
 it("rejects a relative path and extra arguments before reading", async () => {
   let calls = 0;
@@ -53,7 +52,6 @@ it("records the selected ELF and an absent note table", async () => {
     identity,
     inspect: () => Promise.resolve(ok(report)),
   }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
@@ -107,12 +105,13 @@ it("retains an examined empty table and rejects an uncounted table", async () =>
   }
 });
 
-it("discards an observation if the caller cancels while the provider completes", async () => {
+it("retains a completed observation when the caller cancels as the provider completes", async () => {
   const controller = new AbortController();
+  const reason = { request: "late ElfNotes cancellation" };
   const service = new ElfNotesService({
     identity,
     inspect: () => {
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(ok(report));
     },
   });
@@ -120,6 +119,11 @@ it("discards an observation if the caller cancels while the provider completes",
     { path: report.artifact.path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "inspect_elf_notes",
+    normalized_result: report,
+  });
 });

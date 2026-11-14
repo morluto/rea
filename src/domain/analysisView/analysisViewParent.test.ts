@@ -4,7 +4,7 @@ import {
   freezeOwnedJsonTreeSnapshot,
   isImmutableJsonSnapshot,
 } from "../immutableJson.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({

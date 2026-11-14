@@ -11,10 +11,11 @@ import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import {
   parseTypes,
-  signature,
+  methodGenericArity,
   readTypeDefinitions,
   type SignatureTypeName,
 } from "./ManagedMemberInspectorCore.js";
+import { signature } from "../../tests/fixtures/managedSignature.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
@@ -59,30 +60,15 @@ const named =
     return name === undefined ? null : nameDigest(name);
   };
 
-describe("layoutless signature coordinates", () => {
-  it.each([
-    [0, 2, 0],
-    [0x25, 1, 9],
-    [0x07, undefined, 1],
-  ] as const)(
-    "keeps layoutless operand %s decoded without admitting a metadata row",
-    (value, table, row) => {
-      const name = vi.fn<SignatureTypeName>(() => Buffer.alloc(32));
-      const result = signature(
-        Buffer.from([0x06, 0x12, value]),
-        undefined,
-        name,
-      );
-
-      expect(result.parse_status).toBe("decoded");
-      expect(result.resolved_sha256).toMatch(/^[0-9a-f]{64}$/u);
-      expect(name).toHaveBeenCalledTimes(1);
-      expect(name).toHaveBeenCalledWith(
-        expect.objectContaining({ value, coordinate: { table, row } }),
-      );
-    },
-  );
-});
+it.each([0, 0x25, 0x07])(
+  "recovers method generic arity without admitting type coordinate %i",
+  (value) => {
+    const layout = metadataLayout(buildManagedPeFixture());
+    expect(
+      methodGenericArity(layout, Buffer.from([0x10, 0x01, 0, 0x12, value])),
+    ).toBe(1);
+  },
+);
 
 describe("resolved member signature digests", () => {
   it("names modifier, class, and generic type operands instead of their rows", () => {
@@ -346,8 +332,8 @@ describe("type operand names", () => {
     });
 
     expect(inspection.fields[0]?.signature.parse_status).toBe("malformed");
-    expect(inspection.fields[0]?.signature.issue).toContain(
-      "coded index selects row 9 in table 1, which has 1 rows",
+    expect(inspection.fields[0]?.signature.issue).toMatch(
+      /row 9.*table 1.*1 rows/iu,
     );
     expect(inspection.fields[0]?.signature.resolved_sha256).toBeNull();
     expect(inspection.coverage.state).toBe("partial");

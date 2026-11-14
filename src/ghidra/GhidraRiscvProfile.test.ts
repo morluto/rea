@@ -1,6 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, parse, relative } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
@@ -31,7 +30,10 @@ import {
   GHIDRA_SESSION_CAPABILITIES,
   type GhidraSessionInfo,
 } from "./GhidraSessionValues.js";
-import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
+import {
+  createSimulatedInstallDirectory,
+  ghidraProfileInstallationHost as host,
+} from "./GhidraInstallation.fixture.js";
 import {
   ghidraPinnedLanguage,
   ghidraProfileLanguageOverride,
@@ -107,21 +109,19 @@ const ilp32 = (
   });
 
 let installDir = "";
+let disposeInstallDir: (() => Promise<void>) | undefined;
 beforeAll(async () => {
-  const root =
-    process.platform === "win32" ? join(process.cwd(), "build") : tmpdir();
-  await mkdir(root, { recursive: true });
-  installDir = await mkdtemp(join(root, "rea-ghidra-riscv-languages-"));
-  // The simulated Linux host needs a POSIX absolute path. A current-drive root
-  // path also reaches this real fixture on Windows without changing admission.
-  if (process.platform === "win32")
-    installDir = `/${relative(parse(installDir).root, installDir).replaceAll("\\", "/")}`;
+  const directory = await createSimulatedInstallDirectory(
+    "rea-ghidra-riscv-languages-",
+  );
+  installDir = directory.path;
+  disposeInstallDir = directory.dispose;
   const languages = join(installDir, "Ghidra/Processors/RISCV/data/languages");
   await mkdir(languages, { recursive: true });
   await writeFile(join(languages, "riscv.ldefs"), RISCV_LDEFS);
 });
 afterAll(async () => {
-  await rm(installDir, { recursive: true, force: true });
+  await disposeInstallDir?.();
 });
 
 const ghidra = (environment: Record<string, string> = {}) =>
@@ -278,7 +278,6 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     const resolved = await ghidra({
       REA_GHIDRA_LANGUAGE_ID: "RISCV:LE:32:AndeStar_v5",
     }).resolveAnalysisProfile(target({ elfClass: 32 }));
-    expect(resolved.ok).toBe(false);
     if (resolved.ok) throw new Error("expected a refusal");
     expect(resolved.error.message).toContain("generic little-endian RISC-V");
     expect(resolved.error).toMatchObject({
@@ -384,9 +383,9 @@ describe("RISC-V lane and calling-convention tables", () => {
     });
   });
 
-  it("keeps the decision record in docs/ghidra-riscv.md in step with the tables", async () => {
+  it("keeps the decision record in docs/providers/ghidra-riscv.md in step with the tables", async () => {
     const docs = await readFile(
-      new URL("../../docs/ghidra-riscv.md", import.meta.url),
+      new URL("../../docs/providers/ghidra-riscv.md", import.meta.url),
       "utf8",
     );
     for (const lane of GHIDRA_RISCV_LANES)

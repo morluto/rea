@@ -7,7 +7,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { pythonPycSchema } from "../../../src/domain/python/pythonPyc.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   marshalCode,
   pythonPycHeader,
@@ -70,12 +70,11 @@ const assertSparseSelectors = async (
 
 cliTest(
   "queries same-name pyc objects through CLI/MCP after deleting the source",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pyc-views-");
     const path = join(root, "module.pyc");
     await writeSameNamePyc(path);
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const complete = await run({
       arguments: ["inspect-python-pyc", path, "--json"],
     });
@@ -223,7 +222,7 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pyc-invalid-delivery-");
     const output = join(root, "unused.json");
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const view = JSON.stringify({
       kind: "python-pyc",
       collection: "code_objects",

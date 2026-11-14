@@ -1,4 +1,5 @@
 import { createDeferred } from "../../../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { readFile, rename, copyFile } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
@@ -26,7 +27,6 @@ it("preserves only fully verified streams when cancellation arrives before the n
     const result = await new PlaywrightTraceService(
       new PlaywrightTraceDecoder(resources),
     ).inspect({ path: fixture.path }, controller.signal);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
@@ -61,7 +61,6 @@ it("retains complete Evidence and the exact failed reader owner when abort arriv
     const result = await new PlaywrightTraceService(
       new PlaywrightTraceDecoder(resources),
     ).inspect({ path: fixture.path }, controller.signal);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected composed failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupPrimary?._tag).toBe("AnalysisCancelledError");
@@ -101,7 +100,6 @@ it("keeps completed Evidence on cancellation during the outer descriptor close",
     const result = await new PlaywrightTraceService(
       new PlaywrightTraceDecoder(resources),
     ).inspect({ path: fixture.path }, controller.signal);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
@@ -136,7 +134,6 @@ it("keeps an existing unsupported-version failure ahead of cancellation during c
       fixture.path,
       controller.signal,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected version refusal");
     expect(controller.signal.aborted).toBe(true);
     expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
@@ -166,7 +163,6 @@ it("retains independent reader and file owners until both cleanup retries comple
     const result = await new PlaywrightTraceService(
       new PlaywrightTraceDecoder(resources),
     ).inspect({ path: fixture.path });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cleanup failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(resources.cleanupResources).toHaveLength(2);
@@ -216,7 +212,6 @@ it.skipIf(process.platform === "win32")(
       const result = await new PlaywrightTraceDecoder(resources).inspect(
         fixture.path,
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected source identity refusal");
       expect(result.error._tag).toBe("AnalysisArtifactChangedError");
       expect((await readFile(held)).equals(original)).toBe(true);
@@ -246,9 +241,8 @@ it("bounds active imports without an unbounded queue and releases admission afte
     );
   const first = port.inspect(fixture.path);
   try {
-    await reached.promise;
+    await awaitAcknowledgement(reached.promise, first, "trace import");
     const second = await port.inspect(fixture.path);
-    expect(second.ok).toBe(false);
     if (second.ok) throw new Error("Expected capacity refusal");
     expect(second.error._tag).toBe("AnalysisResourceConstraintError");
     release.resolve();

@@ -1,6 +1,7 @@
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   withArtifactFileHandle,
   bindArtifactFileCleanup,
@@ -36,25 +37,33 @@ it("waits for admitted operations and shares concurrent close", async () => {
     started.resolve();
     await finish.promise;
   });
-  await started.promise;
+  try {
+    await awaitAcknowledgement(started.promise, operation, "scope admission");
+    const close = scope.close();
+    expect(scope.close()).toBe(close);
+    await expect(scope.run(async () => undefined)).rejects.toMatchObject({
+      reason: "unavailable",
+      message: expect.stringContaining("closed"),
+    });
+    let closed = false;
+    void close.then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
 
-  const close = scope.close();
-  expect(scope.close()).toBe(close);
-  await expect(scope.run(async () => undefined)).rejects.toMatchObject({
-    reason: "unavailable",
-    message: "Artifact resource scope is closed",
-  });
-  let closed = false;
-  void close.then(() => {
-    closed = true;
-  });
-  await Promise.resolve();
-  expect(closed).toBe(false);
-
-  finish.resolve();
-  await operation;
-  await close;
-  expect(closed).toBe(true);
+    finish.resolve();
+    await operation;
+    await close;
+    expect(closed).toBe(true);
+  } finally {
+    finish.resolve();
+    try {
+      await operation;
+    } finally {
+      await scope.close();
+    }
+  }
 });
 
 it("stops a close hook even when retained cleanup is still failing", async () => {
@@ -84,7 +93,7 @@ it("stops a close hook even when retained cleanup is still failing", async () =>
     (cause: unknown) => cause,
   );
   expect(closeFailure).toMatchObject({
-    message: "Artifact cleanup remains incomplete: stuck lease, close hook",
+    message: expect.stringContaining("stuck lease, close hook"),
     failedOwners: [owner],
     cleanup: {
       reason: "still owned; hook still stopping",
@@ -305,7 +314,7 @@ it("retains the same failed reader owner in a retry failure and retries before a
 
   await expect(scope.run(async () => "must not run")).rejects.toMatchObject({
     reason: "unavailable",
-    message: "Artifact cleanup remains incomplete: fixture reader",
+    message: expect.stringContaining("fixture reader"),
     failedOwners: [owner],
   });
   expect(closeAttempts).toBe(2);

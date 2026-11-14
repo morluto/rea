@@ -20,16 +20,13 @@ import type {
   SemanticIterationSource,
 } from "./javascriptSemanticIterationFacts.js";
 
-export type {
-  IterationSourceValue,
-  SemanticIterationSource,
-} from "./javascriptSemanticIterationFacts.js";
-
 /** A property value obtained by destructuring or an own-enumerable copy. */
 export interface SemanticPropertyReadSource
   extends IterationSourceValue, SourceGuards {
   readonly mutation: t.Node;
   readonly lookup: "prototype" | "own";
+  /** The language protocol invokes a callable value read from this slot. */
+  readonly invoke?: true;
 }
 
 interface PatternSource extends IterationSourceValue {
@@ -337,6 +334,7 @@ const semanticSourceFacts = (
       t.isAssignmentExpression(node) ||
       t.isForOfStatement(node) ||
       t.isSpreadElement(node) ||
+      t.isAwaitExpression(node) ||
       t.isYieldExpression(node) ||
       t.isCatchClause(node) ||
       t.isFunction(node)
@@ -372,11 +370,15 @@ const semanticSourceFacts = (
         mutation: node,
         lookup: "own",
       });
-  } else if (
-    t.isYieldExpression(node) &&
-    node.delegate &&
-    node.argument != null
-  )
+  } else if (t.isAwaitExpression(node))
+    propertyReads.push({
+      node: node.argument,
+      projection: ["then"],
+      mutation: node,
+      lookup: "prototype",
+      invoke: true,
+    });
+  else if (t.isYieldExpression(node) && node.delegate && node.argument != null)
     add(sources, { node: node.argument, projection: [] }, node, {});
   else if (
     t.isCatchClause(node) &&

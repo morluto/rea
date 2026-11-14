@@ -7,6 +7,63 @@ import { FUNCTIONS, run, session } from "./kunaSessionFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
 
+it("preserves observed edges while qualifying undiscovered calls in both directions", async () => {
+  const { open } = await session("rea-kuna-data-call-path-", {
+    graphIndirectCalls: false,
+    graphDataFunction: "parse",
+  });
+  const client = open();
+  try {
+    const tools = new EnhancedTools(client);
+    const forward = await tools.execute("trace_call_path", {
+      start: "main",
+      goal: "0x2000",
+      direction: "forward",
+    });
+    if (!forward.ok) throw forward.error;
+    expect(forward.value).toMatchObject({
+      goal_status: "unknown",
+      search_scope: {
+        discovery: "partial",
+        observed_goal_status: "not_reached",
+      },
+      relationship_coverage: {
+        "0x1040": {
+          status: "complete",
+          discovery: { callees: { status: "partial" } },
+        },
+      },
+      truncated: false,
+    });
+    const backward = await tools.execute("trace_call_path", {
+      start: "0x2000",
+      goal: "main",
+      direction: "backward",
+    });
+    if (!backward.ok) throw backward.error;
+    expect(backward.value).toMatchObject({
+      goal_status: "unknown",
+      search_scope: {
+        discovery: "unknown",
+        observed_goal_status: "not_reached",
+      },
+    });
+    const observed = await tools.execute("trace_call_path", {
+      start: "main",
+      goal: "parse",
+      direction: "forward",
+    });
+    if (!observed.ok) throw observed.error;
+    expect(observed.value).toMatchObject({
+      goal_status: "reached",
+      traversal_path: ["0x1000", "0x1040"],
+      search_scope: { discovery: "unknown", observed_goal_status: "reached" },
+    });
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
 it("resolves graph-only imports as graph roots and path endpoints without exporting C", async () => {
   const { open, kuna } = await session("rea-kuna-graph-only-import-", {
     inventoryImports: false,
@@ -178,6 +235,30 @@ it("filters forwarding aliases and reuses exact-address xrefs without inventory 
   }
 });
 
+it("distinguishes exact xrefs from recorded pointer rows to forwarding aliases", async () => {
+  const { open } = await session("rea-kuna-pointer-alias-", {
+    version: { stdout: "kuna 1.990\n" },
+    pointerAliasReferences: true,
+  });
+  const client = open();
+  try {
+    const answer = await run(client, "xrefs", { address: "0x2000" });
+    expect(answer.result).toEqual(["0x1004", "0x1100"]);
+    expect(answer.rawResult).toMatchObject({
+      references: {
+        pointers: [{ to_address: "0x2000" }, { to_address: "0x3000" }],
+      },
+    });
+    expect(answer.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("compare each row's to_address"),
+      ]),
+    );
+  } finally {
+    await client.close();
+  }
+});
+
 it("resolves an xref procedure name without starting the project export", async () => {
   const { open, kuna } = await session("rea-kuna-named-xrefs-");
   const client = open();
@@ -224,10 +305,8 @@ it("caps distinct pending xrefs and cancels queued work without launching it", a
   );
   try {
     await expect
-      .poll(
-        async () =>
-          (await fakeKunaCalls(kuna)).some(({ argv }) => argv[0] === "xrefs"),
-        { timeout: 5000 },
+      .poll(async () =>
+        (await fakeKunaCalls(kuna)).some(({ argv }) => argv[0] === "xrefs"),
       )
       .toBe(true);
     expect(await client.execute("xrefs", { address: "0x5000" })).toMatchObject({

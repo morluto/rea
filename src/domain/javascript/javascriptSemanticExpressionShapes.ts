@@ -16,7 +16,6 @@ import {
   isUnshadowedGlobal,
   semanticBindingAtRead,
 } from "./javascriptSemanticMutationInitializers.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -66,7 +65,7 @@ export const createSemanticExpressionShapeResolver = (
       const unwrapped = unwrapJavaScriptExpression(node);
       node = unwrapped.node;
       depth += unwrapped.depth;
-      if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+      if (depth > state.precision.expression_depth) {
         state.valueResourceLimits.add("expression-depth");
         return "unknown";
       }

@@ -15,7 +15,6 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   assertRizinProcessStartTimeStable,
   RizinDebugSessionManager,
-  truncateUtf8,
 } from "../../../src/rizin/RizinDebugSessionManager.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { TOOL_EFFECTS } from "../../../src/contracts/toolEffects.js";
@@ -25,6 +24,7 @@ import {
   rizinTestInferiorTty,
 } from "./RizinTestInferiorTty.js";
 import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
+import { waitForTestPidFile } from "../../support/process/pidFile.js";
 
 let terminal: ReturnType<typeof spawn> | undefined;
 let manager: RizinDebugSessionManager | undefined;
@@ -304,7 +304,6 @@ it.skipIf(process.platform !== "linux")(
     });
     await expectCloseRejectedAndReleased(sessionId);
   },
-  4_000,
 );
 
 it("rejects changed or missing Rizin inferior identity during detach", () => {
@@ -315,25 +314,6 @@ it("rejects changed or missing Rizin inferior identity during detach", () => {
   expect(() => assertRizinProcessStartTimeStable("11", null)).toThrow(
     "disappeared or was reused",
   );
-});
-
-it("truncates UTF-8 strings by byte limit preserving multi-byte code point boundaries", () => {
-  expect(truncateUtf8("", 10)).toBe("");
-  expect(truncateUtf8("hello", 0)).toBe("");
-  expect(truncateUtf8("hello", -1)).toBe("");
-  expect(truncateUtf8("hello", 3)).toBe("hel");
-  expect(truncateUtf8("hello", 10)).toBe("hello");
-
-  // Multibyte 3-byte CJK character (0xe6 0x96 0x87)
-  // 5 bytes allows only 1 character (3 bytes); the second character would need 6 bytes
-  expect(truncateUtf8("中文", 5)).toBe("中");
-  expect(truncateUtf8("中文", 6)).toBe("中文");
-
-  // 4-byte emoji (🚀 = 0xf0 0x9f 0x9a 0x80)
-  expect(truncateUtf8("🚀🚀", 3)).toBe("");
-  expect(truncateUtf8("🚀🚀", 4)).toBe("🚀");
-  expect(truncateUtf8("🚀🚀", 7)).toBe("🚀");
-  expect(truncateUtf8("🚀🚀", 8)).toBe("🚀🚀");
 });
 
 it.skipIf(process.platform !== "linux")(
@@ -421,8 +401,10 @@ it.skipIf(process.platform !== "linux")(
     expect(evidence.normalized_result).toMatchObject({
       output_truncated: true,
     });
-    expect(evidence.limitations.join(" ")).toContain(
-      "The owned debugger session remains retained because cleanup could not be verified",
+    expect(evidence.limitations).toContainEqual(
+      expect.stringMatching(
+        /debugger session.*retained.*cleanup could not be verified/iu,
+      ),
     );
     expect(manager!.status(sessionId)?.state).toBe("closed");
   },
@@ -484,18 +466,7 @@ it.skipIf(
     );
     const closed = await closing;
     expect(closed.ok, closed.ok ? "" : closed.error.message).toBe(true);
-    const deadline = Date.now() + 5_000;
-    let pidText = "";
-    while (Date.now() < deadline) {
-      try {
-        pidText = await readFile(pidPath, "utf8");
-        break;
-      } catch {
-        await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
-      }
-    }
-    inferiorPid = Number(pidText);
-    expect(Number.isSafeInteger(inferiorPid) && inferiorPid > 0).toBe(true);
+    inferiorPid = await waitForTestPidFile(pidPath, 5_000);
     expect(() => process.kill(inferiorPid!, 0)).not.toThrow();
     await writeFile(releasePath, "release after close");
     const outputDeadline = Date.now() + 3_000;
@@ -595,7 +566,17 @@ process.stdin.on("data", (chunk) => {
   await chmod(provider, 0o700);
   let providerStderr = "";
   manager = new RizinDebugSessionManager(
-    { ...process.env, REA_RIZIN_COMMAND: provider },
+    {
+      PATH: process.env.PATH,
+      ...(options.maxCommandOutputBytes === undefined
+        ? {}
+        : {
+            REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: String(
+              options.maxCommandOutputBytes,
+            ),
+          }),
+      REA_RIZIN_COMMAND: provider,
+    },
     {
       spawnProcess: async (spawnOptions) => {
         const launched = await spawnOwnedProviderProcess(spawnOptions);
@@ -621,9 +602,6 @@ process.stdin.on("data", (chunk) => {
         });
         return launched;
       },
-      ...(options.maxCommandOutputBytes === undefined
-        ? {}
-        : { maxCommandOutputBytes: options.maxCommandOutputBytes }),
     },
   );
   const started = await manager.start({
@@ -636,20 +614,7 @@ process.stdin.on("data", (chunk) => {
   ).toBe(true);
   if (!started.ok) throw started.error;
   if (launchTarget) {
-    let pidText: string | undefined;
-    const deadline = Date.now() + 2_000;
-    while (pidText === undefined && Date.now() < deadline) {
-      try {
-        pidText = await readFile(pidPath, "utf8");
-      } catch {
-        await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
-      }
-    }
-    const parsedInferiorPid =
-      pidText === undefined ? Number.NaN : Number(pidText);
-    if (!Number.isSafeInteger(parsedInferiorPid) || parsedInferiorPid <= 0)
-      throw new Error("The test inferior did not publish a valid PID.");
-    inferiorPid = parsedInferiorPid;
+    inferiorPid = await waitForTestPidFile(pidPath, 2_000);
   }
   return started.value.session_id;
 }

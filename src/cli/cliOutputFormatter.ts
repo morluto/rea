@@ -227,18 +227,6 @@ export const delimitedOutputInputError = (
     { path, reason: "invalid_value", message },
   ]);
 
-/** Render a validated row page, preceded by a versioned metadata record. */
-export const formatDelimitedRows = (
-  rows: unknown,
-  format: "csv" | "tsv",
-  options: CliDelimitedOutputOptions,
-): Result<string, AnalysisInputError> => {
-  const prepared = prepareDelimitedOutput(rows, format, options);
-  return prepared.ok
-    ? ok([...formatDelimitedOutputParts(prepared.value)].join(""))
-    : prepared;
-};
-
 /** Stream a page after its rows and cells have been validated and snapshotted. */
 export function* formatDelimitedOutputParts({
   encodedHeaders,

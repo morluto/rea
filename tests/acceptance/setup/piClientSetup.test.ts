@@ -138,7 +138,6 @@ cliTest(
       arguments: arguments_,
       cwd: home,
       environment,
-      timeoutMs: 20_000,
     });
     expect(applied.exitCode).toBe(0);
     expect(applied.json).toMatchObject({
@@ -193,7 +192,6 @@ cliTest(
       arguments: arguments_,
       cwd: home,
       environment,
-      timeoutMs: 20_000,
     });
     expect(repeated.exitCode).toBe(0);
     expect(repeated.json).toMatchObject({
@@ -232,7 +230,6 @@ cliTest(
           PI_PROFILE: "legacy",
           PI_CONFIG_DIR: ".omp-other",
         },
-        timeoutMs: 20_000,
       });
 
     const planned = await run([
@@ -345,7 +342,6 @@ cliTest(
           HOPPER_LAUNCHER_PATH: join(home, "unconfigured-hopper"),
           PI_CODING_AGENT_DIR: "custom-agent",
         },
-        timeoutMs: 20_000,
       });
     const run = runIn(created);
     const setup = await run(["setup", "--client", "pi", "--yes", "--json"]);
@@ -444,6 +440,7 @@ cliTest(
   "malformed Pi overrides do not block selected Codex setup or doctor and never fall back for Pi",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-pi-invalid-cli-");
+    const moduleCache = await createTestTempDirectory("rea-pi-swift-cache-");
     const run = (arguments_: readonly string[]) =>
       cli.run({
         arguments: arguments_,
@@ -453,8 +450,8 @@ cliTest(
           USERPROFILE: home,
           HOPPER_LAUNCHER_PATH: join(home, "unconfigured-hopper"),
           PI_CODING_AGENT_DIR: "file:///agent%2fdir",
+          REA_DARWIN_MODULE_CACHE_PATH: moduleCache,
         },
-        timeoutMs: 20_000,
       });
     const plan = await run([
       "setup",

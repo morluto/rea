@@ -10,6 +10,7 @@ import {
   execFileOutput,
 } from "../process/ExecFileOutput.js";
 import { inspectLinuxHopperPythonRuntime } from "./LinuxHopperPython.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const response = (value: unknown) => {
   const stdout = JSON.stringify(value);
@@ -157,8 +158,7 @@ setInterval(() => {}, 1000);
         execFileOutput(process.execPath, ["-e", program], options),
     );
     try {
-      await vi.waitFor(() => access(stopping), {
-        timeout: 5_000,
+      await waitFor(() => access(stopping), {
         interval: 10,
       });
       controller.abort({ request: "cancel during failed command cleanup" });
@@ -209,10 +209,9 @@ while True:
         return result;
       });
       try {
-        await vi.waitFor(() => access(ready), { timeout: 5_000, interval: 10 });
+        await waitFor(() => access(ready), { interval: 10 });
         controller.abort(reason);
-        await vi.waitFor(() => access(stopping), {
-          timeout: 3_000,
+        await waitFor(() => access(stopping), {
           interval: 10,
         });
         // The child cannot exit until released; early settlement loses ownership.
@@ -224,8 +223,7 @@ while True:
           controller.abort(reason);
           await execution;
         }
-        await vi.waitFor(() => access(stopped), {
-          timeout: 5_000,
+        await waitFor(() => access(stopped), {
           interval: 10,
         });
       }

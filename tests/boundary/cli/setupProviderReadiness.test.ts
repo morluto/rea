@@ -28,7 +28,6 @@ cliTest.skipIf(process.platform === "win32").for(["blocked", "ready"] as const)(
         REA_KUNA_COMMAND: command,
         REA_KUNA_CACHE_DIR: cachePath,
       },
-      timeoutMs: 20_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.json).toMatchObject({
@@ -88,7 +87,6 @@ cliTest.skipIf(process.platform === "win32")(
     const setup = await cli.run({
       arguments: ["setup", "--client", "claude_code", "--dry-run", "--json"],
       environment,
-      timeoutMs: 20_000,
     });
     expect(setup.exitCode, setup.stdout).toBe(0);
     expect(setup.json).toMatchObject({
@@ -111,7 +109,6 @@ cliTest.skipIf(process.platform === "win32")(
     const doctor = await cli.run({
       arguments: ["doctor", "--json"],
       environment,
-      timeoutMs: 20_000,
     });
     expect(doctor.json).toMatchObject({
       providerInspections: expect.arrayContaining([

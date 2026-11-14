@@ -132,7 +132,6 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
   );
 
   const opened = await session.openBundleResources(rootPath);
-  expect(opened.ok).toBe(true);
   if (!opened.ok) throw opened.error;
   expect(session.allowsSnapshotReplay("inspect_plist")).toBe(false);
   expect(opened.value.executableSha256).toBeNull();
@@ -146,9 +145,11 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
     path: opened.value.canonicalPath,
     caller_path: opened.value.callerPath,
   });
-  expect(session.activeBundleResourceRoot()?.canonicalPath).toBe(
-    opened.value.canonicalPath,
-  );
+  expect(await session.status()).toMatchObject({
+    open: true,
+    session_kind: "bundle_resources",
+    resource_root: { canonical_path: opened.value.canonicalPath },
+  });
   expect(
     bundleResourceRootSchema.parse({
       caller_path: opened.value.callerPath,
@@ -167,6 +168,7 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
   expect(await session.status()).toMatchObject({
     open: true,
     session_kind: "bundle_resources",
+    analysis_provider_candidates_observed: "not_applicable",
     resource_root: { canonical_path: opened.value.canonicalPath },
   });
   const snapshot = session.exportAnalysisSnapshot();
@@ -395,7 +397,6 @@ it.each([false, true])(
     releaseClose();
 
     const result = await opening;
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected failed resource switch");
     expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cleanupPrimary?.cause).toBe(reason);
@@ -481,7 +482,6 @@ it("keeps an earlier resource close failure primary when a later cleanup is canc
   releaseCandidateClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed resource switch");
   expect(result.error).toBe(originalFailure);
   expect(result.error.cleanupPrimary).toBeUndefined();
@@ -570,7 +570,6 @@ it("keeps cancellation primary when binary retirement fails before opening resou
   releaseClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed resource open");
   expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cleanupPrimary?.cause).toBe(reason);
@@ -662,7 +661,6 @@ it("keeps an earlier resource close failure primary when binary candidate cleanu
   releaseCandidateClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed binary open");
   expect(result.selection).toEqual({ kind: "none" });
   expect(result.error).toBe(originalFailure);
@@ -766,7 +764,6 @@ it("keeps an earlier binary close failure primary when candidate cleanup is canc
   releaseCandidateClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed resource open");
   expect(result.error).toBe(originalFailure);
   expect(result.error.cleanupPrimary).toBeUndefined();
@@ -837,7 +834,6 @@ it("cancels a binary switch during resource retirement and retains null-subject 
   );
   expect((await session.openBundleResources(rootPath)).ok).toBe(true);
   const observed = await session.execute("inspect_plist", {});
-  expect(observed.ok).toBe(true);
   if (!observed.ok) throw observed.error;
   const recorded = session.recordEvidence(
     createEvidence(undefined, identity, {
@@ -868,7 +864,6 @@ it("cancels a binary switch during resource retirement and retains null-subject 
   releaseResourceClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancelled binary open");
   expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cleanupPrimary?.cause).toBe(reason);

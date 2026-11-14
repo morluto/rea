@@ -59,7 +59,7 @@ describe("Kimi Code configuration paths and skills", () => {
       "linux",
       override === undefined ? {} : { KIMI_CODE_HOME: override },
     );
-    expect(client).toEqual({
+    expect(client).toMatchObject({
       name: "kimi",
       displayName: "Kimi Code",
       configPath: join(directory, "mcp.json"),
@@ -474,15 +474,18 @@ describe("Kimi Code transport validation", () => {
         })
       ).find(({ client: name }) => name === "kimi"),
     ).toMatchObject({ state: "aligned", command });
+    // The explicit selector already chooses stdio, so setup keeps it and
+    // has nothing to rewrite.
+    expect(await configureClientConfiguration(client, {}, command)).toEqual({
+      status: "unchanged",
+    });
+    expect(await configureClientConfiguration(client, {}, command)).toEqual({
+      status: "unchanged",
+    });
     expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    expect(await configureClientConfiguration(client, {}, command)).toEqual({
-      status: "unchanged",
-    });
-    expect(await configureClientConfiguration(client, {}, command)).toEqual({
-      status: "unchanged",
-    });
+      JSON.parse(await readFile(client.configPath, "utf8")).mcpServers.rea
+        .transport,
+    ).toBe("stdio");
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {

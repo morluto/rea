@@ -2,12 +2,14 @@ import { setImmediate } from "node:timers/promises";
 
 import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  DEFAULT_NODE_SEA_READER_LIMITS,
+  type NodeSeaReaderLimits,
+} from "../../domain/artifactReaderLimits.js";
+import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 
 /** Node `SeaBlob::kMagic` from `src/node_sea.h` (v24). */
-export const NODE_SEA_MAGIC = 0x143da20;
-
-/** In-memory cap for one injected blob. Larger declarations fail closed. */
-export const NODE_SEA_MAX_BLOB_BYTES = 256 * 1024 * 1024;
+const NODE_SEA_MAGIC = 0x143da20;
 
 const FLAG_DISABLE_EXPERIMENTAL_SEA_WARNING = 1 << 0;
 const FLAG_USE_SNAPSHOT = 1 << 1;
@@ -21,22 +23,11 @@ const KNOWN_FLAGS =
   FLAG_INCLUDE_ASSETS |
   FLAG_INCLUDE_EXEC_ARGV;
 
-// Resource bounds checked before records are created, not Node format limits.
-// Asset names are budgeted separately because empty bodies make each record
-// cost far more retained memory than its blob bytes.
-const MAX_ASSET_COUNT = 100_000;
-const MAX_ASSET_NAME_BYTES = 8 * 1024 * 1024;
-const MAX_EXEC_ARGV = 4096;
-const MAX_EXEC_ARGV_TEXT_BYTES = 1024 * 1024;
-const NO_OVERRIDE = "This release has no runtime override.";
-
-export const NODE_SEA_BAD_MAGIC = "Node SEA blob magic is not 0x143da20";
+const NODE_SEA_BAD_MAGIC = "Node SEA blob magic is not 0x143da20";
 export const NODE_SEA_TRUNCATED = "Node SEA blob is truncated";
-export const NODE_SEA_UNKNOWN_FLAGS =
-  "Node SEA blob flags contain unknown bits";
-export const NODE_SEA_UNKNOWN_EXTENSION =
-  "Node SEA exec argv extension is unknown";
-export const NODE_SEA_TRAILING_BYTES = "Node SEA blob has trailing bytes";
+const NODE_SEA_UNKNOWN_FLAGS = "Node SEA blob flags contain unknown bits";
+const NODE_SEA_UNKNOWN_EXTENSION = "Node SEA exec argv extension is unknown";
+const NODE_SEA_TRAILING_BYTES = "Node SEA blob has trailing bytes";
 export const NODE_SEA_DUPLICATE_BLOB =
   "Node SEA blob is declared more than once";
 export const NODE_SEA_ELF_DESCRIPTOR_TRUNCATED =
@@ -49,21 +40,13 @@ export const NODE_SEA_MACHO_COMMANDS_TRUNCATED =
   "Node SEA Mach-O load commands are truncated";
 export const NODE_SEA_MACHO_SEGMENT_TRUNCATED =
   "Node SEA Mach-O segment table is truncated";
-export const NODE_SEA_FUSE_ABSENT =
+const NODE_SEA_FUSE_ABSENT =
   "Node SEA blob is present but no NODE_SEA_FUSE sentinel was observed";
-export const NODE_SEA_FUSE_UNSET =
+const NODE_SEA_FUSE_UNSET =
   "Node SEA blob is present but the NODE_SEA_FUSE sentinel is unset";
-export const NODE_SEA_FUSE_CONFLICT = "Node SEA fuse sentinels disagree";
-export const NODE_SEA_EMPTY_CODE_PATH = "Node SEA code path is empty";
-export const NODE_SEA_INVALID_UTF8 = "Node SEA string is not valid UTF-8";
-export const NODE_SEA_ASSET_COUNT = `Node SEA asset count exceeds the ${String(MAX_ASSET_COUNT)}-asset bound. ${NO_OVERRIDE}`;
-export const NODE_SEA_ASSET_NAME_BYTES = `Node SEA asset names exceed the ${String(MAX_ASSET_NAME_BYTES)}-byte name budget. ${NO_OVERRIDE}`;
-export const NODE_SEA_EXEC_ARGV_COUNT = `Node SEA exec argv count exceeds the ${String(MAX_EXEC_ARGV)}-argument bound. ${NO_OVERRIDE}`;
-export const NODE_SEA_EXEC_ARGV_TEXT = `Node SEA exec argv text exceeds the ${String(MAX_EXEC_ARGV_TEXT_BYTES)}-byte bound. ${NO_OVERRIDE}`;
-export const NODE_SEA_BLOB_TOO_LARGE = `Node SEA blob exceeds the ${String(NODE_SEA_MAX_BLOB_BYTES)}-byte in-memory bound`;
-
-export const nodeSeaAssetCollision = (name: string): string =>
-  `Node SEA asset name collides: ${name}`;
+const NODE_SEA_FUSE_CONFLICT = "Node SEA fuse sentinels disagree";
+const NODE_SEA_EMPTY_CODE_PATH = "Node SEA code path is empty";
+const NODE_SEA_INVALID_UTF8 = "Node SEA string is not valid UTF-8";
 
 const FUSE_PREFIX = "NODE_SEA_FUSE_";
 
@@ -103,12 +86,6 @@ export interface NodeSeaFuseObservation {
   readonly fuseContradiction: string | null;
 }
 
-const limitFailure = (
-  message: string,
-  boundary: "capacity" | "memory",
-): ArtifactReaderFailure =>
-  new ArtifactReaderFailure("limit", message, { boundary });
-
 const formatFailure = (
   message: string,
   cause?: unknown,
@@ -128,9 +105,18 @@ const formatFailure = (
 export const decodeNodeSeaBlob = async (
   bytes: Buffer,
   signal?: AbortSignal,
+  limits: NodeSeaReaderLimits = DEFAULT_NODE_SEA_READER_LIMITS,
 ): Promise<DecodedNodeSeaBlob> => {
   assertArtifactReadActive(signal);
-  const cursor = new BlobCursor(bytes);
+  if (bytes.length > limits.blob_bytes)
+    throw artifactReaderLimitFailure(
+      "artifact_limits.node_sea.blob_bytes",
+      limits.blob_bytes,
+      "bytes",
+      bytes.length,
+      "memory",
+    );
+  const cursor = new BlobCursor(bytes, limits);
   if (cursor.remaining < 4) throw formatFailure(NODE_SEA_TRUNCATED);
   const magic = cursor.u32();
   if (magic !== NODE_SEA_MAGIC) throw formatFailure(NODE_SEA_BAD_MAGIC);
@@ -217,7 +203,10 @@ const extensionName = (value: number): NodeSeaExecArgvExtension => {
 class BlobCursor {
   #offset = 0;
 
-  constructor(private readonly bytes: Buffer) {}
+  constructor(
+    private readonly bytes: Buffer,
+    private readonly limits: NodeSeaReaderLimits,
+  ) {}
 
   get remaining(): number {
     return this.bytes.length - this.#offset;
@@ -246,6 +235,12 @@ class BlobCursor {
         raw,
       );
     } catch (cause: unknown) {
+      if (cause instanceof RangeError)
+        throw new ArtifactReaderFailure(
+          "limit",
+          "Node SEA UTF-8 text exceeds this runtime's string or memory capacity. Admission budgets do not raise runtime representation limits or reserve host memory.",
+          { boundary: "memory", cause },
+        );
       throw formatFailure(NODE_SEA_INVALID_UTF8, cause);
     }
     if (!allowEmpty && text.length === 0) throw formatFailure(emptyMessage);
@@ -260,15 +255,20 @@ class BlobCursor {
   }
 
   async assets(signal?: AbortSignal): Promise<NodeSeaAsset[]> {
-    const count = this.#count(MAX_ASSET_COUNT, NODE_SEA_ASSET_COUNT);
-    if (count * 16 > this.remaining) throw formatFailure(NODE_SEA_TRUNCATED);
+    const count = this.#count("asset_count", 16);
     const seen = new Set<string>();
     const assets: NodeSeaAsset[] = [];
     let nameBytes = 0;
     const charge = (bytes: number): void => {
       nameBytes += bytes;
-      if (nameBytes > MAX_ASSET_NAME_BYTES)
-        throw limitFailure(NODE_SEA_ASSET_NAME_BYTES, "memory");
+      if (nameBytes > this.limits.asset_name_bytes)
+        throw artifactReaderLimitFailure(
+          "artifact_limits.node_sea.asset_name_bytes",
+          this.limits.asset_name_bytes,
+          "bytes",
+          nameBytes,
+          "memory",
+        );
     };
     for (let index = 0; index < count; index += 1) {
       if (index % 256 === 0) {
@@ -276,7 +276,8 @@ class BlobCursor {
         assertArtifactReadActive(signal);
       }
       const name = this.text(true, NODE_SEA_INVALID_UTF8, charge);
-      if (seen.has(name)) throw formatFailure(nodeSeaAssetCollision(name));
+      if (seen.has(name))
+        throw formatFailure(`Node SEA asset name collides: ${name}`);
       seen.add(name);
       assets.push({ name, range: this.byteRange() });
     }
@@ -284,14 +285,19 @@ class BlobCursor {
   }
 
   async execArgv(signal?: AbortSignal): Promise<string[]> {
-    const count = this.#count(MAX_EXEC_ARGV, NODE_SEA_EXEC_ARGV_COUNT);
-    if (count * 8 > this.remaining) throw formatFailure(NODE_SEA_TRUNCATED);
+    const count = this.#count("argument_count", 8);
     const values: string[] = [];
     let textBytes = 0;
     const charge = (bytes: number): void => {
       textBytes += bytes;
-      if (textBytes > MAX_EXEC_ARGV_TEXT_BYTES)
-        throw limitFailure(NODE_SEA_EXEC_ARGV_TEXT, "memory");
+      if (textBytes > this.limits.argument_bytes)
+        throw artifactReaderLimitFailure(
+          "artifact_limits.node_sea.argument_bytes",
+          this.limits.argument_bytes,
+          "bytes",
+          textBytes,
+          "memory",
+        );
     };
     for (let index = 0; index < count; index += 1) {
       if (index % 256 === 0) {
@@ -330,13 +336,22 @@ class BlobCursor {
     return Number(value);
   }
 
-  #count(limit: number, message: string): number {
+  #count(
+    field: "asset_count" | "argument_count",
+    minimumRowBytes: number,
+  ): number {
     if (this.remaining < 8) throw formatFailure(NODE_SEA_TRUNCATED);
     const value = this.#demand(8).readBigUInt64LE(0);
-    if (value > BigInt(Number.MAX_SAFE_INTEGER))
+    if (value > BigInt(Math.floor(this.remaining / minimumRowBytes)))
       throw formatFailure(NODE_SEA_TRUNCATED);
     const count = Number(value);
-    if (count > limit) throw limitFailure(message, "capacity");
+    if (count > this.limits[field])
+      throw artifactReaderLimitFailure(
+        `artifact_limits.node_sea.${field}`,
+        this.limits[field],
+        "count",
+        count,
+      );
     return count;
   }
 

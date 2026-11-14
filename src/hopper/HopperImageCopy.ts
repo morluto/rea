@@ -17,9 +17,6 @@ export interface HopperImageCopyOptions {
   readonly resourceScope: ArtifactResourceScope;
   readonly fileSystem?: HopperImageCopyFileSystem;
   readonly signal?: AbortSignal;
-  readonly observer?: {
-    readonly afterChunkWritten?: (copiedBytes: number) => Promise<void>;
-  };
 }
 const defaultFileSystem: HopperImageCopyFileSystem = { open };
 
@@ -37,7 +34,6 @@ export const prepareHopperExecutableImage = async (
     resourceScope: options.resourceScope,
     fileSystem: options.fileSystem,
     signal: options.signal,
-    observer: options.observer,
     selectBytes: (bytes) => {
       hash.update(bytes);
       return bytes;
@@ -95,7 +91,6 @@ export const copyHopperSource = async (options: {
   readonly sourcePath: string;
   readonly destination: string;
   readonly signal: AbortSignal | undefined;
-  readonly observer: HopperImageCopyOptions["observer"] | undefined;
   readonly resourceScope: ArtifactResourceScope;
   readonly fileSystem: HopperImageCopyFileSystem | undefined;
   readonly selectBytes: (chunk: Buffer, position: number) => Buffer | undefined;
@@ -136,7 +131,6 @@ const performHopperImageCopy = async (options: {
   readonly sourcePath: string;
   readonly destination: string;
   readonly signal: AbortSignal | undefined;
-  readonly observer: HopperImageCopyOptions["observer"] | undefined;
   readonly fileSystem: HopperImageCopyFileSystem | undefined;
   readonly selectBytes: (chunk: Buffer, position: number) => Buffer | undefined;
 }): Promise<HopperImageCopyOperation> => {
@@ -182,7 +176,6 @@ const performHopperImageCopy = async (options: {
       if (selected !== undefined && selected.length > 0) {
         await output.handle.writeFile(selected);
         copied += selected.length;
-        await options.observer?.afterChunkWritten?.(copied);
       }
       position += bytes.length;
     }

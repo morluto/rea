@@ -143,7 +143,6 @@ type DebuggerName = keyof typeof debuggers;
 type FakeMode = "clean" | "malformed" | "unanswered";
 
 const EXIT_DEADLINE_MS = 20_000;
-const TEST_DEADLINE_MS = 2 * EXIT_DEADLINE_MS;
 
 const isAlive = (pid: number): boolean => {
   try {
@@ -216,10 +215,15 @@ const expectRetainedOutcome = (
   result: ProcessResult,
   pid: number,
 ): void => {
-  expect(JSON.parse(result.stdout)).toMatchObject({
+  const output = JSON.parse(result.stdout) as {
+    remediation: { action: string };
+  };
+  expect(output).toMatchObject({
     code: "cleanup_incomplete",
     retryable: false,
-    remediation: { action: retainedDebuggerRemediation([pid]) },
+    remediation: {
+      action: retainedDebuggerRemediation([pid]),
+    },
     details: {
       operation: debuggers[name].operation,
       cleanup: "incomplete",
@@ -229,7 +233,7 @@ const expectRetainedOutcome = (
       },
     },
   });
-  expectNamesProcess(retainedDebuggerRemediation([pid]), pid);
+  expectNamesProcess(output.remediation.action, pid);
   expect(result.stdout).toContain(`"retained_debugger_pids":[${String(pid)}]`);
 };
 
@@ -255,9 +259,7 @@ const startMcpSession = async (
     child.stdin.write(
       `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
     );
-    await expect
-      .poll(() => stdout, { timeout: EXIT_DEADLINE_MS })
-      .toContain(`"id":${String(id)}`);
+    await expect.poll(() => stdout).toContain(`"id":${String(id)}`);
   };
   await request(1, "initialize", {
     protocolVersion: "2025-06-18",
@@ -286,7 +288,6 @@ describe.skipIf(process.platform === "win32")(
       ["gdb", "unanswered"],
     ] as const)(
       "ends one-shot %s with a retained debugger whose cleanup is %s",
-      { timeout: TEST_DEADLINE_MS },
       async ([name, mode], { processes, cliCompileCache }) => {
         const tty = await rizinTestInferiorTty();
         const launch = await prepareLaunch(name, mode, cliCompileCache);
@@ -302,9 +303,7 @@ describe.skipIf(process.platform === "win32")(
         expectRetainedOutcome(name, result, pid);
         // REA reports the debugger as retained and did not stop it. Exiting
         // closes its command stream; that is the only thing it sees from REA.
-        await expect
-          .poll(launch.notes, { timeout: EXIT_DEADLINE_MS })
-          .toContain("stdin-end");
+        await expect.poll(launch.notes).toContain("stdin-end");
         expect(await launch.notes()).not.toContain("sigterm");
         expect(isAlive(pid)).toBe(true);
       },
@@ -312,7 +311,6 @@ describe.skipIf(process.platform === "win32")(
 
     cliTest.for(["rizin", "gdb"] as const)(
       "keeps a one-shot %s success and its exit status when cleanup is confirmed",
-      { timeout: TEST_DEADLINE_MS },
       async (name, { processes, cliCompileCache }) => {
         const tty = await rizinTestInferiorTty();
         const launch = await prepareLaunch(name, "clean", cliCompileCache);
@@ -330,15 +328,12 @@ describe.skipIf(process.platform === "win32")(
         });
         expect(result.stdout).not.toContain("retained_debugger_pids");
         const pid = await launch.debuggerPid();
-        await expect
-          .poll(() => isAlive(pid), { timeout: EXIT_DEADLINE_MS })
-          .toBe(false);
+        await expect.poll(() => isAlive(pid)).toBe(false);
       },
     );
 
     cliTest.for(["rizin", "gdb"] as const)(
       "ends one-shot %s with its signal status when interrupted during final cleanup",
-      { timeout: TEST_DEADLINE_MS },
       async (name, { processes, cliCompileCache }) => {
         const tty = await rizinTestInferiorTty();
         const launch = await prepareLaunch(name, "unanswered", cliCompileCache);
@@ -352,16 +347,10 @@ describe.skipIf(process.platform === "win32")(
         child.stdout.on("data", (chunk: Buffer) => (stdout += String(chunk)));
         child.stdin.end();
         // The unanswered request is issued by final cleanup, after the command.
-        await expect
-          .poll(launch.notes, { timeout: EXIT_DEADLINE_MS })
-          .toContain("inventory-request");
+        await expect.poll(launch.notes).toContain("inventory-request");
         child.kill("SIGINT");
-        await expect
-          .poll(() => child.exitCode, { timeout: EXIT_DEADLINE_MS })
-          .toBe(130);
-        await expect
-          .poll(() => stdout, { timeout: EXIT_DEADLINE_MS })
-          .toContain("retained_debugger_pids");
+        await expect.poll(() => child.exitCode).toBe(130);
+        await expect.poll(() => stdout).toContain("retained_debugger_pids");
 
         const pid = await launch.debuggerPid();
         expectRetainedOutcome(
@@ -380,7 +369,6 @@ describe.skipIf(process.platform === "win32")(
       ["rizin", "SIGTERM"],
     ] as const)(
       "ends the stdio MCP server holding a retained %s session on %s and names it",
-      { timeout: TEST_DEADLINE_MS },
       async ([name, trigger], { processes, cliCompileCache }) => {
         const tty = await rizinTestInferiorTty();
         const launch = await prepareLaunch(name, "malformed", cliCompileCache);
@@ -395,15 +383,15 @@ describe.skipIf(process.platform === "win32")(
         if (trigger === "SIGTERM") child.kill("SIGTERM");
         else child.stdin.end();
 
-        await expect
-          .poll(() => child.exitCode, { timeout: EXIT_DEADLINE_MS })
-          .toBe(1);
+        await expect.poll(() => child.exitCode).toBe(1);
         const pid = await launch.debuggerPid();
         // Nothing else reports these once the server has exited.
-        await expect
-          .poll(stderr, { timeout: EXIT_DEADLINE_MS })
-          .toContain(`${retainedDebuggerRemediation([pid])}\n`);
-        expectNamesProcess(retainedDebuggerRemediation([pid]), pid);
+        const guidance = () =>
+          stderr()
+            .split("\n")
+            .find((line) => line === retainedDebuggerRemediation([pid]));
+        await expect.poll(guidance).toBeDefined();
+        expectNamesProcess(guidance()!, pid);
         const logs = stderr()
           .split("\n")
           .filter((line) => line.startsWith("{"))

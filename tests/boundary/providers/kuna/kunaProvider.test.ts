@@ -11,6 +11,7 @@ import {
 import { join } from "node:path";
 
 import { expect, it as test, vi } from "vitest";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
@@ -20,8 +21,10 @@ import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { KUNA_NATIVE_VALUE_FLOW_UNAVAILABLE } from "../../../../src/kuna/KunaSessionClient.js";
+import { runWithAnalysisOperationSnapshot } from "../../../../src/domain/analysisOperationSnapshot.js";
+import { KUNA_VALUE_FLOW_UNAVAILABLE } from "../../../../src/kuna/KunaProviderCapabilities.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
+import { KunaRunSlots } from "../../../../src/kuna/KunaRunSlots.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "../../../../src/kuna/KunaLimits.js";
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
 import { cleanupOwnedProcessGroup } from "../../../../src/process/ProcessOwnership.js";
@@ -39,6 +42,7 @@ import {
   exportsOf,
   FUNCTIONS,
   unprovenCleanupLauncher,
+  awaitKunaCommand,
 } from "./kunaSessionFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
@@ -441,9 +445,24 @@ it("reports a failed function and an import slot as unavailable text, not errors
     procedure: "broken",
   });
   expect(broken.result).toBeNull();
-  expect(broken.limitations.at(-1)).toBe(
-    "Kuna could not decompile this function: Flow exceeded maximum instructions",
+  expect(broken.limitations).toContainEqual(
+    expect.stringMatching(
+      /could not decompile.*Flow exceeded maximum instructions/i,
+    ),
   );
+  const dossier = await run(client, "analyze_function", {
+    procedure: "broken",
+  });
+  expect(dossier.result).toMatchObject({
+    facet_availability: {
+      pseudocode: {
+        available: false,
+        reason: expect.stringMatching(
+          /could not decompile.*Flow exceeded maximum instructions/i,
+        ),
+      },
+    },
+  });
   const imported = await run(client, "procedure_pseudo_code", {
     procedure: "puts",
   });
@@ -512,7 +531,7 @@ it("builds a dossier with text and call relationships, leaving unsupported facet
     assembly: ["main:  ; 0x1000", "  00001000: c3     RET"],
     native_value_flow: {
       available: false,
-      reason: KUNA_NATIVE_VALUE_FLOW_UNAVAILABLE,
+      reason: KUNA_VALUE_FLOW_UNAVAILABLE,
     },
     facet_availability: {
       pseudocode: { available: true },
@@ -663,13 +682,31 @@ it("keeps answering pseudocode one function at a time when the export fails", as
   });
   expect(pseudocode.rawResult).toMatchObject({
     source: { kind: "single-function" },
-    project_export: { state: "failed", failure_records: "not_exposed" },
+    project_export: {
+      state: "failed",
+      failure_records: "not_exposed",
+      reason: expect.stringContaining("not in recognized object file format"),
+    },
   });
   expect(pseudocode.limitations).toEqual(
     expect.arrayContaining([
       expect.stringContaining("The project export failed"),
       "REA does not expose per-function records from a failed project export.",
     ]),
+  );
+  const fresh = await run(client, "procedure_pseudo_code", {
+    procedure: "main",
+    analysis: "independent_fresh",
+  });
+  expect(fresh.rawResult).toMatchObject({
+    source: { kind: "single-function" },
+    project_export: {
+      state: "failed",
+      reason: expect.stringContaining("not in recognized object file format"),
+    },
+  });
+  expect(fresh.limitations).toContainEqual(
+    expect.stringContaining("fresh independent single-function"),
   );
   expect(pseudocode.limitations.join(" ")).not.toContain("still building");
   expect(pseudocode.limitations.join(" ")).toContain(
@@ -713,7 +750,7 @@ it("keeps an overflow as the primary failure when cancellation arrives during fi
     { signal: caller.signal },
   );
   try {
-    await entered;
+    await awaitAcknowledgement(entered, pending, "Kuna overflow cleanup");
     caller.abort("cancel during overflow cleanup");
     releaseCleanup();
     const result = await pending;
@@ -792,13 +829,7 @@ it.each([false, true])(
       withCallerSignal ? { signal: caller.signal } : {},
     );
     try {
-      await expect
-        .poll(async () =>
-          (await fakeKunaCalls(kuna)).filter(
-            ({ argv }) => argv[0] === "decompile",
-          ),
-        )
-        .toHaveLength(1);
+      await awaitKunaCommand(kuna, "decompile", request);
       const call = (await fakeKunaCalls(kuna)).find(
         ({ argv }) => argv[0] === "decompile",
       );
@@ -810,8 +841,8 @@ it.each([false, true])(
       });
     } finally {
       caller.abort();
-      await request;
       await client.close();
+      await request;
     }
   },
 );
@@ -865,13 +896,7 @@ it("retains an active request's workspace when close cannot prove its stop", asy
     { signal: caller.signal },
   );
   try {
-    await expect
-      .poll(async () =>
-        (await fakeKunaCalls(kuna)).filter(
-          ({ argv }) => argv[0] === "decompile",
-        ),
-      )
-      .toHaveLength(1);
+    await awaitKunaCommand(kuna, "decompile", request);
     const closed = await client.close();
     expect(closed).toMatchObject({
       ok: false,
@@ -887,9 +912,119 @@ it("retains an active request's workspace when close cannot prove its stop", asy
     expect(await readFile(input ?? "", "utf8")).toBe("program bytes");
   } finally {
     caller.abort();
-    await request;
     unproven.release();
-    expect(await client.close()).toEqual({ ok: true, value: null });
+    const closed = await client.close();
+    await request;
+    expect(closed).toEqual({ ok: true, value: null });
+  }
+});
+
+it("preserves cancellation after a foreground slot is granted and before deadline admission", async () => {
+  const snapshot = {
+    revision: 1,
+    overrides: { "kuna.function_timeout_ms": 1_000 },
+  } as const;
+  const fixture = await runWithAnalysisOperationSnapshot(snapshot, () =>
+    session(
+      "rea-kuna-slot-cancel-",
+      {},
+      { REA_KUNA_TIMEOUT_MS: "invalid" },
+      undefined,
+      1,
+    ),
+  );
+  const client = runWithAnalysisOperationSnapshot(snapshot, () =>
+    fixture.open(),
+  );
+  const controller = new AbortController();
+  const reason = { cancelled: "after slot admission" };
+  const acquire = KunaRunSlots.prototype.acquire;
+  let intercepted = false;
+  const spy = vi
+    .spyOn(KunaRunSlots.prototype, "acquire")
+    .mockImplementation(async function (this: KunaRunSlots, signal) {
+      const release = await acquire.call(this, signal);
+      if (!intercepted && release !== undefined) {
+        intercepted = true;
+        controller.abort(reason);
+      }
+      return release;
+    });
+  try {
+    const listed = await runWithAnalysisOperationSnapshot(snapshot, () =>
+      client.execute("list_procedures", {}),
+    );
+    expect(listed.ok).toBe(true);
+    const result = await client.execute(
+      "procedure_pseudo_code",
+      { procedure: "main", analysis: "independent_fresh" },
+      { signal: controller.signal },
+    );
+    expect(intercepted).toBe(true);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cause).toBe(reason);
+    spy.mockRestore();
+    const retried = await runWithAnalysisOperationSnapshot(snapshot, () =>
+      client.execute(
+        "procedure_pseudo_code",
+        { procedure: "main", analysis: "independent_fresh" },
+        { signal: AbortSignal.timeout(3000) },
+      ),
+    );
+    expect(retried.ok).toBe(true);
+  } finally {
+    spy.mockRestore();
+    await client.close();
+  }
+});
+
+it("releases the foreground slot when a reset exposes an invalid function deadline", async () => {
+  const snapshot = {
+    revision: 1,
+    overrides: { "kuna.function_timeout_ms": 1_000 },
+  } as const;
+  const fixture = await runWithAnalysisOperationSnapshot(snapshot, () =>
+    session(
+      "rea-kuna-invalid-reset-slot-",
+      {},
+      { REA_KUNA_TIMEOUT_MS: "invalid" },
+      undefined,
+      1,
+    ),
+  );
+  const client = runWithAnalysisOperationSnapshot(snapshot, () =>
+    fixture.open(),
+  );
+  try {
+    const listed = await runWithAnalysisOperationSnapshot(snapshot, () =>
+      client.execute("list_procedures", {}),
+    );
+    expect(listed.ok).toBe(true);
+    const invalid = await client.execute("procedure_pseudo_code", {
+      procedure: "main",
+      analysis: "independent_fresh",
+    });
+    expect(invalid).toMatchObject({
+      ok: false,
+      error: { _tag: "ConfigurationError" },
+    });
+    const resumed = await runWithAnalysisOperationSnapshot(snapshot, () =>
+      client.execute(
+        "procedure_pseudo_code",
+        {
+          procedure: "main",
+          analysis: "independent_fresh",
+        },
+        { signal: AbortSignal.timeout(3000) },
+      ),
+    );
+    expect(resumed).toMatchObject({ ok: true });
+  } finally {
+    await client.close();
   }
 });
 
@@ -898,25 +1033,34 @@ it("keeps reporting a failed close and succeeds once a retry proves the stop", a
   const { open } = await session(
     "rea-kuna-close-retry-",
     { project: "hang", decompile: "hang" },
-    { REA_KUNA_TIMEOUT_MS: "300" },
+    { REA_KUNA_TIMEOUT_MS: "10000" },
     unproven.launcher,
   );
   const client = open();
 
-  expect(
-    await client.execute("procedure_pseudo_code", { procedure: "main" }),
-  ).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
-  const first = await client.close();
-  expect(first).toMatchObject({
-    ok: false,
-    error: { diagnostics: { reason: "decompile stop unproven" } },
-  });
-  // A retry that still cannot prove the stop keeps failing.
-  expect((await client.close()).ok).toBe(false);
+  try {
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
+    expect(
+      await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "kuna.function_timeout_ms": 300 } },
+        () => client.execute("procedure_pseudo_code", { procedure: "main" }),
+      ),
+    ).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
+    const first = await client.close();
+    expect(first).toMatchObject({
+      ok: false,
+      error: { diagnostics: { reason: "decompile stop unproven" } },
+    });
+    // A retry that still cannot prove the stop keeps failing.
+    expect((await client.close()).ok).toBe(false);
 
-  unproven.release();
-  expect(await client.close()).toEqual({ ok: true, value: null });
-  expect(await client.close()).toEqual({ ok: true, value: null });
+    unproven.release();
+    expect(await client.close()).toEqual({ ok: true, value: null });
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  } finally {
+    unproven.release();
+    expect((await client.close()).ok).toBe(true);
+  }
 });
 
 it("reports an abandoned export's unproven cleanup from close", async () => {
@@ -1029,36 +1173,16 @@ it("recovers when another server evicts the export this session adopted", async 
   await client.close();
 });
 
-it("reports a failed export as failed rather than building", async () => {
-  const { open } = await session("rea-kuna-failed-state-", {
-    project: "exit-failure",
-  });
-  const client = open();
-  await client.execute("procedure_assembly", { procedure: "main" });
-
-  expect(
-    (await run(client, "procedure_pseudo_code", { procedure: "main" }))
-      .rawResult,
-  ).toMatchObject({
-    project_export: {
-      state: "failed",
-      reason: expect.stringContaining("not in recognized object file format"),
-    },
-  });
-  await client.close();
-});
-
 it.each([
   {
     name: "export deadline",
     behavior: { project: "hang" } as const,
     environment: { REA_KUNA_PROJECT_TIMEOUT_MS: "300" },
     cause: "AnalysisTimeoutError",
-    next: "To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above 300 ms in the environment that starts REA. REA reads Kuna settings when it starts, so restart REA, then reopen the target.",
-    details: {
-      timeout_ms: 300,
-      captured_output: { truncated: expect.any(Boolean) },
-    },
+    next: "To retry, set kuna.project_timeout_ms above 300 ms with update_analysis_settings. It can be changed at runtime. The launch seed is REA_KUNA_PROJECT_TIMEOUT_MS. Then reopen the target so the export runs again.",
+    // The whole export can expire during preparation, before a child exists.
+    // Command-output presence is covered at the command owner below that boundary.
+    details: { timeout_ms: 300 },
   },
   {
     name: "Kuna failure",
@@ -1139,6 +1263,64 @@ it.each([
     }
   },
 );
+
+it("retains the producing project deadline after its runtime override is reset", async () => {
+  const { client, first } = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "kuna.project_timeout_ms": 300 } },
+    async () => {
+      const { open } = await session(
+        "rea-kuna-retained-deadline-",
+        { project: "hang" },
+        { REA_KUNA_PROJECT_TIMEOUT_MS: "invalid" },
+      );
+      const client = open();
+      const first = await client.execute("procedure_assembly", {
+        procedure: "main",
+      });
+      return { client, first };
+    },
+  );
+  try {
+    const later = await runWithAnalysisOperationSnapshot(
+      { revision: 2, overrides: {} },
+      () => client.execute("analyze_function", { procedure: "main" }),
+    );
+    for (const result of [first, later]) {
+      expect(result.ok).toBe(false);
+      if (result.ok) continue;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCapabilityUnavailableError",
+        cause: {
+          _tag: "AnalysisTimeoutError",
+          timeoutMs: 300,
+          limit: {
+            setting: "kuna.project_timeout_ms",
+            effective_value: 300,
+            source: "runtime",
+          },
+        },
+      });
+    }
+    const fallback = await runWithAnalysisOperationSnapshot(
+      { revision: 2, overrides: {} },
+      () => client.execute("procedure_pseudo_code", { procedure: "main" }),
+    );
+    expect(fallback).toMatchObject({
+      ok: true,
+      value: {
+        siblingUnavailability: {
+          cause: {
+            _tag: "AnalysisTimeoutError",
+            timeoutMs: 300,
+            limit: { setting: "kuna.project_timeout_ms", source: "runtime" },
+          },
+        },
+      },
+    });
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
 
 it("lets one caller stop waiting for the shared inventory without failing another", async () => {
   const { open } = await session("rea-kuna-shared-inventory-", {

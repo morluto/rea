@@ -4,7 +4,7 @@ import { inspectPlaywrightTraceInputSchema } from "../domain/playwrightTrace/pla
 import {
   playwrightTraceSummaryViewResultSchema,
   playwrightTracePageViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
+} from "../domain/analysisView/analysisViewResult.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import type { ToolContract } from "./toolContractTypes.js";
@@ -15,7 +15,7 @@ export const PLAYWRIGHT_TRACE_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_playwright_trace"),
     kind: "application",
     description:
-      "Inspect a caller-selected Playwright v10 trace ZIP offline. No browser, replay or recorded-URL requests. Retains action boundaries, console text, network facts and screenshot/body references with archive/member/line identity. No cross-stream total order or complete-capture claim. Credentials use existing HAR/URL projection; context options, most action arguments/results, DOM and resource bytes are not analyzed. Default summary retains complete supported Evidence; view selects events/streams/members/diagnostics with batch IDs, fields and paging. Default text previews cover 256 UTF-16 units; event-text reads further exact text chunks and fields text returns the complete value. Archive/decoded-stream/fact allowances are 256/32/32 MiB; individual lines 4 MiB with bounded JSON node admission. One archive import is admitted at a time per decoder; retained views remain independent. Paging does not increase parsing allowances.",
+      'Inspect a local Playwright v10 trace ZIP offline, without browser replay or requests to recorded URLs. Returns action boundaries, console/network facts, screenshot/body references and archive/member/line provenance; no cross-stream total order or complete-capture claim. Context options, most action arguments/results, DOM and resource bytes are not analyzed; credentials use HAR/URL projection. Default summary retains supported Evidence. Use view {kind:"playwright-trace",collection:"events",kinds:["network"],limit:10}, or streams/members/diagnostics pages. Text previews cover 256 UTF-16 units; event-text with exact event_id reads further chunks, and fields ["text"] selects full text. Paging does not raise parsing allowances; one archive import is admitted per decoder while retained views remain independent.',
     inputSchema: inspectPlaywrightTraceInputSchema,
     outputSchema: evidenceResultOf(
       z.union([

@@ -1,14 +1,12 @@
 import { expect, it } from "vitest";
-import { analyzeJavaScriptStaticSource } from "../javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { completeSemanticSteps } from "../javascript/javascriptSemanticTraversal.js";
 import { buildJavaScriptRouteInventorySteps } from "../javascript/javascriptRouteInventory.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
-import {
-  projectAnalysisView,
-  analysisViewRequestSchema,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const inventory = (
   text = `createBrowserRouter([{path:'/reports',children:[{path:':id'},{path:'settings'}]}]);router.push('/login');`,
@@ -266,7 +264,6 @@ it("returns a typed retained-parent resource error when even a summary identity 
       collection: "summary",
     }),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a resource error");
   expect(result.error.message).toContain("cannot fit");
 });
@@ -288,7 +285,6 @@ it("explains how to recover an oversized route row without changing the parent",
       ...selection,
     }),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected an oversized-row refusal");
   const projected = projectAnalysisError(result.error);
   expect(projected).toMatchObject({
@@ -338,7 +334,6 @@ it.each(["summary", "routes"] as const)(
         ...selection,
       }),
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a sealed-page resource error");
     expect(result.error.message).toContain("cannot fit");
   },

@@ -1,3 +1,4 @@
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import { Readable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
@@ -64,12 +65,12 @@ export const regionFileName = (start: number, end: number): string =>
  */
 export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
   readonly #scope = new ArtifactResourceScope();
-  readonly #entries = new Map<string, ArtifactEntry>();
-  readonly #regions = new Map<string, Uint8Array>();
+  #entries = new Map<string, ArtifactEntry>();
+  #regions = new Map<string, Uint8Array>();
   readonly #streams = new Set<Readable>();
   readonly #source: ArtifactFileSource;
   readonly #decoding: RegionDecoding<Image>;
-  #prepared: Promise<void> | undefined;
+  readonly #preparation = new ArtifactPreparation();
   /** Whole-file facts only; the region map is the sole owner of region bytes. */
   #described: Omit<DecodedRegions, "regions"> | undefined;
   #closing = false;
@@ -110,10 +111,14 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
       await this.#source.read(signal);
     });
+    this.#assertOpen(signal);
     const coverage = this.#described?.coverage;
     if (coverage !== undefined)
       options?.onCoverage?.({
@@ -127,6 +132,7 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
       this.#assertOpen(signal);
       yield copyArtifactEntry(entry);
     }
+    this.#assertOpen(signal);
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
@@ -230,6 +236,8 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
 
   async #prepare(signal?: AbortSignal): Promise<void> {
     const described = this.#decoding.describe(await this.#decode(signal));
+    const entries = new Map<string, ArtifactEntry>();
+    const regions = new Map<string, Uint8Array>();
     let index = 0;
     for (const region of described.regions) {
       if (index % 256 === 0) await setImmediate();
@@ -248,13 +256,16 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
         adapterKey: `${this.#decoding.keyPrefix}:${String(index)}`,
         formatMetadata: region.formatMetadata,
       } satisfies ArtifactEntry;
-      this.#entries.set(entry.adapterKey, entry);
-      this.#regions.set(entry.adapterKey, region.bytes);
+      entries.set(entry.adapterKey, entry);
+      regions.set(entry.adapterKey, region.bytes);
       index += 1;
     }
     const { regions: _regions, ...facts } = described;
-    this.#described = facts;
     await this.#source.read(signal);
+    this.#assertOpen(signal);
+    this.#entries = entries;
+    this.#regions = regions;
+    this.#described = facts;
   }
 
   async #decode(signal?: AbortSignal): Promise<Image> {

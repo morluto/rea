@@ -39,10 +39,7 @@ import {
   GhidraLaunchError,
 } from "../../../../src/ghidra/GhidraLauncher.js";
 import type { GhidraDiagnostic } from "../../../../src/ghidra/GhidraClientTypes.js";
-import type {
-  GhidraLaunchSession,
-  GhidraLauncher,
-} from "../../../../src/ghidra/GhidraLauncher.js";
+import type { GhidraLauncher } from "../../../../src/ghidra/GhidraLauncher.js";
 import type { ProviderProcessHandle } from "../../../../src/process/ProviderProcess.js";
 import type { GhidraTransportKind } from "../../../../src/ghidra/GhidraTransport.js";
 import {
@@ -55,6 +52,7 @@ import {
   GhidraFixtureLauncher as FixtureLauncher,
   ghidraFixturePath as fixturePath,
 } from "./ghidraClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const PROFILE_DIGEST = "a".repeat(64);
 const PROVIDER_VERSION = "12.1.4";
@@ -499,7 +497,6 @@ it("reports snapshot descriptor cleanup immediately and resolves its exact error
     await client.close();
   });
   const result = await client.hashTargetSnapshot();
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected snapshot final close failure");
   expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(true);
   expect(result.error.partialObservation).toMatchObject({
@@ -537,7 +534,6 @@ it("preserves completed snapshot hashing and exact cancellation during descripto
     });
   onTestFinished(() => close.mockRestore());
   const result = await client.hashTargetSnapshot(controller.signal);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected final-close cancellation");
   expect(result.error.kind).toBe("cancelled");
   expect(result.error.cancellation?.reason).toBe(reason);
@@ -662,7 +658,6 @@ it("preserves snapshot cancellation and completed hash while final close also fa
     close.mockRestore();
   });
   const result = await client.hashTargetSnapshot(controller.signal);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation and cleanup failure");
   expect(result.error.kind).toBe("cancelled");
   expect(result.error.cancellation?.reason).toBe(reason);
@@ -769,7 +764,6 @@ it("keeps a snapshot read failure primary across late cancellation and failed cl
     close.mockRestore();
   });
   const result = await client.hashTargetSnapshot(controller.signal);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected read and cleanup failure");
   expect(result.error.kind).toBe("protocol");
   expect(result.error.cancellation).toBeUndefined();
@@ -1102,9 +1096,53 @@ describe("GhidraClient", () => {
       client.callTool("list_strings", { document: null }),
     ).resolves.toMatchObject({
       ok: true,
-      value: [{ address: "0x2000", value: "fixture 雪🦊" }],
+      value: [{ address: "0x2000", value: "fixture �雪🦊" }],
     });
   });
+
+  it.each(["valid_then_invalid", "valid_then_invalid_split"] as const)(
+    "retains a complete reply before later malformed bytes (%s)",
+    async (mode) => {
+      const client = clientFor(new FixtureLauncher(mode));
+      expect((await client.start()).ok).toBe(true);
+      const completed = client.callTool("list_strings", { document: null });
+      const later = client.callTool("list_procedures", { document: null });
+      await expect(completed).resolves.toEqual({
+        ok: true,
+        value: "completed",
+      });
+      await expect(later).resolves.toMatchObject({
+        ok: false,
+        error: { kind: "protocol" },
+      });
+    },
+  );
+
+  it("keeps a valid UTF-8 EOF without a newline distinct from malformed bytes", async () => {
+    const client = clientFor(new FixtureLauncher("valid_utf8_end"));
+    await expect(
+      client.callTool("list_strings", { document: null }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "process" },
+    });
+  });
+
+  it.each(["invalid_utf8", "invalid_utf8_split", "invalid_utf8_end"] as const)(
+    "rejects malformed response bytes (%s) instead of replacement-decoding string evidence",
+    async (mode) => {
+      const client = clientFor(new FixtureLauncher(mode));
+      await expect(
+        client.callTool("list_strings", { document: null }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: {
+          kind: "protocol",
+          message: "Ghidra bridge response is not valid UTF-8",
+        },
+      });
+    },
+  );
 
   it("accepts an owned-socket result above the former 64 MiB ceiling", async () => {
     const client = clientFor(new FixtureLauncher("oversized_result"));
@@ -1346,7 +1384,7 @@ it.each([0, 1])(
         cancelled = result;
       });
       controllers[cancelledIndex]?.abort();
-      await vi.waitFor(() =>
+      await waitFor(() =>
         expect(cancelled).toMatchObject({
           ok: false,
           error: { kind: "cancelled" },
@@ -1508,7 +1546,7 @@ it("applies one startup deadline and removes the private runtime", async () => {
   const pending = client.start();
   const child = await launcher.started;
   await vi.advanceTimersByTimeAsync(30);
-  const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+  const result = await waitFor(() => pending);
   vi.useRealTimers();
 
   expect(result).toMatchObject({
@@ -1573,7 +1611,7 @@ describe("GhidraClient established requests", () => {
       { document: null, procedure: "fixture_main" },
       { signal: activeController.signal },
     );
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(launcher.requests).toContain("procedure_pseudo_code"),
     );
     const queuedController = new AbortController();
@@ -1638,7 +1676,7 @@ describe("GhidraClient runtime removal failures", () => {
             { document: null, procedure: "fixture_main" },
             { signal: controller.signal },
           );
-          await vi.waitFor(() =>
+          await waitFor(() =>
             expect(launcher.requests).toContain("procedure_pseudo_code"),
           );
           const queued = client.callTool("procedure_info", {
@@ -1732,7 +1770,7 @@ describe("GhidraClient cleanup and diagnostics", () => {
       client.callTool("list_strings", { document: null }),
     ).resolves.toMatchObject({ ok: true });
 
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(client.diagnostics()).toMatchObject({
         diagnostic_truncated: true,
       });
@@ -2379,7 +2417,7 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
       { document: null, procedure: "fixture_main" },
       { signal: activeController.signal },
     );
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(launcher.requests).toContain("procedure_pseudo_code"),
     );
     const queuedController = new AbortController();
@@ -2461,7 +2499,7 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
     const client = clientFor(launcher, { startupTimeoutMs: 10000 });
     const controller = new AbortController();
     const pending = client.start(controller.signal);
-    await vi.waitFor(() => expect(observed).toHaveBeenCalled());
+    await waitFor(() => expect(observed).toHaveBeenCalled());
     controller.abort(reason);
     const result = await pending;
     if (result.ok) throw new Error("Expected startup cancellation");

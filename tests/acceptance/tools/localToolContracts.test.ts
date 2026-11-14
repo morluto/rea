@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
+import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -246,12 +247,17 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["inspect_pe_resources", { path: nul }],
   ["inspect_pe_certificates", { path: nul }],
   ["inspect_pe_imports", { path: nul }],
+  ["inspect_windows_shortcut", { path: nul }],
   ["inspect_native_exports", { path: nul }],
   ["inspect_elf_notes", { path: nul }],
+  ["inspect_native_initializers", { path: nul }],
+  ["inspect_elf_unwind_ranges", { path: nul }],
   ["inspect_apple_ips", { path: nul }],
   ["inspect_devicetree", { path: nul }],
   ["inspect_kernel_module", { path: nul }],
+  ["inspect_kernel_build_config", { path: nul }],
   ["inspect_pe_load_config", { path: nul }],
+  ["audit_release_exposure", { path: nul }],
   ["inspect_binary_hardening", { path: nul }],
   ["inspect_python_pyc", { path: nul }],
   ["inspect_erlang_beam", { path: nul }],
@@ -329,22 +335,85 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["start_gdb_session", { inferior_tty: nul }],
 ];
 
+const nulIssuePaths = (
+  value: unknown,
+  path: readonly (string | number)[] = [],
+): (string | number)[][] => {
+  if (typeof value === "string") return value.includes("\0") ? [[...path]] : [];
+  if (Array.isArray(value))
+    return value.flatMap((item, index) =>
+      nulIssuePaths(item, [...path, index]),
+    );
+  if (typeof value === "object" && value !== null)
+    return Object.entries(value).flatMap(([key, item]) =>
+      nulIssuePaths(item, [...path, key]),
+    );
+  return [];
+};
+
 it("rejects OS-invalid local inputs through the real advertised MCP contracts", async () => {
   const { call } = await connectLocalToolsMcp();
+  const checked: string[] = [];
   for (const [name, arguments_] of pathRequests) {
-    const response = await call(name, arguments_);
-    expect(response.isError, name).toBe(true);
-    expect(JSON.stringify(response.content), name).toContain("NUL");
+    const paths = nulIssuePaths(arguments_);
+    expect(paths.length, name).toBeGreaterThan(0);
+    const error = parseMcpToolError(await call(name, arguments_)).error;
+    expect(error, name).toMatchObject({
+      code: "invalid_request",
+      details: { operation: name },
+    });
+    const issues = z
+      .object({
+        issues: z.array(
+          z.object({
+            path: z.array(z.union([z.string(), z.number()])),
+            reason: z.string(),
+            message: z.string(),
+            expected: z.unknown().optional(),
+          }),
+        ),
+      })
+      .parse(error.details).issues;
+    expect(issues, name).toEqual(
+      expect.arrayContaining(
+        paths.map((path) =>
+          expect.objectContaining({
+            path,
+            reason: "invalid_format",
+            expected: "regex",
+            message: expect.stringMatching(/\bNUL\b|null byte|zero byte/i),
+          }),
+        ),
+      ),
+    );
+    checked.push(name);
   }
+  expect(checked).toEqual(
+    expect.arrayContaining([
+      "extract_firmware",
+      "inspect_wasm_artifact",
+      "demangle_swift",
+      "capture_electron_scenario",
+    ]),
+  );
   const relative = await call("extract_firmware", {
     path: "/tmp/firmware.bin",
     output_directory: "relative-output",
   });
-  expect(relative.isError).toBe(true);
-  expect(JSON.stringify(relative.content)).toContain(
-    "absolute local filesystem path",
-  );
-}, 60_000);
+  expect(parseMcpToolError(relative).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "extract_firmware",
+      issues: [
+        expect.objectContaining({
+          path: ["output_directory"],
+          reason: "invalid_format",
+          expected: "regex",
+        }),
+      ],
+    },
+  });
+});
 
 const ignoredOptions = [
   { terminal: { columns: 80, row: 12 } },
@@ -514,9 +583,6 @@ captureTest(
       },
     });
   },
-  // 22 malformed requests plus two filesystem errors each start a fresh CLI.
-  // Cache compilation, but allow for startup at the bounded fanout of two.
-  120_000,
 );
 
 captureTest.each(["untruncated", "truncated"] as const)(

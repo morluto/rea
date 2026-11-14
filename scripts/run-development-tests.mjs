@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
-import { stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   developmentTestPlan,
   parseDevelopmentTestRequest,
 } from "./lib/development-tests.mjs";
+import { projectForTest } from "./lib/test-projects.mjs";
 
 let child;
 let forceTimer;
@@ -29,9 +30,22 @@ for (const signal of Object.keys(signalExitCodes))
 try {
   const [mode, ...arguments_] = process.argv.slice(2);
   const request = parseDevelopmentTestRequest(mode, arguments_);
+  const resolvedPaths = [];
+  const repository = await realpath(".");
   for (const path of request.paths) {
     if (!(await stat(path)).isFile())
       throw new Error(`Test path is not a file: ${path}`);
+    // Ownership follows the filesystem's canonical spelling. Execution keeps
+    // the caller path so exact discovery still rejects excluded symlink aliases.
+    const resolvedPath = relative(repository, await realpath(path))
+      .split(sep)
+      .join("/");
+    if (
+      request.mode !== "focused" &&
+      projectForTest(resolvedPath).group !== "source"
+    )
+      throw new Error(`Use test:focused for built test projects: ${path}`);
+    resolvedPaths.push(resolvedPath);
   }
   let baseCommit;
   if (request.mode === "changed") {
@@ -42,7 +56,7 @@ try {
       );
     baseCommit = base.output.trim();
   }
-  const plan = developmentTestPlan(request, baseCommit);
+  const plan = developmentTestPlan(request, baseCommit, resolvedPaths);
   if (request.dryRun) {
     console.log(JSON.stringify({ ...request, baseCommit, ...plan }, null, 2));
   } else {

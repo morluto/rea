@@ -1,12 +1,8 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import { compareFunctionEvidence } from "../application/investigation/FunctionComparisonEvidence.js";
-import {
-  recordEvidenceSources,
-  retainAnalysisResultSources,
-} from "../application/investigation/recordEvidenceSources.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
+import { deliverInvestigationWorkflow } from "./deliverInvestigationWorkflow.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
@@ -43,28 +39,11 @@ export const registerFunctionComparisonTool = (
             },
             (value) => value,
           );
-          const completed = retainAnalysisResultSources(
-            contract.name,
-            session.recordEvidence.bind(session),
-            computed,
-          );
-          if (!completed.ok)
-            return server.delivery.toPartialErrorToolResult(
-              completed.error,
-              contract.returnsTargetContent,
-              session.recordEvidence.bind(session),
-            );
-          const { evidence, sources, unknown } = completed.value;
-          const retained = recordEvidenceSources(
-            session.recordEvidence.bind(session),
-            sources,
-          );
-          if (!retained.ok)
-            return server.delivery.toCallToolResult(retained, contract);
-          return server.delivery.toEvidenceToolResult(
-            evidence,
+          return deliverInvestigationWorkflow(
+            server,
+            session,
             contract,
-            recordDerivedEvidence(session, evidence, unknown),
+            computed,
           );
         },
       ),

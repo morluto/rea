@@ -3,10 +3,8 @@ import {
   analysisViewCaptureFixture,
   analysisViewCaptureEvidence,
 } from "../../../tests/fixtures/analysisView.js";
-import {
-  analysisViewRequestSchema,
-  projectAnalysisView,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
 
 const project = (
@@ -232,7 +230,6 @@ it.each(["api-surface", "environment-manifest", "environment-state"])(
       },
       analysisViewRequestSchema.parse({ kind }),
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected parent admission to fail");
     expect(result.error.cause).toMatchObject({ name: "ZodError" });
     expect(projectAnalysisError(result.error)).toMatchObject({

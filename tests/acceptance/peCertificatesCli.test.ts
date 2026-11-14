@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { UNSIGNED_ATTRIBUTES_LIMITATION } from "../../src/native/pe/PeCertificateParser.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   peCertificateFixture,
@@ -11,8 +10,119 @@ import {
   pkcs7SignedDataIndefiniteEnvelopeFixture,
 } from "../../src/native/pe/PeCertificates.fixture.js";
 import { repeatedCertificateSignedData } from "../fixtures/peCertificateAllowance.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+cliTest.for([0x00, 0x01, 0x7f, 0xfe, 0xff, null])(
+  "requires canonical extension critical encoding %s through CLI and MCP",
+  async (critical, { cli }) => {
+    const root = await createTestTempDirectory("rea-pe-cert-critical-");
+    const path = join(root, "signed.exe");
+    // Extension ::= SEQUENCE { extnID, critical BOOLEAN DEFAULT FALSE, extnValue }.
+    // The extension OID and opaque value stay identical in every control.
+    const fields = Buffer.concat([
+      Buffer.from([0x06, 0x03, 0x55, 0x1d, 0x0e]),
+      critical === null ? Buffer.alloc(0) : Buffer.from([0x01, 0x01, critical]),
+      Buffer.from([0x04, 0x03, 0x04, 0x01, 0xaa]),
+    ]);
+    const extension = Buffer.concat([
+      Buffer.from([0x30, fields.length]),
+      fields,
+    ]);
+    const extensions = Buffer.concat([
+      Buffer.from([0x30, extension.length]),
+      extension,
+    ]);
+    const bytes = peCertificateFixture(
+      false,
+      pkcs7SignedDataFixture(undefined, undefined, undefined, undefined, {
+        extensions,
+      }),
+    );
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_pe_certificates", { path });
+    const valid = critical === null || critical === 0xff;
+    expect(result.exitCode, result.stdout).toBe(valid ? 0 : 1);
+    if (valid)
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    else expect(response.isError, JSON.stringify(response)).toBe(true);
+    for (const value of [
+      result.json,
+      valid ? response.structuredContent : parseMcpToolError(response).error,
+    ]) {
+      if (valid) {
+        const report = toolContract(
+          "inspect_pe_certificates",
+        ).outputSchema.parse(value).normalized_result;
+        expect(report.coverage.status).toBe("complete");
+        expect(report.entries[0]?.pkcs7?.certificates[0]?.serial_hex).toBe(
+          "11223344",
+        );
+      } else {
+        expect(value).toMatchObject({
+          code: "invalid_request",
+          details: {
+            operation: "inspect_pe_certificates",
+            issues: [
+              expect.objectContaining({
+                path: ["path"],
+                reason: "invalid_format",
+                message: expect.stringContaining("critical"),
+              }),
+            ],
+          },
+        });
+      }
+    }
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
+
+cliTest.for(["extra-field", "empty-rdn"] as const)(
+  "rejects a malformed certificate name %s through CLI and MCP",
+  async (kind, { cli }) => {
+    const root = await createTestTempDirectory("rea-pe-name-structure-");
+    const path = join(root, "malformed.exe");
+    const subject =
+      kind === "empty-rdn"
+        ? Buffer.from([0x30, 0x02, 0x31, 0])
+        : Buffer.from([
+            0x30, 14, 0x31, 12, 0x30, 10, 0x06, 3, 0x55, 0x04, 3, 0x0c, 1, 0x41,
+            0x05, 0,
+          ]);
+    const payload = pkcs7SignedDataFixture(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { subject },
+    );
+    const bytes = peCertificateFixture(false, payload);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect.soft(result.exitCode, result.stdout).toBe(1);
+    expect.soft(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_pe_certificates",
+        issues: [
+          expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
+        ],
+      },
+    });
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_pe_certificates", { path });
+    expect.soft(response.isError, JSON.stringify(response)).toBe(true);
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest.for(["pubkey", "signature"])(
   "rejects nonzero BIT STRING padding in %s through the public CLI",
@@ -63,7 +173,7 @@ cliTest.for(["pubkey", "signature"])(
 );
 
 cliTest(
-  "reports PKCS#7 signer identity through the public CLI",
+  "reports PKCS#7 signer identity and RDN indices through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pe-cert-cli-");
     const path = join(root, "signed.exe");
@@ -72,12 +182,24 @@ cliTest(
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
-      result.json,
-    );
-    expect(
-      evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.serial_hex,
-    ).toBe("11223344");
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_pe_certificates", { path });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    for (const value of [result.json, response.structuredContent]) {
+      const report = toolContract("inspect_pe_certificates").outputSchema.parse(
+        value,
+      ).normalized_result;
+      const pkcs7 = report.entries[0]?.pkcs7;
+      expect(pkcs7?.certificates[0]?.serial_hex).toBe("11223344");
+      for (const name of [
+        pkcs7?.certificates[0]?.issuer,
+        pkcs7?.certificates[0]?.subject,
+        pkcs7?.signers[0]?.issuer,
+      ])
+        expect(name?.attributes.map(({ rdn_index }) => rdn_index)).toEqual([
+          0, 1,
+        ]);
+    }
   },
 );
 
@@ -103,7 +225,9 @@ cliTest("reports unsigned attributes through CLI and MCP", async ({ cli }) => {
     expect(
       report.entries[0]?.pkcs7?.signers[0]?.unsigned_attribute_oids,
     ).toEqual(["1.3.6.1.4.1.311.3.3.1"]);
-    expect(report.limitations).toContain(UNSIGNED_ATTRIBUTES_LIMITATION);
+    expect(report.limitations).toContain(
+      "Signer unsigned attribute contents are not decoded; nested signatures and timestamp token certificates and times may be omitted.",
+    );
   }
 });
 
@@ -205,8 +329,8 @@ cliTest(
       evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.issuer
         .text,
     ).toBe("commonName=Âe, organizationName=REA Tests");
-    expect(evidence.normalized_result.limitations).toContain(
-      "TeletexString values use OpenSSL's ISO-8859-1 compatibility mapping; this is not a full T.61 decoder.",
+    expect(evidence.normalized_result.limitations).toContainEqual(
+      expect.stringMatching(/TeletexString.*ISO.8859.1.*not a full T.61/iu),
     );
   },
 );
@@ -375,9 +499,7 @@ cliTest.for([
     expect(reason).toContain(message);
     expect(remediation.action).toContain(String(Object.values(limits)[0]));
     expect(remediation.action).toContain("no runtime override");
-    expect(remediation.action).toContain(
-      "Repeating the unchanged request fails the same way",
-    );
+    expect(remediation.action).toMatch(/unchanged request.*fails/iu);
   },
 );
 

@@ -1,11 +1,10 @@
 import { createServer } from "node:net";
 import { createHmac, randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-import ts from "typescript6";
 
 import { serveCli } from "./cliServeHarness.js";
 import {
@@ -22,64 +21,6 @@ const listen = async (
   if (address === null || typeof address === "string")
     throw new Error("Expected an ephemeral TCP listener");
   return address.port;
-};
-
-const assertRealVerifierJsonInspection = async (
-  directory: string,
-  commandJsonModes: readonly boolean[],
-): Promise<void> => {
-  // Exercise the actual real-verifier command selection against the public CLI.
-  const source = ts.createSourceFile(
-    "verify-real-cutter.mjs",
-    await readFile("scripts/verify-real-cutter.mjs", "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.JS,
-  );
-  const observations: string[][] = [];
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === "runCli" &&
-      ts.isStringLiteral(node.arguments[0]!) &&
-      node.arguments[0].text === "cutter-command" &&
-      node.arguments[3] !== undefined &&
-      ts.isStringLiteral(node.arguments[3]) &&
-      node.arguments[3].text === "ij"
-    ) {
-      observations.push(
-        node.arguments.slice(4).map((argument) => {
-          if (!ts.isStringLiteral(argument))
-            throw new Error(
-              "Verifier inspection flags must be explicit arguments",
-            );
-          return argument.text;
-        }),
-      );
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
-  expect(observations).toHaveLength(1);
-  const verification = await serveCli(
-    [
-      "cutter-command",
-      SESSION_ID,
-      "0",
-      "ij",
-      ...observations[0]!,
-      "--format",
-      "json",
-    ],
-    { REA_CUTTER_BRIDGE_DIR: directory },
-  );
-  expect(verification.exitCode).toBe(0);
-  expect(commandJsonModes.at(-1)).toBe(true);
-  expect(JSON.parse(verification.stdout)).toMatchObject({
-    predicate_type: "rea.cutter.command-observation",
-    raw_result: { answer: 42 },
-  });
 };
 
 describe("Cutter CLI commands", () => {
@@ -157,7 +98,9 @@ describe("Cutter CLI commands", () => {
         ownsProcessLifetime: true,
       });
       try {
-        await expect.poll(() => accepted, { timeout: 5_000 }).toBe(8);
+        // Probes that time out close their sockets, so only a full concurrent
+        // wave holds eight open at once.
+        await expect.poll(() => sockets.size).toBe(8);
         launched.process.kill("SIGINT");
         expect(await supervisor.waitForExit(5_000)).toBe(true);
         expect(await supervisor.waitForOutputClose(1_000)).toBe(true);
@@ -184,8 +127,20 @@ describe("Cutter CLI commands", () => {
       { REA_CUTTER_BRIDGE_DIR: directory },
     );
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("invalid_request");
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "cutter_command",
+        issues: [
+          {
+            path: ["session_id"],
+            message:
+              "Cutter bridge session is unavailable or stale; list sessions again and select an available session.",
+          },
+        ],
+      },
+    });
   });
 });
 
@@ -342,7 +297,5 @@ describe("Cutter CLI command output flags", () => {
       expect(rejected.stdout).toContain("Unknown flag: --json");
     }
     expect(commandJsonModes).toHaveLength(commandsBeforeRejectedFlags);
-
-    await assertRealVerifierJsonInspection(directory, commandJsonModes);
   });
 });

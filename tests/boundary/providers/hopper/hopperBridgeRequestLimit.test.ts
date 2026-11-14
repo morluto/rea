@@ -7,6 +7,7 @@ import {
   HopperFixtureLauncher,
   trackHopperClient,
 } from "./hopperClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const limit = (maximumBytes: number) =>
   ({ maximumBytes, source: "setting" }) as const;
@@ -33,7 +34,9 @@ it("reports a Hopper ceiling mismatch and releases the fixture", async () => {
     bridgeMaxRequestBytesRecovery(limit(1048576), "Hopper"),
   );
   const process = launcher.processes[0];
-  expect(process?.exitCode !== null || process?.signalCode !== null).toBe(true);
+  if (process === undefined)
+    throw new Error("Expected a launched fixture child");
+  expect(process.exitCode !== null || process.signalCode !== null).toBe(true);
 });
 
 it("refuses an oversized Hopper request before the fixture receives it", async () => {
@@ -175,12 +178,9 @@ it("serializes a queued Hopper request only when it reaches the wire", async () 
       },
     },
   );
-  await vi.waitFor(
-    () => {
-      if (!queuedNotice) throw new Error("echo is not queued yet");
-    },
-    { timeout: 5_000 },
-  );
+  await waitFor(() => {
+    if (!queuedNotice) throw new Error("echo is not queued yet");
+  });
   expect(serializedPayload(stringify.mock.calls, value)).toBe(false);
   await launcher.release(held);
   await expect(active).resolves.toMatchObject({

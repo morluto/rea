@@ -1,7 +1,4 @@
-import {
-  UpdateCommandRunner,
-  UPDATE_COMMAND_OUTPUT_BYTES,
-} from "../../src/application/UpdateCommandRunner.js";
+import { UpdateCommandRunner } from "../../src/application/UpdateCommandRunner.js";
 import { mkdir, readFile, rm, writeFile, access } from "node:fs/promises";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +16,7 @@ import { systemUpdateHost } from "../../src/application/UpdateRuntime.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
 const entryPoint = resolve("scripts/rea.mjs");
 let home: string;
 
@@ -266,30 +264,36 @@ describe("registration ownership in maintenance", () => {
     ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          status: expect.objectContaining({ client: "codex", state: "stale" }),
+          status: expect.objectContaining({
+            client: "codex",
+            state: "stale",
+            command_identity: "owned",
+          }),
           activation: "enabled",
-          commandIdentity: "owned",
         }),
         expect.objectContaining({
-          status: expect.objectContaining({ client: "cursor", state: "stale" }),
+          status: expect.objectContaining({
+            client: "cursor",
+            state: "stale",
+            command_identity: "foreign",
+          }),
           activation: "enabled",
-          commandIdentity: "foreign",
         }),
         expect.objectContaining({
           status: expect.objectContaining({
             client: "opencode",
             state: "stale",
+            command_identity: "owned",
           }),
           activation: "disabled",
-          commandIdentity: "owned",
         }),
         expect.objectContaining({
           status: expect.objectContaining({
             client: "claude_code",
             state: "missing",
+            command_identity: "unknown",
           }),
           activation: "unknown",
-          commandIdentity: "unknown",
         }),
       ]),
     );
@@ -456,7 +460,7 @@ describe("shared registration maintenance", () => {
   it("retains FreeBuff when ZCode reads the shared fallback", async () => {
     // Both products load the one shared row, but their setup actions write
     // different files: ZCode writes ~/.zcode/cli/config.json and deliberately
-    // leaves ~/.agents/mcp.json untouched (docs/client-configuration.md), so
+    // leaves ~/.agents/mcp.json untouched (docs/getting-started/client-configuration.md), so
     // its fallback view cannot cover FreeBuff's registration. The shared row
     // would stay pinned to the old version without FreeBuff's own action.
     await writeClient("zcode", JSON.stringify({ mcp: { servers: {} } }));
@@ -569,19 +573,15 @@ describe("updated executable maintenance planning", () => {
 });
 
 describe("update subprocess boundaries", () => {
-  cliTest(
-    "exposes update in CLI help",
-    async ({ cli }) => {
-      const help = await cli.run({
-        arguments: ["--help"],
-        environment: process.env,
-      });
-      expect(help.exitCode, help.stderr).toBe(0);
-      expect(help.stdout).toMatch(/^\s{2}update\s/mu);
-      expect(help.stdout).not.toMatch(/^\s{2}upgrade\s/mu);
-    },
-    60_000,
-  );
+  cliTest("exposes update in CLI help", async ({ cli }) => {
+    const help = await cli.run({
+      arguments: ["--help"],
+      environment: process.env,
+    });
+    expect(help.exitCode, help.stderr).toBe(0);
+    expect(help.stdout).toMatch(/^\s{2}update\s/mu);
+    expect(help.stdout).not.toMatch(/^\s{2}upgrade\s/mu);
+  });
 
   cliTest("rejects the removed upgrade CLI command", async ({ cli }) => {
     const removed = await cli.run({

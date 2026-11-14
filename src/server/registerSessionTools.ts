@@ -8,6 +8,7 @@ import { workflowUnknownInput } from "../application/investigation/WorkflowUnkno
 import {
   getNavigationContext,
   inspectAddressContext,
+  omitContextEvidenceForDelivery,
 } from "../application/AnalysisContextQueries.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
@@ -323,11 +324,30 @@ const registerContextTools = (
       const admitted = await admission(
         addressContract.name,
         context.mcpReq.signal,
-        async (analysis) =>
-          server.delivery.toCallToolResult(
-            await inspectAddressContext(analysis, input, context.mcpReq.signal),
+        async (analysis) => {
+          const result = await inspectAddressContext(
+            analysis,
+            input,
+            context.mcpReq.signal,
+          );
+          if (!result.ok)
+            return server.delivery.toCallToolResult(result, addressContract);
+          const value = result.value;
+          return server.delivery.toCallToolResult(
+            result,
             addressContract,
-          ),
+            {},
+            (failure, budgetBytes) =>
+              (function* () {
+                for (const alternative of omitContextEvidenceForDelivery(
+                  value,
+                  failure,
+                  budgetBytes,
+                ))
+                  yield { result: alternative };
+              })(),
+          );
+        },
       );
       return admitted.ok
         ? admitted.value
@@ -500,6 +520,6 @@ const missingAndroidAvailability = async (): Promise<ProviderAvailability> => ({
   code: "not_configured",
   reason: "No Android JADX analysis provider is configured.",
   remediation:
-    "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp 0.7.1 JAR and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
+    "Set REA_JADX_MCP_JAR to the jadx-headless-mcp 0.7.1 release JAR (rea doctor --provider jadx names its download URL and SHA-256) and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
   diagnostics: { configured: false },
 });

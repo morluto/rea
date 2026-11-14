@@ -42,6 +42,49 @@ it("reads named PE32+ imports and a pefile-compatible import hash", async () => 
   expect(report.delay_imports).toEqual([]);
 });
 
+it.each(["standard", "delay"] as const)(
+  "does not read %s descriptors past the declared directory size",
+  async (kind) => {
+    const bytes = peImportImage(
+      kind === "standard"
+        ? {
+            dlls: [
+              { name: "ONE.dll", functions: [{ name: "First" }] },
+              { name: "TWO.dll", functions: [{ name: "Second" }] },
+            ],
+          }
+        : {
+            dlls: [],
+            delayDlls: [
+              { name: "ONE.dll", functions: [{ name: "First" }] },
+              { name: "TWO.dll", functions: [{ name: "Second" }] },
+            ],
+          },
+    );
+    const directoryAt = 152 + 112 + (kind === "standard" ? 1 : 13) * 8;
+    const directoryRva = bytes.readUInt32LE(directoryAt);
+    const descriptorBytes = kind === "standard" ? 20 : 32;
+    bytes.writeUInt32LE(descriptorBytes, directoryAt + 4);
+
+    const report = await parse(bytes);
+    const rows = kind === "standard" ? report.imports : report.delay_imports;
+    const directory =
+      kind === "standard"
+        ? report.import_directory
+        : report.delay_import_directory;
+    expect(rows.map((row) => row.name)).toEqual(["ONE.dll"]);
+    expect(directory?.locations).toHaveLength(1);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_entry",
+        location: `0x${(directoryRva + descriptorBytes).toString(16)}`,
+        message: expect.stringContaining("ends before a null descriptor"),
+      }),
+    );
+  },
+);
+
 const parse = (bytes: Buffer) => parsePeImports(bytes, artifact(bytes), input);
 
 it.each([
@@ -108,14 +151,64 @@ it.each([
   },
 );
 
+it.each([4096, 4097])(
+  "reports a %i-byte DLL name at the fixed read boundary",
+  async (length) => {
+    const name = "n".repeat(length);
+    const report = await parse(
+      peImportImage({
+        sectionBytes: 8192,
+        dlls: [{ name, functions: [] }],
+      }),
+    );
+    if (length === 4096) {
+      expect(report.imports[0]?.name).toBe(name);
+      expect(report.coverage.status).toBe("complete");
+    } else {
+      expect(report.imports[0]?.name).toBeNull();
+      expect(report.coverage.status).toBe("partial");
+      expect(report.issues).toContainEqual(
+        expect.objectContaining({
+          code: "name_unreadable",
+          message: expect.stringContaining("4096-byte read allowance"),
+        }),
+      );
+    }
+  },
+);
+
+it("retains later imports when a function name exceeds the read allowance", async () => {
+  const report = await parse(
+    peImportImage({
+      sectionBytes: 8192,
+      dlls: [
+        {
+          name: "example.dll",
+          functions: [{ name: "n".repeat(4097) }, { name: "kept" }],
+        },
+      ],
+    }),
+  );
+  expect(report.imports[0]?.functions).toMatchObject([{ name: "kept" }]);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "name_unreadable",
+      message: expect.stringContaining("4096-byte read allowance"),
+    }),
+  );
+  expect(report.imphash.md5).toBeNull();
+});
+
 it("does not consume a DLL name past the uint32 RVA end", async () => {
   const report = await parse(peImportNameAtRva(0xfffffff8));
   expect(report.imports[0]?.name).toBeNull();
   expect(report.imports[0]?.functions).toHaveLength(2);
   expect(report.coverage).toMatchObject({
     status: "partial",
-    reason:
-      "1 import table issue(s) affect reported rows or metadata; see issues",
+    reason: expect.stringMatching(
+      /1 import table issue.*reported rows or metadata/i,
+    ),
   });
   expect(report.issues).toEqual(
     expect.arrayContaining([

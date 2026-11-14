@@ -443,8 +443,8 @@ describe("managed artifact coded indexes", () => {
         expect.objectContaining({
           code: "invalid-row",
           scope: "metadata.ManifestResource:0x28000001",
-          detail: expect.stringContaining(
-            "coded index 0x9 is invalid: coded index selects row 2 in table 35, which has 1 rows",
+          detail: expect.stringMatching(
+            /0x9.*invalid.*row 2.*table 35.*1 rows/iu,
           ),
         }),
       ],
@@ -580,7 +580,7 @@ describe("managed artifact coded indexes", () => {
         (attribute) => attribute.type_name === "Fixture.LookupAttribute",
       ),
     ).toBe(true);
-  }, 30_000);
+  });
 });
 
 it.each([false, true])(

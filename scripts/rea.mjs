@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { prepareCliProcessEnvironment } from "./lib/cli-process-environment.mjs";
+import { unsupportedRuntimeMessage } from "./lib/runtime-admission.mjs";
 
 // Route production MCP before importing Incur. Incur owns registration helpers
 // such as `mcp add`, while the MCP runtime serves the tool catalog over stdio
@@ -13,6 +14,19 @@ const args = process.argv.slice(2);
 const { default: packageJson } = await import("../package.json", {
   with: { type: "json" },
 });
+// Admit the runtime before the first compiled import. Compiled modules import
+// Node APIs that absent releases only reject while linking, so an unsupported
+// release previously surfaced as a module error from every command, including
+// `--version` and `doctor`. `process.exit` is required here: setting exitCode
+// would still reach the imports below.
+const unsupportedRuntime = unsupportedRuntimeMessage(
+  packageJson.engines?.node,
+  process.versions.node,
+);
+if (unsupportedRuntime !== undefined) {
+  process.stderr.write(`${unsupportedRuntime}\n`);
+  process.exit(1);
+}
 prepareCliProcessEnvironment(
   process.env,
   process.platform,
@@ -38,6 +52,8 @@ const isMcpHttpMode =
   isMcpEntry &&
   (args[1]?.startsWith("-") ?? false) &&
   args.slice(1).includes("--http");
+/** How long an exiting command may wait for its remaining handles to close. */
+const EXIT_DRAIN_GRACE_MS = 1_000;
 /** Exit status of a writer terminated by SIGPIPE (128 + 13). */
 const SIGPIPE_EXIT_STATUS = 141;
 // Set once the reader of CLI output has closed the pipe.
@@ -50,7 +66,7 @@ const runtimeFiles = [
       ? ["dist/mcp/main.js", "dist/cli-runtime/mcpDoctor.js"]
       : [
           "dist/cli-runtime/cli.js",
-          "dist/cli-runtime/cliOutput.js",
+          "dist/cli-runtime/cliOneShot.js",
           "dist/cli-runtime/cliResultOutput.js",
         ]),
 ];
@@ -90,155 +106,74 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
       );
   }
 } else {
-  const {
-    cliConfigurationError,
-    renderCliOutputArgumentError,
-    renderEmptyFilteredCliOutput,
-    renderVersionReport,
-    parseCliOutputArguments,
-  } = await import("../dist/cli-runtime/cliOutput.js");
+  const { runOneShotCli } = await import("../dist/cli-runtime/cliOneShot.js");
   guardClosedStdout();
-  const cliArgs = isShellCompletion
-    ? args
-    : builtinArguments.normalizeCliArguments(args);
-  // Completion words are transport data, including partial output flags.
-  const outputOptions = parseCliOutputArguments(
-    isShellCompletion ? [] : cliArgs,
-  );
-  const outputArguments = outputOptions.validation;
-  // `--version` with an explicit format reports the runtime as a document;
-  // plain `--version` stays Incur's bare version string.
-  const versionOutput = renderVersionReport(
-    outputOptions,
-    {
-      packageName: packageJson.name,
-      packageVersion: packageJson.version,
-      versions: process.versions,
-      platform: process.platform,
-      architecture: process.arch,
-    },
-    process.stdout.isTTY === true,
-  );
-  const configurationError = cliConfigurationError(process.env);
   let dispatchFailure;
   let closeCliResources;
   // Incur can exit from the callback below before this function returns.
   // That callback owns the status, including a closed-pipe exit of 141.
   let exiting = false;
   try {
-    // Doctor is the readiness report for this failure. Other commands still stop
-    // here so they do not run with an unusable log level.
-    if (
-      configurationError !== undefined &&
-      (isShellCompletion ||
-        builtinArguments.splitIncurBuiltinArguments(cliArgs).command[0] !==
-          "doctor")
-    ) {
-      process.stderr.write(`${configurationError}\n`);
-      process.exitCode = 1;
-    } else if (!outputArguments.ok) {
-      writeStdout(renderCliOutputArgumentError(outputArguments));
-      process.exitCode = 1;
-    } else if (versionOutput !== undefined) {
-      writeStdout(versionOutput);
-    } else if (
-      !isShellCompletion &&
-      builtinArguments.isProjectScopedAmpRegistration(cliArgs)
-    ) {
-      // Incur's Amp writer ignores --no-global and always writes the global
-      // settings file, so fail closed before it runs rather than reporting
-      // a project registration that never happened.
-      //
-      // A caller that asked for a structured document gets the refusal in
-      // that document, through the same pre-execution error renderer the
-      // output-argument branch uses; anything else keeps the plain message.
-      const refusalMessage =
-        "Amp does not support project-scoped registration: 'rea mcp add --no-global' with Amp would write the global Amp settings file instead of a project file. Run without --no-global to register Amp globally.";
-      const refusalFormat = outputOptions.format;
-      if (
-        refusalFormat === "json" ||
-        refusalFormat === "jsonl" ||
-        refusalFormat === "yaml"
-      ) {
-        writeStdout(
-          renderCliOutputArgumentError({
-            ok: false,
-            format: refusalFormat,
-            code: "AMP_PROJECT_SCOPE_UNSUPPORTED",
-            message: refusalMessage,
-          }),
-        );
-      } else {
-        process.stderr.write(`${refusalMessage}\n`);
-      }
-      process.exitCode = 1;
-    } else {
-      const cliRuntime = await import("../dist/cli-runtime/cli.js");
-      closeCliResources = cliRuntime.closeCliResources;
-      const { createCli } = cliRuntime;
-      const { createCliResultOutput } =
-        await import("../dist/cli-runtime/cliResultOutput.js");
-      let wroteOutput = false;
-      const resultOutput = createCliResultOutput(outputOptions, process.stdout);
-      try {
-        await createCli(process.env, resultOutput).serve(cliArgs, {
-          stdout: (output) => {
-            if (resultOutput?.handled) {
-              if (resultOutput.failed && !stdoutClosed)
-                process.stderr.write(output);
-              return;
-            }
-            if (output.length > 0) wroteOutput = true;
-            if (resultOutput?.captureSdkOutput(output)) return;
-            writeStdout(output);
-          },
-          // A command failure caused by the closed pipe keeps the pipe's status.
-          // Worker shutdown is shared with the dispatch finally below. A failed
-          // shutdown is reported here because this callback is what exits.
-          exit: (code) => {
-            exiting = true;
-            void (async () => {
-              let status = typeof code === "number" ? code : 0;
-              try {
-                await closeCliResources();
-              } catch (cleanup) {
-                process.stderr.write(
-                  `Failed to close CLI resources: ${cleanupFailureText(cleanup)}\n`,
-                );
-                if (status === 0) status = 1;
-              }
-              try {
-                await resultOutput?.finishSdkOutput(status);
-              } catch (cause) {
-                if (!stdoutClosed)
-                  process.stderr.write(`${cleanupFailureText(cause)}\n`);
-                if (status === 0) status = 1;
-              }
-              process.exit(stdoutClosed ? SIGPIPE_EXIT_STATUS : status);
-            })();
-          },
-        });
-      } catch (cause) {
-        if (wroteOutput) throw cause;
-        const recovered = await resultOutput
-          ?.recoverFormattingFailure(cause)
-          .catch((writeFailure) => {
-            // Recovery writes outside Incur's command boundary. A reader that
-            // declined this document keeps the same quiet SIGPIPE outcome.
-            if (!stdoutClosed) throw writeFailure;
-            return true;
-          });
-        if (!recovered) throw cause;
-        process.exitCode = stdoutClosed ? SIGPIPE_EXIT_STATUS : 1;
-      }
-      if (!wroteOutput && !resultOutput?.handled)
-        writeStdout(renderEmptyFilteredCliOutput(outputOptions) ?? "");
-      // An SDK failure exits through the callback, which owns its pending write.
-      if (!exiting)
-        await resultOutput?.finishSdkOutput(
-          typeof process.exitCode === "number" ? process.exitCode : 0,
-        );
-    }
+    await runOneShotCli(args, {
+      environment: process.env,
+      runtime: {
+        packageName: packageJson.name,
+        packageVersion: packageJson.version,
+        versions: process.versions,
+        platform: process.platform,
+        architecture: process.arch,
+      },
+      stdoutIsTerminal: process.stdout.isTTY === true,
+      resultDestination: process.stdout,
+      closedStdoutStatus: SIGPIPE_EXIT_STATUS,
+      writeStdout,
+      writeStderr: (text) => {
+        process.stderr.write(text);
+      },
+      stdoutClosed: () => stdoutClosed,
+      exitCode: () =>
+        typeof process.exitCode === "number" ? process.exitCode : 0,
+      setExitCode: (code) => {
+        process.exitCode = code;
+      },
+      ownCliResources: (close) => {
+        closeCliResources = close;
+      },
+      exitRequested: () => exiting,
+      // A command failure caused by the closed pipe keeps the pipe's status.
+      // Worker shutdown is shared with the dispatch finally below. A failed
+      // shutdown is reported here because this callback is what exits.
+      exit: (code, finishOutput) => {
+        exiting = true;
+        void (async () => {
+          let status = code;
+          try {
+            await closeCliResources();
+          } catch (cleanup) {
+            process.stderr.write(
+              `Failed to close CLI resources: ${cleanupFailureText(cleanup)}\n`,
+            );
+            if (status === 0) status = 1;
+          }
+          try {
+            await finishOutput(status);
+          } catch (cause) {
+            if (!stdoutClosed)
+              process.stderr.write(`${cleanupFailureText(cause)}\n`);
+            if (status === 0) status = 1;
+          }
+          // process.exit() shuts the platform down without tearing the
+          // isolate down, so a V8 compile thread waiting for a collection can
+          // deadlock that shutdown. Let the event loop drain instead, and force
+          // the exit only when a handle outlives a short grace.
+          process.exitCode = stdoutClosed ? SIGPIPE_EXIT_STATUS : status;
+          setTimeout(
+            () => process.exit(process.exitCode),
+            EXIT_DRAIN_GRACE_MS,
+          ).unref();
+        })();
+      },
+    });
   } catch (cause) {
     if (cause?.code === "EPIPE") {
       stdoutClosed = true;

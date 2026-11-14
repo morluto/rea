@@ -46,7 +46,6 @@ cliTest(
         NODE_OPTIONS: `--import=${preload} --max-old-space-size=768`,
         NODE_DISABLE_COMPILE_CACHE: "1",
       },
-      timeoutMs: 30_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -93,7 +92,6 @@ cliTest(
           name,
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -123,7 +121,6 @@ cliTest(
         directory,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
@@ -142,6 +139,8 @@ cliTest(
     expect(document.files.map((file) => file.path).sort()).toEqual(
       BUNDLE_FILES,
     );
+    for (const file of document.files)
+      expect(file.bytes).toBe((await stat(join(directory, file.path))).size);
     const written = (
       await readdir(directory, { recursive: true, withFileTypes: true })
     )
@@ -209,7 +208,6 @@ cliTest(
         directory,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -251,7 +249,6 @@ cliTest(
         directory,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -288,7 +285,6 @@ cliTest.skipIf(process.platform === "win32")(
         NODE_OPTIONS: `--import=${preload} --max-old-space-size=768`,
         NODE_DISABLE_COMPILE_CACHE: "1",
       },
-      timeoutMs: 30_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     for (const relative of BUNDLE_FILES) {
@@ -330,7 +326,6 @@ cliTest.skipIf(process.platform === "win32")(
         packagePath,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.json).toMatchObject({
@@ -385,7 +380,6 @@ cliTest.skipIf(HOST_PATH_MAX[process.platform] === undefined)(
         directory,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({

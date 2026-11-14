@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import {
   cliTest,
-  runFileCli,
+  type CliInvocation,
   type TestCli,
 } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -240,7 +240,6 @@ const verifyPortableCli = async (
 
 cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
   "shared public CLI/MCP matching retains sources, pages exact facts, and feeds selected dossier pairs directly to compare_functions ($profile)",
-  { timeout: 60000 },
   async ({ profile }, { cli }) => {
     const fixture = await createMatchingFixture();
     const { left, right, leftDetails, rightDetails, importedPath } = fixture;
@@ -317,11 +316,46 @@ cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
         },
       ],
     });
+    const selectedPage = parseEvidence(page.structuredContent)
+      .normalized_result as {
+      items: Record<string, unknown>[];
+    };
+    expect(selectedPage.items[0]).not.toHaveProperty("limitations");
     expect(parseEvidence(page.structuredContent).locations).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: "artifact-path" }),
       ]),
     );
+    const withoutBytes = await call("match_native_functions", {
+      left: reference(left.evidence_id),
+      right: reference(right.evidence_id),
+    });
+    expect(withoutBytes.isError, JSON.stringify(withoutBytes)).not.toBe(true);
+    const missingParent = parseEvidence(withoutBytes.structuredContent)
+      .normalized_result as { parent_evidence_id: string };
+    const missingPage = await call("inspect_analysis_view", {
+      source: reference(missingParent.parent_evidence_id),
+      view: {
+        kind: "function-matches",
+        collection: "functions",
+        sides: ["left"],
+        names: ["main"],
+      },
+    });
+    expect(missingPage.isError, JSON.stringify(missingPage)).not.toBe(true);
+    expect(
+      parseEvidence(missingPage.structuredContent).normalized_result,
+    ).toMatchObject({
+      items: [
+        {
+          name: "main",
+          body_sha256: null,
+          limitations: [
+            "No complete unambiguous bytes for the observed function body.",
+          ],
+        },
+      ],
+    });
     const compared = await call(
       "compare_functions",
       report.matches[0]!.compare_functions_input!,
@@ -449,7 +483,6 @@ cliTest(
       retainedBefore.structuredContent,
     );
   },
-  60000,
 );
 
 cliTest(
@@ -475,8 +508,8 @@ cliTest(
       "right_observations",
     ] as const) {
       // Keep fresh-process coverage for both source-admission routes on left.
-      const run =
-        field === "left" ? cli.run.bind(cli) : runFileCli.bind(undefined, cli);
+      const run = (invocation: CliInvocation) =>
+        cli.run({ ...invocation, freshProcess: field === "left" });
       const observation = field.endsWith("observations");
       const request = {
         left,
@@ -578,7 +611,7 @@ cliTest(
 
     const corruptRequest = { left: badCoordinate, right, detail: "complete" };
     await writeFile(requestPath, JSON.stringify(corruptRequest));
-    const corruptInline = await runFileCli(cli, {
+    const corruptInline = await cli.run({
       arguments: ["match-native-functions", requestPath, "--json"],
     });
     const corruptPortableRequest = {
@@ -590,7 +623,7 @@ cliTest(
       detail: "complete",
     };
     await writeFile(requestPath, JSON.stringify(corruptPortableRequest));
-    const corruptPortable = await runFileCli(cli, {
+    const corruptPortable = await cli.run({
       arguments: [
         "match-native-functions",
         requestPath,
@@ -608,7 +641,7 @@ cliTest(
 
     const malformedBundlePath = join(root, "malformed-outer-frame.json");
     await writeFile(malformedBundlePath, JSON.stringify({ records: [left] }));
-    const malformedBundle = await runFileCli(cli, {
+    const malformedBundle = await cli.run({
       arguments: [
         "match-native-functions",
         requestPath,
@@ -622,7 +655,6 @@ cliTest(
       code: "evidence_integrity_mismatch",
     });
   },
-  60000,
 );
 
 cliTest(
@@ -658,12 +690,10 @@ cliTest(
       before.structuredContent,
     );
   },
-  60000,
 );
 
 cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
   "ties byte qualifications to selected observations through paged and offline MCP ($profile)",
-  { timeout: 60000 },
   async ({ profile }) => {
     const left = nativeMatchingInventory("1", [
       { address: "0x10", value: "left" },
@@ -796,7 +826,6 @@ cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
 
 cliTest(
   "bounds byte-source pages and recovers an oversized source",
-  { timeout: 60000 },
   async () => {
     const left = nativeMatchingInventory("1", [
       { address: "0x10", value: "left" },
@@ -905,7 +934,6 @@ cliTest(
 
 cliTest(
   "oversized inline matching Evidence points back to the caller's original record",
-  { timeout: 60000 },
   async () => {
     const left = nativeMatchingInventory("1", [
       { address: "0x10", value: "left" },

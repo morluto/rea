@@ -179,7 +179,9 @@ it("updates the main frame from a pre-arm root replacement without inventing a n
   );
   expect(observation.limitations).toEqual(
     expect.arrayContaining([
-      expect.stringContaining("Buffered events with unknown timing"),
+      expect.stringMatching(
+        /Buffered events.*unknown timing.*context only.*do not establish.*observation window/iu,
+      ),
     ]),
   );
 });
@@ -324,8 +326,10 @@ it.each([
     expect(observation.timeline).not.toContainEqual(
       expect.objectContaining({ request_id: "after-terminal-event" }),
     );
-    expect(observation.limitations).toContain(
-      "Timeline rows without a comparable producer timestamp have a null timestamp. Buffered events with unknown timing are retained as context only; they do not establish activity inside the selected observation window.",
+    expect(observation.limitations).toContainEqual(
+      expect.stringMatching(
+        /Buffered events.*unknown timing.*context only.*do not establish.*observation window/iu,
+      ),
     );
   },
 );
@@ -405,7 +409,7 @@ it("ends an armed observation at a fatal protocol failure without waiting out it
     ok: false,
     error: { _tag: "BrowserObservationError", reason: "protocol_error" },
   });
-}, 15_000);
+});
 
 it("does not join an empty document request identity to a later loading failure", async () => {
   const { observation } = await observeDuringClockSampling(

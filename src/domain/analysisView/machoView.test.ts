@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { inspectMachoSchema } from "../native/nativeInspection.js";
 
-import {
-  analysisViewResultSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 it("binds every Mach-O facet to its rows, including empty pages", () => {
   for (const facet of [
@@ -67,6 +65,42 @@ it("keeps historical symbol defaults scoped to their selected Mach-O facet", () 
     }).success,
   ).toBe(false);
 });
+
+it.each(["not-encrypted", "malformed"] as const)(
+  "projects historical encryption rows with %s status",
+  (status) => {
+    const current = inspectMachoSchema.parse(report);
+    const { malformed_kind: _unrecorded, ...recorded } =
+      current.encryption.items[0]!;
+    const historical = {
+      ...recorded,
+      status,
+      ...(status === "malformed"
+        ? { reason: "slice has 3 encryption load commands", range: null }
+        : {}),
+    };
+    const source = { ...current, encryption: coverage([historical]) };
+    expect(inspectMachoSchema.safeParse(source).success).toBe(false);
+    const projected = projectAnalysisView(parent(source), {
+      kind: "macho",
+      facet: "encryption",
+      offset: 0,
+      limit: 10,
+    });
+    if (!projected.ok || projected.value.kind !== "macho")
+      throw new Error("Expected a historical Mach-O encryption page");
+    expect(projected.value.item).toEqual([
+      {
+        ...historical,
+        malformed_kind: status === "malformed" ? "unrecorded" : null,
+      },
+    ]);
+    expect(analysisViewResultSchema.safeParse(projected.value).success).toBe(
+      true,
+    );
+    expect(historical).not.toHaveProperty("malformed_kind");
+  },
+);
 
 const symbol = (name: string) => ({
   name,
@@ -148,6 +182,7 @@ const report = {
       container_file_offset: 0,
       size: 4096,
       status: "not-encrypted",
+      malformed_kind: null,
       reason: null,
       commands: [
         {
@@ -398,7 +433,9 @@ describe("Mach-O analysis views", () => {
       exhausted: true,
     });
   });
+});
 
+describe("Mach-O view uncertainty", () => {
   it("keeps encryption unknown for Evidence retained before it was reported", () => {
     const { encryption: _omitted, ...legacy } = report;
     const projected = projectAnalysisView(parent(legacy), { kind: "summary" });
@@ -411,8 +448,10 @@ describe("Mach-O analysis views", () => {
       },
       unknowns: [expect.stringContaining("exhaustive imports, encryption;")],
     });
-    expect(projected.value.limitations).toContain(
-      "This inspect_macho Evidence predates encryption reporting; slice encryption status is unknown.",
+    expect(projected.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /inspect_macho Evidence.*predates encryption reporting.*slice encryption status is unknown/iu,
+      ),
     );
   });
 
@@ -440,7 +479,7 @@ describe("Mach-O analysis views", () => {
       issues: [
         {
           path: ["view"],
-          message: "Mach-O inspection supports summary and macho views.",
+          message: expect.stringMatching(/summary and macho views/iu),
         },
       ],
     });

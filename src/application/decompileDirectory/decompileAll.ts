@@ -1,3 +1,4 @@
+import { ExportPublishedCleanupFailure } from "./exportResources.js";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -37,6 +38,7 @@ import {
   DecompileExport,
   exportOutputFailure,
   type ExportIdentity,
+  type UnknownBodies,
 } from "./exportTree.js";
 import {
   bodyRecord,
@@ -63,6 +65,13 @@ const DUPLICATE_ADDRESSES =
 export const OUTPUT_IO_STREAK_LIMIT = 5;
 const unaddressedRows = (count: number): string =>
   `${count.toString()} inventory row(s) had no address and were not exported.`;
+/** Summarizes every retained record, including those earlier runs wrote. */
+const unknownBodyRecords = (unknown: UnknownBodies): string =>
+  `${unknown.count.toString()} exported function record(s) report an unavailable body${
+    unknown.sharedReason === undefined
+      ? ` for differing reasons; see each record's body.reason in ${DECOMPILE_DIRECTORY_INDEX_NAME}.`
+      : `: ${unknown.sharedReason}`
+  }`;
 
 interface FailureReason {
   readonly code: string;
@@ -83,7 +92,6 @@ interface PublishState {
   readonly failures: InlineFailure[];
   inlineFailureBytes: number;
   readonly recentFailures: PublishState["failures"];
-  bodyUnavailable: boolean;
   /** Failure code of the function being attempted, if it failed. */
   lastFailureCode: string | undefined;
   /**
@@ -136,7 +144,6 @@ export const decompileAll = async (
     failures: [],
     inlineFailureBytes: 2,
     recentFailures: [],
-    bodyUnavailable: false,
     lastFailureCode: undefined,
     outputIoStreak: 0,
   };
@@ -153,13 +160,14 @@ export const decompileAll = async (
       identity: loaded.value.identity,
       signal,
       limit: input.limit,
+      retryFailed: input.retry_failed,
       state,
     });
     limitations = exportLimitations(
       input.layout,
       loaded.value.identity,
       selection.collapsedDuplicates,
-      state.bodyUnavailable,
+      session.unknownBodies(),
       loaded.value.unaddressed,
     );
     indexed = await session.writeIndex({
@@ -198,7 +206,17 @@ export const decompileAll = async (
     ...(closed.ok ? [] : [closed.error]),
   ];
   const primary = failures[0];
+  const publishedIndex = indexed.ok
+    ? join(session.root, DECOMPILE_DIRECTORY_INDEX_NAME)
+    : indexed.error.cause instanceof ExportPublishedCleanupFailure
+      ? indexed.error.cause.publishedPath
+      : undefined;
+  const publishedOutput =
+    publishedIndex === undefined
+      ? undefined
+      : { output_directory: session.root, index_path: publishedIndex };
   if (primary !== undefined) {
+    let failure = primary;
     if (
       isAborted(signal) &&
       !(
@@ -209,22 +227,30 @@ export const decompileAll = async (
       primary.retainSecondaryFailure(cancelled(signal));
     for (const failure of failures.slice(1))
       primary.retainSecondaryFailure(failure);
-    return !closed.ok &&
+    if (
+      !closed.ok &&
       primary !== closed.error &&
       closed.error.cleanupIncomplete
-      ? err(
-          analysisErrorWithCleanupFailure(
-            primary,
-            closed.error,
-            "decompile_all",
-          ).bindCleanupDependencies([primary, closed.error]),
-        )
-      : err(primary);
+    ) {
+      failure = analysisErrorWithCleanupFailure(
+        primary,
+        closed.error,
+        "decompile_all",
+      ).bindCleanupDependencies([primary, closed.error]);
+    }
+    if (publishedOutput !== undefined)
+      failure.retainPrimaryDiagnostics({ published_output: publishedOutput });
+    return err(failure);
   }
   // Finalization succeeded, so committed files and the index are usable on
   // resume, but a caller abort that stopped the loop or arrived meanwhile is
   // not a success. Report it with the caller's own reason.
-  if (isAborted(signal)) return err(cancelled(signal));
+  if (isAborted(signal)) {
+    const failure = cancelled(signal);
+    if (publishedOutput !== undefined)
+      failure.retainPrimaryDiagnostics({ published_output: publishedOutput });
+    return err(failure);
+  }
   const manifest = decompileDirectoryManifestSchema.safeParse(
     manifestOf({
       root: session.root,
@@ -361,6 +387,7 @@ interface PublishInput {
   readonly identity: ExportIdentity;
   readonly signal: AbortSignal | undefined;
   readonly limit: number | undefined;
+  readonly retryFailed: DecompileDirectoryInput["retry_failed"];
   readonly state: PublishState;
 }
 
@@ -485,6 +512,7 @@ const publishOne = async (input: {
   readonly signal: AbortSignal | undefined;
   readonly state: PublishState;
   readonly bodySupport: "unknown" | "unavailable";
+  readonly retryFailed: DecompileDirectoryInput["retry_failed"];
 }): Promise<{
   readonly result: Result<void, AnalysisError>;
   readonly bodySupport: "unknown" | "unavailable";
@@ -498,7 +526,6 @@ const publishOne = async (input: {
   );
   if (body.kind === "error")
     return { result: err(body.error), bodySupport: input.bodySupport };
-  if (body.kind === "unavailable") input.state.bodyUnavailable = true;
   // Caveats of the observations this attempt used. The journal record keeps
   // the complete list, written or failed, so the bounded Evidence summary and
   // the length-capped file header never hold the only copy.
@@ -515,7 +542,8 @@ const publishOne = async (input: {
       bodySupport: body.support,
     };
   }
-  const decompiled = await input.analysis.execute(
+  let attemptedIndependent = false;
+  let decompiled = await input.analysis.execute(
     "procedure_pseudo_code",
     { procedure: input.procedure.address },
     executionOptions(input.signal),
@@ -523,8 +551,43 @@ const publishOne = async (input: {
   // A provider still owns cleanup even if the caller aborted meanwhile.
   if (!decompiled.ok && decompiled.error.cleanupIncomplete)
     return { result: decompiled, bodySupport: body.support };
-  if (isAborted(input.signal))
-    return { result: err(cancelled(input.signal)), bodySupport: body.support };
+  if (
+    !isAborted(input.signal) &&
+    decompiled.ok &&
+    input.retryFailed === "independent_fresh" &&
+    decompiled.value.result === null &&
+    decompiled.value.pseudocodeAbsence?.kind === "provider-failure" &&
+    observationMismatch(input.identity, decompiled.value) === undefined
+  ) {
+    const original = decompiled.value;
+    const originalSource: NonNullable<
+      DecompileDirectoryFunctionRecord["provider_source"]
+    > =
+      original.sourceDescriptor === undefined
+        ? { status: "unknown", reason: "source_not_available" }
+        : { status: "reported", source: original.sourceDescriptor };
+    const recorded = await input.session.append(
+      failureRecord(input.procedure, body.fact, pseudocodeFailure(null), {
+        limitations: [...new Set([...infoCaveats, ...original.limitations])],
+        providerSource: originalSource,
+        pseudocodeAbsence: original.pseudocodeAbsence,
+      }),
+    );
+    if (!recorded.ok) return { result: recorded, bodySupport: body.support };
+    if (isAborted(input.signal))
+      return {
+        result: err(cancelled(input.signal)),
+        bodySupport: body.support,
+      };
+    attemptedIndependent = true;
+    decompiled = await input.analysis.execute(
+      "procedure_pseudo_code",
+      { procedure: input.procedure.address, analysis: "independent_fresh" },
+      executionOptions(input.signal),
+    );
+    if (!decompiled.ok && decompiled.error.cleanupIncomplete)
+      return { result: decompiled, bodySupport: body.support };
+  }
   if (!decompiled.ok) {
     if (decompiled.error instanceof AnalysisCancelledError)
       return { result: decompiled, bodySupport: body.support };
@@ -553,7 +616,18 @@ const publishOne = async (input: {
     };
   }
   const caveats = [
-    ...new Set([...infoCaveats, ...decompiled.value.limitations]),
+    ...new Set([
+      ...infoCaveats,
+      ...decompiled.value.limitations,
+      ...(input.retryFailed === "independent_fresh" &&
+      !attemptedIndependent &&
+      decompiled.value.result === null &&
+      decompiled.value.pseudocodeAbsence?.kind !== "provider-failure"
+        ? [
+            "Independent retry was not attempted because the provider did not report a function failure for this observation.",
+          ]
+        : []),
+    ]),
   ];
   const observationSource: NonNullable<
     DecompileDirectoryFunctionRecord["provider_source"]
@@ -563,18 +637,34 @@ const publishOne = async (input: {
       : { status: "reported", source: decompiled.value.sourceDescriptor };
   const pseudocode = decompiled.value.result;
   if (typeof pseudocode !== "string" || pseudocode.length === 0) {
-    const reason = pseudocodeFailure(pseudocode);
+    const reason =
+      input.retryFailed === undefined &&
+      pseudocode === null &&
+      decompiled.value.pseudocodeAbsence?.kind === "provider-failure"
+        ? {
+            code: "no_pseudocode",
+            message:
+              "The provider reported a function decompilation failure. If it supports independent decompilation, resume this export with retry_failed: independent_fresh (CLI: --resume --retry-failed independent_fresh). The retry may use different analysis context.",
+          }
+        : pseudocodeFailure(pseudocode);
     recordFailure(input.state, input.procedure, reason);
     return {
       result: await input.session.append(
         failureRecord(input.procedure, body.fact, reason, {
           limitations: caveats,
           providerSource: observationSource,
+          ...(decompiled.value.pseudocodeAbsence === undefined
+            ? {}
+            : { pseudocodeAbsence: decompiled.value.pseudocodeAbsence }),
         }),
       ),
       bodySupport: body.support,
     };
   }
+  // Classify and journal settled failures before a later caller abort. A valid
+  // result still needs an active caller before publishing a new function file.
+  if (isAborted(input.signal))
+    return { result: err(cancelled(input.signal)), bodySupport: body.support };
   const relativePath = input.session.pathFor(input.procedure.address);
   const bytes = Buffer.from(
     functionFileText({
@@ -923,6 +1013,7 @@ const failureRecord = (
     /** Caveats of the observations this attempt used. */
     readonly limitations?: readonly string[];
     readonly providerSource?: DecompileDirectoryFunctionRecord["provider_source"];
+    readonly pseudocodeAbsence?: DecompileDirectoryFunctionRecord["pseudocode_absence"];
   } = {},
 ): DecompileDirectoryFunctionRecord => ({
   address: procedure.address,
@@ -933,6 +1024,9 @@ const failureRecord = (
   ...(options.providerSource === undefined
     ? {}
     : { provider_source: options.providerSource }),
+  ...(options.pseudocodeAbsence === undefined
+    ? {}
+    : { pseudocode_absence: options.pseudocodeAbsence }),
   ...(options.relativePath === undefined
     ? {}
     : { relative_path: options.relativePath }),
@@ -995,7 +1089,7 @@ const exportLimitations = (
   layout: DecompileDirectoryInput["layout"],
   identity: ExportIdentity,
   collapsedDuplicates: boolean,
-  bodyUnavailable: boolean,
+  unknownBodies: UnknownBodies,
   unaddressed: number,
 ): readonly string[] => [
   ...(layout === "dwarf" ? [DWARF_LAYOUT_UNAVAILABLE] : []),
@@ -1003,7 +1097,7 @@ const exportLimitations = (
   ...(identity.analysisProfileDigest === null ? [PROFILE_UNAVAILABLE] : []),
   ...(collapsedDuplicates ? [DUPLICATE_ADDRESSES] : []),
   ...(unaddressed > 0 ? [unaddressedRows(unaddressed)] : []),
-  ...(bodyUnavailable ? [BODY_UNAVAILABLE] : []),
+  ...(unknownBodies.count > 0 ? [unknownBodyRecords(unknownBodies)] : []),
 ];
 
 const layoutStatus = (

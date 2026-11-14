@@ -7,7 +7,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { erlangBeamSchema } from "../../../src/domain/erlang/beam.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   erlangBeamFixture,
   erlangBeamChunksFixture,
@@ -103,12 +103,11 @@ const checkSelectors = async (
 
 cliTest(
   "queries same-name BEAM export arities through CLI/MCP after deleting the source",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-beam-views-");
     const path = join(root, "app.beam");
     await writeFile(path, erlangBeamFixture("views"));
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const complete = await run({
       arguments: ["inspect-erlang-beam", path, "--json"],
     });
@@ -313,7 +312,7 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-beam-invalid-view-");
     const output = join(root, "unused.json");
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const view = JSON.stringify({ kind: "beam", collection: "exports" });
     for (const [flags, key] of [
       [["--detail", "summary"], "evidence_output"],

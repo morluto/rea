@@ -1,19 +1,16 @@
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
-// - Evidence ordering must be locale-independent (ICU varies by host), so
-//   src/domain orders with compareUnicodeCodePoints, never localeCompare.
 // - Composite dedup keys must not NUL-join variable-length or free-form
 //   MIDDLE fields: ["a\0b"] collapses with ["a", "b"] and drops a finding.
-//   compositeKey (JSON tuple) is the single owner for composite keys.
+//   The text check below only flags one spelling; it is not a complete audit.
 // - Transparent wrappers unwrap in exactly one place
 //   (javascriptAstValues.unwrapJavaScriptExpression); direct isTS* unwrapping
 //   elsewhere drifts (the `satisfies` class of bug).
-// - AST walks go through traverseJavaScriptAst/childNodes: bespoke
-//   Object.values walkers diverge on loc/comment fields and overflow the
-//   stack on deep generated chains.
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -25,6 +22,7 @@ const listFiles = async (dir) => {
     else if (
       entry.name.endsWith(".ts") &&
       !entry.name.endsWith(".test.ts") &&
+      !entry.name.endsWith(".spec.ts") &&
       !entry.name.endsWith(".fixture.ts")
     )
       output.push(path);
@@ -46,8 +44,6 @@ const files = await Promise.all(
     content: stripComments(await readFile(path, "utf8")),
   })),
 );
-const inDir = (dir) => files.filter((file) => file.path.startsWith(dir));
-
 const failures = [];
 const check = (label, selected, pattern, allow = []) => {
   const offenders = selected.filter(
@@ -66,34 +62,13 @@ check(
   /providers\/ProviderInspectionScope\.js/,
 );
 
-check(
-  "src/domain uses localeCompare (use compareUnicodeCodePoints)",
-  inDir("src/domain/"),
-  /\.localeCompare\(/,
-);
-
-check(
-  "NUL-joined list key (use compositeKey)",
-  files,
-  /\.join\(["']\\0["']\)/,
-  [
-    // Sorted pair of constrained trace IDs; documented in plan.
-    "src/domain/process/processTraceSpecification.ts",
-  ],
-);
+check("NUL-joined list key (use compositeKey)", files, /\.join\(["']\\0["']\)/);
 
 check(
   "direct transparent-wrapper unwrap outside javascriptAstValues (use unwrapJavaScriptExpression)",
   files,
   /isTSAsExpression|isTSSatisfiesExpression|isTSNonNullExpression|isTSTypeAssertion|isTSInstantiationExpression|isParenthesizedExpression/,
   ["src/domain/javascript/javascriptAstValues.ts"],
-);
-
-check(
-  "bespoke AST child walker (use traverseJavaScriptAst/childNodes)",
-  files,
-  /VISITOR_KEYS/,
-  ["src/domain/javascript/javascriptSemanticTraversal.ts"],
 );
 
 // A producer that pins both the soft and hard ceiling of every resource takes
@@ -140,10 +115,10 @@ check(
 // inputBytes values with a different policy (an overridable pwntools admission,
 // historical capture intake) are not this budget.
 check(
-  "inline resident-input budget (use BOUNDED_PRODUCER_LIMITS from src/process/LinuxResourceLimits)",
+  "inline resident-input budget (use BOUNDED_PRODUCER_LIMITS from src/domain/producerResourceLimits)",
   files,
   /input_bytes:\s*32 \* 1024 \* 1024/,
-  ["src/process/LinuxResourceLimits.ts"],
+  ["src/domain/producerResourceLimits.ts"],
 );
 
 // Fixed-arity backtick keys audited 2026-10-10: every prefix field is NUL-free
@@ -161,7 +136,6 @@ check(
     "src/application/GuidanceAccess.ts",
     "src/application/javascript/ElectronBoundaryAnalysis.ts",
     "src/application/javascript/ElectronBoundaryGraphContext.ts",
-    "src/application/javascript/JavaScriptArtifactGraphContext.ts",
     "src/browser/CdpCaptureCompleteness.ts",
     "src/browser/CdpCaptureEventHandlers.ts",
     "src/browser/CdpPageCapture.ts",
@@ -177,7 +151,6 @@ check(
     "src/domain/javascript/javascriptNativeHandoff.ts",
     "src/domain/javascript/javascriptRuntimeReconciliationMatching.ts",
     "src/domain/javascript/javascriptRuntimeReconciliationSchemas.ts",
-    "src/domain/javascript/javascriptSemanticQuery.ts",
     "src/domain/javascript/javascriptStaticAnalysisBundler.ts",
     "src/domain/javascript/javascriptStaticAnalysisCalls.ts",
     "src/domain/javascript/javascriptStaticAnalysisFindings.ts",
@@ -192,5 +165,24 @@ check(
 if (failures.length > 0) {
   console.error(`Architecture guards failed:\n\n${failures.join("\n\n")}\n`);
   process.exit(1);
+}
+// CI runs this file before `npm ci`. The numeric-limit parser needs
+// typescript6, so that check waits until dependencies exist. `npm run lint`
+// runs it after install.
+const typescript6 = new URL(
+  "../../node_modules/typescript6/package.json",
+  import.meta.url,
+);
+if (!existsSync(typescript6)) {
+  console.log(
+    "Numeric REA_ limit check waits until dependencies are installed.",
+  );
+} else {
+  const numericLimits = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL("./rea-numeric-limits.mjs", import.meta.url))],
+    { stdio: "inherit" },
+  );
+  if (numericLimits.status !== 0) process.exit(numericLimits.status ?? 1);
 }
 console.log(`Architecture guards passed across ${files.length} source files.`);

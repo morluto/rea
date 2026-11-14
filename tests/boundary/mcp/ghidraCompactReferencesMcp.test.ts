@@ -61,13 +61,19 @@ describe("compact Ghidra reference MCP evidence", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 
   it("preserves empty references and unresolved targets without manufacturing provenance", async () => {
     const outputs = {
       inspect_native_instruction: {
         ...compactInstruction(),
         status: "data",
+        containing_data: {
+          address: "0x401000",
+          length: 4,
+          type_id: "/dword",
+          provenance: "ghidra-listing",
+        },
         incoming_references: [],
       },
       resolve_native_call_targets: compactCallTargets(),
@@ -101,7 +107,7 @@ describe("compact Ghidra reference MCP evidence", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 
   it("preserves ARM TMode and Thumb decoder context across the MCP boundary", async () => {
     const instructionWithContext = (value: string | null) => ({
@@ -142,5 +148,5 @@ describe("compact Ghidra reference MCP evidence", () => {
         await harness.close();
       }
     }
-  }, 30_000);
+  });
 });

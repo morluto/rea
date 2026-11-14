@@ -13,6 +13,75 @@ import { nativeMatchingNamedInventory } from "../fixtures/nativeFunctionMatching
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 
+it("recovers expanded ASAR listing admission on the same MCP connection independently of header bytes", async () => {
+  const root = await createTestTempDirectory("rea-listing-settings-");
+  const archive = join(root, "small.asar");
+  const payload = Buffer.from("answer");
+  await writeFile(
+    archive,
+    Buffer.concat([
+      asarHeaderBytes(
+        JSON.stringify({
+          files: { "answer.txt": { size: payload.length, offset: "0" } },
+        }),
+      ),
+      payload,
+    ]),
+  );
+  const { client, call } = await connectLocalToolsMcp();
+  try {
+    expect((await call("open_binary", { path: archive })).isError).not.toBe(
+      true,
+    );
+    expect(
+      (
+        await call("update_analysis_settings", {
+          changes: [
+            { setting: "asar.max_listing_bytes", action: "set", value: 1 },
+          ],
+        })
+      ).isError,
+    ).not.toBe(true);
+    const refused = await call("inspect_artifact", {});
+    expect(refused.isError).toBe(true);
+    const text = refused.content.find((item) => item.type === "text");
+    if (text?.type !== "text") throw new Error("Missing projected error");
+    expect(JSON.parse(text.text).error).toMatchObject({
+      details: {
+        limit: {
+          setting: "asar.max_listing_bytes",
+          effective_value: 1,
+          agent_editable: true,
+        },
+      },
+    });
+    expect(
+      (
+        await call("update_analysis_settings", {
+          changes: [
+            { setting: "asar.max_listing_bytes", action: "set", value: 4096 },
+          ],
+        })
+      ).isError,
+    ).not.toBe(true);
+    const recovered = await call("inspect_artifact", {});
+    expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
+    const inspected = artifactInspectionResultSchema.parse(
+      parseEvidence(recovered.structuredContent).normalized_result,
+    );
+    const inventory = inspected.substeps.find(
+      (step) => step.operation === "inventory_artifact",
+    );
+    expect(
+      inventory?.evidence.normalized_result.occurrences.some(
+        (row) => row.logical_path === "answer.txt",
+      ),
+    ).toBe(true);
+  } finally {
+    await client.close();
+  }
+});
+
 it("advertises exact contracts and recovers a full large-index archive over one MCP connection", async () => {
   const root = await createTestTempDirectory("rea-runtime-settings-");
   const archive = join(root, "application.asar");
@@ -79,7 +148,7 @@ it("advertises exact contracts and recovers a full large-index archive over one 
     expect(updated.structuredContent).toMatchObject({
       revision: 1,
       active_work_changed: false,
-      rea_restart_required: false,
+      pending_restart: false,
     });
     const recovered = await invoke("inspect_artifact", {});
     expect(recovered.isError).not.toBe(true);
@@ -145,7 +214,7 @@ it("advertises exact contracts and recovers a full large-index archive over one 
   } finally {
     await client.close();
   }
-}, 30000);
+});
 
 it.each(["0", "2147483648"])(
   "keeps invalid JADX launch timeout %s local and repairable through MCP",
@@ -159,8 +228,19 @@ it.each(["0", "2147483648"])(
         call("inspect_analysis_settings", {
           settings: ["jadx.operation_timeout_ms"],
         });
+      const response = await inspect();
+      const tool = (await client.listTools()).tools.find(
+        (entry) => entry.name === "inspect_analysis_settings",
+      );
+      expect(tool?.outputSchema).toBeDefined();
+      const ajv = new Ajv2020({ strict: false });
+      const validate = ajv.compile(tool!.outputSchema as AnySchema);
+      expect(
+        validate(response.structuredContent),
+        JSON.stringify(validate.errors),
+      ).toBe(true);
       const invalid = analysisSettingsResultSchema.parse(
-        (await inspect()).structuredContent,
+        response.structuredContent,
       );
       expect(invalid).toMatchObject({
         settings: [
@@ -177,6 +257,7 @@ it.each(["0", "2147483648"])(
       });
       expect(invalid.settings[0]).not.toHaveProperty("value");
       expect(invalid.settings[0]).not.toHaveProperty("launch_value");
+      expect(invalid.settings[0]).not.toHaveProperty("pending_restart");
       const repaired = await call("update_analysis_settings", {
         changes: [
           { setting: "jadx.operation_timeout_ms", action: "set", value: 42000 },
@@ -184,7 +265,7 @@ it.each(["0", "2147483648"])(
       });
       expect(repaired.isError).not.toBe(true);
       expect(repaired.structuredContent).toMatchObject({
-        settings: [{ value: 42000, source: "runtime" }],
+        settings: [{ value: 42000, source: "runtime", pending_restart: false }],
         changes: [{ new_value: 42000 }],
       });
       const reset = await call("update_analysis_settings", {
@@ -198,7 +279,6 @@ it.each(["0", "2147483648"])(
       await client.close();
     }
   },
-  30000,
 );
 
 it("lowers, restores and seeds the native matching allowance over MCP", async () => {
@@ -307,6 +387,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
       },
     });
     expect(inspected.settings[0]).not.toHaveProperty("value");
+    expect(inspected.settings[0]).not.toHaveProperty("pending_restart");
     const refused = await invalid.call("match_native_functions", request);
     expect(refused.isError).toBe(true);
     const text = refused.content.find((item) => item.type === "text");
@@ -334,6 +415,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
         {
           source: "runtime",
           value: 100663296,
+          pending_restart: false,
           configuration_error: inspected.settings[0]!.configuration_error,
         },
       ],
@@ -344,4 +426,116 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
   } finally {
     await invalid.client.close();
   }
-}, 30000);
+});
+
+it("starts with invalid runtime seeds and recovers ASAR and capture work on the same connection", async () => {
+  const root = await createTestTempDirectory("rea-invalid-runtime-seeds-");
+  const archive = join(root, "small.asar");
+  const capture = join(root, "capture.har");
+  const payload = Buffer.from("answer");
+  await writeFile(
+    archive,
+    Buffer.concat([
+      asarHeaderBytes(
+        JSON.stringify({
+          files: { "answer.txt": { size: payload.length, offset: "0" } },
+        }),
+      ),
+      payload,
+    ]),
+  );
+  await writeFile(
+    capture,
+    JSON.stringify({
+      log: {
+        version: "1.2",
+        creator: { name: "test", version: "1" },
+        entries: [],
+      },
+    }),
+  );
+  const { client, call } = await connectLocalToolsMcp({
+    REA_ASAR_MAX_HEADER_BYTES: "invalid",
+    REA_ASAR_MAX_LISTING_BYTES: "invalid",
+    REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "invalid",
+  });
+  try {
+    const changes = [
+      { setting: "asar.max_header_bytes", action: "set", value: 8192 },
+      { setting: "asar.max_listing_bytes", action: "set", value: 4096 },
+      {
+        setting: "capture.decoder_old_generation_mib",
+        action: "set",
+        value: 64,
+      },
+    ];
+    expect(
+      (await call("update_analysis_settings", { changes })).isError,
+    ).not.toBe(true);
+    expect((await call("open_binary", { path: archive })).isError).not.toBe(
+      true,
+    );
+    expect((await call("inspect_artifact", {})).isError).not.toBe(true);
+    const inspected = await call("inspect_web_network_capture", {
+      capture_path: capture,
+      format: "har",
+    });
+    expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+    expect(
+      (
+        await call("update_analysis_settings", {
+          changes: changes.map(({ setting }) => ({ setting, action: "reset" })),
+        })
+      ).isError,
+    ).not.toBe(true);
+    const refusedArchive = await call("inspect_artifact", {});
+    expect(refusedArchive.isError).toBe(true);
+    expect(JSON.stringify(refusedArchive)).toContain(
+      "REA_ASAR_MAX_HEADER_BYTES",
+    );
+    const refused = await call("inspect_web_network_capture", {
+      capture_path: capture,
+      format: "har",
+    });
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused)).toContain(
+      "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
+    );
+    expect(
+      (await call("update_analysis_settings", { changes })).isError,
+    ).not.toBe(true);
+    expect((await call("inspect_artifact", {})).isError).not.toBe(true);
+    expect(
+      (
+        await call("inspect_web_network_capture", {
+          capture_path: capture,
+          format: "har",
+        })
+      ).isError,
+    ).not.toBe(true);
+  } finally {
+    await client.close();
+  }
+});
+
+it.skipIf(process.platform === "win32")(
+  "ignores Windows ChangeTime launch settings on other hosts",
+  async () => {
+    const root = await createTestTempDirectory("rea-non-windows-change-time-");
+    const archive = join(root, "small.asar");
+    await writeFile(archive, asarHeaderBytes(JSON.stringify({ files: {} })));
+    const { client, call } = await connectLocalToolsMcp({
+      REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "invalid",
+      REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "invalid",
+      REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "invalid",
+    });
+    try {
+      const opened = await call("open_binary", { path: archive });
+      expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+      const inspected = await call("inspect_artifact", {});
+      expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+    } finally {
+      await client.close();
+    }
+  },
+);

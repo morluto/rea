@@ -1,3 +1,5 @@
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import type { AnalysisSettingValues } from "../domain/analysisSettings.js";
 import {
   DEBUGGER_CONTROL_REPLY_BYTES,
   DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS,
@@ -96,16 +98,16 @@ const constraintFor = (admission: DebuggerAdmissionLimit): string =>
       : ""
   }`;
 
-export const debuggerCommandDeadlineConstraint = constraintFor(
+const debuggerCommandDeadlineConstraint = constraintFor(
   DEFAULT_DEBUGGER_COMMAND_DEADLINE,
 );
-export const debuggerMaxSessionsConstraint = constraintFor(
+const debuggerMaxSessionsConstraint = constraintFor(
   DEFAULT_DEBUGGER_MAX_SESSIONS_LIMIT,
 );
-export const debuggerMaxPendingCommandsConstraint = constraintFor(
+const debuggerMaxPendingCommandsConstraint = constraintFor(
   DEFAULT_DEBUGGER_MAX_PENDING_COMMANDS_LIMIT,
 );
-export const debuggerMaxCommandOutputBytesConstraint = constraintFor(
+const debuggerMaxCommandOutputBytesConstraint = constraintFor(
   DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_LIMIT,
 );
 
@@ -131,14 +133,11 @@ export const debuggerMaxCommandOutputBytesSchema = positiveDecimalIntegerSchema(
 );
 
 /** Schemas startup validation spreads. The setting names are not restated. */
+/** Restart-only debugger caps. Runtime deadline and output are parsed per call. */
 export const debuggerSessionLimitEnvironmentShape = {
-  [DEBUGGER_COMMAND_DEADLINE_SETTING]:
-    debuggerCommandDeadlineMsSchema.optional(),
   [DEBUGGER_MAX_SESSIONS_SETTING]: debuggerMaxSessionsSchema.optional(),
   [DEBUGGER_MAX_PENDING_COMMANDS_SETTING]:
     debuggerMaxPendingCommandsSchema.optional(),
-  [DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING]:
-    debuggerMaxCommandOutputBytesSchema.optional(),
 };
 
 export interface DebuggerSessionLimits {
@@ -148,6 +147,12 @@ export interface DebuggerSessionLimits {
   readonly maxCommandOutputBytes: DebuggerAdmissionLimit;
 }
 
+const RUNTIME_DEBUGGER_OVERRIDES = {
+  [DEBUGGER_COMMAND_DEADLINE_SETTING]: "debugger.command_deadline_ms",
+  [DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING]:
+    "debugger.max_command_output_bytes",
+} as const satisfies Partial<Record<string, keyof AnalysisSettingValues>>;
+
 const parseOne = (
   admission: DebuggerAdmissionLimit,
   schema: ReturnType<typeof positiveDecimalIntegerSchema>,
@@ -156,25 +161,50 @@ const parseOne = (
 ): Result<DebuggerAdmissionLimit, ConfigurationError> => {
   if (value === undefined) return ok(admission);
   const parsed = schema.safeParse(value);
-  return parsed.success
-    ? ok({ ...admission, value: parsed.data, source: "setting" })
-    : err(
-        new ConfigurationError(constraint, {
-          settings: [{ setting: admission.setting, constraint }],
-        }),
-      );
+  if (parsed.success)
+    return ok({ ...admission, value: parsed.data, source: "setting" });
+  const override =
+    RUNTIME_DEBUGGER_OVERRIDES[
+      admission.setting as keyof typeof RUNTIME_DEBUGGER_OVERRIDES
+    ];
+  if (
+    override !== undefined &&
+    currentAnalysisOperationSnapshot()?.overrides[override] !== undefined
+  )
+    return ok(admission);
+  return err(
+    new ConfigurationError(constraint, {
+      settings: [{ setting: admission.setting, constraint }],
+    }),
+  );
 };
 
-/** Resolve every shared debugger cap from one environment. Invalid values are refused. */
-export const parseDebuggerSessionLimits = (
+/** Parse the selected runtime cap without coupling it to another setting. */
+export const parseDebuggerCommandDeadline = (
   environment: Readonly<Record<string, string | undefined>>,
-): Result<DebuggerSessionLimits, ConfigurationError> => {
-  const commandDeadline = parseOne(
+) =>
+  parseOne(
     DEFAULT_DEBUGGER_COMMAND_DEADLINE,
     debuggerCommandDeadlineMsSchema,
     debuggerCommandDeadlineConstraint,
     environment[DEBUGGER_COMMAND_DEADLINE_SETTING],
   );
+
+export const parseDebuggerCommandOutput = (
+  environment: Readonly<Record<string, string | undefined>>,
+) =>
+  parseOne(
+    DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_LIMIT,
+    debuggerMaxCommandOutputBytesSchema,
+    debuggerMaxCommandOutputBytesConstraint,
+    environment[DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING],
+  );
+
+/** Resolve every shared debugger cap from one environment. Invalid values are refused. */
+export const parseDebuggerSessionLimits = (
+  environment: Readonly<Record<string, string | undefined>>,
+): Result<DebuggerSessionLimits, ConfigurationError> => {
+  const commandDeadline = parseDebuggerCommandDeadline(environment);
   const maxSessions = parseOne(
     DEFAULT_DEBUGGER_MAX_SESSIONS_LIMIT,
     debuggerMaxSessionsSchema,
@@ -187,12 +217,7 @@ export const parseDebuggerSessionLimits = (
     debuggerMaxPendingCommandsConstraint,
     environment[DEBUGGER_MAX_PENDING_COMMANDS_SETTING],
   );
-  const maxCommandOutputBytes = parseOne(
-    DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_LIMIT,
-    debuggerMaxCommandOutputBytesSchema,
-    debuggerMaxCommandOutputBytesConstraint,
-    environment[DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING],
-  );
+  const maxCommandOutputBytes = parseDebuggerCommandOutput(environment);
   const settings = [
     commandDeadline,
     maxSessions,
@@ -219,13 +244,30 @@ export const parseDebuggerSessionLimits = (
   });
 };
 
-/** Refuse an invalid launch cap instead of falling back to the default. */
-export const resolveDebuggerSessionLimits = (
+const RUNTIME_DEBUGGER_SETTINGS = new Set<string>([
+  DEBUGGER_COMMAND_DEADLINE_SETTING,
+  DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
+]);
+
+/**
+ * Session and pending caps still fail construction. An invalid runtime deadline
+ * or output cap does not: the next command reads the snapshot or the launch seed.
+ */
+export const debuggerConstructionLimits = (
   environment: Readonly<Record<string, string | undefined>>,
 ): DebuggerSessionLimits => {
   const parsed = parseDebuggerSessionLimits(environment);
-  if (!parsed.ok) throw parsed.error;
-  return parsed.value;
+  if (parsed.ok) return parsed.value;
+  const blockers = parsed.error.settings.filter(
+    (setting) => !RUNTIME_DEBUGGER_SETTINGS.has(setting.setting),
+  );
+  if (blockers.length > 0) throw parsed.error;
+  const startup = { ...environment };
+  delete startup[DEBUGGER_COMMAND_DEADLINE_SETTING];
+  delete startup[DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING];
+  const again = parseDebuggerSessionLimits(startup);
+  if (!again.ok) throw again.error;
+  return again.value;
 };
 
 /**
@@ -243,10 +285,3 @@ export const debuggerControlReplyOutput: DebuggerAdmissionLimit = {
   maximum: DEBUGGER_CONTROL_REPLY_BYTES,
   unit: "bytes",
 };
-
-/** Test and caller seams replace the launch value and record that source. */
-export const applyDebuggerAdmissionOverride = (
-  admission: DebuggerAdmissionLimit,
-  value: number | undefined,
-): DebuggerAdmissionLimit =>
-  value === undefined ? admission : { ...admission, value, source: "runtime" };

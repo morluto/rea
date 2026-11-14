@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { getDefaultHighWaterMark } from "node:stream";
 import { buffer } from "node:stream/consumers";
 import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
@@ -60,8 +61,18 @@ const consumptionCases = ({ image, createReader }: LifecycleFixture): void => {
       const controller = new AbortController();
       const reason = new Error("cancel buffered member");
       try {
-        const [entry] = await entries(reader);
-        const stream = await reader.open(entry!, controller.signal);
+        // Unread bytes buffer fully only below the readable high-water mark.
+        // Node's default is 16 KiB on Windows and 64 KiB elsewhere.
+        const entry = (await entries(reader)).find(
+          ({ declaredSize }) =>
+            declaredSize !== null &&
+            declaredSize > 0 &&
+            declaredSize < getDefaultHighWaterMark(false),
+        );
+        if (entry === undefined)
+          throw new Error("fixture has no member that fits one stream buffer");
+        const stream = await reader.open(entry, controller.signal);
+        expect(entry.declaredSize).toBeLessThan(stream.readableHighWaterMark);
         await finished(stream, { readable: false, cleanup: true });
         await setImmediate();
         expect(stream.readableLength).toBeGreaterThan(0);
@@ -243,7 +254,8 @@ const validationCases = ({ image, createReader }: LifecycleFixture): void => {
 };
 
 /** Stored-member readers share ownership and native I/O regression oracles.
- * The fixture must have a nonempty first entry with a physical byte range.
+ * The fixture must have a nonempty first entry with a physical byte range,
+ * and a nonempty entry smaller than Node's default stream buffer.
  */
 export const artifactReaderLifecycleCases = (setup: LifecycleFixture): void => {
   describe("stored member lifecycle", () => {
@@ -251,4 +263,75 @@ export const artifactReaderLifecycleCases = (setup: LifecycleFixture): void => {
     descriptorCases(setup);
     validationCases(setup);
   });
+};
+
+/** An interrupted preparation belongs to its caller, not concurrent readers. */
+export const artifactPreparationRecoveryCases = ({
+  image,
+  createReader,
+}: LifecycleFixture): void => {
+  it.each(["cancelled", "physical failure"] as const)(
+    "preserves independent preparation after %s",
+    async (scenario) => {
+      const path = await fixture(image());
+      const admitted = await openRegularFile(path, { symlinks: "reject" });
+      const reader = createReader(path, admitted);
+      const controller = new AbortController();
+      const reason = { request: "first inventory" };
+      const physical = Object.assign(new Error("controlled read failure"), {
+        code: "EIO",
+      });
+      const reached = createDeferred<void>();
+      const release = createDeferred<void>();
+      const nativeRead = admitted.handle.read.bind(admitted.handle);
+      let blocked = false;
+      const read = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+        ...args: unknown[]
+      ) => {
+        const result = await Reflect.apply(nativeRead, admitted.handle, args);
+        if (!blocked) {
+          blocked = true;
+          reached.resolve();
+          await release.promise;
+          if (scenario === "physical failure") throw physical;
+        }
+        return result;
+      }) as typeof admitted.handle.read);
+      const pending: Promise<unknown>[] = [];
+      try {
+        const first = (async () => {
+          for await (const _ of reader.entries(controller.signal)) {
+          }
+        })();
+        pending.push(first);
+        void first.catch(() => undefined);
+        await awaitAcknowledgement(reached.promise, first, "preparation read");
+        const peer = entries(reader);
+        pending.push(peer);
+        void peer.catch(() => undefined);
+        controller.abort(reason);
+        release.resolve();
+        if (scenario === "physical failure") {
+          await expect(first).rejects.toBe(physical);
+          await expect(peer).rejects.toBe(physical);
+        } else {
+          await expect(first).rejects.toMatchObject({
+            reason: "cancelled",
+            cause: reason,
+          });
+          const recovered = await peer;
+          expect(recovered.length).toBeGreaterThan(0);
+          expect(
+            (await buffer(await reader.open(recovered[0]!))).length,
+          ).toBeGreaterThan(0);
+        }
+      } finally {
+        release.resolve();
+        await Promise.allSettled(pending);
+        read.mockRestore();
+        await reader.close();
+        await admitted.handle.close();
+      }
+    },
+  );
 };

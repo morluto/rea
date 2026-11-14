@@ -29,6 +29,7 @@ import {
   LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX,
   parseLinuxPrivateDisplayDiagnostic,
 } from "../../../../src/hopper/LinuxPrivateDisplayDiagnostic.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const helperPath = fileURLToPath(
   new URL("../../../../scripts/hopper-demo-x11.py", import.meta.url),
@@ -44,7 +45,8 @@ const dialogOutcomeFixturePath = fileURLToPath(
 );
 const pythonCommand = ["python3", "python"].find(
   (candidate) =>
-    spawnSync(candidate, ["--version"], { stdio: "ignore" }).status === 0,
+    spawnSync(candidate, ["--version"], { stdio: "ignore", timeout: 5000 })
+      .status === 0,
 );
 const cleanupTimeoutFixturePath = fileURLToPath(
   new URL("../../../fixtures/hopperCleanupTimeout.py", import.meta.url),
@@ -120,7 +122,7 @@ describe("Hopper demo dialog detection", () => {
       const result = spawnSync(
         "/usr/bin/python3",
         [dialogDetectionFixturePath, helperPath],
-        { encoding: "utf8" },
+        { encoding: "utf8", timeout: 10000 },
       );
       expect(result.status).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({
@@ -139,7 +141,7 @@ describe("Hopper demo dialog timeout outcomes", () => {
       const result = spawnSync(
         pythonCommand ?? "python3",
         [dialogOutcomeFixturePath],
-        { encoding: "utf8" },
+        { encoding: "utf8", timeout: 10000 },
       );
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({
@@ -391,7 +393,7 @@ describe("Linux private display selection", () => {
       const result = spawnSync(
         "/usr/bin/python3",
         [helperPath, "--probe", option, "/rea/missing-executable"],
-        { encoding: "utf8" },
+        { encoding: "utf8", timeout: 10000 },
       );
       expect(result.status).toBe(79);
       const parsed = parseLinuxPrivateDisplayDiagnostic(result.stderr);
@@ -420,6 +422,7 @@ describe("Linux private display selection", () => {
     });
     const processes = spawnSync("/bin/ps", ["-eo", "args="], {
       encoding: "utf8",
+      timeout: 5000,
     }).stdout;
     expect(processes).not.toContain(hangingHelperPath);
   });
@@ -541,10 +544,12 @@ it.skipIf(process.platform === "win32").each(["exited", "cancelled"] as const)(
       signal: controller.signal,
     });
     if (outcome === "cancelled") {
-      await vi.waitFor(async () => expect(await access(ready)).toBeUndefined());
+      await waitFor(async () => expect(await access(ready)).toBeUndefined());
       controller.abort("caller stopped");
     }
     const result = await operation;
+    // Adopt the exact cleanup lease before any outcome assertion can fail.
+    if (result.cleanup.status === "pending") pending = result.cleanup;
     expect(result.outcome).toBe(outcome);
     // The probe has settled despite refused cleanup; no abandoned output wait
     // should keep its original deadline alive until a later cleanup retry.
@@ -557,16 +562,16 @@ it.skipIf(process.platform === "win32").each(["exited", "cancelled"] as const)(
     expect(result.cleanup.status).toBe("pending");
     if (result.cleanup.status !== "pending")
       throw new Error("Expected retained probe owner");
-    pending = result.cleanup;
+    const retained = result.cleanup;
     const retainedRunId = cleanup.mock.calls[0]?.[0].runId;
-    await expect(pending.lease.release()).rejects.toThrow(
+    await expect(retained.lease.release()).rejects.toThrow(
       "controlled display probe cleanup refusal",
     );
     expect(
       cleanup.mock.calls.every(([owner]) => owner.runId === retainedRunId),
     ).toBe(true);
     cleanup.mockImplementation(original);
-    await pending.lease.release();
-    expect(pending.lease.released).toBe(true);
+    await retained.lease.release();
+    expect(retained.lease.released).toBe(true);
   },
 );

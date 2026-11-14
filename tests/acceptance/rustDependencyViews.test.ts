@@ -4,16 +4,66 @@ import { expect } from "vitest";
 import { parseEvidence, createEvidence } from "../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { rustBinarySchema } from "../../src/domain/rust/rustBinary.js";
-import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import {
   createRustImage,
+  createRustHashOverflowImage,
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+cliTest(
+  "keeps compiler-prefix coverage in CLI summaries until the selected budget admits every hash",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-compiler-summary-");
+    const path = join(root, "compiler-paths.elf");
+    await writeFile(path, createRustHashOverflowImage());
+    for (const maxHashes of [64, 65]) {
+      const output = join(root, `source-${String(maxHashes)}.json`);
+      const delivered = await cli.run({
+        arguments: [
+          "inspect-rust-binary",
+          path,
+          "--detail",
+          "summary",
+          "--evidence_output",
+          output,
+          "--max-rustc-hashes",
+          String(maxHashes),
+          "--json",
+        ],
+      });
+      expect(delivered.exitCode, delivered.stderr).toBe(0);
+      const summary = analysisViewResultSchema.parse(
+        (delivered.json as { summary: { normalized_result: unknown } }).summary
+          .normalized_result,
+      );
+      if (
+        summary.kind !== "summary" ||
+        summary.parent_operation !== "inspect_rust_binary"
+      )
+        throw new Error("Expected a Rust summary");
+      expect(summary.summary.rustc_commit).toEqual({
+        evidence_kind: "inferred",
+        hashes_count: maxHashes,
+        ...(maxHashes === 64
+          ? {
+              coverage: {
+                status: "partial",
+                reason: "max_rustc_hashes",
+                effective_limit: 64,
+              },
+            }
+          : {}),
+      });
+      expect(summary.summary.auditable_metadata?.counts.packages).toBe(2);
+    }
+  },
+);
 
 /** Both authenticated retention and portable imports query the same captured facts. */
 const assertRetainedPages = async (
@@ -259,7 +309,6 @@ cliTest(
       ).toMatchObject({ code: "invalid_request" });
     }
   },
-  60000,
 );
 
 cliTest(
@@ -401,5 +450,4 @@ cliTest(
     }
     expect((await readFile(path)).length).toBeGreaterThan(0);
   },
-  30000,
 );

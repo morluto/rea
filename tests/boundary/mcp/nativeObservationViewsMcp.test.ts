@@ -8,10 +8,8 @@ import { ok } from "../../../src/domain/result.js";
 import { z } from "zod";
 import { afterAll, expect, it } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS } from "../../../src/domain/native/nativeObservation.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -34,13 +32,6 @@ it("delivers native primitive and graph summaries with exact retained parents an
         { toolDefinition: tool },
       );
       expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
-      expect(
-        validation.assertions.validate(
-          tool.outputSchema,
-          result.structuredContent,
-        ),
-        JSON.stringify(validation.assertions.errors),
-      ).toBe(true);
       return parseEvidence(result.structuredContent);
     };
     const viewSchemas = await advertisedMcpToolSchemas(
@@ -138,6 +129,15 @@ it("delivers native primitive and graph summaries with exact retained parents an
       },
       coverage: { total: 1, exhausted: true },
     });
+    expect(
+      analysisViewResultSchema.parse(page.normalized_result).unknowns,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /source addresses only.*reference kinds or provenance.*complete parent Evidence/iu,
+        ),
+      ]),
+    );
     const caveats = await call("inspect_analysis_view", {
       source,
       view: { kind: "native-context", facet: "limitations" },
@@ -149,7 +149,7 @@ it("delivers native primitive and graph summaries with exact retained parents an
   } finally {
     await harness.close();
   }
-}, 90_000);
+});
 
 it("follows native overflow continuations through MCP without repeating provider work", async () => {
   let reads = 0;
@@ -175,6 +175,12 @@ it("follows native overflow continuations through MCP without repeating provider
             relationshipCoverage: {
               status: "partial",
               limitations: ["Indirect edges unknown"],
+              discovery: {
+                callees: {
+                  status: "partial",
+                  reason: "Body was classified as data.",
+                },
+              },
             },
           },
         ),
@@ -234,6 +240,24 @@ it("follows native overflow continuations through MCP without repeating provider
         kind: "native-observation",
         parent_operation: name,
       });
+      if (name === "get_call_graph")
+        expect(evidence.normalized_result).toMatchObject({
+          items: {
+            type: "graph-nodes",
+            rows: [
+              {
+                relationship_coverage: {
+                  discovery: {
+                    callees: {
+                      status: "partial",
+                      reason: "Body was classified as data.",
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        });
       expect(reads).toBe(before);
     }
   } finally {
@@ -241,4 +265,4 @@ it("follows native overflow continuations through MCP without repeating provider
     const closed = await session.close();
     if (!closed.ok) throw closed.error;
   }
-}, 90_000);
+});

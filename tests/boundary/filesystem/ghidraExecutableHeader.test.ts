@@ -9,10 +9,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  readGhidraExecutableHeader,
-  GHIDRA_EXECUTABLE_HEADER_BYTES,
-} from "../../../src/ghidra/GhidraExecutableHeader.js";
+import { readGhidraExecutableHeader } from "../../../src/ghidra/GhidraExecutableHeader.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -64,11 +61,11 @@ it.each([0, 23, 8192])(
       ).toEqual({
         ok: true,
         value: {
-          bytes: bytes.subarray(0, GHIDRA_EXECUTABLE_HEADER_BYTES),
+          bytes: bytes.subarray(0, 4096),
           size: length,
         },
       });
-      expect(bytesRead).toBe(Math.min(length, GHIDRA_EXECUTABLE_HEADER_BYTES));
+      expect(bytesRead).toBe(Math.min(length, 4096));
     } finally {
       await resources.close();
     }
@@ -171,7 +168,6 @@ it.each(["completed", "physical", "close"] as const)(
         resourceOwner: resources.owner,
         signal: controller.signal,
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected retained failure");
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanupResources).toEqual([path]);

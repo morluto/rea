@@ -21,7 +21,7 @@ import {
   parseEvidence,
   rebindEvidenceToTargetPath,
 } from "../../domain/evidence.js";
-import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisViewRequest.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import {
@@ -362,7 +362,7 @@ it("reports inline Evidence identity failures at the complete source path", asyn
           {
             path: ["source", "evidence", "evidence_id"],
             reason: "invalid_value",
-            message: "Evidence semantic identifier does not match its record",
+            message: expect.stringMatching(/semantic identifier.*not match/iu),
           },
         ],
       },

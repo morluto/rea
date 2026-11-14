@@ -1,15 +1,19 @@
 import { bridgeMaxRequestBytesRecovery } from "../../../src/config/bridgeMaxRequestBytes.js";
 import { createServer } from "node:net";
-import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
 import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
-import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../../../src/domain/analysisErrorCore.js";
 import {
   authenticatedServer,
   writeDescriptor,
@@ -52,14 +56,167 @@ const clientFor = (directory: string, ceiling: string): CutterBridgeClient => {
   return client;
 };
 
-it("rejects a bridge ceiling below the floor at client construction", () => {
-  expect(
+it("preserves pre-aborted cancellation before admitting a malformed bridge limit", async () => {
+  const client = new CutterBridgeClient({
+    REA_BRIDGE_MAX_REQUEST_BYTES: "invalid",
+  });
+  const reason = new Error("stop before discovery");
+  const signal = AbortSignal.abort(reason);
+  for (const operation of [
+    () => client.listSessions({ signal }),
     () =>
-      new CutterBridgeClient({
-        REA_BRIDGE_MAX_REQUEST_BYTES: "7463",
+      client.execute({
+        sessionId: SESSION,
+        expectedGeneration: 0,
+        command: "ij",
+        json: false,
+        signal,
       }),
-  ).toThrow(ConfigurationError);
+  ]) {
+    await expect(operation()).rejects.toSatisfy((error: unknown) => {
+      expect(error).toBeInstanceOf(AnalysisCancelledError);
+      expect(error).toHaveProperty("cause", reason);
+      return true;
+    });
+  }
+  await client.close();
 });
+
+it("uses a runtime bridge ceiling for a Cutter client built from the launch value", async () => {
+  const directory = await privateDirectory();
+  const server = authenticatedServer(TOKEN, SESSION, () => undefined);
+  const port = await listen(server);
+  await writeDescriptor(directory, SESSION, port, TOKEN, {
+    maxRequestBytes: 8192,
+  });
+  const client = clientFor(directory, "8192");
+  await expect(
+    runWithAnalysisOperationSnapshot(
+      {
+        revision: 1,
+        overrides: { "bridge.max_request_bytes": 16_777_216 },
+      },
+      () => client.listSessions(),
+    ),
+  ).rejects.toSatisfy((error: unknown) => {
+    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!(error instanceof AnalysisResourceConstraintError)) return false;
+    expect(error.reportedLimits).toMatchObject({
+      bridge_max_request_bytes: 8192,
+      client_max_request_bytes: 16_777_216,
+    });
+    expect(error.limit).toMatchObject({
+      setting: "bridge.max_request_bytes",
+      effective_value: 16_777_216,
+      source: "runtime",
+      update_mode: "runtime",
+      pending_restart: false,
+    });
+    return true;
+  });
+});
+
+it("retains the runtime limit when an authenticated status response is oversized", async () => {
+  const directory = await privateDirectory();
+  const server = authenticatedServer(
+    TOKEN,
+    SESSION,
+    (_request, respond) => respond({ ok: true, padding: "x".repeat(8192) }),
+    true,
+  );
+  const port = await listen(server);
+  await writeDescriptor(directory, SESSION, port, TOKEN, {
+    maxRequestBytes: 8192,
+  });
+  const client = clientFor(directory, "8192");
+  await expect(
+    runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "bridge.max_request_bytes": 8192 } },
+      () => client.listSessions(),
+    ),
+  ).rejects.toSatisfy((error: unknown) => {
+    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!(error instanceof AnalysisResourceConstraintError)) return false;
+    expect(error.operation).toBe("list_cutter_sessions");
+    expect(error.limit).toMatchObject({
+      setting: "bridge.max_request_bytes",
+      effective_value: 8192,
+      source: "runtime",
+    });
+    return true;
+  });
+});
+
+it("rejects a bridge ceiling below the floor when the call has no override", async () => {
+  const client = new CutterBridgeClient({
+    REA_BRIDGE_MAX_REQUEST_BYTES: "7463",
+  });
+  await expect(client.listSessions()).rejects.toBeInstanceOf(
+    ConfigurationError,
+  );
+});
+
+it("uses a runtime bridge ceiling when the launch value is below the floor", async () => {
+  const client = new CutterBridgeClient({
+    REA_BRIDGE_MAX_REQUEST_BYTES: "7463",
+  });
+  await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "bridge.max_request_bytes": 8192 } },
+    async () => {
+      await expect(client.listSessions()).resolves.toMatchObject({
+        sessions: [],
+      });
+    },
+  );
+});
+
+it.each([false, true])(
+  "admits descriptor path bytes only when valid UTF-8 (malformed=%s)",
+  async (malformed) => {
+    const directory = await privateDirectory();
+    const currentFile = "/selected/\uFFFD";
+    let connections = 0;
+    const server = authenticatedServer(
+      TOKEN,
+      SESSION,
+      (request, respond) => {
+        respond({ ok: true, session_id: request.session_id });
+      },
+      true,
+    );
+    server.on("connection", () => {
+      connections += 1;
+    });
+    const port = await listen(server);
+    await writeDescriptor(directory, SESSION, port, TOKEN, {
+      currentFile,
+      maxRequestBytes: 8192,
+    });
+    const path = join(directory, `cutter-${process.pid}-${SESSION}.json`);
+    if (malformed) {
+      const bytes = await readFile(path);
+      const marker = Buffer.from("\uFFFD");
+      const offset = bytes.indexOf(marker);
+      if (offset < 0) throw new Error("Missing literal UTF-8 fixture value");
+      await writeFile(
+        path,
+        Buffer.concat([
+          bytes.subarray(0, offset),
+          Buffer.from([0xff]),
+          bytes.subarray(offset + marker.length),
+        ]),
+      );
+    }
+    const client = clientFor(directory, "8192");
+    const result = await client.listSessions();
+    expect(result.discovery_status).toBe(
+      malformed ? "no_live_bridge_found" : "sessions_found",
+    );
+    expect(result.sessions).toHaveLength(malformed ? 0 : 1);
+    if (!malformed) expect(result.sessions[0]?.current_file).toBe(currentFile);
+    expect(connections).toBe(malformed ? 0 : 1);
+  },
+);
 
 const closedPort = async (): Promise<number> => {
   const server = createServer();
@@ -82,7 +239,8 @@ const ceilingMismatch = (error: unknown): boolean => {
   expect(error.reason).toContain(
     "No status request was sent to the mismatched session.",
   );
-  expect(error.remediationAction).toContain("Set REA_BRIDGE_MAX_REQUEST_BYTES");
+  expect(error.remediationAction).toContain("update_analysis_settings");
+  expect(error.remediationAction).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
   return true;
 };
 
@@ -388,7 +546,7 @@ it("accepts a Cutter response at the ceiling and excludes the terminating LF", a
           message: expect.stringContaining("8192"),
         },
         limitations: expect.arrayContaining([
-          "The command completed or may have completed, but output exceeded the bridge transport limit and was omitted.",
+          expect.stringMatching(/output.*transport limit.*omitted/iu),
         ]),
       },
     },

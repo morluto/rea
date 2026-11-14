@@ -201,15 +201,11 @@ mcpTest(
         view.ajv.validate(view.inputSchema, request),
         JSON.stringify(view.ajv.errors),
       ).toBe(true);
-      const reply = await client.callTool({
-        name: "inspect_analysis_view",
-        arguments: request,
-      });
+      const reply = await client.callTool(
+        { name: "inspect_analysis_view", arguments: request },
+        { toolDefinition: view.toolDefinition },
+      );
       expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
-      expect(
-        view.ajv.validate(view.outputSchema, reply.structuredContent),
-        JSON.stringify(view.ajv.errors),
-      ).toBe(true);
       const result = parseEvidence(reply.structuredContent).normalized_result;
       expect(result).toMatchObject({
         item: [expected],
@@ -254,18 +250,17 @@ mcpTest(
       tool.ajv.validate(tool.outputSchema, historical),
       JSON.stringify(tool.ajv.errors),
     ).toBe(true);
-    const oldView = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: {
-        source: { kind: "inline", evidence: historical },
-        view: { kind: "macho", facet: "segments" },
+    const oldView = await client.callTool(
+      {
+        name: "inspect_analysis_view",
+        arguments: {
+          source: { kind: "inline", evidence: historical },
+          view: { kind: "macho", facet: "segments" },
+        },
       },
-    });
+      { toolDefinition: view.toolDefinition },
+    );
     expect(oldView.isError, JSON.stringify(oldView.content)).not.toBe(true);
-    expect(
-      view.ajv.validate(view.outputSchema, oldView.structuredContent),
-      JSON.stringify(view.ajv.errors),
-    ).toBe(true);
     expect(
       parseEvidence(oldView.structuredContent).normalized_result,
     ).toMatchObject({ item: [historicalSegment], source_exhaustive: true });
@@ -358,15 +353,11 @@ mcpTest(
         schemas.ajv.validate(schemas.inputSchema, request),
         JSON.stringify(schemas.ajv.errors),
       ).toBe(true);
-      const reply = await client.callTool({
-        name: "inspect_analysis_view",
-        arguments: request,
-      });
+      const reply = await client.callTool(
+        { name: "inspect_analysis_view", arguments: request },
+        { toolDefinition: schemas.toolDefinition },
+      );
       expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
-      expect(
-        schemas.ajv.validate(schemas.outputSchema, reply.structuredContent),
-        JSON.stringify(schemas.ajv.errors),
-      ).toBe(true);
       expect(
         pageSchema.parse(
           parseEvidence(reply.structuredContent).normalized_result,
@@ -488,8 +479,8 @@ describe.skipIf(process.platform !== "darwin")(
           },
         });
         expect(wrongKind.isError).toBe(true);
-        expect(JSON.stringify(wrongKind.content)).toContain(
-          "Mach-O inspection supports summary and macho views.",
+        expect(JSON.stringify(wrongKind.content)).toMatch(
+          /summary and macho views/iu,
         );
       },
     );

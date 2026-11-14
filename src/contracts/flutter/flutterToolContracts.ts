@@ -4,7 +4,7 @@ import {
   dartAotInspectionInputSchema,
   flutterResultSchemas,
 } from "../../domain/flutter/flutterBuildAnalysis.js";
-import { dartAotSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { dartAotSummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "../toolEffects.js";
@@ -30,7 +30,7 @@ export const FLUTTER_TOOL_CONTRACTS = [
     name: "inspect_dart_aot",
     ...toolContractMetadata("inspect_dart_aot"),
     description:
-      'Inspect one ABI\'s legacy split VM/isolate Dart AOT snapshot inside an APK (complete structural coverage: Dart 2.14 FullAOT kind 3). Unified _kDartSnapshotData/_kDartSnapshotText profiles are unsupported. Returns the four snapshot exports through the ELF dynamic symbol table with offsets, sizes and headers (magic, kind, length), snapshot hash, and a bounded string-pool projection from isolate data (package: source URIs, dart: SDK URIs, identifier-like tokens). String-pool entries are byte-pattern observations, not deserialized cluster semantics; typed class and function recovery needs an SDK-specific parser. Omitted or complete detail returns the full observation. Select detail: "summary" for target/ABI/library identity, all snapshot headers, coverage and original lower-bound counts without string lists. The complete source stays retained; read returned strings via inspect_analysis_view with parent_evidence_id and kind dart-aot, collection package_uris/dart_uris/class_like_tokens, offset and limit. Exhausting pages does not imply complete pool coverage. No engine, no execution.',
+      "Inspect one APK ABI's legacy split VM/isolate Dart AOT snapshot without executing it. Structural coverage supports Dart 2.14 FullAOT kind 3; unified snapshot layouts are unsupported. Returns snapshot exports/headers/hash and bounded package:/dart:/identifier-like byte-pattern strings, not deserialized classes/functions. pool_policy.contains selects strings before collection; other pool budgets do not raise APK/ELF/response limits. Default complete returns all facts; detail summary retains them for inspect_analysis_view kind dart-aot, collections package_uris/dart_uris/class_like_tokens, using parent_evidence_id and row paging. Counts are lower bounds and page exhaustion never proves complete pool coverage.",
     kind: "flutter-provider",
     inputSchema: dartAotInspectionInputSchema,
     outputSchema: evidenceResultOf(

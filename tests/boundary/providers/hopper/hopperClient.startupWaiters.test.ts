@@ -14,6 +14,7 @@ import {
   HopperFixtureLauncher,
   trackHopperClient,
 } from "./hopperClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 it("preserves a warm provider when an already cancelled caller joins", async () => {
   const launcher = new HopperFixtureLauncher();
@@ -23,7 +24,6 @@ it("preserves a warm provider when an already cancelled caller joins", async () 
   const reason = { source: "caller", opaque: 7 };
   controller.abort(reason);
   const joined = await client.start(controller.signal);
-  expect(joined.ok).toBe(false);
   if (joined.ok) throw new Error("Expected cancellation");
   expect(joined.error).toBeInstanceOf(HopperCancelledError);
   expect(joined.error.cause).toBe(reason);
@@ -145,7 +145,7 @@ it.each([0, 1])(
       });
       const reason = { source: "caller", opaque: cancelledIndex };
       controllers[cancelledIndex]?.abort(reason);
-      await vi.waitFor(() =>
+      await waitFor(() =>
         expect(cancelled).toMatchObject({
           ok: false,
           error: { _tag: "HopperCancelledError" },

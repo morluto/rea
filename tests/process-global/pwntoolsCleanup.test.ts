@@ -15,6 +15,7 @@ import { spawnOwnedProviderProcess } from "../../src/process/ProviderProcess.js"
 import { cleanupOwnedProcessGroup } from "../../src/process/ProcessOwnership.js";
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";
 import { stopProviderProcessFixture } from "../fixtures/providerProcess.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
   createTestWorkspace,
@@ -265,7 +266,7 @@ it.runIf(supportedHost)(
       await provider.close();
     });
     const first = provider.inspect({ path });
-    await started;
+    await awaitAcknowledgement(started, first, "pwntools launch");
     const controller = new AbortController();
     const cancelled = provider.inspect({ path }, { signal: controller.signal });
     const reason = { stage: "queued" };

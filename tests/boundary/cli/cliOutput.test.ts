@@ -19,8 +19,6 @@ import {
   parseCliOutputArguments,
 } from "../../../src/cliOutput.js";
 
-const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
-
 describe("CLI output argument boundary", () => {
   it("requires an exact row selector and explicit columns for delimited formats", () => {
     expect(
@@ -200,6 +198,9 @@ describe("CLI output value admission", () => {
         "NaN",
         "Infinity",
         "9007199254740992",
+        "0x10",
+        "1e3",
+        " 16 ",
       ]) {
         const validation = parseCliOutputArguments([
           "providers",
@@ -220,7 +221,7 @@ describe("CLI output value admission", () => {
             error: { code: "INVALID_OUTPUT_VALUE" },
           });
       }
-      for (const value of ["0", "1", "9007199254740991"])
+      for (const value of ["0", "1", "010", "9007199254740991"])
         expect(
           parseCliOutputArguments(["providers", flag, value]).validation,
         ).toEqual({ ok: true });
@@ -292,14 +293,12 @@ describe("CLI output flag value forms", () => {
       ]) {
         const result = await cli.run({
           arguments: [...filter, "providers", "--json"],
-          timeoutMs: 10_000,
         });
         expect(result.exitCode).toBe(0);
         expect(JSON.parse(result.stdout)).toEqual({});
         expect(result.stderr).toBe("");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   it("splits only the equals forms of valued output flags", () => {
@@ -393,7 +392,6 @@ describe("unclosed CLI output filter slices", () => {
             "--filter-output",
             "result[0,1].name[",
           ],
-          timeoutMs: 3000,
         });
         expect(result.exitCode).toBe(1);
         expect(result.stdout).toContain("INVALID_OUTPUT_FILTER");
@@ -402,7 +400,6 @@ describe("unclosed CLI output filter slices", () => {
       }
       const splitPath = await cli.run({
         arguments: ["providers", "--json", "--filter-output", "][,]"],
-        timeoutMs: 3000,
       });
       expect(splitPath.exitCode).toBe(1);
       expect(splitPath.json).toMatchObject({
@@ -410,7 +407,6 @@ describe("unclosed CLI output filter slices", () => {
         error: { code: "INVALID_OUTPUT_FILTER" },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -423,7 +419,6 @@ describe("unclosed CLI output filter slices", () => {
           "--filter-output",
           "capabilities[0,1].provider.id,open",
         ],
-        timeoutMs: 3000,
       });
       expect(result.exitCode).toBe(0);
       expect(result.json).toEqual({
@@ -431,7 +426,6 @@ describe("unclosed CLI output filter slices", () => {
         open: false,
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -452,7 +446,6 @@ describe("CLI output valued-flag parsing", () => {
         });
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -467,7 +460,6 @@ describe("CLI output valued-flag parsing", () => {
         error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -555,7 +547,6 @@ describe("CLI output valued-flag parsing", () => {
         expect(result.stdout).not.toContain("[truncated:");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -641,7 +632,6 @@ describe("compiled CLI output boundary", () => {
         },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -676,7 +666,6 @@ describe("compiled CLI output boundary", () => {
         expect(result.stdout).toContain("expected string");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -707,7 +696,6 @@ describe("compiled CLI output boundary", () => {
         },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -732,7 +720,6 @@ describe("compiled CLI output boundary", () => {
       );
       expect(result.stdout).toContain("See below for usage.");
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -763,7 +750,6 @@ describe("compiled CLI artifact diagnostics", () => {
         },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -1058,6 +1044,5 @@ describe("unknown MCP subcommand output", () => {
       expect(toon.exitCode).toBe(1);
       expect(toon.stdout).toMatch(/^code: COMMAND_NOT_FOUND\n/u);
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  A_ARMORED,
   SIGNED_BY_BOTH,
   VENDOR_A,
   VENDOR_B,
@@ -62,9 +63,77 @@ describe.skipIf(!hasGpgv)("withGpgvKeyCheck with gpgv", () => {
     expect(verified.fingerprint).toBe(VENDOR_A.fingerprint);
     expect(verified.bytes.equals(VENDOR_A.key)).toBe(true);
   });
+
+  it("verifies the armored key a sources entry holds and retains it as it is, named by the entry's file", async () => {
+    const { release } = await files({});
+    const sources = "/etc/apt/sources.list.d/a-ubuntu-b-noble.sources";
+
+    const verified = await withGpgvKeyCheck(runHostQuery, undefined, (check) =>
+      check.heldVerifying({ path: sources, bytes: Buffer.from(A_ARMORED) }, [
+        release,
+      ]),
+    );
+
+    if ("reason" in verified) throw new Error(verified.reason);
+    expect(verified).toMatchObject({
+      path: sources,
+      format: "armored",
+      fingerprint: VENDOR_A.fingerprint,
+    });
+    expect(verified.bytes.toString()).toBe(A_ARMORED);
+  });
 });
 
 describe("withGpgvKeyCheck cleanup", () => {
+  it.each(["completed", "failed"])(
+    "observes cancellation during final keyring cleanup after %s work",
+    async (completion) => {
+      const cancel = new AbortController();
+      const reason = new Error("cancelled during keyring cleanup");
+      const primary = new Error("verification failed");
+      const create = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+      let path: string | undefined;
+      vi.spyOn(PrivateRuntimeRoot, "create").mockImplementationOnce(
+        async (options) => {
+          const root = await create(options);
+          path = root.path;
+          const close = root.close.bind(root);
+          vi.spyOn(root, "close").mockImplementationOnce(async () => {
+            cancel.abort(reason);
+            await close();
+          });
+          return root;
+        },
+      );
+      const { release, paths } = await files({ "a.gpg": VENDOR_A.key });
+      const result = withGpgvKeyCheck(
+        async () => ({ stdout: "", exitCode: 2 }),
+        cancel.signal,
+        async (check) => {
+          const verified = await check.firstVerifying(
+            [paths["a.gpg"] ?? ""],
+            [release],
+          );
+          if (completion === "failed") throw primary;
+          return verified;
+        },
+      );
+      if (completion === "failed") await expect(result).rejects.toBe(primary);
+      else {
+        const failure = await result.catch((cause: unknown) => cause);
+        expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+        if (!(failure instanceof ArtifactReaderFailure))
+          throw new Error("Expected typed keyring cleanup cancellation");
+        expect(failure.reason).toBe("cancelled");
+        expect(failure.cause).toBe(reason);
+      }
+      expect(path).toBeDefined();
+      await expect(access(path ?? "")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
   it("keeps the private keyring folder's owner when its removal fails", async () => {
     const create = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
     let owned: PrivateRuntimeRoot | undefined;
@@ -93,5 +162,30 @@ describe("withGpgvKeyCheck cleanup", () => {
       failure.cleanupLeases?.map((lease) => lease.release()) ?? [],
     );
     await expect(access(owned.path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("writes a held key's keyring into the private folder and removes it, saying why the key does not verify", async () => {
+    const { release } = await files({});
+    const keyrings: string[] = [];
+    const runQuery: QueryRunner = async (_command, argv) => {
+      keyrings.push(argv[argv.indexOf("--keyring") + 1] ?? "");
+      return { stdout: "[GNUPG:] NEWSIG\n", exitCode: 2 };
+    };
+    const sources = "/etc/apt/sources.list.d/a-ubuntu-b-noble.sources";
+
+    const verified = await withGpgvKeyCheck(runQuery, undefined, (check) =>
+      check.heldVerifying({ path: sources, bytes: Buffer.from(A_ARMORED) }, [
+        release,
+      ]),
+    );
+
+    if (!("reason" in verified)) throw new Error("expected a refusal");
+    expect(verified.reason).toContain(sources);
+    expect(verified.reason).toContain(release);
+    expect(verified.reason).not.toMatch(/[a-z][a-z0-9+.-]*:\/\//iu);
+    expect(keyrings).toHaveLength(1);
+    await expect(access(keyrings[0] ?? "")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });

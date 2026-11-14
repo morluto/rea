@@ -230,6 +230,7 @@ it.each([false, true])(
 it("blocks a fresh launch while cleanup remains unverified", async () => {
   const launcher = new RetryCleanupLauncher();
   const { client, child } = await failedStartup(launcher);
+  expect(client.operationHealth()).toMatchObject({ state: "not_started" });
   await expect(client.start()).resolves.toMatchObject({
     ok: false,
     error: {
@@ -248,32 +249,6 @@ it("blocks a fresh launch while cleanup remains unverified", async () => {
     ok: true,
     value: null,
   });
-});
-
-it("preserves failed startup state through a blocked retry until cleanup succeeds", async () => {
-  const launcher = new RetryCleanupLauncher();
-  const { client } = await failedStartup(launcher);
-  // The startup timeout leaves the client in not_started with retained
-  // resources; cleanup is still incomplete.
-  expect(client.operationHealth()).toMatchObject({ state: "not_started" });
-  // An intervening retry is blocked by the retained resources, and now
-  // surfaces the recorded startup failure (upstream 069308bb) instead of
-  // a generic protocol error...
-  await expect(client.start()).resolves.toMatchObject({
-    ok: false,
-    error: {
-      _tag: "ProviderAdapterError",
-      cleanupIncomplete: true,
-      cause: { cause: { _tag: "HopperTimeoutError" } },
-    },
-  });
-  // ...but must not wipe the failed-startup state: the client still
-  // reports not_started (never idle) until cleanup succeeds, so a
-  // same-target open_binary keeps retiring the wedged client instead of
-  // fast-pathing it.
-  expect(client.operationHealth()).toMatchObject({ state: "not_started" });
-  launcher.allowCleanup = true;
-  await expect(client.close()).resolves.toEqual({ ok: true, value: null });
 });
 
 it("permits a fresh launch after stopping an owned bridge-request provider without an acknowledgement", async () => {

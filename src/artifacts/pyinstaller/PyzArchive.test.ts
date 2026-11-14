@@ -1,12 +1,12 @@
 import { pythonPycFixture } from "../../python/PythonPyc.fixture.js";
 import { parsePythonPyc } from "../../python/PythonPycParser.js";
-import { inspectPythonPycInputSchema } from "../../domain/python/pythonPyc.js";
+import { pythonPycLimitsSchema } from "../../domain/python/pythonPyc.js";
 import { createHash } from "node:crypto";
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { readPyzArchive, MAX_PYZ_TABLE_BYTES } from "./PyzArchive.js";
+import { readPyzArchive } from "./PyzArchive.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PYTHON_39_MAGIC, pyzArchive } from "./CArchive.fixture.js";
 
@@ -82,7 +82,7 @@ it.each(["PYZ\0", "BAD\0"])(
     await writeFile(path, header);
     const handle = await open(path, "r+");
     try {
-      const size = 12 + MAX_PYZ_TABLE_BYTES + 1;
+      const size = 12 + 16 * 1024 * 1024 + 1;
       await handle.truncate(size);
       expect(await readPyzArchive(handle, 0, size)).toMatchObject({
         ok: false,
@@ -94,44 +94,83 @@ it.each(["PYZ\0", "BAD\0"])(
   },
 );
 
-it("rejects a PYZ table whose back-references repeat one long row", async () => {
-  // One namespace row with a 16 KiB name, flagged for reference, then 999
-  // back-references to it. The table is about 21 KiB but would expand to
-  // 16 MiB of entry names.
-  const name = Buffer.alloc(16 * 1024, 0x61);
-  const refs = 1_000;
-  const row = Buffer.concat([
-    Buffer.from([0x28 | 0x80]),
-    int32(2),
-    Buffer.from([0x61]),
-    int32(name.length),
-    name,
-    Buffer.from([0x29, 3, 0x69]),
-    int32(3),
-    Buffer.from([0x69]),
-    int32(0),
-    Buffer.from([0x69]),
-    int32(0),
-  ]);
-  const reference = Buffer.concat([Buffer.from([0x72]), int32(0)]);
-  const table = Buffer.concat([
-    Buffer.from([0x5b]),
-    int32(refs),
-    row,
-    ...Array.from({ length: refs - 1 }, () => reference),
-  ]);
-  const header = Buffer.alloc(12);
-  header.write("PYZ\0");
-  PYTHON_39_MAGIC.copy(header, 4);
-  header.writeUInt32BE(12, 8);
-  const image = Buffer.concat([header, table]);
-  expect(image.length).toBeLessThan(32 * 1024);
+it.each([0x61, 0xe9])(
+  "rejects a PYZ table whose back-references repeat one long row (byte %i)",
+  async (byte) => {
+    // One namespace row with a 16 KiB name, flagged for reference, then 999
+    // back-references to it. The table is about 21 KiB but would expand to
+    // 16 or 32 MiB of UTF-8 entry names.
+    const name = Buffer.alloc(16 * 1024, byte);
+    const refs = 1_000;
+    const row = Buffer.concat([
+      Buffer.from([0x28 | 0x80]),
+      int32(2),
+      Buffer.from([0x61]),
+      int32(name.length),
+      name,
+      Buffer.from([0x29, 3, 0x69]),
+      int32(3),
+      Buffer.from([0x69]),
+      int32(0),
+      Buffer.from([0x69]),
+      int32(0),
+    ]);
+    const reference = Buffer.concat([Buffer.from([0x72]), int32(0)]);
+    const table = Buffer.concat([
+      Buffer.from([0x5b]),
+      int32(refs),
+      row,
+      ...Array.from({ length: refs - 1 }, () => reference),
+    ]);
+    const header = Buffer.alloc(12);
+    header.write("PYZ\0");
+    PYTHON_39_MAGIC.copy(header, 4);
+    header.writeUInt32BE(12, 8);
+    const image = Buffer.concat([header, table]);
+    expect(image.length).toBeLessThan(32 * 1024);
 
-  const parsed = await readImage(image);
-  expect(parsed).toMatchObject({ ok: false, error: { reason: "limit" } });
-  if (parsed.ok) return;
-  expect(parsed.error.message).toContain("expand past");
-});
+    const parsed = await readImage(image);
+    expect(parsed).toMatchObject({ ok: false, error: { reason: "limit" } });
+    if (parsed.ok) return;
+    expect(parsed.error.message).toContain("expand past");
+  },
+);
+
+it.each([0x61, 0x41, 0x7a, 0x5a, 0x75])(
+  "preserves namespace text from one-byte and UTF-8 marshal encodings (tag %i)",
+  async (tag) => {
+    const name = "é".repeat(64);
+    const encoded = Buffer.from(name, tag === 0x75 ? "utf8" : "latin1");
+    const table = Buffer.concat([
+      Buffer.from([0x5b]),
+      int32(1),
+      Buffer.from([0x29, 2, tag]),
+      tag === 0x7a || tag === 0x5a
+        ? Buffer.from([encoded.length])
+        : int32(encoded.length),
+      encoded,
+      Buffer.from([0x29, 3, 0x69]),
+      int32(3),
+      Buffer.from([0x69]),
+      int32(0),
+      Buffer.from([0x69]),
+      int32(0),
+    ]);
+    const image = pyzArchive({
+      magic: PYTHON_39_MAGIC,
+      modules: [],
+      toc: table,
+    });
+    expect(await readImage(image)).toMatchObject({
+      ok: true,
+      value: {
+        kind: "entries",
+        sha256: createHash("sha256").update(image).digest("hex"),
+        entries: [{ name, role: "namespace", typeCode: 3, length: 0 }],
+      },
+    });
+  },
+);
 
 const int32 = (value: number): Buffer => {
   const bytes = Buffer.alloc(4);
@@ -176,7 +215,10 @@ it("reports a truncated table before deferred signature rejection", async () => 
   header.writeUInt32BE(12, 8);
   expect(await readImage(header, 16)).toMatchObject({
     ok: false,
-    error: { reason: "format", message: "PYZ table is truncated" },
+    error: {
+      reason: "format",
+      message: expect.stringMatching(/table.*truncated/iu),
+    },
   });
 });
 
@@ -185,7 +227,10 @@ it("reports the signature after completing a readable table and image hash", asy
   image.write("BAD\0");
   expect(await readImage(image)).toMatchObject({
     ok: false,
-    error: { reason: "format", message: "PYZ archive magic does not match" },
+    error: {
+      reason: "format",
+      message: expect.stringMatching(/magic.*match/iu),
+    },
   });
 });
 
@@ -203,7 +248,7 @@ it.each([
         bytes: pyc.length,
         sha256: createHash("sha256").update(pyc).digest("hex"),
       },
-      inspectPythonPycInputSchema.parse({ path: "/fixtures/module.pyc" }),
+      pythonPycLimitsSchema.parse({}),
     );
     expect(standalone.header.python_version).toBe(version);
     const image = pyzArchive({

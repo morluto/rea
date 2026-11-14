@@ -1,3 +1,14 @@
+import { z } from "zod";
+import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
+import {
+  webSourceLocationCompleteDeliveryShape,
+  webSourceLocationSummaryDeliveryShape,
+} from "../domain/analysisView/webSourceLocationView.js";
+import {
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
+} from "../domain/analysisView/analysisViewResult.js";
 import {
   exportWebScriptsInputSchema,
   webScriptExportResultSchema,
@@ -14,21 +25,36 @@ import {
   webSourceLocationResultSchema,
 } from "../domain/webSourceLocation.js";
 
+export const webSourceLocationRequestSchema = z
+  .discriminatedUnion("detail", [
+    webSourceLocationInputSchema.extend(webSourceLocationCompleteDeliveryShape),
+    webSourceLocationInputSchema.extend(webSourceLocationSummaryDeliveryShape),
+  ])
+  .meta({ "x-rea-root-discriminator": "detail" });
+
 /** Local captured-script publication contracts shared by CLI and MCP. */
 export const WEB_SCRIPT_TOOL_CONTRACTS = [
   {
     name: "trace_web_source_location",
     ...toolContractMetadata("trace_web_source_location"),
     description:
-      "Trace one generated position in an exported website script through an explicitly paired local source map. Verifies manifest, selected script and map SHA-256/byte identities; returns every equal-position mapping, reported source/root, resolved source URL, embedded sourcesContent and original position inline. One-based lines and zero-based UTF-16 columns; greatest generated position <= requested across lines. Duplicate sources and generated-only mappings remain distinct. Caller-selected pairing does not establish deployment authenticity or execution. Regular maps and inline indexed sections only; external section URLs are unsupported. No network access or application execution; uses the pinned upstream codec in an owned Node process with private temporary files, independent 192 MiB old-generation heap and 20-second deadline. 4 MiB map, 32 MiB reply; complete evidence or actionable resource failure. Cleanup may extend the deadline.",
+      'Map one generated position in an exported script through a caller-paired local source map, verifying manifest/script/map byte identities. Returns all equal-position matches, original positions, resolved source URLs and embedded sourcesContent; pairing does not prove deployment authenticity or execution. Lines are one-based, columns zero-based UTF-16; lookup uses the greatest generated position <= requested across lines. Regular maps and inline indexed sections only; external section URLs are unsupported. No network or application execution; decoding uses an owned codec process. Complete delivery is default. detail summary retains Evidence; view {kind:"source-location",collection:"matches",offset:0,limit:64} pages match metadata. source-text additionally requires match_index and pages UTF-16 text. inspect_analysis_view reuses the retained parent; export_evidence_bundle preserves it. source_map_limits changes byte/record/heap admission per call; decode_timeout_ms is separate. Refusals name the exhausted control; cleanup may outlast the deadline.',
     kind: "application",
-    inputSchema: webSourceLocationInputSchema,
-    outputSchema: evidenceResultOf(webSourceLocationResultSchema),
+    inputSchema: webSourceLocationRequestSchema,
+    outputSchema: analysisDetailOutputSchemaOf(
+      webSourceLocationResultSchema,
+      z.union([
+        webSourceLocationSummaryViewResultSchema,
+        webSourceLocationMatchesViewResultSchema,
+        webSourceLocationTextViewResultSchema,
+      ]),
+    ),
     examples: [
       {
         title:
-          "Trace a selected captured JavaScript point to embedded original source",
+          "Trace a selected captured JavaScript point with retained compact delivery",
         input: {
+          detail: "summary",
           manifest_path: "/analysis/scripts/manifest.json",
           script_index: 0,
           source_map: {
@@ -44,7 +70,7 @@ export const WEB_SCRIPT_TOOL_CONTRACTS = [
     name: "trace_web_module_imports",
     ...toolContractMetadata("trace_web_module_imports"),
     description:
-      "Trace one exported website script's outgoing native ES imports/re-exports, using exact URL and optional selected import-map context. Reads a local export_web_scripts manifest and verifies the selected source's SHA-256/size; returns source positions, native resolved URLs or exact errors, every matching captured candidate and explicit unknown execution. Query/fragment identities are preserved. Computed imports and bundler IDs remain unknown. Select importer_url for unknown inline/document-base context. Caller-supplied Chromium executes only a trusted REA resolver stub in an owned context with page requests locally fulfilled/blocked; no captured application execution or asset refetch. Requires absolute REA_BROWSER_EXECUTABLE for literal imports. 32 MiB manifest, 16 MiB source, 4 MiB map and 20-second native deadline; cleanup may extend the deadline.",
+      "Resolve native ES imports/re-exports from one script in a local export_web_scripts manifest. Verifies the selected source digest/size and returns source positions, resolved URLs/errors and every matching captured candidate. URL query/fragment identities remain distinct; computed imports, bundler IDs and execution remain unknown. Supply importer_url when inline/document-base context is unknown and an import_map when needed. Literal resolution requires absolute REA_BROWSER_EXECUTABLE: caller-supplied Chromium runs only a trusted REA resolver stub with page requests fulfilled locally or blocked, without captured app execution or asset refetch. The native deadline is 20 seconds; cleanup may extend it.",
     kind: "application",
     inputSchema: webModuleTraceInputSchema,
     outputSchema: evidenceResultOf(webModuleTraceResultSchema),

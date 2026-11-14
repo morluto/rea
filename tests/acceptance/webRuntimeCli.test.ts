@@ -68,10 +68,15 @@ it("advertises the canonical observation duration bounds through the compiled CL
     options: {
       properties: {
         observationMs: {
-          type: "integer",
-          minimum: 1,
-          maximum: 2_147_483_647,
           default: 10_000,
+          anyOf: [
+            {
+              type: "integer",
+              minimum: 1,
+              maximum: 2_147_483_647,
+            },
+            { type: "string", pattern: "^[0-9]+$" },
+          ],
         },
       },
     },
@@ -286,7 +291,7 @@ const cancellationCases = cancellationCommands.flatMap((command) =>
 
 it.each(cancellationCases)(
   "$command preserves $signal status and awaited cleanup during CDP discovery",
-  async ({ command, operation, buildArgs, signal, expectedExitCode }) => {
+  async ({ operation, buildArgs, signal, expectedExitCode }) => {
     const sockets = new Set<Socket>();
     const server = createServer(() => undefined);
     server.on("connection", (socket) => {

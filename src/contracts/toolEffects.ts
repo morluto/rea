@@ -159,6 +159,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   inspect_il2cpp_metadata: evidence,
   inspect_model_artifact: evidence,
   inspect_api_contract: evidence,
+  inspect_ntfs_journal: evidence,
   inspect_playwright_trace: evidence,
   inspect_gpu_code_objects: evidence,
   inspect_rust_binary: evidence,
@@ -290,11 +291,16 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   inspect_pe_resources: evidence,
   inspect_pe_certificates: evidence,
   inspect_pe_imports: evidence,
+  inspect_windows_shortcut: evidence,
   inspect_native_exports: evidence,
   inspect_elf_notes: evidence,
+  inspect_native_initializers: evidence,
+  inspect_elf_unwind_ranges: evidence,
   inspect_apple_ips: evidence,
   inspect_devicetree: evidence,
   inspect_kernel_module: evidence,
+  inspect_kernel_build_config: evidence,
+  inspect_v8_code_cache: evidence,
   inspect_pe_load_config: evidence,
   inspect_binary_hardening: evidence,
   inspect_analysis_view: evidence,
@@ -728,6 +734,11 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     launchesProcess: true,
   }),
   inspect_electron_fuses: evidence,
+  audit_release_exposure: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
   export_web_scripts: effects({
     mutatesSession: true,
     writesFilesystem: true,
@@ -749,6 +760,60 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   // Drives the app through the computer's driver on a loopback port.
   act_on_build_computer: effects({
     mutatesSession: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  // Downloads package lists and launches the app inside the computer.
+  start_build_capture: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  mark_build_checkpoint: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  // Closes the app and drafts the task with REA inside the computer.
+  stop_build_capture: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    idempotent: false,
+  }),
+  // Runs the task's readers, commands the task names, on the captured files.
+  export_build_environment: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  // A witness stage records the display, runs the task's readers or the bundle's judge, and writes its record here.
+  check_build_task: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  // Keeps the person's consent with the computer for the export to ship.
+  record_build_consent: effects({
+    mutatesSession: true,
+    idempotent: false,
+  }),
+  // Runs the bundle's task in fresh computers and writes its record into the bundle.
+  measure_build_task: effects({
+    writesFilesystem: true,
+    launchesProcess: true,
     accessesNetwork: true,
     changesUiState: true,
     executesForeignCode: true,
@@ -784,14 +849,19 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   project_harmony_application_graph: evidence,
   // Lifecycle transitions can retire an IDA client, including a pending
   // cleanup from an earlier provider, over its configured MCP transport.
+  // Retiring Ghidra can discard ephemeral edits or save a configured checkpoint.
   open_binary: effects({
     mutatesSession: true,
+    writesFilesystem: true,
     launchesProcess: true,
     accessesNetwork: true,
+    mayDiscardData: true,
   }),
   open_bundle_resources: effects({
     mutatesSession: true,
+    writesFilesystem: true,
     accessesNetwork: true,
+    mayDiscardData: true,
   }),
   close_binary: effects({
     mutatesSession: true,

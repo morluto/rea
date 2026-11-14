@@ -1,3 +1,4 @@
+import { isJavaScriptModuleUnit } from "../javascript/javascriptModuleUnits.js";
 import {
   AnalysisInputError,
   type AnalysisInputIssue,
@@ -53,9 +54,7 @@ const jsIncompatible = (detail: string): AnalysisError =>
   ]);
 
 /** Every exact module path or original source-map reference retained by a node. */
-export const javascriptModulePaths = (
-  node: ApplicationNode,
-): readonly string[] => {
+const javascriptModulePaths = (node: ApplicationNode): readonly string[] => {
   if (node.identity.strategy === "canonical-path") return [node.identity.path];
   if (node.identity.strategy === "source-map-original")
     return [node.identity.original_source];
@@ -83,17 +82,12 @@ interface ModuleEntry {
   readonly paths: readonly string[];
 }
 
-const isModuleNode = (node: ApplicationNode): node is ModuleEntry["node"] =>
-  node.kind === "javascript-asset" ||
-  node.kind === "javascript-module" ||
-  node.kind === "source-module";
-
 /** One owner for the module kinds and path semantics of every module view. */
 function* moduleEntries(
   nodes: readonly ApplicationNode[],
 ): Generator<ModuleEntry> {
   for (const node of nodes) {
-    if (isModuleNode(node)) {
+    if (isJavaScriptModuleUnit(node)) {
       const paths = javascriptModulePaths(node);
       yield { node, path: paths[0] ?? null, paths };
     }
@@ -187,15 +181,7 @@ const moduleItem = (node: ApplicationNode, path: string | null): JsonValue => ({
   hashes: [...nodeHashes(node)],
   exports: [...exportNames(node)],
   source_ranges: [...sourceRanges(node)],
-  observations: node.observations.map((observation) => ({
-    observation_id: observation.observation_id,
-    label: observation.label,
-    properties: observation.properties,
-    evidence: {
-      ...observation.evidence,
-      location: observation.evidence.location,
-    },
-  })),
+  observations: node.observations,
 });
 
 const moduleReference = ({
@@ -399,7 +385,7 @@ export const projectJavaScriptApplicationView = (
     // Summary coverage counts modules. Graph nodes that are not modules stay
     // in summary.coverage.application rather than inflating this total.
     const moduleCount = analysis.graph.nodes.reduce(
-      (count, node) => count + Number(isModuleNode(node)),
+      (count, node) => count + Number(isJavaScriptModuleUnit(node)),
       0,
     );
     return ok({

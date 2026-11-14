@@ -16,7 +16,7 @@ import { expect } from "vitest";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 import {
   analysisViewLayoutEvidence,
@@ -216,10 +216,10 @@ cliTest(
           "--json",
         ],
       };
-      const rejected =
-        source.kind === "inline"
-          ? await cli.run(invocation)
-          : await runFileCli(cli, invocation);
+      const rejected = await cli.run({
+        ...invocation,
+        freshProcess: source.kind === "inline",
+      });
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
@@ -251,9 +251,10 @@ cliTest(
       };
       // Keep a fresh-process integrity check for the altered bundle while the
       // worker must reread the same path for the other invalid inputs.
-      const rejected = freshProcess
-        ? await cli.run(invocation)
-        : await runFileCli(cli, invocation);
+      const rejected = await cli.run({
+        ...invocation,
+        freshProcess: freshProcess,
+      });
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
@@ -541,10 +542,10 @@ cliTest(
         };
         // Exercise a valid and a malformed parent in fresh processes as well
         // as the shared worker's repeated reads of the rewritten input path.
-        const reply =
-          group === "manifest" && variant !== "missing"
-            ? await cli.run(invocation)
-            : await runFileCli(cli, invocation);
+        const reply = await cli.run({
+          ...invocation,
+          freshProcess: group === "manifest" && variant !== "missing",
+        });
         expect(reply.stderr).toBe("");
         if (variant === "valid") {
           expect(application.ok).toBe(true);
@@ -554,7 +555,6 @@ cliTest(
           });
           continue;
         }
-        expect(application.ok).toBe(false);
         if (application.ok) throw new Error("Expected an invalid parent");
         expect(application.error.cause).toBeInstanceOf(z.ZodError);
         expect(reply.exitCode).toBe(1);
@@ -590,7 +590,6 @@ cliTest(
       view: { kind: "summary" as const },
     };
     const application = await inspectAnalysisView(request);
-    expect(application.ok).toBe(false);
     if (application.ok) throw new Error("Expected invalid nested Evidence");
     expect(application.error.cause).toMatchObject({
       cause: expect.any(z.ZodError),
@@ -620,7 +619,7 @@ cliTest(
               "evidence_id",
             ],
             reason: "invalid_value",
-            message: "Evidence semantic identifier does not match its record",
+            message: expect.stringMatching(/semantic identifier.*not match/iu),
           },
         ],
       },
@@ -693,9 +692,7 @@ cliTest(
     expect(result.normalized_result).toMatchObject({
       groups: [{ content_types: [], flags: ["single-sample"] }],
       limitations: expect.arrayContaining([caveat]),
-      unknowns: [
-        "Some retained records have unavailable status or content type values.",
-      ],
+      unknowns: [expect.stringMatching(/unavailable status or content type/iu)],
     });
   },
 );

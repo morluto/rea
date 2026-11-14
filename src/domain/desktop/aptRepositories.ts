@@ -18,8 +18,8 @@ export interface AptSourceStanza {
   readonly architectures: readonly string[];
   /** Keyring paths and key fingerprints the entry is signed by. */
   readonly signedBy: readonly string[];
-  /** Whether Signed-By holds a key block rather than paths or fingerprints. */
-  readonly inlineKey: boolean;
+  /** The armored key block Signed-By holds in place of paths or fingerprints; null when it holds none. */
+  readonly inlineKey: string | null;
 }
 
 /** One `deb` entry of an apt sources file for one URI and suite. */
@@ -55,6 +55,22 @@ export const withoutCredentials = (uri: string): string =>
 export const withoutCredentialsIn = (text: string): string =>
   text.replace(/(?<scheme>[a-z][a-z0-9+.-]*:\/\/)[^\s/]*@/giu, "$<scheme>");
 
+/**
+ * The key block a deb822 Signed-By field holds, as apt writes it to a key
+ * file: each line stripped and a `.` line made empty, from its BEGIN line to
+ * its last END line; null when the field holds no key block.
+ */
+const inlineKeyBlock = (value: string): string | null => {
+  if (!value.includes(ARMOR_BEGIN)) return null;
+  const lines = value.split("\n").map((line) => {
+    const stripped = line.trim();
+    return stripped === "." ? "" : stripped;
+  });
+  const begin = Math.max(lines.indexOf(ARMOR_BEGIN), 0);
+  const end = lines.lastIndexOf(ARMOR_END);
+  return `${lines.slice(begin, end < begin ? lines.length : end + 1).join("\n")}\n`;
+};
+
 /** Whether a suite as an entry writes it is a target's release, which apt leaves empty for the flat suite `/`. */
 const isRelease = (suite: string, release: string): boolean =>
   suite === release || (suite === "/" && release === "");
@@ -69,7 +85,7 @@ const stanza = (
   },
 ): AptSourceStanza => {
   const signedBy = fields.options.get("signed-by") ?? "";
-  const inlineKey = signedBy.includes(ARMOR_BEGIN);
+  const inlineKey = inlineKeyBlock(signedBy);
   const uris = fields.uris.map(withoutCredentials);
   return {
     ...at,
@@ -80,7 +96,7 @@ const stanza = (
     suites: fields.suites,
     components: fields.components,
     architectures: listValues(fields.options.get("arch")),
-    signedBy: inlineKey ? [] : listValues(signedBy),
+    signedBy: inlineKey === null ? listValues(signedBy) : [],
     inlineKey,
   };
 };
@@ -304,19 +320,38 @@ export const repositorySupplies = (
     .sort();
 };
 
-/** The `NAME='value'` lines `apt-config shell` prints, by name; apt writes a quote in a value as `'\''`. */
+/** The `NAME='value'` assignments `apt-config shell` prints; apt writes a quote in a value as `'\''`. */
 export const parseAptConfigShell = (
   output: string,
-): ReadonlyMap<string, string> =>
-  new Map(
-    output.split("\n").flatMap((line) => {
-      const match = /^(?<name>[A-Za-z_]\w*)='(?<value>.*)'$/u.exec(line);
-      const { name, value } = match?.groups ?? {};
-      return name === undefined || value === undefined
-        ? []
-        : [[name, value.replaceAll(`'\\''`, "'")] as const];
-    }),
-  );
+): ReadonlyMap<string, string> => {
+  const values = new Map<string, string>();
+  const prefix = /([A-Za-z_]\w*)='/uy;
+  let offset = 0;
+  while (offset < output.length) {
+    prefix.lastIndex = offset;
+    const match = prefix.exec(output);
+    if (match === null) {
+      const newline = output.indexOf("\n", offset);
+      if (newline < 0) break;
+      offset = newline + 1;
+      continue;
+    }
+    const start = prefix.lastIndex;
+    let end = output.indexOf("'", start);
+    // Only apt's close/escaped-quote/reopen sequence continues the value.
+    // Literal newlines inside the quotes are data, not record boundaries.
+    while (end >= 0 && output.startsWith(`'\\''`, end))
+      end = output.indexOf("'", end + 4);
+    if (end < 0) break;
+    const after = end + 1;
+    if (after === output.length || output[after] === "\n")
+      values.set(match[1]!, output.slice(start, end).replaceAll(`'\\''`, "'"));
+    const newline = output.indexOf("\n", after);
+    if (newline < 0) break;
+    offset = newline + 1;
+  }
+  return values;
+};
 
 const QUOTED = new Set('\\|{}[]<>"^~_=!@#$%^&*');
 

@@ -12,13 +12,7 @@ import {
   fitFixture,
   type FitFixtureImage,
 } from "./FitImage.fixture.js";
-import {
-  FIT_MAX_CONFIGURATION_REFERENCES,
-  FIT_MAX_CONFIGURATIONS,
-  FIT_MAX_HASH_NODES_PER_IMAGE,
-  FIT_MAX_IMAGES,
-  readFitStructure,
-} from "./FitStructure.js";
+import { readFitStructure } from "./FitStructure.js";
 
 const read = (file: Buffer) =>
   readFitStructure(
@@ -176,10 +170,13 @@ describe("FIT image facts", () => {
       }),
     ).images;
     expect(image?.metadata).toMatchObject({ load: null, arch: null });
-    expect(image?.limitations).toEqual([
-      "/images/kernel: arch is not a NUL-terminated UTF-8 string",
-      "/images/kernel: load is not a 1- or 2-cell address",
-    ]);
+    expect(image?.limitations).toHaveLength(2);
+    expect(image?.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/\/images\/kernel.*arch.*NUL.*UTF-8/iu),
+        expect.stringMatching(/\/images\/kernel.*load.*1- or 2-cell/iu),
+      ]),
+    );
   });
 });
 
@@ -275,8 +272,9 @@ describe("FIT image data ranges", () => {
       ),
     ).toMatchObject({
       reason: "format",
-      message:
-        "FIT is malformed: /images/chained: image-data target /images/shared has its own image-data",
+      message: expect.stringMatching(
+        /\/images\/chained.*image-data.*\/images\/shared/iu,
+      ),
     });
   });
 
@@ -293,8 +291,9 @@ describe("FIT image data ranges", () => {
       ),
     ).toMatchObject({
       reason: "format",
-      message:
-        "FIT is malformed: image data overlaps: /images/shared and the FIT devicetree",
+      message: expect.stringMatching(
+        /overlaps.*\/images\/shared.*devicetree/iu,
+      ),
     });
   });
 
@@ -325,7 +324,7 @@ describe("FIT image data ranges", () => {
   ])("fails %s", (_name, file, message) => {
     expect(failureOf(file)).toMatchObject({
       reason: "format",
-      message: `FIT is malformed: ${message}`,
+      message: expect.stringContaining(message),
     });
   });
 });
@@ -395,8 +394,9 @@ describe("FIT hashes", () => {
       ),
     ).toMatchObject({
       reason: "integrity",
-      message:
-        "FIT image kernel hash-1 sha256 value is 31 bytes; sha256 values are 32 bytes",
+      message: expect.stringMatching(
+        /kernel.*hash-1.*sha256.*31 bytes.*32 bytes/iu,
+      ),
     });
   });
 });
@@ -481,75 +481,74 @@ describe("FIT configurations", () => {
 
 describe("FIT fixed limits", () => {
   it("fails more images than the fixed allowance", () => {
-    expect(
-      failureOf(
-        fitFixture({
-          images: Array.from({ length: FIT_MAX_IMAGES + 1 }, (_, index) => ({
-            name: `image-${String(index)}`,
-            data: Buffer.from([index & 0xff]),
-          })),
-        }),
-      ),
-    ).toMatchObject({ reason: "limit", boundary: "capacity" });
+    const make = (count: number) =>
+      fitFixture({
+        images: Array.from({ length: count }, (_, index) => ({
+          name: `image-${String(index)}`,
+          data: Buffer.from([index & 0xff]),
+        })),
+      });
+    expect(read(make(1024)).images).toHaveLength(1024);
+    expect(failureOf(make(1025))).toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+    });
   });
 
   it("fails more hash nodes than the fixed allowance", () => {
-    expect(
-      failureOf(
-        fitFixture({
-          images: [
-            {
-              ...kernel(),
-              hashes: Array.from(
-                { length: FIT_MAX_HASH_NODES_PER_IMAGE + 1 },
-                () => "crc32",
-              ),
-            },
-          ],
-        }),
-      ),
-    ).toMatchObject({ reason: "limit", boundary: "capacity" });
+    const make = (count: number) =>
+      fitFixture({
+        images: [
+          {
+            ...kernel(),
+            hashes: Array.from({ length: count }, () => "crc32"),
+          },
+        ],
+      });
+    expect(read(make(8)).images[0]?.hashes).toHaveLength(8);
+    expect(failureOf(make(9))).toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+    });
   });
 
   it("fails more configurations than the fixed allowance", () => {
-    expect(
-      failureOf(
-        fitFixture({
-          images: [kernel()],
-          configurations: {
-            name: "configurations",
-            children: Array.from(
-              { length: FIT_MAX_CONFIGURATIONS + 1 },
-              (_, index) => ({ name: `conf-${String(index)}` }),
-            ),
-          },
-        }),
-      ),
-    ).toMatchObject({ reason: "limit", boundary: "capacity" });
+    const make = (count: number) =>
+      fitFixture({
+        images: [kernel()],
+        configurations: {
+          name: "configurations",
+          children: Array.from({ length: count }, (_, index) => ({
+            name: `conf-${String(index)}`,
+          })),
+        },
+      });
+    expect(read(make(1024)).metadata.configurations).toHaveLength(1024);
+    expect(failureOf(make(1025))).toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+    });
   });
 
   it("bounds configuration references before decoding them", () => {
-    expect(
-      failureOf(
-        fitFixture({
-          images: [kernel()],
-          configurations: {
-            name: "configurations",
-            children: [
-              {
-                name: "conf-1",
-                properties: {
-                  loadables: Buffer.alloc(FIT_MAX_CONFIGURATION_REFERENCES + 1),
-                },
-              },
-            ],
-          },
-        }),
-      ),
-    ).toMatchObject({ reason: "limit", boundary: "capacity" });
+    const make = (count: number) =>
+      fitFixture({
+        images: [kernel()],
+        configurations: {
+          name: "configurations",
+          children: [
+            { name: "conf-1", properties: { loadables: Buffer.alloc(count) } },
+          ],
+        },
+      });
+    expect(read(make(16_384)).metadata.configurations).toHaveLength(1);
+    expect(failureOf(make(16_385))).toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+    });
   });
 
-  it("maps a parser limit to a fixed allowance without a caller limit", () => {
+  it("does not attach caller-adjustable admission to a fixed parser limit", () => {
     let nested: FixtureNode = { name: "leaf" };
     for (let depth = 0; depth < 64; depth += 1)
       nested = { name: `n${String(depth)}`, children: [nested] };
@@ -559,25 +558,25 @@ describe("FIT fixed limits", () => {
         children: [{ name: "images" }, nested],
       }),
     );
-    expect(failure).toMatchObject({ reason: "limit", boundary: "capacity" });
-    // The parser's caller-limit recovery does not apply to fixed FIT reads.
-    expect(String((failure as Error).message)).not.toContain("caller-selected");
+    expect(failure).toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      readerLimit: undefined,
+      admission: undefined,
+    });
   });
 
   it("fails a structure without /images", () => {
     expect(failureOf(devicetreeFixture())).toMatchObject({
       reason: "format",
-      message: "FIT is malformed: /images node is missing",
+      message: expect.stringMatching(/\/images.*missing/iu),
     });
   });
 });
 
 it("bounds dangling-reference diagnostics while preserving every declared reference", () => {
   const name = "c".repeat(4096);
-  const references = Array.from(
-    { length: FIT_MAX_CONFIGURATION_REFERENCES },
-    () => "missing",
-  );
+  const references = Array.from({ length: 16_384 }, () => "missing");
   const file = fitFixture({
     images: [{ name: "kernel", data: Buffer.from("K") }],
     configurations: {

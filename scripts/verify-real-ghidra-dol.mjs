@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFile, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,10 +9,9 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
-import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
+import { withVerifierArtifactScope } from "./lib/verifier-artifact-scope.mjs";
 import { readGhidraLanguageCatalog } from "../dist/ghidra/GhidraLanguageCatalog.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildGameCubeDolFixture } from "../tests/conformance/ghidra/dol-fixture.mjs";
@@ -84,19 +82,14 @@ for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
  * installation catalog reader it uses. User extensions are not in that catalog.
  */
 async function languageInstalled(languageId) {
-  const scope = new ArtifactResourceScope();
-  try {
+  return withVerifierArtifactScope(async (scope) => {
     const catalog = await readGhidraLanguageCatalog(
       installation.installDir,
       scope,
     );
     return catalog.some((definition) => definition.id === languageId);
-  } finally {
-    await scope.close();
-  }
+  });
 }
-
-const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 /** One MCP session plus CLI check. `languageOverride` is set only for the Gekko pass. */
 async function runPass({ fixture, languageOverride, label, layout }) {
@@ -115,9 +108,12 @@ async function runPass({ fixture, languageOverride, label, layout }) {
     stderr = (stderr + chunk.toString()).slice(-65536);
   });
   const call = async (name, args = {}) => {
-    const reply = await client.callTool({ name, arguments: args }, undefined, {
-      timeout: 180000,
-    });
+    const reply = await client.callTool(
+      { name, arguments: args },
+      {
+        timeout: 180000,
+      },
+    );
     return requireMcpOperationResult(reply, name);
   };
   const report = { label, language_override: languageOverride ?? null };

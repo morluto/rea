@@ -7,19 +7,26 @@ import { RecordedCrashService } from "../application/binaryDiagnostics/RecordedC
 import { PwntoolsRecordedCrashProvider } from "../native/pwntools/PwntoolsRecordedCrashProvider.js";
 import { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import { PwntoolsLayoutProvider } from "../native/pwntools/PwntoolsLayoutProvider.js";
-import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 import { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import { PeResourcesProvider } from "../native/pe/PeResourcesProvider.js";
 import { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
 import { PeCertificatesProvider } from "../native/pe/PeCertificatesProvider.js";
 import { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
 import { PeImportsProvider } from "../native/pe/PeImportsProvider.js";
+import { WindowsShortcutService } from "../application/binaryDiagnostics/WindowsShortcutService.js";
+import { WindowsShortcutProvider } from "../native/windows/WindowsShortcutProvider.js";
 import { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import { ElfNotesProvider } from "../native/elf/ElfNotesProvider.js";
+import { NativeInitializersService } from "../application/binaryDiagnostics/NativeInitializersService.js";
+import { NativeInitializersProvider } from "../native/initializers/NativeInitializersProvider.js";
+import { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
+import { ElfUnwindRangesProvider } from "../native/elf/ElfUnwindRangesProvider.js";
 import { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
 import { AppleIpsProvider } from "../native/apple/AppleIpsProvider.js";
 import { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
 import { KernelModuleProvider } from "../native/elf/KernelModuleProvider.js";
+import { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
+import { KernelBuildConfigProvider } from "../native/elf/KernelBuildConfigProvider.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { NativeExportsProvider } from "../native/exports/NativeExportsProvider.js";
@@ -28,8 +35,6 @@ import { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeSe
 import { DevicetreeProvider } from "../firmware/devicetree/DevicetreeProvider.js";
 export const createDevicetreeService = (): DevicetreeService =>
   new DevicetreeService(new DevicetreeProvider());
-
-export { pwntoolsHostSupported };
 
 /** Portable PE inspection with no engine, installation or target acquisition. */
 export const createPeResourcesService = (): PeResourcesService =>
@@ -43,6 +48,10 @@ export const createPeCertificatesService = (): PeCertificatesService =>
 export const createPeImportsService = (): PeImportsService =>
   new PeImportsService(new PeImportsProvider());
 
+/** Portable Shell Link inspection with no COM, engine or target resolution. */
+export const createWindowsShortcutService = (): WindowsShortcutService =>
+  new WindowsShortcutService(new WindowsShortcutProvider());
+
 /** Portable PE/ELF export tables with no engine, toolchain or target acquisition. */
 export const createNativeExportsService = (): NativeExportsService =>
   new NativeExportsService(new NativeExportsProvider());
@@ -50,12 +59,22 @@ export const createNativeExportsService = (): NativeExportsService =>
 export const createElfNotesService = (): ElfNotesService =>
   new ElfNotesService(new ElfNotesProvider());
 
+/** Portable ELF and Mach-O initializer and finalizer listing with no engine. */
+export const createNativeInitializersService = (): NativeInitializersService =>
+  new NativeInitializersService(new NativeInitializersProvider());
+/** Portable ELF unwind-range inspection with no engine or disassembler. */
+export const createElfUnwindRangesService = (): ElfUnwindRangesService =>
+  new ElfUnwindRangesService(new ElfUnwindRangesProvider());
+
 /** Portable Apple .ips inspection with no engine, Xcode or target acquisition. */
 export const createAppleIpsService = (): AppleIpsService =>
   new AppleIpsService(new AppleIpsProvider());
 /** Portable Linux kernel-module metadata inspection with no engine or host `modinfo`. */
 export const createKernelModuleService = (): KernelModuleService =>
   new KernelModuleService(new KernelModuleProvider());
+/** Portable Linux kernel banner and embedded build-config inspection with no engine or host tools. */
+export const createKernelBuildConfigService = (): KernelBuildConfigService =>
+  new KernelBuildConfigService(new KernelBuildConfigProvider());
 
 /** Compose the offline adapter without import-time I/O or dependency acquisition. */
 export const createBinaryLayoutService = (

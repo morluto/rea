@@ -1,35 +1,20 @@
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { afterAll, beforeAll, expect } from "vitest";
+import { join } from "node:path";
+import { expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import {
   applicationFeatureTraceResultSchema,
   type ApplicationFeatureTraceResult,
 } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
+import { fileLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const client = new Client({ name: "native-handoff-identity", version: "1" });
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [resolve("scripts/rea.mjs"), "mcp"],
-  cwd: process.cwd(),
-  env: { PATH: process.env.PATH ?? "" },
-  stderr: "pipe",
-});
-beforeAll(async () => {
-  await client.connect(transport);
-  transport.stderr?.on("data", () => undefined);
-});
-afterAll(async () => {
-  await Promise.all([client.close(), transport.close()]);
-});
+const mcp = fileLocalToolsMcp();
 
 const sha256 = (value: Uint8Array) =>
   createHash("sha256").update(value).digest("hex");
@@ -126,7 +111,7 @@ for (const available of [false, true]) {
       const parent = toolContract(
         "analyze_javascript_application",
       ).outputSchema.parse(analysis.json);
-      const summary = await client.callTool({
+      const summary = await mcp.client.callTool({
         name: "analyze_javascript_application",
         arguments: { input_path: archive, detail: "summary" },
       });
@@ -179,7 +164,7 @@ for (const available of [false, true]) {
         const cliEvidence = toolContract(
           "trace_application_feature",
         ).outputSchema.parse(cliTrace.json);
-        const response = await client.callTool({
+        const response = await mcp.client.callTool({
           name: "trace_application_feature",
           arguments: {
             ...query,
@@ -217,7 +202,7 @@ for (const available of [false, true]) {
       expect(sha256(await readFile(archive))).toBe(archiveDigest);
       if (available)
         expect(sha256(await readFile(companion))).toBe(nativeDigest);
-      await client.ping();
+      await mcp.client.ping();
     },
   );
 }

@@ -122,11 +122,9 @@ it("names retained debuggers in stderr and every log level when shutdown ends", 
   requests[0]?.();
   await new Promise((resolve) => setImmediate(resolve));
 
-  expect(output).toEqual([
-    `${MCP_SHUTDOWN_FAILED}\n`,
-    `${retainedDebuggerRemediation([4242])}\n`,
-  ]);
-  // Comparing with the formatter alone would still pass if it dropped the process.
+  expect(output).toHaveLength(2);
+  expect(output[0]).toBe(`${MCP_SHUTDOWN_FAILED}\n`);
+  expect(output[1]).toBe(`${retainedDebuggerRemediation([4242])}\n`);
   expect(output[1]).toMatch(/\b4242\b/u);
   const parsed = logs.map((line) => JSON.parse(line));
   expect(parsed).toContainEqual(
@@ -473,7 +471,7 @@ it("does not leave a provider running when a target open is queued behind shutdo
     },
   });
   expect(session.activeTarget()).toBeUndefined();
-  expect(session.activeBundleResourceRoot()).toBeUndefined();
+  expect(await session.status()).toMatchObject({ open: false });
   expect(created).toBe(closed);
 });
 

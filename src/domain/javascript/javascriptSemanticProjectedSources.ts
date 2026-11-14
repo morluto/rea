@@ -8,9 +8,8 @@ import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
-  type JavaScriptSemanticObjectReference,
 } from "./javascriptSemanticObjectReferences.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
+import type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
 import {
   semanticBindingAtRead,
   semanticDefiniteEffectPrecedesReference,
@@ -115,7 +114,7 @@ const hasFreshProjectedReceiver = (
     if (paths.has(key)) return false;
     paths.add(key);
     examined.set(node, paths);
-    if (++selections > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+    if (++selections > state.precision.alias_selections) {
       state.valueResourceLimits.add("alias-selections");
       return false;
     }
@@ -138,7 +137,7 @@ const hasFreshProjectedReceiver = (
     if (sources.length === 0) return false;
     if (
       selections + pending.length + sources.length >
-      SEMANTIC_ALIAS_SELECTION_LIMIT
+      state.precision.alias_selections
     ) {
       state.valueResourceLimits.add("alias-selections");
       return false;
@@ -191,6 +190,7 @@ export function semanticProjectedSourceFactsAtRead(
   memberReadAt?: t.Node,
   capturedSelections?: readonly SemanticCapturedSelection[],
   retainEligibility?: boolean,
+  valueEscapesHideSources?: boolean,
 ):
   | {
       readonly sources: readonly (Omit<ProjectedSource, "path"> & {
@@ -220,6 +220,9 @@ const projectedSourceFactsAtRead = (
   memberReadAt: t.Node = reference,
   capturedSelections: readonly SemanticCapturedSelection[] = [],
   retainEligibility = false,
+  // Accessor lookup reads source syntax. A prior value escape does not hide
+  // that syntax; unknown writes and invocations still fail closed.
+  valueEscapesHideSources = true,
 ):
   | {
       readonly sources: readonly ProjectedSource[];
@@ -366,6 +369,7 @@ const projectedSourceFactsAtRead = (
           (replacement.assignedSources?.[0]?.target?.start ?? -1)));
   if (
     includeUnknown &&
+    valueEscapesHideSources &&
     semanticSomeEffectPathCandidate(
       binding.escapedPaths,
       path,

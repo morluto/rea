@@ -5,6 +5,7 @@ import {
   effectiveClientServer,
   parseClientConfiguration,
   type ClientConfigurationDocument,
+  type ClientConfigurationFormat,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
@@ -22,14 +23,14 @@ export interface ClientConfigurationSource extends ClientConfigurationDocument {
 const invalidEnvironment = (
   path: string,
   error: ConfigurationError,
-  overrides: Readonly<Record<string, string>> = {},
-  platform: NodeJS.Platform = process.platform,
+  overrides: Readonly<Record<string, string>> | undefined,
+  platform: NodeJS.Platform,
 ): ClientConfigurationFileError => {
   const constraints = error.settings
     .map(({ setting, constraint }) => `${setting}: ${constraint}`)
     .join("; ");
   const overrideNames = new Set(
-    Object.keys(overrides).map((name) =>
+    Object.keys(overrides ?? {}).map((name) =>
       platform === "win32" ? name.toUpperCase() : name,
     ),
   );
@@ -88,7 +89,7 @@ export const readConfigurationText = async (
 /** Read and parse one configuration at its source boundary. */
 export const readConfigurationFile = async (
   path: string,
-  format: SetupClient["format"],
+  format: ClientConfigurationFormat | undefined,
   resources?: ArtifactResourceScope,
 ): Promise<
   Result<ClientConfigurationDocument | undefined, ClientConfigurationFileError>
@@ -128,6 +129,7 @@ export const readClientConfigurationFiles = async (
     if (document.value !== undefined) {
       const environment = clientRegistrationEnvironment(
         document.value,
+        client,
         path === client.configPath ? writeOverrides : undefined,
         "fragment",
         platform,
@@ -146,6 +148,7 @@ export const readClientConfigurationFiles = async (
   }
   const environment = clientRegistrationEnvironment(
     effectiveClientConfiguration(documents, undefined, platform),
+    client,
     writeOverrides,
     "effective",
     platform,
@@ -233,6 +236,14 @@ export const effectiveClientConfiguration = (
             return document === undefined ? [] : [document];
           },
         );
+  return mergeClientConfigurationDocuments(documents, platform);
+};
+
+/** Merge admitted layers without re-reading or changing their source documents. */
+export const mergeClientConfigurationDocuments = (
+  documents: readonly ClientConfigurationDocument[],
+  platform: NodeJS.Platform = process.platform,
+): ClientConfigurationDocument | undefined => {
   const last = documents.at(-1);
   if (last === undefined) return undefined;
   if (documents.length === 1) return last;

@@ -33,11 +33,13 @@ const withOmittableDefaults = (schema: z.ZodObject): z.ZodObject => {
     fillsOmission(field),
   );
   if (omittable.length === 0) return schema;
-  return schema.safeExtend(
+  const metadata = schema.meta();
+  const result = schema.safeExtend(
     Object.fromEntries(
       omittable.map(([key, field]) => [key, optionalWithMetadata(field)]),
     ),
   );
+  return metadata === undefined ? result : result.meta(metadata);
 };
 
 /** Let the object parser decide omission; Incur advertises required outputs. */

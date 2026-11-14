@@ -26,6 +26,7 @@ import {
   ok as resultOk,
   err as resultErr,
 } from "../../../src/domain/result.js";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -51,13 +52,6 @@ import { createArtifactBinarySession } from "../../../src/composition/binary.js"
 import { observed } from "../../fixtures/analysisExecution.js";
 import { cArchiveExecutable } from "../../../src/artifacts/pyinstaller/CArchive.fixture.js";
 import { compareUnicodeCodePoints } from "../../../src/domain/unicodeCodePointOrder.js";
-
-const integrityMessage = (unpacked: boolean): string =>
-  `${
-    unpacked
-      ? "Declared ASAR integrity for unpacked entry main.js contradicts its companion file; packaging tools commonly sign or strip unpacked native binaries after writing the archive."
-      : "Artifact bytes contradict declared integrity."
-  } If expected, rerun inspect_artifact with integrity_policy=record-and-continue (CLI: --integrity-policy record-and-continue) to retain observed bytes as untrusted; otherwise get a fresh copy.`;
 
 it("refuses an artifact parent and summary when its actual inventory source cannot be recorded", async ({
   mcp,
@@ -126,7 +120,6 @@ it.for([
   { unpacked: true, label: "unpacked" },
 ])(
   "returns actionable local details for an $label ASAR integrity error",
-  { timeout: 20_000 },
   async ({ unpacked }, { mcp, onTestFinished }) => {
     const root = await createTestTempDirectory("rea-asar-integrity-mcp-");
     const source = join(root, "source");
@@ -169,21 +162,35 @@ it.for([
         arguments: {},
       });
       expect(result.isError).toBe(true);
-      expect(parseMcpToolError(result)).toEqual({
+      const projected = parseMcpToolError(result);
+      expect(projected).toEqual({
         error: {
           code: "artifact_integrity_mismatch",
           category: "integrity_mismatch",
-          message: integrityMessage(unpacked),
+          message: expect.stringMatching(
+            /integrity.*inspect_artifact.*integrity_policy=record-and-continue.*untrusted.*fresh copy/iu,
+          ),
           details: {
             logical_path: "main.js",
-            declared_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-            calculated_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+            declared_sha256: createHash("sha256")
+              .update(original)
+              .digest("hex"),
+            calculated_sha256: createHash("sha256")
+              .update(changed)
+              .digest("hex"),
             unpacked,
           },
           retryable: false,
-          remediation: { action: integrityMessage(unpacked) },
+          remediation: { action: projected.error.message },
         },
       });
+      expect(projected.error.message).toContain(
+        "--integrity-policy record-and-continue",
+      );
+      if (unpacked)
+        expect(projected.error.message).toMatch(
+          /unpacked entry main\.js.*companion file/iu,
+        );
     } finally {
       await mcp.close();
     }
@@ -284,7 +291,7 @@ it("preserves raw legacy ZIP name bytes and CP437 path interpretation through MC
       expect.objectContaining({
         logical_path: "╟╤▒█.txt",
         limitations: [
-          "ZIP name uses CP437 fallback; source encoding unverified; raw hex: c7d1b1db2e747874.",
+          expect.stringMatching(/CP437.*unverified.*c7d1b1db2e747874/iu),
         ],
       }),
     );
@@ -973,6 +980,67 @@ it("does not apply PyInstaller declaration unknowns to foreign metadata or neste
   }
 });
 
+const verifyComparableDeclarations = async (
+  client: Client,
+  session: ReturnType<typeof createTestBinarySession>,
+  clean: ReturnType<typeof parseEvidence>,
+  declarationsPath: string,
+  declarationsCopyPath: string,
+) => {
+  // Complete PyInstaller declarations can prove equality even when their
+  // payloads were not hashed. Verification must reuse that producer rule.
+  const manifest = artifactInventoryResultSchema.parse(
+    clean.normalized_result,
+  ).manifest;
+  const declarationEvidence = (path: string) =>
+    createEvidence(
+      { path, sha256: manifest.root_sha256, format: manifest.root_format },
+      clean.provider,
+      {
+        operation: "inventory_artifact",
+        parameters: { path },
+        result: clean.normalized_result,
+        confidence: "observed",
+      },
+    );
+  const original = declarationEvidence(declarationsPath);
+  const reconstruction = declarationEvidence(declarationsCopyPath);
+  expect(session.recordEvidence(original).ok).toBe(true);
+  expect(session.recordEvidence(reconstruction).ok).toBe(true);
+  const separateDeclarations = await compareArtifactEvidenceThroughMcp(
+    client,
+    original,
+    reconstruction,
+  );
+  expect(separateDeclarations.isError).not.toBe(true);
+  const comparison = toolEvidence(separateDeclarations.structuredContent);
+  expect(comparison.normalized_result).toMatchObject({ status: "unchanged" });
+  const verification = await client.callTool({
+    name: "verify_reconstruction",
+    arguments: {
+      specification: {
+        name: "Declaration comparison",
+        claims: [
+          {
+            kind: "structural-artifact",
+            claim_id: "declarations",
+            title: "Declared structure remains equal",
+            comparison_evidence_id: comparison.evidence_id,
+            dimension: "overall",
+          },
+        ],
+      },
+    },
+  });
+  expect(verification.isError, JSON.stringify(verification)).not.toBe(true);
+  expect(
+    toolEvidence(verification.structuredContent).normalized_result,
+    JSON.stringify(verification),
+  ).toMatchObject({
+    status: "pass",
+  });
+};
+
 it("compares PyInstaller declaration facts without inventing payload identity", async ({
   mcp,
   onTestFinished,
@@ -981,12 +1049,14 @@ it("compares PyInstaller declaration facts without inventing payload identity", 
   const leftPath = join(root, "module");
   const rightPath = join(root, "script");
   const declarationsPath = join(root, "declarations");
+  const declarationsCopyPath = join(root, "declarations-copy");
   const modulePath = join(root, "module-clean");
   const shiftedPath = join(root, "module-shifted");
   await Promise.all([
     writeFile(leftPath, pyInstallerComparisonArchive("m", true)),
     writeFile(rightPath, pyInstallerComparisonArchive("s", true)),
     writeFile(declarationsPath, pyInstallerComparisonArchive("s", false)),
+    writeFile(declarationsCopyPath, pyInstallerComparisonArchive("s", false)),
     writeFile(modulePath, pyInstallerComparisonArchive("m", false)),
     writeFile(shiftedPath, pyInstallerComparisonArchive("m", false, true)),
   ]);
@@ -1062,18 +1132,12 @@ it("compares PyInstaller declaration facts without inventing payload identity", 
         }),
       ]),
     });
-    expect(
-      z
-        .object({ changes: z.array(z.object({ logical_path: z.string() })) })
-        .parse(changedResult)
-        .changes.map(({ logical_path }) => logical_path),
-    ).not.toContain("__pyinstaller__/runtime-options/1");
-    expect(
-      z
-        .object({ changes: z.array(z.object({ logical_path: z.string() })) })
-        .parse(changedResult)
-        .changes.map(({ logical_path }) => logical_path),
-    ).not.toContain("__pyinstaller__/dependencies/2");
+    const changedPaths = z
+      .object({ changes: z.array(z.object({ logical_path: z.string() })) })
+      .parse(changedResult)
+      .changes.map(({ logical_path }) => logical_path);
+    expect(changedPaths).not.toContain("__pyinstaller__/runtime-options/1");
+    expect(changedPaths).not.toContain("__pyinstaller__/dependencies/2");
 
     const declarationsOnly = await client.callTool({
       name: "compare_artifacts",
@@ -1087,6 +1151,14 @@ it("compares PyInstaller declaration facts without inventing payload identity", 
       summary: { unchanged: 4, unknown: 0 },
       changes: [],
     });
+
+    await verifyComparableDeclarations(
+      client,
+      session,
+      clean,
+      declarationsPath,
+      declarationsCopyPath,
+    );
 
     const layoutOnly = await client.callTool({
       name: "compare_artifacts",

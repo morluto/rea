@@ -15,6 +15,7 @@ import {
   analyzeAppleAssetCatalogs,
   collectInterfaceBuilderResourceKeys,
 } from "./AppleAssetCatalogAnalysis.js";
+import { waitFor } from "../../../tests/support/testWait.js";
 
 describe("Apple asset catalog traversal coverage", () => {
   it.for([false, true])(
@@ -146,8 +147,10 @@ describe("Apple asset catalog application workflow", () => {
         next_offset: null,
         truncated: false,
       });
-      expect(result.limitations).toContain(
-        "No compiled Assets.car catalog was found among the app bundle's regular files (symlinks are not followed); any resource keys are reported as unmatched.",
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          /Assets\.car.*symlinks.*not followed.*unmatched/iu,
+        ),
       );
     },
   );
@@ -224,8 +227,10 @@ it.skipIf(process.platform === "win32")(
         throw new Error("No catalog is present");
       },
     });
-    expect(result.limitations).toContain(
-      "Interface Builder resource-key joins may be incomplete because the decoded object inventory is incomplete.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /resource-key joins.*incomplete.*object inventory.*incomplete/iu,
+      ),
     );
   },
 );
@@ -362,7 +367,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
       },
     });
     expect(result.catalogs).toHaveLength(1);
-  }, 5_000);
+  });
 
   it("cancels the Interface Builder analysis and reports a catalog failure", async () => {
     let cancelled = false;
@@ -408,7 +413,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
       settled = true;
     });
     analysis.catch(() => undefined);
-    await vi.waitFor(() => expect(catalogStarted).toBe(true));
+    await waitFor(() => expect(catalogStarted).toBe(true));
     await new Promise((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     finishCatalog("[]");
@@ -448,7 +453,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
           signal: controller.signal,
           analyzeInterfaceBuilder: async () => emptyGraph,
         }).catch((cause: unknown) => cause);
-        await vi.waitFor(() => expect(access(ready)).resolves.toBeUndefined());
+        await waitFor(() => expect(access(ready)).resolves.toBeUndefined());
         controller.abort("stop asset inspection");
         expect(await settled).toMatchObject({ reason: "cancelled" });
         await expect(access(exited)).resolves.toBeUndefined();
@@ -558,8 +563,7 @@ it.each(["reported carutil", "tab-indented carutil", "observed assetutil"])(
     expect(error.cause).toBe(cause);
     expect(projectAnalysisError(error)).toMatchObject({
       code: "artifact_operation_failed",
-      message:
-        "Artifact is invalid or has changed. Get a fresh copy and try again.",
+      message: expect.stringMatching(/invalid.*changed.*fresh copy/iu),
       details: {
         operation: "inspect_asset_catalog",
         reason: "format",
@@ -743,7 +747,7 @@ it.skipIf(process.platform === "win32")(
         settled = true;
       });
     try {
-      await vi.waitFor(() => expect(access(exited)).resolves.toBeUndefined());
+      await waitFor(() => expect(access(exited)).resolves.toBeUndefined());
       expect(settled).toBe(false);
       controller.abort("late cancellation");
       expect(settled).toBe(false);

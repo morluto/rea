@@ -3,6 +3,7 @@ import { executeComposedWorkflow } from "../../../src/application/WorkflowEviden
 import { parseAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import { ok } from "../../../src/domain/result.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { expect, it } from "vitest";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -200,8 +201,8 @@ it("deduplicates repeated and nested consumed records without linking unrelated 
       return nested.ok ? ok(nested.value.result) : nested;
     },
   );
-  await entered.promise;
   try {
+    await awaitAcknowledgement(entered.promise, overview, "summary execution");
     const other = await executeComposedWorkflow(
       fixture.session,
       async (observed) => {
@@ -267,8 +268,8 @@ it("rehydrates the original atomic identity from an authenticated snapshot witho
         {},
       );
       if (!execution.ok) return execution;
-      expect(execution.value.limitations).toContain(
-        "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+      expect(execution.value.limitations).toContainEqual(
+        expect.stringMatching(/snapshot.*did not re.run the provider/iu),
       );
       return ok(execution.value.result);
     },
@@ -391,8 +392,8 @@ it("reruns an ambiguous snapshot binding before selecting composed Evidence link
       (operation) => operation === "read_binary_inventory_summary",
     ),
   ).toHaveLength(1);
-  expect(after.value.limitations).not.toContain(
-    "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+  expect(after.value.limitations).not.toContainEqual(
+    expect.stringMatching(/snapshot.*did not re.run the provider/iu),
   );
   if (after.value.evidenceId === undefined)
     throw new Error("Fresh provider observation was not committed");

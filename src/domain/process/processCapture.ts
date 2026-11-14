@@ -98,8 +98,8 @@ export type FileState = FileStateIdentity &
         readonly type: "symlink";
         readonly sha256: null;
         readonly symlink_target: string | null;
-        /** Exact stored target bytes; omitted by legacy captures. */
-        readonly symlink_target_hex?: string | undefined;
+        /** Exact stored target bytes; decoded text is only a display projection. */
+        readonly symlink_target_hex: string;
       }
     | {
         readonly type: "directory" | "other";
@@ -191,7 +191,7 @@ export type RecordProcessCaptureEvent = (
   index: number,
 ) => void;
 
-/** Observed process-tree settlement and the cleanup required by that state. */
+/** Observed process-tree settlement and subsequent owned-resource cleanup. */
 export type ProcessSettlement =
   | VerifiedProcessSettlement
   | {
@@ -204,7 +204,7 @@ export type VerifiedProcessSettlement =
   | {
       readonly state: "quiesced";
       readonly elapsed_ms: number;
-      readonly cleanup_outcome: "not_required";
+      readonly cleanup_outcome: "not_required" | "cleaned";
     }
   | {
       readonly state: "alive_at_deadline" | "unverifiable";
@@ -353,6 +353,10 @@ export interface IncompleteProcessCaptureObservations {
   readonly manifest: PartialProcessObservationField<
     UnverifiedProcessCapture["manifest"]
   >;
+  /** Facts retained after completion failed; historical records may omit them. */
+  readonly residual_unknowns?:
+    | UnverifiedProcessCapture["residual_unknowns"]
+    | undefined;
 }
 
 const fileStateSchema = z.discriminatedUnion("type", [
@@ -371,20 +375,9 @@ const fileStateSchema = z.discriminatedUnion("type", [
       type: z.literal("symlink"),
       sha256: z.null(),
       symlink_target: z.string().nullable(),
-      symlink_target_hex: z
-        .string()
-        .regex(/^(?:[a-f0-9]{2})+$/u)
-        .optional(),
+      symlink_target_hex: z.string().regex(/^(?:[a-f0-9]{2})+$/u),
     })
     .superRefine((file, context) => {
-      if (file.symlink_target_hex === undefined) {
-        if (file.symlink_target === null)
-          context.addIssue({
-            code: "custom",
-            message: "An unknown symlink target requires its exact bytes",
-          });
-        return;
-      }
       const { text } = observedSymlinkTarget(
         Buffer.from(file.symlink_target_hex, "hex"),
       );
@@ -440,7 +433,7 @@ const processSettlementSchema = z.discriminatedUnion("state", [
   z.object({
     state: z.literal("quiesced"),
     elapsed_ms: z.int().nonnegative(),
-    cleanup_outcome: z.enum(["not_required", "failed"]),
+    cleanup_outcome: z.enum(["not_required", "cleaned", "failed"]),
   }),
   z.object({
     state: z.enum(["alive_at_deadline", "unverifiable"]),
@@ -551,7 +544,7 @@ const processCaptureShapeSchema = z.strictObject({
     z.object({
       state: z.literal("quiesced"),
       elapsed_ms: z.int().nonnegative(),
-      cleanup_outcome: z.literal("not_required"),
+      cleanup_outcome: z.enum(["not_required", "cleaned"]),
     }),
     z.object({
       state: z.enum(["alive_at_deadline", "unverifiable"]),
@@ -666,6 +659,8 @@ const incompleteProcessCaptureObservationsSchema = z.strictObject({
   manifest: partialObservationFieldSchema(
     processCaptureShapeSchema.shape.manifest,
   ),
+  residual_unknowns:
+    processCaptureShapeSchema.shape.residual_unknowns.optional(),
 });
 
 const partialCleanupReportSchema = z.strictObject({
@@ -810,7 +805,10 @@ export const partialProcessCaptureObservationSchema = z
       capture.settlement.state === "quiesced"
         ? {
             ...capture.settlement,
-            cleanup_outcome: "not_required" as const,
+            cleanup_outcome:
+              capture.settlement.cleanup_outcome === "cleaned"
+                ? ("cleaned" as const)
+                : ("not_required" as const),
           }
         : { ...capture.settlement, cleanup_outcome: "cleaned" as const };
     const validationCapture: UnverifiedProcessCapture = {

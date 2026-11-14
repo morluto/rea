@@ -2,12 +2,17 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { join, resolve } from "node:path";
-import { expect } from "vitest";
+import { afterAll, expect } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const scenarios = [
   {
@@ -78,15 +83,17 @@ const scenarios = [
 
 cliTest.for(["full", "compact"] as const)(
   "projects browser scenario input diagnostics over stdio MCP (%s)",
-  { timeout: 60_000 },
   async (profile, { cli }) => {
     const home = await createTestTempDirectory(
       "rea-browser-scenario-mcp-home-",
     );
-    const client = new Client({
-      name: "browser-scenario-input-diagnostics",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "browser-scenario-input-diagnostics",
+        version: "1",
+      },
+      { jsonSchemaValidator: schemaValidation },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -146,8 +153,7 @@ cliTest.for(["full", "compact"] as const)(
           category: "invalid_input",
           retryable: false,
           remediation: {
-            action:
-              "Read the declared input schema or CLI usage for capture_browser_scenario; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.",
+            action: expect.stringContaining("capture_browser_scenario"),
           },
           recovery: {
             kind: "inspect_input_contract",

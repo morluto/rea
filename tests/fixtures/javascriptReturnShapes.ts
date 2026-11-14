@@ -1,3 +1,4 @@
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { writeFile } from "node:fs/promises";
@@ -9,6 +10,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../src/domain/java
 import { projectedExportReturnShapesSchema } from "../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 import type { TestCli } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "./mcpSchemaValidation.js";
 
 const exportedReturnFields = (value: unknown) => {
   const analysis = javascriptApplicationAnalysisResultSchema.parse(value);
@@ -82,7 +84,11 @@ export const verifyJavaScriptReturnShapes = async (
     check,
     fileName,
   );
-  const client = new Client({ name: "return-shapes-e2e", version: "1" });
+  const validation = createMcpSchemaValidation();
+  const client = new Client(
+    { name: "return-shapes-e2e", version: "1" },
+    { jsonSchemaValidator: validation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -91,7 +97,7 @@ export const verifyJavaScriptReturnShapes = async (
     stderr: "pipe",
   });
   transport.stderr?.on("data", () => undefined);
-  try {
+  await withVerifierCleanup(async () => {
     await client.connect(transport);
     const response = await client.callTool({
       name: "analyze_javascript_application",
@@ -109,8 +115,5 @@ export const verifyJavaScriptReturnShapes = async (
       ),
     );
     await client.ping();
-  } finally {
-    await client.close();
-    await transport.close();
-  }
+  }, [() => client.close(), () => transport.close(), () => validation.clear()]);
 };

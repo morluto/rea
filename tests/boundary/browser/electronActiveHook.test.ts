@@ -1,10 +1,11 @@
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { createTestProcessRegistry } from "../../support/process/processFixture.js";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, onTestFinished } from "vitest";
 
 import { electronActiveTimelineEventSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -47,6 +48,7 @@ class BrowserWindow extends EventEmitter {
     this.id = 3;
     this.webContents = new WebContents();
     this.options = options;
+    this.webContents.session = options.webPreferences.session ?? (options.webPreferences.partition ? createSession() : session);
     this.webContents.getLastWebPreferences = () => options.webPreferences;
     app.emit("browser-window-created", {}, this);
   }
@@ -69,9 +71,10 @@ const shell = {
 };
 const createSession = () => {
   const value = new EventEmitter();
-  value.setPermissionRequestHandler = () => undefined;
-  value.setPermissionCheckHandler = () => undefined;
+  value.setPermissionRequestHandler = function(handler) { this.requestHandler = handler; };
+  value.setPermissionCheckHandler = function(handler) { this.checkHandler = handler; };
   value.setCertificateVerifyProc = () => undefined;
+  app.emit("session-created", value);
   return value;
 };
 const session = createSession();
@@ -89,6 +92,7 @@ module.exports = {
   session: {
     defaultSession: session,
     fromPartition: () => customSession,
+    fromPath: () => customSession,
   },
   shell,
   utilityProcess,
@@ -108,8 +112,8 @@ window.webContents.emit(longEventName);
 const utility = electron.utilityProcess.fork("utility.js");
 utility.emit("message", { data: { value: true } });
 utility.postMessage({ value: true });
-electron.session.defaultSession.emit("will-download", window.webContents, { cancel() {} });
-electron.session.fromPartition("persist:custom").emit("will-download", window.webContents, { cancel() {} });
+electron.session.defaultSession.emit("will-download", {}, { cancel() {} }, window.webContents);
+electron.session.fromPartition("persist:custom").emit("will-download", {}, { cancel() {} }, window.webContents);
 const defaultPopupDecision = window.webContents.windowOpenHandler({ url: "https://default-popup.invalid" });
 window.webContents.setWindowOpenHandler(() => ({ action: "allow" }));
 const popupDecision = window.webContents.windowOpenHandler({ url: "https://popup.invalid" });
@@ -225,7 +229,10 @@ it("retains active hook evidence within its event-retention budget", async () =>
     snapshot.events.filter(
       (event) => event.kind === "download" && event.phase === "blocked",
     ),
-  ).toHaveLength(2);
+  ).toEqual([
+    expect.objectContaining({ target: "webContents:12" }),
+    expect.objectContaining({ target: "webContents:12" }),
+  ]);
   const ipc = snapshot.events.find(
     (event) => event.kind === "main-handler-invocation",
   );
@@ -246,6 +253,91 @@ it("retains active hook evidence within its event-retention budget", async () =>
     ]),
   );
 });
+
+it.each([
+  "ready-default",
+  "deferred-default",
+  "partition",
+  "path",
+  "window",
+  "engine",
+])(
+  "denies permissions before app registration and after replacement for %s sessions",
+  async (admission) => {
+    const root = await createTestTempDirectory("rea-electron-session-policy-");
+    temporary.push(root);
+    await writeElectronFixture(
+      root,
+      admission === "deferred-default"
+        ? electronModuleSource.replace(
+            "app.isReady = () => true",
+            "app.isReady = () => false",
+          )
+        : electronModuleSource,
+    );
+    const script = join(root, "permissions.cjs");
+    await writeFile(
+      script,
+      `const electron = require("electron");
+const admission = ${JSON.stringify(admission)};
+if (admission === "deferred-default") electron.app.emit("ready");
+const engineSession = {
+  setPermissionRequestHandler(handler) { this.requestHandler = handler; },
+  setPermissionCheckHandler(handler) { this.checkHandler = handler; },
+};
+if (admission === "engine") electron.app.emit("session-created", engineSession);
+const selected = admission === "partition" ? electron.session.fromPartition("persist:caller")
+  : admission === "path" ? electron.session.fromPath("/caller/profile")
+  : admission === "window" ? new electron.BrowserWindow({ webPreferences: { partition: "caller" } }).webContents.session
+  : admission === "engine" ? engineSession : electron.session.defaultSession;
+const webContents = { id: 45 };
+const query = () => {
+  let granted = true;
+  if (selected.requestHandler) selected.requestHandler(webContents, "notifications", value => { granted = value; });
+  return { granted, checked: selected.checkHandler ? selected.checkHandler(webContents, "notifications") : true };
+};
+const initial = query();
+let applicationCalls = 0;
+selected.setPermissionRequestHandler((_contents, _permission, callback) => { applicationCalls++; callback(true); });
+selected.setPermissionCheckHandler(() => { applicationCalls++; return true; });
+const replaced = query();
+selected.setPermissionRequestHandler(null);
+selected.setPermissionCheckHandler(null);
+const cleared = query();
+new electron.BrowserWindow({ webPreferences: { session: selected } });
+console.log(JSON.stringify({ initial, replaced, cleared, applicationCalls,
+  snapshot: globalThis.__reaElectronActiveSnapshot() }));`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const result = JSON.parse(execution.stdout.trim());
+    expect(result.initial).toEqual({ granted: false, checked: false });
+    expect(result.replaced).toEqual(result.initial);
+    expect(result.cleared).toEqual(result.initial);
+    expect(result.applicationCalls).toBe(0);
+    expect(result.snapshot.hook_error).toBe(false);
+    expect(
+      result.snapshot.events.filter(
+        (event: { kind: string }) => event.kind === "permission",
+      ),
+    ).toEqual(
+      Array.from({ length: 3 }, () => [
+        expect.objectContaining({
+          event: "permission-request",
+          phase: "blocked",
+          target: "webContents:45",
+        }),
+        expect.objectContaining({
+          event: "permission-check",
+          phase: "blocked",
+          target: "webContents:45",
+        }),
+      ]).flat(),
+    );
+    expect(JSON.stringify(result.snapshot)).not.toContain("notifications");
+    electronActiveTimelineEventSchema.array().parse(result.snapshot.events);
+  },
+);
 
 it("blocks synchronous shell effects with their native return contracts and retains argument shapes only", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-shell-");
@@ -814,6 +906,38 @@ process.stdout.write(JSON.stringify({
   ]);
   expect(hooked).toEqual(plain);
   expect(invocations).toEqual(["ch"]);
+});
+
+it("does not infer hook dispatch from an application's listener metadata", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-indirect-owner-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "indirect-owner.cjs");
+  await writeFile(
+    script,
+    `const {ipcMain}=require("electron");
+ipcMain.on("seed",()=>{});
+let calls=0;
+const outer=()=>{calls++;};
+outer.listener=ipcMain.rawListeners("seed")[0];
+ipcMain.on("outer",outer);
+ipcMain.emit("outer", {sender:{id:9}});
+ipcMain.removeListener("outer",outer);
+const events=globalThis.__reaElectronActiveSnapshot().events;
+process.stdout.write(JSON.stringify({calls,remaining:ipcMain.listenerCount("outer"),
+ invocations:events.filter(e=>e.kind==="main-event-invocation"&&e.channel==="outer").length,
+ gaps:events.filter(e=>e.kind==="ipc-observation-gap"&&e.channel==="outer").map(e=>e.event)}));`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(JSON.parse(execution.stdout)).toEqual({
+    calls: 1,
+    remaining: 0,
+    invocations: 0,
+    gaps: ["listener-chain"],
+  });
 });
 
 it("keeps ipcMain once self-removal through an on decorator that wraps the hook", async () => {
@@ -1559,7 +1683,7 @@ it.each([
     depth: 16,
     prototypeDepth: 0,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 1,
   },
   {
@@ -1599,7 +1723,7 @@ it.each([
     depth: 1,
     prototypeDepth: 1,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 0,
   },
   {
@@ -1623,7 +1747,7 @@ it.each([
     depth: 1,
     prototypeDepth: 16,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 0,
   },
   {
@@ -3643,28 +3767,19 @@ const runNode = async (
   readonly stdout: string;
   readonly stderr: string;
 }> => {
-  const hook = await stageHook(root, sourceHook);
-  return new Promise((resolve, reject) => {
-    const child = spawn(
+  const processes = createTestProcessRegistry();
+  onTestFinished(() => processes.shutdown());
+  return withVerifierCleanup(async () => {
+    const hook = await stageHook(root, sourceHook);
+    const result = await processes.run(
       process.execPath,
       [...nodeArguments, ...(preloadHook ? ["-r", hook] : []), script],
-      {
-        cwd: root,
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
+      { cwd: root, env: process.env },
     );
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.once("error", reject);
-    child.once("close", (code) =>
-      resolve({
-        code,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-      }),
-    );
-  });
+    return {
+      code: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  }, [() => processes.shutdown()]);
 };

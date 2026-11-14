@@ -2,11 +2,9 @@ import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
-import {
-  pwntoolsHostRequirement,
-  pwntoolsHostSupported,
-} from "./PwntoolsDecoder.js";
+import { pwntoolsHostSupported } from "./PwntoolsDecoder.js";
 import { pwntoolsDecoderFailure } from "./PwntoolsFailures.js";
+import { resolvePwntoolsLimits } from "../../domain/native/pwntoolsResourceLimits.js";
 
 it.each([undefined, null, false, 0, "stop", { stop: true }, new Error("stop")])(
   "preserves opaque cancellation from command and artifact owners: %s",
@@ -29,7 +27,75 @@ it.each([undefined, null, false, 0, "stop", { stop: true }, new Error("stop")])(
   },
 );
 
-it("names pwntools_timeout_ms and leaves cpuSeconds and byte allowances fixed", () => {
+it("keeps the caller-selected pwntools input-limit source", () => {
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new ArtifactReaderFailure(
+        "limit",
+        "artifact exceeds the input allowance",
+        {},
+      ),
+      "artifact-read",
+      "/selected",
+      "/python",
+      {},
+      {
+        operation: "inspect_binary_layout",
+        providerId: "pwntools",
+        producerLimits: resolvePwntoolsLimits(undefined, 4096),
+        inputBytesSource: "request",
+      },
+    ),
+  );
+  expect(projected.details?.limit).toMatchObject({
+    setting: "pwntools.max_input_bytes",
+    effective_value: 4096,
+    source: "request",
+    update_mode: "parameter",
+    pending_restart: false,
+    parameter: "producer_limits.input_bytes",
+  });
+  expect(projected.remediation.action).toContain(
+    "producer_limits.input_bytes is 4096 bytes",
+  );
+  expect(projected.remediation.action).not.toContain("launch default of");
+});
+
+it("names a runtime pwntools ceiling instead of the built-in default", () => {
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new ArtifactReaderFailure(
+        "limit",
+        "artifact exceeds the input allowance",
+        {},
+      ),
+      "artifact-read",
+      "/selected",
+      "/python",
+      {},
+      {
+        operation: "inspect_binary_layout",
+        providerId: "pwntools",
+        producerLimits: resolvePwntoolsLimits(undefined, 67_108_864),
+        inputBytesSource: "runtime",
+      },
+    ),
+  );
+  expect(projected.details?.limit).toMatchObject({
+    effective_value: 67_108_864,
+    source: "runtime",
+    update_mode: "runtime",
+  });
+  expect(projected.remediation.action).toContain(
+    "67108864 bytes (source runtime)",
+  );
+  expect(projected.remediation.action).toContain("update_analysis_settings");
+  expect(projected.message).not.toContain(
+    "Selected producer_limits.input_bytes is",
+  );
+});
+
+it("distinguishes the wall deadline from caller-selected producer resource budgets", () => {
   const projected = projectAnalysisError(
     pwntoolsDecoderFailure(
       new OwnedCommandFailure("timeout", "deadline expired"),
@@ -48,8 +114,9 @@ it("names pwntools_timeout_ms and leaves cpuSeconds and byte allowances fixed", 
   expect(projected.message).toContain("4500 ms");
   expect(projected.message).toContain("pwntools_timeout_ms");
   expect(projected.remediation.action).toContain("--pwntools-timeout-ms");
-  expect(projected.remediation.action).toContain("cpuSeconds is 30");
-  expect(projected.remediation.action).toContain("no runtime override");
+  expect(projected.remediation.action).toContain("cpu_seconds=30");
+  expect(projected.remediation.action).toContain("producer_limits");
+  expect(projected.remediation.action).toContain("no REA restart");
   expect(projected.remediation.action).toContain("67108864");
 });
 
@@ -80,12 +147,12 @@ it("names the reported file-size allowance instead of address space", () => {
   expect(projected.code).toBe("resource_constraint");
   expect(projected.message).toContain("file_size_bytes");
   expect(projected.message).toContain("4096");
-  expect(projected.message).toContain("outputBytes");
+  expect(projected.message).toContain("producer_limits.file_bytes");
   expect(projected.message).toContain("67108864");
   expect(projected.remediation.action).toContain("4096");
   expect(projected.remediation.action).toContain("67108864");
   expect(projected.remediation.action).toContain("tighter inherited limit");
-  expect(projected.remediation.action).not.toContain("address-space");
+  expect(projected.remediation.action).not.toContain("address_space_bytes");
   expect(projected.remediation.action).not.toContain("1111");
   expect(projected.remediation.action).not.toContain("3221225472");
 });
@@ -105,12 +172,12 @@ it("names the file-size cap when SIGXFSZ has no reported limit", () => {
       { marker: { resource: "file-size", failure: null } },
     ),
   );
-  expect(projected.remediation.action).toContain("outputBytes");
+  expect(projected.remediation.action).toContain("producer_limits.file_bytes");
   expect(projected.remediation.action).toContain("67108864");
   expect(projected.remediation.action).toContain("file_size_bytes");
   expect(projected.remediation.action).toContain("not reported");
   expect(projected.remediation.action).toContain("tighter inherited limit");
-  expect(projected.remediation.action).not.toContain("address-space");
+  expect(projected.remediation.action).not.toContain("address_space_bytes");
   expect(projected.remediation.action).not.toContain("3221225472");
 });
 
@@ -132,7 +199,7 @@ it("names memory in the marker recovery for an allocation failure", () => {
   expect(projected.code).toBe("resource_constraint");
   expect(projected.details).toMatchObject({ resource: "memory" });
   expect(projected.remediation.action).toContain("memory");
-  expect(projected.remediation.action).toContain("address-space");
+  expect(projected.remediation.action).toContain("address_space_bytes");
   expect(projected.remediation.action).toContain("3221225472");
 });
 
@@ -154,10 +221,8 @@ it("retains legacy owner causes without guessing cancellation from error text", 
   );
 });
 
-it("names the refused host instead of implying the target was refused", () => {
+it("restricts the verified host profile to Linux x64", () => {
+  expect(pwntoolsHostSupported("linux", "x64")).toBe(true);
   expect(pwntoolsHostSupported("linux", "arm64")).toBe(false);
-  const message = pwntoolsHostRequirement("linux", "arm64");
-  expect(message).toContain("Linux x64 host");
-  expect(message).toContain("this host is linux/arm64");
-  expect(message).toContain("The selected target was not read.");
+  expect(pwntoolsHostSupported("darwin", "x64")).toBe(false);
 });

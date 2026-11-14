@@ -62,7 +62,7 @@ export const isImmutableEvidenceBundle = (
   typeof input === "object" && input !== null && immutableBundles.has(input);
 
 /** Caller input has valid shape but is not in authenticated canonical form. */
-export class NonCanonicalEvidenceBundleError extends TypeError {
+class NonCanonicalEvidenceBundleError extends TypeError {
   constructor() {
     super("Evidence bundle manifests are not canonical");
     this.name = "NonCanonicalEvidenceBundleError";
@@ -70,7 +70,7 @@ export class NonCanonicalEvidenceBundleError extends TypeError {
 }
 
 /** Caller input lists the same Evidence record more than once. */
-export class DuplicateEvidenceRecordError extends TypeError {
+class DuplicateEvidenceRecordError extends TypeError {
   constructor() {
     super("Evidence bundle contains duplicate record IDs");
     this.name = "DuplicateEvidenceRecordError";
@@ -246,7 +246,9 @@ export const evidenceBundleForTarget = (
   );
 };
 
-const referencedEvidenceIds = (unknown: ResidualUnknown): readonly string[] => [
+export const referencedEvidenceIds = (
+  unknown: ResidualUnknown,
+): readonly string[] => [
   ...unknown.supporting_evidence_ids,
   ...unknown.contradicting_evidence_ids,
   ...unknown.mutation_evidence_ids,
@@ -448,13 +450,7 @@ const validateUnknownGraph = (
     unknownById.set(id, head);
   }
   for (const unknown of unknowns) {
-    const referencedEvidence = [
-      ...unknown.supporting_evidence_ids,
-      ...unknown.contradicting_evidence_ids,
-      ...unknown.mutation_evidence_ids,
-      ...(unknown.resolution?.evidence_ids ?? []),
-    ];
-    for (const evidenceId of referencedEvidence)
+    for (const evidenceId of referencedEvidenceIds(unknown))
       if (!evidenceById.has(evidenceId))
         throw new InvalidResidualUnknownGraphError({
           kind: "missing_evidence",

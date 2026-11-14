@@ -101,9 +101,16 @@ it("starts child finalization synchronously and shares concurrent closes", async
   ]);
   const first = owner.close();
   expect(calls).toBe(1);
-  expect(owner.close()).toBe(first);
+  const second = owner.close();
+  let secondSettled = false;
+  void second.then(() => {
+    secondSettled = true;
+  });
+  await Promise.resolve();
+  expect(secondSettled).toBe(false);
   complete?.();
   expect(await first).toBeUndefined();
+  expect(await second).toBeUndefined();
   expect(await owner.close()).toBeUndefined();
   expect(calls).toBe(1);
 });
@@ -213,8 +220,6 @@ it.each(["pending", "already recovered"] as const)(
     expect(source.cleanupIncomplete).toBe(false);
     expect(first?.cleanupIncomplete).toBe(true);
     expect(second?.cleanupIncomplete).toBe(true);
-    expect(first?.cleanupResources).toContain("/delegated");
-    expect(second?.cleanupResources).toContain("/delegated");
     expect(first?.cleanupResources).toEqual(["/delegated"]);
     expect(second?.cleanupResources).toEqual(["/delegated"]);
     expect(await owner.close()).toBeUndefined();

@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "./jsonPointer.js";
 import { BrowserObservationError } from "./browserObservationError.js";
 import { EvidenceFileError } from "./evidenceErrors.js";
 import type { AnalysisError } from "./analysisErrorBase.js";
@@ -48,20 +49,13 @@ const excludeSnapshotIdentity = (
   return { ...snapshot, path, admitted_sha256 };
 };
 
-/** Keep a real JSON-pointer ancestor when a property identity is explicitly excluded. */
-export const redactExplicitPointer = (
-  pointer: string,
-  values: readonly string[],
-): string =>
-  redactSensitivePointer(pointer, (value) => redactExplicitText(value, values));
-
 const redactSensitivePointer = (
   pointer: string,
   text: (value: string) => string,
 ): string => {
   let parent = "";
   for (const segment of pointer.split("/").slice(1)) {
-    const decoded = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+    const decoded = unescapeJsonPointerToken(segment);
     const child = `${parent}/${segment}`;
     if (text(decoded) !== decoded || text(child) !== child) return parent;
     parent = child;
@@ -91,6 +85,9 @@ export const redactSensitiveFailure = (
   // Other observation owners already apply their format-aware exclusions.
   if (redacted !== error && error.partialObservation !== undefined)
     redacted.retainPartialObservation(error.partialObservation);
+  if (redacted !== error)
+    for (const secondary of error.secondaryFailures)
+      redacted.retainSecondaryFailure(redactSensitiveFailure(secondary, text));
   return redacted === error ? error : mirrorCleanup(error, redacted, text);
 };
 
@@ -230,6 +227,9 @@ const redactFailure = (
     return new AnalysisCancelledError(error.operation, {
       ...context,
       cause: error.cause,
+      ...(error.userMessage === undefined
+        ? {}
+        : { userMessage: text(error.userMessage) }),
     });
   if (error instanceof AnalysisTimeoutError)
     return new AnalysisTimeoutError(error.operation, error.timeoutMs, {
@@ -240,6 +240,7 @@ const redactFailure = (
       ...(error.remediationAction === undefined
         ? {}
         : { remediationAction: text(error.remediationAction) }),
+      ...(error.limit === undefined ? {} : { limit: error.limit }),
     });
   if (error instanceof AnalysisAccessDeniedError)
     return new AnalysisAccessDeniedError(
@@ -271,11 +272,16 @@ const redactFailure = (
       error.issues.map(issueProjection),
     );
   if (error instanceof AnalysisOutputError)
-    return new AnalysisOutputError(
-      error.operation,
-      text(error.reason),
-      context,
-    );
+    return new AnalysisOutputError(error.operation, text(error.reason), {
+      ...context,
+      ...(error.userMessage === undefined
+        ? {}
+        : { userMessage: text(error.userMessage) }),
+      ...(error.remediationAction === undefined
+        ? {}
+        : { remediationAction: text(error.remediationAction) }),
+      cleanupOnly: error.cleanupOnly,
+    });
   if (error instanceof AnalysisCapabilityUnavailableError)
     return new AnalysisCapabilityUnavailableError(
       error.providerId,
@@ -286,6 +292,14 @@ const redactFailure = (
         ...(error.userMessage === undefined
           ? {}
           : { userMessage: text(error.userMessage) }),
+        ...(error.remediationAction === undefined
+          ? {}
+          : { remediationAction: text(error.remediationAction) }),
+        ...(error.fallbackRemediationAction === undefined
+          ? {}
+          : {
+              fallbackRemediationAction: text(error.fallbackRemediationAction),
+            }),
         ...(error.siblingOperations === undefined
           ? {}
           : { siblingOperations: error.siblingOperations }),
@@ -308,7 +322,11 @@ const redactFailure = (
       error.resource,
       text(error.reason),
       error.reportedLimits === null ? null : diagnostics(error.reportedLimits),
-      { ...context, ...resourceConstraintRecovery(error, text) },
+      {
+        ...context,
+        ...resourceConstraintRecovery(error, text),
+        ...(error.limit === undefined ? {} : { limit: error.limit }),
+      },
     );
   if (error instanceof ProviderCleanupError)
     return new ProviderCleanupError(

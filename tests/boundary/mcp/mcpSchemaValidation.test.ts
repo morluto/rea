@@ -1,5 +1,27 @@
-import { expect, it } from "vitest";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
+import { expect, it, vi } from "vitest";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+it("compiles a listed tool's validator only when it first validates", () => {
+  // The SDK requests a validator for every listed tool before its first call.
+  const compile = vi.spyOn(AjvJsonSchemaValidator.prototype, "getValidator");
+  const validation = createMcpSchemaValidation();
+  try {
+    const listed = [
+      { type: "string" },
+      { type: "integer" },
+      { type: "boolean" },
+    ];
+    const validators = listed.map((schema) => validation.getValidator(schema));
+    expect(compile).not.toHaveBeenCalled();
+    expect(validators[1]?.(7).valid).toBe(true);
+    expect(validators[1]?.("seven").valid).toBe(false);
+    expect(compile).toHaveBeenCalledTimes(1);
+  } finally {
+    compile.mockRestore();
+    validation.clear();
+  }
+});
 
 it("reuses equal schemas and recompiles changed schemas sharing an id", () => {
   const validation = createMcpSchemaValidation();

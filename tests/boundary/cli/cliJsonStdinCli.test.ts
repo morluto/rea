@@ -4,7 +4,6 @@ import { pathToFileURL } from "node:url";
 import { expect } from "vitest";
 
 import { nativeJsonParseRequiredBytes } from "../../../src/application/JsonInputFile.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { waitForExit } from "../../support/process/processFixture.js";
 
@@ -13,7 +12,10 @@ const probe = pathToFileURL(
 ).href;
 
 cliTest.for([
-  [Buffer.from("\uFEFF{}"), JSON_BYTE_ORDER_MARK_MESSAGE],
+  [
+    Buffer.from("\uFEFF{}"),
+    expect.stringMatching(/byte-order mark.*UTF-8 without a byte-order mark/iu),
+  ],
   [Buffer.from([0xf0, 0x28, 0x8c, 0xbc]), "JSON input is not valid UTF-8"],
   [Buffer.from('{"secret-value":'), undefined],
 ] as const)(
@@ -72,9 +74,7 @@ cliTest.for([false, true])(
       child.once("close", () => resolve());
     });
     await expect
-      .poll(() => /REA_TEST_STDIN_READ (\d+)/u.test(stderr), {
-        timeout: 10_000,
-      })
+      .poll(() => /REA_TEST_STDIN_READ (\d+)/u.test(stderr))
       .toBe(true);
     const heapSizeLimit = Number(
       /REA_TEST_STDIN_READ (\d+)/u.exec(stderr)?.[1],
@@ -180,9 +180,7 @@ cliTest.skipIf(process.platform === "win32").for(
       child.once("error", reject);
       child.once("close", () => resolve());
     });
-    await expect
-      .poll(() => stderr.includes("REA_TEST_STDIN_READ"), { timeout: 10_000 })
-      .toBe(true);
+    await expect.poll(() => stderr.includes("REA_TEST_STDIN_READ")).toBe(true);
     // Keep the pipe open: EOF must not be what releases the pending read.
     child.kill(signal);
     expect(await waitForExit(child, 5_000), stderr).toBe(true);

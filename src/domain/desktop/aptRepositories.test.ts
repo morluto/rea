@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { GPGV_A_ONLY, VENDOR_A } from "./aptKeys.fixture.js";
+import {
+  A_ARMORED,
+  GPGV_A_ONLY,
+  inlineSignedBy,
+  VENDOR_A,
+} from "./aptKeys.fixture.js";
 import {
   aptListFileName,
   dearmorPublicKeys,
@@ -9,10 +14,45 @@ import {
   isArmoredKey,
   isUbuntuProRepository,
   parseAptIndexTargets,
+  parseAptConfigShell,
   parseDeb822Sources,
   parseOneLineSources,
   validSignature,
 } from "./aptRepositories.js";
+
+describe("apt-config shell assignments", () => {
+  it.each([
+    "",
+    "/var/lib/apt/lists/",
+    "/tmp/user's lists/",
+    "/tmp/lists\ncustom/",
+    "/tmp/'\nPARTS=literal\n\\tail/",
+  ])("preserves a complete quoted value %j", (value) => {
+    const assignment = `LISTS='${value.replaceAll("'", "'\\''")}'\n`;
+    expect(parseAptConfigShell(assignment)).toEqual(
+      new Map([["LISTS", value]]),
+    );
+  });
+
+  it("keeps multiline values separate from adjacent assignments", () => {
+    const values = new Map([
+      ["LISTS", "/tmp/lists\ncustom/"],
+      ["PARTS", "/tmp/key's\nparts/"],
+      ["TRUSTED", "/tmp/trusted\\keys.gpg"],
+    ]);
+    const output = [...values]
+      .map(([name, value]) => `${name}='${value.replaceAll("'", "'\\''")}'\n`)
+      .join("");
+    expect(parseAptConfigShell(output)).toEqual(values);
+    expect(parseAptConfigShell(output.slice(0, -1))).toEqual(values);
+  });
+
+  it("does not promote an assignment-looking line from an incomplete quoted value", () => {
+    expect(parseAptConfigShell("LISTS='unclosed\nPARTS='decoy'\n")).toEqual(
+      new Map(),
+    );
+  });
+});
 
 /** `/etc/apt/sources.list.d/ubuntu.sources` from Ubuntu 24.04 arm64, its comment block shortened. */
 const UBUNTU_SOURCES = [
@@ -107,7 +147,7 @@ describe("parseOneLineSources", () => {
         components: [],
         architectures: [],
         signedBy: [],
-        inlineKey: false,
+        inlineKey: null,
       },
     ]);
   });
@@ -150,7 +190,7 @@ describe("parseDeb822Sources", () => {
     });
   });
 
-  it("skips disabled stanzas yet counts them, as apt does, and marks a Signed-By that holds the key itself", () => {
+  it("skips disabled stanzas yet counts them, as apt does, and reads a Signed-By that holds the key itself", () => {
     const stanzas = parseDeb822Sources(
       [
         "# a comment-only paragraph apt does not count",
@@ -180,9 +220,50 @@ describe("parseDeb822Sources", () => {
         uris: ["https://ppa.launchpadcontent.net/a/b/ubuntu"],
         architectures: ["arm64"],
         signedBy: [],
-        inlineKey: true,
+        inlineKey:
+          "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nmQINBGdummy\n-----END PGP PUBLIC KEY BLOCK-----\n",
       }),
     ]);
+  });
+
+  it("reads the key a PPA's Signed-By holds as add-apt-repository writes it, so it dearmors to the key", () => {
+    const [stanza] = parseDeb822Sources(
+      [
+        "Types: deb",
+        "URIs: https://ppa.launchpadcontent.net/freecad-maintainers/freecad-stable/ubuntu/",
+        "Suites: noble",
+        "Components: main",
+        inlineSignedBy(A_ARMORED),
+        "",
+      ].join("\n"),
+      "/etc/apt/sources.list.d/freecad-maintainers-ubuntu-freecad-stable-noble.sources",
+    );
+
+    expect(stanza).toMatchObject({ signedBy: [], inlineKey: A_ARMORED });
+    expect(
+      dearmorPublicKeys(Buffer.from(stanza?.inlineKey ?? ""))?.equals(
+        VENDOR_A.key,
+      ),
+    ).toBe(true);
+  });
+
+  it("reads a key that starts on the Signed-By line, with tab-indented lines and a field after it", () => {
+    const [stanza] = parseDeb822Sources(
+      [
+        "Types: deb",
+        "URIs: https://ppa.launchpadcontent.net/a/b/ubuntu/",
+        "Suites: noble",
+        `Signed-By: ${A_ARMORED.trimEnd().replaceAll("\n\n", "\n.\n").replaceAll("\n", "\n\t ")}`,
+        "# a comment between fields",
+        "Components: main",
+      ].join("\n"),
+      "a-ubuntu-b-noble.sources",
+    );
+
+    expect(stanza).toMatchObject({
+      components: ["main"],
+      inlineKey: A_ARMORED,
+    });
   });
 
   it("keeps a stanza's URIs and suites as lists and resolves a target's pair from them, without expanding every pair", () => {

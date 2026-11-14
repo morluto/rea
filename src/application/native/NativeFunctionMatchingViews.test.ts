@@ -1,7 +1,5 @@
-import {
-  projectAnalysisView,
-  analysisViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+import { projectAnalysisView } from "../../domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatching.js";
 import { expect, it } from "vitest";
 import { matchNativeFunctions } from "./NativeFunctionMatchingService.js";

@@ -32,9 +32,7 @@ const MAXIMUM_TABLE_ENTRIES = 65_536;
 const hex = (value: bigint): string => `0x${value.toString(16)}`;
 
 /** Strict Modified UTF-8: no four-byte UTF-8, overlong forms or replacements. */
-export const decodeJniModifiedUtf8 = (
-  bytes: Uint8Array,
-): string | undefined => {
+const decodeJniModifiedUtf8 = (bytes: Uint8Array): string | undefined => {
   const chunks: string[] = [];
   let units: number[] = [];
   for (let at = 0; at < bytes.length;) {
@@ -70,7 +68,7 @@ export const decodeJniModifiedUtf8 = (
 };
 
 const methodName = (name: string): boolean =>
-  name !== "" && !/[.;\[/<>\0]/u.test(name);
+  name !== "" && !/[.;[/<>\0]/u.test(name);
 const methodDescriptor = (descriptor: string): boolean => {
   if (
     !dexDescriptorSchema.safeParse(descriptor).success ||
@@ -340,11 +338,7 @@ export const inspectAndroidJniLibrary = async (
       for (const section of directory.sections) {
         if ((section.flags & 3n) !== 3n || section.size === 0n) continue;
         active();
-        if (
-          (section.flags & 0x800n) !== 0n ||
-          !section.file_backed ||
-          section.type === 8
-        ) {
+        if (section.compressed || !section.file_backed || section.type === 8) {
           tablesStatus = "partial";
           unknowns.add(
             "Allocated writable sections without ordinary file bytes were not scanned; runtime-built tables remain unknown",

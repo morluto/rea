@@ -1,8 +1,5 @@
 import { expect, it, vi } from "vitest";
-import {
-  decodeJniModifiedUtf8,
-  inspectAndroidJniLibrary,
-} from "../../../src/native/android/AndroidJniLibrary.js";
+import { inspectAndroidJniLibrary } from "../../../src/native/android/AndroidJniLibrary.js";
 import { androidJniLibraryFactsSchema } from "../../../src/domain/android/androidJniLibraryFacts.js";
 import { projectAndroidJniBindings } from "../../../src/domain/android/androidJniBindings.js";
 import { jniElfFixture } from "../../fixtures/android/jniElf.js";
@@ -108,7 +105,6 @@ it.each([
     const fixture = jniElfFixture({ bits, machine, encoding });
     const original = Buffer.from(fixture.bytes);
     const result = await inspectAndroidJniLibrary(fixture.bytes);
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error.message);
     expect(androidJniLibraryFactsSchema.safeParse(result.value).success).toBe(
       true,
@@ -261,19 +257,42 @@ it("preserves later candidates after malformed Modified UTF-8 and a malformed JN
 });
 
 it.each([
-  [[], ""],
-  [[0xc0, 0x80], "\0"],
-  [[0xed, 0xa0, 0x81, 0xed, 0xb0, 0x80], "𐐀"],
-  [[0xed, 0xa0, 0x80], "\ud800"],
-  [[0], undefined],
+  [[], "X"],
+  [[0xc0, 0x80], undefined],
+  [[0xed, 0xa0, 0x81, 0xed, 0xb0, 0x80], "X𐐀"],
+  [[0xed, 0xa0, 0x80], "X\ud800"],
   [[0xc0, 0x81], undefined],
   [[0xc1, 0xbf], undefined],
   [[0xe0, 0x80, 0x80], undefined],
   [[0xf0, 0x90, 0x90, 0x80], undefined],
   [[0xe7, 0x8c], undefined],
   [[0x80], undefined],
-] as const)("decodes exact Modified UTF-8 bytes %o", (bytes, value) => {
-  expect(decodeJniModifiedUtf8(Uint8Array.from(bytes))).toBe(value);
+] as const)(
+  "admits JNI names with Modified UTF-8 bytes %o",
+  async (encoded, name) => {
+    const { bytes } = jniElfFixture();
+    bytes.fill(0, 0x400, 0x420);
+    bytes.set([0x58, ...encoded, 0], 0x400);
+    const result = await inspectAndroidJniLibrary(bytes);
+    if (!result.ok) throw new Error(result.error.message);
+    expect(
+      result.value.tables
+        .flatMap((table) => table.entries)
+        .map((entry) => entry.name),
+    ).toEqual([...(name === undefined ? [] : [name]), "overload", "𐐀"]);
+  },
+);
+
+it("rejects an empty JNI method name while preserving later candidates", async () => {
+  const { bytes } = jniElfFixture();
+  bytes[0x400] = 0;
+  const result = await inspectAndroidJniLibrary(bytes);
+  if (!result.ok) throw new Error(result.error.message);
+  expect(
+    result.value.tables
+      .flatMap((table) => table.entries)
+      .map((entry) => entry.name),
+  ).toEqual(["overload", "𐐀"]);
 });
 
 it("returns explicit cancellation before decoding and never runs a target", async () => {

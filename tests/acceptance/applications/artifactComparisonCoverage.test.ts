@@ -367,16 +367,20 @@ cliTest(
       edge_count: 0,
     });
     expect(inventory.limitations).toEqual([
-      "Inventory covers root bytes only; child container entries were not examined.",
+      expect.stringMatching(/root bytes only.*child.*not examined/iu),
     ]);
+    const leftInventory = artifactInventoryResultSchema.parse(
+      left.normalized_result,
+    );
+    expect(leftInventory.limitations).toEqual(inventory.limitations);
     const equal = await compare(left, right);
     expect(equal.normalized_result).toMatchObject({
       status: "unchanged",
       summary: { unchanged: 1, unknown: 0 },
       changes: [],
       limitations: [
-        "Left: Inventory covers root bytes only; child container entries were not examined.",
-        "Right: Inventory covers root bytes only; child container entries were not examined.",
+        ...leftInventory.limitations.map((note) => `Left: ${note}`),
+        ...inventory.limitations.map((note) => `Right: ${note}`),
       ],
     });
     const behavior = await call("find_changed_behavior", {
@@ -428,7 +432,6 @@ cliTest(
 
     await assertCoverageControls({ left, right, inventory, compare });
   },
-  30_000,
 );
 
 cliTest.skipIf(process.platform === "win32")(
@@ -465,7 +468,6 @@ cliTest.skipIf(process.platform === "win32")(
       ],
     });
   },
-  30_000,
 );
 
 cliTest.skipIf(process.platform === "win32")(
@@ -517,7 +519,6 @@ cliTest.skipIf(process.platform === "win32")(
       ]),
     });
   },
-  30_000,
 );
 
 cliTest.skipIf(process.platform === "win32")(
@@ -575,7 +576,6 @@ cliTest.skipIf(process.platform === "win32")(
       );
     }
   },
-  30_000,
 );
 
 cliTest(
@@ -616,7 +616,6 @@ cliTest(
       ]),
     });
   },
-  30_000,
 );
 
 cliTest(

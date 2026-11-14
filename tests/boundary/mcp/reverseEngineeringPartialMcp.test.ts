@@ -1,8 +1,7 @@
 import pino from "pino";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 
@@ -407,9 +406,11 @@ it("preserves a partial MCP error without claiming failed Evidence retention", a
 
   expect(response.isError).toBe(true);
   expect(response.structuredContent?.error?.details).toMatchObject({
-    partial_observation: expect.objectContaining({
-      operation: "execute_rizin_command",
-    }),
+    partial_observation: {
+      kind: "inline-evidence",
+      retention: "unknown",
+      evidence: { operation: "execute_rizin_command" },
+    },
   });
   expect(
     JSON.stringify(response.structuredContent?.error?.details),

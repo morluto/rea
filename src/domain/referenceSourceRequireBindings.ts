@@ -1,8 +1,12 @@
 import * as t from "@babel/types";
 import { posix } from "node:path";
 
-import { semanticStaticPropertyKey } from "./javascript/javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticAmbientWrites.js";
+import {
+  semanticMemberChain,
+  semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
+} from "./javascript/javascriptAstValues.js";
+import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticGlobalReference.js";
 import {
   indexJavaScriptBindingsWithReceiversSteps,
   type JavaScriptReceiverIndex,
@@ -11,6 +15,7 @@ import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSem
 import {
   semanticRequireCallAt,
   semanticRequireLoaderAt,
+  semanticSelectedMemberMayHaveChanged,
   type JavaScriptRequireCallFact,
 } from "./javascript/javascriptSemanticRequireOrigin.js";
 import {
@@ -33,12 +38,17 @@ export interface ReferenceSourceRequireCall {
   readonly limitation?: string;
 }
 
+export type ReferenceSourceRequireInvocation =
+  | t.CallExpression
+  | t.OptionalCallExpression
+  | t.NewExpression;
+
 /** Identify exact calls through a source-owned Node loader and their resolver base. */
 export const referenceSourceRequireCalls = (
   file: Pick<ParsedJavaScriptSource, "program">,
   path: string,
 ): ReadonlyMap<
-  t.CallExpression | t.OptionalCallExpression,
+  ReferenceSourceRequireInvocation,
   ReferenceSourceRequireCall
 > => {
   // Unmarked paths depend on package scope or compiler options. Preserve their
@@ -52,22 +62,37 @@ export const referenceSourceRequireCalls = (
   );
   const factoryBindings: ReadonlySet<string> = new Set();
   const candidates: {
-    readonly call: t.CallExpression | t.OptionalCallExpression;
-    readonly identifier: t.Identifier;
+    readonly call: ReferenceSourceRequireInvocation;
     readonly arguments: JavaScriptRequireCallFact["arguments"];
     readonly resolutionBase: ReferenceSourceRequireResolutionBase;
     readonly limitation?: string;
   }[] = [];
   traverseJavaScriptAst(file.program, {
     enter: (node) => {
-      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+      if (
+        !t.isCallExpression(node) &&
+        !t.isOptionalCallExpression(node) &&
+        !t.isNewExpression(node)
+      )
         return;
-      const identifier = callReceiverIdentifier(node.callee);
-      if (identifier === undefined) return;
+      const callee = unwrapJavaScriptExpression(node.callee).node;
+      if (
+        !t.isCallExpression(callee) &&
+        !t.isOptionalCallExpression(callee) &&
+        !hasIdentifierReceiver(callee)
+      )
+        return;
+      if (t.isCallExpression(callee) || t.isOptionalCallExpression(callee))
+        completeSemanticSteps(index.indexMemberMutationFactsSteps());
       let fact = semanticRequireLoaderAt(node, index.bindings, factoryBindings);
-      if (fact === "create-require") {
-        // Definitions identify a possible factory. Its mutable member reads
-        // need the shared write index before they can prove an association.
+      if (
+        fact === "create-require" ||
+        ((t.isMemberExpression(callee) ||
+          t.isOptionalMemberExpression(callee)) &&
+          ["call", "apply", "resolve"].includes(
+            semanticStaticPropertyKey(callee.property, callee.computed) ?? "",
+          ))
+      ) {
         completeSemanticSteps(index.indexMemberMutationFactsSteps());
         fact = semanticRequireLoaderAt(node, index.bindings, factoryBindings);
       }
@@ -75,9 +100,16 @@ export const referenceSourceRequireCalls = (
         node,
         index.bindings,
         factoryBindings,
+        index,
       );
       if (callFact === undefined || callFact.loader === "local") return;
-      if (fact !== "create-require" && fact !== "commonjs-loader") return;
+      if (
+        fact !== "create-require" &&
+        fact !== "commonjs-loader" &&
+        callFact.loader !== "create-require" &&
+        callFact.loader !== "commonjs-loader"
+      )
+        return;
       const sourceRelativePath = callFact.sourceRelativePath;
       const normalizedSourceRelativePath =
         sourceRelativePath === undefined
@@ -103,8 +135,7 @@ export const referenceSourceRequireCalls = (
                       kind: "source-relative-file",
                       path: normalizedSourceRelativePath,
                     }
-            : fact === "commonjs-loader" &&
-                callFact.loader === "commonjs-loader" &&
+            : callFact.loader === "commonjs-loader" &&
                 runtimeContext === "commonjs"
               ? "source-file"
               : "unknown";
@@ -117,7 +148,6 @@ export const referenceSourceRequireCalls = (
       );
       candidates.push({
         call: node,
-        identifier,
         arguments: callFact.arguments,
         resolutionBase: searchBase,
         ...(runtimeContext === "unknown"
@@ -128,25 +158,18 @@ export const referenceSourceRequireCalls = (
       });
     },
   });
-  if (candidates.some(({ call }) => !t.isIdentifier(call.callee)))
+  if (candidates.some(({ call }) => hasMemberCallee(call)))
     completeSemanticSteps(index.indexMemberMutationFactsSteps());
   return new Map(
     candidates.map(
-      ({
-        call,
-        identifier,
-        arguments: callArguments,
-        resolutionBase,
-        limitation,
-      }) =>
+      ({ call, arguments: callArguments, resolutionBase, limitation }) =>
         [
           call,
           {
             arguments: callArguments,
             ...(limitation === undefined ? {} : { limitation }),
             resolutionBase:
-              !t.isIdentifier(call.callee) &&
-              hasPriorMemberMutation(index, call, identifier)
+              hasMemberCallee(call) && hasPriorMemberMutation(index, call)
                 ? "unknown"
                 : resolutionBase,
           },
@@ -187,33 +210,26 @@ const requireResolveSearchBase = (
 
 const hasPriorMemberMutation = (
   index: JavaScriptReceiverIndex,
-  site: t.CallExpression | t.OptionalCallExpression,
-  identifier: t.Identifier,
+  site: ReferenceSourceRequireInvocation,
 ): boolean => {
-  const callee = site.callee;
-  const property =
-    t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
-      ? semanticStaticPropertyKey(callee.property, callee.computed)
-      : undefined;
-  if (property === undefined || property === null) return true;
-  const facts = index.effectsForReferenceAt(site, identifier, [property]);
+  const callee = unwrapJavaScriptExpression(site.callee).node;
   return (
-    !facts.memberEffectsIndexed ||
-    facts.effects.some(
-      ({ kind, timing }) =>
-        (kind === "member-write" || kind === "escape") && timing !== "after",
-    )
+    semanticMemberChain(callee) === undefined ||
+    semanticSelectedMemberMayHaveChanged(index, site, callee)
   );
 };
 
-const callReceiverIdentifier = (
-  callee: t.Node | null | undefined,
-): t.Identifier | undefined => {
-  if (t.isIdentifier(callee)) return callee;
-  if (
-    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
-    t.isIdentifier(callee.object)
+const hasMemberCallee = (call: ReferenceSourceRequireInvocation): boolean => {
+  const callee = unwrapJavaScriptExpression(call.callee).node;
+  return t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee);
+};
+
+const hasIdentifierReceiver = (callee: t.Node): boolean => {
+  let expression = callee;
+  while (
+    t.isMemberExpression(expression) ||
+    t.isOptionalMemberExpression(expression)
   )
-    return callee.object;
-  return undefined;
+    expression = unwrapJavaScriptExpression(expression.object).node;
+  return t.isIdentifier(expression);
 };

@@ -958,15 +958,6 @@ class _BridgeServer(threading.Thread):
             proof.update(fragment.encode("utf-8"))
         return proof.hexdigest()
 
-    def _encode_authenticated_response(
-        self, value: dict[str, Any], client_nonce: str, server_nonce: str
-    ) -> bytes | None:
-        """Return one exact frame. The socket path writes the same pieces."""
-        proof = self._authenticated_proof(value, client_nonce, server_nonce)
-        if proof is None:
-            return None
-        return b"".join(self._iter_authenticated_frame(value, proof))
-
     def _iter_authenticated_frame(self, value: dict[str, Any], proof: str):
         yield _AUTHENTICATED_PREFIX
         for fragment in _response_fragments(value):
