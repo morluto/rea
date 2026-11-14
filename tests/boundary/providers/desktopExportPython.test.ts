@@ -30,8 +30,7 @@ import {
 import {
   detectStateFormat,
   keyfileView,
-  isJsonText,
-  jsonView,
+  textSyntaxFormat,
   textualView,
 } from "../../../src/domain/desktop/stateFormats.js";
 import { safeParseJson } from "../../../src/domain/safeJson.js";
@@ -539,7 +538,7 @@ it("refuses the JSON numbers REA's state view refuses, as JSON with an error rat
   const python = pythonJson(texts);
 
   texts.forEach((text, index) => {
-    const typescript = jsonView(text);
+    const typescript = textualView("json", new TextEncoder().encode(text));
     const verdict = python[index];
     expect(verdict?.error === undefined).toBe(typescript.ok);
     if (typescript.ok) expect(verdict?.view).toEqual(typescript.value);
@@ -733,7 +732,9 @@ it("checks text for JSON the way REA does, token by token, without parsing it", 
   ) as { syntax: boolean[]; built: boolean[] };
 
   const parsed = texts.map((text) => safeParseJson(text).ok);
-  expect(texts.map((text) => isJsonText(text))).toEqual(parsed);
+  expect(
+    texts.map((text) => textSyntaxFormat("fixture.json", text) === "json"),
+  ).toEqual(parsed);
   expect(python.syntax).toEqual(parsed);
   expect(python.built).toEqual(parsed);
   expect(parsed.filter(Boolean)).toHaveLength(10);

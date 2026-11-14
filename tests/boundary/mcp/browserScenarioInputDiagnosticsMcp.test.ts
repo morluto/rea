@@ -78,7 +78,6 @@ const scenarios = [
 
 cliTest.for(["full", "compact"] as const)(
   "projects browser scenario input diagnostics over stdio MCP (%s)",
-  { timeout: 60_000 },
   async (profile, { cli }) => {
     const home = await createTestTempDirectory(
       "rea-browser-scenario-mcp-home-",

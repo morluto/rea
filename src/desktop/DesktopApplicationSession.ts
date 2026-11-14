@@ -1,3 +1,7 @@
+import {
+  SamplingReadBatchFailure,
+  samplingInspectionFailures,
+} from "../process/capture/ProcessSamplingObservation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
@@ -13,8 +17,6 @@ import {
   type DesktopCaptureEvent,
   type DesktopSession,
 } from "../domain/desktop/desktopCapture.js";
-import { samplingInspectionFailures } from "../process/capture/ProcessSamplingObservation.js";
-import { ProcessCaptureError } from "../process/capture/ProcessCaptureError.js";
 import { ownedCommandResources } from "../process/OwnedCommand.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
@@ -409,17 +411,18 @@ export const runDesktopSession = async (
     await checkpointNow(plan, observations, "exit", "exit");
     assertProcessOwnershipInspectionActive(signal);
   } catch (cause: unknown) {
-    supervisor.retainInspectionFailure(cause);
-    for (const inspection of samplingInspectionFailures(cause))
-      for (const cleanup of inspection.inspectionCleanup)
-        supervisor.retainInspectionCleanup(cause, cleanup);
+    const inspections = samplingInspectionFailures(cause);
+    for (const inspection of inspections)
+      supervisor.retainInspectionFailure(inspection);
     const cancelled =
       cause instanceof AnalysisCancelledError ||
-      (cause instanceof ProcessCaptureError &&
-        cause.userCategory === "cancelled") ||
       (cause instanceof ArtifactReaderFailure &&
         cause.reason === "cancelled") ||
-      isProcessOwnershipInspectionCancellation(cause);
+      isProcessOwnershipInspectionCancellation(cause) ||
+      (cause instanceof SamplingReadBatchFailure &&
+        cause.otherFailures.length === 0 &&
+        inspections.length > 0 &&
+        inspections.every(isProcessOwnershipInspectionCancellation));
     releaseResult = await releaseOnce();
     if (!cancelled) {
       const left = unreleased(spawned, supervisor, releaseResult);

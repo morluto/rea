@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import { z } from "zod";
 
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
@@ -14,12 +15,7 @@ import { recordListsOf } from "./appTaskDraftNested.js";
 import { holdsFields, isRecordAt } from "./appTaskDraftText.js";
 import { attributesOf, compactValue, previewWriter } from "./compactValue.js";
 import { pairMembers, pairedAtSeed } from "./memberPairing.js";
-import {
-  escapeToken,
-  isXmlElement,
-  locatePointer,
-  resolvePointer,
-} from "./viewPointer.js";
+import { isXmlElement, locatePointer, resolvePointer } from "./viewPointer.js";
 
 /** Why a value's pointer cannot go into a check as it is, or why the value is noise. */
 export const VALUE_NOTES = ["by_position", ...NOISE_REASONS] as const;
@@ -476,7 +472,12 @@ const fieldsOf = (view: JsonValue | null, pointer: string): string[] => {
     return (isXmlElement(element) ? element.children : []).flatMap(
       (child, index) =>
         isXmlElement(child)
-          ? [{ child, key: escapeToken(keys[index] ?? String(index)) }]
+          ? [
+              {
+                child,
+                key: escapeJsonPointerToken(keys[index] ?? String(index)),
+              },
+            ]
           : [],
     );
   };

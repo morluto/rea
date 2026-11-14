@@ -550,7 +550,6 @@ it.runIf(host)(
     expect(projected.remediation.action).toContain("above 1500");
     expect(projected.remediation.action).not.toContain("above 30000");
   },
-  10_000,
 );
 
 const fixture = async (

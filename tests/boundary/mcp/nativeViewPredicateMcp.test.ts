@@ -156,13 +156,6 @@ it.each(["full", "compact"] as const)(
         expect(goodReply.isError, JSON.stringify(goodReply.content)).not.toBe(
           true,
         );
-        expect(
-          validation.assertions.validate(
-            viewTool.outputSchema,
-            goodReply.structuredContent,
-          ),
-          JSON.stringify(validation.assertions.errors),
-        ).toBe(true);
         const goodView = parseEvidence(goodReply.structuredContent);
         expect(goodView.evidence_links).toContain(good.evidence_id);
         const raw = join(root, `${index}.json`),

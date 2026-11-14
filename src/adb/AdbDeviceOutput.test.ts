@@ -74,6 +74,52 @@ describe("parseAdbDevicesOutput", () => {
       },
     ]);
   });
+
+  it("classifies adb mDNS wireless serials as TCP without treating them as USB", () => {
+    const output = [
+      "List of devices attached",
+      "adb-8c4f2a1b4e5d6f70-AbCdEf._adb-tls-connect._tcp device product:cheetah model:Pixel_7_Pro device:cheetah transport_id:4",
+      "phone._adb._tcp       device transport_id:5",
+      "not-a-service._tcp    device transport_id:6",
+      "adb-wired._adb-tls-connect._tcp device usb:1-1 product:raven model:Pixel_6 device:raven transport_id:7",
+      "",
+    ].join("\n");
+    const { devices, unparsedLines } = parseAdbDevicesOutput(output);
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
+    expect(
+      devices.map(({ serial, transport, kind, kind_basis }) => ({
+        serial,
+        transport,
+        kind,
+        kind_basis,
+      })),
+    ).toEqual([
+      {
+        serial: "adb-8c4f2a1b4e5d6f70-AbCdEf._adb-tls-connect._tcp",
+        transport: "tcp",
+        kind: "unknown",
+        kind_basis: "none",
+      },
+      {
+        serial: "phone._adb._tcp",
+        transport: "tcp",
+        kind: "unknown",
+        kind_basis: "none",
+      },
+      {
+        serial: "not-a-service._tcp",
+        transport: "unknown",
+        kind: "unknown",
+        kind_basis: "none",
+      },
+      {
+        serial: "adb-wired._adb-tls-connect._tcp",
+        transport: "usb",
+        kind: "physical",
+        kind_basis: "usb_transport",
+      },
+    ]);
+  });
 });
 
 describe("ADB daemon startup notices", () => {

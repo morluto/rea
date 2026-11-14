@@ -81,6 +81,12 @@ it.skipIf(process.platform === "win32").each([false, true])(
         paths.push(entry.path);
       expect(paths).toContain("image.dmg/Volume/readable.txt");
       expect(coverage).toEqual(unknownCoverage ? [producerCoverage] : []);
+      const paused = reader.entries()[Symbol.asyncIterator]();
+      expect((await paused.next()).done).toBe(false);
+      await reader.close();
+      await expect(paused.next()).rejects.toMatchObject({
+        reason: "unavailable",
+      });
     } finally {
       try {
         await reader.close();

@@ -1,20 +1,19 @@
+import { SamplingReadBatchFailure } from "./ProcessSamplingObservation.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../../artifacts/AnalysisCleanupLease.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
-import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import {
-  ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
   isProcessOwnershipInspectionCancellation,
 } from "../ProcessInspectionCancellation.js";
 import {
+  isProcessInspectionFailure,
   processInspectionCleanupFailures,
   processInspectionCancellations,
   type ProcessInspectionFailure,
-  type ProcessInspectionCleanupLease,
 } from "../ProcessInspectionCleanup.js";
 import { DarwinProcessOwnershipInspectionError } from "../DarwinProcessRunTokenReader.js";
 import {
@@ -146,14 +145,10 @@ export const processCaptureCancelled = (
 
 /** Keep the exact inspection record and close capabilities through capture finalization. */
 export class ProcessCaptureInspectionFailure extends ProcessCaptureError {
-  readonly #inspectionCleanup: readonly ProcessInspectionCleanupLease[];
-
-  get inspectionCleanup(): readonly ProcessInspectionCleanupLease[] {
-    return this.#inspectionCleanup;
-  }
+  readonly #cleanupLeases: readonly AnalysisCleanupLease[];
 
   get cleanupLeases(): readonly AnalysisCleanupLease[] {
-    return this.#inspectionCleanup.map(({ lease }) => lease);
+    return this.#cleanupLeases;
   }
 
   constructor(readonly inspectionFailure: ProcessInspectionFailure) {
@@ -218,7 +213,7 @@ export class ProcessCaptureInspectionFailure extends ProcessCaptureError {
           : {}),
       },
     );
-    const cleanup: ProcessInspectionCleanupLease[] = [];
+    const leases: AnalysisCleanupLease[] = [];
     for (const failure of cleanupFailures) {
       if (failure instanceof DarwinProcessOwnershipInspectionError) {
         const marker = failure.cleanupFailure;
@@ -234,19 +229,14 @@ export class ProcessCaptureInspectionFailure extends ProcessCaptureError {
           marker ?? ["process ownership inspection"],
         );
         if (marker !== undefined) lease.bindCleanupError(marker);
-        cleanup.push({ failure, lease });
+        leases.push(lease);
       } else
-        cleanup.push({
-          failure,
-          lease: new AnalysisCleanupLease(
-            () => failure.owner.close(),
-            [failure.path],
-          ),
-        });
+        leases.push(
+          new AnalysisCleanupLease(() => failure.owner.close(), [failure.path]),
+        );
     }
-    this.#inspectionCleanup = cleanup;
-    if (cleanup.length > 0)
-      new AnalysisCleanupLeaseGroup(this, this.cleanupLeases);
+    this.#cleanupLeases = leases;
+    if (leases.length > 0) new AnalysisCleanupLeaseGroup(this, leases);
     if (cancellation === undefined)
       for (const fact of processInspectionCancellations(inspectionFailure))
         this.retainSecondaryFailure(
@@ -255,15 +245,67 @@ export class ProcessCaptureInspectionFailure extends ProcessCaptureError {
   }
 }
 
+/** Capture presentation and cleanup leases for a neutral, fully settled sampling batch. */
+export class ProcessCaptureSamplingFailure extends ProcessCaptureError {
+  readonly #inspectionFailures: readonly ProcessCaptureInspectionFailure[];
+  readonly #samplingFailure: SamplingReadBatchFailure;
+
+  get inspectionFailures(): readonly ProcessCaptureInspectionFailure[] {
+    return this.#inspectionFailures;
+  }
+  get samplingFailure(): SamplingReadBatchFailure {
+    return this.#samplingFailure;
+  }
+
+  constructor(samplingFailure: SamplingReadBatchFailure) {
+    const inspections = samplingFailure.inspectionFailures.map(
+      (failure) => new ProcessCaptureInspectionFailure(failure),
+    );
+    const primary =
+      inspections.find((failure) => failure.userCategory !== "cancelled") ??
+      (samplingFailure.otherFailures.length > 0 ? undefined : inspections[0]);
+    const resources = [
+      ...new Set(inspections.flatMap((failure) => failure.cleanupResources)),
+    ];
+    super(primary?.message ?? samplingFailure.message, {
+      cause: samplingFailure,
+      ...(primary === undefined ? {} : { cleanupPrimary: primary }),
+      ...(primary?.userCategory === "cancelled"
+        ? captureCancellationPresentation
+        : {}),
+      ...(resources.length === 0
+        ? {}
+        : {
+            cleanup: {
+              reason: "Process sampling descriptors remain owned",
+              resources,
+            },
+          }),
+    });
+    this.#inspectionFailures = inspections;
+    this.#samplingFailure = samplingFailure;
+    for (const failure of inspections)
+      if (failure !== primary) this.retainSecondaryFailure(failure);
+    this.bindCleanupDependencies(inspections);
+  }
+}
+
+/** Only capture-owned normalized records transfer capture lease capabilities. */
+export const captureInspectionFailures = (
+  cause: unknown,
+): readonly ProcessCaptureInspectionFailure[] =>
+  cause instanceof ProcessCaptureSamplingFailure
+    ? cause.inspectionFailures
+    : cause instanceof ProcessCaptureInspectionFailure
+      ? [cause]
+      : [];
+
 /** Interpret only facts emitted by the inspection owner; caller values remain opaque. */
 export const normalizeCaptureFailure = (cause: unknown): unknown => {
   if (cause instanceof ProcessCaptureError) return cause;
-  if (
-    cause instanceof DarwinProcessOwnershipInspectionError ||
-    cause instanceof ProcessOwnershipInspectionCancelled ||
-    cause instanceof ProcessOwnershipIdentityBatchFailure ||
-    cause instanceof RegularFileCleanupFailure
-  )
+  if (cause instanceof SamplingReadBatchFailure)
+    return new ProcessCaptureSamplingFailure(cause);
+  if (isProcessInspectionFailure(cause))
     return new ProcessCaptureInspectionFailure(cause);
   return cause;
 };

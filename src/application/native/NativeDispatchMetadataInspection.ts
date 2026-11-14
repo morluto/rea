@@ -83,7 +83,7 @@ export const inspectNativeDispatch = async (
     {},
     signal === undefined ? {} : { signal },
   );
-  if (!execution.ok) return err(execution.error);
+  if (!execution.ok) return execution;
   const names = dispatchNameInventorySchema.safeParse(execution.value.result);
   if (!names.success)
     return err(

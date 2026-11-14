@@ -23,6 +23,14 @@ import { parseAdbTransportIdentity } from "../domain/adb/adbTransportIdentity.js
 
 const DEVICE_LINE = /^(\S+)\s+(.*)$/u;
 
+/**
+ * adb prints a wireless-debugging transport's serial as the mDNS instance
+ * `<instance>._adb._tcp` or `<instance>._adb-tls-connect._tcp`. That serial
+ * has neither a colon nor a `usb:` field.
+ */
+const isAdbMdnsTcpSerial = (serial: string): boolean =>
+  serial.endsWith("._adb._tcp") || serial.endsWith("._adb-tls-connect._tcp");
+
 const normalizeAdbOutputLine = (rawLine: string): string => rawLine.trimEnd();
 
 export const isSuccessfulDaemonStartNotice = (line: string): boolean =>
@@ -122,7 +130,7 @@ export const parseAdbDevicesOutput = (
       transport:
         usb !== null
           ? "usb"
-          : isEmulator || serial.includes(":")
+          : isEmulator || serial.includes(":") || isAdbMdnsTcpSerial(serial)
             ? "tcp"
             : "unknown",
       product: metadataValue(remainder, "product"),

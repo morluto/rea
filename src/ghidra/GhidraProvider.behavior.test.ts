@@ -80,8 +80,6 @@ import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import { GhidraClient, type GhidraTargetSnapshot } from "./GhidraClient.js";
 import {
-  GHIDRA_ANNOTATIONS_RETAINED,
-  GHIDRA_SESSION_RETAINED,
   ghidraDecompileTimeoutRecovery,
   ghidraMissingProgramGuidance,
   ghidraStartupTimeoutGuidance,
@@ -92,7 +90,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
 } from "../domain/analysisErrorCore.js";
-import { GHIDRA_PROJECT_PROFILE_MISMATCH } from "./GhidraProjectSnapshot.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 import {
   GHIDRA_MUTATING_OPERATIONS,
@@ -119,6 +116,11 @@ import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCac
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 
+const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
+const GHIDRA_ANNOTATIONS_RETAINED =
+  "The active analysis session and annotations remain available.";
+const GHIDRA_PROJECT_PROFILE_MISMATCH =
+  "Selected Ghidra project content no longer matches the profile committed by open_binary; when it changed is not established";
 const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
 afterEach(() => vi.restoreAllMocks());
 const installationHost = (

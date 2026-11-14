@@ -1,3 +1,5 @@
+import { processInspectionCleanupFailures } from "../../process/ProcessInspectionCleanup.js";
+import { samplingInspectionFailures } from "../../process/capture/ProcessSamplingObservation.js";
 import type { DesktopLibraryPolicyInput } from "../../domain/desktop/libraryPolicy.js";
 import { arch, hostname, userInfo } from "node:os";
 
@@ -378,22 +380,32 @@ const runCapture = async (
     const primary =
       cause instanceof DesktopSessionCleanupError ? cause.primary : cause;
     const projected = projectFailure(primary, undefined);
-    // The session's supervisor already owns the exact inspection failure in its snapshot.
+    const inspections = samplingInspectionFailures(primary);
+    const cleanupInspections = inspections.filter(
+      (inspection) => processInspectionCleanupFailures(inspection).length > 0,
+    );
+    // The supervisor owns every cleanup-bearing fact in this explicit source vector.
     const sessionOwnsInspection =
       cause instanceof DesktopSessionCleanupError &&
-      cause.cleanup.inspectionCleanup?.causes.includes(primary) === true;
-    const failure = sessionOwnsInspection
-      ? bindProcessInspectionCancellations(
-          primary,
-          projected,
-          DESKTOP_OPERATION,
-        )
-      : retainProcessInspectionCleanup(
-          primary,
-          projected,
-          store.resourceScope,
-          DESKTOP_OPERATION,
-        );
+      cleanupInspections.length > 0 &&
+      cleanupInspections.every(
+        (inspection) =>
+          cause.cleanup.inspectionCleanup?.causes.includes(inspection) === true,
+      );
+    let failure = projected;
+    for (const inspection of inspections.length === 0 ? [primary] : inspections)
+      failure = sessionOwnsInspection
+        ? bindProcessInspectionCancellations(
+            inspection,
+            failure,
+            DESKTOP_OPERATION,
+          )
+        : retainProcessInspectionCleanup(
+            inspection,
+            failure,
+            store.resourceScope,
+            DESKTOP_OPERATION,
+          );
     const sessionCleanup =
       cause instanceof DesktopSessionCleanupError
         ? cause.cleanup

@@ -179,5 +179,4 @@ cliTest(
       await transport.close();
     }
   },
-  60_000,
 );

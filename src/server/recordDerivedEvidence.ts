@@ -10,10 +10,9 @@ export const recordDerivedEvidence = (
   evidence: Evidence,
   unknown: RecordUnknownInput | undefined,
 ): Result<Evidence, AnalysisError> => {
-  if (unknown !== undefined) {
-    const recorded = session.recordEvidenceWithUnknown(evidence, unknown);
-    return recorded.ok ? ok(evidence) : recorded;
-  }
-  const recorded = session.recordEvidence(evidence);
+  const recorded =
+    unknown === undefined
+      ? session.recordEvidence(evidence)
+      : session.recordEvidenceWithUnknown(evidence, unknown);
   return recorded.ok ? ok(evidence) : recorded;
 };
