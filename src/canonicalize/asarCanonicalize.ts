@@ -1,4 +1,7 @@
-import { parseAsarHeaderExtents } from "../artifacts/AsarHeader.js";
+import {
+  decodeAsarHeaderText,
+  parseAsarHeaderExtents,
+} from "../artifacts/AsarHeader.js";
 import {
   readAsarListing,
   type AsarListedEntry,
@@ -44,8 +47,11 @@ export const looksLikeAsar = (bytes: Buffer): boolean => {
 
 const parseHeader = (bytes: Buffer, jsonBytes: number): unknown => {
   const end = Math.min(JSON_START + jsonBytes, bytes.length);
+  // Reuse the owning reader's strict UTF-8 decoder so this path cannot accept
+  // header bytes the real reader would reject or decode them differently.
+  const text = decodeAsarHeaderText(bytes.subarray(JSON_START, end));
   try {
-    return JSON.parse(bytes.toString("utf8", JSON_START, end));
+    return JSON.parse(text);
   } catch (cause: unknown) {
     throw new ArtifactReaderFailure(
       "format",
@@ -95,11 +101,30 @@ export const canonicalizeAsarBytes = async (
   );
   if (!extents.ok) throw extents.error;
   const header = parseHeader(bytes, extents.value.jsonBytes);
-  const entries = await readAsarListing(
-    header,
-    signal,
-    DEFAULT_ASAR_LISTING_ADMISSION,
-  );
+  const headerBytesOverDocumentedLimit =
+    extents.value.headerBytes > DEFAULT_ASAR_MAX_HEADER_BYTES
+      ? extents.value.headerBytes
+      : null;
+  let entries: readonly AsarListedEntry[];
+  try {
+    entries = await readAsarListing(
+      header,
+      signal,
+      DEFAULT_ASAR_LISTING_ADMISSION,
+    );
+  } catch (cause: unknown) {
+    // An inflated inventory exceeds the reader's listing budget. Report an
+    // explicit truncated result with the reader's own guidance, rather than let
+    // the provider recommend an unrelated limit (`max_file_bytes`).
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
+      return classifyAsarInventory([], budget, {
+        reachable: new Set(),
+        headerBytesOverDocumentedLimit,
+        listingTruncated: true,
+        extraLimitations: [cause.message],
+      });
+    throw cause;
+  }
   const reachable = resolveReachable(
     bytes,
     8 + extents.value.headerBytes,
@@ -109,13 +134,11 @@ export const canonicalizeAsarBytes = async (
     path: entry.path,
     kind: entry.kind,
     size: entry.size,
+    limitations: entry.limitations,
   }));
   return classifyAsarInventory(inventory, budget, {
     reachable,
-    headerBytesOverDocumentedLimit:
-      extents.value.headerBytes > DEFAULT_ASAR_MAX_HEADER_BYTES
-        ? extents.value.headerBytes
-        : null,
+    headerBytesOverDocumentedLimit,
     listingTruncated: false,
   });
 };

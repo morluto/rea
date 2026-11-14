@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   CanonicalizeFact,
   CanonicalizeReduction,
@@ -12,6 +14,10 @@ import {
 /** Multiplier bounding the pass's own node walk against structural inflation. */
 const NODE_BUDGET_FACTOR = 256;
 const MIN_NODE_BUDGET = 1024;
+/** Maximum code units kept for one path segment (object key or array index). */
+const MAX_SEGMENT_UNITS = 128;
+/** Maximum code units kept for a whole structural path name. */
+const MAX_PATH_UNITS = 1024;
 
 type Container = Record<string, unknown> | unknown[];
 
@@ -32,6 +38,36 @@ const recognizes = (bytes: Buffer): boolean => {
   return byte === 0x7b /* { */ || byte === 0x5b; /* [ */
 };
 
+/** JSON Pointer escaping so a key containing `/` cannot forge a nested path. */
+const escapeSegment = (segment: string): string =>
+  segment.replace(/~/gu, "~0").replace(/\//gu, "~1");
+
+interface BoundedPath {
+  readonly path: string;
+  readonly truncated: boolean;
+}
+
+/**
+ * Build a child path, bounding each segment and the whole path. An artifact
+ * controls key text, so an inflated key must never be repeated verbatim across
+ * many fact names; when a segment or the path is shortened the fact carries a
+ * digest of the exact key for reference.
+ */
+const childPath = (parentPath: string, escaped: string): BoundedPath => {
+  let truncated = false;
+  let segment = escaped;
+  if (segment.length > MAX_SEGMENT_UNITS) {
+    segment = `${segment.slice(0, MAX_SEGMENT_UNITS)}…(${String(escaped.length)})`;
+    truncated = true;
+  }
+  let path = `${parentPath}/${segment}`;
+  if (path.length > MAX_PATH_UNITS) {
+    path = `${path.slice(0, MAX_PATH_UNITS)}…`;
+    truncated = true;
+  }
+  return { path, truncated };
+};
+
 const memberCount = (value: Container): number =>
   Array.isArray(value) ? value.length : Object.keys(value).length;
 
@@ -44,9 +80,15 @@ const scalarText = (value: unknown): string =>
         ? value.toString()
         : String(value as number | boolean);
 
+const truncatedKeyDetail = (sha256: string | null): string =>
+  sha256 === null
+    ? ""
+    : " Path name was shortened; sha256 identifies the exact key bytes.";
+
 const containerSummaryFact = (
   path: string,
   value: Container,
+  sha256: string | null,
 ): CanonicalizeFact => {
   const count = memberCount(value);
   return {
@@ -55,9 +97,9 @@ const containerSummaryFact = (
     classification: "behavior-relevant",
     bytes: 0,
     location: null,
-    sha256: null,
+    sha256,
     sample: null,
-    detail: `${Array.isArray(value) ? "array" : "object"} with ${String(count)} ${Array.isArray(value) ? "elements" : "members"}`,
+    detail: `${Array.isArray(value) ? "array" : "object"} with ${String(count)} ${Array.isArray(value) ? "elements" : "members"}.${truncatedKeyDetail(sha256)}`,
   };
 };
 
@@ -65,6 +107,7 @@ const leafFact = (
   path: string,
   value: unknown,
   sampleUnits: number,
+  sha256: string | null,
 ): CanonicalizeFact => {
   const kind = value === null ? "null" : typeof value;
   return {
@@ -73,12 +116,12 @@ const leafFact = (
     classification: "behavior-relevant",
     bytes: 0,
     location: null,
-    sha256: null,
+    sha256,
     sample: canonicalizeSample(
       Buffer.from(scalarText(value), "utf8"),
       sampleUnits,
     ),
-    detail: `Behavior-relevant ${kind} value.`,
+    detail: `Behavior-relevant ${kind} value.${truncatedKeyDetail(sha256)}`,
   };
 };
 
@@ -130,17 +173,27 @@ const admitChild = (
   state: WalkState,
   budget: NormalizerBudget,
   depth: number,
-  path: string,
+  parentPath: string,
+  rawSegment: string,
+  isKey: boolean,
   child: unknown,
 ): boolean => {
   if (state.retained >= budget.maxFacts) return false;
+  const { path, truncated } = childPath(
+    parentPath,
+    isKey ? escapeSegment(rawSegment) : rawSegment,
+  );
+  // Hash the exact (unbounded) key once, only when its name was shortened.
+  const sha256 = truncated
+    ? createHash("sha256").update(rawSegment, "utf8").digest("hex")
+    : null;
   if (isContainer(child)) {
-    state.core.push(containerSummaryFact(path, child));
+    state.core.push(containerSummaryFact(path, child, sha256));
     state.retained += 1;
     state.stack.push({ value: child, depth: depth + 1, path });
     return true;
   }
-  state.core.push(leafFact(path, child, budget.sampleUnits));
+  state.core.push(leafFact(path, child, budget.sampleUnits, sha256));
   state.retained += 1;
   return true;
 };
@@ -196,7 +249,9 @@ const processFrame = (
           state,
           budget,
           frame.depth,
-          `${frame.path}/${String(index)}`,
+          frame.path,
+          String(index),
+          false,
           frame.value[index],
         )
       )
@@ -216,7 +271,9 @@ const processFrame = (
         state,
         budget,
         frame.depth,
-        `${frame.path}/${key}`,
+        frame.path,
+        key,
+        true,
         (frame.value as Record<string, unknown>)[key],
       )
     )

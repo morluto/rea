@@ -264,6 +264,33 @@ describe("json-structure normalizer", () => {
       ),
     ).toBe(false);
   });
+
+  it("bounds an inflated key in the fact name and keeps a digest reference", () => {
+    const hugeKey = "k".repeat(4000);
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(JSON.stringify({ [hugeKey]: 1 }), "utf8"),
+      "json",
+      budget(),
+    );
+    const leaf = facts.core.find((fact) => fact.collection === "json-value");
+    expect(leaf).toBeDefined();
+    // The 4000-unit key cannot be reproduced verbatim in the fact name.
+    expect((leaf?.name ?? "").length).toBeLessThanOrEqual(256);
+    // The exact key is preserved by reference, not confabulated away.
+    expect(leaf?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("escapes slashes in keys so distinct members get distinct names", () => {
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(JSON.stringify({ "a/b": 1, a: { b: 2 } }), "utf8"),
+      "json",
+      budget(),
+    );
+    const names = facts.core.map((fact) => fact.name);
+    // The key "a/b" becomes "$/a~1b"; the nested a.b becomes "$/a/b" — distinct.
+    expect(names).toContain("$/a~1b");
+    expect(names).toContain("$/a/b");
+  });
 });
 
 // --- Fallback -------------------------------------------------------------

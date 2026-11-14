@@ -26,6 +26,8 @@ export interface AsarInventoryEntry {
   readonly kind: AsarEntryKind;
   /** Declared size, or null when it cannot bound the member's content. */
   readonly size: number | null;
+  /** The owning reader's per-entry limitations (unknown size, integrity, ...). */
+  readonly limitations: readonly string[];
 }
 
 export interface AsarClassificationContext {
@@ -35,7 +37,18 @@ export interface AsarClassificationContext {
   readonly headerBytesOverDocumentedLimit: number | null;
   /** True when the owning reader stopped before the whole inventory. */
   readonly listingTruncated: boolean;
+  /** Reader-supplied limitation details to surface first (e.g., a listing limit). */
+  readonly extraLimitations?: readonly string[];
 }
+
+/** Maximum distinct per-entry limitation strings surfaced before summarizing. */
+const MAX_ENTRY_LIMITATIONS = 64;
+
+/** An unknown declared size must stay distinct from a genuine zero-byte member. */
+const sizeSuffix = (entry: AsarInventoryEntry): string =>
+  entry.size === null
+    ? " Declared size is unknown; this is not a zero-byte member."
+    : "";
 
 /** Best-effort reachable module paths from an archive's own package.json bytes. */
 export const reachableAsarPaths = (manifest: Buffer): ReadonlySet<string> => {
@@ -71,7 +84,7 @@ const reachableFact = (entry: AsarInventoryEntry): CanonicalizeFact => ({
   location: null,
   sha256: null,
   sample: null,
-  detail: "Reachable from package.json main/exports.",
+  detail: `Reachable from package.json main/exports.${sizeSuffix(entry)}`,
 });
 
 const unverifiedFact = (entry: AsarInventoryEntry): CanonicalizeFact => ({
@@ -83,9 +96,10 @@ const unverifiedFact = (entry: AsarInventoryEntry): CanonicalizeFact => ({
   sha256: null,
   sample: null,
   detail:
-    entry.kind === "file"
+    (entry.kind === "file"
       ? "Packaged entry; reachability from entrypoints unverified."
-      : `${entry.kind} entry; reachability from entrypoints unverified.`,
+      : `${entry.kind} entry; reachability from entrypoints unverified.`) +
+    sizeSuffix(entry),
 });
 
 const decoyFact = (
@@ -99,7 +113,7 @@ const decoyFact = (
   location: null,
   sha256: canonicalizeDigest(Buffer.from(entry.path, "utf8")),
   sample: null,
-  detail: `Inventory entry with a ${String(entry.path.length)}-character path; unreferenced path inflation.`,
+  detail: `Inventory entry with a ${String(entry.path.length)}-character path; unreferenced path inflation.${sizeSuffix(entry)}`,
 });
 
 interface InventoryState {
@@ -201,7 +215,7 @@ export const classifyAsarInventory = (
         "Entries with abnormally long paths were classified as unreferenced path inflation.",
     });
 
-  const limitations: string[] = [];
+  const limitations: string[] = [...(context.extraLimitations ?? [])];
   if (context.headerBytesOverDocumentedLimit !== null)
     limitations.push(
       `ASAR header is ${String(context.headerBytesOverDocumentedLimit)} bytes, beyond REA's documented asar.max_header_bytes; canonicalized within the pass's own read budget.`,
@@ -209,6 +223,23 @@ export const classifyAsarInventory = (
   if (context.listingTruncated)
     limitations.push(
       "The ASAR inventory was truncated by the reader's listing budget; the remaining inventory is unverified.",
+    );
+  // Surface the owning reader's per-entry limitations (unknown sizes, integrity
+  // declarations) rather than dropping them when mapping to facts.
+  const entryLimitations = new Set<string>();
+  let entryLimitationsOverflow = false;
+  for (const entry of entries)
+    for (const limitation of entry.limitations) {
+      if (entryLimitations.size >= MAX_ENTRY_LIMITATIONS) {
+        entryLimitationsOverflow = true;
+        break;
+      }
+      entryLimitations.add(limitation);
+    }
+  limitations.push(...entryLimitations);
+  if (entryLimitationsOverflow)
+    limitations.push(
+      `Additional per-entry limitations beyond ${String(MAX_ENTRY_LIMITATIONS)} distinct notes were omitted.`,
     );
 
   const omitted =

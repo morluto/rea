@@ -432,9 +432,17 @@ export const readAsarHeader = async (
   assertArtifactReadActive(signal);
   if (bytes.length !== extents.jsonBytes)
     throw new ArtifactReaderFailure("format", "Truncated ASAR JSON header");
-  let json: string;
+  return JSON.parse(decodeAsarHeaderText(bytes)) as unknown;
+};
+
+/**
+ * Decode admitted ASAR header bytes as strict UTF-8. Every consumer that
+ * interprets an ASAR header shares this one decoder, so none silently replaces
+ * invalid bytes or reinterprets the raw source differently.
+ */
+export const decodeAsarHeaderText = (bytes: Uint8Array): string => {
   try {
-    json = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
       bytes,
     );
   } catch (cause: unknown) {
@@ -444,5 +452,4 @@ export const readAsarHeader = async (
       { cause },
     );
   }
-  return JSON.parse(json) as unknown;
 };
