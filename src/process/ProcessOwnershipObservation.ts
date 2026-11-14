@@ -749,7 +749,7 @@ const identityFact = (
   };
 
 const readIdentityFacts = async (
-  processes: readonly ProcessTableEntry[],
+  processes: readonly Pick<ProcessTableEntry, "pid">[],
   host: ProcessOwnershipHost,
   phase: "before" | "after",
   signal?: AbortSignal,
@@ -802,7 +802,7 @@ export const readNativeProcessIdentityMap = async (
  * A deadline, unavailable read or changed generation remains explicit evidence.
  */
 export const settleExitingProcessIdentities = async (
-  processes: readonly ProcessTableEntry[],
+  processes: readonly Pick<ProcessTableEntry, "pid">[],
   host: ProcessOwnershipHost,
   initial: ReadonlyMap<number, ProcessIdentityObservation>,
   signal?: AbortSignal,
@@ -1695,14 +1695,13 @@ export const observeProcessStartIdentity = async (
 ): Promise<ProcessIdentityObservation | undefined> => {
   if (host.processIdentities === undefined)
     return { state: "unavailable", reason: "process identity is unsupported" };
-  const identity: ProcessIdentityObservation = (
-    await host.processIdentities([{ pid }])
-  ).get(pid) ?? {
-    state: "unavailable",
-    reason: "process identity was not returned",
-  };
-  if (identity.state === "absent" || processIdentityHasExited(identity))
-    return undefined;
+  const identity = liveProcessIdentity(
+    (await host.processIdentities([{ pid }])).get(pid) ?? {
+      state: "unavailable",
+      reason: "process identity was not returned",
+    },
+  );
+  if (identity === undefined) return undefined;
   if (expectedRunId === undefined || identity.state !== "readable")
     return identity;
   const process = (await host.listProcesses()).find(
@@ -1741,6 +1740,14 @@ export const observeProcessStartIdentity = async (
       };
 };
 
+/** An absent or exited identity has no live process; others stay as observed. */
+const liveProcessIdentity = (
+  identity: ProcessIdentityObservation,
+): ProcessIdentityObservation | undefined =>
+  identity.state === "absent" || processIdentityHasExited(identity)
+    ? undefined
+    : identity;
+
 /** Confirm whether the process that held an authenticated bridge has exited. */
 export const observeProcessStartIdentityExit = async (
   pid: number,
@@ -1751,19 +1758,21 @@ export const observeProcessStartIdentityExit = async (
     let observed = await observeProcessStartIdentity(pid, host);
     // An exiting process closes its sockets before it becomes a zombie, so a
     // caller that reacts to the closed transport can observe the same
-    // generation mid-exit. Wait only for that positively observed state.
-    const deadline = performance.now() + PROCESS_CLEANUP_VERIFICATION_GRACE_MS;
-    while (
+    // generation mid-exit. The shared settlement waits only for that
+    // positively observed state of the same identity.
+    if (
       observed?.state === "readable" &&
-      observed.identity === expectedIdentity &&
-      processIdentityIsExiting(observed)
+      observed.identity === expectedIdentity
     ) {
-      const remaining = deadline - performance.now();
-      if (remaining <= 0) break;
-      await delay(
-        Math.min(PROCESS_CLEANUP_VERIFICATION_INTERVAL_MS, remaining),
-      );
-      observed = await observeProcessStartIdentity(pid, host);
+      const settled = (
+        await settleExitingProcessIdentities(
+          [{ pid }],
+          host,
+          new Map([[pid, observed]]),
+        )
+      ).get(pid);
+      observed =
+        settled === undefined ? observed : liveProcessIdentity(settled);
     }
     if (observed === undefined) return "exited";
     if (observed.state !== "readable") return "unverified";
