@@ -577,6 +577,8 @@ as complete while required questions remain open.
 
 ## Read only the relevant guide
 
+- คู่มือการใช้งานภาษาไทย (Thai Guide & Fast Reference):
+  [Windows quick tools launcher](https://github.com/morluto/rea/blob/main/docs/getting-started/windows-quicktools.md).
 - Native binaries, managed assemblies, archives, and extraction:
   [references/native-and-artifacts.md](references/native-and-artifacts.md)
 - ASARs, extracted JavaScript, feature tracing, and version comparison:

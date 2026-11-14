@@ -10,6 +10,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Client configuration and troubleshooting](getting-started/client-configuration.md)
 - [CLI and Evidence](getting-started/cli.md)
 - [Guided MCP prompts and completion](getting-started/mcp-prompts.md)
+- [Windows quick tools launcher (Thai guide)](getting-started/windows-quicktools.md)
 
 ## Native binaries
 

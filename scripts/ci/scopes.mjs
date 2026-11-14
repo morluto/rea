@@ -182,6 +182,10 @@ const PATH_SCOPES = {
   // Four-host installed-package matrix and the Windows curated lane.
   package: [
     ...WINDOWS_EXECUTABLE_SELECTION_INPUTS,
+    // The launcher's real cmd.exe behavior tests run in windows-curated.
+    "tools/windows/**",
+    "tests/test_windows_quicktools.py",
+    "scripts/run-python-tests.py",
     // Selected-file spelling requires the real Windows identity workflow.
     "src/application/binaryDiagnostics/ByteEntropyService.ts",
     "tests/acceptance/byteEntropyWindowsIdentity.test.ts",
