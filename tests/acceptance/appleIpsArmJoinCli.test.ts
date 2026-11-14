@@ -8,7 +8,7 @@ import {
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { appleIpsBytes } from "../fixtures/binaryDiagnostics/appleIps.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 /** Actual 32-bit framing; the displayed family alone cannot identify its subtype. */
 const armImage = (subtype: number, withUuid = true): Uint8Array => {
@@ -49,7 +49,7 @@ cliTest.for([
     const image = join(root, "image.bin");
     await writeFile(path, appleIpsBytes({ arch, base: 0x8000 }));
     await writeFile(image, armImage(subtype));
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-apple-ips", path, "--join-path", image, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -96,7 +96,7 @@ cliTest.for([11, 99])(
         { cpu: { type: 12, subtype }, bytes: armImage(subtype, false) },
       ]),
     );
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-apple-ips", path, "--join-path", image, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
