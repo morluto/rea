@@ -89,6 +89,21 @@ it.each([
   ["a token header name", 'fetch(url, { headers: { "x-ok": "1" } })', "fetch"],
   ["empty credentials", 'fetch("http://:@api.example.test/x")', "fetch"],
   ["a relative fetch URL", 'fetch("/api/items")', "fetch"],
+  [
+    "a same-scheme relative URL with an at sign",
+    'fetch("http:user@api.example.test/x")',
+    "fetch",
+  ],
+  [
+    "a forbidden method after a spread",
+    'fetch(...list, { method: "CONNECT" })',
+    "fetch",
+  ],
+  [
+    "a subprotocol after a spread",
+    'new WebSocket(...list, "a b")',
+    "WebSocket",
+  ],
   ["a ws URL", 'new WebSocket("wss://chat.example.test/ws")', "WebSocket"],
   [
     "an http WebSocket URL",

@@ -23,9 +23,14 @@ const literalString = (node: t.Node | undefined): string | undefined => {
     : undefined;
 };
 
-/** Whether an absolute URL literal names a user or password. */
+/**
+ * Whether an absolute URL literal names a user or password. Without `//` after
+ * the scheme, a browser page with the same scheme reads the rest as a relative
+ * path: on an http page, "http:user@host/x" names no user.
+ */
 const carriesCredentials = (url: string): boolean => {
-  if (!URL.canParse(url)) return false;
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(url) || !URL.canParse(url))
+    return false;
   const parsed = new URL(url);
   return parsed.username !== "" || parsed.password !== "";
 };
@@ -64,6 +69,8 @@ const fetchRefused = (node: t.Node): boolean => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
   const [input, init] = node.arguments;
+  // A spread can move every later literal to a slot the host ignores.
+  if (input === undefined || t.isSpreadElement(input)) return false;
   const url = literalString(input);
   if (url !== undefined && carriesCredentials(url)) return true;
   if (init === undefined || t.isSpreadElement(init)) return false;
@@ -94,8 +101,7 @@ const fetchRefused = (node: t.Node): boolean => {
   if (!t.isObjectExpression(record)) return false;
   const names = staticObjectPropertyNames(record);
   return (
-    names.status !== "missing" &&
-    names.status !== "dynamic" &&
+    (names.status === "partial" || names.status === "complete") &&
     names.names.some((name) => !TOKEN.test(name))
   );
 };
@@ -116,6 +122,8 @@ const fetchRefused = (node: t.Node): boolean => {
 const webSocketRefused = (node: t.Node): boolean => {
   if (!t.isNewExpression(node)) return false;
   const [target, protocols] = node.arguments;
+  // A spread can move every later literal to a slot the host ignores.
+  if (target === undefined || t.isSpreadElement(target)) return false;
   const url = literalString(target);
   if (url !== undefined) {
     // The URL parser treats any "#" as the start of the fragment.
