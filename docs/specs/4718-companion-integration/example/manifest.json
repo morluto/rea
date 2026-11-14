@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "example-companion",
+  "companionVersion": "0.1.0",
+  "description": "For requested reconstruction planning; ordinary REA diagnostics do not require this companion.",
+  "entrypoint": "instructions.example.md",
+  "requires": {
+    "integrationContract": "example-contract-v1"
+  },
+  "files": {
+    "instructions.example.md": "a13103a99518c0c9220cbee5389dde586afbef03db6ee54cd36bec2aae5059bb"
+  }
+}
