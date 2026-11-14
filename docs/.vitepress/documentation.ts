@@ -334,6 +334,11 @@ export const documentationSections = [
         route: "/ida-provider",
       },
       {
+        text: "Binary Ninja provider",
+        source: "providers/binary-ninja.md",
+        route: "/binary-ninja",
+      },
+      {
         text: "JEB instrumentation and analysis",
         source: "providers/jeb-analysis.md",
         route: "/jeb-analysis",

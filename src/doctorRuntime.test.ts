@@ -514,6 +514,67 @@ it("carries a validated REA_KUNA_COMMAND into the provider registration environm
   });
 });
 
+test.each([
+  { idaTimeout: undefined, binaryNinjaTimeout: 600_000, expected: 600_000 },
+  { idaTimeout: 900_000, binaryNinjaTimeout: 600_000, expected: 900_000 },
+  { idaTimeout: 300_000, binaryNinjaTimeout: 600_000, expected: 600_000 },
+  { idaTimeout: 300_000, binaryNinjaTimeout: 0, expected: 300_000 },
+  { idaTimeout: 0, binaryNinjaTimeout: 600_000, expected: 600_000 },
+  { idaTimeout: 0, binaryNinjaTimeout: 0, expected: undefined },
+])(
+  "uses the largest valid auto provider request budget: %j",
+  async ({ idaTimeout, binaryNinjaTimeout, expected }) => {
+    const root = await createTestTempDirectory("rea-auto-provider-budget-");
+    const binaryNinja = join(root, "binary-ninja.json");
+    const ida = join(root, "ida.json");
+    await writeFile(
+      binaryNinja,
+      JSON.stringify({
+        url: "http://127.0.0.1:9/mcp",
+        timeoutMs: binaryNinjaTimeout,
+      }),
+    );
+    await writeFile(
+      ida,
+      JSON.stringify({ command: "fixture", timeoutMs: idaTimeout }),
+    );
+    const environment = {
+      REA_BINARY_NINJA_MCP_CONFIG: binaryNinja,
+      ...(idaTimeout === undefined ? {} : { REA_IDA_MCP_CONFIG: ida }),
+    };
+    const host = createSystemDoctorHost(environment);
+    try {
+      expect(
+        await host.resolveProviderRequestBudget?.("auto", environment),
+      ).toEqual(ok(expected));
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
+test("carries a validated REA_BINARY_NINJA_MCP_CONFIG into the provider registration environment without connecting", async () => {
+  expect(DOCTOR_PROVIDER_IDS).toContain("binary-ninja");
+  const root = await createTestTempDirectory("rea-binary-ninja-registration-");
+  const registration = join(root, "binary-ninja-mcp.json");
+  await writeFile(
+    registration,
+    JSON.stringify({ url: "http://127.0.0.1:9/mcp" }),
+  );
+
+  const inspections = await createSystemDoctorHost({
+    REA_BINARY_NINJA_MCP_CONFIG: registration,
+  }).providerInspections?.([]);
+
+  expect(inspections?.find(({ id }) => id === "binary-ninja")).toMatchObject({
+    configured: true,
+    available: true,
+  });
+  expect(providerRegistrationEnvironment(inspections ?? [])).toMatchObject({
+    REA_BINARY_NINJA_MCP_CONFIG: registration,
+  });
+});
+
 it("does not save inherited cache defaults into a Kuna registration", async () => {
   const root = await createTestTempDirectory("rea-kuna-inherited-");
   const home = join(root, "home");
@@ -585,6 +646,52 @@ test("probes the selected client's registration environment instead of the termi
     await host.close?.();
   }
 });
+
+test.each(["literal", "expression"] as const)(
+  "uses the selected client's Binary Ninja registration setting: %s",
+  async (mode) => {
+    const home = await createTestTempDirectory("rea-bn-selected-doctor-");
+    const registration = join(home, "binary-ninja.json");
+    await writeFile(
+      registration,
+      JSON.stringify({ url: "http://127.0.0.1:9/mcp" }),
+    );
+    await mkdir(join(home, ".qwen"), { recursive: true });
+    await writeFile(
+      join(home, ".qwen/settings.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "node",
+            args: ["rea"],
+            env: {
+              REA_BINARY_NINJA_MCP_CONFIG:
+                mode === "literal"
+                  ? registration
+                  : "${REA_BINARY_NINJA_MCP_CONFIG}",
+            },
+          },
+        },
+      }),
+    );
+    const host = createSystemDoctorHost({
+      HOME: home,
+      REA_BINARY_NINJA_MCP_CONFIG:
+        mode === "literal" ? join(home, "missing.json") : registration,
+    });
+    try {
+      const inspections = await host.providerInspections?.(["qwen_code"]);
+      expect(
+        inspections?.find(({ id }) => id === "binary-ninja"),
+      ).toMatchObject({
+        configured: mode === "literal" ? true : null,
+        available: mode === "literal" ? true : null,
+      });
+    } finally {
+      await host.close?.();
+    }
+  },
+);
 
 test("keeps reading this terminal when no client is selected", async () => {
   const home = await createTestTempDirectory("rea-opencode-doctor-ambient-");

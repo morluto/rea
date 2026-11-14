@@ -17,6 +17,22 @@ import {
 } from "../config/runtimeAnalysisSettings.js";
 import { parseConfig } from "../config/parseConfig.js";
 
+it.each(["search_strings", "search_procedures"])(
+  "exposes shared regex controls when filtering for Binary Ninja %s",
+  (operation) => {
+    const store = new AnalysisSettings({
+      REA_REGEX_MATCHING_DEADLINE_MS: "9000",
+      REA_REGEX_WORKER_HEAP_REQUEST_MIB: "80",
+    });
+    expect(
+      store.inspect({ provider: "binary-ninja", operation }).settings,
+    ).toMatchObject([
+      { setting: "regex.matching_deadline_ms", value: 9000 },
+      { setting: "regex.worker_heap_request_mib", value: 80 },
+    ]);
+  },
+);
+
 it.each([
   ["inspect_native_api", [64, 7]],
   ["trace_native_ui_action", []],

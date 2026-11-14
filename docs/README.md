@@ -102,6 +102,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Windows Ghidra P0](providers/windows-ghidra-p0.md)
 - [Headerless raw-binary analysis with Ghidra](providers/raw-binary.md)
 - [IDA provider](providers/ida-provider.md)
+- [Binary Ninja provider](providers/binary-ninja.md)
 - [JEB instrumentation and analysis](providers/jeb-analysis.md)
 
 ## Contracts and evidence

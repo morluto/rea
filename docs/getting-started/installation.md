@@ -3,16 +3,16 @@
 Run REA, connect your selected agents, and check the tools needed for your task.
 Setup previews configuration changes and asks for approval before applying them.
 
-| Task                                  | Section                                                                                                             |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Connect an agent                      | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                           |
-| Install a Claude Code/Codex plugin    | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                   |
-| Install the Cursor Marketplace plugin | [Cursor Marketplace](#cursor-marketplace)                                                                           |
-| Run unreleased code                   | [Run REA from a checkout](#run-rea-from-a-checkout)                                                                 |
-| Diagnose one task                     | [Scoped readiness checks](#check-readiness-for-your-task)                                                           |
-| Configure an analysis engine          | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), or [Kuna](../kuna-provider.md) |
-| Update or remove REA                  | [Maintenance](#diagnose-update-and-remove)                                                                          |
-| Resolve a client-specific problem     | [Client configuration](client-configuration.md)                                                                     |
+| Task                                  | Section                                                                                                                                                           |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connect an agent                      | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                                                                         |
+| Install a Claude Code/Codex plugin    | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                                                                 |
+| Install the Cursor Marketplace plugin | [Cursor Marketplace](#cursor-marketplace)                                                                                                                         |
+| Run unreleased code                   | [Run REA from a checkout](#run-rea-from-a-checkout)                                                                                                               |
+| Diagnose one task                     | [Scoped readiness checks](#check-readiness-for-your-task)                                                                                                         |
+| Configure an analysis engine          | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), [Binary Ninja](../providers/binary-ninja.md), or [Kuna](../kuna-provider.md) |
+| Update or remove REA                  | [Maintenance](#diagnose-update-and-remove)                                                                                                                        |
+| Resolve a client-specific problem     | [Client configuration](client-configuration.md)                                                                                                                   |
 
 ## Start setup
 
