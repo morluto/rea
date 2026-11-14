@@ -34,7 +34,6 @@ export const compareProcessEvidence = (
   lookup?: EvidenceLookup,
   options: {
     readonly signal?: AbortSignal;
-    readonly now?: () => number;
   } = {},
 ): Result<ProcessComparisonExecution, AnalysisError> => {
   const selected = resolveEvidenceRequest(
@@ -57,7 +56,6 @@ export const compareProcessEvidence = (
     ...(request.trace_spec === undefined
       ? {}
       : { traceSpecification: request.trace_spec }),
-    ...(options.now === undefined ? {} : { now: options.now }),
   });
 };
 
@@ -126,15 +124,7 @@ export const readProcessComparisonSource = (
         ]),
       );
     case "unsupported-provider":
-      return err(
-        new AnalysisInputError(operation, undefined, [
-          {
-            path: [side, "provider"],
-            reason: "invalid_value",
-            message: `The ${side} Evidence provider ${failure.provider.id} v${failure.provider.version} (${failure.provider.name}) is not the current or supported legacy ${PROCESS_PROVIDER.id} v${PROCESS_PROVIDER.version} process capture provider.`,
-          },
-        ]),
-      );
+      return err(unsupportedProcessCaptureProvider(side, failure));
     case "invalid-capture":
       return err(
         new EvidenceIntegrityError(
@@ -147,6 +137,22 @@ export const readProcessComparisonSource = (
       );
   }
 };
+
+/** Report the same provider admission failure at both public adapters. */
+export const unsupportedProcessCaptureProvider = (
+  side: "left" | "right",
+  failure: Extract<
+    ProcessCaptureEvidenceFailure,
+    { kind: "unsupported-provider" }
+  >,
+): AnalysisInputError =>
+  new AnalysisInputError("compare_process_captures", undefined, [
+    {
+      path: [side, "provider"],
+      reason: "invalid_value",
+      message: `The ${side} Evidence provider ${failure.provider.id} v${failure.provider.version} (${failure.provider.name}) is not the current or supported legacy ${PROCESS_PROVIDER.id} v${PROCESS_PROVIDER.version} process capture provider.`,
+    },
+  ]);
 
 const comparisonUnknownInput = (
   parsed: {

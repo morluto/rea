@@ -23,7 +23,7 @@ import {
   type NativeSection,
   type NativeSectionDirectory,
 } from "../native/metadata/NativeSectionDirectory.js";
-import { readElfString } from "../native/metadata/ElfStringTable.js";
+import { readElfStringBytes } from "../native/metadata/ElfStringTable.js";
 import { readElfSymbol } from "../domain/elfSymbol.js";
 import {
   gpuCount,
@@ -321,7 +321,7 @@ const cudaKernels = async (
       const kernel = blankKernel(
         source,
         `sym:${section.index}:${offset / width}`,
-        readElfString(names, symbol.name_offset),
+        readElfStringBytes(names, symbol.name_offset).toString("latin1"),
         site(source, section, offset, width),
       );
       if (

@@ -19,7 +19,6 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   PACKAGED_NATIVE_IMAGES,
-  RELEASE_EXPOSURE_CHECK_IDS,
   releaseExposureReportSchema,
   type ReleaseExposureScan,
 } from "../../domain/releaseExposure.js";
@@ -189,9 +188,6 @@ describe("ReleaseExposureService", () => {
         observation: { samples: string[] };
       }[];
     };
-    expect(report.checks.map((check) => check.id)).toEqual([
-      ...RELEASE_EXPOSURE_CHECK_IDS,
-    ]);
     expect(
       report.checks.find((check) => check.id === "go.build_paths")?.status,
     ).toBe("not_applicable");

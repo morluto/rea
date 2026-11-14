@@ -3,10 +3,8 @@ import { createHash } from "node:crypto";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
-import {
-  projectAnalysisView,
-  analysisViewRequestSchema,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 import { timedCaptureEvidence } from "../../../tests/fixtures/analysisView.js";
 
 const capture = () => {

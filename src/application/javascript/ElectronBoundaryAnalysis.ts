@@ -172,7 +172,7 @@ const electronModuleReferencedBy = ({
 };
 
 /** Whether any analyzed source loads an Electron module. */
-export const electronModuleReferenced = (
+const electronModuleReferenced = (
   analysis: JavaScriptArtifactAnalysis,
 ): boolean => analysis.files.some(electronModuleReferencedBy);
 

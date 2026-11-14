@@ -47,6 +47,10 @@ import type {
 import { OwnedCommandFailure, ownedCommandResources } from "./OwnedCommand.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 
+/** Limitations shared by resource-limited artifact producer observations. */
+export const ARTIFACT_PRODUCER_LIMITATION =
+  "Linux prlimit enforces the reported per-process address-space, per-file and CPU limits before execution with no core dumps, preserving tighter inherited soft and hard limits. Input, command deadline and retained output budgets are reported in limits; producer_limits can change their requested defaults on the next call without restart. Output overflow fails. Parser and transport bounds remain independent. These are per-process/per-file limits, not aggregate memory or filesystem quotas; caller-supplied tools and the limiter are trusted.";
+
 export type ArtifactAnalysisRuntime = Pick<
   PrivateRuntimeRoot,
   "path" | "close"

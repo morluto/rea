@@ -3,16 +3,12 @@ import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
 
 import { DEFAULT_NODE_SEA_READER_LIMITS } from "../../domain/artifactReaderLimits.js";
-import {
-  NODE_SEA_MAGIC,
-  decodeNodeSeaBlob,
-  observeNodeSeaFuseMatches,
-} from "./NodeSeaBlob.js";
-import { buildNodeSeaBlob } from "./NodeSea.fixture.js";
+import { decodeNodeSeaBlob, observeNodeSeaFuseMatches } from "./NodeSeaBlob.js";
+import { buildNodeSeaBlob, NODE_SEA_FIXTURE_MAGIC } from "./NodeSea.fixture.js";
 
 const header = (flags: number, extension = 1): Buffer => {
   const bytes = Buffer.alloc(9);
-  bytes.writeUInt32LE(NODE_SEA_MAGIC, 0);
+  bytes.writeUInt32LE(NODE_SEA_FIXTURE_MAGIC, 0);
   bytes.writeUInt32LE(flags, 4);
   bytes[8] = extension;
   return bytes;

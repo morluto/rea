@@ -142,5 +142,4 @@ cliTest(
     });
     expect(withoutAuthoredField?.attributes).not.toHaveProperty("className");
   },
-  60_000,
 );

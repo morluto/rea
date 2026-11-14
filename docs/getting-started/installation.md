@@ -1927,7 +1927,7 @@ terminal, use the package runner at the version the plugin pins:
 <!-- x-release-please-start-version -->
 
 ```bash
-npx -y rea-agents@6.8.0 doctor --provider ghidra --json
+npx -y rea-agents@6.9.0 doctor --provider ghidra --json
 ```
 
 <!-- x-release-please-end -->
@@ -1960,7 +1960,7 @@ therefore runs the published package instead of a local build:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@6.8.0", "mcp"]
+      "args": ["-y", "rea-agents@6.9.0", "mcp"]
     }
   }
 }

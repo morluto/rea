@@ -212,7 +212,6 @@ describe("IDA registration descriptor ownership", () => {
       retain: (resource) => retained.push(resource),
       run: (operation) => operation(),
     };
-    const close = OwnedFileHandle.prototype.close;
     const reason = new Error("cancel while closing IDA registration");
     const controller = new AbortController();
     let entered!: () => void;

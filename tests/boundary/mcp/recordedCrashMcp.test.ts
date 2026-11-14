@@ -65,15 +65,14 @@ it("records inline recorded-core evidence with compact schemas and canonical pat
       approval: true,
     }),
   ).toBe(false);
-  const response = await client.callTool({
-    name: "inspect_recorded_crash",
-    arguments: { path: value.artifact.path },
-  });
+  const response = await client.callTool(
+    {
+      name: "inspect_recorded_crash",
+      arguments: { path: value.artifact.path },
+    },
+    { toolDefinition: advertised },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const parsed = toolContract("inspect_recorded_crash").outputSchema.parse(
     response.structuredContent,
   );

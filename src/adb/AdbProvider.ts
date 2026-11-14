@@ -84,6 +84,7 @@ import {
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { createEvidence } from "../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   PrivateRuntimeRoot,
   type PrivateRuntimeRootOptions,
@@ -993,15 +994,12 @@ export class AdbProvider {
     const partialObservation =
       execution === undefined
         ? undefined
-        : createEvidence(execution.subject ?? undefined, execution.provider, {
+        : createAnalysisExecutionEvidence(
             operation,
             parameters,
-            result: execution.result,
-            rawResult: execution.rawResult,
-            limitations: execution.limitations,
-            locations: execution.locations,
-            confidence: "observed",
-          });
+            execution,
+            "observed",
+          );
     return new ProviderCleanupError(
       ADB_PROVIDER_IDENTITY.id,
       resources,

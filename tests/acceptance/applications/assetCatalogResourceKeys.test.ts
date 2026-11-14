@@ -170,5 +170,4 @@ cliTest.skipIf(process.platform !== "darwin")(
       });
     }
   },
-  30_000,
 );

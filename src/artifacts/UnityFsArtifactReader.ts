@@ -1,3 +1,4 @@
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
@@ -12,10 +13,8 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import {
-  artifactReadCancelledBy,
-  assertArtifactReadActive,
-} from "./ArtifactFileOperation.js";
+import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import type {
   ArtifactFormatMetadata,
@@ -58,9 +57,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
   #entries = new Map<string, UnityFsEntryState>();
   readonly #streams = new Map<Readable, AbortController>();
   readonly #source: ArtifactFileSource;
-  #prepared:
-    | { signal: AbortSignal | undefined; promise: Promise<void> }
-    | undefined;
+  readonly #preparation = new ArtifactPreparation();
   #header: UnityFsMetadata | undefined;
   #blocks: readonly UnityFsBlock[] = [];
   #dataStart = 0;
@@ -93,27 +90,11 @@ export class UnityFsArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      for (;;) {
-        const pending = (this.#prepared ??= {
-          signal,
-          promise: this.#prepare(signal),
-        });
-        try {
-          await pending.promise;
-          break;
-        } catch (cause: unknown) {
-          if (this.#prepared === pending) this.#prepared = undefined;
-          if (
-            pending.signal !== signal &&
-            signal?.aborted !== true &&
-            artifactReadCancelledBy(cause, pending.signal)
-          ) {
-            this.#assertOpen(signal);
-            continue;
-          }
-          throw cause;
-        }
-      }
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
       await this.#source.read(signal);
     });
     this.#assertOpen(signal);
@@ -128,6 +109,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
               : "UnityFS blocks-and-directory table uses an unsupported compression; member identities remain unknown.",
         ],
       });
+      this.#assertOpen(signal);
       return;
     }
     let index = 0;
@@ -173,46 +155,17 @@ export class UnityFsArtifactReader implements ArtifactReader {
           { boundary: "capacity" },
         );
       const controller = new AbortController();
-      const output = Readable.from(
+      const output = ownAsyncArtifactStream(
         this.#memberChunks(handle, state, controller.signal),
+        controller,
         {
-          objectMode: false,
+          scope: this.#scope,
+          streams: this.#streams,
+          signal,
+          label: "UnityFS",
           highWaterMark: CHUNK_BYTES,
         },
       );
-      const onAbort = (): void => {
-        controller.abort(signal?.reason);
-        output.destroy(
-          new ArtifactReaderFailure(
-            "cancelled",
-            "UnityFS member read cancelled",
-            { cause: signal?.reason },
-          ),
-        );
-      };
-      output.on("error", () => undefined);
-      this.#streams.set(output, controller);
-      const completion = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          signal?.removeEventListener("abort", onAbort);
-          this.#streams.delete(output);
-          resolve();
-        });
-      });
-      // Readable.from waits for its async iterator to retire before close. Keep
-      // that whole lifetime owned, including a suspended positional read/decoder.
-      void this.#scope
-        .run(() => completion)
-        .catch((cause: unknown) => {
-          controller.abort(cause);
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error("UnityFS stream ownership failed", { cause }),
-          );
-        });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted === true) onAbort();
       return output;
     });
   }
@@ -278,10 +231,9 @@ export class UnityFsArtifactReader implements ArtifactReader {
     const { dataHash, blocks, nodes, dataStart } = await readUnityFsBlocksInfo(
       handle,
       header,
-      initial.size,
       signal,
     );
-    const budget = artifactExpansionBudgetBytes(initial.size);
+    const budget = artifactExpansionBudgetBytes(header.declaredSize);
     let streamBytes = 0n;
     for (const block of blocks) {
       streamBytes += BigInt(block.uncompressedSize);

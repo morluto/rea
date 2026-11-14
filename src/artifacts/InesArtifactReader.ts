@@ -244,12 +244,6 @@ export class InesArtifactReader implements ArtifactReader {
     await this.ownedSource?.close();
   }
 
-  #assertOpen(signal?: AbortSignal): void {
-    abortIfNeeded(signal);
-    if (this.#closed)
-      throw new ArtifactReaderFailure("unavailable", "iNES reader is closed");
-  }
-
   async #verifySource(signal?: AbortSignal): Promise<void> {
     this.#assertOpen(signal);
     try {
@@ -270,5 +264,11 @@ export class InesArtifactReader implements ArtifactReader {
     }
     // State validation is asynchronous even after the final byte was consumed.
     this.#assertOpen(signal);
+  }
+
+  #assertOpen(signal?: AbortSignal): void {
+    abortIfNeeded(signal);
+    if (this.#closed)
+      throw new ArtifactReaderFailure("unavailable", "iNES reader is closed");
   }
 }

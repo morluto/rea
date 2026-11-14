@@ -10,7 +10,6 @@ import * as nativeExportContracts from "../../domain/native/nativeExports.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-  BinaryStringReadLimitFailure,
 } from "../metadata/BinaryContainer.js";
 import {
   parseNativeExports,
@@ -873,6 +872,33 @@ describe("ELF export version and name coverage", () => {
   });
 });
 
+it.each(["definition", "requirement"] as const)(
+  "retains an export with an over-limit version %s name as partial",
+  (kind) => {
+    const longName = "v".repeat(65_536);
+    const result = parse(
+      elfExportImage({
+        symbols: [{ name: "kept", version: 2 }],
+        ...(kind === "definition"
+          ? { versionDefinitions: ["base", longName] }
+          : { versionRequirements: [{ index: 2, name: longName }] }),
+      }),
+    );
+    expect(result.exports).toMatchObject([
+      { name: "kept", version: { index: 2, name: null } },
+    ]);
+    expect(result.coverage.status).toBe("partial");
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "version_unresolved",
+          message: expect.stringContaining("65536-byte read allowance"),
+        }),
+      ]),
+    );
+  },
+);
+
 describe("ELF version requirements", () => {
   it("resolves defined copy-relocated symbols through version requirements", () => {
     const result = parse(
@@ -1146,14 +1172,15 @@ describe("ELF symbol-name text", () => {
       expect(result.exports.map((entry) => entry.name)).toEqual(
         length === 65535 ? [name] : [],
       );
-      if (length === 65536)
+      if (length === 65536) {
+        expect(result.coverage.status).toBe("partial");
         expect(result.issues).toContainEqual(
           expect.objectContaining({
-            message: expect.stringContaining(
-              new BinaryStringReadLimitFailure(65_536).message,
-            ),
+            code: "name_unreadable",
+            message: expect.stringContaining("65536-byte read allowance"),
           }),
         );
+      }
     },
   );
 
