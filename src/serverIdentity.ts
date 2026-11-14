@@ -2,6 +2,12 @@ import { statSync } from "node:fs";
 import { dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  javaScriptRuntime,
+  type JavaScriptRuntime,
+} from "./domain/runtimeVersion.js";
+import { normalizeEntrypointPath } from "./process/CurrentEntrypointPath.js";
+
 import type { createCatalogIdentity } from "./catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "./identity.js";
 
@@ -28,12 +34,15 @@ const packageRoot = (): string => {
 const compareServerPaths = (
   expected: string,
   observed: string,
+  runtime: JavaScriptRuntime["id"],
 ): "aligned" | "mismatch" | "unknown" => {
-  if (expected === observed) return "aligned";
-  if (process.platform === "win32")
-    return resolve(expected) === observed ? "aligned" : "mismatch";
+  // Select the registered script the way this runtime does: Node resolves it
+  // lexically, while Bun follows native traversal through a symlink before `..`.
+  const script = normalizeEntrypointPath(expected, runtime) ?? expected;
+  if (script === observed) return "aligned";
+  if (process.platform === "win32") return "mismatch";
   try {
-    const selected = statSync(expected, { bigint: true });
+    const selected = statSync(script, { bigint: true });
     const running = statSync(observed, { bigint: true });
     return selected.dev === running.dev && selected.ino === running.ino
       ? "aligned"
@@ -51,13 +60,19 @@ export const createServerIdentity = (input: {
   readonly client?: ConnectedClientIdentity;
   readonly protocolVersion?: string | undefined;
   readonly catalog: ReturnType<typeof createCatalogIdentity>;
+  /** The runtime that selected `commandPath`; defaults to the current one. */
+  readonly runtime?: JavaScriptRuntime["id"];
 }) => {
   const catalog = input.catalog;
   const serverPath = input.commandPath || undefined;
   const pathComparison =
     input.expected?.server_path === undefined || serverPath === undefined
       ? "unknown"
-      : compareServerPaths(input.expected.server_path, serverPath);
+      : compareServerPaths(
+          input.expected.server_path,
+          serverPath,
+          input.runtime ?? javaScriptRuntime(process.versions).id,
+        );
   const reasons: string[] = [];
   if (
     input.expected?.package_version !== undefined &&
