@@ -267,8 +267,9 @@ This is static reference inspection; no image decoding, language fallback,
 resource loading or selected-file execution occurs.
 
 An absent resource data directory is a complete empty inventory. Malformed
-headers, truncated tables, cycles, duplicate sibling identities, unbacked or
-ambiguous RVA mappings, nonidentical overlapping ranges and unsupported tree
+headers, truncated tables, cycles, duplicate sibling identities, descending
+numeric IDs, unbacked or ambiguous RVA mappings, nonidentical overlapping ranges
+and unsupported tree
 shapes fail explicitly, rather than returning partial inventories. Exact shared
 payload ranges are supported. The supported tree has three levels: type, name,
 and language. Other resource payload formats remain opaque.

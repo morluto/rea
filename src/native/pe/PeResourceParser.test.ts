@@ -81,6 +81,32 @@ describe("word-aligned PE resource records", () => {
   );
 });
 
+it.each([false, true])(
+  "rejects descending numeric resource directory entries (PE32+ = %s)",
+  async (plus) => {
+    const { bytes, entryOffsets } = peResourceFixture(plus, [
+      { type: 10, name: 4, language: 1033, payload: Buffer.from("first") },
+      { type: 10, name: 9, language: 1033, payload: Buffer.from("second") },
+    ]);
+    const first = entryOffsets[1]!;
+    const second = entryOffsets[3]!;
+    expect(bytes.readUInt32LE(first)).toBe(4);
+    expect(bytes.readUInt32LE(second)).toBe(9);
+    const control = await parse(bytes);
+    expect(control.resources.map(({ name }) => name)).toEqual([
+      { kind: "id", id: 4 },
+      { kind: "id", id: 9 },
+    ]);
+
+    bytes.writeUInt32LE(9, first);
+    bytes.writeUInt32LE(4, second);
+    await expect(parse(bytes)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining("ascending order"),
+    });
+  },
+);
+
 describe("portable PE resource parsing", () => {
   it.each([false, true])(
     "preserves original identities, ranges, hashes and icon candidates (PE32+ = %s)",

@@ -173,6 +173,7 @@ export const parsePeResources = async (
     account(directory);
     directories.push(directory);
     const keys = new Set<string>();
+    let previousId = -1;
     const nested = new Set([...ancestors, at]);
     for (let index = 0; index < count; index++) {
       if (index % 128 === 0) {
@@ -193,6 +194,13 @@ export const parsePeResources = async (
       if (keys.has(key))
         peFailure("Duplicate identity within a resource directory.");
       keys.add(key);
+      if (identity.kind === "id") {
+        if (identity.id < previousId)
+          peFailure(
+            "Numeric PE resource directory IDs are not in ascending order.",
+          );
+        previousId = identity.id;
+      }
       const next = [...path, identity];
       const locations = [
         ...entryLocations,
