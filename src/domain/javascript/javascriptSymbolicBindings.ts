@@ -667,6 +667,12 @@ export class JavaScriptSymbolicBindings {
     )
       return { kind: "literal", value: node.value };
     if (t.isNullLiteral(node)) return { kind: "literal", value: null };
+    // A template without substitutions spells the same exact string as a
+    // quoted literal; templates with substitutions remain unsupported.
+    if (t.isTemplateLiteral(node)) {
+      const exact = readExactJavaScriptLiteral(node);
+      if (exact.found) return { kind: "literal", value: exact.value };
+    }
     if (t.isFunction(node))
       return { kind: "function", node, environment: env, origins: [] };
     if (t.isObjectExpression(node))

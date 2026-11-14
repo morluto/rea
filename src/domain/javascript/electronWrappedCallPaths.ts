@@ -1,5 +1,8 @@
 import * as t from "@babel/types";
-import { runtimeFunctionParameters } from "./javascriptAstValues.js";
+import {
+  readExactJavaScriptLiteral,
+  runtimeFunctionParameters,
+} from "./javascriptAstValues.js";
 import { JavaScriptSymbolicBindings } from "./javascriptSymbolicBindings.js";
 import {
   symbolicVariants,
@@ -57,6 +60,19 @@ const callLabel = (node: t.Node): string =>
   t.isSequenceExpression(node)
     ? callLabel(node.expressions.at(-1) ?? node)
     : calleeName(node) || "local call";
+
+/**
+ * Whether a call's first argument is one exact string, read as the syntax pass
+ * reads literal channels and keys. Only such calls start a trace.
+ */
+const exactStringArgument = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): boolean => {
+  const argument = node.arguments[0];
+  if (argument === undefined) return false;
+  const literal = readExactJavaScriptLiteral(argument);
+  return literal.found && typeof literal.value === "string";
+};
 
 const ipcEndpointKey = (value: ElectronIpcFinding): string =>
   JSON.stringify([
@@ -338,7 +354,8 @@ export function* collectElectronWrappedCallPathsSteps(
         !t.isNumericLiteral(test) &&
         !t.isBooleanLiteral(test) &&
         !t.isNullLiteral(test) &&
-        !t.isBigIntLiteral(test)
+        !t.isBigIntLiteral(test) &&
+        !(t.isTemplateLiteral(test) && readExactJavaScriptLiteral(test).found)
       )
         return undefined;
       const label = text(test);
@@ -1485,11 +1502,9 @@ export function* collectElectronWrappedCallPathsSteps(
     node: t.CallExpression | t.OptionalCallExpression,
   ): Generator<void, void> {
     if (remainingVisits < 0) return;
-    const isolatedSeed = t.isStringLiteral(node.arguments[0])
-      ? undefined
-      : isolatedBridgeCall(node);
-    if (!t.isStringLiteral(node.arguments[0]) && isolatedSeed === undefined)
-      return;
+    const literalSeed = exactStringArgument(node);
+    const isolatedSeed = literalSeed ? undefined : isolatedBridgeCall(node);
+    if (!literalSeed && isolatedSeed === undefined) return;
     const env = isolatedSeed?.env ?? resolver.environmentAt(node);
     let context: PathContext = {
       entryNode: node,

@@ -184,6 +184,21 @@ it("does not invent a selection predicate for dynamic case expressions", () => {
   expect(result.parse_status).toBe("partial");
 });
 
+it("retains switch selection for an exact template case", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (process.platform) {
+      case \`win32\`:
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: "((process.platform) === (`win32`))",
+    }),
+  ]);
+});
+
 it("retains the continuing predicate after a break to an enclosing label", () => {
   const result = analyzeJavaScriptStaticSource(`const e=require("electron");
     guard: {
@@ -598,6 +613,16 @@ describe("contextBridge helper invocations", () => {
     ]);
   });
 
+  it("binds an exact template key like a quoted key", () => {
+    const { apis } = exposures(`
+      function expose(key) { contextBridge.exposeInMainWorld(key, { ping() {} }); }
+      expose(\`one\`); expose("two");`);
+    expect(apis).toEqual([
+      { api_key: "one", ...literalKey, members: ["ping"], unknown_members: 0 },
+      { api_key: "two", ...literalKey, members: ["ping"], unknown_members: 0 },
+    ]);
+  });
+
   it("counts a repeated identical invocation once", () => {
     const { apis } = exposures(`
       function expose(key, api) { contextBridge.exposeInMainWorld(key, api); }
@@ -931,6 +956,75 @@ it("keeps an argument-supplied channel unresolved beside its resolved candidates
     new Set(sends.map(({ location }) => JSON.stringify(location))).size,
   ).toBe(1);
 });
+it.each([
+  ["every invocation is exact", "", "literal"],
+  [
+    "another invocation has a substitution",
+    "register(`app:${suffix}`, () => 3);",
+    null,
+  ],
+] as const)(
+  "substitutes every exact spelling of a wrapper channel when %s",
+  (_, extra, invocationChannels) => {
+    const result = analyzeJavaScriptStaticSource(`
+      const { ipcMain } = require("electron");
+      function register(channel, handler) { ipcMain.handle(channel, handler); }
+      register("app:quoted", () => 1);
+      register(\`app:template\`, () => 2);
+      register("app:typed" as const, () => 4);
+      ${extra}
+    `);
+    // Quoted, template and type-asserted spellings are one exact channel. A
+    // template with a substitution stays dynamic, so the wrapper's own site
+    // may still receive a channel no traced invocation supplied.
+    expect(
+      result.electron.ipc.map((finding) => [
+        finding.channel,
+        finding.channel_expression,
+        finding.resolution_basis ?? "direct",
+        finding.channel === null ? (finding.invocation_channels ?? null) : null,
+      ]),
+    ).toEqual([
+      [null, "channel", "direct", invocationChannels],
+      ["app:quoted", null, "wrapper-substitution", null],
+      ["app:template", null, "wrapper-substitution", null],
+      ["app:typed", null, "wrapper-substitution", null],
+    ]);
+  },
+);
+it.each([
+  [
+    "a direct handler's channel",
+    "e.ipcMain.on(`app:copy`, event => event.sender.copy());",
+    {
+      entry_kind: "ipc-handler",
+      entry: "app:copy",
+      channel: "app:copy",
+      terminal: "ipc-event.sender.copy",
+    },
+  ],
+  [
+    "a contextBridge key",
+    'e.contextBridge.exposeInMainWorld(`desktop`, { ping: () => e.ipcRenderer.invoke("app:ping") });',
+    {
+      entry_kind: "bridge-member",
+      entry: "desktop.ping",
+      channel: "app:ping",
+      terminal: "electron.ipcRenderer.invoke",
+    },
+  ],
+])(
+  "traces call paths from %s spelled as an exact template",
+  (_, source, path) => {
+    const result = analyzeJavaScriptStaticSource(`
+    const e = require("electron");
+    ${source}
+  `);
+    expect(result.electron.call_paths ?? []).toContainEqual(
+      expect.objectContaining(path),
+    );
+  },
+);
 it.each([
   [
     "an exposed member",
