@@ -402,7 +402,8 @@ const launchCommand = async (
       },
       request.arguments,
     ),
-    workingDirectory: workingDirectory ?? request.home,
+    // An empty `Path=` is unset, as GLib and KIO launch it.
+    workingDirectory: workingDirectory || request.home,
     entry: {
       id: located.value.id,
       path: located.value.path,
