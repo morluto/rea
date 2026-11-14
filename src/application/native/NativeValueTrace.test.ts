@@ -1662,3 +1662,275 @@ it("requires an Evidence owner for aliases of an already analyzed procedure", as
   expect(result.error.partialObservation).toEqual(expected);
   expect(graph.analyzed).toEqual(["0x1000", "callee", "also_callee"]);
 });
+
+const thunkDossier = (
+  thunkTarget: string,
+  operations: ReturnType<typeof node>[],
+) => {
+  const dossier = functionDossierSchema.parse(
+    nativeFlowDossier(functionDossierSchema.parse(ghidraFunctionDossier()), {
+      address: "0xc000",
+      name: "thunk",
+      operations,
+      parameters: [],
+    }),
+  );
+  return jsonValueSchema.parse({
+    ...dossier,
+    procedure: {
+      ...dossier.procedure,
+      classification: {
+        external: false,
+        thunk: true,
+        thunk_target: thunkTarget,
+        provenance: "ghidra-function-manager",
+      },
+    },
+  });
+};
+const thunkPort = (dossier: ReturnType<typeof jsonValueSchema.parse>) => {
+  const attempted: unknown[] = [];
+  const port: AnalysisOperationPort = {
+    execute: async (operation, parameters) => {
+      attempted.push([operation, parameters]);
+      if (operation !== "analyze_function")
+        throw new Error(`Unexpected native trace operation: ${operation}`);
+      return ok(createAnalysisExecution(dossier, provider, { subject }));
+    },
+  };
+  return { port, attempted };
+};
+// Rows are matched by their structured fields; the reason is any explanation.
+const externalTargetUnknown = {
+  procedure: "0xc000",
+  address: null,
+  related_procedure: "EXTERNAL:0x1",
+  reason: expect.any(String),
+};
+const thunkTargetRows = (unknowns: { related_procedure?: string }[]) =>
+  unknowns.filter(({ related_procedure }) => related_procedure !== undefined);
+
+describe("native value trace thunk targets", () => {
+  it("reports an external import target that the synthetic thunk model never reaches", async () => {
+    const { port, attempted } = thunkPort(
+      thunkDossier("EXTERNAL:0x1", [node("return", "0xc000", "RETURN")]),
+    );
+    const result = await traceNativeValues(port, { procedure: "0xc000" });
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value)).toMatchObject({
+      decompilations: 1,
+      edges: [],
+      traversal: { status: "complete" },
+      unknowns: [externalTargetUnknown],
+    });
+    expect(attempted).toEqual([["analyze_function", { procedure: "0xc000" }]]);
+  });
+
+  it("keeps an internal thunk whose model borrows its target's operations", async () => {
+    const { port, attempted } = thunkPort(
+      thunkDossier("0x2b8", [
+        node("copy", "0x2b8", "COPY"),
+        node("return", "0x2bc", "RETURN"),
+      ]),
+    );
+    const result = await traceNativeValues(port, { procedure: "0xc000" });
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value)).toMatchObject({
+      traversal: { status: "complete" },
+      unknowns: [],
+    });
+    expect(attempted).toEqual([["analyze_function", { procedure: "0xc000" }]]);
+  });
+
+  it("reports an internal thunk target whose only operation is not admitted", async () => {
+    const targetUnknown = {
+      ...externalTargetUnknown,
+      related_procedure: "0x2b8",
+    };
+    for (const block_membership of ["detached", "unavailable"]) {
+      const { port } = thunkPort(
+        thunkDossier("0x2b8", [
+          { ...node("copy", "0x2b8", "COPY"), block_membership },
+          node("return", "0x2bc", "RETURN"),
+        ]),
+      );
+      const result = await traceNativeValues(port, { procedure: "0xc000" });
+      if (!result.ok) throw result.error;
+      expect(nativeValueTraceSchema.parse(result.value)).toMatchObject({
+        traversal: { status: "complete" },
+        unknowns: [targetUnknown],
+      });
+    }
+    const { port } = thunkPort(
+      thunkDossier("0x2b8", [
+        node("return", "0x2bc", "RETURN"),
+        node("copy", "0x2b8", "COPY"),
+      ]),
+    );
+    const limited = await traceNativeValues(port, {
+      procedure: "0xc000",
+      max_nodes: 1,
+    });
+    if (!limited.ok) throw limited.error;
+    const trace = nativeValueTraceSchema.parse(limited.value);
+    expect(trace.traversal).toEqual({
+      status: "truncated",
+      reasons: ["max_nodes"],
+    });
+    expect(trace.unknowns).toContainEqual(targetUnknown);
+  });
+
+  it("keeps a thunk whose resolved call reaches its target and traverses it", async () => {
+    const graph = staticValueGraph(
+      { "0x2000": { operations: [node("return", "0x2000", "RETURN")] } },
+      { "0xc000": [{ destination: "0x2000", status: "direct" }] },
+    );
+    const thunk = thunkDossier("0x2000", [
+      node("call", "0xc000", "CALL"),
+      node("return", "0xc004", "RETURN"),
+    ]);
+    const port: AnalysisOperationPort = {
+      execute: (operation, parameters) =>
+        operation === "analyze_function" && parameters.procedure === "0xc000"
+          ? Promise.resolve(
+              ok(createAnalysisExecution(thunk, provider, { subject })),
+            )
+          : graph.port.execute(operation, parameters),
+    };
+    const result = await traceNativeValues(port, { procedure: "0xc000" });
+    if (!result.ok) throw result.error;
+    const parsed = nativeValueTraceSchema.parse(result.value);
+    expect(parsed).toMatchObject({
+      decompilations: 2,
+      traversal: { status: "complete" },
+      edges: expect.arrayContaining([
+        expect.objectContaining({
+          source: "0xc000/call",
+          target: "0x2000",
+          kind: "call",
+          status: "direct",
+        }),
+      ]),
+    });
+    expect(thunkTargetRows(parsed.unknowns)).toEqual([]);
+    expect(graph.analyzed).toEqual(["0x2000"]);
+  });
+});
+
+describe("native value trace thunk target ordering and limits", () => {
+  it("keeps a thunk whose target another path analyzes after the thunk", async () => {
+    const graph = staticValueGraph(
+      {
+        "0x1000": {
+          operations: [
+            node("call-thunk", "0x1000", "CALL"),
+            node("call-target", "0x1004", "CALL"),
+            node("return", "0x1008", "RETURN"),
+          ],
+        },
+        "0x2000": { operations: [node("return", "0x2000", "RETURN")] },
+      },
+      {
+        "0x1000": [{ destination: "0xc000", status: "direct" }],
+        "0x1004": [{ destination: "0x2000", status: "direct" }],
+      },
+    );
+    // The thunk's own model neither contains nor calls its target.
+    const thunk = thunkDossier("0x2000", [node("return", "0xc000", "RETURN")]);
+    const port: AnalysisOperationPort = {
+      execute: (operation, parameters) =>
+        operation === "analyze_function" && parameters.procedure === "0xc000"
+          ? Promise.resolve(
+              ok(createAnalysisExecution(thunk, provider, { subject })),
+            )
+          : graph.port.execute(operation, parameters),
+    };
+    const result = await traceNativeValues(port, { procedure: "0x1000" });
+    if (!result.ok) throw result.error;
+    const parsed = nativeValueTraceSchema.parse(result.value);
+    expect(parsed.procedures.map(({ address }) => address)).toEqual([
+      "0x1000",
+      "0xc000",
+      "0x2000",
+    ]);
+    expect(parsed.traversal).toEqual({ status: "complete" });
+    expect(thunkTargetRows(parsed.unknowns)).toEqual([]);
+  });
+
+  it("reports a thunk target whose call edge an exactly filled edge budget rejects", async () => {
+    const graph = staticValueGraph(
+      {},
+      { "0xc008": [{ destination: "0x2000", status: "direct" }] },
+    );
+    const dossier = functionDossierSchema.parse(
+      thunkDossier("0x2000", [
+        node("copy", "0xc000", "COPY"),
+        node("use", "0xc004", "COPY"),
+        node("call", "0xc008", "CALL"),
+        node("return", "0xc00c", "RETURN"),
+      ]),
+    );
+    if (!dossier.native_value_flow?.available)
+      throw new Error("Invalid fixture");
+    dossier.native_value_flow.def_use = [
+      { definition: "copy", use: "use", input_index: 0 },
+    ];
+    const thunk = jsonValueSchema.parse(dossier);
+    const port: AnalysisOperationPort = {
+      execute: (operation, parameters) =>
+        operation === "analyze_function"
+          ? parameters.procedure === "0xc000"
+            ? Promise.resolve(
+                ok(createAnalysisExecution(thunk, provider, { subject })),
+              )
+            : Promise.reject(
+                new Error(`Unexpected ${String(parameters.procedure)}`),
+              )
+          : graph.port.execute(operation, parameters),
+    };
+    // The def-use edge fills the budget exactly, so the call is resolved and
+    // then rejected: the target is neither an edge nor queued, so it stays unexamined.
+    const result = await traceNativeValues(port, {
+      procedure: "0xc000",
+      max_edges: 1,
+    });
+    if (!result.ok) throw result.error;
+    const parsed = nativeValueTraceSchema.parse(result.value);
+    expect(parsed).toMatchObject({
+      decompilations: 1,
+      traversal: { status: "truncated", reasons: ["max_edges"] },
+    });
+    expect(parsed.edges.map(({ kind }) => kind)).toEqual(["def-use"]);
+    expect(parsed.unknowns).toContainEqual({
+      procedure: "0xc000",
+      address: null,
+      reason: "Edge budget reached",
+    });
+    expect(parsed.unknowns).toContainEqual({
+      procedure: "0xc000",
+      address: null,
+      related_procedure: "0x2000",
+      reason: expect.any(String),
+    });
+    expect(graph.resolved).toEqual(["0xc008"]);
+  });
+
+  it("reports the thunk target alongside a missing def-use model", async () => {
+    const { port } = thunkPort(
+      jsonValueSchema.parse({
+        ...functionDossierSchema.parse(thunkDossier("EXTERNAL:0x1", [])),
+        native_value_flow: null,
+      }),
+    );
+    const result = await traceNativeValues(port, { procedure: "0xc000" });
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value).unknowns).toEqual([
+      {
+        procedure: "0xc000",
+        address: null,
+        reason: "Native def-use was not recorded for this procedure.",
+      },
+      externalTargetUnknown,
+    ]);
+  });
+});
