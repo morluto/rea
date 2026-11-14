@@ -93,6 +93,7 @@ import {
 import { projectEnvironmentCoverageView } from "./environmentCoverageView.js";
 import { projectPcapCaptureView } from "./pcapCaptureView.js";
 import { projectAndroidPackageView } from "./androidPackageView.js";
+import { projectNugetPackageView } from "./nugetPackageView.js";
 import { projectAndroidSymbolSummary } from "./androidSymbolView.js";
 import { projectAndroidJniView } from "./androidJniView.js";
 import { projectDartAotView } from "./dartAotView.js";
@@ -321,6 +322,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
+  retain("inspect_nuget_package", projectNugetPackageView),
   retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 

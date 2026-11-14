@@ -1,0 +1,145 @@
+import { z } from "zod";
+import type { AnalysisError } from "../analysisErrorBase.js";
+import { nugetPackageSchema } from "../nugetPackage/nugetPackage.js";
+import { err, ok, type Result } from "../result.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
+import { completeWithinViewCoverage } from "./analysisViewCoverage.js";
+
+/**
+ * A summary keeps what triage reads: identity, the declaration facts, per-kind
+ * asset counts and a bounded diagnostic sample. The full member and diagnostic
+ * lists stay in the parent Evidence, so the summary counts what it omitted.
+ */
+export const nugetPackageSummarySchema = z.strictObject({
+  artifact: nugetPackageSchema.shape.artifact,
+  nuspecs: z.array(
+    nugetPackageSchema.shape.nuspecs.element.omit({
+      dependency_groups: true,
+      description: true,
+    }),
+  ),
+  nuspec_count: z.int().nonnegative(),
+  /** Nuspec rows this summary did not repeat; the parent lists all of them. */
+  nuspecs_omitted: z.int().nonnegative(),
+  asset_counts: z.strictObject(
+    Object.fromEntries(
+      nugetPackageSchema.shape.assets.element.shape.kind.options.map((kind) => [
+        kind,
+        z.int().nonnegative(),
+      ]),
+    ) as Record<string, z.ZodNumber>,
+  ),
+  asset_count: z.int().nonnegative(),
+  assemblies: z.int().nonnegative(),
+  diagnostics: nugetPackageSchema.shape.diagnostics,
+  /** Diagnostics this summary did not repeat; the parent lists all of them. */
+  diagnostics_omitted: z.int().nonnegative(),
+  source_coverage: nugetPackageSchema.shape.source_coverage,
+});
+
+const readReport = createAnalysisViewResultReader(nugetPackageSchema);
+
+/**
+ * A summary has no paging companion, so it repeats only the diagnostics that
+ * fit a single reply; the parent Evidence stays the complete list.
+ */
+const VIEW_DIAGNOSTIC_LIMIT = 100;
+
+/**
+ * The summary has no paging companion either, so it repeats only the first
+ * nuspec rows. Each row keeps free-text fields (`id`, `authors`, license,
+ * repository) that can approach the member allowance, so an unbounded list
+ * would grow the reply without a smaller page to ask for. `nuspecs_omitted`
+ * and the parent Evidence carry the rest.
+ */
+const VIEW_NUSPEC_LIMIT = 20;
+
+/** Project retained declaration and inventory facts without reopening the package. */
+export const projectNugetPackageView = (
+  parent: AnalysisViewParent,
+  view: AdmittedView,
+): Result<
+  {
+    readonly kind: "summary";
+    readonly view: SummaryAnalysisView;
+    readonly parent_evidence_id: string;
+    readonly parent_operation: "inspect_nuget_package";
+    readonly parent_digest: string;
+    readonly artifact: { readonly path: string; readonly sha256: string };
+    readonly summary: z.output<typeof nugetPackageSummarySchema>;
+    readonly coverage: ReturnType<typeof completeWithinViewCoverage>;
+    readonly limitations: string[];
+    readonly unknowns: string[];
+  },
+  AnalysisError
+> => {
+  if (view.kind !== "summary")
+    return err(
+      analysisViewInputError([
+        {
+          path: ["view"],
+          reason: "invalid_value",
+          message:
+            "NuGet package Evidence supports the summary view; retrieve the parent Evidence for the complete member list.",
+        },
+      ]),
+    );
+  assertOwnedView<SummaryAnalysisView>(view, "summary");
+  const parsed = readReport(parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
+  const assetCounts: Record<string, number> = {};
+  for (const kind of nugetPackageSchema.shape.assets.element.shape.kind.options)
+    assetCounts[kind] = 0;
+  for (const asset of report.assets)
+    assetCounts[asset.kind] = (assetCounts[asset.kind] ?? 0) + 1;
+  return ok({
+    kind: "summary" as const,
+    view,
+    parent_evidence_id: parent.evidenceId,
+    parent_operation: "inspect_nuget_package" as const,
+    parent_digest: parent.evidenceId.slice(3),
+    artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
+    summary: {
+      artifact: report.artifact,
+      nuspecs: report.nuspecs
+        .slice(0, VIEW_NUSPEC_LIMIT)
+        .map(
+          ({
+            dependency_groups: _groups,
+            description: _description,
+            ...rest
+          }) => rest,
+        ),
+      nuspec_count: report.nuspecs.length,
+      nuspecs_omitted: Math.max(0, report.nuspecs.length - VIEW_NUSPEC_LIMIT),
+      asset_counts: assetCounts,
+      asset_count: report.assets.length,
+      assemblies: report.summary.assemblies,
+      diagnostics:
+        report.diagnostics.length > VIEW_DIAGNOSTIC_LIMIT
+          ? report.diagnostics.slice(0, VIEW_DIAGNOSTIC_LIMIT)
+          : report.diagnostics,
+      diagnostics_omitted: Math.max(
+        0,
+        report.diagnostics.length - VIEW_DIAGNOSTIC_LIMIT,
+      ),
+      source_coverage: report.source_coverage,
+    },
+    coverage: completeWithinViewCoverage(1, 1),
+    limitations: [...parent.limitations].sort(),
+    unknowns:
+      report.source_coverage.status === "partial"
+        ? [
+            "Package coverage is partial; package identity, declared dependencies or some members are unobserved. The diagnostics on the parent Evidence name each reason.",
+          ]
+        : [],
+  });
+};

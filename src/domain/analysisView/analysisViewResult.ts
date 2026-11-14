@@ -321,6 +321,7 @@ import {
   summaryViewSchema,
 } from "./analysisViewShape.js";
 import { recordedArrayViewSchema } from "./analysisViewRequest.js";
+import { nugetPackageSummarySchema } from "./nugetPackageView.js";
 
 const artifactSchema = z.strictObject({
   path: z
@@ -403,6 +404,7 @@ const viewResultBase = {
     "trace_native_values",
     "match_native_functions",
     "procedure_references",
+    "inspect_nuget_package",
   ]),
   parent_digest: digestSchema,
   view_digest: digestSchema,
@@ -539,6 +541,12 @@ export const byteEntropySummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   summary: byteEntropySummarySchema,
   parent_operation: z.literal("inspect_byte_entropy"),
+});
+
+export const nugetPackageSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_nuget_package"),
+  summary: nugetPackageSummarySchema,
 });
 
 export const nativeExportsSummaryViewResultSchema = z.strictObject({
@@ -1415,6 +1423,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     featureTraceSummaryViewResultSchema,
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
+    nugetPackageSummaryViewResultSchema,
   ]),
   z.strictObject({
     ...viewResultBase,

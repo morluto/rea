@@ -1,0 +1,827 @@
+import { describe, expect, it } from "vitest";
+import {
+  NUGET_PACKAGE_MAX_DIAGNOSTICS,
+  type NugetPackageArtifact,
+} from "./nugetPackage.js";
+import {
+  parseNugetPackage,
+  type NugetArchiveMember,
+} from "./parseNugetPackage.js";
+
+const artifact: NugetPackageArtifact = {
+  path: "/artifacts/Example.1.0.0.nupkg",
+  sha256: "0".repeat(64),
+  bytes: 1234,
+};
+
+const NUSPEC = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>Example.Package</id>
+    <version>1.0.0</version>
+    <authors>Example Authors</authors>
+    <description>An example package.</description>
+    <license type="expression">MIT</license>
+    <projectUrl>https://example.test/package</projectUrl>
+    <repository type="git" url="https://example.test/repo.git" branch="main" commit="abc123" />
+    <dependencies>
+      <group targetFramework="net8.0">
+        <dependency id="Newtonsoft.Json" version="[13.0.0,14.0.0)" exclude="Build,Analyzers" />
+        <dependency id="System.Text.Json" version="8.0.0" />
+      </group>
+      <group targetFramework="netstandard2.0">
+        <dependency id="Newtonsoft.Json" version="12.0.0" />
+      </group>
+    </dependencies>
+  </metadata>
+</package>`;
+
+const member = (
+  path: string,
+  extra: Partial<NugetArchiveMember> = {},
+): NugetArchiveMember => ({
+  path,
+  bytes: 100,
+  directory: false,
+  encrypted: false,
+  ...extra,
+});
+
+const parse = (
+  members: NugetArchiveMember[],
+  maxEntries = 20_000,
+): ReturnType<typeof parseNugetPackage> =>
+  parseNugetPackage(artifact, members, { maxEntries });
+
+const parsed = (result: ReturnType<typeof parseNugetPackage>) => {
+  if (!result.ok) throw new Error(result.error.message);
+  return result.value;
+};
+
+describe("parseNugetPackage: nuspec metadata", () => {
+  it("inventories .nuspec identity and dependency groups as written", () => {
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", {
+          bytes: NUSPEC.length,
+          text: NUSPEC,
+        }),
+        member("lib/net8.0/Example.dll"),
+        member("lib/netstandard2.0/Example.dll"),
+        member("runtimes/win-x64/lib/net8.0/Example.dll"),
+        member("build/Example.targets"),
+      ]),
+    );
+
+    expect(package_.nuspecs).toHaveLength(1);
+    const nuspec = package_.nuspecs[0];
+    if (nuspec === undefined) throw new Error("Expected one nuspec");
+    expect(nuspec.id).toBe("Example.Package");
+    expect(nuspec.version).toBe("1.0.0");
+    expect(nuspec.authors).toBe("Example Authors");
+    expect(nuspec.license).toEqual({ kind: "expression", value: "MIT" });
+    expect(nuspec.repository).toEqual({
+      url: "https://example.test/repo.git",
+      kind: "git",
+      branch: "main",
+      commit: "abc123",
+    });
+    expect(nuspec.dependency_groups).toEqual([
+      {
+        target_framework: "net8.0",
+        dependencies: [
+          {
+            name: "Newtonsoft.Json",
+            version_range: "[13.0.0,14.0.0)",
+            exclude: "Build,Analyzers",
+            include: null,
+          },
+          {
+            name: "System.Text.Json",
+            version_range: "8.0.0",
+            exclude: null,
+            include: null,
+          },
+        ],
+      },
+      {
+        target_framework: "netstandard2.0",
+        dependencies: [
+          {
+            name: "Newtonsoft.Json",
+            version_range: "12.0.0",
+            exclude: null,
+            include: null,
+          },
+        ],
+      },
+    ]);
+
+    expect(package_.summary.nuspecs).toBe(1);
+    expect(package_.summary.assets).toBe(5);
+    // Only lib/ framework folders are `assemblies`; a RID-specific copy under
+    // runtimes/ stays a runtime asset so the two are never conflated.
+    expect(package_.summary.assemblies).toBe(2);
+    expect(package_.source_coverage.status).toBe("complete-within-scope");
+    expect(package_.source_coverage.dependency_resolution).toBe(
+      "not-performed",
+    );
+    expect(package_.source_coverage.network).toBe("not-contacted");
+  });
+
+  it("keeps a dependency empty attribute distinct from an absent one", () => {
+    const nuspec = NUSPEC.replace(
+      '<dependency id="System.Text.Json" version="8.0.0" />',
+      '<dependency id="System.Text.Json" version="8.0.0" include="" exclude="" />',
+    );
+    const nuspecs = parsed(
+      parse([
+        member("Example.Package.nuspec", {
+          bytes: nuspec.length,
+          text: nuspec,
+        }),
+      ]),
+    ).nuspecs;
+    const group = nuspecs[0]?.dependency_groups[0];
+    if (group === undefined) throw new Error("Expected one group");
+    expect(group.dependencies[1]).toEqual({
+      name: "System.Text.Json",
+      version_range: "8.0.0",
+      include: "",
+      exclude: "",
+    });
+  });
+
+  it("keeps an unrecognised license type unknown instead of calling it an expression", () => {
+    const nuspec = NUSPEC.replace(
+      '<license type="expression">MIT</license>',
+      '<license type="url">https://example.test/LICENSE</license>',
+    );
+    const nuspecs = parsed(
+      parse([
+        member("Example.Package.nuspec", {
+          bytes: nuspec.length,
+          text: nuspec,
+        }),
+      ]),
+    ).nuspecs;
+    expect(nuspecs[0]?.license).toBeNull();
+  });
+
+  it("keeps a dependency with no id unnamed instead of inventing an empty name", () => {
+    const nuspec = NUSPEC.replace(
+      '<dependency id="System.Text.Json" version="8.0.0" />',
+      '<dependency version="8.0.0" />',
+    );
+    const nuspecs = parsed(
+      parse([
+        member("Example.Package.nuspec", {
+          bytes: nuspec.length,
+          text: nuspec,
+        }),
+      ]),
+    ).nuspecs;
+    const group = nuspecs[0]?.dependency_groups[0];
+    if (group === undefined) throw new Error("Expected one group");
+    expect(group.dependencies[1]).toEqual({
+      name: null,
+      version_range: "8.0.0",
+      exclude: null,
+      include: null,
+    });
+  });
+});
+
+describe("parseNugetPackage: dependency text", () => {
+  it("reads dependencies written directly under <dependencies> as the untargeted group", () => {
+    const nuspec = NUSPEC.replace(
+      /<dependencies>[\s\S]*<\/dependencies>/,
+      '<dependencies><dependency id="Example.Flat" version="1.0.0" /></dependencies>',
+    );
+    const nuspecs = parsed(
+      parse([
+        member("Example.Package.nuspec", {
+          bytes: nuspec.length,
+          text: nuspec,
+        }),
+      ]),
+    ).nuspecs;
+    expect(nuspecs[0]?.dependency_groups).toEqual([
+      {
+        target_framework: null,
+        dependencies: [
+          {
+            name: "Example.Flat",
+            version_range: "1.0.0",
+            include: null,
+            exclude: null,
+          },
+        ],
+      },
+    ]);
+  });
+});
+
+describe("parseNugetPackage: asset layout", () => {
+  it("classifies framework and runtime folders without applying restore selection", () => {
+    const package_ = parsed(
+      parse([
+        member("lib/net8.0/Example.dll"),
+        member("lib/netstandard2.0/Example.dll"),
+        member("ref/net8.0/Example.dll"),
+        member("runtimes/win-x64/lib/net8.0/Example.dll"),
+        member("runtimes/win-x64/native/example.so"),
+        member("analyzers/dotnet/cs/Example.Analyzers.dll"),
+        member("buildTransitive/Example.props"),
+        member("buildMultiTargeting/Example.props"),
+        member("buildTransitive/net8.0/Example.targets"),
+        member("buildMultiTargeting/net8.0/Example.targets"),
+        member("contentFiles/any/any/readme.txt"),
+        member("tools/net8.0/any/MyTool.dll"),
+        member("tools/install.ps1"),
+        member("readme.md"),
+      ]),
+    );
+
+    const byPath = new Map(package_.assets.map((asset) => [asset.path, asset]));
+    expect(byPath.get("lib/net8.0/Example.dll")).toMatchObject({
+      kind: "assemblies",
+      target_framework: "net8.0",
+      runtime_identifier: null,
+    });
+    expect(byPath.get("ref/net8.0/Example.dll")).toMatchObject({
+      kind: "ref",
+      target_framework: "net8.0",
+    });
+    const ridAssembly = byPath.get("runtimes/win-x64/lib/net8.0/Example.dll");
+    expect(ridAssembly).toMatchObject({
+      kind: "runtime",
+      target_framework: "net8.0",
+      runtime_identifier: "win-x64",
+    });
+    expect(byPath.get("runtimes/win-x64/native/example.so")).toMatchObject({
+      kind: "native",
+      target_framework: null,
+      runtime_identifier: "win-x64",
+    });
+    expect(byPath.get("analyzers/dotnet/cs/Example.Analyzers.dll")?.kind).toBe(
+      "analyzers",
+    );
+    expect(byPath.get("buildTransitive/Example.props")?.kind).toBe(
+      "build-transitive",
+    );
+    expect(byPath.get("buildMultiTargeting/Example.props")?.kind).toBe(
+      "build-multitargeting",
+    );
+    // Every build asset prefix keeps its framework folder; buildTransitive and
+    // buildMultiTargeting are separate kinds, not a reason to drop the TFM.
+    expect(
+      byPath.get("buildTransitive/net8.0/Example.targets")?.target_framework,
+    ).toBe("net8.0");
+    expect(
+      byPath.get("buildMultiTargeting/net8.0/Example.targets")
+        ?.target_framework,
+    ).toBe("net8.0");
+    expect(byPath.get("contentFiles/any/any/readme.txt")?.kind).toBe(
+      "content-files",
+    );
+    // A .NET tool's payload keeps the TFM from `tools/<tfm>/any/`.
+    expect(byPath.get("tools/net8.0/any/MyTool.dll")).toMatchObject({
+      kind: "tools",
+      target_framework: "net8.0",
+    });
+    expect(byPath.get("tools/install.ps1")?.kind).toBe("tools");
+    expect(byPath.get("readme.md")?.kind).toBe("other");
+    // A `lib/` file with no framework folder has no framework to report.
+    const bare = parsed(parse([member("lib/Example.dll")])).assets[0];
+    expect(bare?.target_framework).toBe(null);
+  });
+});
+
+describe("parseNugetPackage: framework folder edge cases", () => {
+  it("treats an empty framework segment as no framework folder", () => {
+    const byPath = new Map(
+      parsed(
+        parse([
+          member("lib//Example.dll"),
+          member("runtimes/win-x64/lib/", { directory: true }),
+        ]),
+      ).assets.map((asset) => [asset.path, asset]),
+    );
+    expect(byPath.get("lib//Example.dll")?.target_framework).toBe(null);
+    expect(byPath.get("runtimes/win-x64/lib/")?.target_framework).toBe(null);
+  });
+
+  it("does not read a RID lib filename as a framework folder", () => {
+    const byPath = new Map(
+      parsed(
+        parse([
+          member("runtimes/win-x64/lib/readme.txt"),
+          member("runtimes/win-x64/lib/net8.0/Example.dll"),
+          member("runtimes/win-x64/lib/net8.0/", { directory: true }),
+        ]),
+      ).assets.map((asset) => [asset.path, asset]),
+    );
+    expect(
+      byPath.get("runtimes/win-x64/lib/readme.txt")?.target_framework,
+    ).toBe(null);
+    expect(
+      byPath.get("runtimes/win-x64/lib/net8.0/Example.dll")?.target_framework,
+    ).toBe("net8.0");
+    expect(byPath.get("runtimes/win-x64/lib/net8.0/")?.target_framework).toBe(
+      "net8.0",
+    );
+  });
+  it("reads the framework from build and contentFiles layouts", () => {
+    const byPath = new Map(
+      parsed(
+        parse([
+          member("build/net8.0/Example.targets"),
+          member("build/net8.0/", { directory: true }),
+          member("build/Example.targets"),
+          member("contentFiles/cs/net8.0/readme.txt"),
+          member("contentFiles/cs/net8.0/", { directory: true }),
+          member("contentFiles/cs/readme.txt"),
+        ]),
+      ).assets.map((asset) => [asset.path, asset]),
+    );
+    expect(byPath.get("build/net8.0/Example.targets")?.target_framework).toBe(
+      "net8.0",
+    );
+    expect(byPath.get("build/net8.0/")?.target_framework).toBe("net8.0");
+    expect(byPath.get("build/Example.targets")?.target_framework).toBe(null);
+    expect(
+      byPath.get("contentFiles/cs/net8.0/readme.txt")?.target_framework,
+    ).toBe("net8.0");
+    expect(byPath.get("contentFiles/cs/net8.0/")?.target_framework).toBe(
+      "net8.0",
+    );
+    expect(byPath.get("contentFiles/cs/readme.txt")?.target_framework).toBe(
+      null,
+    );
+  });
+});
+
+describe("parseNugetPackage: coverage and refusals", () => {
+  it("reports a package with no readable .nuspec as partial rather than empty", () => {
+    const package_ = parsed(parse([member("lib/net8.0/Example.dll")]));
+    expect(package_.nuspecs).toEqual([]);
+    expect(package_.diagnostics.map((entry) => entry.code)).toContain(
+      "no-nuspec",
+    );
+    expect(package_.source_coverage.status).toBe("partial");
+  });
+
+  it("keeps a malformed .nuspec as an explicit diagnostic", () => {
+    const package_ = parsed(
+      parse([
+        member("Broken.nuspec", { text: "<package><metadata>" }),
+        member("lib/net8.0/Example.dll"),
+      ]),
+    );
+    expect(package_.nuspecs).toEqual([]);
+    expect(package_.diagnostics.map((entry) => entry.code)).toContain(
+      "invalid-nuspec",
+    );
+  });
+
+  it("refuses a document type declaration instead of resolving it", () => {
+    const package_ = parsed(
+      parse([
+        member("Doc.nuspec", {
+          text: '<!DOCTYPE package [<!ENTITY x "y">]><package><metadata><id>Ex</id></metadata></package>',
+        }),
+      ]),
+    );
+    expect(package_.diagnostics.map((entry) => entry.code)).toContain(
+      "unsupported-nuspec-doctype",
+    );
+  });
+
+  it("reports every .nuspec separately when the archive carries more than one", () => {
+    const second = NUSPEC.replace("1.0.0", "2.0.0");
+    const package_ = parsed(
+      parse([
+        member("Example.nuspec", { text: NUSPEC }),
+        member("lib/net8.0/Example.nuspec", { text: second }),
+      ]),
+    );
+    expect(package_.nuspecs.map((nuspec) => nuspec.version)).toEqual([
+      "1.0.0",
+      "2.0.0",
+    ]);
+    expect(package_.diagnostics.map((entry) => entry.code)).toContain(
+      "duplicate-nuspec",
+    );
+    // A duplicate document is an observation, not a coverage gap.
+    expect(package_.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it("counts a duplicate .nuspec even when the second one cannot be parsed", () => {
+    const package_ = parsed(
+      parse([
+        member("Example.nuspec", { text: NUSPEC }),
+        member("Other.nuspec", { text: "<not-xml" }),
+      ]),
+    );
+    expect(package_.nuspecs).toHaveLength(1);
+    // Two members were encountered; rejecting the second one does not undo it.
+    expect(package_.diagnostics.map((entry) => entry.code)).toEqual(
+      expect.arrayContaining(["invalid-nuspec", "duplicate-nuspec"]),
+    );
+  });
+
+  it("accepts metadata only from a package root's direct child", () => {
+    const nested = `<?xml version="1.0"?><package><wrapper><metadata><id>Nested</id></metadata></wrapper></package>`;
+    const unrelated = `<?xml version="1.0"?><not-package><metadata><id>Unrelated</id></metadata></not-package>`;
+    for (const text of [nested, unrelated]) {
+      const package_ = parsed(parse([member("Example.nuspec", { text })]));
+      expect(package_.nuspecs).toEqual([]);
+      expect(package_.diagnostics.map((entry) => entry.code)).toContain(
+        "invalid-nuspec",
+      );
+      expect(package_.source_coverage.status).toBe("partial");
+    }
+  });
+
+  it("rejects a package root in a foreign namespace", () => {
+    const foreign = `<?xml version="1.0"?><x:package xmlns:x="urn:not-nuspec"><x:metadata><x:id>X</x:id></x:metadata></x:package>`;
+    const package_ = parsed(
+      parse([member("Example.nuspec", { text: foreign })]),
+    );
+    expect(package_.nuspecs).toEqual([]);
+    expect(package_.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "invalid-nuspec",
+        message: expect.stringContaining("urn:not-nuspec"),
+      }),
+    );
+  });
+
+  it("ignores a foreign extension element that shares a metadata name", () => {
+    const text = NUSPEC.replace(
+      "<id>Example.Package</id>",
+      '<x:id xmlns:x="urn:extension">Forged</x:id><id>Example.Package</id>',
+    );
+    const package_ = parsed(
+      parse([member("Example.nuspec", { bytes: text.length, text })]),
+    );
+    expect(package_.nuspecs[0]?.id).toBe("Example.Package");
+  });
+
+  it("accepts the packaging namespaces NuGet published before 2012", () => {
+    for (const namespace of [
+      "http://schemas.microsoft.com/packaging/2011/10/nuspec.xsd",
+      "http://schemas.microsoft.com/packaging/2013/01/nuspec.xsd",
+    ]) {
+      const text = NUSPEC.replace(
+        /<package[^>]*>/u,
+        `<package xmlns="${namespace}">`,
+      );
+      const package_ = parsed(parse([member("Example.nuspec", { text })]));
+      expect(package_.diagnostics).toEqual([]);
+      expect(package_.nuspecs[0]?.id).toBe("Example.Package");
+    }
+  });
+
+  it("removes transport credentials from declared package URLs", () => {
+    const text = NUSPEC.replace(
+      /<repository[^>]*\/>/u,
+      '<repository type="git" url="https://user:s3cret@example.test/repo.git" />',
+    ).replace(
+      /<projectUrl>[^<]*<\/projectUrl>/u,
+      [
+        "<licenseUrl>https://user:s3cret@example.test/licence</licenseUrl>",
+        "<projectUrl>https://example.test/project</projectUrl>",
+      ].join("\n    "),
+    );
+    const nuspec = parsed(parse([member("Example.nuspec", { text })]))
+      .nuspecs[0];
+    // A nuspec is vendor input: the inventory reports the locator, never the
+    // authentication that reached it.
+    expect(nuspec?.repository?.url).toBe("https://example.test/repo.git");
+    expect(nuspec?.license_url).toBe("https://example.test/licence");
+    expect(nuspec?.project_url).toBe("https://example.test/project");
+  });
+
+  it("keeps an explicitly empty repository attribute distinct from an omission", () => {
+    const text = NUSPEC.replace(
+      /<repository[^>]*\/>/u,
+      '<repository url="" type="git" />',
+    );
+    const package_ = parsed(parse([member("Example.nuspec", { text })]));
+    expect(package_.nuspecs[0]?.repository).toEqual({
+      url: "",
+      kind: "git",
+      branch: null,
+      commit: null,
+    });
+  });
+});
+
+describe("parseNugetPackage: runtime folders and bounded reads", () => {
+  it("reports no runtime identifier for a file directly under runtimes", () => {
+    const package_ = parsed(
+      parse([
+        member("runtimes/readme.txt"),
+        member("runtimes/linux-x64/native/tool"),
+      ]),
+    );
+    const byPath = new Map(package_.assets.map((asset) => [asset.path, asset]));
+    expect(byPath.get("runtimes/readme.txt")?.runtime_identifier).toBeNull();
+    expect(
+      byPath.get("runtimes/linux-x64/native/tool")?.runtime_identifier,
+    ).toBe("linux-x64");
+  });
+
+  it("reports a .nuspec past the read allowance as oversized, not malformed", () => {
+    const package_ = parsed(
+      parse([
+        member("Huge.nuspec", { oversized: true }),
+        member("lib/net8.0/Example.dll"),
+      ]),
+    );
+    expect(package_.diagnostics.map((entry) => entry.code)).toEqual([
+      "nuspec-too-large",
+      "no-nuspec",
+    ]);
+  });
+
+  it("refuses a member path that leaves the package root", () => {
+    const package_ = parsed(
+      parse([
+        member("../../../etc/passwd"),
+        member("/absolute/path.dll"),
+        member("C:\\Windows\\system32\\evil.dll"),
+        member("lib/net8.0/Example.dll"),
+      ]),
+    );
+    expect(package_.assets.map((asset) => asset.path)).toEqual([
+      "lib/net8.0/Example.dll",
+    ]);
+    expect(
+      package_.diagnostics.filter(
+        (entry) => entry.code === "unsafe-entry-path",
+      ),
+    ).toHaveLength(3);
+    expect(package_.source_coverage.status).toBe("partial");
+  });
+
+  it("inventories a symlink member instead of calling it encrypted", () => {
+    const package_ = parsed(
+      parse([
+        member("lib/net8.0/Example.dll", { symlink: true }),
+        member("Example.nuspec", { text: NUSPEC }),
+      ]),
+    );
+    expect(package_.assets.map((asset) => asset.path)).toEqual([
+      "lib/net8.0/Example.dll",
+      "Example.nuspec",
+    ]);
+    const codes = package_.diagnostics.map((entry) => entry.code);
+    expect(codes).toContain("symlink-entry");
+    expect(codes).not.toContain("encrypted-entry");
+  });
+
+  it("does not read an encrypted member and says so", () => {
+    const package_ = parsed(
+      parse([
+        member("lib/net8.0/Example.dll", { encrypted: true }),
+        member("Example.nuspec", { text: NUSPEC }),
+      ]),
+    );
+    expect(package_.assets.map((asset) => asset.path)).toEqual([
+      "Example.nuspec",
+    ]);
+    expect(package_.diagnostics.map((entry) => entry.code)).toContain(
+      "encrypted-entry",
+    );
+  });
+
+  it("stops at the member allowance and reports the truncation", () => {
+    const package_ = parsed(
+      parse(
+        Array.from({ length: 5 }, (_, index) =>
+          member(`lib/net8.0/${index}.dll`),
+        ),
+        3,
+      ),
+    );
+    expect(package_.assets).toHaveLength(3);
+    expect(package_.diagnostics.map((entry) => entry.code)).toContain(
+      "entry-limit-reached",
+    );
+    expect(package_.source_coverage.status).toBe("partial");
+  });
+
+  it("bounds diagnostics so one hostile archive cannot grow the report", () => {
+    const package_ = parsed(
+      parse(
+        Array.from({ length: NUGET_PACKAGE_MAX_DIAGNOSTICS + 5 }, (_, index) =>
+          member(`../${index}.dll`),
+        ),
+      ),
+    );
+    const codes = package_.diagnostics.map((entry) => entry.code);
+    expect(codes.filter((code) => code !== "no-nuspec")).toHaveLength(
+      NUGET_PACKAGE_MAX_DIAGNOSTICS + 1,
+    );
+    expect(codes).toContain("diagnostic-limit-reached");
+  });
+
+  it("keeps the missing-nuspec reason when per-entry diagnostics exhaust the budget", () => {
+    const package_ = parsed(
+      parse(
+        Array.from({ length: NUGET_PACKAGE_MAX_DIAGNOSTICS + 5 }, (_, index) =>
+          member(`../${index}.dll`),
+        ),
+      ),
+    );
+    expect(package_.diagnostics.at(-1)).toMatchObject({
+      path: null,
+      code: "no-nuspec",
+    });
+    expect(package_.source_coverage.status).toBe("partial");
+  });
+});
+
+describe("parseNugetPackage: name uncertainty and read allowances", () => {
+  it("carries a reader's stored-name uncertainty into coverage and limitations", () => {
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        member("lib/net8.0/Ex\\xe4mple.dll", {
+          limitations: [
+            "ZIP name uses CP437 fallback; source encoding unverified; raw hex: 4578e46d706c652e646c6c.",
+          ],
+        }),
+      ]),
+    );
+    expect(package_.limitations).toContain(
+      "ZIP name uses CP437 fallback; source encoding unverified; raw hex: 4578e46d706c652e646c6c.",
+    );
+    expect(package_.source_coverage.status).toBe("partial");
+  });
+
+  it("keeps a harmless name normalisation without reducing coverage", () => {
+    const note =
+      'ZIP member name "./lib/net8.0/Example.dll" has a leading current-directory prefix omitted from its logical path.';
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        member("lib/net8.0/Example.dll", {
+          limitations: [note],
+          sourcePath: "./lib/net8.0/Example.dll",
+        }),
+      ]),
+    );
+    expect(package_.limitations).toContain(note);
+    expect(package_.source_coverage.status).toBe("complete-within-scope");
+    // The schema and the spec both call `path` the member path as stored; the
+    // normalised copy is only what classification reads.
+    expect(package_.assets.map((asset) => asset.path)).toEqual([
+      "Example.Package.nuspec",
+      "./lib/net8.0/Example.dll",
+    ]);
+  });
+
+  it("tells two nuspec members apart by their stored spelling", () => {
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        member("Example.Package.nuspec", {
+          text: NUSPEC,
+          sourcePath: "./Example.Package.nuspec",
+        }),
+      ]),
+    );
+    // The reader rewrote the second name; the archive still stores two members,
+    // so the published paths and identities must not collapse into one.
+    expect(package_.nuspecs.map((entry) => entry.path)).toEqual([
+      "Example.Package.nuspec",
+      "./Example.Package.nuspec",
+    ]);
+    expect(new Set(package_.nuspecs.map((entry) => entry.nuspec_id)).size).toBe(
+      2,
+    );
+  });
+
+  it("classifies a backslash current-directory prefix after separator folding", () => {
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        // A Windows-built archive stores `.\lib\…`; the prefix has to go after
+        // the separators are folded or the asset reads as `other`.
+        member(".\\lib\\net8.0\\Example.dll"),
+      ]),
+    );
+    expect(package_.assets.at(-1)).toMatchObject({
+      path: ".\\lib\\net8.0\\Example.dll",
+      kind: "assemblies",
+      target_framework: "net8.0",
+    });
+  });
+
+  it("treats a rewritten limitation as prose, not a coverage signal", () => {
+    // The reader states the rewrite with `sourcePath`; its message is only
+    // explanatory, so different wording must not change coverage.
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        member("lib/net8.0/Example.dll", {
+          limitations: ["Member name had a redundant ./ prefix."],
+          sourcePath: "./lib/net8.0/Example.dll",
+        }),
+      ]),
+    );
+    expect(package_.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it("keeps an unverified name uncertain when the same member was rewritten", () => {
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        member("lib/net8.0/Exämple.dll", {
+          sourcePath: "./lib/net8.0/Exämple.dll",
+          nameVerified: false,
+          limitations: [
+            'ZIP member name "./lib/net8.0/Exämple.dll" has a leading current-directory prefix omitted from its logical path.',
+            "ZIP name uses CP437 fallback; source encoding unverified; raw hex: 2e2f6c69622f6e6574382e302f4578e46d706c652e646c6c.",
+          ],
+        }),
+      ]),
+    );
+    expect(package_.source_coverage.status).toBe("partial");
+  });
+
+  it("spends a readable nuspec once against the member allowance", () => {
+    // The same member is both an asset and the parsed nuspec; counting it twice
+    // would report this complete package as truncated.
+    const package_ = parsed(
+      parse(
+        [
+          member("Example.Package.nuspec", { text: NUSPEC }),
+          member("lib/net8.0/Example.dll"),
+        ],
+        2,
+      ),
+    );
+    expect(package_.assets).toHaveLength(2);
+    expect(
+      package_.diagnostics.filter(
+        (entry) => entry.code === "entry-limit-reached",
+      ),
+    ).toEqual([]);
+    expect(package_.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it("reports the member allowance once when the archive continues", () => {
+    const package_ = parsed(
+      parse(
+        [
+          member("Example.Package.nuspec", { text: NUSPEC }),
+          member("lib/net8.0/Example.dll"),
+        ],
+        1,
+      ),
+    );
+    expect(package_.assets).toHaveLength(1);
+    expect(package_.diagnostics).toEqual([
+      expect.objectContaining({ code: "entry-limit-reached" }),
+    ]);
+    expect(package_.source_coverage.status).toBe("partial");
+  });
+});
+
+describe("parseNugetPackage: stable identities", () => {
+  it("gives identical packages identical identifiers", () => {
+    const first = parsed(parse([member("a.dll"), member("b.dll")]));
+    const second = parsed(parse([member("a.dll"), member("b.dll")]));
+    expect(first.package_id).toBe(second.package_id);
+    expect(first.assets.map((asset) => asset.asset_id)).toEqual(
+      second.assets.map((asset) => asset.asset_id),
+    );
+  });
+});
+
+describe("parseNugetPackage: member identity", () => {
+  it("keeps members with the same stored bytes but different spellings distinct", () => {
+    const package_ = parsed(
+      parse([member("a.dll"), member("a.dll"), member("b.dll")]),
+    );
+    const ids = package_.assets.map((asset) => asset.asset_id);
+    expect(new Set(ids).size).toBe(3);
+  });
+});
+
+it("does not give two stored spellings of one member the same asset identity", () => {
+  const package_ = parsed(
+    parse([
+      member("lib\\net8.0\\Example.dll"),
+      member("lib/net8.0/Example.dll"),
+    ]),
+  );
+  const ids = package_.assets.map((asset) => asset.asset_id);
+  expect(package_.assets).toHaveLength(2);
+  expect(new Set(ids).size).toBe(2);
+});

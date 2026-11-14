@@ -701,6 +701,24 @@ Coverage describes examined declarations and does not establish runtime behavior
 or full specification/operation validity. See [offline API contracts](../api-contracts.md)
 for source identities, parser allowances, supported scope and CLI publication.
 
+## Offline NuGet package inventory
+
+`inspect_nuget_package` reads one local NuGet package (`.nupkg`) and reports its
+`.nuspec` identity, license, project and repository metadata, and its declared
+dependency groups with version ranges and `include`/`exclude`. Every archive
+member is inventoried by stored path, declared size, asset kind and, where the
+layout supplies one, its target-framework and runtime-identifier folder. NuGet's
+restore-time asset selection for a framework is not applied
+(`target_framework_selection: not-applied`) and dependencies are declarations
+rather than a resolved graph (`dependency_resolution: not-performed`); a listed
+asset is not a claim that a consumer receives it. Every `.nuspec` member is
+reported separately, and a malformed or doctype-bearing document, a package with
+no readable `.nuspec` and a member path leaving the package root each stay
+explicit diagnostics instead of becoming absent facts. No package is restored,
+no feed is contacted, package contents are not executed and signatures are not
+verified. See [NuGet packages](../guides/data/nuget-packages.md) for the
+bypassed selection, refusals and limits.
+
 ## Retained application Evidence inputs
 
 `analyze_javascript_application`, `inspect_binary_layout`, `inspect_artifact`,
