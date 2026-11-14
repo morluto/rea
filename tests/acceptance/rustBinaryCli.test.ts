@@ -6,7 +6,6 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
-import { RUST_RESOURCE_GUARD_LIMITATION } from "../../src/rust/RustBinaryProvider.js";
 import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   compressRustElfSectionNames,
@@ -75,7 +74,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -241,7 +239,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest("returns null metadata when .dep-v0 is absent", async ({ cli }) => {
@@ -428,7 +425,6 @@ cliTest(
     });
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -469,7 +465,13 @@ cliTest(
     );
     // Padding separates the section size from the consumed stream that the
     // inflate guidance names.
-    expect(evidence.limitations).toContain(RUST_RESOURCE_GUARD_LIMITATION);
+    expect(evidence.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /inflated JSON.*64 times the consumed compressed-stream length/iu,
+        ),
+      ]),
+    );
     expect(evidence.locations).toContainEqual({
       kind: "file-offset-range",
       start: metadata?.file_offset,
@@ -480,7 +482,6 @@ cliTest(
     expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -527,7 +528,6 @@ cliTest(
     expect(parseMcpToolError(response).error).toMatchObject(expectedFailure);
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -684,7 +684,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest(

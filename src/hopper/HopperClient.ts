@@ -95,7 +95,7 @@ import {
 } from "./protocol.js";
 
 /** Aggregate in-memory retention budget for this provider's launcher output. */
-export const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
+const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
 
 const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
 

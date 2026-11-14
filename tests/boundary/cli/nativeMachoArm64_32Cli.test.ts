@@ -71,7 +71,6 @@ describe.skipIf(process.platform !== "darwin")(
           details: { selection_reason: "target_unsupported" },
         });
       },
-      60_000,
     );
   },
 );

@@ -13,6 +13,7 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import type {
@@ -97,6 +98,7 @@ export class WxapkgArtifactReader implements ArtifactReader {
           "wxapkg package is V1MMWX-encrypted; member identities and contents remain unknown.",
         ],
       });
+      this.#assertOpen(signal);
       return;
     }
     let index = 0;
@@ -131,46 +133,17 @@ export class WxapkgArtifactReader implements ArtifactReader {
           { boundary: "capacity" },
         );
       const controller = new AbortController();
-      const output = Readable.from(
+      const output = ownAsyncArtifactStream(
         this.#memberChunks(handle, state, controller.signal),
+        controller,
         {
-          objectMode: false,
+          scope: this.#scope,
+          streams: this.#streams,
+          signal,
+          label: "wxapkg",
           highWaterMark: CHUNK_BYTES,
         },
       );
-      const onAbort = (): void => {
-        controller.abort(signal?.reason);
-        output.destroy(
-          new ArtifactReaderFailure(
-            "cancelled",
-            "wxapkg member read cancelled",
-            { cause: signal?.reason },
-          ),
-        );
-      };
-      output.on("error", () => undefined);
-      this.#streams.set(output, controller);
-      const completion = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          signal?.removeEventListener("abort", onAbort);
-          this.#streams.delete(output);
-          resolve();
-        });
-      });
-      // Readable.from waits for its async iterator to retire before close. Keep
-      // that whole lifetime owned, including a suspended positional read.
-      void this.#scope
-        .run(() => completion)
-        .catch((cause: unknown) => {
-          controller.abort(cause);
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error("wxapkg stream ownership failed", { cause }),
-          );
-        });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted === true) onAbort();
       return output;
     });
   }

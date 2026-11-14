@@ -5,7 +5,6 @@ import { ANALYSIS_SNAPSHOT_TARGET } from "./analysisSnapshot.fixture.js";
 import {
   createEvidenceBundle,
   createImmutableEvidenceBundle,
-  NonCanonicalEvidenceBundleError,
   evidenceBundleForTarget,
   parseEvidenceBundle,
   safeParseEvidenceBundle,
@@ -67,7 +66,10 @@ describe("evidence bundle failure classification", () => {
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
     expect(parsed.error.kind).toBe("invalid-bundle");
-    expect(parsed.error.cause).toBeInstanceOf(NonCanonicalEvidenceBundleError);
+    expect(parsed.error.cause).toMatchObject({
+      name: "NonCanonicalEvidenceBundleError",
+      message: "Evidence bundle manifests are not canonical",
+    });
   });
 
   it("treats only authenticated standalone Evidence as the wrong input kind", () => {

@@ -136,7 +136,6 @@ describe.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
           normalized_result: { signed: true, cdhashes: [cdhash] },
         });
       },
-      60_000,
     );
   },
 );

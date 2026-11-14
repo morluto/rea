@@ -4,9 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  formatCommandForDisplay,
   installLinuxHopper,
-  linuxPackageManagerCommands,
+  linuxHopperInstallDisclosure,
   linuxSharedLibrariesAvailable,
   parseLinuxDistribution,
   supportsReaHost,
@@ -30,19 +29,6 @@ import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import * as nativeCommands from "../process/ExecFileOutput.js";
 import * as pythonRuntime from "./LinuxHopperPython.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-
-describe("Linux package-manager command display", () => {
-  it("preserves argument boundaries for paths with spaces and quotes", () => {
-    expect(
-      formatCommandForDisplay("pkexec", [
-        "pacman",
-        "-U",
-        "/tmp/rea test/hopper.arch",
-        "apostrophe'path",
-      ]),
-    ).toBe('pkexec pacman -U "/tmp/rea test/hopper.arch" "apostrophe\'path"');
-  });
-});
 
 class RecordingLinuxHost implements LinuxHopperInstallHost {
   distributionValue: LinuxDistribution | undefined = {
@@ -263,47 +249,34 @@ describe("Linux Hopper installation", () => {
   ] as const)(
     "selects the %s native package manager and dependencies",
     (family, executable, packages) => {
-      expect(
-        linuxPackageManagerCommands(family, "/tmp/Hopper package", true),
-      ).toContainEqual(
-        expect.objectContaining({
-          executable,
-          args: expect.arrayContaining([...packages]),
-        }),
+      const root = linuxHopperInstallDisclosure(family, true).commands;
+      const nonRoot = linuxHopperInstallDisclosure(family, false).commands;
+      expect(root.some((command) => command.startsWith(`${executable} `))).toBe(
+        true,
       );
+      for (const dependency of packages)
+        expect(
+          root.some((command) => command.split(" ").includes(dependency)),
+        ).toBe(true);
       expect(
-        linuxPackageManagerCommands(family, "/tmp/Hopper package", false),
-      ).toContainEqual(
-        expect.objectContaining({
-          executable: "pkexec",
-          args: expect.arrayContaining([executable, "/tmp/Hopper package"]),
-        }),
-      );
+        nonRoot.some(
+          (command) =>
+            command.startsWith(`pkexec ${executable} `) &&
+            command.includes(`"<verified-hopper.${family}>"`),
+        ),
+      ).toBe(true);
     },
   );
 
   it.each([true, false])(
     "keeps installed apt dependencies at their versions while Hopper may upgrade (root: %s)",
     (isRoot) => {
-      const prefix = isRoot ? [] : ["pkexec"];
+      const prefix = isRoot ? "" : "pkexec ";
       expect(
-        linuxPackageManagerCommands("deb", "/tmp/Hopper package", isRoot).map(
-          ({ executable, args }) => [executable, ...args],
-        ),
+        linuxHopperInstallDisclosure("deb", isRoot).commands.slice(0, 2),
       ).toEqual([
-        [
-          ...prefix,
-          "apt-get",
-          "install",
-          "-y",
-          "--no-upgrade",
-          "xvfb",
-          "xauth",
-          "python3",
-          "libx11-6",
-          "libxtst6",
-        ],
-        [...prefix, "apt-get", "install", "-y", "/tmp/Hopper package"],
+        `${prefix}apt-get install -y --no-upgrade xvfb xauth python3 libx11-6 libxtst6`,
+        `${prefix}apt-get install -y "<verified-hopper.deb>"`,
       ]);
     },
   );
