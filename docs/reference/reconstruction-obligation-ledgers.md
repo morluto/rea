@@ -232,6 +232,55 @@ sample Evidence ID with an authenticated review record already present in
 }
 ```
 
+### Retiring a generated obligation
+
+A reviewed record whose `obligation_id` names a generated obligation and whose
+`disposition` is `out-of-scope` or `not-applicable` reviews that obligation
+instead of competing with it: the generated definition is kept, no
+`duplicate-definition` is reported, and the record's `disposition_reason` and
+`review_evidence_ids` are attached to the obligation. `disposition_reason` is
+required and must not be blank; it is rejected as caller input otherwise. The
+record's own `required` value does not override the generated definition's:
+the generated `required` value is kept, so a retired required obligation stays
+required. The generated `source_state` is kept too: review Evidence is
+attached, but an observed process or service record cited by the review does
+not make the generated claim `observed`. The record must name the generated
+`obligation_version`, and only one retiring record may review a generated ID;
+a second retiring record, or one for another version, is a competing
+definition reported as `duplicate-definition` rather than a retirement, and
+the result does not depend on the order the records are listed.
+
+```json
+{
+  "obligation_id": "obl_0000000000000000000000000000000000000000000000000000000000000000",
+  "obligation_version": 1,
+  "title": "Decoy context bridge in dead code",
+  "application_layer": "electron",
+  "family": "context-bridge",
+  "target": {
+    "artifact_sha256": null,
+    "application_node_id": null,
+    "semantic_node_id": null,
+    "location": "preload.js dead branch"
+  },
+  "required": true,
+  "required_case_kinds": ["positive"],
+  "required_original_authority": "runtime",
+  "required_fixture_authority": "renderer",
+  "required_verifier_authority": "renderer",
+  "requires_parser_type": false,
+  "dependency_obligation_ids": [],
+  "residual_unknown_ids": [],
+  "unavailable_authority": [],
+  "required_next_evidence": [],
+  "disposition": "not-applicable",
+  "disposition_reason": "The bridge is only exposed inside an unreachable branch; no renderer can call it.",
+  "review_evidence_ids": [
+    "ev_ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  ]
+}
+```
+
 ## Manifest and closure
 
 A manifest binding names one owner and a caller-supplied `owner_sha256`. Both
@@ -337,6 +386,43 @@ visible in the ledger and produce diagnostics; they cannot close the obligation.
 A green unit test cannot close a `packaged-process` obligation. A static-only
 source cannot close a runtime or process claim. Marking a claim `blocked` or
 `out-of-scope` records the disposition but does not silently count it as verified.
+A `blocked` claim with an authenticated contradiction keeps status `blocked`,
+but the contradiction still fails the ledger.
+
+A retired obligation (`out-of-scope` or `not-applicable`) stays in the ledger
+with its `required` value unchanged and status `out-of-scope`; its reason is
+carried in the `out-of-scope` or `not-applicable` diagnostic detail. It demands
+no owner, fixture, original case, or authority, but a required retired
+obligation still counts toward `required_open` and keeps the ledger `open`:
+retiring claims never makes a ledger `ready`. Proof that was supplied for a
+retired obligation is still checked: a failing fixture or verifier proof on
+its binding reports `fixture-failed` or `verifier-failed` and fails the
+ledger. An authenticated contradiction on a retired obligation reports a
+`contradiction` diagnostic and also fails the ledger. Residual unknowns,
+unavailable authority, and competing reviewed definitions remain visible on
+it.
+
+### Over-generation
+
+Static Application Graph facts can generate many candidates that no runtime
+observation reaches, including decoy boundaries placed in dead code. When more
+than 20 generated obligations in one artifact have neither runtime authority
+nor a manifest binding, the ledger adds one `obligation-overgeneration:`
+limitation for that artifact naming the count and families, and how many of
+those obligations are still unreviewed versus retired by a reviewed
+disposition. Families whose `required_original_authority` is `static`, such
+as native exports and addons, are characterized without runtime authority and
+are not counted. Retired obligations stay in the count with their generated
+`source_state`, so retiring decoys does not erase the signal; only runtime
+authority or manifest bindings narrow it. A
+fully retired artifact never reaches `ready`: it stays flagged by this
+limitation until runtime authority or manifest bindings exist for the
+artifact, so retiring every decoy does not close the ledger. Every
+candidate is still listed; the limitation keeps closure `unknown` and tells
+agents to stop fixture work on those candidates until runtime authority or
+reviewed dispositions cover the still-unreviewed ones. A large real
+application can cross the threshold too, moving its ledger from `open` to
+`unknown`; that is a limitation on closure, not truncation of the ledger.
 
 ### Proof applicability
 

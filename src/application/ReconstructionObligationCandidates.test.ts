@@ -6,13 +6,20 @@ import {
   JavaScriptSemanticEvidenceContextRegistry,
 } from "../domain/javascript/javascriptSemanticGraph.js";
 import {
+  build,
   deriveCandidates,
+  processEvidence,
   proofEvidence,
+  request,
+  reviewedObligation,
 } from "./ReconstructionObligationLedger.fixture.js";
+import { OBLIGATION_OVERGENERATION_THRESHOLD } from "./ReconstructionObligationLedgerEvaluation.js";
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
+import type { ApplicationNode } from "../domain/javascript/javascriptApplicationGraphSchemas.js";
+import type { ReconstructionObligationLedger } from "../domain/reconstructionObligationLedgerSchemas.js";
 import {
   emptyUnverifiedProcessCapture,
   FINALIZED_PROCESS_CAPTURE_EXAMPLE,
@@ -46,7 +53,7 @@ const applicationWithUnknowns = (
   {
     kind = "unknown",
     label = "Unclassified application boundary",
-  }: { kind?: "unknown" | "package"; label?: string } = {},
+  }: { kind?: ApplicationNode["kind"]; label?: string } = {},
 ) => {
   const source = createEvidence(
     undefined,
@@ -147,6 +154,7 @@ const applicationWithUnknowns = (
   return {
     graph,
     unknownNodes,
+    records: [source, application],
     generated: deriveCandidates(
       createEvidenceBundle([source, application]),
       [],
@@ -267,6 +275,335 @@ describe("reconstruction obligation candidates", () => {
       /Process Evidence.*could not generate candidates.*manifest\.completed_at/iu,
     );
     expect(generated.limitations[0]).toContain("(1 more issues)");
+  });
+});
+
+const decoyApplication = (count: number) =>
+  applicationWithUnknowns(
+    Array.from({ length: count }, (_, index) => `decoy-${String(index)}`),
+    { kind: "ipc-channel", label: "decoy:channel" },
+  );
+const overgeneration = (ledger: ReconstructionObligationLedger) =>
+  ledger.limitations.filter((limitation) =>
+    limitation.startsWith("obligation-overgeneration:"),
+  );
+/** Generated, unbound claims that still need runtime authority. */
+const staticUnbound = (ledger: ReconstructionObligationLedger) =>
+  ledger.obligations.filter(
+    ({
+      origin,
+      binding,
+      source_state: sourceState,
+      required_original_authority: originalAuthority,
+    }) =>
+      origin === "generated" &&
+      binding === null &&
+      sourceState !== "observed" &&
+      originalAuthority !== "static",
+  ).length;
+/** Families the limitation names: static-authority families are not counted. */
+const countedFamilies = (ledger: ReconstructionObligationLedger) =>
+  [
+    ...new Set(
+      ledger.obligations
+        .filter(
+          ({ required_original_authority: authority }) =>
+            authority !== "static",
+        )
+        .map(({ family }) => family),
+    ),
+  ]
+    .sort()
+    .join(", ");
+
+describe("reconstruction obligation over-generation", () => {
+  it("reports one artifact-level limitation only above the threshold and keeps every candidate", () => {
+    const base = build(request(decoyApplication(0).records));
+    const baseline = staticUnbound(base);
+    expect(baseline).toBeGreaterThan(0);
+    expect(overgeneration(base)).toEqual([]);
+
+    const atThreshold = build(
+      request(
+        decoyApplication(OBLIGATION_OVERGENERATION_THRESHOLD - baseline)
+          .records,
+      ),
+    );
+    expect(staticUnbound(atThreshold)).toBe(
+      OBLIGATION_OVERGENERATION_THRESHOLD,
+    );
+    expect(overgeneration(atThreshold)).toEqual([]);
+
+    const flooded = decoyApplication(
+      OBLIGATION_OVERGENERATION_THRESHOLD - baseline + 1,
+    );
+    const ledger = build(request(flooded.records));
+    for (const node of flooded.unknownNodes)
+      expect(
+        ledger.obligations.some(
+          ({ target }) => target.application_node_id === node.node_id,
+        ),
+      ).toBe(true);
+    expect(ledger.obligations).toHaveLength(
+      base.obligations.length + flooded.unknownNodes.length,
+    );
+    expect(overgeneration(ledger)).toEqual([
+      `obligation-overgeneration: artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(OBLIGATION_OVERGENERATION_THRESHOLD + 1)} generated obligations with no runtime authority and no manifest binding (families: ${countedFamilies(ledger)}), above the threshold of ${String(OBLIGATION_OVERGENERATION_THRESHOLD)}; ${String(OBLIGATION_OVERGENERATION_THRESHOLD + 1)} still unreviewed, 0 retired by reviewed disposition. Stop: do not write fixtures or verifiers for these candidates; obtain runtime authority for the artifact or record a reviewed disposition for each still-unreviewed decoy first.`,
+    ]);
+    expect(ledger.status).toBe("unknown");
+    expect(ledger.coverage.status).toBe("partial");
+  });
+
+  it("keeps the limitation when reviewed dispositions retire the surplus and reports the unreviewed count", () => {
+    const flooded = decoyApplication(OBLIGATION_OVERGENERATION_THRESHOLD);
+    const open = build(request(flooded.records));
+    const total = staticUnbound(open);
+    const surplus = total - OBLIGATION_OVERGENERATION_THRESHOLD;
+    expect(surplus).toBeGreaterThan(0);
+    expect(overgeneration(open)).toHaveLength(1);
+    const decoys = open.obligations
+      .filter(({ target }) =>
+        flooded.unknownNodes.some(
+          ({ node_id: nodeId }) => target.application_node_id === nodeId,
+        ),
+      )
+      .slice(0, surplus);
+    const review = flooded.records[0]!;
+    const ledger = build(
+      request(flooded.records, {
+        reviewed_obligations: decoys.map(({ obligation_id: obligationId }) => ({
+          ...reviewedObligation(obligationId, review.evidence_id),
+          disposition: "not-applicable" as const,
+          disposition_reason: "Decoy channel in dead code.",
+        })),
+      }),
+    );
+    // Retired decoys stay in the count: retiring cannot erase the signal.
+    expect(overgeneration(ledger)).toHaveLength(1);
+    expect(overgeneration(ledger)[0]).toContain(
+      `has ${String(total)} generated obligations`,
+    );
+    expect(overgeneration(ledger)[0]).toContain(
+      `; ${String(OBLIGATION_OVERGENERATION_THRESHOLD)} still unreviewed, ${String(surplus)} retired by reviewed disposition.`,
+    );
+    expect(ledger.status).toBe("unknown");
+    expect(ledger.obligations).toHaveLength(open.obligations.length);
+    for (const decoy of decoys)
+      expect(
+        ledger.obligations.find(
+          ({ obligation_id: id }) => id === decoy.obligation_id,
+        ),
+      ).toMatchObject({
+        origin: "generated",
+        required: true,
+        status: "out-of-scope",
+        diagnostics: [
+          {
+            code: "not-applicable",
+            detail:
+              "Reviewed disposition marks this obligation not applicable; it remains visible. Reason: Decoy channel in dead code.",
+          },
+        ],
+      });
+    const retained = new Set(decoys.map(({ obligation_id: id }) => id));
+    expect(
+      ledger.obligations
+        .filter(({ obligation_id: id }) => !retained.has(id))
+        .map(({ status }) => status),
+    ).toEqual(
+      open.obligations
+        .filter(({ obligation_id: id }) => !retained.has(id))
+        .map(({ status }) => status),
+    );
+  });
+
+  it("does not reach ready when the real bridge and every decoy bridge are retired", () => {
+    const flooded = applicationWithUnknowns(
+      Array.from({ length: 25 }, (_, index) => `decoyApi${String(index)}`),
+      { kind: "context-bridge-api", label: "decoyApi" },
+    );
+    const open = build(request(flooded.records));
+    const realBridge = open.obligations.find(
+      ({ family, title }) =>
+        family === "context-bridge" && title === "desktopApi",
+    );
+    if (realBridge === undefined)
+      throw new Error("Expected the fixture context bridge obligation");
+    const unbound = staticUnbound(open);
+    expect(unbound).toBeGreaterThan(OBLIGATION_OVERGENERATION_THRESHOLD);
+    const review = flooded.records[0]!;
+    const ledger = build(
+      request(flooded.records, {
+        reviewed_obligations: open.obligations.map(
+          ({ obligation_id: obligationId }) => ({
+            ...reviewedObligation(obligationId, review.evidence_id),
+            disposition: "out-of-scope" as const,
+            disposition_reason: "Bridge retired by a decoy sweep.",
+          }),
+        ),
+      }),
+    );
+    expect(ledger.obligations).toHaveLength(open.obligations.length);
+    expect(
+      ledger.obligations.find(
+        ({ obligation_id: id }) => id === realBridge.obligation_id,
+      ),
+    ).toMatchObject({ required: true, status: "out-of-scope" });
+    expect(ledger.summary).toMatchObject({
+      required: open.obligations.length,
+      required_open: open.obligations.length,
+    });
+    expect(ledger.status).not.toBe("ready");
+    expect(ledger.status).toBe("unknown");
+    expect(overgeneration(ledger)).toHaveLength(1);
+    expect(overgeneration(ledger)[0]).toContain(
+      `; 0 still unreviewed, ${String(unbound)} retired by reviewed disposition.`,
+    );
+  });
+});
+
+describe("reconstruction obligation over-generation group", () => {
+  it("keeps the generated source state when a retiring review cites observed process Evidence", () => {
+    const flooded = decoyApplication(OBLIGATION_OVERGENERATION_THRESHOLD);
+    const capture = processEvidence();
+    const open = build(request([...flooded.records, capture]));
+    const decoys = open.obligations.filter(({ target }) =>
+      flooded.unknownNodes.some(
+        ({ node_id: nodeId }) => target.application_node_id === nodeId,
+      ),
+    );
+    // The observed process obligation is under another artifact and never
+    // counts, so this is the flooded artifact's group.
+    const total = staticUnbound(open);
+    const ledger = build(
+      request([...flooded.records, capture], {
+        reviewed_obligations: decoys.map(({ obligation_id: obligationId }) => ({
+          ...reviewedObligation(obligationId, capture.evidence_id),
+          disposition: "not-applicable" as const,
+          disposition_reason: "Decoy channel in dead code.",
+        })),
+      }),
+    );
+
+    // The observed process capture is attached as review Evidence but does
+    // not make the decoys look observed, so they stay in the count.
+    for (const decoy of decoys) {
+      const retiredDecoy = ledger.obligations.find(
+        ({ obligation_id: id }) => id === decoy.obligation_id,
+      );
+      expect(retiredDecoy).toMatchObject({
+        status: "out-of-scope",
+        source_state: decoy.source_state,
+      });
+      expect(retiredDecoy?.source_state).not.toBe("observed");
+      expect(
+        retiredDecoy?.authority_references.map(({ evidence_id: id }) => id),
+      ).toContain(capture.evidence_id);
+    }
+    expect(overgeneration(ledger)).toHaveLength(1);
+    expect(overgeneration(ledger)[0]).toContain(
+      `artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(total)} generated obligations`,
+    );
+    expect(overgeneration(ledger)[0]).toContain(
+      `; ${String(total - decoys.length)} still unreviewed, ${String(decoys.length)} retired by reviewed disposition.`,
+    );
+    expect(ledger.status).toBe("unknown");
+  });
+
+  it.each([
+    ["a second retiring review", "out-of-scope"],
+    ["an active review", "active"],
+  ] as const)(
+    "keeps the generated source state when %s also cites observed process Evidence",
+    (_, secondDisposition) => {
+      const flooded = decoyApplication(OBLIGATION_OVERGENERATION_THRESHOLD);
+      const capture = processEvidence();
+      const open = build(request([...flooded.records, capture]));
+      const decoys = open.obligations.filter(({ target }) =>
+        flooded.unknownNodes.some(
+          ({ node_id: nodeId }) => target.application_node_id === nodeId,
+        ),
+      );
+      const total = staticUnbound(open);
+      const ledger = build(
+        request([...flooded.records, capture], {
+          reviewed_obligations: decoys.flatMap(
+            ({ obligation_id: obligationId }) => [
+              {
+                ...reviewedObligation(obligationId, capture.evidence_id),
+                disposition: "not-applicable" as const,
+                disposition_reason: "Decoy channel in dead code.",
+              },
+              secondDisposition === "active"
+                ? reviewedObligation(obligationId, capture.evidence_id)
+                : {
+                    ...reviewedObligation(obligationId, capture.evidence_id),
+                    disposition: secondDisposition,
+                    disposition_reason: "Decoy channel reviewed again.",
+                  },
+            ],
+          ),
+        }),
+      );
+
+      // Every later review of a generated claim attaches its Evidence without
+      // making the claim look observed, so the decoys stay in the count.
+      for (const decoy of decoys) {
+        const retiredDecoy = ledger.obligations.find(
+          ({ obligation_id: id }) => id === decoy.obligation_id,
+        );
+        expect(retiredDecoy).toMatchObject({
+          origin: "generated",
+          status: "out-of-scope",
+          source_state: decoy.source_state,
+        });
+        expect(retiredDecoy?.source_state).not.toBe("observed");
+        expect(retiredDecoy?.diagnostics.map(({ code }) => code)).toContain(
+          "duplicate-definition",
+        );
+        expect(
+          retiredDecoy?.authority_references.map(({ evidence_id: id }) => id),
+        ).toContain(capture.evidence_id);
+      }
+      expect(overgeneration(ledger)).toHaveLength(1);
+      expect(overgeneration(ledger)[0]).toContain(
+        `; ${String(total - decoys.length)} still unreviewed, ${String(decoys.length)} retired by reviewed disposition.`,
+      );
+      expect(ledger.status).toBe("unknown");
+      expect(ledger.coverage.status).toBe("partial");
+    },
+  );
+
+  it("does not count static-authority native families as lacking runtime authority", () => {
+    const flooded = applicationWithUnknowns(
+      Array.from({ length: 25 }, (_, index) => `export-${String(index)}`),
+      { kind: "native-export", label: "decoy:export" },
+    );
+    const ledger = build(request(flooded.records));
+    const natives = ledger.obligations.filter(({ target }) =>
+      flooded.unknownNodes.some(
+        ({ node_id: nodeId }) => target.application_node_id === nodeId,
+      ),
+    );
+
+    expect(natives).toHaveLength(25);
+    for (const native of natives)
+      expect(native).toMatchObject({
+        origin: "generated",
+        family: "native-export",
+        binding: null,
+        source_state: "candidate",
+        required_original_authority: "static",
+      });
+    // Static-authority claims never need runtime authority, so they cannot
+    // be told to obtain it: the artifact is not reported as over-generated.
+    expect(natives.length + staticUnbound(ledger)).toBeGreaterThan(
+      OBLIGATION_OVERGENERATION_THRESHOLD,
+    );
+    expect(staticUnbound(ledger)).toBeLessThanOrEqual(
+      OBLIGATION_OVERGENERATION_THRESHOLD,
+    );
+    expect(overgeneration(ledger)).toEqual([]);
   });
 });
 

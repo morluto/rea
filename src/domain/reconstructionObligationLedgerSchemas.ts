@@ -178,7 +178,7 @@ export const reconstructionObligationManifestSchema = z.strictObject({
   ),
 });
 
-export const reviewedReconstructionObligationSchema = z.strictObject({
+const reviewedReconstructionObligationDefinitionSchema = z.strictObject({
   obligation_id: stableIdSchema,
   obligation_version: z.int().min(1),
   title: textSchema,
@@ -195,9 +195,26 @@ export const reviewedReconstructionObligationSchema = z.strictObject({
   residual_unknown_ids: z.array(stableIdSchema),
   unavailable_authority: z.array(textSchema),
   required_next_evidence: z.array(textSchema),
-  disposition: z.enum(["active", "blocked", "out-of-scope"]),
   review_evidence_ids: z.array(evidenceIdSchema).min(1),
 });
+
+/**
+ * A retiring disposition (`out-of-scope` or `not-applicable`) must state its
+ * reason. When its obligation ID names a generated candidate, the record
+ * reviews that candidate instead of competing with it.
+ */
+export const reviewedReconstructionObligationSchema = z.discriminatedUnion(
+  "disposition",
+  [
+    reviewedReconstructionObligationDefinitionSchema.extend({
+      disposition: z.enum(["active", "blocked"]),
+    }),
+    reviewedReconstructionObligationDefinitionSchema.extend({
+      disposition: z.enum(["out-of-scope", "not-applicable"]),
+      disposition_reason: textSchema,
+    }),
+  ],
+);
 
 const diagnosticSchema = z.strictObject({
   code: z.enum([
@@ -227,6 +244,7 @@ const diagnosticSchema = z.strictObject({
     "unavailable-authority",
     "blocked",
     "out-of-scope",
+    "not-applicable",
   ]),
   detail: textSchema,
 });
