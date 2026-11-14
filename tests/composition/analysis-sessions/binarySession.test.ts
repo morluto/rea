@@ -707,7 +707,18 @@ describe("evidence metadata imports and snapshot cache", () => {
       ok: true,
       value: {
         entries: before.value.entries,
-        evidence_bundle: { records: expect.arrayContaining([addition]) },
+        // The import keeps the caller's record and adds the session's own
+        // provider selection to it, so the display fields are the imported ones.
+        evidence_bundle: {
+          records: expect.arrayContaining([
+            expect.objectContaining({
+              evidence_id: addition.evidence_id,
+              operation: addition.operation,
+              parameters: addition.parameters,
+              subject: addition.subject,
+            }),
+          ]),
+        },
       },
     });
     const callsAfterInitialRead = [...calls];
@@ -776,7 +787,14 @@ describe("Evidence display metadata refresh", () => {
         });
         expect(changed).toHaveBeenCalledTimes(1);
         unsubscribe();
-        expect(session.evidenceById(evidence.evidence_id)).toEqual(relocated);
+        expect(session.evidenceById(evidence.evidence_id)).toMatchObject({
+          ...relocated,
+          // Nothing recorded the unrelated record, so the import supplies the
+          // session's own selection beside the caller's display metadata.
+          ...(scope === "active"
+            ? {}
+            : { provider_selection: expect.any(Object) }),
+        });
         const refreshed = session.exportAnalysisSnapshot();
         if (!refreshed.ok) throw refreshed.error;
         if (scope === "active") {
@@ -1194,7 +1212,16 @@ describe("snapshot cache eligibility", () => {
           );
         } else {
           expect(evidenceIds).toEqual([undefined, undefined]);
-          expect(records).toEqual([source]);
+          // The session attributes the source to its own provider selection, so
+          // the callable fields match while the attribution is the session's.
+          expect(records).toHaveLength(1);
+          expect(records[0]).toMatchObject({
+            evidence_id: source.evidence_id,
+            provider_selection: {
+              selection_source: "auto-single-candidate",
+              candidates: [{ selected: true }],
+            },
+          });
         }
         expect(session.exportAnalysisSnapshot()).toMatchObject({
           ok: true,

@@ -86,6 +86,59 @@ const executionEnvironmentSchema = z.strictObject({
   architecture: z.string().min(1),
   isolation: z.enum(["none", "process", "container", "virtual-machine"]),
 });
+
+/**
+ * Where the recording session's provider came from and how the other
+ * candidates fared. Session provenance, not observation identity: the same
+ * result observed under a different selection is the same observation.
+ */
+const providerSelectionProvenanceSchema = z
+  .strictObject({
+    selection_source: z.enum([
+      "request",
+      "environment",
+      "auto-single-candidate",
+    ]),
+    candidates: z
+      .array(
+        z.strictObject({
+          provider: providerSchema,
+          selected: z.boolean(),
+          availability: z.enum(["available", "unavailable", "unknown"]),
+          target_support: z.enum(["supported", "unsupported", "unknown"]),
+          rejection_codes: z.array(z.string().min(1)),
+        }),
+      )
+      // The object carries no separate selected-provider id, so a reader can
+      // only name the recording session's provider when exactly one candidate
+      // claims the selection. An imported bundle with zero or several would
+      // re-export ambiguous provenance under a stable Evidence id.
+      .refine(
+        (candidates) => {
+          const selected = candidates.filter(({ selected }) => selected);
+          if (selected.length !== 1) return false;
+          // Every registry path binds a provider only after its availability
+          // and target support both succeeded, so a selected candidate that
+          // reports either as not-known never came from a recording session.
+          const [candidate] = selected;
+          return (
+            candidate !== undefined &&
+            candidate.availability === "available" &&
+            candidate.target_support === "supported"
+          );
+        },
+        {
+          error:
+            "provider selection must mark exactly one available, supported candidate selected",
+        },
+      ),
+  })
+  .describe(
+    "Selected-session provider provenance; excluded from Evidence semantic identity.",
+  );
+export type ProviderSelectionProvenance = z.infer<
+  typeof providerSelectionProvenanceSchema
+>;
 const callerInputPathsSchema = z.record(
   nulFreeStringSchema,
   z.union([nulFreeStringSchema, z.array(nulFreeStringSchema)]),
@@ -112,6 +165,11 @@ const evidenceBaseSchema = z
       .exactOptional()
       .describe(
         "Verbatim auxiliary input paths keyed by argument name; repeated selections retain their order. Caller assertions are outside semantic identity.",
+      ),
+    provider_selection: providerSelectionProvenanceSchema
+      .exactOptional()
+      .describe(
+        "Provider selection provenance of the recording session; absent on older records and outside semantic identity.",
       ),
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
@@ -325,7 +383,73 @@ export const evidenceDisplayMetadataAgree = (
   left.subject?.name === right.subject?.name &&
   left.subject?.local_path === right.subject?.local_path &&
   left.caller_input_path === right.caller_input_path &&
-  isDeepStrictEqual(left.caller_input_paths, right.caller_input_paths);
+  isDeepStrictEqual(left.caller_input_paths, right.caller_input_paths) &&
+  isDeepStrictEqual(left.provider_selection, right.provider_selection);
+
+/**
+ * Adopt the display metadata an incoming copy actually carries, keeping the
+ * retained subject and caller-selected inputs where the copy omits them.
+ *
+ * A copy is produced by a different recording session; it may render the same
+ * semantic record without the caller's selected paths or subject display.
+ * Display metadata is a presentation fact of the session that recorded the
+ * observation, so omission cannot stand for deletion.
+ */
+export const adoptEvidenceDisplayMetadata = (
+  retained: Evidence,
+  incoming: Evidence,
+): Evidence => {
+  const subject = mergedSubjectDisplay(retained.subject, incoming.subject);
+  const callerInputPath =
+    incoming.caller_input_path ?? retained.caller_input_path;
+  const callerInputPaths =
+    incoming.caller_input_paths ?? retained.caller_input_paths;
+  const providerSelection =
+    incoming.provider_selection ?? retained.provider_selection;
+  if (
+    subject === retained.subject &&
+    callerInputPath === retained.caller_input_path &&
+    callerInputPaths === retained.caller_input_paths &&
+    providerSelection === retained.provider_selection
+  )
+    return retained;
+  const display: Record<string, unknown> = { ...incoming };
+  delete display.subject;
+  delete display.caller_input_path;
+  delete display.caller_input_paths;
+  delete display.provider_selection;
+  if (subject !== undefined) display.subject = subject;
+  if (callerInputPath !== undefined)
+    display.caller_input_path = callerInputPath;
+  if (callerInputPaths !== undefined)
+    display.caller_input_paths = callerInputPaths;
+  if (providerSelection !== undefined)
+    display.provider_selection = providerSelection;
+  return rememberReboundEvidence(retained, display as unknown as Evidence);
+};
+
+/**
+ * Per-field display facts keep the retained value wherever the copy omits one.
+ * The subject is either present or null, so a null copy keeps the retained
+ * subject rather than clearing the display identity.
+ */
+const mergedSubjectDisplay = (
+  retained: Evidence["subject"],
+  incoming: Evidence["subject"],
+): Evidence["subject"] => {
+  if (retained === incoming) return retained;
+  // A copy that carries no subject cannot clear the recording session's one.
+  if (retained === null || incoming === null) return retained;
+  if (
+    incoming.name === retained.name &&
+    incoming.local_path === retained.local_path
+  )
+    return retained;
+  return {
+    ...incoming,
+    local_path: incoming.local_path || retained.local_path,
+  };
+};
 
 /** Recognize authenticated Evidence in a union of partial observations. */
 export const tryParseEvidence = (input: unknown): Evidence | undefined => {
@@ -405,6 +529,19 @@ export const withEvidenceCallerInputPath = (
       : { caller_input_path: callerInputPath }),
     ...(paths === undefined ? {} : { caller_input_paths: paths }),
   };
+  return rememberReboundEvidence(owned, rebound);
+};
+
+/** Bind the recording session's provider selection facts without changing semantic identity. */
+export const withEvidenceProviderSelection = (
+  evidence: Evidence,
+  selection: ProviderSelectionProvenance | undefined,
+): Evidence => {
+  if (selection === undefined) return immutableEvidence(evidence);
+  const provenance = providerSelectionProvenanceSchema.parse(selection);
+  const owned = immutableEvidence(evidence);
+  if (isDeepStrictEqual(owned.provider_selection, provenance)) return owned;
+  const rebound = { ...owned, provider_selection: provenance };
   return rememberReboundEvidence(owned, rebound);
 };
 

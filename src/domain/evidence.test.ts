@@ -15,6 +15,7 @@ import {
   immutableEvidence,
   withEvidenceCallerInputPath,
   rebindEvidenceToTargetPath,
+  withEvidenceProviderSelection,
 } from "./evidence.js";
 import {
   MAX_JSON_DEPTH,
@@ -321,6 +322,114 @@ it("retains verbatim caller input without changing semantic identity or copying 
       .success,
   ).toBe(false);
   expect(() => withEvidenceCallerInputPath(second, "invalid\0path")).toThrow();
+});
+
+it("retains the recording session's provider selection without changing semantic identity", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: { address: "0x1000" },
+    result: { nested: ["observed"] },
+    rawResult: { source: "provider" },
+  });
+  const selection = {
+    selection_source: "auto-single-candidate" as const,
+    candidates: [
+      {
+        provider: { id: "ghidra", name: "Ghidra", version: "11.2" },
+        selected: true,
+        availability: "available" as const,
+        target_support: "supported" as const,
+        rejection_codes: [],
+      },
+      {
+        provider: { id: "ida", name: "IDA", version: null },
+        selected: false,
+        availability: "unavailable" as const,
+        target_support: "unknown" as const,
+        rejection_codes: ["ida_missing"],
+      },
+    ],
+  };
+  const attributed = withEvidenceProviderSelection(original, selection);
+
+  expect(attributed.provider_selection).toEqual(selection);
+  expect(original.provider_selection).toBeUndefined();
+  // Selection provenance describes the session, not the observation.
+  expect(attributed.evidence_id).toBe(original.evidence_id);
+  expect(attributed.normalized_result).toEqual(original.normalized_result);
+  expect(attributed.raw_result).toEqual(original.raw_result);
+  expect(Object.isFrozen(attributed)).toBe(true);
+  expect(withEvidenceProviderSelection(attributed, selection)).toBe(attributed);
+  // Older records carry no provenance and still authenticate.
+  expect(parseEvidence(JSON.parse(JSON.stringify(original)))).toEqual(original);
+  expect(parseEvidence(JSON.parse(JSON.stringify(attributed)))).toEqual(
+    attributed,
+  );
+  expect(withEvidenceProviderSelection(original, undefined)).toEqual(
+    immutableEvidence(original),
+  );
+});
+
+it("refuses provider selection provenance that names no single provider", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: {},
+    rawResult: null,
+  });
+  const candidate = (id: string, selected: boolean) => ({
+    provider: { id, name: id, version: null },
+    selected,
+    availability: "available" as const,
+    target_support: "supported" as const,
+    rejection_codes: [],
+  });
+  // Without a separate selected-provider id, a reader can only name the
+  // recording session's provider when exactly one candidate claims it.
+  for (const candidates of [
+    [candidate("ghidra", false), candidate("ida", false)],
+    [candidate("ghidra", true), candidate("ida", true)],
+    [],
+  ])
+    expect(() =>
+      withEvidenceProviderSelection(original, {
+        selection_source: "auto-single-candidate",
+        candidates,
+      }),
+    ).toThrow();
+});
+
+it("refuses a selected provider the registry could never have bound", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: {},
+    rawResult: null,
+  });
+  const candidate = (status: {
+    readonly availability: "available" | "unavailable" | "unknown";
+    readonly target_support: "supported" | "unsupported" | "unknown";
+  }) => ({
+    provider: { id: "ghidra", name: "Ghidra", version: null },
+    selected: true,
+    ...status,
+    rejection_codes: [],
+  });
+  // Every registry path binds a provider only after both checks succeeded, so
+  // an imported bundle naming a selected unavailable or unsupported candidate
+  // would re-export a selection that never occurred.
+  for (const status of [
+    { availability: "unavailable", target_support: "supported" },
+    { availability: "unknown", target_support: "supported" },
+    { availability: "available", target_support: "unsupported" },
+    { availability: "available", target_support: "unknown" },
+  ] as const)
+    expect(() =>
+      withEvidenceProviderSelection(original, {
+        selection_source: "request",
+        candidates: [candidate(status)],
+      }),
+    ).toThrow();
 });
 
 it("retains named auxiliary path choices without changing identity, history or shared payloads", () => {

@@ -3,9 +3,19 @@ import { analysisProfilesEqual } from "../../domain/analysisProfile.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { Evidence } from "../../domain/evidence.js";
+import {
+  isImmutableEvidence,
+  tryParseEvidence,
+  withEvidenceProviderSelection,
+  type ProviderSelectionProvenance,
+} from "../../domain/evidence.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { evidenceBundleForTarget } from "../../domain/evidenceBundle.js";
+import {
+  createImmutableEvidenceBundle,
+  evidenceBundleForTarget,
+  safeParseImmutableEvidenceBundle,
+} from "../../domain/evidenceBundle.js";
 import {
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,
@@ -53,6 +63,30 @@ import {
 const SNAPSHOT_MUTATION_RECOVERY =
   "Export session observations through export_evidence_bundle if needed. Close the active target without saving a snapshot, then reopen it before importing or saving a snapshot.";
 
+/**
+ * Import replaces a same-ID record's presentation metadata, and
+ * `provider_selection` is part of that metadata, so importing a bundle built
+ * by a provider run would drop the attribution the recording session already
+ * stamped onto its own record and leave the caller holding an unattributed
+ * copy. Re-attribute every record here, where both import paths converge.
+ * Without an active selection the bundle passes through unchanged — there is
+ * nothing to attribute it to, and dropping the caller's metadata would be a
+ * loss, not a correction.
+ *
+ * Attribution seals its result, and a sealed value skips the owning ledger's
+ * ordinary-JSON and heap-headroom admission, so the caller must admit first.
+ */
+const attributeImportedProviderSelection = (
+  bundle: EvidenceBundle,
+  providerSelection: ProviderSelectionProvenance,
+): EvidenceBundle =>
+  createImmutableEvidenceBundle(
+    bundle.records.map((record) =>
+      withEvidenceProviderSelection(record, providerSelection),
+    ),
+    bundle.unknowns,
+  );
+
 /** A missing replay prerequisite is not an Evidence integrity failure. */
 const snapshotUnavailable = (reason: string) =>
   new AnalysisCapabilityUnavailableError(
@@ -71,6 +105,8 @@ export interface ActiveAnalysisBinding {
   readonly profile: AnalysisProfileCommitment | null;
   /** Current route profile for the single profileless native dispatch workflow. */
   readonly profilelessWorkflowProfile?: AnalysisProfileCommitment;
+  /** Recording session's provider selection, retained with every admitted record. */
+  readonly providerSelection?: ProviderSelectionProvenance;
 }
 
 /** Validated composed-workflow payload bound to the active target and profile. */
@@ -121,8 +157,52 @@ export abstract class BinarySessionRecords {
   ): Result<"added" | "duplicate", AnalysisError> {
     if (this.#investigationDisposed)
       return err(new AnalysisCancelledError("record_evidence"));
-    const recorded = this.#records.recordEvidence(evidence);
-    if (recorded.ok && recorded.value === "added") this.#emitSnapshotChanged();
+    // Selection facts belong to the session that admitted the observation, so
+    // every record stays attributable to the exact engine that produced it.
+    // Attribution seals its result, and a sealed record skips the owning
+    // ledger's ordinary-JSON and heap-headroom admission, so admit the caller's
+    // own value first — validating a large record must not wait until after it
+    // has been copied and sealed. A record that reaches here already sealed has
+    // been through both steps, so only a fresh value pays for them again.
+    const authenticated = tryParseEvidence(evidence);
+    if (authenticated === undefined)
+      return this.#records.recordEvidence(evidence);
+    // A sealed record has already been traversed and admitted; re-validating
+    // it here would repeat that work without adding a fact.
+    if (!isImmutableEvidence(evidence)) {
+      const admitted = this.#records.admitSealedEvidenceInput(
+        evidence,
+        "record_evidence",
+      );
+      if (!admitted.ok) return admitted;
+    }
+    const attributed = withEvidenceProviderSelection(
+      authenticated,
+      this.activeAnalysisBinding()?.providerSelection,
+    );
+    const recorded = this.#records.recordEvidence(attributed);
+    if (recorded.ok && recorded.value === "added") {
+      this.#emitSnapshotChanged();
+      return recorded;
+    }
+    if (!recorded.ok || attributed === authenticated) return recorded;
+    // The ledger already holds this semantic ID. Its stored display metadata
+    // came from whichever session recorded the observation first, possibly an
+    // imported bundle with no selection, so adopt this session's selection
+    // instead of dropping it with the discarded duplicate.
+    const replaced = this.#records.replaceEvidenceMetadata(
+      attributed,
+      authenticated,
+    );
+    if (!replaced.ok) return replaced;
+    // The retained record's display metadata changed, so replay caches and
+    // snapshot subscribers must observe it exactly as on the import path.
+    if (replaced.value !== null) {
+      this.#snapshot.refreshEvidenceMetadata([
+        { kind: "metadata", previous: authenticated, current: replaced.value },
+      ]);
+      this.#emitSnapshotChanged();
+    }
     return recorded;
   }
 
@@ -201,7 +281,12 @@ export abstract class BinarySessionRecords {
   ): Result<EvidenceImportReceipt, AnalysisError> {
     if (this.#investigationDisposed)
       return err(new AnalysisCancelledError("import_evidence_bundle"));
-    const imported = this.#records.mergeEvidenceBundle(bundle);
+    const importable = this.#attributeImportedBundle(
+      bundle,
+      "import_evidence_bundle",
+    );
+    if (!importable.ok) return importable;
+    const imported = this.#records.mergeEvidenceBundle(importable.value);
     if (!imported.ok) return imported;
     this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
     if (imported.value.changed) this.#emitSnapshotChanged();
@@ -210,6 +295,25 @@ export abstract class BinarySessionRecords {
       unknownsAdded: imported.value.unknownsAdded,
       totalRecords: this.#records.statistics().evidenceRecords,
     });
+  }
+
+  /** Admit, then attribute, an imported bundle the way `recordEvidence` does. */
+  #attributeImportedBundle(
+    bundle: unknown,
+    operation: string,
+  ): Result<unknown, AnalysisError> {
+    const providerSelection = this.activeAnalysisBinding()?.providerSelection;
+    if (providerSelection === undefined) return ok(bundle);
+    const admitted = this.#records.admitSealedEvidenceInput(bundle, operation);
+    if (!admitted.ok) return admitted;
+    const authenticated = safeParseImmutableEvidenceBundle(bundle);
+    if (!authenticated.ok) return ok(bundle);
+    return ok(
+      attributeImportedProviderSelection(
+        authenticated.value,
+        providerSelection,
+      ),
+    );
   }
 
   protected abstract activeAnalysisBinding(): ActiveAnalysisBinding | undefined;
@@ -300,10 +404,15 @@ export abstract class BinarySessionRecords {
           ? undefined
           : { target: active.target, profile },
       (bundle) => {
-        const imported = this.#records.mergeEvidenceBundle(bundle);
+        const importable = this.#attributeImportedBundle(
+          bundle,
+          "import_analysis_snapshot",
+        );
+        if (!importable.ok) return importable;
+        const imported = this.#records.mergeEvidenceBundle(importable.value);
         if (!imported.ok) return imported;
         this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
-        return ok(imported.value.recordsAdded);
+        return ok(importable.value);
       },
     );
     if (imported.ok) this.#emitSnapshotChanged();
@@ -466,8 +575,12 @@ export abstract class BinarySessionRecords {
   ): Result<ResidualUnknown, AnalysisError> {
     if (this.#investigationDisposed)
       return err(new AnalysisCancelledError("record_unknown"));
-    const target = this.activeAnalysisBinding()?.target;
-    const recorded = this.#records.recordUnknown(input, target);
+    const binding = this.activeAnalysisBinding();
+    const recorded = this.#records.recordUnknown(
+      input,
+      binding?.target,
+      binding?.providerSelection,
+    );
     if (recorded.ok) this.#emitSnapshotChanged();
     return recorded;
   }
@@ -478,7 +591,14 @@ export abstract class BinarySessionRecords {
   ): Result<ResidualUnknown | null, AnalysisError> {
     if (this.#investigationDisposed)
       return err(new AnalysisCancelledError("record_evidence_with_unknown"));
-    const recorded = this.#records.recordEvidenceWithUnknown(evidence, input);
+    // The mutation record carries the same session attribution as the sibling
+    // recordUnknown/updateUnknown paths; otherwise this atomic workflow is the
+    // one place an exported record has no provider selection.
+    const recorded = this.#records.recordEvidenceWithUnknown(
+      evidence,
+      input,
+      this.activeAnalysisBinding()?.providerSelection,
+    );
     if (recorded.ok) this.#emitSnapshotChanged();
     return recorded;
   }
@@ -488,8 +608,12 @@ export abstract class BinarySessionRecords {
   ): Result<ResidualUnknown, AnalysisError> {
     if (this.#investigationDisposed)
       return err(new AnalysisCancelledError("update_unknown"));
-    const target = this.activeAnalysisBinding()?.target;
-    const updated = this.#records.updateUnknown(input, target);
+    const binding = this.activeAnalysisBinding();
+    const updated = this.#records.updateUnknown(
+      input,
+      binding?.target,
+      binding?.providerSelection,
+    );
     if (updated.ok) this.#emitSnapshotChanged();
     return updated;
   }

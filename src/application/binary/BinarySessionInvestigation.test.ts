@@ -2,7 +2,10 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import { createEvidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  withEvidenceCallerInputPath,
+} from "../../domain/evidence.js";
 import {
   createEvidenceBundle,
   parseEvidenceBundle,
@@ -15,6 +18,7 @@ import type { AnalysisProviderCandidate } from "../AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
+import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import {
   ControllableAnalysisClient,
   createBinarySessionTargets,
@@ -172,6 +176,217 @@ it("preserves metadata invalidation across reset until the mutated engine is ret
     expect((await session.close()).ok).toBe(true);
     expect((await session.open(target)).ok).toBe(true);
     expect(session.exportAnalysisSnapshot().ok).toBe(true);
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("records the selected session's provider provenance with every admitted observation", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    expect(
+      (
+        await session.execute("address_name", {
+          address: "0x1000",
+          document: "fixture",
+        })
+      ).ok,
+    ).toBe(true);
+    const records = session.exportEvidenceBundle().records;
+    expect(records.length).toBeGreaterThan(0);
+    for (const record of records)
+      expect(record.provider_selection).toMatchObject({
+        selection_source: expect.stringMatching(
+          /^(request|environment|auto-single-candidate)$/u,
+        ),
+        candidates: [
+          expect.objectContaining({
+            provider: expect.objectContaining({ id: "fixture", version: "1" }),
+            selected: true,
+          }),
+        ],
+      });
+    // Provenance is session metadata, so semantic identity is unchanged.
+    expect(parseEvidenceBundle(session.exportEvidenceBundle()).records).toEqual(
+      records,
+    );
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("adopts the active session's selection when an imported record holds the semantic ID", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  try {
+    // Imported before a target is opened: no active binding stamps the bundle,
+    // so the retained record carries no provider selection.
+    const bundle = createEvidenceBundle([observation("duplicate")]);
+    expect(session.importEvidenceBundle(bundle).ok).toBe(true);
+    expect(
+      session.exportEvidenceBundle().records[0]?.provider_selection,
+    ).toBeUndefined();
+    expect((await session.open(target)).ok).toBe(true);
+    // The provider then produces the same deterministic observation. The ledger
+    // keeps one record, but its display provenance must name this session.
+    const recorded = session.recordEvidence(observation("duplicate"));
+    expect(recorded.ok && recorded.value).toBe("duplicate");
+    expect(
+      session.exportEvidenceBundle().records[0]?.provider_selection,
+    ).toMatchObject({
+      selection_source: expect.stringMatching(
+        /^(request|environment|auto-single-candidate)$/u,
+      ),
+    });
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("attributes an imported bundle to the recording session's provider selection", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    // A bundle built by the provider run itself, as `runDirectAnalysis`
+    // imports at `DirectAnalysis`: same record identity, no attribution.
+    const foreign = createEvidenceBundle([observation("provider_run")]);
+    expect(foreign.records[0]?.provider_selection).toBeUndefined();
+    const imported = session.importEvidenceBundle(foreign);
+    if (!imported.ok) throw imported.error;
+    const [record] = session.exportEvidenceBundle().records;
+    // Semantic identity is unchanged; only the session metadata is stamped.
+    expect(record?.evidence_id).toBe(foreign.records[0]?.evidence_id);
+    expect(record?.operation).toBe("provider_run");
+    expect(record?.provider_selection).toMatchObject({
+      selection_source: expect.stringMatching(
+        /^(request|environment|auto-single-candidate)$/u,
+      ),
+    });
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("adopts a later recording's selection without erasing retained display metadata", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    // A bundle recorded before the target opened carries no attribution. The
+    // session then records the same semantic observation under a caller-
+    // selected path; adopting the bundle's later selection must keep that path.
+    const foreign = createEvidenceBundle([observation("provider_run")]);
+    expect(session.importEvidenceBundle(foreign).ok).toBe(true);
+    expect(
+      session.recordEvidence(
+        withEvidenceCallerInputPath(
+          observation("provider_run"),
+          "/selected/app.bin",
+        ),
+      ).ok,
+    ).toBe(true);
+    const [record] = session.exportEvidenceBundle().records;
+    expect(record?.caller_input_path).toBe("/selected/app.bin");
+    expect(record?.provider_selection).toMatchObject({
+      selection_source: expect.stringMatching(
+        /^(request|environment|auto-single-candidate)$/u,
+      ),
+    });
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("emits a snapshot change when a duplicate adopts the recording selection", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    // Imported before the target opened, so it carries no selection.
+    const foreign = createEvidenceBundle([observation("provider_run")]);
+    expect(session.importEvidenceBundle(foreign).ok).toBe(true);
+    const listener = vi.fn();
+    session.onAnalysisSnapshotChanged(listener);
+    expect(session.recordEvidence(observation("provider_run")).ok).toBe(true);
+    const [record] = session.exportEvidenceBundle().records;
+    expect(record?.provider_selection).toBeDefined();
+    expect(listener).toHaveBeenCalled();
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("attributes the atomic Evidence-and-Unknown mutation record", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    const recorded = session.recordEvidenceWithUnknown(
+      observation("atomic_unknown"),
+      unknownInput,
+    );
+    if (!recorded.ok) throw recorded.error;
+    const mutation = session
+      .exportEvidenceBundle()
+      .records.filter((record) => record.operation === "record_unknown");
+    // The atomic path synthesizes its mutation record rather than taking one
+    // from the caller, so it is the one write that can miss attribution.
+    expect(mutation).toHaveLength(1);
+    expect(mutation[0]?.provider_selection).toMatchObject({
+      selection_source: expect.stringMatching(
+        /^(request|environment|auto-single-candidate)$/u,
+      ),
+    });
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("admits record Evidence before attributing it to the session", async () => {
+  const [target] = await createBinarySessionTargets();
+  // A session with no authentication allowance must refuse a mutable record
+  // rather than copying and sealing it for attribution first.
+  const session = createTestBinarySession(
+    createCacheProvider([]),
+    {},
+    new InvestigationRecords({ availableAuthenticationBytes: () => 0 }),
+  );
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    const refused = session.recordEvidence(observation("no_headroom"));
+    if (refused.ok) throw new Error("Expected authentication headroom refusal");
+    expect(refused.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(session.exportEvidenceBundle().records).toHaveLength(0);
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("re-attributes a sealed record it already holds without a second admission", async () => {
+  const [target] = await createBinarySessionTargets();
+  let headroom = 0;
+  const session = createTestBinarySession(
+    createCacheProvider([]),
+    {},
+    new InvestigationRecords({ availableAuthenticationBytes: () => headroom }),
+  );
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    // Record while there is room, then withdraw it: the record the ledger holds
+    // is already sealed, so re-attributing it must not read it again and must
+    // not be refused by an allowance that only applies to fresh input.
+    headroom = 1_000_000;
+    const first = session.recordEvidence(observation("sealed"));
+    if (!first.ok) throw first.error;
+    const borrowed = session.evidenceForAnalysis(
+      session.exportEvidenceBundle().records[0]!.evidence_id,
+    );
+    if (borrowed === undefined) throw new Error("Expected a held record");
+    headroom = 0;
+    expect(session.recordEvidence(borrowed).ok).toBe(true);
   } finally {
     await session.dispose();
   }

@@ -6,7 +6,11 @@ import { createDeferred } from "../../fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { expect, it } from "vitest";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSemanticContent,
+  parseEvidence,
+} from "../../../src/domain/evidence.js";
 import { composedWorkflowFixture } from "../../fixtures/composedWorkflowEvidence.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -404,11 +408,24 @@ it("reruns an ambiguous snapshot binding before selecting composed Evidence link
   const originalRecord = snapshot.value.evidence_bundle.records.find(
     ({ evidence_id }) => evidence_id === initial.value.evidenceId,
   );
-  expect(replay.session.evidenceById(after.value.evidenceId)).toEqual(
-    originalRecord,
+  if (originalRecord === undefined)
+    throw new Error("Snapshot did not carry the initial record");
+  const replayedRecord = replay.session.evidenceById(after.value.evidenceId);
+  if (replayedRecord === undefined)
+    throw new Error("Replay did not commit the reproduced record");
+  // The replay session opens a different temp copy of the artifact, so the
+  // subject's display path and the session-attributed provider selection are
+  // presentation metadata, not part of the id. Compare what the id commits to.
+  expect(evidenceSemanticContent(replayedRecord)).toEqual(
+    evidenceSemanticContent(originalRecord),
   );
-  expect(replay.session.evidenceById(alternative.evidence_id)).toEqual(
-    alternative,
+  const replayedAlternative = replay.session.evidenceById(
+    alternative.evidence_id,
+  );
+  if (replayedAlternative === undefined)
+    throw new Error("Replay did not carry the alternative record");
+  expect(evidenceSemanticContent(replayedAlternative)).toEqual(
+    evidenceSemanticContent(alternative),
   );
 
   const composed = await executeComposedWorkflow(

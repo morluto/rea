@@ -17,6 +17,7 @@ import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import {
   isImmutableEvidence,
+  adoptEvidenceDisplayMetadata,
   evidenceDisplayMetadataAgree,
   type Evidence,
 } from "../../domain/evidence.js";
@@ -120,6 +121,33 @@ export class EvidenceLedger {
     this.#records.set(evidence.evidence_id, evidence);
     this.#commitAccounting(admitted.value);
     return ok("added");
+  }
+
+  /**
+   * Adopt display metadata from a later recording of the same semantic ID.
+   * Only a value the ledger already holds under that ID can be replaced: the
+   * retained value's caller-selected paths, aliases and subject display come
+   * from the session that recorded the observation, so an incoming copy without
+   * them must not erase them merely to add attribution.
+   */
+  replaceMetadata(
+    current: Evidence,
+    previous: Evidence,
+  ): Result<Evidence | null, AnalysisError> {
+    if (current.evidence_id !== previous.evidence_id) return ok(null);
+    if (current.provider_selection === undefined) return ok(null);
+    const retained = this.#records.get(current.evidence_id);
+    if (retained === undefined) return ok(null);
+    const replacement = adoptEvidenceDisplayMetadata(retained, current);
+    if (replacement === retained) return ok(null);
+    const admitted = this.#admitChanges(
+      "record_evidence",
+      new Map([[current.evidence_id, replacement]]),
+    );
+    if (!admitted.ok) return admitted;
+    this.#records.set(current.evidence_id, replacement);
+    this.#commitAccounting(admitted.value);
+    return ok(replacement);
   }
 
   /** Validate an entire bundle before atomically merging its records. */
@@ -622,6 +650,22 @@ export class EvidenceLedger {
     this.#records = records;
     this.#unknownRevisions = unknownRevisions;
     this.#unknownHeads = unknownHeads;
+  }
+
+  /**
+   * Whether the value carries the admission this ledger's reader skips: a
+   * sealed record. A record this ledger holds is sealed; asking costs one map
+   * lookup and no payload traversal.
+   */
+  holdsSealedEvidence(input: unknown): boolean {
+    if (typeof input !== "object" || input === null) return false;
+    const evidenceId = (input as { readonly evidence_id?: unknown })
+      .evidence_id;
+    if (typeof evidenceId !== "string") return false;
+    const held = this.#records.get(evidenceId);
+    // Only a held value that is this exact object establishes the provenance;
+    // matching IDs alone would admit an unvalidated lookalike.
+    return held !== undefined && held === input && isImmutableEvidence(held);
   }
 
   #readEvidence(

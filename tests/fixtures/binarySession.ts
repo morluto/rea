@@ -16,6 +16,7 @@ import type {
   AnalysisProvider,
 } from "../../src/application/AnalysisProvider.js";
 import { BinarySession } from "../../src/application/binary/BinarySession.js";
+import { InvestigationRecords } from "../../src/application/investigation/InvestigationRecords.js";
 import { SessionProviderRouter } from "../../src/application/binary/SessionProviderRouter.js";
 import { AnalysisProviderRegistry } from "../../src/application/binary/AnalysisProviderRegistry.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../src/contracts/officialToolContracts.js";
@@ -119,8 +120,9 @@ export const createTestProviderRouter = (
 export const createTestBinarySession = (
   provider: AnalysisProvider | FixtureClientFactory,
   options: TestBinarySessionOptions = {},
+  records: InvestigationRecords = new InvestigationRecords(),
 ): BinarySession =>
-  new BinarySession(createTestProviderRouter(provider, options));
+  new BinarySession(createTestProviderRouter(provider, options), records);
 
 /** Materialize two distinct targets for session lifecycle tests. */
 export const createBinarySessionTargets = async (): Promise<
