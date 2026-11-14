@@ -9,6 +9,7 @@ import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaR
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
 import type { KunaExportStatus } from "../../../../src/kuna/KunaProjectExport.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 
 // Reproduce concurrent eviction's shared directory snapshot while retaining
@@ -205,31 +206,29 @@ it("protects a cache request that arrives after an eviction snapshot starts", as
     releases.push(cache.pin(result.value.key));
     return result.value;
   };
-  const second = pinResult(cache.build(await request("second")));
-  let warm: ReturnType<typeof pinResult> | undefined;
+  const pending: ReturnType<typeof pinResult>[] = [];
   onTestFinished(async () => {
     snapshot.release();
     touch.release();
-    await Promise.allSettled(warm === undefined ? [second] : [second, warm]);
+    await Promise.allSettled(pending);
     for (const release of releases) release();
     const closed = await cache.close();
     if (!closed.ok) throw closed.error;
   });
-  await Promise.race([
+  const second = pinResult(cache.build(await request("second")));
+  pending.push(second);
+  await awaitAcknowledgement(
     snapshotStarted.promise,
-    second.then(() => {
-      throw new Error(
-        "Export completed without reaching the eviction snapshot",
-      );
-    }),
-  ]);
-  warm = pinResult(cache.build(firstInput));
-  await Promise.race([
+    second,
+    "Kuna eviction snapshot",
+  );
+  const warm = pinResult(cache.build(firstInput));
+  pending.push(warm);
+  await awaitAcknowledgement(
     touchStarted.promise,
-    warm.then(() => {
-      throw new Error("Cache request completed without touching its entry");
-    }),
-  ]);
+    warm,
+    "Kuna retained-entry touch",
+  );
   listing.names = await actual.readdir(listing.directory);
   snapshot.release();
   await second;
