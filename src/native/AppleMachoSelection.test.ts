@@ -7,6 +7,7 @@ import {
   dylibCommand,
   dylibUseCommand,
   fatImage,
+  fatSliceRange,
   machoImage,
   machoImageWithUnknownCommand,
 } from "../artifacts/apple/MachoImage.fixture.js";
@@ -97,7 +98,9 @@ it.each([false, true])(
     const thin = machoImage({ cpu: CPU.arm64e });
     const fat = Buffer.from(fatImage([{ cpu: CPU.arm64e, bytes: thin }], wide));
     if (wide) fat.writeUInt32BE(0x89abcdef, 8 + 28);
-    expect(selectMachoSlice(fat, "arm64").fatDeclaration).toEqual({
+    expect(
+      selectMachoSlice(fat, "arm64", fatSliceRange(fat, 0)).fatDeclaration,
+    ).toEqual({
       index: 0,
       offset: 4096,
       size: thin.byteLength,
@@ -130,10 +133,15 @@ it.each([
       container === "fat" ? fatImage([{ cpu: CPU.arm64, bytes: thin }]) : thin,
     );
     const decode = () =>
-      decodeAppleDispatchMetadata(bytes, 10, {
-        path: "/many-commands",
-        sha256: "fixture",
-      });
+      decodeAppleDispatchMetadata(
+        bytes,
+        10,
+        { path: "/many-commands", sha256: "fixture" },
+        "arm64",
+        undefined,
+        true,
+        container === "fat" ? fatSliceRange(bytes, 0) : undefined,
+      );
     if (corrupt) {
       expect(decode).toThrow(/load command 4096 .*invalid cmdsize 4/u);
       return;
@@ -392,7 +400,10 @@ describe("native Mach-O slice selection", () => {
 
   it("accepts a FAT slice whose table identity and embedded header agree", () => {
     const fat = fatImage([{ cpu: CPU.arm64, bytes: machoImage({}) }]);
-    expect(parseMachoLayout(Buffer.from(fat), "arm64").segments).toEqual([]);
+    expect(
+      parseMachoLayout(Buffer.from(fat), "arm64", fatSliceRange(fat, 0))
+        .segments,
+    ).toEqual([]);
   });
 
   registerThinCpuFamilyControls();
@@ -411,7 +422,11 @@ describe("native Mach-O slice selection", () => {
     const fat = Buffer.from(
       fatImage([{ cpu: ARM64E_X1, bytes: machoImage({ cpu: ARM64E_X1 }) }]),
     );
-    const selection = parseMachoLayout(fat, "arm64").selectedImage;
+    const selection = parseMachoLayout(
+      fat,
+      "arm64",
+      fatSliceRange(fat, 0),
+    ).selectedImage;
     expect(selection).toMatchObject({
       container: "fat",
       cpuType: ARM64E_X1.type,
@@ -429,91 +444,117 @@ describe("native Mach-O slice selection", () => {
     const sliceOffset = new DataView(fat.buffer).getUint32(16, false);
     new DataView(fat.buffer).setUint32(sliceOffset + 4, CPU.arm64.type, true);
 
-    expect(() => parseMachoLayout(Buffer.from(fat), "x86")).toThrow(
+    expect(() =>
+      parseMachoLayout(Buffer.from(fat), "x86", fatSliceRange(fat, 0)),
+    ).toThrow(
       /FAT architecture 0 CPU type\/subtype disagrees with its Mach-O header/u,
     );
   });
 
-  it("selects only the admitted CPU type and rejects a 32-bit slice", () => {
+  it("reads only an admitted slice of the requested CPU type and rejects a 32-bit slice", () => {
     const sixtyFour = fatImage([
       { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
     ]);
-    expect(() => parseMachoLayout(Buffer.from(sixtyFour), "x86")).toThrow(
-      /Requested FAT architecture is absent/u,
-    );
-    expect(() => parseMachoLayout(Buffer.from(sixtyFour), "arm")).toThrow(
-      /Requested FAT architecture is absent/u,
-    );
+    const admitted = fatSliceRange(sixtyFour, 0);
+    expect(() =>
+      parseMachoLayout(Buffer.from(sixtyFour), "x86", admitted),
+    ).toThrow(/Admitted FAT slice does not match the requested architecture/u);
+    expect(() =>
+      parseMachoLayout(Buffer.from(sixtyFour), "arm", admitted),
+    ).toThrow(/Admitted FAT slice does not match the requested architecture/u);
     const thirtyTwo = fatImage([
       {
         cpu: CPU.i386,
         bytes: machoImage({ cpu: CPU.i386, wide: false }),
       },
     ]);
-    expect(() => parseMachoLayout(Buffer.from(thirtyTwo), "x86")).toThrow(
-      /Unsupported 32-bit Mach-O metadata for requested CPU type x86/u,
-    );
+    expect(() =>
+      parseMachoLayout(
+        Buffer.from(thirtyTwo),
+        "x86",
+        fatSliceRange(thirtyTwo, 0),
+      ),
+    ).toThrow(/Unsupported 32-bit Mach-O metadata for requested CPU type x86/u);
   });
 
   it("rejects FAT subtype disagreement and unaligned slice offsets", () => {
     const original = fatImage([{ cpu: CPU.arm64, bytes: machoImage({}) }]);
     const mismatched = original.slice();
     new DataView(mismatched.buffer).setUint32(12, 2, false);
-    expect(() => parseMachoLayout(Buffer.from(mismatched), "arm64")).toThrow(
-      /disagrees/u,
-    );
+    expect(() =>
+      parseMachoLayout(
+        Buffer.from(mismatched),
+        "arm64",
+        fatSliceRange(mismatched, 0),
+      ),
+    ).toThrow(/disagrees/u);
 
     const unaligned = original.slice();
     new DataView(unaligned.buffer).setUint32(16, 4097, false);
-    expect(() => parseMachoLayout(Buffer.from(unaligned), "arm64")).toThrow(
-      /not aligned/u,
-    );
-  });
-
-  it.each([
-    { layout: "arm64e, arm64e.x1", cpus: [CPU.arm64e, ARM64E_X1], index: 0 },
-    { layout: "arm64e.x1, arm64e", cpus: [ARM64E_X1, CPU.arm64e], index: 1 },
-    { layout: "arm64, arm64e.x1", cpus: [CPU.arm64, ARM64E_X1], index: 0 },
-    { layout: "arm64e.x1, arm64", cpus: [ARM64E_X1, CPU.arm64], index: 1 },
-    {
-      layout: "x86_64, arm64e, arm64e.x1",
-      cpus: [CPU.x86_64, CPU.arm64e, ARM64E_X1],
-      index: 1,
-    },
-    {
-      layout: "x86_64h, x86_64",
-      cpus: [X86_64H, CPU.x86_64],
-      index: 1,
-      architecture: "x86_64",
-    },
-  ])(
-    "selects one slice when FAT slices $layout share a CPU type",
-    ({ cpus, index, architecture = "arm64" }) => {
-      const fat = Buffer.from(
-        fatImage(cpus.map((cpu) => ({ cpu, bytes: machoImage({ cpu }) }))),
-      );
-      expect(selectMachoSlice(fat, architecture).fatDeclaration).toMatchObject({
-        index,
-        cpuSubtype: cpus[index]?.subtype,
-      });
-      expect(parseMachoLayout(fat, architecture).segments).toEqual([]);
-    },
-  );
-
-  it("rejects slices of the requested CPU type that share a subtype", () => {
-    const fat = fatImage(
-      [CPU.arm64e, CPU.arm64e].map((cpu) => ({
-        cpu,
-        bytes: machoImage({ cpu }),
-      })),
-    );
-    expect(() => parseMachoLayout(Buffer.from(fat), "arm64")).toThrow(
-      /Ambiguous FAT architecture slice/u,
-    );
+    expect(() =>
+      parseMachoLayout(
+        Buffer.from(unaligned),
+        "arm64",
+        fatSliceRange(unaligned, 0),
+      ),
+    ).toThrow(/not aligned/u);
   });
 });
 
-describe("admitted Mach-O capability variants", () => {
+describe("admitted Mach-O slices", () => {
+  it("refuses a universal image without the admitted slice instead of ranking", () => {
+    const fat = Buffer.from(
+      fatImage(
+        [CPU.arm64e, ARM64E_X1, X86_64H].map((cpu) => ({
+          cpu,
+          bytes: machoImage({ cpu }),
+        })),
+      ),
+    );
+    expect(() => selectMachoSlice(fat, "arm64")).toThrow(
+      /Universal Mach-O metadata needs the admitted slice/u,
+    );
+    expect(() => parseMachoLayout(fat, "arm64")).toThrow(
+      /Universal Mach-O metadata needs the admitted slice/u,
+    );
+  });
+
+  it("refuses an admitted range the FAT table does not declare", () => {
+    const fat = Buffer.from(
+      fatImage([{ cpu: CPU.arm64, bytes: machoImage({}) }]),
+    );
+    const { offset, size } = fatSliceRange(fat, 0);
+    expect(() =>
+      selectMachoSlice(fat, "arm64", { offset, size: size + 1 }),
+    ).toThrow(/Admitted FAT slice is not declared/u);
+  });
+
+  it.each([
+    { layout: "arm64e, arm64e.x1", cpus: [CPU.arm64e, ARM64E_X1] },
+    { layout: "arm64, arm64e.x1", cpus: [CPU.arm64, ARM64E_X1] },
+    {
+      layout: "x86_64h, x86_64",
+      cpus: [X86_64H, CPU.x86_64],
+      architecture: "x86_64",
+    },
+  ])(
+    "reads whichever slice was admitted when FAT slices $layout share a CPU type",
+    ({ cpus, architecture = "arm64" }) => {
+      const fat = Buffer.from(
+        fatImage(cpus.map((cpu) => ({ cpu, bytes: machoImage({ cpu }) }))),
+      );
+      for (const [index, cpu] of cpus.entries()) {
+        const admitted = fatSliceRange(fat, index);
+        expect(
+          selectMachoSlice(fat, architecture, admitted).fatDeclaration,
+        ).toMatchObject({ index, cpuSubtype: cpu.subtype });
+        expect(
+          parseMachoLayout(fat, architecture, admitted).selectedImage,
+        ).toMatchObject({ offset: admitted.offset, cpuSubtype: cpu.subtype });
+      }
+    },
+  );
+
   it("reads the admitted capability variant instead of ranking again", () => {
     const v1 = { type: CPU.arm64.type, subtype: 0x81000002 };
     const v0 = { type: CPU.arm64.type, subtype: 0x80000002 };
@@ -531,19 +572,11 @@ describe("admitted Mach-O capability variants", () => {
         { cpu: v0, bytes: images[1]! },
       ]),
     );
-    expect(() => parseMachoLayout(fat, "arm64")).toThrow(
-      /Ambiguous FAT architecture slice/u,
-    );
-    const secondOffset = 4096 + Math.ceil(images[0]!.length / 4096) * 4096;
-    expect(
-      parseMachoLayout(fat, "arm64", {
-        offset: secondOffset,
-        size: images[1]!.length,
-      }),
-    ).toMatchObject({
+    const admitted = fatSliceRange(fat, 1);
+    expect(parseMachoLayout(fat, "arm64", admitted)).toMatchObject({
       selectedImage: {
         container: "fat",
-        offset: secondOffset,
+        offset: admitted.offset,
         byteLength: images[1]!.length,
       },
       fixups: { dylibs: ["/fixture/variant-1.dylib"] },
@@ -675,7 +708,7 @@ it.each([0, 129])(
     expect(() => selectMachoSlice(bytes, "arm64")).toThrow(
       count === 0
         ? new TypeError(
-            "Requested FAT architecture is absent (FAT header byte order: big-endian)",
+            "Universal Mach-O metadata needs the admitted slice (FAT header byte order: big-endian)",
           )
         : new RangeError(
             "Malformed FAT architecture table (FAT header byte order: big-endian)",

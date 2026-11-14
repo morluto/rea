@@ -1054,14 +1054,17 @@ Loader selection reads the Mach-O container header, including FAT files with a
 single architecture. For FAT32 and FAT64 containers, REA validates the
 architecture table and selected Mach-O header, prepares a private thin image,
 and loads it with Hopper's native Mach-O loader instead of Hopper's implicit
-FAT slice choice. For arm64 targets, REA ranks subtype bases 0 (plain arm64) and
-2 (arm64e), ignoring capability bits for ranking while retaining the raw subtype
-for slice identity. These slices' function-entry encodings decode under
-`--aarch64`, ahead of Apple's arm64e.x1 variant (base subtype 12), which is
-selected only when it is the arm64 family's only candidate. REA checks the
-entire source's SHA-256 while copying the slice; source identity and reported
-offsets still refer to the original container. Any other ambiguous architecture
-subtype requires an explicitly extracted thin image; REA does not guess.
+FAT slice choice. Hopper reads the slice that `open_binary` admitted for the
+session, the same slice other tools and the session's Evidence name; it does not
+rank slices again. For arm64 targets, admission prefers subtype bases 0 (plain
+arm64), then 2 (arm64e), then 1 (arm64v8), ignoring capability bits for ranking
+while retaining the raw subtype for slice identity. These slices'
+function-entry encodings decode under `--aarch64`, ahead of Apple's arm64e.x1
+variant (base subtype 12), which is selected only when no preferred subtype is
+present. REA checks the entire source's SHA-256 while copying the slice; source
+identity and reported offsets still refer to the original container. When
+admission cannot choose one slice, open an explicitly extracted thin image; REA
+does not guess.
 Set `HOPPER_LOADER_ARGS_JSON` in REA's launch environment to a JSON array of
 strings to override the derived Hopper loader arguments, for example
 `["-l","Mach-O"]`. Empty string elements are preserved; NUL bytes are not
