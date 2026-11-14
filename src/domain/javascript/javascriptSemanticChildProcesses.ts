@@ -756,9 +756,23 @@ const childOptionValue = (
     isUnshadowedGlobal(value, state, value.name)
   )
     return { kind: "primitive", value: Number(value.name) };
-  // The shared reader refuses a non-finite numeric literal such as `1e400`.
+  // The shared reader refuses a non-finite numeric literal such as `1e400` and a
+  // signed one such as `-0` or `-1e400`; `-0` stays an accepted timeout.
   if (t.isNumericLiteral(value))
     return { kind: "primitive", value: value.value };
+  if (
+    t.isUnaryExpression(value) &&
+    (value.operator === "-" || value.operator === "+")
+  ) {
+    const operand = unwrapJavaScriptExpression(value.argument).node;
+    if (t.isNumericLiteral(operand))
+      return {
+        kind: "primitive",
+        value: value.operator === "-" ? -operand.value : operand.value,
+      };
+    // `-1n` is a BigInt; `+1n` throws before any options object exists.
+    if (t.isBigIntLiteral(operand)) return { kind: "bigint" };
+  }
   if (t.isBigIntLiteral(value)) return { kind: "bigint" };
   if (isObjectValuedSyntax(value, context)) return { kind: "object" };
   return { kind: "unknown" };
