@@ -2219,7 +2219,9 @@ export class KunaSessionClient implements AnalysisClient {
           },
           admitSpan: (operation, signal, open) =>
             this.#admitSpan(operation, signal, open),
-          finishSpan: (finish) => this.#finishSpan(finish),
+          // Finalization shares the admission queue so the next read observes
+          // either completed cleanup or its retained lease.
+          finishSpan: (finish) => this.#enqueueSpan(finish),
         });
   }
 
@@ -2263,11 +2265,6 @@ export class KunaSessionClient implements AnalysisClient {
         );
       return ok(await open());
     });
-  }
-
-  /** Release or retain this descriptor before the next span is admitted. */
-  #finishSpan<T>(finish: () => Promise<T>): Promise<T> {
-    return this.#enqueueSpan(finish);
   }
 
   /**

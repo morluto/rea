@@ -7,7 +7,7 @@ import {
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
 } from "../../../src/domain/analysisView/analysisView.js";
-import type { WebBundleAnalysis } from "../../../src/domain/webBundleAnalysis.js";
+import { sampleWebBundleAnalysis } from "../../fixtures/webBundleAnalysis.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -15,104 +15,6 @@ import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
-
-const sampleWebBundleAnalysis = (): WebBundleAnalysis => ({
-  capture: {
-    target_url: "https://example.test/app",
-    target_origin: "https://example.test",
-    scripts_observed: 3,
-    scripts_analyzed: 2,
-    source_artifacts: [],
-  },
-  observations: {
-    chunks: {
-      nodes: [
-        {
-          script_key: "app.js",
-          url: "https://example.test/app.js",
-          artifact_sha256: "a".repeat(64),
-          bytes: 1200,
-        },
-        {
-          script_key: "vendor.js",
-          url: "https://example.test/vendor.js",
-          artifact_sha256: "b".repeat(64),
-          bytes: 4500,
-        },
-      ],
-      edges: [],
-    },
-    routes: [],
-    endpoints: [
-      {
-        value: "/api/users",
-        mechanism: "call:fetch",
-        location: { script_key: "app.js", line: 10, column: 2 },
-      },
-      {
-        value: "/api/users",
-        mechanism: "call:fetch",
-        location: { script_key: "vendor.js", line: 42, column: 8 },
-      },
-      {
-        value: "/api/orders",
-        mechanism: "call:sendBeacon",
-        location: { script_key: "app.js", line: 85, column: 4 },
-      },
-    ],
-    webmcp_declarations: [],
-    source_maps: {
-      status: "not_requested",
-      requested: 0,
-      processed: 0,
-      items: [],
-    },
-  },
-  inferences: [
-    {
-      kind: "endpoint_candidate",
-      value: "/api/dynamic-user",
-      confidence: "low",
-      basis: [
-        {
-          script_key: "app.js",
-          artifact_sha256: "a".repeat(64),
-          line: 25,
-          column: 4,
-          detector: "call:client.get:unverified-network-receiver",
-        },
-      ],
-    },
-    {
-      kind: "vendor_fingerprint",
-      value: "React",
-      confidence: "high",
-      basis: [
-        {
-          script_key: "vendor.js",
-          artifact_sha256: "b".repeat(64),
-          line: 1,
-          column: 0,
-          detector: "vendor:react",
-        },
-      ],
-    },
-  ],
-  unknowns: [
-    {
-      dimension: "network",
-      reason: "Unverified client receiver",
-      affected_script_keys: ["app.js"],
-    },
-  ],
-  completeness: {
-    status: "partial",
-    parsed_scripts: 2,
-    parse_failures: 1,
-    visited_ast_nodes: 150,
-  },
-  limitations: ["Script evaluation was omitted"],
-});
 
 const makeParent = () =>
   createEvidence(
@@ -150,18 +52,18 @@ it("projects web bundle summary views over MCP using retained and inline sources
   const parent = makeParent();
   expect(session.recordEvidence(parent).ok).toBe(true);
 
-  const summaryCall = await client.callTool({
-    ...schemas.toolDefinition,
-    arguments: {
-      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
-      view: { kind: "summary" },
+  const summaryCall = await client.callTool(
+    {
+      name: schemas.toolDefinition.name,
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+        view: { kind: "summary" },
+      },
     },
-  });
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(summaryCall.isError, JSON.stringify(summaryCall)).not.toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.outputSchema, summaryCall.structuredContent),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
+
   const summaryResult = webBundleSummaryViewResultSchema.parse(
     parseEvidence(summaryCall.structuredContent).normalized_result,
   );
@@ -173,21 +75,18 @@ it("projects web bundle summary views over MCP using retained and inline sources
     completeness: { status: "partial" },
   });
 
-  const collectionSummaryCall = await client.callTool({
-    ...schemas.toolDefinition,
-    arguments: {
-      source: { kind: "inline", evidence: parent },
-      view: { kind: "web-bundle", collection: "summary" },
+  const collectionSummaryCall = await client.callTool(
+    {
+      name: schemas.toolDefinition.name,
+      arguments: {
+        source: { kind: "inline", evidence: parent },
+        view: { kind: "web-bundle", collection: "summary" },
+      },
     },
-  });
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(collectionSummaryCall.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(
-      schemas.outputSchema,
-      collectionSummaryCall.structuredContent,
-    ),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
+
   const collectionSummaryResult = webBundlePageViewResultSchema.parse(
     parseEvidence(collectionSummaryCall.structuredContent).normalized_result,
   );
@@ -205,23 +104,23 @@ it("pages web bundle endpoints and inferences over MCP using evidence-file sourc
   const evidenceFile = join(tempDir, "webbundle-evidence.json");
   await writeFile(evidenceFile, JSON.stringify(parent));
 
-  const page1Call = await client.callTool({
-    ...schemas.toolDefinition,
-    arguments: {
-      source: { kind: "evidence-file", path: evidenceFile },
-      view: {
-        kind: "web-bundle",
-        collection: "endpoints",
-        offset: 0,
-        limit: 2,
+  const page1Call = await client.callTool(
+    {
+      name: schemas.toolDefinition.name,
+      arguments: {
+        source: { kind: "evidence-file", path: evidenceFile },
+        view: {
+          kind: "web-bundle",
+          collection: "endpoints",
+          offset: 0,
+          limit: 2,
+        },
       },
     },
-  });
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(page1Call.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.outputSchema, page1Call.structuredContent),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
+
   const page1 = webBundlePageViewResultSchema.parse(
     parseEvidence(page1Call.structuredContent).normalized_result,
   );
@@ -243,23 +142,23 @@ it("pages web bundle endpoints and inferences over MCP using evidence-file sourc
   });
   expect(page1.completeness.status).toBe("partial");
 
-  const page2Call = await client.callTool({
-    ...schemas.toolDefinition,
-    arguments: {
-      source: { kind: "evidence-file", path: evidenceFile },
-      view: {
-        kind: "web-bundle",
-        collection: "endpoints",
-        offset: 2,
-        limit: 2,
+  const page2Call = await client.callTool(
+    {
+      name: schemas.toolDefinition.name,
+      arguments: {
+        source: { kind: "evidence-file", path: evidenceFile },
+        view: {
+          kind: "web-bundle",
+          collection: "endpoints",
+          offset: 2,
+          limit: 2,
+        },
       },
     },
-  });
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(page2Call.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.outputSchema, page2Call.structuredContent),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
+
   const page2 = webBundlePageViewResultSchema.parse(
     parseEvidence(page2Call.structuredContent).normalized_result,
   );
@@ -276,25 +175,22 @@ it("pages web bundle endpoints and inferences over MCP using evidence-file sourc
     exhausted: true,
   });
 
-  const candidatesCall = await client.callTool({
-    ...schemas.toolDefinition,
-    arguments: {
-      source: { kind: "evidence-file", path: evidenceFile },
-      view: {
-        kind: "web-bundle",
-        collection: "inferences",
-        kinds: ["endpoint_candidate"],
+  const candidatesCall = await client.callTool(
+    {
+      name: schemas.toolDefinition.name,
+      arguments: {
+        source: { kind: "evidence-file", path: evidenceFile },
+        view: {
+          kind: "web-bundle",
+          collection: "inferences",
+          kinds: ["endpoint_candidate"],
+        },
       },
     },
-  });
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(candidatesCall.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(
-      schemas.outputSchema,
-      candidatesCall.structuredContent,
-    ),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
+
   const candidatesPage = webBundlePageViewResultSchema.parse(
     parseEvidence(candidatesCall.structuredContent).normalized_result,
   );
@@ -307,23 +203,23 @@ it("pages web bundle endpoints and inferences over MCP using evidence-file sourc
     }),
   ]);
 
-  const emptyCall = await client.callTool({
-    ...schemas.toolDefinition,
-    arguments: {
-      source: { kind: "evidence-file", path: evidenceFile },
-      view: {
-        kind: "web-bundle",
-        collection: "endpoints",
-        offset: 100,
-        limit: 10,
+  const emptyCall = await client.callTool(
+    {
+      name: schemas.toolDefinition.name,
+      arguments: {
+        source: { kind: "evidence-file", path: evidenceFile },
+        view: {
+          kind: "web-bundle",
+          collection: "endpoints",
+          offset: 100,
+          limit: 10,
+        },
       },
     },
-  });
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(emptyCall.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.outputSchema, emptyCall.structuredContent),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
+
   const emptyPage = webBundlePageViewResultSchema.parse(
     parseEvidence(emptyCall.structuredContent).normalized_result,
   );

@@ -1,3 +1,7 @@
+import {
+  escapeJsonPointerToken,
+  unescapeJsonPointerToken,
+} from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isStamp } from "./appTaskDraftNoise.js";
 import {
@@ -6,14 +10,11 @@ import {
   isPlaceholder,
   isSaveNumberedId,
 } from "./attributeRank.js";
-import { escapeToken, isXmlElement, resolvePointer } from "./viewPointer.js";
+import { isXmlElement, resolvePointer } from "./viewPointer.js";
 import { selectorOf, spellCondition } from "./viewSelector.js";
 
 /** Other pointers a value's entry lists. */
 const MAX_ALTERNATIVES = 3;
-
-const unescape = (token: string) =>
-  token.replaceAll("~1", "/").replaceAll("~0", "~");
 
 /**
  * The value's pointer naming its element another way, for an author to pick
@@ -32,7 +33,7 @@ export const alternativePointers = (
   for (let index = segments.length - 1; index >= 2; index -= 1) {
     const conditions =
       segments[index - 1] === "children"
-        ? selectorOf(unescape(segments[index] ?? ""))
+        ? selectorOf(unescapeJsonPointerToken(segments[index] ?? ""))
         : undefined;
     if (conditions === undefined) continue;
     // A step its tag alone names, as an XHTML `h1` holding `id="chapter-two"`, gives way outward when nothing else names it.
@@ -56,7 +57,7 @@ export const alternativePointers = (
     );
     const reads =
       segments[index + 1] === "attributes" && index + 3 === segments.length
-        ? unescape(segments[index + 2] ?? "")
+        ? unescapeJsonPointerToken(segments[index + 2] ?? "")
         : undefined;
     const alone = (key: string, value: string) =>
       list.filter(
@@ -81,7 +82,7 @@ export const alternativePointers = (
           ? [
               [
                 ...segments.slice(0, index),
-                escapeToken(
+                escapeJsonPointerToken(
                   `[name=${element.name}]${spellCondition({ prefix: "@", key, value })}`,
                 ),
                 ...segments.slice(index + 1),

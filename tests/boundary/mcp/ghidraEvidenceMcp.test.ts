@@ -736,5 +736,5 @@ describe("Ghidra MCP evidence parity", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 });

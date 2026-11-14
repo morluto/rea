@@ -457,7 +457,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         expectedLinuxSha256 = inspected.value.sha256;
       }
       const display = await this.#privateDisplay(signal);
-      if (!display.ok) return err(display.error);
+      if (!display.ok) return display;
       const nativeHelperVerified =
         (this.dependencies.platform ?? process.platform) === "darwin" &&
         this.options.launchMode === "native" &&

@@ -9,6 +9,7 @@ import {
   gpuCodeObjectsSchema,
 } from "../../src/domain/gpu/gpuCodeObjects.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { amdFixture, cudaFixture } from "../fixtures/gpu/codeObjects.js";
 type ReadFile = (
   buffer: Buffer,
@@ -231,7 +232,7 @@ it("joins an admitted file read during shutdown and rejects overlapping work", a
   let closing: Promise<void> | undefined;
   try {
     active = provider.inspect({ path, analysis: "kernels" });
-    await admitted;
+    await awaitAcknowledgement(admitted, active, "GPU file read admission");
     let closed = false;
     closing = provider.close().then(() => {
       closed = true;
@@ -249,10 +250,16 @@ it("joins an admitted file read during shutdown and rejects overlapping work", a
     expect(closed).toBe(true);
   } finally {
     release();
-    await active;
-    await closing;
-    spy.mockRestore();
-    await provider.close();
+    try {
+      try {
+        await active;
+      } finally {
+        await closing;
+      }
+    } finally {
+      spy.mockRestore();
+      await provider.close();
+    }
   }
 });
 

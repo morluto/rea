@@ -264,7 +264,7 @@ describe("production MCP doctor", () => {
       ],
       { timeout: 30_000 },
     );
-  }, 35_000);
+  });
 
   it("preserves the full-output envelope for startup failures", async () => {
     const result = await runProductionMcpDoctorCli(
@@ -332,7 +332,6 @@ describe("production MCP doctor", () => {
       if (cliParity)
         await assertCliCatalogIdentity(selectedEnvironment, identity);
     },
-    30_000,
   );
 });
 
@@ -384,7 +383,6 @@ describe("production MCP doctor family scopes", () => {
       await assertStatusCatalogIdentity(environment, identity);
       if (cliParity) await assertCliCatalogIdentity(environment, identity);
     },
-    30_000,
   );
 
   it("discovers an empty prompt inventory and explains a scope without session", async () => {
@@ -428,7 +426,7 @@ describe("production MCP doctor family scopes", () => {
     expect(result.diagnostics?.stderr).toEqual(
       expect.stringContaining("REA_MCP_TOOL_FAMILIES"),
     );
-  }, 30_000);
+  });
 });
 
 describe("production MCP doctor output", () => {
@@ -494,7 +492,7 @@ describe("production MCP doctor output", () => {
         },
       },
     });
-  }, 35_000);
+  });
 
   it.each([false, true])(
     "frames unhealthy JSONL diagnostics and retains the selected envelope (%s)",
@@ -662,7 +660,7 @@ describe("production MCP doctor probe validation", () => {
         });
       }
     }
-  }, 30_000);
+  });
 });
 
 describe("production MCP doctor child lifecycle", () => {
@@ -724,7 +722,7 @@ describe("production MCP doctor child lifecycle", () => {
       stderr_bytes: 4 * 1024 * 1024,
       stderr_truncated: true,
     });
-  }, 10_000);
+  });
 
   it("does not manufacture a replacement character when the retained prefix ends inside UTF-8", async () => {
     const prefixBytes = MCP_STARTUP_POLICY.doctorStderrBytes - 1;
@@ -797,7 +795,7 @@ describe("production MCP doctor child lifecycle", () => {
     expectDoctorDeadline(result.checks[0]?.detail, 60_000);
     expect(result.checks[0]?.detail).not.toContain("REA_MCP_STARTUP");
     await expect(waitForExit(pid)).resolves.toBeUndefined();
-  }, 10_000);
+  });
 
   it("stops the owned process family when a descendant outlives the launcher", async () => {
     const root = await createTestTempDirectory("rea-mcp-doctor-descendant-");
@@ -833,7 +831,7 @@ describe("production MCP doctor child lifecycle", () => {
     expect(result.checks.map(({ name }) => name)).toEqual(["transport"]);
     expectDoctorDeadline(result.checks[0]?.detail, 60_000);
     await expect(waitForExit(pids.descendant)).resolves.toBeUndefined();
-  }, 20_000);
+  });
 });
 
 describe("production MCP doctor request-flow deadline", () => {
@@ -868,7 +866,7 @@ describe("production MCP doctor request-flow deadline", () => {
     expect(requestFlow?.ok).toBe(false);
     expectDoctorDeadline(requestFlow?.detail, 60_000);
     expect(requestFlow?.detail).not.toContain("REA_MCP_STARTUP");
-  }, 15_000);
+  });
 
   it.each([
     "unrelated fixture method refusal",
@@ -897,7 +895,6 @@ describe("production MCP doctor request-flow deadline", () => {
       expect(requestFlow?.detail).toContain(message);
       expect(requestFlow?.detail).not.toContain("REA_MCP_DOCTOR_DEADLINE_MS");
     },
-    10_000,
   );
 
   it("refuses an invalid phase budget before starting a child", async () => {

@@ -134,4 +134,4 @@ process.stdout.write(JSON.stringify({ failure, observedPids: pids.length, livePi
     observedPids: 2,
     livePids: [],
   });
-}, 45_000);
+});

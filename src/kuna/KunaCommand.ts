@@ -62,7 +62,7 @@ export type KunaProcessLauncher = (
 ) => Promise<SpawnedOwnedProviderProcess>;
 
 /** One bounded Kuna run inside a private workspace. */
-export interface KunaCommandRequest {
+interface KunaCommandRequest {
   readonly installation: KunaInstallation;
   readonly arguments: readonly string[];
   /** Private directory used as the working and temporary directory. */
@@ -90,7 +90,7 @@ export interface KunaCommandRequest {
  * stopped, so it may still write into the workspace, which therefore stays
  * with the caller's cleanup owner.
  */
-export type KunaCommandOutcome =
+type KunaCommandOutcome =
   | { readonly kind: "ok"; readonly snapshot: ProviderProcessSnapshot }
   | {
       readonly kind: "failed";
@@ -309,7 +309,7 @@ export interface KunaInputPrefix {
 }
 
 /** A copy's SHA-256 and size, and the leading bytes kept from the same stream. */
-export interface KunaCopiedInput {
+interface KunaCopiedInput {
   readonly sha256: string;
   readonly bytes: number;
   /** Empty unless a prefix was requested; the digest covers these exact bytes. */

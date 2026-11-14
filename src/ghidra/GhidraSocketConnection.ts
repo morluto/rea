@@ -1,15 +1,15 @@
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { createConnection, type Socket } from "node:net";
+import type { Socket } from "node:net";
+import { connectLocalSocketOnce } from "../process/LocalSocketConnection.js";
 
 import { err, ok, type Result } from "../domain/result.js";
 import type { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
-  GhidraSessionError,
+  type GhidraSessionError,
   type GhidraSessionFailureFactory,
 } from "./GhidraSessionError.js";
 import {
-  type GhidraConnectTarget,
   type GhidraEndpoint,
   observeGhidraEndpoint,
 } from "./GhidraTransport.js";
@@ -86,7 +86,7 @@ export const connectGhidraSocket = async (
         return err(interruptionFailure(options));
       continue;
     }
-    const connected = await connectGhidraSocketOnce(
+    const connected = await connectLocalSocketOnce(
       observed.value,
       options.deadline.signal,
     );
@@ -103,57 +103,6 @@ export const connectGhidraSocket = async (
     }),
   );
 };
-
-/** Open one abort-aware connection to an observed local Ghidra endpoint. */
-const connectGhidraSocketOnce = (
-  target: GhidraConnectTarget,
-  signal: AbortSignal,
-): Promise<Result<Socket, GhidraSessionError>> =>
-  new Promise((resolve) => {
-    const socket =
-      "path" in target
-        ? createConnection(target.path)
-        : createConnection({ host: target.host, port: target.port });
-    const detach = (): void => {
-      socket.off("connect", onConnect);
-      socket.off("error", onError);
-      signal.removeEventListener("abort", onAbort);
-    };
-    const onConnect = (): void => {
-      detach();
-      resolve(ok(socket));
-    };
-    const onError = (cause: Error): void => {
-      detach();
-      socket.destroy();
-      resolve(
-        err(
-          new GhidraSessionError("start", "Ghidra bridge connection failed", {
-            endpoint: target,
-            error: cause.message,
-          }),
-        ),
-      );
-    };
-    const onAbort = (): void => {
-      detach();
-      socket.destroy();
-      resolve(
-        err(
-          new GhidraSessionError(
-            "cancelled",
-            "Ghidra bridge connection was cancelled",
-            { endpoint: target },
-            { cause: signal.reason, cancellation: { reason: signal.reason } },
-          ),
-        ),
-      );
-    };
-    socket.once("connect", onConnect);
-    socket.once("error", onError);
-    signal.addEventListener("abort", onAbort, { once: true });
-    if (signal.aborted) onAbort();
-  });
 
 const interruptionFailure = (
   options: GhidraSocketConnectOptions,

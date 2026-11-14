@@ -1,4 +1,5 @@
-import { Readable, Transform, pipeline } from "node:stream";
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
+import { Readable, Transform } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
@@ -11,10 +12,7 @@ import type {
 } from "../domain/artifactFormatMetadata.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
-import {
-  assertArtifactReadActive,
-  artifactReadCancelledBy,
-} from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   ArtifactPathRegistry,
@@ -29,6 +27,7 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
 import {
   denoFormatFailure,
@@ -42,6 +41,8 @@ import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js"
 import {
   DENO_CHILD_SUFFIXES,
   DENO_PATH_LENGTH_LIMITATION,
+  DENO_PATH_PARTS_LIMITATION,
+  DENO_UNSAFE_PATH_LIMITATION,
   denoLogicalPathFits,
   MAX_DENO_LOGICAL_PATH_PARTS,
   type DenoVfsMember,
@@ -73,12 +74,7 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
   readonly #streams = new Set<Readable>();
   readonly #source: ArtifactFileSource;
   #admission: DenoStandaloneAdmission | undefined;
-  #prepared:
-    | {
-        readonly signal: AbortSignal | undefined;
-        readonly promise: Promise<void>;
-      }
-    | undefined;
+  readonly #preparation = new ArtifactPreparation();
   #header: DenoStandaloneMetadata | undefined;
   #closing = false;
 
@@ -117,27 +113,11 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      for (;;) {
-        const pending = (this.#prepared ??= {
-          signal,
-          promise: this.#prepare(signal),
-        });
-        try {
-          await pending.promise;
-          break;
-        } catch (cause: unknown) {
-          if (this.#prepared === pending) this.#prepared = undefined;
-          if (
-            pending.signal !== signal &&
-            signal?.aborted !== true &&
-            artifactReadCancelledBy(cause, pending.signal)
-          ) {
-            this.#assertOpen(signal);
-            continue;
-          }
-          throw cause;
-        }
-      }
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
       await this.#source.readSelectedPath(signal);
     });
     if (this.#header?.vfs_listing === "unsupported")
@@ -167,6 +147,10 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
       this.#assertOpen(signal);
       if (stored.byteOffset === null || stored.declaredSize === null)
         throw denoFormatFailure("member has no physical byte range");
+      const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>
+        new ArtifactReaderFailure("cancelled", "Deno compile read cancelled", {
+          cause: reason,
+        });
       const source =
         stored.declaredSize === 0
           ? Readable.from([])
@@ -174,64 +158,16 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
               start: stored.byteOffset,
               end: stored.byteOffset + stored.declaredSize - 1,
               signal,
-              cancellationFailure: (reason) =>
-                new ArtifactReaderFailure(
-                  "cancelled",
-                  "Deno compile read cancelled",
-                  {
-                    cause: reason,
-                  },
-                ),
+              cancellationFailure,
             });
       const output = this.#memberStream(stored, signal);
-      output.on("error", () => undefined);
-      this.#streams.add(output);
-      let producerComplete = false;
-      const onAbort = (): void => {
-        // Active I/O and final validation own failure precedence. Buffered
-        // readable bytes remain owned after production finishes.
-        if (!producerComplete || output.destroyed) return;
-        output.destroy(
-          new ArtifactReaderFailure(
-            "cancelled",
-            "Deno compile read cancelled",
-            {
-              cause: signal?.reason,
-            },
-          ),
-        );
-      };
-      const retired = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          this.#streams.delete(output);
-          signal?.removeEventListener("abort", onAbort);
-          resolve();
-        });
+      ownArtifactStream(source, output, {
+        scope: this.#scope,
+        streams: this.#streams,
+        signal,
+        cancellationFailure,
+        label: "Deno compile",
       });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-      void this.#scope
-        .run(async () => {
-          // Writable completion can leave unread bytes buffered. Join both
-          // producer work and retirement before releasing the carrier.
-          await Promise.all([
-            new Promise<void>((resolve) => {
-              pipeline(source, output, () => {
-                producerComplete = true;
-                if (signal?.aborted) onAbort();
-                resolve();
-              });
-            }),
-            retired,
-          ]);
-        })
-        .catch((cause: unknown) =>
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error("Deno compile stream ownership failed", { cause }),
-          ),
-        );
       return output;
     });
   }
@@ -247,7 +183,7 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
     this.#entries.clear();
     this.#header = undefined;
     this.#admission = undefined;
-    this.#prepared = undefined;
+    this.#preparation.clear();
   }
 
   provenance(): readonly [] {
@@ -612,9 +548,7 @@ const remoteDestination = (
       return {
         path: fallback,
         sourcePath: text,
-        limitations: [
-          `The virtual name exceeds the fixed ${String(MAX_DENO_LOGICAL_PATH_PARTS)}-part logical path allowance; an indexed path is used and the original name is retained.`,
-        ],
+        limitations: [DENO_PATH_PARTS_LIMITATION],
       };
   let normalized: string;
   try {
@@ -625,9 +559,7 @@ const remoteDestination = (
     return {
       path: fallback,
       sourcePath: text,
-      limitations: [
-        "The virtual name is not a safe relative path; an indexed path is used and the original name is retained.",
-      ],
+      limitations: [DENO_UNSAFE_PATH_LIMITATION],
     };
   }
   // A specifier is generated into a path, so its spelling can follow every

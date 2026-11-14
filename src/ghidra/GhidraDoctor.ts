@@ -120,9 +120,6 @@ export const inspectSystemGhidraProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   resourceOwner: RetainedResourceScope,
   signal?: AbortSignal,
-  probeTemporaryDirectory: (
-    resourceOwner: RetainedResourceScope,
-  ) => Promise<GhidraTemporaryDirectoryProbe> = probeGhidraTemporaryDirectory,
 ): Promise<DoctorProviderInspection> => {
   try {
     const installation = await inspectGhidraInstallation({
@@ -139,7 +136,7 @@ export const inspectSystemGhidraProvider = async (
     // The restricted-host denial reported for #7075 is Windows-specific.
     const temporaryDirectory =
       installation.status === "available" && installation.platform === "win32"
-        ? await probeTemporaryDirectory(resourceOwner)
+        ? await probeGhidraTemporaryDirectory(resourceOwner)
         : undefined;
     return projectGhidraDoctorInspection(installation, temporaryDirectory);
   } catch (cause: unknown) {
