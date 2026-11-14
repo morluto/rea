@@ -1,7 +1,7 @@
-import { existsSync } from "node:fs";
-import { mkdtemp, readdir, realpath, symlink } from "node:fs/promises";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 
 import {
@@ -219,59 +219,65 @@ const parseJson = (stdout: string): unknown | undefined => {
 };
 
 /**
- * Hide a `rea` executable from the inherited PATH without removing directories.
+ * Hide `rea` executables from the inherited PATH without disturbing the tools
+ * a CLI child needs.
  *
  * Setup registers a PATH alias that proves the same file as the selected
- * entrypoint, so a developer machine with a globally installed or linked `rea`
- * would change the command under test. The suite asserts the repo entrypoint;
- * give it a PATH where no such alias is found.
+ * entrypoint (`sameFileExecutableAlias`), so a developer machine with a
+ * globally installed or linked `rea` would change the command under test. The
+ * suite asserts the repo entrypoint, so those aliases must not be reachable.
  *
- * Only the alias directory is shadowed, by prepending a directory of the same
- * entries minus `rea`/`rea-agents`. Removing the directory outright would take
- * unrelated prerequisites with it — on a usrmerged host `/bin` and `/usr/bin`
- * are the same directory, so a `rea` install in `/usr/bin` would also hide `ps`.
+ * A directory is dropped only when it holds an executable `rea`/`rea-agents`
+ * *and* does not hold the runtime the CLI actually runs on. Dropping every
+ * directory that named a `rea` alias took unrelated tools with it: on a
+ * usrmerged host `/bin` and `/usr/bin` are one directory, so a `rea` install
+ * there also removed `ps` and the supervised-process check failed. Keeping the
+ * directory that holds `process.execPath` also stops setup from selecting a
+ * different `node` as its runtime alias.
  */
-const pathWithoutReaAliases = async (path: string): Promise<string> => {
+const hideReaAliasDirectories = (
+  path: string,
+  runtimeDirectory: string,
+): string => {
   const separator = process.platform === "win32" ? ";" : ":";
-  const directories = path.split(separator).filter((entry) => entry.length > 0);
-  const shadows = new Map<string, string>();
-  const shadowed = await Promise.all(
-    directories.map(async (directory) => {
-      if (!hasReaExecutable(directory)) return directory;
-      const existing = shadows.get(await realpathOrSelf(directory));
-      if (existing !== undefined) return existing;
-      const shadow = await mkdtemp(
-        join(await realpathOrSelf(tmpdir()), "rea-path-shadow-"),
-      );
-      for (const entry of await readdir(directory)) {
-        if (entry === "rea" || entry === "rea-agents") continue;
-        await symlink(join(directory, entry), join(shadow, entry)).catch(
-          () => undefined,
-        );
-      }
-      shadows.set(await realpathOrSelf(directory), shadow);
-      return shadow;
-    }),
-  );
-  return shadowed.join(separator);
+  const keep = new Set([runtimeDirectory]);
+  return path
+    .split(separator)
+    .filter((directory) => {
+      if (directory.length === 0) return false;
+      if (keep.has(directory)) return true;
+      if (sameFile(directory, runtimeDirectory)) return true;
+      return !holdsExecutableReaAlias(directory);
+    })
+    .join(separator);
 };
 
-const realpathOrSelf = async (path: string): Promise<string> => {
+/** Whether two spellings name the same directory, without throwing on ENOENT. */
+const sameFile = (left: string, right: string): boolean => {
   try {
-    return await realpath(path);
+    return realpathSync(left) === realpathSync(right);
   } catch {
-    return path;
+    return false;
   }
 };
 
-const hasReaExecutable = (directory: string): boolean => {
-  for (const name of ["rea", "rea-agents"]) {
-    for (const suffix of process.platform === "win32"
-      ? [".cmd", ".exe", ""]
-      : [""])
-      if (existsSync(`${directory}/${name}${suffix}`)) return true;
+const holdsExecutableReaAlias = (directory: string): boolean =>
+  ["rea", "rea-agents"].some((name) => {
+    const candidate = join(directory, name);
+    try {
+      return statSync(candidate).isFile() && isExecutable(candidate);
+    } catch {
+      return false;
+    }
+  });
+
+const isExecutable = (path: string): boolean => {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
   }
-  return false;
 };
 
 /** Child environment for one compiled CLI process, without the parent environment. */
@@ -279,7 +285,10 @@ export const cliProcessEnvironment = async (
   environment: NodeJS.ProcessEnv | undefined,
   compileCache?: string,
 ): Promise<NodeJS.ProcessEnv> => ({
-  PATH: await pathWithoutReaAliases(process.env.PATH ?? ""),
+  PATH: hideReaAliasDirectories(
+    process.env.PATH ?? "",
+    dirname(process.execPath),
+  ),
   // Native Windows APIs need the system root and a writable temporary
   // directory even when the command's application environment is empty.
   ...(process.platform === "win32"
