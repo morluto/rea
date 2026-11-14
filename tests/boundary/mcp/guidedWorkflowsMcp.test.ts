@@ -153,8 +153,6 @@ it.each([
       );
     }
   },
-  // Full catalog startup took up to 39s with concurrent work on a shared host.
-  60_000,
 );
 
 it("uses the native prompt scope for tool discovery and rendering", async () => {

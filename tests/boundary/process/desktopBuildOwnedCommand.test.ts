@@ -9,7 +9,6 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform === "win32")(
   "stops the packing process family before removing its partial archive on timeout",
-  { timeout: 15_000 },
   async () => {
     await prepareProcessOwnershipInspection();
     const directory = await createTestTempDirectory("rea-owned-pack-");
@@ -56,7 +55,6 @@ it.skipIf(process.platform === "win32")(
 
 it.skipIf(process.platform === "win32")(
   "cancels a running setup process family before removing its partial output",
-  { timeout: 15_000 },
   async () => {
     await prepareProcessOwnershipInspection();
     const directory = await createTestTempDirectory("rea-owned-pack-cancel-");

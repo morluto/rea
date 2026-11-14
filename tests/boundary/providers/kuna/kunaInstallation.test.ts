@@ -317,7 +317,7 @@ it("stops a version probe that ignores SIGTERM instead of waiting on it", async 
   expect(Date.now() - started).toBeLessThan(10_000);
   const pid = (await fakeKunaCalls(kuna))[0]?.pid ?? 0;
   expect(() => process.kill(pid, 0)).toThrow();
-}, 20_000);
+});
 
 it("keeps a version deadline ahead of cancellation during its joined stop", async () => {
   const root = await createTestTempDirectory("rea-kuna-deadline-first-");

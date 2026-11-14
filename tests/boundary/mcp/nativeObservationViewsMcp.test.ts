@@ -151,7 +151,7 @@ it("delivers native primitive and graph summaries with exact retained parents an
   } finally {
     await harness.close();
   }
-}, 90_000);
+});
 
 it("follows native overflow continuations through MCP without repeating provider work", async () => {
   let reads = 0;
@@ -267,4 +267,4 @@ it("follows native overflow continuations through MCP without repeating provider
     const closed = await session.close();
     if (!closed.ok) throw closed.error;
   }
-}, 90_000);
+});

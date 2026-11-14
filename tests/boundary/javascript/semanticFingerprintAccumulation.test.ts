@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { beforeAll, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import {
   createJavaScriptSemanticGraphProjection,
   projectJavaScriptSemanticFileSteps,
@@ -8,6 +8,9 @@ import { analyzeJavaScriptSemantics } from "../../../src/domain/javascript/javas
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { resolveJavaScriptSemanticEvidence } from "../../support/javascriptSemanticGraphFixture.js";
 
+// This forked project uses the same main-thread stack as the CLI parent.
+// These real callable facts exceed V8's call-argument capacity, but fit the
+// caller-selectable one-million-node graph ceiling.
 const count = 130_000;
 const source = "(()=>{});\n".repeat(count);
 const sha256 = createHash("sha256").update(source).digest("hex");
@@ -21,23 +24,17 @@ const file: JavaScriptArtifactFile = {
   unpacked: false,
   text: { included: true, value: source },
 };
-let ir: ReturnType<typeof analyzeJavaScriptSemantics>;
-beforeAll(() => {
-  // Both projection paths consume the same immutable producer facts. Parsing
-  // 130,000 callables twice adds work unrelated to either accumulation guard.
-  ir = analyzeJavaScriptSemantics(source);
-  expect(ir.callables).toHaveLength(count);
-  expect(ir.functionFingerprints).toHaveLength(count);
-  Object.freeze(ir.callables);
-  Object.freeze(ir.functionFingerprints);
-}, 30_000);
+// Projection reads the analysis without changing it, so both projection modes
+// share one analysis of the wide source instead of repeating it.
+let analysis: ReturnType<typeof analyzeJavaScriptSemantics> | undefined;
+const analyzedSource = () => (analysis ??= analyzeJavaScriptSemantics(source));
 
 it.each(["direct", "transferred"] as const)(
   "retains an admitted source's wide fingerprint list through %s projection",
   (mode) => {
-    // This forked project uses the same main-thread stack as the CLI parent.
-    // These real callable facts exceed V8's call-argument capacity, but fit
-    // the caller-selectable one-million-node graph ceiling.
+    const ir = analyzedSource();
+    expect(ir.callables).toHaveLength(count);
+    expect(ir.functionFingerprints).toHaveLength(count);
     const projection = createJavaScriptSemanticGraphProjection({
       totalNodes: count + 1,
       fileNodes: count + 1,
@@ -102,5 +99,4 @@ it.each(["direct", "transferred"] as const)(
       });
     }
   },
-  30_000,
 );
