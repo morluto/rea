@@ -66,7 +66,9 @@ const adjustableBudgetRemediation = (
     return `${effective}. ${control} is already at its maximum (${range}); narrow the request or select a smaller input. ${UNCHANGED}`;
   const environment = analysisSettingDefinition(budget.setting).environment;
   const change =
-    budget.update_mode === "parameter" && budget.parameter !== undefined
+    budget.parameter !== undefined &&
+    (budget.update_mode === "parameter" ||
+      (callerLifetime === "invocation" && environment === undefined))
       ? `Pass a larger ${budget.parameter} on the next ${operation} call`
       : callerLifetime === "invocation"
         ? `Set ${environment ?? budget.setting} for the next invocation`

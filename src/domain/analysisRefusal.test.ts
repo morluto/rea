@@ -99,6 +99,46 @@ describe("typed refusals", () => {
     ).toContain("Set REA_ASAR_MAX_LISTING_BYTES for the next invocation");
   });
 
+  it.each(["request", "default", "runtime"] as const)(
+    "uses the per-call heap control for invocation source %s",
+    (source) => {
+      expect(
+        projectAnalysisError(
+          budgetError("javascript.max_heap_mb", 128, source),
+          "invocation",
+        ).remediation.action,
+      ).toContain("Pass a larger max_heap_mb");
+    },
+  );
+
+  it("distinguishes measured exhaustion from a capacity budget refusal", () => {
+    const limit = analysisSettingLimit(
+      "asar.max_listing_bytes",
+      1024,
+      "runtime",
+    );
+    const measured = new AnalysisResourceConstraintError(
+      "inspect_artifact",
+      "memory",
+      "Exhausted.",
+      null,
+      { limit, measuredExhaustion: true },
+    );
+    const capacity = new AnalysisResourceConstraintError(
+      "inspect_artifact",
+      "capacity",
+      "Limit reached.",
+      null,
+      { limit },
+    );
+    expect(projectAnalysisError(measured).details).not.toHaveProperty(
+      "refusal",
+    );
+    expect(projectAnalysisError(capacity).details?.refusal).toMatchObject({
+      kind: "adjustable_budget",
+    });
+  });
+
   it("does not suggest raising a budget already at its maximum", () => {
     const maximum = analysisSettingLimit(
       "asar.max_listing_bytes",

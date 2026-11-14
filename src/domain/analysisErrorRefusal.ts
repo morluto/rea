@@ -22,7 +22,10 @@ export const analysisErrorRefusal = (
       };
     if (
       error.limit !== undefined &&
-      !(error.resource === "capacity" && error.retryable !== false)
+      !(
+        "measuredExhaustion" in error.recovery &&
+        error.recovery.measuredExhaustion === true
+      )
     )
       return {
         kind: "adjustable_budget",

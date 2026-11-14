@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { RuleTester } from "oxlint/plugins-dev";
 import rule from "../../scripts/lint/rules/typed-resource-refusal.mjs";
 
@@ -14,6 +15,10 @@ new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
   rule,
   {
     valid: [
+      {
+        code: construct(""),
+        filename: resolve("src/application/JsonAuthenticationHeadroom.ts"),
+      },
       construct(', fixedAllowanceOptions("The allowance", "count")'),
       construct(
         ', { cause, ...fixedAllowanceOptions("The allowance", "count") }',
@@ -25,6 +30,16 @@ new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
       'new AnalysisInputError("op", { cause });',
     ],
     invalid: [
+      {
+        code: construct("") + construct(""),
+        filename: resolve("src/application/JsonAuthenticationHeadroom.ts"),
+        errors: [{ messageId: "untyped" }, { messageId: "untyped" }],
+      },
+      {
+        code: "const value = 1;",
+        filename: resolve("src/application/JsonAuthenticationHeadroom.ts"),
+        errors: [{ messageId: "stale", data: { allowed: "1", actual: "0" } }],
+      },
       { code: construct(""), errors: [{ messageId: "untyped" }] },
       { code: construct(", { cause }"), errors: [{ messageId: "untyped" }] },
       {
