@@ -320,6 +320,17 @@ rea discover-webmcp-tools http://127.0.0.1:9222 TARGET_ID \
   --json
 ```
 
+The `observe-web-session` CLI writes JSON progress lines to stderr, leaving
+stdout for the final Evidence or failure. Wait for `rea_progress` with
+`phase: "browser_observation"`, `completed: 1` and `total: 2` before performing
+the external action. After the window ends successfully, `completed: 2` and
+`terminal: true` report its end. Failed preparation does not announce arming;
+a failed or cancelled observation does not fabricate a successful end event.
+MCP exposes the same provider progress through its progress notifications.
+If navigation leaves the selected scope, or the target detaches or terminates
+during preparation, the ended window can be reported without an armed event.
+Only the explicit armed event invites the caller to perform its action.
+
 ### WebMCP discovery prerequisites
 
 `discover_webmcp_tools` reports only what the attached browser's experimental
