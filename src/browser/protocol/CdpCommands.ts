@@ -53,6 +53,7 @@ const preciseCoverageReply = z.object({
 const CDP_COMMAND_REPLIES = {
   "Debugger.enable": acknowledgement,
   "Debugger.evaluateOnCallFrame": z.object({
+    result: z.looseObject({}),
     exceptionDetails: z.unknown().optional(),
   }),
   "Debugger.getScriptSource": z.object({ scriptSource: z.string() }),

@@ -108,6 +108,31 @@ describe("CDP connection admission cancellation", () => {
 });
 
 describe("CDP connection response correlation", () => {
+  it("preserves the remote value of a debugger evaluation", async () => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: (command) =>
+        command.method === "Debugger.evaluateOnCallFrame"
+          ? { result: { type: "boolean", value: false } }
+          : undefined,
+    });
+    browsers.push(browser);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "inspect_web_page",
+    );
+    try {
+      await expect(
+        connection.send("Debugger.evaluateOnCallFrame", {
+          callFrameId: "frame-1",
+          expression: "false",
+          returnByValue: true,
+        }),
+      ).resolves.toEqual({ result: { type: "boolean", value: false } });
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("rejects one malformed registered reply without poisoning the connection", async () => {
     const browser = await startFakeCdpBrowser({
       commandResult: (command) =>
