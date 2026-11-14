@@ -7,6 +7,11 @@ import { pathToFileURL } from "node:url";
 import { deflateSync } from "node:zlib";
 import { decodeRawRaster } from "../../src/domain/rawRaster.ts";
 
+export const EXPERIMENT_ALLOWANCE = Object.freeze({
+  maxSourceBytes: 1024 * 1024,
+  maxOutputBytes: 1024 * 1024,
+});
+
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 function crc32(bytes) {
   let crc = 0xffffffff;
@@ -48,10 +53,7 @@ function encodePng({ rgba, layout: { width, height } }) {
 export function previewRawRasterExperiment(source, input) {
   // Small harness-only allowances, not proposed REA settings. At most 1 MiB RGBA,
   // 1.25 MiB filter rows, plus bounded compression/chunk/concatenation copies.
-  const decoded = decodeRawRaster(source, input, {
-    maxSourceBytes: 1024 * 1024,
-    maxOutputBytes: 1024 * 1024,
-  });
+  const decoded = decodeRawRaster(source, input, EXPERIMENT_ALLOWANCE);
   if (!decoded.ok) return decoded;
   const png = encodePng(decoded.value);
   const { offset, length, ...decoding } = decoded.value.layout;
@@ -99,14 +101,18 @@ export async function writeSyntheticPreview(outputDirectory) {
     rowOrder: "top-down",
   });
   if (!result.ok) throw new Error(result.error.message);
+  await writePreviewResult(result.value, outputDirectory);
+}
+
+export async function writePreviewResult(preview, outputDirectory) {
   // Exclusive directory and files; never replace an existing result or source.
   await mkdir(outputDirectory);
-  await writeFile(join(outputDirectory, "preview.png"), result.value.png, {
+  await writeFile(join(outputDirectory, "preview.png"), preview.png, {
     flag: "wx",
   });
   await writeFile(
     join(outputDirectory, "manifest.json"),
-    JSON.stringify(result.value.manifest, null, 2) + "\n",
+    JSON.stringify(preview.manifest, null, 2) + "\n",
     { flag: "wx" },
   );
 }

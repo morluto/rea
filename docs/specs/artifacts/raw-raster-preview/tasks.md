@@ -11,7 +11,11 @@ only from checks against the final implementation. See [spec](spec.md) and
       short stride and input/output allowances; verify input bytes stay unchanged.
 - [x] R4: Produce an experimental PNG and reproducible manifest; independently
       decode a tiny fixture and verify all pixels and both hashes.
-- [x] R5: Confirm no provider, CLI, MCP, runtime configuration or catalog wiring.
+- [x] R5: Confirm no provider, registered REA CLI/MCP, runtime configuration or
+      catalog wiring.
+- [x] R6: Add an experimental file workflow with pre-read range admission, bounded
+      positional reads, pre/post descriptor and selected-path checks, original offset
+      provenance, source preservation, cleanup and exclusive output tests.
 - [x] Run applicable focused tests, test discovery, type/lint and documentation
       checks; report blocked or unrun checks without claiming success.
 - [x] Obtain independent diff review and address actionable findings.
@@ -19,7 +23,7 @@ only from checks against the final implementation. See [spec](spec.md) and
 ## Deferred integration gates
 
 - [ ] Obtain maintainer scope and architecture decisions in #8162.
-- [x] Resolve artifact/subject identity and production source acquisition,
+- [ ] Resolve artifact/subject identity and production source acquisition,
       stability, cancellation and evidence semantics using existing owners.
 - [ ] Define full-workflow resource accounting and public transport contracts;
       verify real CLI/MCP workflows before enabling them.

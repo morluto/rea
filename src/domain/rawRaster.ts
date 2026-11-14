@@ -88,15 +88,21 @@ const parseLayout = (
   return ok({ layout, channelCount });
 };
 
-/** Experimental pure decoder. Selected ranges are relative to the supplied view.
- * RGBA8 has straight alpha; no premultiplication or colour-space inference.
- * The final row need not include padding. Source bytes are never modified.
- */
-export const decodeRawRaster = (
-  source: Uint8Array,
+/** Validate source and RGBA representation bounds without allocating either. */
+export const admitRawRaster = (
+  sourceLength: number,
   input: unknown,
   allowance: RawRasterAllowance,
-): Result<RawRasterPixels, RawRasterFailure> => {
+): Result<
+  {
+    readonly layout: RawRasterLayout;
+    readonly channelCount: number;
+    readonly consumedSpan: number;
+  },
+  RawRasterFailure
+> => {
+  if (!Number.isSafeInteger(sourceLength) || sourceLength < 0)
+    return invalid("Source byte length must be a nonnegative safe integer.");
   if (
     !positiveInteger(allowance.maxSourceBytes) ||
     !positiveInteger(allowance.maxOutputBytes)
@@ -105,8 +111,8 @@ export const decodeRawRaster = (
   const parsed = parseLayout(input);
   if (!parsed.ok) return parsed;
   const { layout, channelCount } = parsed.value;
-  const { offset, length, width, height, stride, format, rowOrder } = layout;
-  if (offset > source.byteLength || length > source.byteLength - offset)
+  const { offset, length, width, height, stride } = layout;
+  if (offset > sourceLength || length > sourceLength - offset)
     return invalid("Selected range exceeds source bytes.");
   // Divide before multiplying so hostile dimensions cannot overflow admission.
   if (
@@ -125,6 +131,22 @@ export const decodeRawRaster = (
     return invalid(
       "Selected range cannot contain the requested raster layout.",
     );
+  return ok({ layout, channelCount, consumedSpan });
+};
+
+/** Experimental pure decoder. Selected ranges are relative to the supplied view.
+ * RGBA8 has straight alpha; no premultiplication or colour-space inference.
+ * The final row need not include padding. Source bytes are never modified.
+ */
+export const decodeRawRaster = (
+  source: Uint8Array,
+  input: unknown,
+  allowance: RawRasterAllowance,
+): Result<RawRasterPixels, RawRasterFailure> => {
+  const admitted = admitRawRaster(source.byteLength, input, allowance);
+  if (!admitted.ok) return admitted;
+  const { layout, channelCount, consumedSpan } = admitted.value;
+  const { offset, width, height, stride, format, rowOrder } = layout;
   const rgba = new Uint8Array(width * height * 4);
   const bgr = format === "bgr888" || format === "bgra8888";
   for (let y = 0; y < height; y++) {

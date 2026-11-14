@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { decodeRawRaster } from "./rawRaster.js";
+import { decodeRawRaster, admitRawRaster } from "./rawRaster.js";
 
 const layout = {
   offset: 0,
@@ -123,4 +123,21 @@ it("distinguishes malformed layout from capacity exhaustion", () => {
   });
   expect(malformed.ok ? undefined : malformed.error.kind).toBe("malformed");
   expect(capacity.ok ? undefined : capacity.error.kind).toBe("capacity");
+});
+
+it("admits a bounded selection in a large file without allocating file or pixels", () => {
+  const result = admitRawRaster(
+    2 ** 40,
+    { ...layout, offset: 2 ** 39 },
+    budget,
+  );
+  expect(result.ok).toBe(true);
+  if (result.ok)
+    expect(result.value).toEqual({
+      layout: { ...layout, offset: 2 ** 39 },
+      channelCount: 3,
+      consumedSpan: 3,
+    });
+  expect(admitRawRaster(NaN, layout, budget).ok).toBe(false);
+  expect(admitRawRaster(-1, layout, budget).ok).toBe(false);
 });
