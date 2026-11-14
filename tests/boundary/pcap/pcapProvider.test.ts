@@ -417,7 +417,7 @@ it.each([
   },
 );
 
-it("reports a non-capture file as unsupported", async () => {
+it("keeps the failing stage unknown when a limited capture tool rejects the file", async () => {
   const { provider, root } = await providerWith({ failCapinfos: true });
   const failPath = join(root, "fail.pcap");
   await writeFile(failPath, "not a capture file");
@@ -427,9 +427,13 @@ it("reports a non-capture file as unsupported", async () => {
   });
   expect(result.ok).toBe(false);
   if (result.ok) return;
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "unsupported_target",
-  });
+  // Linux always runs the tool under prlimit, so a nonzero exit cannot be
+  // attributed to the tool or the limiter; the diagnostic is preserved.
+  expect(result.error._tag).toBe("AnalysisProtocolError");
+  expect(result.error.message).toContain(
+    "whether the limiter or selected tool failed is unknown",
+  );
+  expect(result.error.message).toContain("The file is not a capture file");
 });
 
 it("reports relative configuration and missing capinfos as capability gaps", async () => {
@@ -939,7 +943,7 @@ it.each([false, true])(
       if (failCapinfos)
         expect(projectAnalysisError(result.error)).toMatchObject({
           details: {
-            diagnostics: { primary_error: { code: "unsupported_target" } },
+            diagnostics: { primary_error: { code: "unreadable_output" } },
           },
         });
       else
