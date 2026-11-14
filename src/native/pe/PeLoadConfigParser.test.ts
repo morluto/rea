@@ -1,5 +1,5 @@
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
@@ -14,6 +14,39 @@ import {
   peManySectionsImage,
   type PeLoadConfigFixtureOptions,
 } from "./PeLoadConfig.fixture.js";
+
+/**
+ * Section table reads left for PE images read while this is set. The read
+ * past the last one throws, so walking every section per lookup fails at once
+ * instead of running for seconds. Null leaves the tables unwrapped.
+ */
+const sectionTable = vi.hoisted(() => ({ readsLeft: null as number | null }));
+vi.mock("../metadata/PeImage.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../metadata/PeImage.js")>();
+  return {
+    ...actual,
+    readPeImage: (...args: Parameters<typeof actual.readPeImage>) => {
+      const image = actual.readPeImage(...args);
+      if (sectionTable.readsLeft === null) return image;
+      const sections = new Proxy(image.sections, {
+        get(target, key, receiver) {
+          if (
+            sectionTable.readsLeft !== null &&
+            typeof key === "string" &&
+            /^\d+$/u.test(key)
+          ) {
+            if (sectionTable.readsLeft === 0)
+              throw new Error("PE section table read allowance exhausted");
+            sectionTable.readsLeft -= 1;
+          }
+          return Reflect.get(target, key, receiver) as unknown;
+        },
+      });
+      return { ...image, sections };
+    },
+  };
+});
 
 const parse = (
   options: PeLoadConfigFixtureOptions = {},
@@ -182,7 +215,9 @@ it("retains a callback in virtual-only section storage with unknown file offset"
 
 it("resolves callback sections in bounded time for the largest section table", async () => {
   const bytes = peManySectionsImage(65535, 4096);
-  const started = performance.now();
+  // Indexing names reads each of the 65,535 sections twice. Scanning
+  // every section for each callback reads them 4,096 more times.
+  sectionTable.readsLeft = 4 * 65535;
   const report = await parsePeLoadConfig(
     bytes,
     { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
@@ -190,9 +225,9 @@ it("resolves callback sections in bounded time for the largest section table", a
       path: "/sample.exe",
       max_callbacks: 4096,
     }),
-  );
-  // A per-callback scan of every section takes several seconds here.
-  expect(performance.now() - started).toBeLessThan(1_000);
+  ).finally(() => {
+    sectionTable.readsLeft = null;
+  });
   expect(report.tls?.callbacks).toHaveLength(4096);
   expect(report.tls?.callbacks.every(({ section }) => section === ".v")).toBe(
     true,

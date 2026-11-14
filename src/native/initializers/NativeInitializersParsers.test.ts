@@ -26,6 +26,42 @@ vi.mock("../metadata/BinaryContainer.js", async (importOriginal) => {
     },
   };
 });
+/**
+ * Section table reads left for ELF directories read while this is set. The
+ * read past the last one throws, so walking every header per lookup fails at
+ * once instead of running for minutes. Null leaves the tables unwrapped.
+ */
+const sectionTable = vi.hoisted(() => ({ readsLeft: null as number | null }));
+vi.mock("../metadata/NativeSectionDirectory.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../metadata/NativeSectionDirectory.js")
+    >();
+  return {
+    ...actual,
+    readElfDirectoryFromBuffer: (
+      ...args: Parameters<typeof actual.readElfDirectoryFromBuffer>
+    ) => {
+      const directory = actual.readElfDirectoryFromBuffer(...args);
+      if (sectionTable.readsLeft === null) return directory;
+      const sections = new Proxy(directory.sections, {
+        get(target, key, receiver) {
+          if (
+            sectionTable.readsLeft !== null &&
+            typeof key === "string" &&
+            /^\d+$/u.test(key)
+          ) {
+            if (sectionTable.readsLeft === 0)
+              throw new Error("ELF section table read allowance exhausted");
+            sectionTable.readsLeft -= 1;
+          }
+          return Reflect.get(target, key, receiver) as unknown;
+        },
+      });
+      return { ...directory, sections };
+    },
+  };
+});
 import {
   elf32RelativeInitializers,
   elf64PieInitializers,
@@ -538,9 +574,7 @@ describe("ELF incomplete inputs", () => {
     const bytes = elf64PieInitializers();
     // DT_INIT_ARRAYSZ is the fourth dynamic entry; 2^50 slots is still a safe integer.
     bytes.writeBigUInt64LE(8n << 50n, 0x300 + 3 * 16 + 8);
-    const started = performance.now();
     const report = await read(bytes);
-    expect(performance.now() - started).toBeLessThan(10_000);
     expect(report.status).toBe("incomplete");
     expect(report.coverage).toMatchObject({
       status: "incomplete",
@@ -950,10 +984,12 @@ describe("ELF section lookups", () => {
       bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 40);
       bytes.writeBigUInt64LE(BigInt(base.length), 0x300 + 2 * 16 + 8);
       bytes.writeBigUInt64LE(BigInt(slots * 8), 0x300 + 3 * 16 + 8);
-      const started = performance.now();
-      const report = await read(bytes);
-      // A per-lookup header walk is about 4e9 comparisons here; the index is a few hundred ms.
-      expect(performance.now() - started).toBeLessThan(10_000);
+      // Reading the image reads each of the 65,535 headers six times. Walking
+      // them to name each slot's target reads them 65,536 more times.
+      sectionTable.readsLeft = 16 * 0xffff;
+      const report = await read(bytes).finally(() => {
+        sectionTable.readsLeft = null;
+      });
       expect(report.coverage.examined_entries).toBe(slots);
       const slot = report.entries.find((entry) => entry.kind === "init_array");
       expect(slot).toMatchObject({
