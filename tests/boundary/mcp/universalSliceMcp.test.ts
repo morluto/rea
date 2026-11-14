@@ -373,19 +373,23 @@ sliceTest(
             architecture,
           },
         }),
-      ).details.issues[0]?.message;
-    expect(await refusal("duplicate-arm64", [0, 0], "arm64")).toBe(
-      "Universal Mach-O holds several arm64 slices (arm64 (subtype 0x0), arm64 (subtype 0x0)); no slice was selected.",
-    );
+      ).details.issues[0];
+    // The refusal is an input issue on architecture; only its offered
+    // selector, when there is one, is asserted from the message.
+    const duplicate = await refusal("duplicate-arm64", [0, 0], "arm64");
+    expect(duplicate).toMatchObject({ path: ["architecture"] });
+    expect(duplicate?.message).not.toMatch(/Select architecture/u);
     // The refusal names the value that does select one slice.
-    expect(
-      await refusal("duplicate-arm64-and-arm64e", [0, 0, 2], "arm64"),
-    ).toBe(
-      "Universal Mach-O holds several arm64 slices (arm64 (subtype 0x0), arm64 (subtype 0x0), arm64 (subtype 0x2)); no slice was selected. Select architecture arm64e.",
+    const offered = await refusal(
+      "duplicate-arm64-and-arm64e",
+      [0, 0, 2],
+      "arm64",
     );
-    expect(await refusal("arm64-only", [0, 1], "arm64e")).toBe(
-      "Universal Mach-O holds arm64 (subtype 0x0), arm64 (subtype 0x1); no slice has the arm64e subtype.",
-    );
+    expect(offered).toMatchObject({ path: ["architecture"] });
+    expect(offered?.message).toMatch(/Select architecture arm64e\.$/u);
+    const missing = await refusal("arm64-only", [0, 1], "arm64e");
+    expect(missing).toMatchObject({ path: ["architecture"] });
+    expect(missing?.message).not.toMatch(/Select architecture/u);
   },
 );
 
