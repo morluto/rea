@@ -69,7 +69,7 @@ export const parseIdaInput = (
         invalidRegexPatternError(
           operation,
           cause instanceof Error ? cause.message : String(cause),
-          cause,
+          { cause },
         ),
       );
     }
