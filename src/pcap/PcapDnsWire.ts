@@ -210,6 +210,7 @@ const decodeRecords = (
   const addressesByIdentity = addressInventory(observed);
   const records: RecordFact[] = [];
   let extendedRcode = 0;
+  let optRecords = 0;
   for (let section = 0; section < counts.length; section += 1) {
     for (let index = 0; index < counts[section]!; index += 1) {
       const ownerResult = decodeName(message, at);
@@ -227,6 +228,11 @@ const decodeRecords = (
       // EDNS: an OPT pseudo-RR in the additional section carries the
       // upper eight bits of the extended RCODE in its TTL field.
       if (section === 2 && type === 41 && owner.end + 8 <= message.length) {
+        // RFC 6891 6.1.1: more than one OPT record is a format error, so no
+        // later record may choose or clear the extended RCODE.
+        optRecords += 1;
+        if (optRecords > 1)
+          return invalidWire("DNS message carries more than one OPT record");
         extendedRcode = message.readUInt32BE(owner.end + 4) >>> 24;
       }
       let target: string | null = null;

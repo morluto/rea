@@ -120,6 +120,42 @@ it("does not attribute addresses when EDNS OPT extended RCODE is nonzero (BADVER
   });
 });
 
+it("does not let a second OPT record clear an earlier extended RCODE", () => {
+  const query = label("612e62", "6578616d706c65");
+  const answer = rr(query, 1, address);
+  const opt = (extended: number) => {
+    const ttl = Buffer.alloc(4);
+    ttl.writeUInt32BE(extended << 24);
+    return Buffer.concat([
+      Buffer.from([0]),
+      word(41),
+      word(4096),
+      ttl,
+      word(0),
+    ]);
+  };
+  const bytes = Buffer.concat([
+    word(1),
+    word(0x8180), // QR=1, RD=1, header RCODE=0
+    word(1),
+    word(1),
+    word(0),
+    word(2),
+    query,
+    word(1),
+    word(1),
+    answer,
+    opt(1),
+    opt(0),
+  ]);
+  // RFC 6891 makes more than one OPT record a format error.
+  expect(parse(bytes)).toMatchObject({
+    assigned: [],
+    unattributed: ["192.0.2.9"],
+    incomplete: true,
+  });
+});
+
 it("preserves both nonzero RCODE rejection and TC truncation reasons", () => {
   const query = label("612e62", "6578616d706c65");
   const answer = rr(query, 1, address);
