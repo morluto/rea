@@ -37,8 +37,8 @@ export interface DecodedRegion {
 export interface DecodedRegions {
   readonly metadata: ArtifactFormatMetadata;
   readonly regions: readonly DecodedRegion[];
-  /** Omitted when every byte was examined and no limitation applies. */
-  readonly coverage?: ArtifactReaderTraversal;
+  /** What the decoder examined, including complete coverage. */
+  readonly coverage: ArtifactReaderTraversal;
   readonly containerIntegrity?: ArtifactContainerIntegrityPair;
 }
 

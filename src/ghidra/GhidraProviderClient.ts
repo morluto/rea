@@ -75,6 +75,8 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   reattributedResourceConstraint,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
@@ -120,6 +122,7 @@ import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher, GhidraLaunchError } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
+import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import {
   ghidraHealthLimitations,
@@ -130,6 +133,8 @@ import {
   ghidraEmptyExternalOutgoingLimitation,
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
+  ghidraFunctionSeedRecovery,
+  ghidraNotInProcedureLimitation,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
@@ -157,6 +162,7 @@ import {
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import { ghidraDolLanguage, ghidraDolSectionFile } from "./GhidraDolProfile.js";
+import { invalidRegexPatternError } from "../process/RegexMatcher.js";
 
 /** Production seam for exercising provider projection without a real process. */
 export type GhidraProviderClientFactory = (
@@ -288,6 +294,25 @@ const emptyReferenceCaveat = (
     ];
   }
   return [];
+};
+
+/**
+ * Caveat for a containing-procedure lookup in mapped memory that found no
+ * function: the function inventory lacks the address, which does not establish
+ * that its bytes are not code. An outside-segments answer has no such recovery.
+ */
+const containingProcedureAbsenceCaveat = (
+  operation: AnalysisOperation,
+  normalized: JsonValue,
+  source: GhidraSessionSource,
+): readonly string[] => {
+  if (operation !== "resolve_containing_procedure") return [];
+  const resolution = parseContainingProcedureResolution(normalized);
+  return resolution.ok &&
+    !resolution.value.found &&
+    resolution.value.reason === "not_in_procedure"
+    ? [ghidraNotInProcedureLimitation(source)]
+    : [];
 };
 
 /** Build one AnalysisClient for an admitted Ghidra target and profile. */
@@ -590,8 +615,7 @@ export const createGhidraProviderClient = (input: {
         : [];
   if (input.signal.aborted)
     return err(
-      new AnalysisCancelledError("create_analysis_client", {
-        cause: input.signal.reason,
+      cancelledBy("create_analysis_client", input.signal, {
         diagnostics: ghidraInstallationDiagnostics(installation),
       }),
     );
@@ -1078,17 +1102,21 @@ export const createGhidraProviderClient = (input: {
       if (!result.ok) return result;
       let { value: normalized, ...observation } = result.value;
       let executionMetadata: GhidraExecutionMetadata = observation;
-      const unresolvedReferences = isGhidraFunctionOperation(operation)
+      const absenceCaveats = isGhidraFunctionOperation(operation)
         ? emptyReferenceCaveat(operation, normalized)
-        : [];
-      if (unresolvedReferences.length > 0) {
-        // An empty list is the provider's observation, not proof: distinguish
-        // "no references were resolved" from "there are no references".
+        : containingProcedureAbsenceCaveat(
+            operation,
+            normalized,
+            projection.source,
+          );
+      if (absenceCaveats.length > 0) {
+        // An absent answer is the provider's observation, not proof: distinguish
+        // "this analysis resolved none" from "there are none".
         executionMetadata = {
           ...executionMetadata,
           limitations: [
             ...(executionMetadata.limitations ?? []),
-            ...unresolvedReferences,
+            ...absenceCaveats,
           ],
         };
       }
@@ -1472,7 +1500,8 @@ const projectPrimarySessionError = (
           "Use list_procedures or search_procedures (CLI: `rea search <path> <pattern> --kind procedures --provider ghidra --json`) to inspect the current Ghidra inventory and choose an observed name or address. An absent entry does not prove the function is absent from the artifact." +
           (source === "existing-project"
             ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME; that analysis will not include the selected project's annotations or other edits."
-            : "");
+            : "") +
+          ` ${ghidraFunctionSeedRecovery(source)}`;
     }
     return new AnalysisInputError(
       operation,
@@ -1497,14 +1526,18 @@ const projectPrimarySessionError = (
   if (
     failure.kind === "cancelled" ||
     (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
-  )
-    return new AnalysisCancelledError(operation, {
-      ...context,
-      cause:
+  ) {
+    const { cause: _failure, ...cancellationContext } = context;
+    return cancelledBy(
+      operation,
+      carriedReason(
         failure.cancellation === undefined
           ? failure
           : failure.cancellation.reason,
-    });
+      ),
+      cancellationContext,
+    );
+  }
   if (failure.kind === "remote" && failure.remoteCode === "decompile_failed")
     return new ProviderAdapterError("ghidra", operation, {
       ...context,
@@ -1589,22 +1622,11 @@ const projectPrimarySessionError = (
     failure.kind === "remote" &&
     failure.remoteCode === "invalid_regex_pattern"
   )
-    return new AnalysisInputError(
-      operation,
-      {
-        ...context,
-        userMessage: failure.message,
-        remediationAction:
-          "Correct the pattern using the reported Ghidra regex syntax error, or select mode literal to search for the text literally, then retry.",
-      },
-      [
-        {
-          path: ["pattern"],
-          reason: "invalid_format",
-          message: failure.message,
-        },
-      ],
-    );
+    // The bridge message already names the pattern and Java's syntax error.
+    return invalidRegexPatternError(operation, failure.message, {
+      ...context,
+      userMessage: failure.message,
+    });
   if (failure.kind === "remote" && isGhidraInputFailureCode(failure.remoteCode))
     return new AnalysisInputError(operation, context, [
       { path: [], reason: "invalid_value", message: failure.message },

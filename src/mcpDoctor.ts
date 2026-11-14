@@ -1,4 +1,5 @@
 import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
+import { OwnedMcpClient } from "./process/OwnedMcpClient.js";
 import { Help } from "incur";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
@@ -135,7 +136,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     },
     stderr.append,
   );
-  const client = new Client({ name: "rea-mcp-doctor", version: "1" });
+  const client = new OwnedMcpClient({ name: "rea-mcp-doctor", version: "1" });
   let result: ProductionMcpDoctorResult;
   let cleanupFailure: { readonly cause: unknown } | undefined;
   try {
