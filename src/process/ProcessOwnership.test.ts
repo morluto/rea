@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  cleanupFailureFollowedSignal,
   cleanupOwnedProcessGroup,
   type ProcessIdentityObservation,
   type ProcessOwnershipHost,
   type ProcessTableEntry,
 } from "./ProcessOwnership.js";
+import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
 import { parseProcessEnvironment } from "./ProcessOwnershipObservation.js";
 import { selectCapturedProcessGroupIds } from "./ProcessOwnershipProcessTree.js";
 import { matchesOwnedProcessCommand } from "./ProcessCommandIdentity.js";
@@ -661,6 +663,45 @@ describe("rooted process-group cleanup", () => {
     expect(result).toMatchObject({ cleaned: false, signaled: true });
     if (result.cleaned) throw new Error("Expected failed verification");
     expect(result.reason).toContain("post-signal inspection unavailable");
+  });
+
+  it("marks an inspection failure thrown after a signal so callers keep the intervention", async () => {
+    const fixture = host({ 100: { REA_PROCESS_RUN_ID: "run-token" } });
+    let sent = false;
+    const cancelled = new ProcessOwnershipInspectionCancelled("stopped");
+    const attempt = cleanupOwnedProcessGroup(
+      { ...ownership, sweepTokenOwnedProcesses: true, captureBaseline: [] },
+      {
+        ...fixture.adapter,
+        listProcesses: async () => {
+          if (sent) throw cancelled;
+          return fixture.adapter.listProcesses();
+        },
+        signalGroup: (group, signal) => {
+          fixture.adapter.signalGroup(group, signal);
+          sent = true;
+        },
+      },
+    );
+    await expect(attempt).rejects.toBe(cancelled);
+    expect(fixture.signalGroup.mock.calls).toEqual([[100, "SIGKILL"]]);
+    expect(cleanupFailureFollowedSignal(cancelled)).toBe(true);
+  });
+
+  it("does not mark an inspection failure thrown before any signal", async () => {
+    const cancelled = new ProcessOwnershipInspectionCancelled("stopped");
+    const signalGroup = vi.fn();
+    await expect(
+      cleanupOwnedProcessGroup(ownership, {
+        listProcesses: async () => {
+          throw cancelled;
+        },
+        environment: async () => ({}),
+        signalGroup,
+      }),
+    ).rejects.toBe(cancelled);
+    expect(signalGroup).not.toHaveBeenCalled();
+    expect(cleanupFailureFollowedSignal(cancelled)).toBe(false);
   });
 
   it("validates and signals rooted descendant groups once, root first", async () => {

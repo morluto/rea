@@ -384,9 +384,32 @@ const implicitEvidenceOwners = new WeakMap<
   ProcessOwnershipEvidenceOwner
 >();
 
+// Failures thrown after this module signaled an owned group, so callers can
+// keep the observed intervention without changing the failure's identity.
+const failuresAfterSignal = new WeakSet<object>();
+
+/** Whether a thrown cleanup failure followed an observed owned-group signal. */
+export const cleanupFailureFollowedSignal = (cause: unknown): boolean =>
+  typeof cause === "object" && cause !== null && failuresAfterSignal.has(cause);
+
 export const cleanupOwnedProcessGroup = async (
   ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost = systemHost,
+): Promise<ProcessCleanupResult> => {
+  const attempt = { signaled: false };
+  try {
+    return await cleanupOwnedProcessGroupAttempt(ownership, host, attempt);
+  } catch (cause: unknown) {
+    if (attempt.signaled && typeof cause === "object" && cause !== null)
+      failuresAfterSignal.add(cause);
+    throw cause;
+  }
+};
+
+const cleanupOwnedProcessGroupAttempt = async (
+  ownership: OwnedProcessGroup,
+  host: ProcessOwnershipHost,
+  attempt: { signaled: boolean },
 ): Promise<ProcessCleanupResult> => {
   if (ownership.evidenceOwner === undefined) {
     let evidenceOwner = implicitEvidenceOwners.get(ownership);
@@ -410,14 +433,13 @@ export const cleanupOwnedProcessGroup = async (
     exitSettlement,
   );
   if ("cleaned" in plan) return plan;
-  let signaled = false;
   // A later verification or signal failure cannot erase earlier intervention.
   const finish = (
     result: ProcessCleanupResult,
     unverified: readonly OwnershipSweepUnverifiedProcess[] = plan.unverified,
   ): ProcessCleanupResult =>
     mergeUnverifiedObservations(
-      signaled ? { ...result, signaled: true } : result,
+      attempt.signaled ? { ...result, signaled: true } : result,
       unverified,
     );
   const pendingGroups = [...plan.signalOrder];
@@ -455,7 +477,7 @@ export const cleanupOwnedProcessGroup = async (
     if (revalidation.empty) continue;
     try {
       host.signalGroup(processGroupId, "SIGKILL");
-      signaled = true;
+      attempt.signaled = true;
     } catch (cause: unknown) {
       const code =
         cause instanceof Error && "code" in cause ? cause.code : undefined;
@@ -510,12 +532,12 @@ export const cleanupOwnedProcessGroup = async (
       });
     }
     if (!verification.cleaned) return finish(verification);
-    return finish({ cleaned: true, signaled }, [
+    return finish({ cleaned: true, signaled: attempt.signaled }, [
       ...plan.unverified,
       ...(verification.unverified ?? []),
     ]);
   }
-  return finish({ cleaned: true, signaled });
+  return finish({ cleaned: true, signaled: attempt.signaled });
 };
 
 /** Verify that no live process still carries an owned capture run token. */

@@ -31,6 +31,7 @@ import {
 } from "./ProcessCaptureRead.js";
 import { classifyFilesystemEffects } from "./ProcessFilesystemEffects.js";
 import {
+  cleanupFailureFollowedSignal,
   cleanupOwnedProcessGroup,
   type OwnedProcessGroup,
   type ProcessOwnershipBaseline,
@@ -1339,8 +1340,11 @@ class ProcessCaptureResourceOwner {
       this.#ownedProcessGroup = outcome.report;
       this.#recordSignaled(outcome.signaled);
     } catch (cause: unknown) {
-      // A thrown cleanup attempt may have signaled before it failed.
-      this.#recordSignaled(undefined);
+      // A thrown attempt keeps a signal it is known to have sent; otherwise
+      // whether it signaled before failing is unknown.
+      this.#recordSignaled(
+        cleanupFailureFollowedSignal(cause) ? true : undefined,
+      );
       const normalized = normalizeCaptureFailure(cause);
       if (
         normalized instanceof ProcessCaptureInspectionFailure &&
