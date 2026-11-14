@@ -63,20 +63,29 @@ const NUMERIC_SPELLINGS = [
   "99999999999999999999",
 ] as const;
 
+/** The schema a field validates after optional, default, pipe and similar wrappers. */
+const innermost = (contract: z.ZodType): unknown => {
+  let current: unknown = contract;
+  for (
+    let depth = 0;
+    depth < 8 &&
+    !(current instanceof z.ZodString) &&
+    !(current instanceof z.ZodNumber);
+    depth += 1
+  ) {
+    const def = (current as { _zod?: { def?: Record<string, unknown> } })?._zod
+      ?.def;
+    const inner = def?.["in"] ?? def?.["innerType"] ?? def?.["schema"];
+    if (inner === undefined) break;
+    current = inner;
+  }
+  return current;
+};
+
 /** Probes that exercise refusals of one contract field. */
 const probesFor = (contract: z.ZodType): readonly Probe[] => {
   const probes: Probe[] = [];
-  let unwrapped: unknown = contract;
-  for (
-    let depth = 0;
-    depth < 8 && !(unwrapped instanceof z.ZodString);
-    depth += 1
-  ) {
-    const def = (unwrapped as { _zod?: { def?: Record<string, unknown> } })
-      ?._zod?.def;
-    unwrapped = def?.["in"] ?? def?.["innerType"] ?? def?.["schema"];
-    if (unwrapped === undefined) break;
-  }
+  const unwrapped = innermost(contract);
   const text = admits(contract, "x")
     ? "x"
     : admits(contract, ABSOLUTE)
@@ -97,13 +106,27 @@ const probesFor = (contract: z.ZodType): readonly Probe[] => {
     if (text === ABSOLUTE && refusesAsRelativeHostPath(contract))
       probes.push({ id: "relative", value: RELATIVE, expect: "resolved" });
   }
-  if (admits(contract, 0) || admits(contract, 1))
-    for (const value of NUMERIC_SPELLINGS)
+  // Numeric fields are identified by type, not by admitting 0 or 1, so a
+  // range such as 256..65536 is probed too, including just past each bound.
+  const numeric = unwrapped instanceof z.ZodNumber;
+  if (numeric || admits(contract, 0) || admits(contract, 1)) {
+    const minValue = numeric ? unwrapped.minValue : null;
+    const maxValue = numeric ? unwrapped.maxValue : null;
+    const bounds = [
+      ...(minValue === null || !Number.isFinite(minValue)
+        ? []
+        : [String(minValue - 1)]),
+      ...(maxValue === null || !Number.isFinite(maxValue)
+        ? []
+        : [String(maxValue + 1)]),
+    ].filter((value) => !admits(contract, Number(value)));
+    for (const value of [...NUMERIC_SPELLINGS, ...bounds])
       probes.push({
         id: `numeric:${JSON.stringify(value)}`,
         value,
         expect: "refused",
       });
+  }
   return probes;
 };
 
@@ -220,6 +243,19 @@ describe("CLI and contract field admission parity", () => {
   it("probes constrained strings without needing a valid sample", () => {
     const probes = probesFor(z.string().regex(/^[a-f0-9]{64}$/u));
     expect(probes.map(({ id }) => id)).toEqual(["empty", "nul"]);
+  });
+  it("probes numeric fields whose range admits neither 0 nor 1", () => {
+    const ids = probesFor(z.number().int().min(256).max(65536).optional()).map(
+      ({ id }) => id,
+    );
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        'numeric:"-1"',
+        'numeric:"99999999999999999999"',
+        'numeric:"255"',
+        'numeric:"65537"',
+      ]),
+    );
   });
   it("compares union fields shared by every operation", () => {
     const limit = z.number().int().positive();
