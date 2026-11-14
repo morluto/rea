@@ -116,16 +116,40 @@ const fieldHoldsFileHandle = (sourceCode, member) => {
   )
     return false;
   const property = member.property;
+  let isStatic = false;
   for (let node = member.parent; node; node = node.parent) {
+    if (
+      (node.type === "MethodDefinition" ||
+        node.type === "PropertyDefinition") &&
+      node.parent?.type === "ClassBody"
+    )
+      isStatic = node.static === true;
     if (node.type !== "ClassBody") continue;
-    return node.body.some(
-      (element) =>
+    return node.body.some((element) => {
+      if (
+        !isStatic &&
+        element.type === "MethodDefinition" &&
+        element.kind === "constructor"
+      )
+        return element.value.params.some((parameter) => {
+          if (parameter.type !== "TSParameterProperty") return false;
+          const value = parameter.parameter;
+          const id = value.type === "AssignmentPattern" ? value.left : value;
+          return (
+            id.type === "Identifier" &&
+            id.name === property.name &&
+            namesFileHandle(sourceCode, id.typeAnnotation)
+          );
+        });
+      return (
         element.type === "PropertyDefinition" &&
+        (element.static === true) === isStatic &&
         element.key.type === property.type &&
         element.key.name === property.name &&
         (namesFileHandle(sourceCode, element.typeAnnotation) ||
-          opensFileHandle(sourceCode, element.value)),
-    );
+          opensFileHandle(sourceCode, element.value))
+      );
+    });
   }
   return false;
 };

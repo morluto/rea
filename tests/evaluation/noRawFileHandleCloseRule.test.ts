@@ -16,9 +16,18 @@ new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
       'const open = async (p: string) => ({ close() {} }); const h = await open("x"); h.close();',
       'import type { FileHandle } from "./local.js"; const f = (h: FileHandle) => h.close();',
       "class C { readonly x: { close(): void }; d() { this.x.close(); } }",
+      'import type { FileHandle } from "node:fs/promises"; class C { static h: FileHandle; h = { close() {} }; d() { this.h.close(); } }',
       'import { close } from "./local.js"; close(1);',
     ],
     invalid: [
+      {
+        code: 'import type { FileHandle } from "node:fs/promises"; class C { constructor(private h: FileHandle) {} d() { this.h.close(); } }',
+        errors: [{ messageId: "raw" }],
+      },
+      {
+        code: 'import type { FileHandle } from "node:fs/promises"; class C { static h: FileHandle; h = { close() {} }; static d() { this.h.close(); } }',
+        errors: [{ messageId: "raw" }],
+      },
       {
         code: 'import { open } from "node:fs/promises"; const h = await open("x"); await h.close();',
         errors: [{ messageId: "raw" }],
