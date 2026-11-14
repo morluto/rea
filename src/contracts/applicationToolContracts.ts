@@ -1,4 +1,5 @@
 import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "./playwrightTraceToolContracts.js";
+import { OTLP_TRACE_TOOL_CONTRACTS } from "./otlpTraceToolContracts.js";
 import { API_CONTRACT_TOOL_CONTRACTS } from "./apiContractToolContracts.js";
 import { NTFS_JOURNAL_TOOL_CONTRACTS } from "./ntfsJournalToolContracts.js";
 import { applicationInventoryProjectionInputSchema } from "../domain/mobileApplicationGraphProjection.js";
@@ -98,6 +99,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
   ...API_CONTRACT_TOOL_CONTRACTS,
   ...NTFS_JOURNAL_TOOL_CONTRACTS,
   ...PLAYWRIGHT_TRACE_TOOL_CONTRACTS,
+  ...OTLP_TRACE_TOOL_CONTRACTS,
   {
     name: "search_guidance",
     ...toolContractMetadata("search_guidance"),

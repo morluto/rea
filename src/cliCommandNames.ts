@@ -73,6 +73,7 @@ export const CLI_COMMANDS = Object.freeze({
   inspectApiContract: "inspect-api-contract",
   inspectNtfsJournal: "inspect-ntfs-journal",
   inspectPlaywrightTrace: "inspect-playwright-trace",
+  inspectOtlpTrace: "inspect-otlp-trace",
   inspectGpuCodeObjects: "inspect-gpu-code-objects",
   inspectRustBinary: "inspect-rust-binary",
   inspectPythonPyc: "inspect-python-pyc",

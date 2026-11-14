@@ -1,3 +1,4 @@
+import { otlpTraceSummarySchema } from "./otlpTraceView.js";
 import {
   webSourceLocationViewRequestSchema,
   webSourceLocationContextSchema,
@@ -403,6 +404,7 @@ const viewResultBase = {
     "trace_native_values",
     "match_native_functions",
     "procedure_references",
+    "inspect_otlp_trace",
   ]),
   parent_digest: digestSchema,
   view_digest: digestSchema,
@@ -545,6 +547,12 @@ export const nativeExportsSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_native_exports"),
   summary: nativeExportsSummarySchema,
+});
+
+export const otlpTraceSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_otlp_trace"),
+  summary: otlpTraceSummarySchema,
 });
 
 export const devicetreeSummaryViewResultSchema = z.strictObject({
@@ -1372,6 +1380,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeValueTraceSummaryViewResultSchema,
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
+    otlpTraceSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,

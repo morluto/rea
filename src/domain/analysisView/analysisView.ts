@@ -1,3 +1,4 @@
+import { projectOtlpTraceView } from "./otlpTraceView.js";
 import { projectWebSourceLocationView } from "./webSourceLocationView.js";
 import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
@@ -270,6 +271,7 @@ const retain = (
 ): readonly [string, RetainedViewProjector] => [operation, project];
 
 const retainedViewProjectors = new Map<string, RetainedViewProjector>([
+  retain("inspect_otlp_trace", projectOtlpTraceView),
   retain("procedure_pseudo_code", projectProcedurePseudocodeView),
   retain("inspect_native_instruction", projectNativeInstructionReferencesView),
   retain("trace_feature", projectNativeFeatureTraceView),

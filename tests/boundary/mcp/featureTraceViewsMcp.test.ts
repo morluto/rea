@@ -537,10 +537,47 @@ it("commits no session facts when cancelled after the trace completes", async ()
       view,
       cancelled.signal,
     );
-    // Same contract as compare_source_to_bundle: a cancelled request leaves the session unchanged.
+    // A derived workflow references sources it has not committed yet, so a
+    // cancelled request leaves the session unchanged.
     expect(parseMcpToolError(delivered)).toMatchObject({
       error: { code: "cancelled" },
     });
     expect(session.exportEvidenceBundle()).toEqual(before);
   }
+});
+
+it("retains a completed standalone import when cancelled after it", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("No deep provider");
+  });
+  const traceExecution = traceApplicationFeatureEvidence(
+    JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+  );
+  if (!traceExecution.ok) throw traceExecution.error;
+  const artifactResources = new ArtifactResourceScope();
+  onTestFinished(() => artifactResources.close());
+  const cancelled = new AbortController();
+  cancelled.abort(new Error("client cancelled"));
+  // The OTLP import reads one export and references no other record, so its
+  // completed parent is self-contained and must survive the late cancellation.
+  const delivered = await deliverApplicationEvidence(
+    { delivery: createToolResultDelivery(undefined) },
+    {
+      artifactResources,
+      logger: silentLogger,
+      evidenceById: (id) => session.evidenceById(id),
+      recordEvidence: (evidence) => session.recordEvidence(evidence),
+      recordEvidenceWithUnknown: undefined,
+    },
+    toolContract("inspect_otlp_trace"),
+    { evidence: traceExecution.value.evidence, sources: [] },
+    undefined,
+    cancelled.signal,
+  );
+  const error = parseMcpToolError(delivered);
+  expect(error).toMatchObject({ error: { code: "cancelled" } });
+  const reference = z
+    .object({ kind: z.literal("retained-evidence"), evidence_id: z.string() })
+    .parse(error.error.details?.partial_observation);
+  expect(session.evidenceById(reference.evidence_id)).toBeDefined();
 });
