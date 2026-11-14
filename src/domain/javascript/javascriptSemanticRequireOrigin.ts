@@ -12,6 +12,7 @@ import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
+import type { RequireResolveSearchPaths } from "./javascriptStaticAnalysisTypes.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
@@ -36,6 +37,7 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import {
+  staticFileExpressionPath,
   staticSourceRelativeUrlPath,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
@@ -723,6 +725,55 @@ export interface JavaScriptRequireCallFact {
   /** A createRequire filename relative to the current source directory, when proven. */
   readonly sourceRelativePath?: string;
 }
+
+/** Valid path arrays can leave disk lookup unknown while preserving package scope. */
+export const requireResolveSearchBase = (
+  { operation, arguments: callArguments }: JavaScriptRequireCallFact,
+  bindings: JavaScriptSemanticAnalysisState,
+): "loader" | RequireResolveSearchPaths => {
+  const arguments_ = callArguments ?? [];
+  if (operation !== "resolve" || arguments_.length < 2) return "loader";
+  if (arguments_.length !== 2) return "unknown";
+  const options = t.isExpression(arguments_[1]) ? arguments_[1] : undefined;
+  if (
+    t.isNullLiteral(options) ||
+    (options !== undefined &&
+      isUnmodifiedGlobalReference(options, bindings, "undefined"))
+  )
+    return "loader";
+  if (options === undefined || !t.isObjectExpression(options)) return "unknown";
+  if (options.properties.length === 0) return "loader";
+  if (options.properties.length !== 1) return "unknown";
+  const property = options.properties[0];
+  if (!t.isObjectProperty(property)) return "unknown";
+  if (semanticStaticPropertyKey(property.key, property.computed) !== "paths")
+    return "unknown";
+  const value = t.isExpression(property.value) ? property.value : undefined;
+  if (!t.isArrayExpression(value)) return "unknown";
+  const sourceDirectory = (node: t.Node): boolean =>
+    javaScriptRuntimeContext(bindings.program) === "commonjs" &&
+    t.isIdentifier(node, { name: "__dirname" }) &&
+    isUnmodifiedGlobalReference(node, bindings, "__dirname");
+  const [directory] = value.elements;
+  if (
+    value.elements.length === 1 &&
+    directory != null &&
+    sourceDirectory(directory)
+  )
+    return "source-file";
+  return value.elements.every(
+    (element) =>
+      element !== null &&
+      (stringValue(element) !== undefined ||
+        sourceDirectory(element) ||
+        staticFileExpressionPath(
+          element,
+          (node, fact) => fact === "source-directory" && sourceDirectory(node),
+        )?.base === "source-directory"),
+  )
+    ? "package-scope"
+    : "unknown";
+};
 
 /** A child-property write does not replace the selected callable itself. */
 export const semanticSelectedMemberMayHaveChanged = (
