@@ -7,11 +7,17 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   machoArm64FatInitializers,
+  machoArm64Initializers,
   elf64PieInitializers,
   elf64AliasedInitializers,
   elfUnmappedInitializerTargets,
 } from "../../../src/native/initializers/NativeInitializers.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  CPU_ARM64,
+  CPU_X86_64,
+  universalMacho,
+} from "../../fixtures/universalMacho.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
 const connect = async (mcp: TestMcp) => {
@@ -133,6 +139,59 @@ mcpTest(
       expect(evidence.normalized_result).toMatchObject({
         format: "mach-o",
         slice: { file_offset: 0x1000, architecture: "arm64" },
+      });
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "reads the arm64 or arm64e slice that the architecture names",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      // The x86_64, arm64 and arm64e layout of stock tools such as /usr/bin/file.
+      const thin = machoArm64Initializers();
+      const universal = universalMacho([
+        { bytes: thin, cpuType: CPU_X86_64, cpuSubtype: 3 },
+        { bytes: thin, cpuType: CPU_ARM64, cpuSubtype: 0 },
+        { bytes: thin, cpuType: CPU_ARM64, cpuSubtype: 0x80000002 },
+      ]);
+      const root = await createTestTempDirectory("rea-native-init-arm64e-mcp-");
+      const path = join(root, "universal");
+      await writeFile(path, universal.bytes);
+      const read = async (architecture: string) => {
+        const response = await client.callTool({
+          name: "inspect_native_initializers",
+          arguments: { path, architecture },
+        });
+        expect(response.isError, JSON.stringify(response.content)).not.toBe(
+          true,
+        );
+        return toolContract("inspect_native_initializers").outputSchema.parse(
+          response.structuredContent,
+        ).normalized_result;
+      };
+      const arm64 = await read("arm64");
+      expect(arm64).toMatchObject({
+        format: "mach-o",
+        slice: {
+          file_offset: universal.slices[1]?.offset,
+          cpu_subtype: 0,
+          architecture: "arm64",
+        },
+      });
+      expect(arm64.entries.length).toBeGreaterThan(0);
+      // The arm64e slice is not read, and the result names the value that reads it.
+      expect(arm64.limitations).toContain(
+        `Only the selected arm64 slice (arm64 (subtype 0x0) at file offset ${String(universal.slices[1]?.offset)}) was read; this universal Mach-O also holds arm64 (subtype 0x80000002) at file offset ${String(universal.slices[2]?.offset)} (architecture arm64e selects it).`,
+      );
+      expect(await read("arm64e")).toMatchObject({
+        slice: {
+          file_offset: universal.slices[2]?.offset,
+          cpu_subtype: 0x80000002,
+        },
       });
     } finally {
       await session.close();
