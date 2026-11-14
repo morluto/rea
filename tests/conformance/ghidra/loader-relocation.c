@@ -17,14 +17,25 @@ const rea_loader_word rea_loader_value = 0x11111111u;
 __attribute__((used, visibility("default"), section(REA_LOADER_POINTER_SECTION)))
 const rea_loader_word *volatile const rea_loader_pointer = &rea_loader_value;
 
+/* A const object defined by the provider. In a PIE, GCC and the linker copy
+ * it into RELRO with a copy relocation that Ghidra cannot apply, so the file
+ * holds zero where the loader writes the provider's value: the #4177 shape. */
+extern const rea_loader_word rea_external_const;
+
 __attribute__((noinline, used, visibility("default")))
 rea_loader_word rea_loader_reader(void) {
-  return *rea_loader_pointer;
+  return rea_external_const;
 }
 
 __attribute__((noinline, used, visibility("default")))
 void rea_loader_writer(void) {
-  *((volatile rea_loader_word **)(void *)&rea_loader_pointer) = 0;
+  *(volatile rea_loader_word *)(void *)&rea_external_const = 0;
+}
+
+/* An applied relocation in the same RELRO segment; it is not protected. */
+__attribute__((noinline, used, visibility("default")))
+rea_loader_word rea_loader_pointer_reader(void) {
+  return *rea_loader_pointer;
 }
 
 extern rea_loader_word rea_external(int value);

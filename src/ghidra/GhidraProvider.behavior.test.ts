@@ -870,7 +870,7 @@ describe("Ghidra platform support", () => {
       "read-only-relocation-limitations-v1",
     );
     expect(await semantics("linux")).toBe(
-      "volatile-read-only-relocation-blocks-v1",
+      "volatile-unapplied-relocation-blocks-v1",
     );
     // A caller's existing project is read-only too, so its saved results must
     // not match a profile that predates the relocation limitation.
@@ -1483,7 +1483,7 @@ describe("Ghidra client projection", () => {
       call_relationship_coverage: "observed-call-inventory-and-discovery-v7",
       function_dossier_coverage: "observed-facets-and-call-relationships-v1",
       native_value_flow_projection: "accepted-runtime-budgets-v1",
-      loader_relocation_semantics: "volatile-read-only-relocation-blocks-v1",
+      loader_relocation_semantics: "volatile-unapplied-relocation-blocks-v1",
     });
 
     const result = await ghidra

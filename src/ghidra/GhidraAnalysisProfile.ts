@@ -76,7 +76,7 @@ const sharedAnalysisSemantics = {
   byte_search_coverage: "separate-loaded-overlays-v1",
   function_boundary_observations: "ghidra-function-boundary-limitations-v5",
 } as const;
-const loaderRelocationSemantics = "volatile-read-only-relocation-blocks-v1";
+const loaderRelocationSemantics = "volatile-unapplied-relocation-blocks-v1";
 // Read-only sessions record relocation limitations without marking blocks volatile.
 const readOnlyLoaderRelocationSemantics = "read-only-relocation-limitations-v1";
 

@@ -1054,11 +1054,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     /**
-     * Ghidra imports loader relocation destinations with their on-disk bytes.
-     * A destination in a non-writable loaded block may instead be populated by
-     * the runtime loader (for example an ELF copy relocation in RELRO). Mark
-     * the containing block volatile before opening the decompiler so those
-     * bytes cannot be constant-propagated as if they were runtime values.
+     * Ghidra applies most loader relocations, but one it cannot apply (for
+     * example an ELF copy relocation in RELRO, whose value comes from another
+     * object) keeps its on-disk bytes while the runtime loader supplies a
+     * different value. Mark a non-writable loaded block holding such a
+     * destination volatile before opening the decompiler so those bytes cannot
+     * be constant-propagated as if they were runtime values.
      *
      * This changes only the ephemeral analysis database: source FileBytes and
      * the original target remain untouched. MemoryBlock exposes volatility for
@@ -1082,6 +1083,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         while (iterator.hasNext()) {
             monitor.checkCancelled();
             Relocation relocation = iterator.next();
+            // An applied relocation already holds the value the loader writes
+            // (for example GLOB_DAT or RELATIVE), so folding it is correct and
+            // keeping its block foldable preserves GOT-call pseudocode.
+            Relocation.Status status = relocation.getStatus();
+            if (status == Relocation.Status.APPLIED || status == Relocation.Status.APPLIED_OTHER)
+                continue;
             Address location = relocation.getAddress();
             MemoryBlock block = currentProgram.getMemory().getBlock(location);
             if (block == null || !block.isLoaded() || !block.isInitialized() || block.isWrite())
