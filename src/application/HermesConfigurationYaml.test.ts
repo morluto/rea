@@ -717,6 +717,17 @@ describe("Hermes registration refresh around anchors and merges", () => {
 });
 
 describe("Hermes registration refresh through inherited merges", () => {
+  it("refuses to drop locally overridden settings that its merge would restore", () => {
+    const source =
+      "remote: &remote\n  url: https://example.invalid\n  transport: sse\nmcp_servers:\n  rea:\n    <<: *remote\n    url: https://local.invalid\n    transport: sse\n";
+    expect(() =>
+      editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+        command: "rea",
+        args: ["mcp"],
+      }),
+    ).toThrow(/Cannot remove inherited YAML setting/);
+  });
+
   it("replaces an inherited remote registration without its remote selectors", () => {
     const source =
       "shared: &shared\n  rea: {url: https://example.invalid, transport: sse}\nmcp_servers:\n  <<: *shared\n";

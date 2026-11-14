@@ -320,11 +320,13 @@ const retainYamlMergeSources = (
   const desired = project(next);
   const inheritedUnchanged = new Set<string>();
   for (const [key, value] of Object.entries(inheritedValues)) {
-    if (Object.hasOwn(directValues, key)) continue;
+    // Removing a key the merge supplies would resurrect it, even when the
+    // mapping also overrides it locally.
     if (!Object.hasOwn(desired, key))
       throw new ConfigurationError(
         `Cannot remove inherited YAML setting ${JSON.stringify(key)} while retaining its merge.`,
       );
+    if (Object.hasOwn(directValues, key)) continue;
     if (isDeepStrictEqual(value, desired[key])) inheritedUnchanged.add(key);
   }
   next.items = [
