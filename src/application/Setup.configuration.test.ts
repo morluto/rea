@@ -843,6 +843,30 @@ describe("setup tool family scope", () => {
     });
   });
 
+  it("writes no input-schema profile for a client whose default is compact", async () => {
+    // Compact became the server default in aa51e43439, so a registration that omits the setting
+    // already resolves to it. Writing it would make the file state a default, and status then
+    // reported the older registration that omits it as stale.
+    const host = new FakeSetupHost();
+    host.doctorHealthy = true;
+    host.skill = "unchanged";
+    host.clients = [
+      {
+        name: "kimi",
+        registrationProfile: supportedClientRegistrationProfile("kimi"),
+        configPath: "/kimi-mcp.json",
+      },
+    ];
+
+    const applied = await runSetup(
+      { ...options(true), clientIds: ["kimi"] },
+      host,
+    );
+    expect(applied.status).toBe("ready");
+    for (const environment of host.configuredProviderEnvironments)
+      expect(environment).not.toHaveProperty("REA_MCP_INPUT_SCHEMA_PROFILE");
+  });
+
   it("still offers Hopper on an unconfigured machine when a scope is set", async () => {
     const host = new FakeSetupHost("darwin");
     host.version = "14.5";

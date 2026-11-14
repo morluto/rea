@@ -167,6 +167,36 @@ it.each([
   },
 );
 
+it("reads a compact-default registration that omits the setting as aligned", async () => {
+  // Compact is the server default, so a registration without REA_MCP_INPUT_SCHEMA_PROFILE
+  // resolves to exactly that advertisement. Reporting it as stale asked a caller to repair a
+  // registration the client already runs correctly.
+  const workspace = await createTestWorkspace("rea-plan-compact-default-");
+  onTestFinished(() => removeTestWorkspace(workspace.root));
+  const home = pathInside(workspace.root, ".");
+  const configPath = pathInside(workspace.root, ".kimi-code", "mcp.json");
+  await mkdir(pathInside(workspace.root, ".kimi-code"));
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: process.execPath,
+          args: [CURRENT_ENTRYPOINT_PATH ?? "rea", "mcp"],
+          startupTimeoutMs: 30000,
+          toolTimeoutMs: 600000,
+        },
+      },
+    }),
+  );
+  const registrations = await readClientRegistrationStatuses(home, undefined, {
+    environment: {},
+  });
+  expect(registrations).toEqual([
+    expect.objectContaining({ client: "kimi", state: "aligned" }),
+  ]);
+});
+
 it("offers detected missing and manual clients without treating absent launcher identity as unknown readiness", async () => {
   const workspace = await createTestWorkspace("rea-plan-absent-launcher-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
