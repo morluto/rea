@@ -5,12 +5,15 @@ this file with Hopper's supported ``--python`` launcher option. Keep all Hopper
 API access on this thread: moving dispatch to a worker can deadlock Hopper.
 """
 
+from __future__ import annotations
+
 import json
 import hmac
 import os
 import re
 import socket
-from typing import Any, Optional, Protocol, Sequence
+from collections.abc import Sequence
+from typing import Any, Protocol
 
 BAD_ADDRESSES = (-1, 0xFFFFFFFFFFFFFFFF, None)
 # The native label setter truncates NSString names at this UTF-16 extent.
@@ -116,9 +119,9 @@ class HopperDocument(Protocol):
 
     def getDocumentName(self) -> str: ...
 
-    def getExecutableFilePath(self) -> Optional[str]: ...
+    def getExecutableFilePath(self) -> str | None: ...
 
-    def getDatabaseFilePath(self) -> Optional[str]: ...
+    def getDatabaseFilePath(self) -> str | None: ...
 
     def backgroundProcessActive(self) -> bool: ...
 
@@ -130,7 +133,7 @@ class HopperDocumentProvider(Protocol):
     def getAllDocuments(cls) -> Sequence[HopperDocument]: ...
 
     @classmethod
-    def getCurrentDocument(cls) -> Optional[HopperDocument]: ...
+    def getCurrentDocument(cls) -> HopperDocument | None: ...
 
 
 class HopperApiFacade:
@@ -142,7 +145,7 @@ class HopperApiFacade:
     def documents(self) -> Sequence[HopperDocument]:
         return self._document_provider.getAllDocuments()
 
-    def current_document(self) -> Optional[HopperDocument]:
+    def current_document(self) -> HopperDocument | None:
         return self._document_provider.getCurrentDocument()
 
     def require_analysis_complete(
