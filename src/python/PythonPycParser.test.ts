@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { expect, it } from "vitest";
+import { createHash, type Hash } from "node:crypto";
+import { expect, it, vi } from "vitest";
 import {
   inspectPythonPycInputSchema,
   pythonPycSchema,
@@ -385,9 +385,7 @@ it("lists a code object shared through TYPE_REF once and refers to it by index",
   ]);
   expect(small.coverage.code_objects).toBe(4);
   expect(pythonPycSchema.safeParse(small).success).toBe(true);
-  const started = Date.now();
   const deep = parse(sharedChain(25));
-  expect(Date.now() - started).toBeLessThan(1000);
   expect(deep.coverage.code_objects).toBe(26);
   expect(JSON.stringify(deep).length).toBeLessThan(64 * 1024);
 });
@@ -608,9 +606,25 @@ it("hashes one shared byte string no matter how many times it is referenced", ()
       ]),
     }),
   ]);
-  const started = Date.now();
-  const report = parse(bytes);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const artifact = {
+    path: defaults.path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
+  };
+  const update = vi.spyOn(
+    Object.getPrototypeOf(createHash("sha256")) as Hash,
+    "update",
+  );
+  let report: PythonPyc;
+  let hashed = 0;
+  try {
+    report = parsePythonPyc(bytes, artifact, defaults);
+    for (const [data] of update.mock.calls) hashed += Buffer.byteLength(data);
+  } finally {
+    update.mockRestore();
+  }
+  // The payload is digested once. A digest per reference hashes 1,201 MiB.
+  expect(hashed).toBeLessThan(2 * payload.length);
   expect(root(report).consts).toHaveLength(refs + 1);
   expect(root(report).consts[refs]).toEqual(root(report).consts[0]);
   expect(root(report).consts[0]).toMatchObject({
@@ -778,9 +792,23 @@ it("reuses a shared integer's bit length instead of converting every reference",
       ]),
     }),
   ]);
-  const started = Date.now();
-  const report = parse(bytes);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const artifact = {
+    path: defaults.path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
+  };
+  const toString = vi.spyOn(BigInt.prototype, "toString");
+  let report: PythonPyc;
+  let conversions = 0;
+  try {
+    report = parsePythonPyc(bytes, artifact, defaults);
+    conversions = toString.mock.calls.length;
+  } finally {
+    toString.mockRestore();
+  }
+  // The bit length comes from the digits as they are decoded. Converting the
+  // 300,000-bit value for each of its 401 references is the repeated work.
+  expect(conversions).toBeLessThanOrEqual(1);
   expect(root(report).consts[0]).toEqual({
     kind: "int",
     bits: digits.length * 15,
@@ -1011,9 +1039,17 @@ it("rejects a shared tuple key before its expansion doubles without bound", () =
   const bytes = withConsts([
     Buffer.concat([Buffer.from([0x3c]), u32(1), body]),
   ]);
-  const started = Date.now();
-  expect(() => parse(bytes)).toThrow(PythonPycResourceFailure);
-  expect(Date.now() - started).toBeLessThan(1000);
+  // Each level doubles the expanded key. Reusing each shared level's key, the
+  // size preflight rejects the first one past max_string_bytes; walking the
+  // shared halves again exhausts the key-walk step budget ("objects") first.
+  expect(() => parse(bytes)).toThrow(
+    expect.objectContaining({
+      boundary: "string",
+      message: expect.stringMatching(
+        /^Marshal key of \d+ bytes exceeds max_string_bytes/,
+      ),
+    }),
+  );
   let shallow = Buffer.concat([Buffer.from([0xe9]), i32(1)]);
   for (let index = 7; index >= 0; index -= 1)
     shallow = Buffer.concat([
@@ -1045,9 +1081,7 @@ it("lists a shared container's code objects once per owner and charges each copy
       consts: [container, ...Array.from({ length: 7 }, () => marshalRef(0))],
     }),
   ]);
-  const started = Date.now();
   const shared = parse(repeated);
-  expect(Date.now() - started).toBeLessThan(1000);
   expect(shared.code_objects.map((code) => code.name)).toEqual([
     "<module>",
     "child",
@@ -1486,9 +1520,14 @@ it("follows a long TYPE_REF chain without a recursive walk", () => {
     pythonPycHeader(3531),
     marshalCode("py311", { constsObject: Buffer.concat(pieces) }),
   ]);
-  const started = Date.now();
-  const report = parse(bytes);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { objects, marshal_depth } = parse(bytes).coverage;
+  // Under the tightest limits that admit this stream, the nested-code walk
+  // may take max_objects * max_depth (about 60,000) steps; it takes 12,000.
+  // Walking each link's chain again takes about 36 million.
+  const report = parseWith(bytes, {
+    max_objects: objects,
+    max_depth: marshal_depth,
+  });
   expect(report.code_objects.map((code) => code.name)).toEqual([
     "<module>",
     "hidden",
@@ -1629,9 +1668,14 @@ it("hashes a long TYPE_REF tuple chain without recursing", () => {
     marshalCode("py311", { constsObject: Buffer.concat(pieces) }),
   ]);
   expect(bytes.length).toBeLessThan(64_000);
-  const started = Date.now();
-  const report = parse(bytes);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { objects } = parse(bytes).coverage;
+  // A linear chain's key descriptors (about 35 KB) fit the file's own size,
+  // and its key walk fits 8 steps per object read. Copying every ancestor
+  // into the next descriptor charges about 36 MB of keys.
+  const report = parseWith(bytes, {
+    max_objects: objects,
+    max_file_bytes: bytes.length,
+  });
   expect(root(report).consts[0]).toEqual({ kind: "tuple", length: links + 1 });
   expect(root(report).consts[1]).toEqual({ kind: "set", length: 1 });
   expect(report.coverage.status).toBe("complete");
