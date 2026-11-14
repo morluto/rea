@@ -56,6 +56,7 @@ it("keeps an unknown the session refused as a secondary cause of the cancellatio
     result: { format: "source-to-bundle", matches: [] },
   });
   const refusal = new Error("session has no room for the unknown");
+  const recordedWithUnknown: string[] = [];
   const contract = toolContract("compare_source_to_bundle");
   const result = await deliverApplicationEvidence(
     { delivery: new ToolResultDelivery(1_000_000) },
@@ -63,7 +64,10 @@ it("keeps an unknown the session refused as a secondary cause of the cancellatio
       artifactResources: { close: async () => undefined } as never,
       logger: { debug() {} } as never,
       evidenceById: undefined,
-      recordEvidence: () => ({ ok: true, value: "added" }),
+      recordEvidence: (value) => {
+        recordedWithUnknown.push(value.evidence_id);
+        return { ok: true, value: "added" };
+      },
       recordEvidenceWithUnknown: () => ({
         ok: false,
         error: new AnalysisInputError("compare_source_to_bundle", {
@@ -83,6 +87,62 @@ it("keeps an unknown the session refused as a secondary cause of the cancellatio
       code: "cancelled",
       details: {
         secondary_failures: [{ code: "invalid_request" }],
+      },
+    },
+  });
+  // The paired save was rejected as a whole, so the parent must not be recorded
+  // on its own: that would keep the comparison without the unknown it carries
+  // and hand the caller an Evidence record the session was told to refuse.
+  expect(result.structuredContent).toMatchObject({
+    error: {
+      details: {
+        partial_observation: {
+          kind: "unretained-evidence",
+          evidence: { evidence_id: parent.evidence_id },
+        },
+      },
+    },
+  });
+  expect(recordedWithUnknown).toEqual([]);
+});
+
+it("records the parent with its unknown when the paired save succeeds", async () => {
+  const provider = { id: "fixture", name: "Fixture", version: "1" };
+  const parent = createEvidence(undefined, provider, {
+    operation: "compare_source_to_bundle",
+    parameters: { path: "/fixtures/app.asar" },
+    result: { format: "source-to-bundle", matches: [] },
+  });
+  const recordedWithUnknown: string[] = [];
+  const contract = toolContract("compare_source_to_bundle");
+  const result = await deliverApplicationEvidence(
+    { delivery: new ToolResultDelivery(1_000_000) },
+    {
+      artifactResources: { close: async () => undefined } as never,
+      logger: { debug() {} } as never,
+      evidenceById: undefined,
+      recordEvidence: () => ({ ok: true, value: "added" }),
+      recordEvidenceWithUnknown: (value) => {
+        recordedWithUnknown.push(value.evidence_id);
+        return { ok: true, value: null };
+      },
+    },
+    contract,
+    { evidence: parent, sources: [] },
+    undefined,
+    AbortSignal.abort(new Error("cancelled before view delivery")),
+    "source-to-bundle-comparison",
+  );
+
+  expect(recordedWithUnknown).toEqual([parent.evidence_id]);
+  expect(result.structuredContent).toMatchObject({
+    error: {
+      code: "cancelled",
+      details: {
+        partial_observation: {
+          kind: "retained-evidence",
+          evidence_id: parent.evidence_id,
+        },
       },
     },
   });

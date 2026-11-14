@@ -89,7 +89,10 @@ export const deliverApplicationEvidence = async (
       // secondary cause. The parent is delivered inline rather than recorded:
       // a recorded parent would carry evidence_links the refused sources never
       // produced, and later closure or export would fail resolving them.
-      interrupted.retainPartialObservation(parent);
+      interrupted.retainPartialObservation({
+        kind: "unretained-evidence",
+        evidence: parent,
+      });
       interrupted.retainSecondaryFailure(sources.error);
       return delivery.toPartialErrorToolResult(
         interrupted,
@@ -100,10 +103,22 @@ export const deliverApplicationEvidence = async (
     // cancelled run registers the same unknown rather than dropping it. A
     // refusal must stay visible: the parent is already committed, so the
     // failure rides along as a secondary cause while cancellation stays primary.
+    // Keep the observation inline when the paired save fails: recording the
+    // parent alone would leave it without the unknown the caller was told it
+    // carries, and a later retry of half the rejected save cannot repair that.
     if (unknownKind !== undefined) {
       const registered = recordApplicationResult(options, parent, unknownKind);
-      if (registered !== undefined && !registered.ok)
+      if (registered !== undefined && !registered.ok) {
+        interrupted.retainPartialObservation({
+          kind: "unretained-evidence",
+          evidence: parent,
+        });
         interrupted.retainSecondaryFailure(registered.error);
+        return delivery.toPartialErrorToolResult(
+          interrupted,
+          contract.returnsTargetContent,
+        );
+      }
     }
     const retained = delivery.toPartialErrorToolResult(
       interrupted.retainPartialObservation(parent),
