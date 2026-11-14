@@ -138,7 +138,7 @@ export const classifyProviderOutcome = (
     }
     case "runtime-exhausted": {
       const reported = context.runtimeExhaustion?.(outcome.exhaustion);
-      const { area, runtime } = outcome.exhaustion;
+      const { area, runtime, stream, line, lineComplete } = outcome.exhaustion;
       return new AnalysisResourceConstraintError(
         operation,
         area === "native-thread" ? "capacity" : "memory",
@@ -146,6 +146,18 @@ export const classifyProviderOutcome = (
         reported?.limits ?? null,
         {
           ...details,
+          // The report may lie beyond the retained output, so the claim keeps
+          // its own source line.
+          diagnostics: {
+            ...details.diagnostics,
+            runtime_exhaustion_report: {
+              runtime,
+              area: area ?? null,
+              stream,
+              line,
+              line_complete: lineComplete,
+            },
+          },
           ...(area === "native-thread"
             ? {
                 retryable: true,

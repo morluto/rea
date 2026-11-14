@@ -61,6 +61,20 @@ it("observes the heap report while output streams, even past the capture allowan
   // The cause is the heap, not the capture allowance the trace overflowed.
   expect(projected.message).toContain("heap");
   expect(projected.remediation.action).toContain("-Xmx");
+  // The retained stderr tail no longer holds the report; the claim keeps it.
+  expect(projected.details).toMatchObject({
+    diagnostics: {
+      runtime_exhaustion_report: {
+        runtime: "jvm",
+        area: "heap",
+        stream: "stderr",
+        line: expect.stringContaining(
+          "java.lang.OutOfMemoryError: Java heap space",
+        ),
+        line_complete: true,
+      },
+    },
+  });
 });
 
 it("still attributes an ordinary decode refusal to the target", async () => {
