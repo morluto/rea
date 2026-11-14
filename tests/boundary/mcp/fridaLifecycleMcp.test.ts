@@ -876,7 +876,7 @@ it("preserves inline Frida partial Evidence when its writer rejects it", async (
     kind: "unretained-evidence",
     evidence: attempts[0],
   });
-  expect(details.partial_observation_retention_error).toMatchObject({
+  expect(details.retention_error).toMatchObject({
     code: expect.any(String),
   });
 });

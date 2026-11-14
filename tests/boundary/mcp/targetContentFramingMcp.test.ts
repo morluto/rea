@@ -255,7 +255,7 @@ describe.each([
                   kind: "unretained-evidence",
                   evidence: partial,
                 },
-                partial_observation_retention_error: {
+                retention_error: {
                   code: "evidence_integrity_mismatch",
                 },
               },

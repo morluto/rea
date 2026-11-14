@@ -410,7 +410,7 @@ it("preserves a partial MCP error without claiming failed Evidence retention", a
       kind: "unretained-evidence",
       evidence: { operation: "execute_rizin_command" },
     },
-    partial_observation_retention_error: {
+    retention_error: {
       code: "evidence_integrity_mismatch",
     },
   });

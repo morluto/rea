@@ -533,7 +533,7 @@ describe("untrusted provenance on failed tool results", () => {
             kind: "unretained-evidence",
             evidence,
           },
-          partial_observation_retention_error: {
+          retention_error: {
             code: "evidence_integrity_mismatch",
           },
         },
@@ -573,7 +573,7 @@ describe("untrusted provenance on failed tool results", () => {
             retention: "unretained",
             evidence_id: evidence.evidence_id,
           },
-          partial_observation_retention_error: {
+          retention_error: {
             code: "evidence_integrity_mismatch",
           },
         },
