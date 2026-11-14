@@ -19,6 +19,12 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def binutils_release(banner):
+    # GNU tools print their upstream release as the final banner field. Build
+    # and distributor text before it is provenance, not format compatibility.
+    return banner.rsplit(None, 1)[-1]
+
+
 def produce(windres, linker):
     if PIL.__version__ != "13.0.0" or pefile.__version__ != "2024.8.26":
         raise RuntimeError("requires Pillow==13.0.0 and pefile==2024.8.26")
@@ -26,7 +32,7 @@ def produce(windres, linker):
     versions = []
     for command in [windres, linker]:
         text = subprocess.check_output([command, "--version"], env=env, text=True, timeout=10).splitlines()[0]
-        if not text.endswith("2.44"):
+        if binutils_release(text) != "2.44":
             raise RuntimeError(f"requires GNU binutils 2.44: {text}")
         versions.append(text)
     samples = []
@@ -115,6 +121,10 @@ if __name__ == "__main__":
     target = Path(__file__).with_name("oracle.json")
     if args.check:
         recorded = json.loads(target.read_text())
+        # Retain the recorded banners on disk, but compare upstream releases
+        # independently of packaging/build branding when reproducing the facts.
+        recorded["binutils"] = [binutils_release(text) for text in recorded["binutils"]]
+        result["binutils"] = [binutils_release(text) for text in result["binutils"]]
         for old, new in zip(recorded["samples"], result["samples"], strict=True):
             assert zlib.decompress(base64.b64decode(old.pop("deflate_base64"))) == zlib.decompress(base64.b64decode(new.pop("deflate_base64")))
         assert recorded == result, "Producer facts differ from recorded oracle"

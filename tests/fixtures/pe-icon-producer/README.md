@@ -31,7 +31,10 @@ python3 -m venv /tmp/rea-pe-icon-oracle
 ```
 
 `--windres PATH` and `--ld PATH` select the installed tools. Tool versions are
-checked. Omit `--check` to regenerate intentionally, then format the JSON and
+checked against upstream release 2.44. Full original banners remain recorded as
+provenance, while `--check` compares their release fields independently of build
+or distributor branding. A different release is still refused. Omit `--check`
+to regenerate intentionally, then format the JSON and
 review its changed bytes/facts. `--check` compares the **uncompressed complete
 files and all oracle facts**; different zlib encodings do not change that proof.
 CI uses the recorded files without external producer tools or optional skips.
