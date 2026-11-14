@@ -1,9 +1,15 @@
 import { EventEmitter } from "node:events";
+import vm from "node:vm";
 
 import { expect, it } from "vitest";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
+import {
+  applyDeclaredBrowserStorageSeeds,
+  declaredBrowserStorageSeedMark,
+  type DeclaredBrowserStorageSeed,
+} from "./declaredBrowserStorageSeed.js";
 import { PlaywrightScenarioStorage } from "./PlaywrightScenarioStorage.js";
 
 class FakeCdp extends EventEmitter {
@@ -366,6 +372,127 @@ it.each(["launch", "connect"] as const)(
     expect(owner?.limitations()).toHaveLength(1);
     expect(contextApi.listenerCount("page")).toBe(0);
     expect(page.listenerCount("popup")).toBe(0);
+  },
+);
+
+const memoryStorage = (fail = false) => {
+  const items = new Map<string, string>();
+  return {
+    items,
+    getItem(name: string) {
+      return items.get(name) ?? null;
+    },
+    setItem(name: string, value: string) {
+      if (fail) throw new Error("storage denied");
+      items.set(name, value);
+    },
+  };
+};
+
+const applySeeds = (
+  origin: string,
+  seeds: readonly DeclaredBrowserStorageSeed[],
+  storage: {
+    local: ReturnType<typeof memoryStorage>;
+    session: ReturnType<typeof memoryStorage>;
+  } = { local: memoryStorage(), session: memoryStorage() },
+): {
+  local: Map<string, string>;
+  session: Map<string, string>;
+} => {
+  const context = vm.createContext({
+    location: { origin },
+    localStorage: storage.local,
+    sessionStorage: storage.session,
+  });
+  vm.runInContext(
+    `(${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify({
+      mark: declaredBrowserStorageSeedMark,
+      seeds,
+    })})`,
+    context,
+  );
+  return { local: storage.local.items, session: storage.session.items };
+};
+
+it("writes declared seeds once per area and keeps later page edits", () => {
+  const seeds: DeclaredBrowserStorageSeed[] = [
+    {
+      origin: "http://child.example",
+      local: [["probe", "seed-local"]],
+      session: [["probe", "seed-session"]],
+    },
+    {
+      origin: "http://root.example",
+      local: [["probe", "root-local"]],
+      session: [["probe", "root-session"]],
+    },
+  ];
+  const storage = { local: memoryStorage(), session: memoryStorage() };
+  applySeeds("http://child.example", seeds, storage);
+  expect(storage.local.items.get("probe")).toBe("seed-local");
+  expect(storage.session.items.get("probe")).toBe("seed-session");
+  storage.local.items.set("probe", "page-updated");
+  storage.local.items.delete("rea_storage_remove");
+  storage.session.items.set("probe", "session-updated");
+  applySeeds("http://child.example", seeds, storage);
+  expect(storage.local.items.get("probe")).toBe("page-updated");
+  expect(storage.local.items.has("rea_storage_remove")).toBe(false);
+  expect(storage.session.items.get("probe")).toBe("session-updated");
+
+  const popup = { local: storage.local, session: memoryStorage() };
+  applySeeds("http://child.example", seeds, popup);
+  expect(popup.local.items.get("probe")).toBe("page-updated");
+  expect(popup.session.items.get("probe")).toBe("seed-session");
+
+  const other = applySeeds("http://other.example", seeds);
+  expect(other.local.size).toBe(0);
+  expect(other.session.size).toBe(0);
+  const opaque = applySeeds("null", seeds);
+  expect(opaque.local.size).toBe(0);
+  expect(opaque.session.size).toBe(0);
+});
+
+it.each(["launch", "connect"] as const)(
+  "seeds later popup documents before their scripts in %s mode",
+  async (mode) => {
+    const cdp = new FakeCdp();
+    const { page, contextApi } = fixture(cdp);
+    const installed: { script: unknown; payload: unknown }[] = [];
+    Object.assign(contextApi, {
+      addInitScript: async (script: unknown, payload: unknown) => {
+        installed.push({ script, payload });
+      },
+    });
+    const input = browserScenarioSchema.parse({
+      ...scenario(),
+      ...(mode === "connect"
+        ? {
+            browser: {
+              mode: "connect",
+              cdp_endpoint: "http://127.0.0.1:9222",
+              target_id: "root-target",
+            },
+          }
+        : {}),
+    });
+    const owner = await createInitializedStorage(contextApi, page, input);
+    expect(installed).toHaveLength(1);
+    expect(installed[0]?.script).toBe(applyDeclaredBrowserStorageSeeds);
+    expect(installed[0]?.payload).toEqual({
+      mark: declaredBrowserStorageSeedMark,
+      seeds: [
+        {
+          origin: "https://storage.example.test",
+          local: [["local-seed", "local-value"]],
+          session: [["session-seed", "session-value"]],
+        },
+      ],
+    });
+    if (mode === "connect") page.emit("popup", new EventEmitter());
+    else contextApi.emit("page", new EventEmitter());
+    expect(owner?.limitations()).toEqual([]);
+    await owner?.close();
   },
 );
 

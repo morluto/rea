@@ -273,12 +273,17 @@ that exact frame's reported security origin before selecting a seed. It does
 not infer the origin from a frame URL or serialized storage key. Unresolved
 frame identity or security origin fails initialization rather than silently
 running with an unknown initial state.
-Popup discovery does not establish that its first script was paused by the
-selected page's storage instrumentation. When non-cookie seeds are declared
-and a popup is discovered, the capture retains completed observations and
-marks `storage` coverage missing, with equality ineligible. This applies even
-if popup lifecycle events were not selected. Popup first-script storage
-initialization is not currently guaranteed.
+Declared non-cookie seeds are also installed with a browser-context init
+script. Playwright runs that script after a document is created and before
+the document's own scripts, including a popup opened later in the same
+context. Page-session CDP auto-attach does not pause a `window.open` target,
+so that init script is what seeds the popup before its first script. Each
+local-storage partition and each top-level session area is seeded once; a
+later document in that same area keeps the page's updates and deletions. The
+bookkeeping key is omitted from captured storage inventories. If the context
+cannot install the script, discovering a popup still retains completed
+observations and marks `storage` coverage missing, with equality ineligible,
+even when popup lifecycle events were not selected.
 
 The result is Evidence with an initial state followed by one record per
 declared action. Each step reports action status, elapsed time, sanitized URLs,

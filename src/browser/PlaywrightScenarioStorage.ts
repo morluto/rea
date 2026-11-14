@@ -9,6 +9,11 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { BrowserContext, CDPSession, Page } from "playwright-core";
 
+import {
+  applyDeclaredBrowserStorageSeeds,
+  declaredBrowserStorageSeedMark,
+} from "./declaredBrowserStorageSeed.js";
+
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
@@ -142,6 +147,7 @@ export class PlaywrightScenarioStorage {
   #cleanupCompleted = false;
   #loadingStopped = false;
   #popupSeedCoverageUnknown = false;
+  #popupSeedsInstalled = false;
   #failure: BrowserObservationError | undefined;
   #closePromise: Promise<PlaywrightScenarioStorageCleanup> | undefined;
   #detachPromise: Promise<void> | undefined;
@@ -246,6 +252,8 @@ export class PlaywrightScenarioStorage {
     page: Page,
     context: BrowserContext,
   ): Promise<void> {
+    await this.installDocumentSeedScript(context);
+    if (this.#closed) return;
     const rootInfo = targetInfoResponse.parse(
       await withScenarioCommandDeadline(
         () => this.cdp.send("Target.getTargetInfo"),
@@ -274,6 +282,23 @@ export class PlaywrightScenarioStorage {
     await ready;
   }
 
+  private async installDocumentSeedScript(
+    context: BrowserContext,
+  ): Promise<void> {
+    const seeds = [...this.#seeds].map(([origin, seed]) => ({
+      origin,
+      local: seed.local,
+      session: seed.session,
+    }));
+    if (seeds.length === 0 || typeof context.addInitScript !== "function")
+      return;
+    await context.addInitScript(applyDeclaredBrowserStorageSeeds, {
+      mark: declaredBrowserStorageSeedMark,
+      seeds,
+    });
+    this.#popupSeedsInstalled = true;
+  }
+
   private addSeeds(
     blocks: BrowserScenario["storage"]["local_storage"],
     kind: "local" | "session",
@@ -297,10 +322,12 @@ export class PlaywrightScenarioStorage {
     page.on("close", detached);
     context.on("close", detached);
     browser?.on("disconnected", detached);
-    // Discovery is later than the first popup script. It cannot establish
-    // that root-session instrumentation controlled this top-level context.
+    // Without the context init script, discovery is later than the first
+    // popup script and cannot establish that page-session instrumentation
+    // controlled that top-level document.
     const popup = (opened: Page): void => {
-      if (opened !== page) this.#popupSeedCoverageUnknown = true;
+      if (opened !== page && !this.#popupSeedsInstalled)
+        this.#popupSeedCoverageUnknown = true;
     };
     if (this.ownsContext) context.on("page", popup);
     else page.on("popup", popup);
