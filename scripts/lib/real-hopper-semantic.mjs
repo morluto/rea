@@ -324,9 +324,14 @@ const analyzeFixtureProcedure = async (
     options,
   );
   const dossier = normalizedResult(reply, "analyze_function");
-  assert.deepEqual(reply.structuredContent.relationship_coverage, {
-    status: "complete",
-  });
+  // Hopper declares caller/callee inventories as incomplete for every operation,
+  // so the fixture oracle must accept that declaration instead of demanding
+  // coverage the provider never claims.
+  const coverage = reply.structuredContent.relationship_coverage;
+  assert.equal(coverage?.status, "unknown");
+  assert.deepEqual(coverage.limited_directions, ["callers", "callees"]);
+  assert.equal(typeof coverage.reason, "string");
+  assert(coverage.reason.length > 0);
   for (const facet of [
     "pseudocode",
     "assembly",
@@ -351,6 +356,9 @@ const analyzeFixtureProcedure = async (
     ),
     "compare_functions",
   );
+  // Unknown caller and callee discovery leaves the compared call sets as
+  // observations over an inventory whose completeness is unestablished, so the
+  // dimension reports that instead of claiming the calls are unchanged.
   assert.deepEqual(
     Object.fromEntries(
       comparison.dimensions.map(({ dimension, status }) => [dimension, status]),
@@ -360,7 +368,7 @@ const analyzeFixtureProcedure = async (
       pseudocode: "unchanged",
       assembly: "unchanged",
       comments: "unchanged",
-      calls: "unchanged",
+      calls: "unknown",
       references: "unknown",
       strings_names: "unchanged",
       cfg: "unchanged",
