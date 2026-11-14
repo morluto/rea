@@ -59,7 +59,7 @@ export const apiContractDiagnosticSchema = z.strictObject({
 
 export const apiContractSchema = z.strictObject({
   contract_id: prefixedDigestSchema("api_contract"),
-  format: z.literal("openapi-json"),
+  format: z.enum(["openapi-json", "openapi-yaml"]),
   openapi: z.string(),
   artifact: apiContractArtifactSchema,
   info: z.strictObject({
@@ -83,7 +83,7 @@ export const apiContractSchema = z.strictObject({
     path_entries_examined: z.int().nonnegative(),
     reference_resolution: z.literal("not-attempted"),
     schema_validation: z.literal("not-performed"),
-    duplicate_json_members: z.literal("last-value-wins"),
+    duplicate_json_members: z.enum(["last-value-wins", "rejected"]),
   }),
   limitations: z.array(z.string()),
 });
