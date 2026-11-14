@@ -6,12 +6,22 @@ import {
 import { prepareProcessOwnershipInspection } from "../dist/process/ProcessOwnershipObservation.js";
 import { resolveWindowsProviderExecutable } from "../dist/process/WindowsProviderExecutable.js";
 import { snapshotEnvironment } from "../dist/process/snapshotEnvironment.js";
+import { retainOwnedCommandCleanup } from "../dist/providers/OwnedCommandCleanup.js";
 
 /** Settle every retained command before dependent resources can be reconciled. */
-export async function settleCommandOwners(owners) {
+export async function settleCommandOwners(
+  owners,
+  preparationOwners = new Set(),
+) {
   const failures = [];
   for (const owner of owners) {
     try {
+      if (preparationOwners.has(owner)) {
+        await owner.close();
+        owners.delete(owner);
+        preparationOwners.delete(owner);
+        continue;
+      }
       const stopped = await owner.stop();
       if (stopped.status === "incomplete" || stopped.status === "not-owned") {
         const error = new Error(
@@ -31,18 +41,40 @@ export async function settleCommandOwners(owners) {
       "Experiment command cleanup failed",
     );
     error.cleanupOwners = owners;
+    error.retryCleanup = () => settleCommandOwners(owners, preparationOwners);
     throw error;
   }
 }
 
 /** Bounded command ownership for manual, unshipped experiments. */
-export async function withCommands(work) {
+export async function withCommands(
+  work,
+  {
+    runCommand = runOwnedCommand,
+    prepareOwnership = prepareProcessOwnershipInspection,
+  } = {},
+) {
   const controller = new AbortController();
-  const abort = () => controller.abort(new Error("Experiment cancelled"));
+  const abort = () => {
+    if (!controller.signal.aborted)
+      controller.abort(new Error("Experiment cancelled"));
+  };
+  const cancelled = () =>
+    new OwnedCommandFailure("cancelled", "Experiment cancelled", null, null, {
+      cause: controller.signal.reason,
+      cancellation: { reason: controller.signal.reason },
+    });
   const owners = new Set();
-  const settle = () => settleCommandOwners(owners);
-  process.once("SIGINT", abort);
-  process.once("SIGTERM", abort);
+  const preparationOwners = new Set();
+  const preparationScope = {
+    retain: (owner) => {
+      owners.add(owner);
+      preparationOwners.add(owner);
+    },
+  };
+  const settle = () => settleCommandOwners(owners, preparationOwners);
+  process.on("SIGINT", abort);
+  process.on("SIGTERM", abort);
   const run = async (command, args, options = {}) => {
     const environment = snapshotEnvironment(options.environment ?? process.env);
     const selectedCommand =
@@ -52,19 +84,19 @@ export async function withCommands(work) {
           })
         : command;
     try {
-      await prepareProcessOwnershipInspection(controller.signal);
+      await prepareOwnership(controller.signal);
     } catch (cause) {
-      if (controller.signal.aborted)
-        throw new OwnedCommandFailure(
-          "cancelled",
-          "Experiment cancelled during ownership preparation",
-          null,
-          null,
-          { cause },
-        );
+      retainOwnedCommandCleanup(
+        cause,
+        preparationScope,
+        "adb-ui-experiment",
+        "prepare_command",
+      );
+      if (controller.signal.aborted && cause === controller.signal.reason)
+        throw cancelled();
       throw cause;
     }
-    const result = await runOwnedCommand(
+    const result = await runCommand(
       {
         command: selectedCommand,
         arguments: args,
@@ -107,17 +139,31 @@ export async function withCommands(work) {
     process.removeListener("SIGINT", abort);
     process.removeListener("SIGTERM", abort);
   }
+  const workFailures = failed ? [primary] : [];
+  if (
+    controller.signal.aborted &&
+    !(
+      primary instanceof OwnedCommandFailure &&
+      primary.cancellation?.reason === controller.signal.reason
+    )
+  )
+    workFailures.push(cancelled());
   if (failures.length) {
     const error = new AggregateError(
-      [...(failed ? [primary] : []), ...failures],
+      [...workFailures, ...failures],
       "Experiment cleanup failed",
       { cause: primary },
     );
     error.cleanupOwners = owners;
+    error.retryCleanup = settle;
     throw error;
   }
-  if (failed) throw primary;
-  if (controller.signal.aborted)
-    throw new OwnedCommandFailure("cancelled", "Experiment cancelled");
+  if (workFailures.length === 1) throw workFailures[0];
+  if (workFailures.length > 1)
+    throw new AggregateError(
+      workFailures,
+      "Experiment work failed during cancellation",
+      { cause: primary },
+    );
   return value;
 }
