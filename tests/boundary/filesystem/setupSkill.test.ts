@@ -660,6 +660,7 @@ describe("canonical skill transaction", () => {
       "references/javascript-applications.md",
       "references/native-and-artifacts.md",
       "references/runtime-observation.md",
+      "references/web-feature-attribution.md",
     ];
     const records = await Promise.all(
       paths.map(async (path) => {
