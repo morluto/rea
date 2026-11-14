@@ -1,3 +1,4 @@
+import { accessSync, constants, realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,39 @@ import { pathToFileURL } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+
+/**
+ * The Inspector URL replaces quotes and backslashes with underscores, so a
+ * temporary root that already contains one cannot express a provable target
+ * path and these cases would measure the refusal instead of cancellation.
+ */
+const provableRoot = (() => {
+  for (const candidate of [tmpdir(), "/tmp"]) {
+    try {
+      const resolved = realpathSync(candidate);
+      // Both the spelling and its canonical form have to survive the Inspector URL rewrite;
+      // a safe alias over an unsafe target still produces an encoded URL.
+      if (/[_"\\]/u.test(candidate) || /[_"\\]/u.test(resolved)) continue;
+      // A safe spelling is not enough: these cases create directories under this root, and a
+      // read-only mount would pass the spelling test and then fail every `mkdtemp`.
+      accessSync(resolved, constants.W_OK);
+      return candidate;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return undefined;
+})();
+
+/**
+ * Cancellation cases that create a temporary target file.
+ *
+ * They need a root whose canonical spelling carries no character the Inspector URL rewrites, so
+ * the target is expressible. The Electron cases below reach the same code paths without a target
+ * file and run everywhere.
+ */
+const targetFileCase =
+  process.platform !== "win32" && provableRoot === undefined ? it.skip : it;
 
 const fileAccess = vi.hoisted(() => ({
   path: undefined as string | undefined,
@@ -109,7 +143,9 @@ afterEach(async () => {
 });
 
 const targetFile = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-inspector-cancel-"));
+  const root = await mkdtemp(
+    join(provableRoot ?? tmpdir(), "rea-inspector-cancel-"),
+  );
   roots.push(root);
   const path = join(root, "entry.js");
   await writeFile(path, "// inert target file\n");
@@ -117,50 +153,53 @@ const targetFile = async (): Promise<string> => {
   return path;
 };
 
-it("stops Inspector target authorization after the current stat settles", async () => {
-  const path = await targetFile();
-  const extraPath = join(roots[0]!, "second.js");
-  await writeFile(extraPath, "// second inert target file\n");
-  fileAccess.extraPath = extraPath;
-  const fake = await startFakeV8Inspector({
-    targetUrl: pathToFileURL(path).href,
-    additionalTargetUrl: pathToFileURL(extraPath).href,
-    additionalTargetCount: 1,
-  });
-  fixtures.push(fake);
-  const controller = new AbortController();
-  const reason = new Error("cancel after target stat");
-  fileAccess.reason = reason;
-  fileAccess.controller = controller;
-  fileAccess.abortOnStatCall = 2;
+targetFileCase(
+  "stops Inspector target authorization after the current stat settles",
+  async () => {
+    const path = await targetFile();
+    const extraPath = join(roots[0]!, "second.js");
+    await writeFile(extraPath, "// second inert target file\n");
+    fileAccess.extraPath = extraPath;
+    const fake = await startFakeV8Inspector({
+      targetUrl: pathToFileURL(path).href,
+      additionalTargetUrl: pathToFileURL(extraPath).href,
+      additionalTargetCount: 1,
+    });
+    fixtures.push(fake);
+    const controller = new AbortController();
+    const reason = new Error("cancel after target stat");
+    fileAccess.reason = reason;
+    fileAccess.controller = controller;
+    fileAccess.abortOnStatCall = 2;
 
-  const result = await new V8InspectorProvider().listTargets(
-    { inspector_endpoint: fake.endpoint },
-    { signal: controller.signal },
-  );
+    const result = await new V8InspectorProvider().listTargets(
+      { inspector_endpoint: fake.endpoint },
+      { signal: controller.signal },
+    );
 
-  if (result.ok) throw new Error("Expected Inspector listing cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  expect(result.error.diagnostics).toMatchObject({
-    completed_target_inventory: {
-      complete: false,
-      targets_examined: 1,
-      limitations: expect.arrayContaining([
-        expect.stringMatching(
-          /cancellation.*authorization.*unexamined targets.*unknown.*not excluded/iu,
-        ),
-      ]),
-    },
-  });
-  const inventory = record(
-    record(result.error.diagnostics)?.completed_target_inventory,
-  );
-  expect(inventory?.targets_discovered).toBeGreaterThan(0);
-  expect(inventory?.targets).toHaveLength(1);
-  expect(inventory?.targets_discovered).toBe(3);
-  expect(fileAccess.calls).toEqual(["stat", "realpath", "stat"]);
-});
+    if (result.ok) throw new Error("Expected Inspector listing cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.diagnostics).toMatchObject({
+      completed_target_inventory: {
+        complete: false,
+        targets_examined: 1,
+        limitations: expect.arrayContaining([
+          expect.stringMatching(
+            /cancellation.*authorization.*unexamined targets.*unknown.*not excluded/iu,
+          ),
+        ]),
+      },
+    });
+    const inventory = record(
+      record(result.error.diagnostics)?.completed_target_inventory,
+    );
+    expect(inventory?.targets_discovered).toBeGreaterThan(0);
+    expect(inventory?.targets).toHaveLength(1);
+    expect(inventory?.targets_discovered).toBe(3);
+    expect(fileAccess.calls).toEqual(["stat", "realpath", "stat"]);
+  },
+);
 
 it("stops Electron target authorization after the current stat settles", async () => {
   const path = await targetFile();
@@ -289,16 +328,19 @@ it("drains pending Electron discovery before shutdown cleanup completes", async 
   ]);
 });
 
-it("keeps ordinary and malformed file-location authorization unchanged", async () => {
-  const path = await targetFile();
+targetFileCase(
+  "keeps ordinary and malformed file-location authorization unchanged",
+  async () => {
+    const path = await targetFile();
 
-  await expect(authorizedElectronFile(pathToFileURL(path).href)).resolves.toBe(
-    path,
-  );
-  await expect(
-    authorizedElectronFile("file://remote.example/share/entry.js"),
-  ).resolves.toBeUndefined();
-  await expect(
-    authorizedElectronFile("file:///tmp/encoded%2fseparator.js"),
-  ).resolves.toBeUndefined();
-});
+    await expect(
+      authorizedElectronFile(pathToFileURL(path).href),
+    ).resolves.toBe(path);
+    await expect(
+      authorizedElectronFile("file://remote.example/share/entry.js"),
+    ).resolves.toBeUndefined();
+    await expect(
+      authorizedElectronFile("file:///tmp/encoded%2fseparator.js"),
+    ).resolves.toBeUndefined();
+  },
+);
