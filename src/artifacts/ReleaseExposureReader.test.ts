@@ -2658,17 +2658,20 @@ describe("ReleaseExposureReader source spellings", () => {
     expect(scanned.text_members).toEqual({ scanned: 1, skipped: 0 });
   });
 
-  it("keeps symlink traversal in a selected directory path", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-link-");
-    await mkdir(join(root, "real", "child"), { recursive: true });
-    await writeFile(join(root, "real", "notes.txt"), key);
-    await writeFile(join(root, "notes.txt"), "decoy\n");
-    await symlink(join(root, "real", "child"), join(root, "link"));
-    const selected = `${root}/link/..`;
-    const scanned = await inspect(selected);
-    expect(scanned.textLocations).toEqual([`${selected}/notes.txt`]);
-    expect(scanned.text_members).toEqual({ scanned: 1, skipped: 0 });
-  });
+  it.skipIf(process.platform === "win32")(
+    "keeps symlink traversal in a selected directory path",
+    async () => {
+      const root = await createTestTempDirectory("rea-release-exposure-link-");
+      await mkdir(join(root, "real", "child"), { recursive: true });
+      await writeFile(join(root, "real", "notes.txt"), key);
+      await writeFile(join(root, "notes.txt"), "decoy\n");
+      await symlink(join(root, "real", "child"), join(root, "link"));
+      const selected = `${root}/link/..`;
+      const scanned = await inspect(selected);
+      expect(scanned.textLocations).toEqual([`${selected}/notes.txt`]);
+      expect(scanned.text_members).toEqual({ scanned: 1, skipped: 0 });
+    },
+  );
 });
 
 describe("ReleaseExposureReader package traversal coverage", () => {
