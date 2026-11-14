@@ -2,16 +2,23 @@ import { createHash } from "node:crypto";
 import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { RPM_PACKAGE_TOOL_CONTRACTS } from "../../src/contracts/rpm/rpmPackageToolContracts.js";
 import { rpmPackageSchema } from "../../src/domain/rpm/package.js";
 import { rpmBinaryPackageFixture } from "../../src/rpm/RpmPackage.fixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
-const completeEvidenceSchema = toolContract(
-  "inspect_rpm_package",
-).outputSchema.safeExtend({ normalized_result: rpmPackageSchema });
+const inspectRpmPackageContract = RPM_PACKAGE_TOOL_CONTRACTS.find(
+  (candidate) => candidate.name === "inspect_rpm_package",
+);
+if (inspectRpmPackageContract === undefined)
+  throw new Error("Missing inspect_rpm_package contract");
+
+const completeEvidenceSchema =
+  inspectRpmPackageContract.outputSchema.safeExtend({
+    normalized_result: rpmPackageSchema,
+  });
 
 cliTest(
   "reports RPM lead, dependencies and header files through the public CLI",

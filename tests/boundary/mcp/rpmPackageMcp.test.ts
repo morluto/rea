@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { createServer } from "../../../src/server/createServer.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { RPM_PACKAGE_TOOL_CONTRACTS } from "../../../src/contracts/rpm/rpmPackageToolContracts.js";
 import { rpmPackageSchema } from "../../../src/domain/rpm/package.js";
 import {
   rpmBinaryPackageFixture,
@@ -14,9 +14,16 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
-const completeEvidenceSchema = toolContract(
-  "inspect_rpm_package",
-).outputSchema.safeExtend({ normalized_result: rpmPackageSchema });
+const inspectRpmPackageContract = RPM_PACKAGE_TOOL_CONTRACTS.find(
+  (candidate) => candidate.name === "inspect_rpm_package",
+);
+if (inspectRpmPackageContract === undefined)
+  throw new Error("Missing inspect_rpm_package contract");
+
+const completeEvidenceSchema =
+  inspectRpmPackageContract.outputSchema.safeExtend({
+    normalized_result: rpmPackageSchema,
+  });
 
 const connect = async (mcp: TestMcp) => {
   const session = createTestBinarySession(() => {
