@@ -1557,3 +1557,79 @@ it.each([
     expect(facts.unresolved).toEqual([]);
   },
 );
+
+// Metro compiles `require.context` into this getter map. Expo Router web
+// exports keep each app-relative route filename as a literal key.
+const metroContext = (keys: readonly string[]): string =>
+  `__d(function(g,r,i,a,m,e,d){const t=Object.defineProperties({},{${keys
+    .map(
+      (key, at) =>
+        `${JSON.stringify(key)}:{enumerable:!0,get(){return r(d[${String(at)}])}}`,
+    )
+    .join(
+      ",",
+    )}});function n(e){return t[e]}n.keys=function(){return Object.keys(t)},m.exports=n},512,[]);`;
+
+it("interprets Expo Router require.context keys as low-confidence file-route candidates", () => {
+  const source = metroContext([
+    "./(app)/_layout.tsx",
+    "./(app)/index.tsx",
+    "./(app)/reports/[id]/edit.tsx",
+    "./(app,admin)/team.tsx",
+    "./+html.tsx",
+    "./+not-found.tsx",
+    "./_layout.tsx",
+    "./api/users+api.ts",
+    "./docs/[...rest].tsx",
+    "./settings/index.web.jsx",
+  ]);
+  const facts = analyze(source);
+  expect(facts.unresolved).toEqual([]);
+  expect(
+    facts.candidates.map(({ path, segments }) => [segments[0]!.value, path]),
+  ).toEqual([
+    ["./(app)/index.tsx", "/"],
+    ["./(app)/reports/[id]/edit.tsx", "/reports/:id/edit"],
+    ["./(app,admin)/team.tsx", "/team"],
+    ["./api/users+api.ts", "/api/users"],
+    ["./docs/[...rest].tsx", "/docs/:rest+"],
+    ["./settings/index.web.jsx", "/settings"],
+  ]);
+  for (const candidate of facts.candidates) {
+    expect(candidate).toMatchObject({
+      mechanism: "expo-router-context-key",
+      confidence: "low",
+      derivation: "inferred",
+      segments: [{ origin: "literal", location: candidate.location }],
+    });
+    expect(
+      source.slice(
+        candidate.location.start.column,
+        candidate.location.end.column,
+      ),
+    ).toBe(JSON.stringify(candidate.segments[0]!.value));
+  }
+});
+
+it("keeps a require.context file map without Expo Router conventions unknown", () => {
+  const source = metroContext(["./Button.stories.tsx", "./Card.stories.tsx"]);
+  const facts = analyze(source);
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toEqual([
+    expect.objectContaining({
+      mechanism: "expo-router-context-key",
+      reason: expect.stringContaining("Expo Router"),
+    }),
+  ]);
+});
+
+it.each([
+  metroContext(["./_layout.tsx", "./about.tsx", "./logo.png"]),
+  metroContext(["./_layout.tsx", "about.tsx"]),
+  "Object.defineProperties(target,{'./_layout.tsx':{get(){}},'./about.tsx':{get(){}}});",
+  "Object.defineProperties({},{default:{get(){}},'./_layout.tsx':{get(){}}});",
+])("does not read other defineProperties maps as route files: %s", (source) => {
+  const facts = analyze(source);
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toEqual([]);
+});
