@@ -759,6 +759,8 @@ const tlsOptionMerge = (
  * the getter runs during Node's own copy, and a `set minVersion` in an earlier argument
  * absorbs a later write. Both are bodies this reader does not run.
  *
+ * The same reader then judges `secureProtocol`; see `rejectsSecureProtocolLiteral`.
+ *
  * Only `tls` reads these members, so `net` is not consulted.
  */
 const rejectsTlsProtocolVersionLiteral = (
