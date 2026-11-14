@@ -5,7 +5,7 @@ import {
 } from "../../process/capture/ProcessSamplingObservation.js";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -129,23 +129,44 @@ const fixture = async () => {
 
 /**
  * Replace the fake application with one that also starts a child in its
- * process group and a child in a new session; each records SIGTERM.
+ * process group and a child in a new session; each records SIGTERM. Startup
+ * stays paused until the test observes the parent's state write. Readiness
+ * then comes from each installed handler, rather than elapsed time.
  */
 const installProcessFamily = async (root: string, path: string) => {
   const windowFile = join(root, "window-open");
   const loop = "while :; do sleep 0.1; done";
+  const bin = path.split(":")[0] ?? "";
+  const child = join(bin, "capture-child");
+  const start = join(root, "start-children");
+  const readyFiles = [join(root, "group-ready"), join(root, "setsid-ready")];
   await executable(
-    join(path.split(":")[0] ?? "", "fakeapp"),
+    child,
+    [
+      "#!/bin/sh",
+      'while [ ! -f "$3" ]; do sleep 0.1; done',
+      "trap 'touch \"$1\"; exit 0' TERM",
+      'printf "ready\\n" > "$2"',
+      loop,
+    ].join("\n"),
+  );
+  await executable(
+    join(bin, "fakeapp"),
     [
       "#!/bin/sh",
       `trap 'rm -f "${windowFile}"; exit 0' TERM`,
       `touch "${windowFile}"`,
-      `( trap 'touch "${join(root, "group-term")}"; exit 0' TERM; ${loop} ) &`,
-      `setsid sh -c 'trap "touch ${join(root, "setsid-term")}; exit 0" TERM; ${loop}' &`,
+      `"${child}" "${join(root, "group-term")}" "${readyFiles[0]}" "${start}" &`,
+      `setsid "${child}" "${join(root, "setsid-term")}" "${readyFiles[1]}" "${start}" &`,
       'printf "count=1\\n" > "$HOME/.config/fakeapp/state.ini"',
       loop,
     ].join("\n"),
   );
+  return {
+    release: () => writeFileSync(start, ""),
+    ready: () =>
+      readyFiles.every((file) => readFileSyncSafe(file) === "ready\n"),
+  };
 };
 
 const host = (
@@ -652,15 +673,17 @@ describe.skipIf(process.platform !== "linux")(
   () => {
     it("asks the process group and token carriers outside it to exit before killing them", async () => {
       const { root, home, environment } = await fixture();
-      await installProcessFamily(root, environment.PATH);
+      const children = await installProcessFamily(root, environment.PATH);
       const statePath = join(home, ".config/fakeapp/state.ini");
-      let writtenAt: number | undefined;
+      let released = false;
       const nextRequest = (): SessionRequest | undefined => {
         if (readFileSyncSafe(statePath) !== "count=1\n") return undefined;
-        writtenAt ??= performance.now();
-        return performance.now() - writtenAt > 1500
-          ? { kind: "stop" }
-          : undefined;
+        if (!released) {
+          expect(children.ready()).toBe(false);
+          children.release();
+          released = true;
+        }
+        return children.ready() ? { kind: "stop" } : undefined;
       };
 
       const evidence = await captureDesktopApplication(
@@ -680,13 +703,21 @@ describe.skipIf(process.platform !== "linux")(
 
     it("stops the application gracefully and removes retained content when the session fails", async () => {
       const { root, home, environment } = await fixture();
-      await installProcessFamily(root, environment.PATH);
+      const children = await installProcessFamily(root, environment.PATH);
       const statePath = join(home, ".config/fakeapp/state.ini");
       const output = join(root, "out");
-      const nextRequest = (): SessionRequest | undefined =>
-        readFileSyncSafe(statePath) === "count=1\n"
+      let released = false;
+      const nextRequest = (): SessionRequest | undefined => {
+        if (readFileSyncSafe(statePath) !== "count=1\n") return undefined;
+        if (!released) {
+          expect(children.ready()).toBe(false);
+          children.release();
+          released = true;
+        }
+        return children.ready()
           ? { kind: "checkpoint", name: "written" }
           : undefined;
+      };
 
       const failed = await captureDesktopApplication(request(output), {
         ...host(environment, nextRequest),
