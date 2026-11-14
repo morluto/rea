@@ -528,7 +528,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
           options?.signal === undefined ? {} : { signal: options.signal },
         );
         if (result === undefined || !result.ok) return result;
-        if (operation === "list_procedures") {
+        if (hasHopperReplyContract(operation)) {
           const replied = parseHopperReply(operation, result.value);
           if (!replied.ok) return replied;
         }
