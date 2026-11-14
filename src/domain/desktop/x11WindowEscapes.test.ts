@@ -120,3 +120,33 @@ _NET_WM_WINDOW_TYPE = _NET_WM_WINDOW_TYPE_DIALOG
     window_type: "dialog",
   });
 });
+
+// Verbatim `LC_ALL=C xprop -notype WM_CLASS _NET_WM_NAME WM_NAME _NET_WM_PID
+// _NET_WM_WINDOW_TYPE` (xprop 1.2.8) for a window whose _NET_WM_NAME is the
+// UTF-8 text "Café 日本<TAB>tab" and whose WM_NAME and WM_CLASS are Latin-1.
+// Outside a UTF-8 locale xprop writes each non-ASCII byte of a UTF8_STRING in
+// octal; the Latin-1 STRING escapes are characters.
+const cLocaleXprop = String.raw`WM_CLASS = "r\351a"
+_NET_WM_NAME = "Caf\303\251 \346\227\245\346\234\254\ttab"
+WM_NAME = "Caf\351"
+_NET_WM_PID = 31
+_NET_WM_WINDOW_TYPE:  no such atom on any window.
+`;
+
+it("decodes the octal bytes of a UTF-8 title as UTF-8 outside a UTF-8 locale", () => {
+  expect(parseX11WindowProperties(cLocaleXprop)).toEqual({
+    instance: "réa",
+    class: null,
+    title: "Café 日本\ttab",
+    pid: 31,
+    window_type: null,
+  });
+});
+
+it("reads WM_NAME when the UTF-8 title bytes are not UTF-8", () => {
+  expect(
+    parseX11WindowProperties(String.raw`_NET_WM_NAME = "Caf\351"
+WM_NAME = "Caf\351"
+`).title,
+  ).toBe("Café");
+});
