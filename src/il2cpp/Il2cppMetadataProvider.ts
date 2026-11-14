@@ -35,12 +35,12 @@ import { createIl2cppMetadataAdmission } from "./Il2cppMetadataAdmission.js";
 import { hexAddress as hex } from "./Il2cppBinaryImage.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import {
   il2cppMetadataSchema,
@@ -396,9 +396,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
     options?: ExecutionOptions,
   ): Promise<Result<Il2cppMetadata, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     if (this.#admissionStopped)
       return err(
         new AnalysisCapabilityUnavailableError(
