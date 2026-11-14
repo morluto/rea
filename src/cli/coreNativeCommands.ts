@@ -560,7 +560,8 @@ const registerAnnotationCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.annotateNativeFunction, {
-    description: "Edit function annotations and return refreshed analysis",
+    description:
+      "Edit function annotations and return refreshed analysis. With a fresh Ghidra CLI session the edit is discarded when the command exits: the returned dossier is the edited observation and later commands see the original name. For dependent multi-edit or multi-read sequences on one target, use the session-oriented MCP workflow (sessions stay open during the sequence; edits do not outlive close, and existing-project mode cannot mutate). Other providers have their own lifetimes.",
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
       procedure: nativeFunctionAnnotationsInputSchema.shape.procedure.describe(
