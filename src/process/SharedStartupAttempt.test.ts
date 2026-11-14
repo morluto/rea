@@ -6,14 +6,19 @@ import {
   STARTUP_OWNER_CLOSED,
 } from "./SharedStartupAttempt.js";
 
-it("keeps shared startup running for an interested peer", async () => {
+it("keeps shared startup running for an interested peer and returns the departing caller's reason", async () => {
   const completed = createDeferred<string>();
   const attempt = new SharedStartupAttempt(() => completed.promise);
   const controller = new AbortController();
   const departing = attempt.wait(controller.signal);
   const staying = attempt.wait();
-  controller.abort();
-  await expect(departing).resolves.toEqual({ status: "cancelled" });
+  const reason = { caller: "departing" };
+  controller.abort(reason);
+  const departed = await departing;
+  expect(departed).toEqual({ status: "cancelled", reason });
+  expect(departed.status === "cancelled" ? departed.reason : undefined).toBe(
+    reason,
+  );
   expect(attempt.signal.aborted).toBe(false);
   completed.resolve("ready");
   await expect(staying).resolves.toEqual({
@@ -28,9 +33,13 @@ it("retains the final cleanup result when all callers cancel together", async ()
   const first = new AbortController();
   const last = new AbortController();
   const waits = [attempt.wait(first.signal), attempt.wait(last.signal)];
-  first.abort();
+  const firstReason = new Error("first caller left");
+  first.abort(firstReason);
   last.abort();
-  await expect(waits[0]).resolves.toEqual({ status: "cancelled" });
+  await expect(waits[0]).resolves.toEqual({
+    status: "cancelled",
+    reason: firstReason,
+  });
   expect(attempt.signal.aborted).toBe(true);
   expect(attempt.settled).toBe(false);
   const failure = { cleanupIncomplete: true };
