@@ -427,6 +427,22 @@ run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
 
+### PTY session semantics and children that outlive the target
+
+`capture_process_scenario` starts the target as the session leader of the
+capture PTY. When the target exits, the PTY delivers `SIGHUP` to its foreground
+process group — exactly as a terminal delivers one when a login shell exits
+(`script -c <program>`, `ssh -t host <program>`). A child the target forked
+without `setsid` or `setpgid` and that is still running receives this hangup
+and, by default, dies shortly after the target exits. This is not REA cleanup —
+`cleanup_outcome: "not_required"` is accurate — but the capture then behaves
+differently from a direct, non-PTY run: the child is gone before any sample is
+taken, and neither `process_samples` nor the residual unknowns explain the
+loss. A worker that must outlive the target must leave the process group
+(`setsid`, `setpgid(0, 0)`) or block/ignore `SIGHUP` before the target exits.
+Absent such handling, a clean exit with an empty `process_samples` does not
+prove no background worker was started and then hung up by the capture.
+
 ### Finalization interval
 
 By default a deadline sends `SIGKILL` at once. Set `finalization_ms` to give the
