@@ -249,6 +249,9 @@ async function verifyStringLiterals() {
         ["", "small"],
         ["tab\there", "small"],
       ],
+      selectCopiedThroughLoop: [],
+      selectedJoin: [],
+      selectedThenOrdinaryWrite: [["VisibleAfterWrite", "large"]],
       returnedLiteral: [["Holding awake", "small"]],
     };
     const decoded = {};
