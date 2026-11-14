@@ -231,7 +231,7 @@ export const inspectNtfsJournalEvidence = async (
         "capacity",
         "One NTFS inspection is already active in this scope; retry after it completes.",
         { maximum_concurrent_inspections: 1 },
-        { retryable: true },
+        { retryable: true, measuredExhaustion: true },
       ),
     );
   try {

@@ -30,6 +30,8 @@ import {
   runUninstall,
   systemUninstallHost,
 } from "../../../src/application/Uninstall.js";
+import { resolveMcpRegistrationClients } from "../../../src/application/McpRegistrationCatalog.js";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -143,6 +145,34 @@ describe("Windows Claude Desktop configuration location", () => {
     expect(inspection.status === "invalid" && inspection.remediation).toContain(
       `Add REA's entry to ${appDataConfig} by hand while Claude Desktop is fully quit`,
     );
+  });
+
+  it("refuses mcp add before any write while the package view is unknown", async () => {
+    const { home, env, appDataConfig, container } = await windowsProfile();
+    await mkdir(join(container, "LocalCache", "Roaming"), { recursive: true });
+    await writeJson(appDataConfig, { preferences: {} });
+    const resources = new ArtifactResourceScope();
+    try {
+      const selected = await resolveMcpRegistrationClients(
+        {
+          agents: ["claude-desktop"],
+          global: true,
+          cwd: home,
+          home,
+          platform: "win32",
+          environment: env,
+        },
+        resources,
+      );
+      expect(selected.ok).toBe(false);
+      if (selected.ok) throw new Error("expected an MSIX write refusal");
+      expect(selected.error.message).toContain(
+        `Add REA's entry to ${appDataConfig} by hand while Claude Desktop is fully quit, or rerun mcp add`,
+      );
+    } finally {
+      await resources.close();
+    }
+    expect(await readJson(appDataConfig)).toEqual({ preferences: {} });
   });
 
   it("creates the private copy when the MSIX package has no configuration", async () => {
