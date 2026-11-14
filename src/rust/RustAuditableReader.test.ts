@@ -228,6 +228,46 @@ it("stops an inflate that exceeds the section ratio", () => {
   ).toThrow(/1 MiB/);
 });
 
+it("reports the absolute cap when a stream inflates past it", () => {
+  const compressed = deflateSync(Buffer.alloc(9 * 1024 * 1024));
+  expect(compressed.length * 64).toBeLessThan(8 * 1024 * 1024);
+  expect(() => readAuditableSection(".dep-v0", 0, compressed)).toThrow(
+    expect.objectContaining({
+      constraint: {
+        resource: "memory",
+        reported_limits: { maximum_bytes: 8 * 1024 * 1024 },
+      },
+    }),
+  );
+});
+
+it("reports the stream limit for a padded PE section whose inflate exceeds the ratio", () => {
+  const document = JSON.stringify({
+    packages: [{ name: "a".repeat(39958), version: "1", source: "local" }],
+  });
+  const compressed = deflateSync(Buffer.from(document));
+  // The 115-byte stream inflates to 40015 bytes: over both its 7360-byte
+  // ratio limit and the 32768-byte limit of the 512-byte padded storage.
+  // The refusal must report the stream limit, not the storage limit.
+  expect(compressed.length).toBe(115);
+  expect(Buffer.byteLength(document)).toBe(40015);
+  const stored = Buffer.alloc(512);
+  compressed.copy(stored);
+  const expected = expect.objectContaining({
+    constraint: {
+      resource: "memory",
+      reported_limits: { maximum_bytes: 115 * 64 },
+    },
+  });
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, stored, { peFileAlignment: 512 }),
+  ).toThrow(expected);
+  // The same stream without padding already reports the stream limit.
+  expect(() => readAuditableSection(".dep-v0", 0, compressed)).toThrow(
+    expected,
+  );
+});
+
 it("retains the compressed-stream limit for a PE section with padding", () => {
   const compressed = deflateSync(Buffer.alloc(RUST_SECTION_BYTES), {
     level: 0,

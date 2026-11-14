@@ -531,6 +531,59 @@ cliTest(
 );
 
 cliTest(
+  "reports the consumed-stream limit when a padded PE inflate exceeds the storage allocation",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-pe-ratio-cap-");
+    const { client, call } = await connectLocalToolsMcp();
+    const path = join(root, "over-storage.exe");
+    const document = Buffer.from(
+      JSON.stringify({
+        packages: [{ name: "a".repeat(39958), version: "1", source: "local" }],
+      }),
+    );
+    const compressed = deflateSync(document);
+    const alignedSize = 512;
+    expect(compressed.length).toBe(115);
+    expect(document.length).toBe(40015);
+    // The inflated document exceeds the 512-byte storage allocation's
+    // 32768-byte limit, so the first inflate attempt fails before the
+    // consumed stream length is known. The refusal must still report the
+    // consumed-stream limit, not the storage-based allocation.
+    expect(document.length).toBeGreaterThan(alignedSize * 64);
+    expect(document.length).toBeGreaterThan(compressed.length * 64);
+
+    const bytes = createRustImage({
+      format: "pe",
+      payload: compressed,
+      includeRustc: false,
+    });
+    bytes.writeUInt32LE(alignedSize, 152 + 36); // OptionalHeader.FileAlignment
+    bytes.writeUInt32LE(0, 264 + 8); // .dep-v0 VirtualSize
+    bytes.writeUInt32LE(alignedSize, 264 + 16); // .dep-v0 SizeOfRawData
+    await writeFile(path, bytes);
+
+    const expectedFailure = {
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "inspect_rust_binary",
+        resource: "memory",
+        reported_limits: { maximum_bytes: compressed.length * 64 },
+      },
+    };
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject(expectedFailure);
+    const response = await call("inspect_rust_binary", { path });
+    expect(parseMcpToolError(response).error).toMatchObject(expectedFailure);
+    await client.ping();
+  },
+  30000,
+);
+
+cliTest(
   "releases a failed Rust descriptor close before projecting the CLI failure",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-cli-close-");

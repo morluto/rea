@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
+import { jsonCommandSchemas } from "../../../src/cli/applicationCommands.js";
 import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
@@ -93,7 +94,18 @@ const registerParserAdvertisementInventoryTests = (): void => {
     for (const command of primary) {
       const advertised = await advertisedSchema(cli, command);
       for (const group of INPUT_GROUPS) {
-        const parser = parserSchema(cli, command, group);
+        // JSON-input commands advertise the document schema, not the
+        // `inputJson` envelope positional the parser registers: the
+        // document itself is validated against the registered input
+        // schema, so that schema is the advertised-schema owner here.
+        const documentSchema =
+          group === "args"
+            ? jsonCommandSchemas.get(command)?.inputSchema
+            : undefined;
+        const parser =
+          documentSchema instanceof z.ZodObject
+            ? documentSchema
+            : parserSchema(cli, command, group);
         const advertisedGroup = advertised[group];
         if (parser === undefined) {
           if (advertisedGroup !== undefined)

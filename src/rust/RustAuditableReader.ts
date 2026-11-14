@@ -148,7 +148,28 @@ const inflateSection = (
       }),
     );
   } catch (cause) {
-    throw inflateFailure(cause, allocationMaximum);
+    if (
+      bufferTooLarge(cause) &&
+      allocationMaximum < RUST_UNCOMPRESSED_BYTES
+    ) {
+      // The storage-based allocation above is not the documented limit: the
+      // ratio applies to the consumed zlib stream, which the first attempt
+      // never learned. Retry once at the absolute cap so the ratio check
+      // below can report the stream-based limit instead of the storage one.
+      // Allocation stays bounded by the absolute cap either way.
+      try {
+        result = nodeCodecResult(
+          inflateSync(bytes, {
+            info: true,
+            maxOutputLength: RUST_UNCOMPRESSED_BYTES,
+          }),
+        );
+      } catch (retryCause) {
+        throw inflateFailure(retryCause, RUST_UNCOMPRESSED_BYTES);
+      }
+    } else {
+      throw inflateFailure(cause, allocationMaximum);
+    }
   }
   const compressedBytes = result.consumedBytes;
   if (compressedBytes > RUST_SECTION_BYTES)
@@ -188,6 +209,11 @@ const inflateSection = (
     );
   return { bytes: result.buffer, compressedBytes };
 };
+
+const bufferTooLarge = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  String(cause.code) === "ERR_BUFFER_TOO_LARGE";
 
 const inflateFailure = (cause: unknown, maximum: number): Error => {
   const code =
