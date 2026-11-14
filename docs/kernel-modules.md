@@ -61,7 +61,7 @@ without their names. `.init.text` and `.exit.text` report the
 observed file-backed size. A compressed payload reports the stored size and a
 limitation that the decoded size is unknown.
 
-The signature trailer is the 27-byte magic `~Module signature appended~\n`
+The signature trailer is the 28-byte magic `~Module signature appended~\n`
 preceded by a 12-byte `module_signature` (`algo`, `hash`, `id_type`,
 `signer_len`, `key_id_len`, three pad bytes, and big-endian `sig_len`). When
 those parameter fields are zero and `id_type` is PKCS#7 (`2`), the preceding
