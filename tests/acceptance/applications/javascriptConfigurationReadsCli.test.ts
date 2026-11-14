@@ -27,7 +27,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const control = await processes.run(
       process.execPath,
       [join(root, "entry.mjs"), "abc", " mode "],
-      { env: { REA_ENDPOINT: "endpoint" }, timeoutMs: 15_000 },
+      { env: { REA_ENDPOINT: "endpoint" } },
     );
     expect(control.exitCode, control.stderr).toBe(0);
     expect(JSON.parse(control.stdout)).toEqual([

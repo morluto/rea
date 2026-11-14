@@ -20,18 +20,14 @@ describe.skipIf(process.platform !== "darwin")(
         const source = join(directory, "library.c");
         const library = join(directory, "libprobe.dylib");
         await writeFile(source, "int exported_value(void) { return 42; }\n");
-        const compiled = await processes.run(
-          "/usr/bin/xcrun",
-          [
-            "clang",
-            "-dynamiclib",
-            source,
-            "-Wl,-install_name,@rpath/libprobe.dylib",
-            "-o",
-            library,
-          ],
-          { timeoutMs: 30_000 },
-        );
+        const compiled = await processes.run("/usr/bin/xcrun", [
+          "clang",
+          "-dynamiclib",
+          source,
+          "-Wl,-install_name,@rpath/libprobe.dylib",
+          "-o",
+          library,
+        ]);
         expect(compiled.exitCode, compiled.stderr).toBe(0);
         const result = await cli.run({
           arguments: ["inspect-macho", library, "--json"],
@@ -54,11 +50,12 @@ describe.skipIf(process.platform !== "darwin")(
 
         // One architecture can still have a FAT container header.
         const universal = join(directory, "libprobe-universal.dylib");
-        const combined = await processes.run(
-          "/usr/bin/lipo",
-          ["-create", library, "-output", universal],
-          { timeoutMs: 30_000 },
-        );
+        const combined = await processes.run("/usr/bin/lipo", [
+          "-create",
+          library,
+          "-output",
+          universal,
+        ]);
         expect(combined.exitCode, combined.stderr).toBe(0);
         const fatResult = await cli.run({
           arguments: ["inspect-macho", universal, "--json"],

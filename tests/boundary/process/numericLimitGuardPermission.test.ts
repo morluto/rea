@@ -32,7 +32,7 @@ processTest.skipIf(
       processes.run(
         process.execPath,
         ["scripts/verify/rea-numeric-limits.mjs"],
-        { cwd: root, timeoutMs: 20_000 },
+        { cwd: root },
       );
     const healthy = await run();
     expect(healthy.exitCode, healthy.stderr).toBe(0);

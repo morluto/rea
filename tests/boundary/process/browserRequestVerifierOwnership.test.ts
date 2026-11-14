@@ -139,7 +139,6 @@ process.stdout.write(JSON.stringify({ pids, live, roots, failure }));
       );
       try {
         const result = await processes.run(process.execPath, [driver], {
-          timeoutMs: 30_000,
           env: {
             ...process.env,
             TMPDIR: tmp,

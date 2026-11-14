@@ -132,7 +132,6 @@ test.for(["target", "loader"] as const)(
       const result = await cli.run({
         arguments: ["analyze", target, "--provider", "hopper", "--json"],
         environment,
-        timeoutMs: 15_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -223,7 +222,6 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
   const deniedCli = await cli.run({
     arguments: ["analyze", target, "--provider", "hopper", "--json"],
     environment,
-    timeoutMs: 15_000,
   });
   expect(deniedCli.exitCode).toBe(1);
   expect(deniedCli.json).toMatchObject({

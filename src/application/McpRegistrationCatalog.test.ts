@@ -296,7 +296,6 @@ it(
         process.execPath,
         ["--import", "tsx", "--input-type=module", "--eval", CATALOG_PROGRAM],
         {
-          timeoutMs: 50_000,
           env: {
             PATH: process.env.PATH,
             SystemRoot: process.env.SystemRoot,

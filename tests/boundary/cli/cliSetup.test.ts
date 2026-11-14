@@ -365,7 +365,6 @@ cliTest.skipIf(process.platform === "win32")(
           XDG_DATA_HOME: join(home, ".local", "share"),
           XDG_CACHE_HOME: join(home, ".cache"),
         },
-        timeoutMs: 20_000,
       });
 
     const planned = await setup("--dry-run");
