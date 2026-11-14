@@ -6,6 +6,11 @@ import {
 } from "../artifacts/StableArtifactFailure.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  isZipZstandardWindowLimit,
+  ZIP_ZSTANDARD_WINDOW_FIXED_ALLOWANCE,
+} from "../artifacts/ZipZstandardWindow.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import {
   type StableArtifactSnapshot,
   readStableArtifact,
 } from "../artifacts/readStableArtifact.js";
@@ -111,6 +116,26 @@ const nupkgFailurePrimary = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "limit") {
+      // The shared ZIP reader's Zstandard window is fixed: worker or host
+      // memory cannot lift it, so carry that recovery instead of a memory retry.
+      if (isZipZstandardWindowLimit(cause))
+        return new AnalysisResourceConstraintError(
+          OPERATION,
+          cause.boundary ?? "memory",
+          cause.message,
+          {
+            max_file_bytes: input.max_file_bytes,
+            max_entries: input.max_entries,
+            max_nuspec_bytes: input.max_nuspec_bytes,
+          },
+          {
+            cause,
+            ...fixedAllowanceOptions(
+              ZIP_ZSTANDARD_WINDOW_FIXED_ALLOWANCE,
+              "parser",
+            ),
+          },
+        );
       const remediationAction = inputBudgetRemediation(cause, input);
       return new AnalysisResourceConstraintError(
         OPERATION,

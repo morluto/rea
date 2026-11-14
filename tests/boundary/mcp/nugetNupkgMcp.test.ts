@@ -1,7 +1,8 @@
 import { nugetNupkgSchema } from "../../../src/domain/nuget/nupkg.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect } from "vitest";
+import { ZipReader } from "@zip.js/zip.js";
+import { expect, vi } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -68,6 +69,50 @@ mcpTest(
         details: { operation: "inspect_nuget_nupkg" },
       });
     } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "advises a fixed allowance, not more memory, for a Zstandard window refusal",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    const refusal = Object.assign(new Error("Frame requires too much memory"), {
+      code: "ZSTD_error_frameParameter_windowTooLarge",
+    });
+    const original = ZipReader.prototype.getEntriesGenerator;
+    const enumeration = vi
+      .spyOn(ZipReader.prototype, "getEntriesGenerator")
+      .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+        for await (const entry of original.call(this, options)) {
+          if (entry.filename === "Demo.Package.nuspec" && !entry.directory) {
+            entry.compressionMethod = 93;
+            entry.getData = () => Promise.reject(refusal);
+          }
+          yield entry;
+        }
+        return true;
+      });
+    try {
+      const root = await createTestTempDirectory("rea-nupkg-mcp-");
+      const path = join(root, "Demo.Package.nupkg");
+      await writeFile(path, await nugetNupkgFixture());
+      const response = await client.callTool({
+        name: "inspect_nuget_nupkg",
+        arguments: { path },
+      });
+      const { error } = parseMcpToolError(response);
+      expect(error).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        remediation: {
+          action: expect.stringContaining("ZIP Zstandard decoder window"),
+        },
+      });
+      expect(error.remediation.action).toMatch(/host memory do not raise/iu);
+    } finally {
+      enumeration.mockRestore();
       await session.close();
     }
   },

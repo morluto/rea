@@ -41,6 +41,10 @@ import {
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
+import {
+  ZIP_ZSTANDARD_WINDOW_LIMIT,
+  ZIP_ZSTANDARD_WINDOW_LOG_MAX,
+} from "./ZipZstandardWindow.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
@@ -49,14 +53,6 @@ const ZIP_UTF8_DECODER = new TextDecoder("utf-8", {
   fatal: true,
   ignoreBOM: true,
 });
-
-/** Fixed method-93 decoder window: 2^27 bytes, matching the ELF/GPU decoders. */
-const ZIP_ZSTANDARD_WINDOW_LOG_MAX = 27;
-
-const ZIP_ZSTANDARD_WINDOW_ALLOWANCE = `${String(2 ** (ZIP_ZSTANDARD_WINDOW_LOG_MAX - 20))} MiB`;
-
-/** A frame above the window cap is a deliberate resource refusal, not damage. */
-const ZIP_ZSTANDARD_WINDOW_LIMIT = `ZIP Zstandard member requires a decoder window above REA's fixed ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE} allowance; the archive is not necessarily corrupt, and this limit cannot be raised at runtime. Recompress the member with a window of at most ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE}, or decompress it with a tool that admits larger windows, then retry.`;
 
 /** Keep zip.js's framing, CRC, size checks and backpressure for method 93. */
 class ZipZstandardDecompressionStream {
