@@ -106,6 +106,11 @@ callback fixture also proves that an unresolved targetless flow is not silently
 promoted to a direct callee. Every target runs in a separate owned project and
 must leave no process, socket, project, or runtime root after close.
 
+`relative-switch-gcc.S` covers GCC's AArch64 dispatch, where LDRB/LDRH loads the
+entry and the extended-register ADD (`SXTB`/`SXTH #2`) sign-extends it; one case
+sits before the ADR label, so its entry is negative. It shares the
+`relative-switch.S` symbol and case oracle for byte and halfword entries.
+
 `relative-switch-signed.S` covers signed halfword offsets, the CBZ zero-entry
 route, and selector biases of 0, 2 and 10 in the AArch64 jump-table lane. The
 nonzero biases exercise overlapping and disjoint typed label/index ranges. REA

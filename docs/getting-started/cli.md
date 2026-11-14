@@ -1085,6 +1085,13 @@ For example:
 rea mcp --http --host 0.0.0.0 --allowed-hosts 127.0.0.1,rea.lan
 ```
 
+The endpoint uses plain HTTP without TLS or client authentication. The `Host`
+and `Origin` checks guard against DNS rebinding and cross-origin browser pages;
+they are not access control, because any client that can reach the port can
+send an admitted `Host` header. A non-loopback bind makes the same tools and
+active analysis state reachable by every such client, so bind outside loopback
+only within a trusted or isolated network.
+
 Requests with a different `Host` or browser `Origin` receive `403`; a missing
 `Origin` is accepted. The announced client URL uses the bound hostname when
 admitted, otherwise the first declared hostname, with the actual bound port.
@@ -1129,7 +1136,9 @@ rea environment-serve manifest.json --evidence capture.json --port 8765
 `MCP_PORT`, then `127.0.0.1` and an ephemeral port. A non-loopback bind requires
 `MCP_ALLOWED_HOSTS` with the same hostname rules and Host/Origin gates as above.
 `environment-serve` uses this environment setting; `--allowed-hosts` belongs to
-`rea mcp --http`. For example:
+`rea mcp --http`. It likewise has no TLS or client authentication: any client
+that reaches the port can call the served tools, including write tools and the
+`/agentenv` methods that change the served state. For example:
 
 ```sh
 MCP_ALLOWED_HOSTS=127.0.0.1,rea.lan rea environment-serve manifest.json --evidence capture.json --host 0.0.0.0
