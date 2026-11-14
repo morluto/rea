@@ -1,6 +1,10 @@
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { productionMcpDoctorArguments } from "../../../src/cliBuiltinArguments.js";
+import {
+  productionMcpDoctorArguments,
+  splitIncurBuiltinArguments,
+} from "../../../src/cliBuiltinArguments.js";
+import { DEFAULT_INFO_LOGGING_COMMANDS } from "../../../src/cliCommandNames.js";
 import { parseLogLevel } from "../../../src/config/processStart.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 
@@ -265,7 +269,8 @@ export const cliCompileCacheEnvironment = (
  * Whether the file's shared process reports this command exactly as a fresh
  * `rea` process would. Stdin and deadlines belong to a process; the launcher
  * routes MCP and its doctor before the shared one-shot path; Node options
- * change the process itself; and enabled logging writes outside the
+ * change the process itself; and enabled logging, whether selected or a
+ * command default, writes outside the
  * per-command output capture.
  */
 const sharedProcessCanServe = ({
@@ -282,7 +287,18 @@ const sharedProcessCanServe = ({
   arguments_[0] !== "--mcp" &&
   productionMcpDoctorArguments([...arguments_]) === undefined &&
   environment?.NODE_OPTIONS === undefined &&
-  !enablesLogging(environment?.REA_LOG_LEVEL);
+  !enablesLogging(environment?.REA_LOG_LEVEL) &&
+  !logsByDefault(arguments_, environment?.REA_LOG_LEVEL);
+
+/** A command that logs at info by default unless REA_LOG_LEVEL selects otherwise. */
+const logsByDefault = (
+  arguments_: readonly string[],
+  level: string | undefined,
+): boolean =>
+  level === undefined &&
+  DEFAULT_INFO_LOGGING_COMMANDS.has(
+    splitIncurBuiltinArguments([...arguments_]).command[0] ?? "",
+  );
 
 /** A valid level other than silent; an invalid level is a captured refusal. */
 const enablesLogging = (level: string | undefined): boolean => {

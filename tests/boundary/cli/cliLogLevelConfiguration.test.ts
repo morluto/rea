@@ -82,7 +82,8 @@ cliTest(
         arguments: arguments_,
         environment: { REA_LOG_LEVEL: "loud" },
       };
-      const fresh = await cli.run(invocation);
+      // Compare the launcher itself with the file's shared process.
+      const fresh = await cli.run({ ...invocation, freshProcess: true });
       const shared = await cli.run(invocation);
       for (const result of [fresh, shared]) {
         expect(result.exitCode, JSON.stringify(arguments_)).toBe(1);
@@ -97,7 +98,7 @@ cliTest(
       arguments: ["doctor"],
       environment: { REA_LOG_LEVEL: "loud", COMPLETE: "bash" },
     };
-    const fresh = await cli.run(completion);
+    const fresh = await cli.run({ ...completion, freshProcess: true });
     const shared = await cli.run(completion);
     for (const result of [fresh, shared]) {
       expect(result.exitCode).toBe(1);
