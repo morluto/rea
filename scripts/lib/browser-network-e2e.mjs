@@ -118,12 +118,29 @@ export async function verifyBrowserNetworkEvidence(
     );
     assert.notEqual(result.isError, true, JSON.stringify(result));
     assert.notEqual(result.structuredContent, undefined);
+    await client.ping();
     const evidence = parseEvidence(
       requireMcpOutput(result, "capture_browser_scenario"),
     );
     mcpProof = assertBrowserNetworkEvidence(
       evidence.normalized_result,
       site.origin,
+    );
+    const summary = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "inline", evidence },
+        view: { kind: "summary" },
+      },
+    });
+    assert.notEqual(summary.isError, true, JSON.stringify(summary));
+    assert.ok(
+      parseEvidence(
+        requireMcpOutput(summary, "inspect_analysis_view"),
+      ).normalized_result.summary.network.by_status_class.some(
+        (group) => group.status_class === "9xx" && group.transactions === 1,
+      ),
+      "The captured nonstandard response must remain available in summaries",
     );
     if (attachment !== undefined) {
       const connectedScenario = browserScenarioSchema.parse({
@@ -160,6 +177,7 @@ export async function verifyBrowserNetworkEvidence(
       "/compressed",
       "/stream",
       "/empty",
+      "/nonstandard-status",
       "/form",
     ])
       assert.equal(

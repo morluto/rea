@@ -13,7 +13,7 @@ const html = `<!doctype html><meta charset="utf-8"><body><button id="start">Run<
   }, body:JSON.stringify({marker, password:'ordinary-selected-value', declared:'${networkFixtureSecret}'})}).then(r=>r.text());
   await Promise.all([send('slow'),send('fast'),fetch('/redirect').then(r=>r.text()),
     fetch('/binary').then(r=>r.arrayBuffer()),fetch('/compressed').then(r=>r.text()),
-    fetch('/empty').then(r=>r.text()),
+    fetch('/empty').then(r=>r.text()),fetch('/nonstandard-status').then(r=>r.text()),
     fetch('/form', {method:'POST', body:new URLSearchParams({declared:'${networkFixtureSecret}'})}).then(r=>r.text())]);
   await fetch('/stream');
   document.querySelector('#done').hidden=false;
@@ -79,6 +79,9 @@ export async function startBrowserNetworkSite() {
     } else if (path === "/empty") {
       response.writeHead(204);
       response.end();
+    } else if (path === "/nonstandard-status") {
+      response.writeHead(999, { "Content-Type": "text/plain" });
+      response.end("nonstandard-status-body");
     } else if (path === "/stream") {
       response.writeHead(200, { "Content-Type": "text/event-stream" });
       response.write("data: still-open\n\n");
