@@ -5,6 +5,7 @@ import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 
 import { AdbProvider } from "../../../../src/adb/AdbProvider.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
+import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import {
   execFileBytes,
   execFileOutput,
@@ -73,7 +74,9 @@ test("does not publish a screen capture cancelled before the commit point", asyn
     { signal: controller.signal },
   );
   if (result.ok) throw new Error("expected cancellation");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(primaryAnalysisError(result.error)._tag).toBe(
+    "AnalysisCancelledError",
+  );
   expect(result.error.cause).toBe(abortReason);
   await expect(readFile(join(output, "screen.png"))).rejects.toMatchObject({
     code: "ENOENT",
@@ -106,7 +109,9 @@ test("retains a committed screen capture receipt when cancellation arrives after
     { signal: controller.signal },
   );
   if (result.ok) throw new Error("expected cancellation");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(primaryAnalysisError(result.error)._tag).toBe(
+    "AnalysisCancelledError",
+  );
   expect(result.error.cause).toBe(abortReason);
   const evidence = parseEvidence(result.error.partialObservation);
   expect(evidence).toMatchObject({
@@ -262,7 +267,9 @@ test("retains the committed receipt and cleanup observation when cancellation ra
     { signal: controller.signal },
   );
   if (result.ok) throw new Error("expected cancellation");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(primaryAnalysisError(result.error)._tag).toBe(
+    "AnalysisCancelledError",
+  );
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.cause).toBeInstanceOf(AggregateError);
   const causes = (result.error.cause as AggregateError).errors as [
@@ -354,7 +361,9 @@ test("cancellation after a failed hard link but before exclusive creation does n
     { signal: controller.signal },
   );
   if (result.ok) throw new Error("expected cancellation");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(primaryAnalysisError(result.error)._tag).toBe(
+    "AnalysisCancelledError",
+  );
   expect(result.error.cause).toBe(abortReason);
   await expect(readFile(join(output, "screen.png"))).rejects.toMatchObject({
     code: "ENOENT",
@@ -392,7 +401,9 @@ test("retains a receipt when cancellation arrives after exclusive output creatio
     { signal: controller.signal },
   );
   if (result.ok) throw new Error("expected cancellation");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(primaryAnalysisError(result.error)._tag).toBe(
+    "AnalysisCancelledError",
+  );
   expect(result.error.cause).toBe(abortReason);
   expect(parseEvidence(result.error.partialObservation)).toMatchObject({
     operation: "capture_adb_screen",
@@ -718,7 +729,9 @@ test("retains incomplete cleanup on a cancelled capture while keeping cancellati
     { signal: controller.signal },
   );
   if (result.ok) throw new Error("expected cancellation");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(primaryAnalysisError(result.error)._tag).toBe(
+    "AnalysisCancelledError",
+  );
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.cleanupResources).toContain(runtime.path);
   await provider.close();

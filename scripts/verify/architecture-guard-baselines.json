@@ -196,7 +196,6 @@
     "src/python/PythonPyc.errors.ts": 1
   },
   "completed-abort-reclassification": {
-    "src/adb/AdbProvider.ts": 1,
     "src/application/EvidenceBundleCommands.ts": 2,
     "src/application/EvidenceInputResolver.ts": 1,
     "src/application/binary/BinarySession.ts": 1,
