@@ -16,7 +16,9 @@ import {
   resolveYamlEditPath,
 } from "./YamlConfigurationAliases.js";
 import {
+  materializeUnresolvedYamlAliases,
   retainYamlConfigurationSource,
+  yamlAliasValues,
   retainYamlScalarSource,
 } from "./YamlConfigurationSource.js";
 
@@ -273,10 +275,11 @@ export const editGooseConfigurationYaml = (
     value === undefined && isMap(parent)
       ? parent.items.find((pair) => pair.key === sourcePath.at(-1))?.key
       : undefined;
+  const aliasValues = yamlAliasValues(previous, document);
   const retained = preserveYamlAliasValues(document, [previous, removedKey]);
   if (value === undefined) {
     if (!document.deleteIn(sourcePath)) return text;
-  } else
+  } else {
     document.setIn(
       sourcePath,
       isMap(previous) || isSeq(previous)
@@ -288,5 +291,7 @@ export const editGooseConfigurationYaml = (
           )
         : value,
     );
+    materializeUnresolvedYamlAliases(document, aliasValues);
+  }
   return document.toString({ lineWidth: 0 });
 };

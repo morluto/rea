@@ -669,6 +669,48 @@ it("keeps argument annotations with unique values and retains removed annotation
 });
 
 describe("Hermes registration refresh around anchors and merges", () => {
+  it("keeps an alias to a sibling anchor that survives the refresh", () => {
+    const source =
+      "mcp_servers:\n  rea:\n    command: old\n    setting: &setting keep\n    metadata: {nested: *setting}\n";
+    const out = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+      command: "new",
+      setting: "keep",
+      metadata: { nested: "keep" },
+    });
+    expect(out).toContain("nested: *setting");
+    expect(
+      parseHermesConfigurationYaml(
+        out.replace("&setting keep", "&setting changed"),
+      ),
+    ).toMatchObject({
+      mcp_servers: { rea: { metadata: { nested: "changed" } } },
+    });
+  });
+
+  it("replaces an inherited remote registration without its remote selectors", () => {
+    const source =
+      "shared: &shared\n  rea: {url: https://example.invalid, transport: sse}\nmcp_servers:\n  <<: *shared\n";
+    const out = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+      command: "rea",
+      args: ["mcp"],
+    });
+    const parsed = parseHermesConfigurationYaml(out) as {
+      mcp_servers: { rea: Record<string, unknown> };
+    };
+    expect(parsed.mcp_servers.rea).toEqual({ command: "rea", args: ["mcp"] });
+  });
+
+  it("refuses to edit a field whose aliased and plain keys name the same setting", () => {
+    const source =
+      "field: &field env\nmcp_servers:\n  rea:\n    command: rea\n    *field : {A: first}\n    env: {A: second}\n";
+    expect(() =>
+      editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+        command: "rea",
+        env: { A: "third" },
+      }),
+    ).toThrow(/env/);
+  });
+
   it("edits a field whose key is an alias to a shared string, keeping the alias", () => {
     const source =
       "field: &field env\nmcp_servers:\n  rea:\n    command: rea\n    *field : {A: '1'}\n";

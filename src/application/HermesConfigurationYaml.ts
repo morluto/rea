@@ -20,7 +20,9 @@ import {
   resolveYamlEditPath,
 } from "./YamlConfigurationAliases.js";
 import {
+  materializeUnresolvedYamlAliases,
   retainYamlConfigurationSource,
+  yamlAliasValues,
   retainYamlScalarSource,
   yamlNumericValuesEqual,
 } from "./YamlConfigurationSource.js";
@@ -273,10 +275,11 @@ const parseHermesDocument = (text: string) => {
   return document;
 };
 
-const projectedYamlPathExists = (
+/** The value a path resolves to, merges included, or `absent`. */
+const projectedYamlValue = (
   document: Document,
   path: readonly string[],
-): boolean => {
+): { readonly value: unknown } | "absent" => {
   let current: unknown = document.toJS();
   for (const segment of path) {
     if (
@@ -284,11 +287,16 @@ const projectedYamlPathExists = (
       current === null ||
       !Object.hasOwn(current, segment)
     )
-      return false;
+      return "absent";
     current = (current as Record<string, unknown>)[segment];
   }
-  return true;
+  return { value: current };
 };
+
+const projectedYamlPathExists = (
+  document: Document,
+  path: readonly string[],
+): boolean => projectedYamlValue(document, path) !== "absent";
 
 const inheritedRegistrationRemovalError = () =>
   new ConfigurationError(
@@ -420,12 +428,21 @@ export const editHermesConfigurationYaml = (
   // A registration inherited whole through a merge keeps that inheritance:
   // override it with the merge, then write only the fields that differ.
   const inheritedSourcePath = resolveYamlEditPath(document, path);
+  // An explicit replacement that drops inherited fields, such as remote
+  // connection selectors, writes a local registration instead.
+  const inheritedRegistration = document.hasIn(inheritedSourcePath)
+    ? "absent"
+    : projectedYamlValue(document, path);
   if (
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    !document.hasIn(inheritedSourcePath) &&
-    projectedYamlPathExists(document, path)
+    inheritedRegistration !== "absent" &&
+    typeof inheritedRegistration.value === "object" &&
+    inheritedRegistration.value !== null &&
+    Object.keys(inheritedRegistration.value).every((key) =>
+      Object.hasOwn(value, key),
+    )
   )
     inheritedYamlMapOverride(document, inheritedSourcePath, path.at(-1)!);
   const sourcePath = resolveYamlEditPath(document, path);
@@ -444,6 +461,7 @@ export const editHermesConfigurationYaml = (
   const removedKey = isMap(parent)
     ? parent.items.find((pair) => pair.key === sourcePath.at(-1))?.key
     : undefined;
+  const aliasValues = yamlAliasValues(previous, document);
   const retainedSources = preserveYamlAliasValues(document, [
     previous,
     removedKey,
@@ -466,6 +484,7 @@ export const editHermesConfigurationYaml = (
           )
         : value,
     );
+    materializeUnresolvedYamlAliases(document, aliasValues);
   }
   // Editing REA must not reflow unrelated user prompts or other YAML scalars.
   return document.toString({

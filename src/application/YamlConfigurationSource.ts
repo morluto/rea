@@ -9,6 +9,7 @@ import {
   YAMLMap,
   type Document,
   type Node,
+  type Alias,
   type ScalarTag,
   type Tags,
   type YAMLSeq,
@@ -56,45 +57,38 @@ const containsRetainedSource = (
   return found;
 };
 
-const yamlNodes = (root: Node): Set<Node> => {
-  const nodes = new Set<Node>([root]);
+/** The value each alias inside `root` resolves to before an edit. */
+export const yamlAliasValues = (
+  root: unknown,
+  document: Document,
+): ReadonlyMap<Alias, unknown> => {
+  const values = new Map<Alias, unknown>();
+  if (!isNode(root)) return values;
   visit(root, {
-    Node: (_key, node) => {
-      nodes.add(node);
+    Alias: (_key, alias) => {
+      const target = alias.resolve(document);
+      if (target !== undefined) values.set(alias, target.toJS(document));
     },
   });
-  return nodes;
+  return values;
 };
 
 /**
- * A reused collection keeps its aliases verbatim. Each must still resolve
- * after the edit: to an anchor inside the reused collection, or to one
- * outside the replaced value whose anchor is not being moved.
+ * Replace each alias the edit left without a preceding anchor with the value
+ * it resolved to before the edit. Aliases whose anchors survive stay aliases.
  */
-const aliasesSurviveReuse = (
-  collection: Node,
-  editedNodes: ReadonlySet<Node>,
-  retainedSources: ReadonlySet<Node>,
+export const materializeUnresolvedYamlAliases = (
   document: Document,
-): boolean => {
-  let reusedNodes: Set<Node> | undefined;
-  let survives = true;
-  visit(collection, {
+  values: ReadonlyMap<Alias, unknown>,
+): void => {
+  if (values.size === 0) return;
+  visit(document, {
     Alias: (_key, alias) => {
-      const target = alias.resolve(document);
-      reusedNodes ??= yamlNodes(collection);
-      if (
-        target === undefined ||
-        (!reusedNodes.has(target) &&
-          (editedNodes.has(target) || retainedSources.has(target)))
-      ) {
-        survives = false;
-        return visit.BREAK;
-      }
-      return undefined;
+      if (!values.has(alias) || alias.resolve(document) !== undefined)
+        return undefined;
+      return document.createNode(values.get(alias));
     },
   });
-  return survives;
 };
 
 /** Keep source nodes and annotations when updating a value. */
@@ -103,10 +97,6 @@ export const retainYamlConfigurationSource = (
   next: Node,
   retainedSources: ReadonlySet<Node>,
   document: Document,
-  // Nodes of the value being replaced; their anchors may not survive.
-  editedNodes: ReadonlySet<Node> = isNode(previous)
-    ? yamlNodes(previous)
-    : new Set(),
 ): Node => {
   if (
     (isMap(previous) || isSeq(previous)) &&
@@ -116,7 +106,6 @@ export const retainYamlConfigurationSource = (
     // collection before reconstructing its children from that projection.
     if (
       !containsRetainedSource([previous], retainedSources) &&
-      aliasesSurviveReuse(previous, editedNodes, retainedSources, document) &&
       isDeepStrictEqual(
         previous.toJS(document, { reviver: normalizeYamlInteger }),
         next.toJS(document, { reviver: normalizeYamlInteger }),
@@ -152,15 +141,9 @@ export const retainYamlConfigurationSource = (
       next.spaceBefore = previous.spaceBefore;
   }
   if (isMap(previous) && isMap(next)) {
-    retainYamlMapSource(previous, next, retainedSources, document, editedNodes);
+    retainYamlMapSource(previous, next, retainedSources, document);
   } else if (isSeq(previous) && isSeq(next)) {
-    retainYamlSequenceSource(
-      previous,
-      next,
-      retainedSources,
-      document,
-      editedNodes,
-    );
+    retainYamlSequenceSource(previous, next, retainedSources, document);
   }
   return next;
 };
@@ -170,7 +153,6 @@ const retainYamlSequenceSource = (
   next: YAMLSeq,
   retainedSources: ReadonlySet<Node>,
   document: Document,
-  editedNodes: ReadonlySet<Node>,
 ): void => {
   const stringItems = (items: readonly unknown[]) =>
     items.every((item) => isScalar(item) && typeof item.value === "string");
@@ -185,7 +167,6 @@ const retainYamlSequenceSource = (
           target,
           retainedSources,
           document,
-          editedNodes,
         ),
       (source) => !retainedSources.has(source),
     );
@@ -198,39 +179,44 @@ const retainYamlSequenceSource = (
           item,
           retainedSources,
           document,
-          editedNodes,
         )
       : item,
   );
 };
 
-/** A key spelled as an alias to a plain string scalar is that string key. */
-const aliasedStringKey = (
-  key: unknown,
+/**
+ * Each pair's key as the string YAML resolves it to. A key written as an alias
+ * of a string scalar counts as that string only when no other pair in the map
+ * resolves to the same string; an ambiguous one stays a source-only key.
+ */
+const resolvedStringKeys = (
+  map: YAMLMap,
   document: Document,
-): string | undefined => {
-  if (!isAlias(key)) return undefined;
-  const target = key.resolve(document);
-  return isScalar(target) && typeof target.value === "string"
-    ? target.value
-    : undefined;
+): Map<(typeof map.items)[number], string> => {
+  const resolved = new Map<(typeof map.items)[number], string>();
+  const aliased = new Map<(typeof map.items)[number], string>();
+  for (const pair of map.items) {
+    if (isScalar(pair.key) && typeof pair.key.value === "string")
+      resolved.set(pair, pair.key.value);
+    else if (isAlias(pair.key)) {
+      const target = pair.key.resolve(document);
+      if (isScalar(target) && typeof target.value === "string")
+        aliased.set(pair, target.value);
+    }
+  }
+  const counts = new Map<string, number>();
+  for (const key of [...resolved.values(), ...aliased.values()])
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  for (const [pair, key] of aliased)
+    if (counts.get(key) === 1) resolved.set(pair, key);
+  return resolved;
 };
-
-/** A string key as YAML resolves it, whether written directly or as an alias. */
-const resolvedStringKey = (
-  key: unknown,
-  document: Document,
-): string | undefined =>
-  isScalar(key) && typeof key.value === "string"
-    ? key.value
-    : aliasedStringKey(key, document);
 
 const retainYamlMapSource = (
   previous: YAMLMap,
   next: YAMLMap,
   retainedSources: ReadonlySet<Node>,
   document: Document,
-  editedNodes: ReadonlySet<Node>,
 ): void => {
   const hasMerges = retainYamlMergeSources(previous, next, document);
   const hasSourceOnlyKeys = retainProjectedYamlKeys(
@@ -239,34 +225,31 @@ const retainYamlMapSource = (
     retainedSources,
     document,
   );
+  const previousKeys = resolvedStringKeys(previous, document);
+  // The source pair each rewritten pair replaces, including aliased keys.
+  const matched = new Map<
+    (typeof next.items)[number],
+    (typeof previous.items)[number]
+  >();
   const entries = new Map(
-    previous.items.flatMap((pair) => {
-      const key = resolvedStringKey(pair.key, document);
-      return key === undefined ? [] : [[key, pair] as const];
-    }),
+    [...previousKeys].map(([pair, key]) => [key, pair] as const),
   );
   for (const pair of next.items) {
     if (previous.items.includes(pair)) continue;
     const key = isScalar(pair.key) ? pair.key.value : undefined;
     const prior = typeof key === "string" ? entries.get(key) : undefined;
     if (prior === undefined) continue;
-    if (isAlias(prior.key)) {
-      // Keep the aliased spelling while its anchor survives this edit.
-      const target = prior.key.resolve(document);
-      if (
-        target !== undefined &&
-        !editedNodes.has(target) &&
-        !retainedSources.has(target)
-      )
-        pair.key = prior.key;
-    } else
-      pair.key = isNode(pair.key)
+    matched.set(pair, prior);
+    // An aliased key keeps its spelling; a later repair materializes it if
+    // the edit leaves it without an anchor.
+    pair.key = isAlias(prior.key)
+      ? prior.key
+      : isNode(pair.key)
         ? retainYamlConfigurationSource(
             prior.key,
             pair.key,
             retainedSources,
             document,
-            editedNodes,
           )
         : prior.key;
     if (isNode(pair.value))
@@ -275,7 +258,6 @@ const retainYamlMapSource = (
         pair.value,
         retainedSources,
         document,
-        editedNodes,
       );
   }
   if (hasSourceOnlyKeys || hasMerges) {
@@ -286,10 +268,10 @@ const retainYamlMapSource = (
     );
     const position = (pair: (typeof next.items)[number]): number => {
       const key = isScalar(pair.key) ? pair.key.value : undefined;
-      const original =
-        positions.has(pair) || typeof key !== "string"
-          ? pair
-          : entries.get(key);
+      const original = positions.has(pair)
+        ? pair
+        : (matched.get(pair) ??
+          (typeof key === "string" ? entries.get(key) : undefined));
       return original === undefined
         ? Infinity
         : (positions.get(original) ?? Infinity);
@@ -350,10 +332,11 @@ const retainProjectedYamlKeys = (
   // those source pairs together when the property was not edited.
   const groups = new Map<string, typeof previous.items>();
   const sourceOnlyKeys = new Set<string>();
+  const stringKeys = resolvedStringKeys(previous, document);
   for (const pair of previous.items) {
     if (isYamlMergeKey(pair.key)) continue;
     let key: string;
-    const stringKey = resolvedStringKey(pair.key, document);
+    const stringKey = stringKeys.get(pair);
     if (stringKey !== undefined) key = stringKey;
     else {
       const singleton = new YAMLMap(document.schema);

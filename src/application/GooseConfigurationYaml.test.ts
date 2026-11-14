@@ -489,3 +489,17 @@ it("edits a field whose key is an alias to a shared string, keeping the alias", 
     extensions: { rea: { cmd: "rea", envs: { A: "2" } } },
   });
 });
+
+it("keeps an anchored value with an aliased key ahead of its later aliases", () => {
+  const source =
+    "field: &field envs\nextensions:\n  rea:\n    cmd: old\n    *field : &settings {A: '1'}\n    1: *settings\n    \"1\": string\n";
+  const out = editGooseConfigurationYaml(source, ["extensions", "rea"], {
+    cmd: "new",
+    envs: { A: "1" },
+    1: "string",
+  });
+  expect(out.indexOf("&settings")).toBeLessThan(out.indexOf("*settings"));
+  expect(parseGooseConfigurationYaml(out)).toMatchObject({
+    extensions: { rea: { cmd: "new", envs: { A: "1" } } },
+  });
+});
