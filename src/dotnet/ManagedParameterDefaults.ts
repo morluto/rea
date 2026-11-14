@@ -15,6 +15,7 @@ import {
 } from "./ManagedMetadataHeaps.js";
 import {
   memberListDefinitionRow,
+  memberListListsDefinition,
   memberListTable,
   validatedMemberListStart,
 } from "./ManagedMemberPointers.js";
@@ -22,6 +23,7 @@ import { readMethodParamList } from "./ManagedMethodDefinitionRows.js";
 import {
   managedFailure,
   ManagedReaderFailure,
+  readManagedValue,
 } from "./ManagedReaderFailure.js";
 
 type ParameterDefault = NonNullable<
@@ -129,6 +131,32 @@ const attributedRun = (
 };
 
 /**
+ * ECMA-335 II.22.26 with ParamPtr: a method owns the Param rows its pointer
+ * positions name. A row no pointer lists has no owning run, so a default it
+ * declares could belong to any method and no method's defaults are complete.
+ * Rows without HasDefault or a Constant row cannot hide a default.
+ */
+const unlistedParameterDefault = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  constant: ManagedConstantReader,
+): ManagedReaderFailure | null => {
+  const rows = layout.table(8)?.rowCount ?? 0;
+  for (let row = 1; row <= rows; row += 1) {
+    if (memberListListsDefinition(bytes, layout, 8, row)) continue;
+    const offset = metadataRowOffset(layout, 8, row);
+    if (constant(8, row, bytes.readUInt16LE(offset)) === null) continue;
+    return managedFailure(
+      "invalid-row",
+      `metadata.Param:${metadataToken(8, row)}`,
+      "Param row declares a default, but no ParamPtr row lists it, so its method is unknown; parameter defaults are unknown",
+      offset,
+    );
+  }
+  return null;
+};
+
+/**
  * Param rows a selected method owns that declare a default, decoded by the
  * shared Constant-table owner. Rows without HasDefault or a Constant row are
  * examined but neither retained nor charged.
@@ -140,6 +168,7 @@ export const createManagedParameterDefaultReader = (
   constant: ManagedConstantReader,
 ): ((methodRow: number) => ParameterDefault[] | null) => {
   let runs: ParamRuns | undefined;
+  let unlisted: ManagedReaderFailure | null | undefined;
   return (methodRow) => {
     // Without Param rows no method owns a parameter default, whatever its
     // list coordinate says.
@@ -147,28 +176,34 @@ export const createManagedParameterDefaultReader = (
     try {
       runs ??= readParamRuns(bytes, layout);
       const { start, end } = attributedRun(bytes, layout, runs, methodRow);
+      unlisted ??= unlistedParameterDefault(bytes, layout, constant);
+      if (unlisted !== null) throw unlisted;
       const defaults: ParameterDefault[] = [];
       for (let position = start; position < end; position += 1) {
         const row = memberListDefinitionRow(bytes, layout, 8, position);
-        const flags = bytes.readUInt16LE(metadataRowOffset(layout, 8, row));
-        const declared = constant(8, row, flags);
-        if (declared === null) continue;
-        const cursor = metadataRowCursor(bytes, layout, 8, row);
-        cursor.readUInt16();
-        const sequence = cursor.readUInt16();
-        defaults.push({
-          token: metadataToken(8, row),
-          row_offset: cursor.start,
-          sequence,
-          name: readMetadataString(
-            bytes,
-            layout,
-            cursor.readIndex(layout.stringIndexSize),
-            layout.strings.size,
-          ),
-          flags,
-          constant: declared,
-        });
+        // One unreadable Param row is reported without hiding its siblings.
+        const entry = readManagedValue((): ParameterDefault | null => {
+          const flags = bytes.readUInt16LE(metadataRowOffset(layout, 8, row));
+          const declared = constant(8, row, flags);
+          if (declared === null) return null;
+          const cursor = metadataRowCursor(bytes, layout, 8, row);
+          cursor.readUInt16();
+          const sequence = cursor.readUInt16();
+          return {
+            token: metadataToken(8, row),
+            row_offset: cursor.start,
+            sequence,
+            name: readMetadataString(
+              bytes,
+              layout,
+              cursor.readIndex(layout.stringIndexSize),
+              layout.strings.size,
+            ),
+            flags,
+            constant: declared,
+          };
+        }, issues);
+        if (entry !== undefined && entry !== null) defaults.push(entry);
       }
       return defaults;
     } catch (cause: unknown) {

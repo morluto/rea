@@ -8,6 +8,8 @@ export interface ManagedPeFixtureMethod {
     readonly name: string;
     readonly flags?: number;
     readonly sequence?: number;
+    /** A raw #Strings index for the Name column, replacing `name`'s entry. */
+    readonly nameIndex?: number;
   }[];
   /** A raw ParamList coordinate; defaults to the run after earlier methods' params. */
   readonly paramList?: number;

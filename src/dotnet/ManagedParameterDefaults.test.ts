@@ -117,6 +117,46 @@ it("decodes field and parameter defaults from one Constant table", () => {
   expect(result.coverage.state).toBe("complete");
 });
 
+it("keeps readable sibling defaults when one Param name is unreadable", () => {
+  const result = inspect({
+    methods: [
+      {
+        name: "Configure",
+        signature: configureSignature,
+        params: [
+          { name: "count", flags: 0x1010, nameIndex: 0xfff0 },
+          { name: "mode", flags: 0x1010 },
+        ],
+      },
+    ],
+    constants: [
+      {
+        typeCode: 0x08,
+        parentRaw: paramParent(1),
+        value: Buffer.from("01000000", "hex"),
+      },
+      {
+        typeCode: 0x08,
+        parentRaw: paramParent(2),
+        value: Buffer.from("04000000", "hex"),
+      },
+    ],
+  });
+  expect(result.methods[0]?.parameter_defaults).toEqual([
+    expect.objectContaining({
+      token: "0x08000002",
+      name: "mode",
+      constant: expect.objectContaining({ value: 4 }),
+    }),
+  ]);
+  expect(result.coverage.issues).toEqual([
+    expect.objectContaining({
+      code: "invalid-heap-index",
+      scope: "metadata.#Strings",
+    }),
+  ]);
+});
+
 describe("unavailable parameter defaults retain independent facts", () => {
   it.each([
     { label: "HasDefault without a Constant row", flags: 0x1000, count: 0 },
@@ -286,6 +326,59 @@ describe("ParamPtr indirection", () => {
           constant: expect.objectContaining({ state: "decoded", value: 4 }),
         }),
       ],
+    ]);
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  });
+
+  it("keeps every method's defaults unknown when an unlisted Param row declares one", () => {
+    // ParamPtr lists only Param row 1, so row 2's default has no owning method.
+    const result = inspect({
+      methods: [
+        {
+          name: "Configure",
+          paramList: 1,
+          params: [{ name: "count" }, { name: "mode", flags: 0x1010 }],
+        },
+        { name: "Main", paramList: 2 },
+      ],
+      constants: [
+        {
+          typeCode: 0x08,
+          parentRaw: paramParent(2),
+          value: Buffer.from("04000000", "hex"),
+        },
+      ],
+      paramPointers: [1],
+    });
+    expect(result.methods.map((method) => method.parameter_defaults)).toEqual([
+      null,
+      null,
+    ]);
+    expect(result.coverage.state).toBe("partial");
+    expect(result.coverage.issues).toEqual([
+      expect.objectContaining({
+        code: "invalid-row",
+        scope: "metadata.Param:0x08000002",
+        detail: expect.stringContaining("no ParamPtr row lists it"),
+      }),
+    ]);
+  });
+
+  it("does not treat an unlisted Param row without a default as hiding one", () => {
+    const result = inspect({
+      methods: [
+        {
+          name: "Configure",
+          paramList: 1,
+          params: [{ name: "count" }, { name: "mode" }],
+        },
+        { name: "Main", paramList: 2 },
+      ],
+      paramPointers: [1],
+    });
+    expect(result.methods.map((method) => method.parameter_defaults)).toEqual([
+      [],
+      [],
     ]);
     expect(result.coverage).toEqual({ state: "complete", issues: [] });
   });

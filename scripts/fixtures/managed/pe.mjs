@@ -295,17 +295,18 @@ const buildManagedMetadata = (options, methods) => {
     ),
   );
   // Each method's run starts after the preceding methods' Param rows.
-  const paramLists = methods.map((_, index) =>
-    methods
-      .slice(0, index)
-      .reduce((start, method) => start + (method.params?.length ?? 0), 1),
-  );
+  let nextParamList = 1;
+  const paramLists = methods.map((method) => {
+    const start = nextParamList;
+    nextParamList += method.params?.length ?? 0;
+    return start;
+  });
   const paramRows = methods.flatMap((method) =>
     (method.params ?? []).map((param, index) =>
       paramRow({
         flags: param.flags,
         sequence: param.sequence ?? index + 1,
-        name: strings.add(param.name),
+        name: param.nameIndex ?? strings.add(param.name),
       }),
     ),
   );

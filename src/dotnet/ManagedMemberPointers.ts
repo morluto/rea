@@ -11,9 +11,14 @@ import {
 /** Field, MethodDef and Param rows; each pointer table precedes its definition table. */
 type MemberTable = 4 | 6 | 8;
 type ListRowLookup = (definitionRow: number) => number;
+/** Pointer positions by definition row (zero when unlisted) and their lookup. */
+interface MemberListIndex {
+  readonly positions: Uint32Array;
+  readonly lookup: ListRowLookup;
+}
 const lookups = new WeakMap<
   ManagedMetadataLayout,
-  Map<MemberTable, ListRowLookup | ManagedReaderFailure>
+  Map<MemberTable, MemberListIndex | ManagedReaderFailure>
 >();
 
 /** TypeDef and MethodDef list coordinates refer to the nonempty pointer table when present. */
@@ -47,14 +52,14 @@ export const validatedMemberListStart = (
     : null;
 };
 
-/** Resolve physical definition rows to list positions without changing token identity. */
-export const memberListRowLookup = (
+/** Validate a nonempty pointer table once and index its definition rows. */
+const memberListIndex = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   table: MemberTable,
-): ListRowLookup => {
+): MemberListIndex | undefined => {
   const pointers = layout.table(table - 1);
-  if (pointers === undefined || pointers.rowCount === 0) return (row) => row;
+  if (pointers === undefined || pointers.rowCount === 0) return undefined;
   let byTable = lookups.get(layout);
   const cached = byTable?.get(table);
   if (cached instanceof ManagedReaderFailure) throw cached;
@@ -105,14 +110,37 @@ export const memberListRowLookup = (
         );
       return position;
     };
-    byTable.set(table, lookup);
-    return lookup;
+    const index = { positions, lookup };
+    byTable.set(table, index);
+    return index;
   } catch (cause: unknown) {
     // Invalid metadata must not rebuild and charge the same retained index for
     // every attribute/member that asks for its owner.
     if (cause instanceof ManagedReaderFailure) byTable.set(table, cause);
     throw cause;
   }
+};
+
+/** Resolve physical definition rows to list positions without changing token identity. */
+export const memberListRowLookup = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  table: MemberTable,
+): ListRowLookup =>
+  memberListIndex(bytes, layout, table)?.lookup ?? ((row) => row);
+
+/**
+ * Whether some pointer row lists this definition row. Without a pointer table
+ * every row is listed; an unlisted row has no owning list run.
+ */
+export const memberListListsDefinition = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  table: MemberTable,
+  definitionRow: number,
+): boolean => {
+  const index = memberListIndex(bytes, layout, table);
+  return index === undefined || (index.positions[definitionRow] ?? 0) !== 0;
 };
 
 /** Resolve a validated list position to its physical definition row. */
@@ -124,8 +152,8 @@ export const memberListDefinitionRow = (
 ): number => {
   const pointers = layout.table(table - 1);
   if (pointers === undefined || pointers.rowCount === 0) return position;
-  // The reverse lookup validates every pointer row once and replays its failure.
-  memberListRowLookup(bytes, layout, table);
+  // The index validates every pointer row once and replays its failure.
+  memberListIndex(bytes, layout, table);
   const offset = pointers.offset + (position - 1) * pointers.rowSize;
   return layout.tableIndexSize(table) === 2
     ? bytes.readUInt16LE(offset)
