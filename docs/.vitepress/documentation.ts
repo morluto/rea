@@ -319,6 +319,11 @@ export const documentationSections = [
         route: "/ghidra-riscv",
       },
       {
+        text: "Xtensa ELF analysis through Ghidra",
+        source: "providers/ghidra-xtensa.md",
+        route: "/ghidra-xtensa",
+      },
+      {
         text: "Windows Ghidra P0",
         source: "providers/windows-ghidra-p0.md",
         route: "/windows-ghidra-p0",
