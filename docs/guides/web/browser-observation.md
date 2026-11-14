@@ -122,7 +122,10 @@ correspondence merely from their different retained registrations.
 - Every surface has equivalent CLI and MCP contracts and returns Evidence provenance.
 - By default, MCP tools return complete results inline and include the Evidence ID. Selected summary views retain the complete parent Evidence and return a projection. Session evidence can be exported with `export_evidence_bundle`.
 
-Target discovery returns the complete in-scope target array in one result.
+Target discovery returns the complete eligible target array in one result.
+Browser pages must have a supported HTTP(S) URL, match any requested exact-origin
+filter, and have a validated CDP transport. Otherwise allowed pages without a
+validated transport are excluded and reported in the result limitations.
 
 ## Screenshot comparison memory budget
 
@@ -316,6 +319,17 @@ rea observe-web-session http://127.0.0.1:9222 TARGET_ID \
 rea discover-webmcp-tools http://127.0.0.1:9222 TARGET_ID \
   --json
 ```
+
+The `observe-web-session` CLI writes JSON progress lines to stderr, leaving
+stdout for the final Evidence or failure. Wait for `rea_progress` with
+`phase: "browser_observation"`, `completed: 1` and `total: 2` before performing
+the external action. After the window ends successfully, `completed: 2` and
+`terminal: true` report its end. Failed preparation does not announce arming;
+a failed or cancelled observation does not fabricate a successful end event.
+MCP exposes the same provider progress through its progress notifications.
+If navigation leaves the selected scope, or the target detaches or terminates
+during preparation, the ended window can be reported without an armed event.
+Only the explicit armed event invites the caller to perform its action.
 
 ### WebMCP discovery prerequisites
 

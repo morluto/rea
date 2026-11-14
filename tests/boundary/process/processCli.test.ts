@@ -202,7 +202,6 @@ describe("process CLI cleanup errors", () => {
           expect(Number.isSafeInteger(targetPid) && targetPid > 0).toBe(true);
           await expect
             .poll(() => observeProcessStartIdentity(targetPid), {
-              timeout: 7_000,
               interval: 25,
             })
             .toBeUndefined();

@@ -2014,6 +2014,30 @@ const packageExportPatternCases = [
     status: "unavailable",
   },
   {
+    name: "matching trailing slash",
+    exports: { "./*": "./*.cjs" },
+    request: "fixture/window/",
+    status: "unavailable",
+  },
+  {
+    name: "trailing slash ignores exact null before pattern",
+    exports: { "./*": "./*.cjs", "./window/": null },
+    request: "fixture/window/",
+    status: "unavailable",
+  },
+  {
+    name: "trailing slash exact key without pattern",
+    exports: { "./window/": "./window.cjs" },
+    request: "fixture/window/",
+    status: "external",
+  },
+  {
+    name: "trailing slash matching null",
+    exports: { "./*": null },
+    request: "fixture/window/",
+    status: "external",
+  },
+  {
     name: "nonmatching",
     exports: { "./other/*": "./*.cjs" },
     request: "fixture/window",

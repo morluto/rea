@@ -17,6 +17,7 @@ import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { AnalysisTimeoutError } from "../../../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const hooks = vi.hoisted(() => ({
   afterCommand: undefined as (() => void) | undefined,
@@ -131,7 +132,7 @@ test("retains the command owner's exact cancellation reason after active process
     { timeoutMs: 5000, maxOutputBytes: 1024 },
   );
   try {
-    await vi.waitFor(async () =>
+    await waitFor(async () =>
       expect(await readFile(ready, "utf8")).toBe("ready"),
     );
     controller.abort(null);

@@ -16,9 +16,11 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 
 const OPERATION = "build_reconstruction_obligation_ledger";
-const requestSchema = reconstructionObligationLedgerInputSchema.extend({
-  evidence_bundle: z.unknown(),
-});
+/** The ledger parser admits the bundle itself after this envelope. */
+export const reconstructionObligationLedgerRequestSchema =
+  reconstructionObligationLedgerInputSchema.extend({
+    evidence_bundle: z.unknown(),
+  });
 
 /** Authenticated bundle and its single request-owned record index. */
 export interface ReconstructionObligationSources {
@@ -36,7 +38,11 @@ export interface ResolvedReconstructionObligationRequest {
 export const resolveReconstructionObligationLedgerRequest = (
   input: unknown,
 ): Result<ResolvedReconstructionObligationRequest, AnalysisError> => {
-  const frame = parseAnalysisInput(OPERATION, input, requestSchema);
+  const frame = parseAnalysisInput(
+    OPERATION,
+    input,
+    reconstructionObligationLedgerRequestSchema,
+  );
   if (!frame.ok) return frame;
   const bundle = readEvidenceBundle(frame.value.evidence_bundle, {
     operation: OPERATION,

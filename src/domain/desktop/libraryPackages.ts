@@ -105,26 +105,46 @@ async function* libraryCandidates(
   machine: number,
   cache: readonly LinkerCacheEntry[],
   host: LibraryWalkHost,
-): AsyncGenerator<string> {
+): AsyncGenerator<{ path: string; unprobed: boolean }> {
   if (soname.startsWith("/")) {
-    yield posix.normalize(soname);
+    yield { path: posix.normalize(soname), unprobed: false };
     return;
   }
+  const unprobed: string[] = [];
   if (!soname.includes("/"))
     for (const directory of directories) {
       const candidate = posix.join(directory, soname);
-      if (await host.isFile(candidate)) yield candidate;
+      const probe = await host.isFile(candidate);
+      if (probe.kind === "file") {
+        if (probe.isFile) yield { path: candidate, unprobed: false };
+      }
+      // A folder the linker cannot search is not the object it loads with the
+      // same credentials. It is only evidence that the soname may be there.
+      else if (probe.unreachable) unprobed.push(candidate);
+      // Any other failed check may be transient, so the candidate keeps its
+      // search position instead of falling behind every cache entry.
+      else yield { path: candidate, unprobed: false };
     }
-  yield* cachedPaths(cache, soname, machine);
+  for (const path of cachedPaths(cache, soname, machine))
+    yield { path, unprobed: false };
+  for (const path of unprobed) yield { path, unprobed: true };
 }
 
+/** What a host check of one candidate path established. */
+export type LibraryFileProbe =
+  | { readonly kind: "file"; readonly isFile: boolean }
+  | {
+      readonly kind: "unknown";
+      /** The check settled the candidate, rather than failing transiently. */
+      readonly unreachable: boolean;
+    };
 /** Host reads the closure walk needs. */
 export interface LibraryWalkHost {
   readonly dependencies: (
     path: string,
     expected: ElfLibraryIdentity,
   ) => Promise<Result<ElfDependencies, ElfDependenciesFailure>>;
-  readonly isFile: (path: string) => Promise<boolean>;
+  readonly isFile: (path: string) => Promise<LibraryFileProbe>;
 }
 
 /** The shared libraries an executable loads at start, as the dynamic linker would find them. */
@@ -181,7 +201,10 @@ export const libraryClosure = async (
           }
         | undefined;
       let unresolved = false;
-      for await (const path of libraryCandidates(
+      // A candidate the probe could not reach stays behind everything the walk
+      // did check, so a searchable candidate with the same soname still wins.
+      let unprobed: { path: string; reason: string } | undefined;
+      for await (const { path, unprobed: couldNotProbe } of libraryCandidates(
         soname,
         directories,
         object.dependencies.machine,
@@ -190,6 +213,10 @@ export const libraryClosure = async (
       )) {
         const dependencies = await host.dependencies(path, object.dependencies);
         if (!dependencies.ok && dependencies.error.identity === null) {
+          if (couldNotProbe) {
+            unprobed ??= { path, reason: dependencies.error.reason };
+            continue;
+          }
           // A failed identity read does not prove this candidate can be skipped,
           // or that its package belongs to the executable's loaded closure.
           closure.unreadable.push({
@@ -214,7 +241,8 @@ export const libraryClosure = async (
         break;
       }
       if (selected === undefined) {
-        if (!unresolved) closure.missing.push(soname);
+        if (unprobed !== undefined) closure.unreadable.push(unprobed);
+        else if (!unresolved) closure.missing.push(soname);
         continue;
       }
       const { path, dependencies } = selected;

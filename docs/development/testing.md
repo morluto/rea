@@ -186,6 +186,9 @@ the caller's reason. Keep focused boundary and lifecycle tests for those facts.
 operation names, schemas or types; display-only selection remains allowed.
 `rea/no-fixture-root-cleanup` follows `const` fixture-root aliases into teardown
 deletion; mutable bindings and mixed root arrays remain outside its scope.
+`rea/project-wait-deadline` resolves Vitest's `vi` and `expect` bindings,
+including aliases and namespace imports; a shadowed local or a fixture method
+with the same name is not reported.
 
 `rea/no-shared-module-mock` resolves Vitest import bindings before rejecting
 module mocks in projects without per-file isolation. The test-project definitions
@@ -315,6 +318,18 @@ child fails with its captured output. Pass `timeoutMs` only when the child's dea
 `// @module-tag long-running`. Assert elapsed time explicitly when speed is the
 behavior under test. Derive an explicit deadline only when a test must outlive
 an operation deadline whose diagnostics it checks.
+
+Waits follow the same policy; Vitest's one-second `expect.poll` and
+`vi.waitFor` defaults assume a host's speed. A wait may take as long as its
+test may run, less the reporting reserve: projects configure `expect.poll`
+that way, and `waitFor` from `tests/support/testWait.ts` replaces `vi.waitFor`.
+Fixture waits such as `awaitAcknowledgement` default to the same deadline.
+`expect.poll` keeps its project's budget in a `long-running` test, while
+`waitFor` follows the deadline the tag applies.
+`rea/project-wait-deadline` rejects `vi.waitFor` and explicit poll timeouts. When promptness is the behavior under test, such as
+cancellation that must preempt a slower production deadline, a wait timeout is
+not its oracle: order the condition before releasing the gate that would
+otherwise satisfy it, or compare elapsed time with the deadline it must beat.
 
 Keep capacity fixtures intact when diagnosing a test failure. For byte equality
 of large buffers, use `Buffer.equals` or `Buffer.compare`; a generic structural

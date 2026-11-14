@@ -17,7 +17,7 @@ export type PackageFileFields = Omit<
 >;
 
 /** Debian policy's package names: lowercase letters, digits, `+`, `-` and `.`, at least two long. */
-export const DEBIAN_PACKAGE_NAME = /^[a-z0-9][a-z0-9+.-]+$/u;
+export const DEBIAN_PACKAGE_NAME = /^[a-z0-9][a-z0-9+.\x2d]+$/u;
 
 /** The comma-separated entries of a relationship field, each on one line with its spacing collapsed. */
 const relationEntries = (value: string | undefined): string[] =>

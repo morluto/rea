@@ -599,10 +599,11 @@ when a DOCTYPE names a DTD. Known differences remain:
 
 - dconf databases are reported as binary, since REA reads them with `dconf`;
   inside an archive, one is `dconf` with an error, as in REA.
-- Zip entry names: a name in an Info-ZIP Unicode Path extra field is used only
-  where Python's `zipfile` reads it (3.12 and later), and an entry whose local
-  header names it differently from the central directory is damaged rather
-  than read.
+- Zip entries whose local header names them differently from the central
+  directory are damaged rather than read. Entry names follow REA's Unicode
+  Path selection: the final extra field replaces earlier claims, a bad version
+  or CRC falls back to the stored name, and the UTF-8 flag takes precedence.
+  Invalid UTF-8 in the selected name makes the archive view unreadable.
 - SQLite databases are read in place, read-only, rather than from a staged copy;
   a write lock the running app holds is waited out for a quarter of a second
   and then gives the file an `error`, and so does a table or column name that

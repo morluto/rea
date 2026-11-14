@@ -12,7 +12,11 @@ import {
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { machoRuntimeSymbolName } from "../domain/native/machoSymbolName.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { NativeCommandCapture } from "./CommandRunner.js";
+import {
+  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
+  type NativeCommandCapture,
+} from "./CommandRunner.js";
+import { chainedImportNames } from "./AppleMachoFixups.js";
 import {
   MACHO_ARCHITECTURE_POLICIES,
   machoToolArchitectureName,
@@ -81,6 +85,13 @@ interface NativeMachoInspectionContext {
   readonly resolveSlice: (
     selected: LipoArchitecture,
   ) => Promise<ResolvedMachoSlice>;
+  /** Read an exact selected-slice range from the same bytes as the tools. */
+  readonly readSliceRange?: (
+    offset: number,
+    size: number | null,
+    at: number,
+    length: number,
+  ) => Promise<Uint8Array>;
   /** Borrow binary framing from the same identity-bound target as the tools. */
   readonly readCommandNames: (
     offset: number,
@@ -88,6 +99,44 @@ interface NativeMachoInspectionContext {
     selected: ResolvedMachoSlice | undefined,
   ) => Promise<MachoCommandNames>;
 }
+
+const LC_DYLD_CHAINED_FIXUPS = 0x80000034;
+
+/**
+ * Exact names from the selected slice's chained-fixup import table by import
+ * ordinal, or why that table cannot stand in for the symbol-table inventory.
+ * Undefined when the context has no slice reader.
+ */
+const readChainedImportNames = async (
+  context: NativeMachoInspectionContext,
+  binary: MachoCommandNames,
+  offset: number,
+  size: number | null,
+): Promise<Result<readonly (string | null)[], string> | undefined> => {
+  if (context.readSliceRange === undefined) return undefined;
+  const fields = binary.commands.find(
+    ({ command }) => command === LC_DYLD_CHAINED_FIXUPS,
+  )?.fixedFields;
+  const at = fields?.dataoff;
+  const length = fields?.datasize;
+  if (at === undefined || length === undefined)
+    return err("its load command fields are not decoded");
+  if (length > NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)
+    return err(
+      `its ${length}-byte payload exceeds the ${NATIVE_COMMAND_OUTPUT_BUDGET_BYTES}-byte native read budget`,
+    );
+  const bytes = await context.readSliceRange(offset, size, at, length);
+  try {
+    return ok(
+      chainedImportNames(
+        Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+      ),
+    );
+  } catch (cause) {
+    if (cause instanceof RangeError) return err(cause.message);
+    throw cause;
+  }
+};
 
 const DISCOVERY_COMMANDS = [["lipo", ["-detailed_info"]]] as const;
 
@@ -313,14 +362,33 @@ export const inspectNativeMacho = async (
     hasChainedFixups,
   );
   if (parsedImports.needsNameInventory) {
-    const importNames = await runSliceCommand(SYMBOL_TABLE_IMPORTS);
-    if (!importNames.ok) return importNames;
-    captures.push(importNames.value);
-    parsedImports = parseDyldImports(
-      sliceOutput(dyldImports),
-      hasChainedFixups,
-      new Set(parseNmSymbolNames(importNames.value.stdout)),
-    );
+    // Chained rows print entries of the binary's own import table by ordinal.
+    // Its exact names settle the ordinal spacing even for imports that the
+    // symbol table omits or lists as defined, such as weak-def coalescing.
+    const chainedTable = hasChainedFixups
+      ? await readChainedImportNames(context, binary, offset, size)
+      : undefined;
+    if (chainedTable?.ok === true)
+      parsedImports = parseDyldImports(
+        sliceOutput(dyldImports),
+        hasChainedFixups,
+        undefined,
+        chainedTable.value,
+      );
+    else {
+      if (chainedTable !== undefined)
+        limitations.push(
+          `The chained-fixup import table is unusable (${chainedTable.error}); chained import names are matched against the undefined symbol table instead.`,
+        );
+      const importNames = await runSliceCommand(SYMBOL_TABLE_IMPORTS);
+      if (!importNames.ok) return importNames;
+      captures.push(importNames.value);
+      parsedImports = parseDyldImports(
+        sliceOutput(dyldImports),
+        hasChainedFixups,
+        new Set(parseNmSymbolNames(importNames.value.stdout)),
+      );
+    }
   }
   const encryption = await context.readEncryption(context.signal);
   const selectedArchitectureName =

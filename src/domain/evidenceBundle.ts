@@ -63,8 +63,9 @@ export const isImmutableEvidenceBundle = (
 
 /** Caller input has valid shape but is not in authenticated canonical form. */
 class NonCanonicalEvidenceBundleError extends TypeError {
-  constructor() {
-    super("Evidence bundle manifests are not canonical");
+  /** The top-level sections whose content differs from canonical form. */
+  constructor(readonly sections: readonly string[]) {
+    super(`Evidence bundle sections are not canonical: ${sections.join(", ")}`);
     this.name = "NonCanonicalEvidenceBundleError";
   }
 }
@@ -402,7 +403,13 @@ const authenticateBundle = (
     parsed.unknowns,
   );
   if (!equalJsonText(parsed, canonical))
-    throw new NonCanonicalEvidenceBundleError();
+    // Name only the sections that differ, so an unchanged section is not
+    // blamed for another section's ordering or content.
+    throw new NonCanonicalEvidenceBundleError(
+      (Object.keys(canonical) as (keyof EvidenceBundle)[]).filter(
+        (section) => !equalJsonText(parsed[section], canonical[section]),
+      ),
+    );
   if (seal) {
     freezeJsonSnapshot(canonical);
     immutableBundles.set(canonical, canonical);

@@ -1219,9 +1219,7 @@ it("resolves every reported shutdown cleanup failure after ownership recovers", 
     cleanupFails = false;
     // Closing the transport can leave the child between live and exited
     // snapshots. Retry retained ownership until cleanup is actually verified.
-    await expect
-      .poll(() => provider.close(), { timeout: 5_000 })
-      .toBeUndefined();
+    await expect.poll(() => provider.close()).toBeUndefined();
   };
   try {
     const outcome = await service.execute("inspect_android_package", {

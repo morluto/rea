@@ -131,12 +131,7 @@ it.each([
       },
     );
     try {
-      await awaitAcknowledgement(
-        started,
-        pending,
-        "environment CLI startup",
-        10_000,
-      );
+      await awaitAcknowledgement(started, pending, "environment CLI startup");
       const served = observedEnvironment();
       if (served === undefined) throw new Error("Environment was not admitted");
       if (ending === "signal") {

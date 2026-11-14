@@ -16,6 +16,7 @@ import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalys
 import { inspectElectronPageInputSchema } from "../../../src/domain/javascript/electronObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
+import { waitFor } from "../../support/testWait.js";
 
 it.each(["Page.disable", "Target.detachFromTarget"])(
   "finishes caller cancellation even when %s has no response",
@@ -53,7 +54,7 @@ it.each(["Page.disable", "Target.detachFromTarget"])(
     expect(methods).toContain("Target.detachFromTarget");
     expect(methods).not.toContain("Target.closeTarget");
     expect(methods).not.toContain("Browser.close");
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   },
 );
 
@@ -72,7 +73,7 @@ it("releases cleanup when cancellation arrives after capture completes", async (
     }),
     { signal: controller.signal },
   );
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(
       browser.commands.some(({ method }) => method === "Page.disable"),
     ).toBe(true);
@@ -89,7 +90,7 @@ it("releases cleanup when cancellation arrives after capture completes", async (
   expect(browser.commands.map(({ method }) => method)).toContain(
     "Target.detachFromTarget",
   );
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   const methods = browser.commands.map(({ method }) => method);
   expect(methods).not.toContain("Target.closeTarget");
   expect(methods).not.toContain("Browser.close");
@@ -132,7 +133,7 @@ it("retains the page inspection when bundle cleanup is cancelled", async () => {
       },
     },
   });
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
 
 it("closes an Electron inspection session when cleanup is cancelled", async () => {
@@ -183,7 +184,7 @@ it("closes an Electron inspection session when cleanup is cancelled", async () =
   expect(methods).toContain("Target.detachFromTarget");
   expect(methods).not.toContain("Target.closeTarget");
   expect(methods).not.toContain("Browser.close");
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   expect((await fetch(`${browser.endpoint}/json/version`)).ok).toBe(true);
 });
 
@@ -234,7 +235,7 @@ it("classifies cancellation that arrives during final Electron detach", async ()
   expect(methods).toContain("Target.detachFromTarget");
   expect(methods).not.toContain("Target.closeTarget");
   expect(methods).not.toContain("Browser.close");
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   expect((await fetch(`${browser.endpoint}/json/version`)).ok).toBe(true);
 });
 
@@ -327,7 +328,7 @@ it.each(
     expect(retry.cleanupIncomplete).toBe(true);
     denied = false;
     await provider.close();
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(retry.cleanupIncomplete).toBe(false);
     expect(result.error.partialObservation).toBe(observation);

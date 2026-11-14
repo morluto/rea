@@ -866,8 +866,9 @@ and provider identities:
 
 Page `coverage` counts the selection only: exhausting it establishes nothing
 about functions outside the batch. Evidence `limitations` aggregate every item's
-provider observations and are not attributed to one successful item; unavailable and error
-items keep their own. A page over the response budget offers a smaller selection
+provider observations; every item, successful or not, also keeps its own
+observation's limitations, and an unavailable item keeps the provider's
+`pseudocode_absence` reason when one was reported. A page over the response budget offers a smaller selection
 from the same `source`: fewer rows, or one body's `pseudocode` pages when a single
 row does not fit. An inline source offers none, because the record cannot be
 repeated in that reply; resend it with a smaller selection.
@@ -1639,6 +1640,16 @@ states the bridge's reason and whose remediation points to
 or `unrepresentable` (beyond the exact JSON integer range). Initialization, not
 the loaded flag, decides whether source bytes can exist, so an initialized
 file-backed overlay still maps.
+
+`search_bytes` continuations reuse `cursor`. The bridge binds that cursor to
+the target, analysis profile (including a selected Ghidra project), pattern,
+mask, bounds, and document. A mismatch returns `invalid_request` attributed to
+`cursor`. The message names that binding and states that the one-way cursor
+does not identify which value differs. Select the original context or omit
+the cursor. The call still matches the input schema, so there is no
+`inspect_input_contract` recovery.
+`details.issues[0].observed.differing_component` is `unknown`, and `bound_to`
+lists the bound components.
 
 For constructor-populated pointer or resource slots, a static zero is not proof
 of a later null value. Inspect the slot's `xrefs` and the writer's assembly or

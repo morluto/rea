@@ -14,6 +14,7 @@ import {
   COVERAGE_DEADLINE_SCALE,
   HOSTED_RUNNER_DEADLINE_SCALE,
   LONG_RUNNING_DEADLINE_MS,
+  remainingTestDeadline,
   TEST_DEADLINE_MS as BASE_TEST_DEADLINE_MS,
 } from "./tests/support/testDeadlines.js";
 
@@ -59,6 +60,14 @@ const TEST_DEADLINE_MS = {
   source: BASE_TEST_DEADLINE_MS.source * DEADLINE_SCALE,
   built: BASE_TEST_DEADLINE_MS.built * DEADLINE_SCALE,
 } as const;
+
+// Vitest's one-second `expect.poll` default is a host-speed guess. A poll the
+// project owns waits as long as its test may run, less a reporting reserve, so
+// a condition that never holds still fails with the poll's own diagnostics.
+const pollPolicy = (deadlineMs: number) => {
+  const timeout = remainingTestDeadline(deadlineMs, 0);
+  return timeout === undefined ? {} : { timeout };
+};
 
 const TEST_PROJECTS = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS];
 const PROJECT_POLICIES = {
@@ -153,6 +162,7 @@ const projects = TEST_PROJECTS.map((project) => {
       isolate: project.isolate !== false,
       testTimeout: TEST_DEADLINE_MS[project.group],
       hookTimeout: TEST_DEADLINE_MS[project.group],
+      expect: { poll: pollPolicy(TEST_DEADLINE_MS[project.group]) },
       ...policy,
     },
   };
@@ -171,6 +181,7 @@ export default defineConfig({
     runner: "./tests/processOwnershipRunner.ts",
     testTimeout: TEST_DEADLINE_MS.source,
     hookTimeout: TEST_DEADLINE_MS.source,
+    expect: { poll: pollPolicy(TEST_DEADLINE_MS.source) },
     // Deadline probes compare what Vitest applies with the configured policy.
     provide: { testDeadlineScale: DEADLINE_SCALE },
     tags: [

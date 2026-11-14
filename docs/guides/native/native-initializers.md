@@ -20,8 +20,21 @@ requires an absolute filesystem path:
 }
 ```
 
-A universal Mach-O requires `architecture` to select one slice. ELF files and
-thin Mach-O files do not take it.
+A universal Mach-O requires `architecture` (`x86`, `x86_64`, `arm`, `arm64` or
+`arm64e`) to select one slice. A CPU family with one slice is selected by its
+family name; `arm64e` reads only an `arm64e` slice. When several slices share
+the family, such as the `arm64` and `arm64e` slices of stock macOS tools, the
+value must name the slice's subtype, as `lipo -thin` does: `arm64` reads the
+`arm64` (or `arm64v8`) slice, `arm64e` the `arm64e` (or `arm64e.x1`) slice, and
+`x86_64` the canonical `x86_64` slice. REA does not choose a slice by
+preference. When no slice or several slices carry the named subtype (capability
+bits are ignored when comparing), the request fails on `architecture`; `arm64e`
+beside `arm64e.x1`, for example, is refused. `slice` reports the selected
+subtype, and `limitations` lists the same-family slices that were not read and
+the value, if any, that selects each. A slice whose Mach-O header does not match
+its FAT declaration, such as a different CPU subtype, is listed as unverified,
+and no value is offered for it. ELF files and thin Mach-O files do not take
+`architecture`.
 
 ## Sources
 

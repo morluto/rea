@@ -12,6 +12,7 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import { nativeCallObservationInputSchema } from "../domain/native/nativeCallObservation.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 
 const OPERATION = "observe_native_calls";
 
@@ -26,11 +27,10 @@ export const registerNativeCallCommands = (
       "Launch a Mach-O under LLDB and record entries into selected functions or Objective-C methods",
     args: z.object({
       path: localPathStringSchema.describe("Mach-O or app path"),
-      inputJson: z
-        .string()
-        .describe(
-          "Inline JSON or a JSON file path: breakpoints, arguments, environment, duration_ms, max_events, argument_registers, backtrace_frames, capture_limits",
-        ),
+      inputJson: jsonInputArgument(
+        "Inline JSON or a JSON file path: breakpoints, arguments, environment, duration_ms, max_events, argument_registers, backtrace_frames, capture_limits",
+        nativeCallObservationInputSchema,
+      ),
     }),
     run: ({ args }) =>
       logCliCommand(logger, CLI_COMMANDS.observeNativeCalls, async () => {

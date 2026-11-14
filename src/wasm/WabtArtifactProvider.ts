@@ -239,10 +239,12 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         throw new AnalysisCancelledError(OPERATION, {
           cause: options.signal.reason,
         });
-      const directory = environment.REA_WABT_BIN_DIRECTORY ?? "";
-      if (!isAbsolute(directory))
+      const directory = environment.REA_WABT_BIN_DIRECTORY;
+      if (directory === undefined || !isAbsolute(directory))
         throw new WabtAdmissionError("directory_not_absolute", {
           setting: "REA_WABT_BIN_DIRECTORY",
+          // Keep the caller's rejected selection; unset stays distinct.
+          ...(directory === undefined ? {} : { configured: directory }),
         });
       const commands: {
         tool: "wasm-validate" | "wasm-objdump" | "wasm2wat";

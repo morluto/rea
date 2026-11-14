@@ -30,6 +30,7 @@ import {
   ghidraHeadlessCommand,
   GhidraHeadlessLauncher,
 } from "../../../../src/ghidra/GhidraLauncher.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const fixturePath = fileURLToPath(
   new URL(
@@ -1193,9 +1194,7 @@ describe("Ghidra Windows launcher process ownership", () => {
       if (!launched.ok) throw launched.error;
       try {
         const capturePath = join(runtimeRoot, "launch-capture.json");
-        await vi.waitFor(() => access(`${capturePath}.ready`), {
-          timeout: 10_000,
-        });
+        await waitFor(() => access(`${capturePath}.ready`));
         const capture = launchCaptureSchema.parse(
           JSON.parse(await readFile(capturePath, "utf8")),
         );

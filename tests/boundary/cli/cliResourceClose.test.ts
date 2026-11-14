@@ -1,9 +1,9 @@
-import { afterEach, expect, it, vi } from "vitest";
-import { closeCliResources } from "../../../src/cli.js";
-import * as javascript from "../../../src/cli/javascriptApplicationAnalysis.js";
-import * as guidance from "../../../src/cli/guidanceCommands.js";
-
-afterEach(() => vi.restoreAllMocks());
+import { expect, it, vi } from "vitest";
+import "../../../src/cli.js";
+import {
+  CliResourceOwners,
+  cliProcessResourceOwners,
+} from "../../../src/cli/cliResources.js";
 
 it.each([
   [false, false],
@@ -15,17 +15,16 @@ it.each([
   async (jsFails, guideFails) => {
     const jsError = new Error("JavaScript resources retained");
     const guideError = new Error("Guidance descriptor retained");
-    const js = vi
-      .spyOn(javascript, "closeCliJavaScriptResources")
-      .mockImplementation(async () => {
-        if (jsFails) throw jsError;
-      });
-    const guides = vi
-      .spyOn(guidance, "closeCliGuidanceResources")
-      .mockImplementation(async () => {
-        if (guideFails) throw guideError;
-      });
-    const closing = closeCliResources();
+    const js = vi.fn(async () => {
+      if (jsFails) throw jsError;
+    });
+    const guides = vi.fn(async () => {
+      if (guideFails) throw guideError;
+    });
+    const owners = new CliResourceOwners();
+    owners.own("javascript-analysis", js);
+    owners.own("guidance", guides);
+    const closing = owners.close();
     if (jsFails && guideFails)
       await expect(closing).rejects.toMatchObject({
         errors: [jsError, guideError],
@@ -37,3 +36,13 @@ it.each([
     expect(guides).toHaveBeenCalledOnce();
   },
 );
+
+it("registers every process-owned CLI resource the complete CLI loads", () => {
+  expect(cliProcessResourceOwners()).toEqual(
+    expect.arrayContaining([
+      "javascript-analysis",
+      "guidance",
+      "mcp-registration",
+    ]),
+  );
+});

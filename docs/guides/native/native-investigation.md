@@ -247,8 +247,10 @@ observation's own `limitations`, so a reason the provider reported for that
 entry, such as a Kuna export failure or a missing body, stays with the item.
 Null pseudocode is `capability_unavailable`; empty or non-text pseudocode is
 `unreadable_output`. Provider failures keep their typed error. Successful items
-do not repeat limitations; the batch Evidence aggregates every observation's
-limitations by provider and operation.
+also keep their own observation's limitations, so repeated selectors that the
+provider answered differently stay distinguishable, and an unavailable item
+keeps the provider's `pseudocode_absence` reason. The batch Evidence still
+aggregates every observation's limitations by provider and operation.
 Resolved entries also appear in the composed Evidence locations. New batch
 Evidence commits the revised workflow profile; retained historical Evidence
 remains valid. This tool
@@ -1133,7 +1135,9 @@ complete observation.
   offers direct metadata inspection or a `list_names` symbol inventory. The
   workflow tries direct metadata first and uses the symbol fallback only when
   that operation is unavailable; runtime failures remain failures rather than
-  being replaced by symbol-only results.
+  being replaced by symbol-only results. If the symbol fallback then fails or
+  returns an invalid inventory, the error also keeps the direct operation's
+  refusal under `details.diagnostics.binary_metadata_failure`.
 
 `get_objc_classes` keeps names from the provider inventory. It coalesces rows
 only when their exact selected-image pointer slots decode to the same class
@@ -1601,10 +1605,12 @@ returns ordered addresses with segments, source file offsets and containing
 procedures. The CLI equivalent is
 `rea search-bytes ./program '48 8B ?? ?? 89' --provider ghidra`.
 Use `start`/`end` to constrain the inclusive address window, and continue with
-`next_cursor` until `complete` is true. Inspect `searched` for page coverage and
-skipped uninitialized blocks. A missing match does not establish absence from
-uninitialized or excluded memory. See
-[Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
+`next_cursor` until `complete` is true. A cursor from another target, analysis
+profile or project, pattern, mask, bounds, or document is rejected without
+schema-repair guidance; the error does not claim which of those differs.
+Inspect `searched` for page coverage and skipped uninitialized blocks. A
+missing match does not establish absence from uninitialized or excluded memory.
+See [Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
 
 Exact-name xref lookup reports distinct candidate addresses as an input ambiguity;

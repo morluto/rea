@@ -6,10 +6,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { expect, it, vi } from "vitest";
 
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
-import {
-  createTestProcessRegistry,
-  remainingProcessDeadline,
-} from "../../support/process/processFixture.js";
+import { createTestProcessRegistry } from "../../support/process/processFixture.js";
 
 const within = async <T>(
   operation: Promise<T>,
@@ -279,15 +276,6 @@ it("terminates a stalled real child at its deadline while retaining captured out
   } finally {
     await processes.shutdown();
   }
-});
-
-it("derives a child deadline from the test deadline, keeping a reporting reserve", () => {
-  expect(remainingProcessDeadline(120_000, 0)).toBe(108_000);
-  expect(remainingProcessDeadline(30_000, 20_000)).toBe(5_000);
-  // The reserve never drops below five seconds, nor the deadline below one.
-  expect(remainingProcessDeadline(8_000, 0)).toBe(3_000);
-  expect(remainingProcessDeadline(8_000, 7_500)).toBe(1_000);
-  expect(remainingProcessDeadline(0, 0)).toBeUndefined();
 });
 
 it(

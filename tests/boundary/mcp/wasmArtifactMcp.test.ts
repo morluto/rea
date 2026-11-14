@@ -24,6 +24,7 @@ import {
   wasmArtifactFixture,
   wasmArtifactExecution,
 } from "../../fixtures/wasm/artifact.js";
+import { waitFor } from "../../support/testWait.js";
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
@@ -344,7 +345,7 @@ it.each([undefined, "summary"] as const)(
         candidate_paths: [],
       });
       await harness.client.ping();
-      await vi.waitFor(() => {
+      await waitFor(() => {
         // Failed summary delivery retains the complete producer, without a derived view.
         expect(session.exportEvidenceBundle().records).toEqual([partial]);
       });

@@ -26,7 +26,11 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { hostReadFailure, isHostFile, isRefusedRead } from "./HostFileRead.js";
+import {
+  hostReadFailure,
+  isRefusedRead,
+  probeHostFile,
+} from "./HostFileRead.js";
 import { succeeded, type QueryRunner } from "./HostQuery.js";
 
 /** The library fields of a Debian package's inventory. */
@@ -173,7 +177,7 @@ export const inspectLibraryPackages = async (
     {
       dependencies: (path, expected) =>
         elfDependencies(path, signal, policy, expected),
-      isFile: isHostFile,
+      isFile: probeHostFile,
     },
     policy.libraries,
   );

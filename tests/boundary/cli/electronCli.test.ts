@@ -4,7 +4,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -23,6 +23,7 @@ import {
   electronRuntimeEvidence,
 } from "../../fixtures/javascriptRuntimeReconciliation.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
+import { waitFor } from "../../support/testWait.js";
 
 const cliProcesses = createTestProcessRegistry();
 const cli = createTestCli(cliProcesses);
@@ -198,14 +199,11 @@ it.skipIf(process.platform === "win32")(
     });
     const hardStop = setTimeout(() => child.kill("SIGKILL"), 15_000);
     try {
-      await vi.waitFor(
-        () => {
-          expect(
-            browser.commands.some(({ method }) => method === "Runtime.enable"),
-          ).toBe(true);
-        },
-        { timeout: 5_000 },
-      );
+      await waitFor(() => {
+        expect(
+          browser.commands.some(({ method }) => method === "Runtime.enable"),
+        ).toBe(true);
+      });
       child.kill("SIGINT");
 
       const result = await closed;
@@ -219,7 +217,7 @@ it.skipIf(process.platform === "win32")(
       expect(methods).toContain("Target.detachFromTarget");
       expect(methods).not.toContain("Target.closeTarget");
       expect(methods).not.toContain("Browser.close");
-      await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
       expect((await fetch(`${browser.endpoint}/json/version`)).ok).toBe(true);
     } finally {
       clearTimeout(hardStop);

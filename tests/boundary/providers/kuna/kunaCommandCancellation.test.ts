@@ -26,12 +26,10 @@ it.each([
     );
     try {
       await expect
-        .poll(
-          async () =>
-            (await fakeKunaCalls(fixture.kuna)).some(
-              ({ argv }) => argv[0] === "strings",
-            ),
-          { timeout: 5000 },
+        .poll(async () =>
+          (await fakeKunaCalls(fixture.kuna)).some(
+            ({ argv }) => argv[0] === "strings",
+          ),
         )
         .toBe(true);
       caller.abort(reason);
@@ -70,12 +68,10 @@ it.each(["peer", "last"] as const)(
         : undefined;
     try {
       await expect
-        .poll(
-          async () =>
-            (await fakeKunaCalls(fixture.kuna)).some(
-              ({ argv }) => argv[0] === "decompile",
-            ),
-          { timeout: 5000 },
+        .poll(async () =>
+          (await fakeKunaCalls(fixture.kuna)).some(
+            ({ argv }) => argv[0] === "decompile",
+          ),
         )
         .toBe(true);
       caller.abort(reason);

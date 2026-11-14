@@ -19,6 +19,7 @@ import {
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { NativeExportsPort } from "../../application/binaryDiagnostics/NativeExportsPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -37,7 +38,11 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../metadata/BinaryContainer.js";
-import { parseNativeExports } from "./NativeExportParser.js";
+import {
+  NativeExportLimitFailure,
+  type NativeExportLimit,
+  parseNativeExports,
+} from "./NativeExportParser.js";
 
 const OPERATION = "inspect_native_exports";
 
@@ -84,6 +89,30 @@ export class NativeExportsProvider implements NativeExportsPort {
   }
 }
 
+/** Recovery for one exhausted allowance, chosen from the parser's structured tag. */
+const limitRecovery = (
+  limit: NativeExportLimit | null,
+  maximum: number,
+): ResourceConstraintRecovery => {
+  switch (limit) {
+    case "rows":
+      return fixedAllowanceOptions(
+        `The ${String(maximum)}-entry native export inventory allowance`,
+        "count",
+      );
+    case "retained_text":
+      return fixedAllowanceOptions(
+        `The ${String(maximum)}-byte native export retained-text allowance`,
+        "bytes",
+      );
+    case null:
+      return fixedAllowanceOptions(
+        "The native export structural decoding allowance",
+        "parser",
+      );
+  }
+};
+
 const nativeExportsFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
   input: InspectNativeExportsInput,
@@ -105,9 +134,9 @@ const nativeExportsFailurePrimary = (
       { boundary: cause.boundary, maximum: cause.maximum_bytes },
       {
         cause,
-        ...fixedAllowanceOptions(
-          "The native export inventory allowance",
-          "count",
+        ...limitRecovery(
+          cause instanceof NativeExportLimitFailure ? cause.limit : null,
+          cause.maximum_bytes,
         ),
       },
     );
