@@ -83,3 +83,39 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "exports a missing parent ID as one empty cell in single-column CSV and TSV",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-delimited-view-cli-");
+    const request = join(root, "view.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        source: { kind: "inline", evidence: ARTIFACT_COMPARISON_EXAMPLE.left },
+        view: { kind: "inventory", collection: "occurrences" },
+      }),
+    );
+
+    for (const format of ["csv", "tsv"] as const) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-analysis-view",
+          request,
+          "--format",
+          format,
+          "--filter-output",
+          "normalized_result.items",
+          "--columns",
+          "parent_occurrence_id",
+        ],
+      });
+      expect(result.exitCode).toBe(0);
+      const lineEnding = format === "csv" ? "\r\n" : "\n";
+      const metadataEnd = result.stdout.indexOf(lineEnding);
+      expect(result.stdout.slice(metadataEnd + lineEnding.length)).toBe(
+        `parent_occurrence_id${lineEnding}""${lineEnding}`,
+      );
+    }
+  },
+);
