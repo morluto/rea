@@ -71,6 +71,14 @@ it.each([
     'tls.connect({ port: 80, secureProtocol: `TLS_method`, minVersion: "TLSv1.2" })',
   ],
   [
+    "a regular-expression method beside a version",
+    `tls.connect({ port: 80, secureProtocol: /x/, minVersion: "TLSv1.2" })`,
+  ],
+  [
+    "a class method beside a version",
+    `tls.connect({ port: 80, secureProtocol: class {}, minVersion: "TLSv1.2" })`,
+  ],
+  [
     "a truthy non-string method beside a version",
     `tls.connect({ port: 80, secureProtocol: 5, minVersion: "TLSv1.2" })`,
   ],
