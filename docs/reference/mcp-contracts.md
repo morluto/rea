@@ -701,6 +701,20 @@ Coverage describes examined declarations and does not establish runtime behavior
 or full specification/operation validity. See [offline API contracts](../api-contracts.md)
 for source identities, parser allowances, supported scope and CLI publication.
 
+## Offline Windows event log records
+
+`inspect_evtx_archive` lists the records of one local Windows Event Log
+(`.evtx`) file without contacting a live Event Log service or executing
+event-provided content. File and chunk headers, chunk numbers, event record
+numbers, record-header timestamps and declared record sizes are reported in file
+order, and each chunk reports whether its header checksum matched. Embedded
+event XML is not decoded in this version, so channel, provider, event ID, level
+and `EventData` values are absent rather than inferred. Typed payload values and
+event templates are not resolved. Truncated records, undecodable chunks and
+disagreeing chunk numbers remain diagnostics instead of ending the inventory
+silently. See [offline Windows event logs](../guides/data/evtx-archives.md) for
+identities and resource bounds.
+
 ## Retained application Evidence inputs
 
 `analyze_javascript_application`, `inspect_binary_layout`, `inspect_artifact`,
