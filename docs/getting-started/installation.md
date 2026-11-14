@@ -214,8 +214,7 @@ instructions and references. Consumers should use `identity.skill.state`,
 obsolete `installed_catalog_digest` field has been removed; current catalog
 identity remains available at `identity.catalog`.
 
-Setup pins package-runner MCP registrations to the exact installed REA version,
-installs the matching skill and on-demand references in the same plan, and adds
+Setup records the absolute runtime and entry script of the REA installation performing setup, so the client launches that installation directly, and installs the matching skill and on-demand references in the same plan. It also adds
 `startup_timeout_sec = 30` for Codex and Grok Build when no positive timeout
 is already configured. Codex also receives a
 `tool_timeout_sec` derived from known provider startup plus operation headroom.
