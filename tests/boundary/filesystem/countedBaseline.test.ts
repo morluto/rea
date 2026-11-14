@@ -30,6 +30,19 @@ it("reports removed copies as stale until the baseline is lowered", () => {
     { path: "src/gone.ts", count: 0, allowed: 1 },
   ]);
   expect(compared.baseline).toBe(baseline);
+  expect(compared.lowered).toBe(false);
+});
+
+it("leaves an absent baseline unchanged so the guard writes no empty entry", () => {
+  for (const shrink of [false, true]) {
+    const compared = compareCountedBaseline(new Map(), {}, shrink);
+    expect(compared).toEqual({
+      grown: [],
+      stale: [],
+      baseline: {},
+      lowered: false,
+    });
+  }
 });
 
 it("only lowers counts when shrinking, never raising one that grew", () => {
@@ -45,5 +58,6 @@ it("only lowers counts when shrinking, never raising one that grew", () => {
   expect(compared.baseline).toEqual({ "src/a.ts": 1, "src/b.ts": 1 });
   expect(compared.grown).toEqual([{ path: "src/b.ts", count: 5, allowed: 1 }]);
   expect(compared.stale).toEqual([]);
+  expect(compared.lowered).toBe(true);
   expect(baseline).toEqual({ "src/a.ts": 2, "src/b.ts": 1, "src/gone.ts": 4 });
 });

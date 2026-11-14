@@ -14,4 +14,6 @@ export function compareCountedBaseline(
   readonly grown: CountedBaselineDifference[];
   readonly stale: CountedBaselineDifference[];
   readonly baseline: Record<string, number>;
+  /** True only when `shrink` lowered or removed a recorded count. */
+  readonly lowered: boolean;
 };

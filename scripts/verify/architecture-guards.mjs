@@ -197,8 +197,9 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     failures.push(
       `${label}; new copies are not allowed:\n${lines(compared.grown)}`,
     );
-  if (compared.baseline !== (baselines[key] ?? {})) {
-    baselines[key] = compared.baseline;
+  if (compared.lowered) {
+    if (Object.keys(compared.baseline).length === 0) delete baselines[key];
+    else baselines[key] = compared.baseline;
     baselinesShrunk = true;
   }
   if (compared.stale.length > 0)
