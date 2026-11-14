@@ -30,7 +30,7 @@ export const ghidraBridgeSourcesDigest = (): string => {
   const hash = createHash("sha256");
   for (const name of Object.values(GHIDRA_BRIDGE_SOURCES).sort()) {
     const bytes = readFileSync(new URL(name, directory));
-    hash.update(`${name}\0${String(bytes.byteLength)}\0`).update(bytes);
+    hash.update(JSON.stringify([name, bytes.byteLength])).update(bytes);
   }
   bridgeSourcesDigest = hash.digest("hex");
   return bridgeSourcesDigest;

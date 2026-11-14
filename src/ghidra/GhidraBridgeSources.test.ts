@@ -20,7 +20,7 @@ it("commits to the name and bytes of each bridge source", async () => {
   const hash = createHash("sha256");
   for (const name of Object.values(GHIDRA_BRIDGE_SOURCES).sort()) {
     const bytes = await readFile(new URL(name, directory));
-    hash.update(`${name}\0${String(bytes.byteLength)}\0`).update(bytes);
+    hash.update(JSON.stringify([name, bytes.byteLength])).update(bytes);
   }
   expect(ghidraBridgeSourcesDigest()).toBe(hash.digest("hex"));
 });
