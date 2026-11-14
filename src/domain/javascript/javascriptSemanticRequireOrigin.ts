@@ -63,12 +63,7 @@ import {
 import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
-} from "./javascriptSemanticAmbientWrites.js";
-
-export type {
-  JavaScriptRequireLoaderFact,
-  JavaScriptRequireOrigin,
-} from "./javascriptSemanticRequireOriginSlot.js";
+} from "./javascriptSemanticGlobalReference.js";
 
 const possibleCommonJsDelegateWriteStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();

@@ -14,7 +14,7 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import {
   analysisViewResultSchema,
   artifactInventorySummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 

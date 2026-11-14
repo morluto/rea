@@ -8,7 +8,7 @@ import {
   analysisDetailSchema,
   analysisDetailOutputSchemaOf,
 } from "./analysisDetail.js";
-import { webNetworkCaptureSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
+import { webNetworkCaptureSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
 
 /** Historical inspection is distinct from live browser capture and runtime authority. */
 export const WEB_NETWORK_CAPTURE_TOOL_CONTRACTS = [

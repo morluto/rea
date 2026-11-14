@@ -5,7 +5,7 @@ import { APPLICATION_TOOL_CONTRACTS } from "../../contracts/applicationToolContr
 import { inspectAnalysisViewValidated } from "../../application/analysisView/AnalysisViewService.js";
 import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
-import type { AnalysisViewRequest } from "../../domain/analysisView/analysisView.js";
+import type { AnalysisViewRequest } from "../../domain/analysisView/analysisViewRequest.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { ok } from "../../domain/result.js";

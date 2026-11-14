@@ -25,6 +25,7 @@ const listFiles = async (dir) => {
     } else if (
       entry.name.endsWith(".ts") &&
       !entry.name.endsWith(".test.ts") &&
+      !entry.name.endsWith(".spec.ts") &&
       !entry.name.endsWith(".fixture.ts")
     )
       output.push(path);
@@ -39,7 +40,7 @@ export const NUMERIC_LIMIT_DECLARATION = "src/domain/numericLimitRegistry.ts";
  * These limits are moving onto runtime analysis settings on their own PRs.
  * A producer or a registry entry cannot satisfy that requirement.
  */
-export const REQUIRED_RUNTIME_LIMITS = [
+const REQUIRED_RUNTIME_LIMITS = [
   "REA_NTFS_MFT_MAX_FILE_BYTES",
   "REA_REGF_HIVE_MAX_FILE_BYTES",
   "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES",
@@ -170,8 +171,16 @@ const stringBindings = (sourceFile, symbols, unresolved) => {
           item.offset === offset &&
           item.reason === reason,
       )
-    )
-      unresolved.push({ path, offset, reason });
+    ) {
+      const location = sourceFile.getLineAndCharacterOfPosition(offset);
+      unresolved.push({
+        path,
+        offset,
+        line: location.line + 1,
+        column: location.character + 1,
+        reason,
+      });
+    }
   };
   const initializer = (identifier) => {
     if (!candidates.has(identifier.text)) return undefined;
@@ -949,7 +958,7 @@ if (direct) {
 
   for (const issue of discovered.unresolved)
     console.log(
-      `${issue.path}:${issue.offset}: numeric limit candidate unresolved (${issue.reason})`,
+      `${issue.path}:${issue.line}:${issue.column}: numeric limit candidate unresolved (${issue.reason})`,
     );
 
   for (const [name, file] of [...discovered].sort(([left], [right]) =>

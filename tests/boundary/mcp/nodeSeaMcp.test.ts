@@ -14,7 +14,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   analysisViewResultSchema,
   artifactInventorySummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 
 const expectBlobAdmissionFailure = (
   reply: Parameters<typeof parseMcpToolError>[0],

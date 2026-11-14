@@ -15,7 +15,7 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   analysisViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import {
   createEvidenceBundle,

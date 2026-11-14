@@ -24,7 +24,7 @@ import {
   inspectWebNetworkCaptureInputSchema,
 } from "../../../src/domain/webNetworkCapture.js";
 import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 

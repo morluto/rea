@@ -11,7 +11,7 @@ import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { graphqlContractSchema } from "../../../src/domain/apiContract/graphqlContract.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 
 const fixture = new URL(
   "../../fixtures/graphql/swapi.graphql.txt",

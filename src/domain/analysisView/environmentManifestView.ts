@@ -16,10 +16,6 @@ import {
   admitScenarioCaptureParent,
   type ScenarioResponseBodyRetention,
 } from "./scenarioCaptureRecords.js";
-import { environmentManifestFields } from "./environmentManifestSchema.js";
-
-export { environmentManifestFields };
-
 /** Opt-in template rules, each listed at most once; shared by every view that groups tools. */
 export const templateRulesSchema = z
   .array(z.enum(TEMPLATE_RULES))

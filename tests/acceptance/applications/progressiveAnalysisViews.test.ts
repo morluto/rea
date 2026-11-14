@@ -6,7 +6,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { apiContractSchema } from "../../../src/domain/apiContract/apiContract.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { toolOutputSchemaWithMetadata } from "../../../src/contracts/toolSchemaMetadata.js";
 

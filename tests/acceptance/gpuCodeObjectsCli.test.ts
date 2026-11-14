@@ -8,7 +8,7 @@ import { gpuCodeObjectsSchema } from "../../src/domain/gpu/gpuCodeObjects.js";
 import {
   gpuCodeObjectsPageViewResultSchema,
   gpuCodeObjectsSummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence, createEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";

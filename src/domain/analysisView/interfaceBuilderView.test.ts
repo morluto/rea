@@ -2,11 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { interfaceBuilderAnalysisSchema } from "../apple/interfaceBuilderGraph.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 
-import {
-  analysisViewResultSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 const target = "a".repeat(64);
 const resourceRoot = {

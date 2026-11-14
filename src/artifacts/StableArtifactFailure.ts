@@ -3,13 +3,42 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
+import {
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+  type ArtifactFilePrimaryFacts,
+} from "./ArtifactFileOperation.js";
 import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
+  AnalysisCancelledError,
   AnalysisInputError,
 } from "../domain/analysisErrorCore.js";
+
+/** Preserve ownership classification for stable-file identity and cancellation. */
+export const projectOwnedArtifactIdentityFailure = (
+  facts: ArtifactFilePrimaryFacts,
+  operation: string,
+  path: string,
+): AnalysisError | undefined => {
+  const { cause, origin } = facts;
+  if (
+    origin !== "owned-or-classified" ||
+    !(cause instanceof ArtifactReaderFailure)
+  )
+    return undefined;
+  if (cause.reason === "integrity")
+    return new AnalysisArtifactChangedError(operation, path, cause.message, {
+      cause,
+    });
+  if (cause.reason === "cancelled")
+    return new AnalysisCancelledError(operation, {
+      cause: artifactFileCancellationCause(cause),
+    });
+  return undefined;
+};
 
 /** Project filesystem errors that identify a refused or unreadable selected file. */
 export const projectSelectedArtifactFileFailure = (
@@ -56,6 +85,18 @@ export const stableArtifactInputRecovery = (cause: ArtifactReaderFailure) =>
         conformsToInputContract: true,
       }
     : {};
+
+/** Report a rejected artifact path or format with its source-provided recovery. */
+export const stableArtifactInputFailure = (
+  cause: ArtifactReaderFailure,
+  operation: string,
+  field = "path",
+): AnalysisInputError =>
+  new AnalysisInputError(
+    operation,
+    { cause, ...stableArtifactInputRecovery(cause) },
+    [{ path: [field], reason: "invalid_format", message: cause.message }],
+  );
 
 const artifactCleanupFailure = (
   cause: unknown,

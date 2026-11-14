@@ -3,7 +3,7 @@ import {
   analysisEvidenceSources,
   undeliveredSourceClosure,
 } from "../application/AnalysisEvidenceSources.js";
-import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js";
+import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import { z } from "incur";
 import {
   isImmutableEvidence,

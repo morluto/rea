@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { ESP32C3_APP_SEGMENTS, espImage } from "../fixtures/espImage.js";
-import { artifactInventorySummaryViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { artifactInventorySummaryViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { artifactComparisonResultSchema } from "../../src/domain/artifactComparison.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { artifactInventoryResultSchema } from "../../src/domain/artifactGraph.js";

@@ -1,9 +1,7 @@
 import { expect, it } from "vitest";
 import { createEvidence } from "../evidence.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 const capture = (
   tsharkStderr: string,

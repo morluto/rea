@@ -14,7 +14,7 @@ import {
   AnalysisCapabilityUnavailableError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { evmInterfaceSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { evmInterfaceSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { inspectSolidityMetadata } from "../../../src/evm/SolidityMetadata.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";

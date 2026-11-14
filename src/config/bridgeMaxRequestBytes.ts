@@ -13,12 +13,6 @@ import {
 
 export const BRIDGE_MAX_REQUEST_BYTES_SETTING = "REA_BRIDGE_MAX_REQUEST_BYTES";
 
-export {
-  DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
-  MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
-  MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
-};
-
 /**
  * Smallest ceiling that still admits the largest bounded bridge request.
  * Hopper symbol names stop at 1024 UTF-16 units. A name of U+0001 repeated

@@ -20,7 +20,7 @@ import {
   staticObservedEndpointComparisonSchema,
   type StaticObservedEndpointComparison,
 } from "../../../src/domain/javascript/staticObservedEndpointSchemas.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 
 const prepareInputs = async (cli: TestCli) => {
