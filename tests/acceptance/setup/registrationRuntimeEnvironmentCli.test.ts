@@ -139,7 +139,6 @@ cliTest(
     });
     expect(await readFile(config, "utf8")).toBe(updatedConfiguration);
   },
-  120_000,
 );
 
 cliTest(
