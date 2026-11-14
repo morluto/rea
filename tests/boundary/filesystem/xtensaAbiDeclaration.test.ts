@@ -1,4 +1,4 @@
-import { open, readFile, writeFile } from "node:fs/promises";
+import { open, readFile, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
@@ -149,6 +149,45 @@ describe("Xtensa ELF target resolution", () => {
       status: "unrecognized",
       value: "7",
     });
+  });
+
+  it("reads a large section table in bounded batches without materializing it", async () => {
+    // Move the three headers to the end and follow them with 60,000 null
+    // sections: a 2.4 MB table that the lookup must not read or keep at once.
+    const base = xtensaElf();
+    const count = 60_000;
+    const table = Buffer.alloc(count * 40);
+    base.copy(table, 0, 52, 52 + 3 * 40);
+    const bytes = Buffer.concat([base, table]);
+    bytes.writeUInt32LE(base.length, 32);
+    bytes.writeUInt16LE(count, 48);
+    const read = async (fixture: Buffer) => {
+      const handle = await open(await writeFixture(fixture), "r");
+      const sizes: number[] = [];
+      const recording = {
+        read: (
+          buffer: Buffer,
+          offset: number,
+          length: number,
+          position: number,
+        ) => {
+          sizes.push(length);
+          return handle.read(buffer, offset, length, position);
+        },
+      } as unknown as FileHandle;
+      try {
+        return {
+          info: await readXtensaElfInfo(recording, fixture.length, () => {}),
+          largest: Math.max(...sizes),
+        };
+      } finally {
+        await handle.close();
+      }
+    };
+    const [moved, original] = await Promise.all([read(bytes), read(base)]);
+    expect(moved.info).toEqual(original.info);
+    expect(moved.info.abi).toMatchObject({ status: "declared" });
+    expect(moved.largest).toBeLessThanOrEqual(64 * 1024);
   });
 });
 
