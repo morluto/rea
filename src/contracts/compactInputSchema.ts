@@ -60,15 +60,11 @@ const retainRootPropertyGuidance = (
   return { ...stripped, properties };
 };
 
-/**
- * Nullable values are the one construct the dialect cannot express without
- * narrowing an input, so a projection that keeps them is still accepted.
- */
 const withinDialect = (schema: Record<string, unknown>): boolean =>
   advertisedInputDialectViolations({
     name: "input",
     inputSchema: schema,
-  }).every(({ rule, detail }) => rule === "type" && detail === "nullable");
+  }).length === 0;
 
 /**
  * Render an advertised input schema within a per-schema byte budget for

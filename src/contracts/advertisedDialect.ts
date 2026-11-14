@@ -42,7 +42,8 @@ export type AdvertisedDialectRule =
   | "root-shape"
   // Each keyword outside the allowlist is rejected by at least one target.
   | "keyword"
-  // Gemini, Moonshot and Ark reject type lists and untyped nodes (#7103, #3800).
+  // Gemini, Moonshot and Ark reject type lists and untyped nodes (#7103,
+  // #3800); a value is nullable only as `anyOf` a typed branch and null.
   | "type"
   // VS Code and OpenAI reject arrays without `items`; Gemini rejects `items`
   // beside a non-array type (#3576, #7103).
@@ -369,18 +370,14 @@ const isNullBranch = (branch: unknown): boolean =>
   branch.type === "null" &&
   Object.keys(branch).length === 1;
 
-/** `[T, "null"]`: the one type list several clients rewrite to `nullable`. */
-const isNullableTypeList = (type: readonly unknown[]): boolean =>
-  type.length === 2 &&
-  type.includes("null") &&
-  type.some(
-    (member) => typeof member === "string" && PRIMITIVE_TYPES.has(member),
-  );
-
 /**
- * One typed branch or null. The dialect has no null type, so a nullable value
- * cannot be advertised without narrowing it; such unions are counted under
- * their own detail rather than as an arbitrary untyped node.
+ * The dialect's one nullable form: `anyOf` a single typed branch and
+ * `{"type": "null"}`, below the root. Every surveyed target accepts a nested
+ * `anyOf` with typed branches, while type lists such as `[T, "null"]` are
+ * rejected by Gemini's legacy schema (#7103) and rewritten differently by
+ * Codex, Goose, VS Code and Gemini CLI. Dropping the null branch would refuse
+ * a valid call such as `limit: null`. The union carries its type in its
+ * branches, so it is not an untyped node.
  */
 const isNullableUnion = (node: Readonly<Record<string, unknown>>): boolean =>
   Array.isArray(node.anyOf) &&
@@ -420,11 +417,11 @@ const nodeViolations = (
   for (const key of Object.keys(node))
     if (!ALLOWED_KEYWORDS.has(key)) add("keyword", key);
   const { type } = node;
-  if (Array.isArray(type))
-    add("type", isNullableTypeList(type) ? "nullable" : "type-list");
-  else if (type === undefined)
-    add("type", isNullableUnion(node) ? "nullable" : "untyped");
-  // A null branch is reported once, by the union that offers it.
+  if (Array.isArray(type)) add("type", "type-list");
+  else if (type === undefined) {
+    if (!isNullableUnion(node)) add("type", "untyped");
+  }
+  // The null branch of a nullable union is typed by its own `type`.
   else if (
     type === "null" &&
     keyword === "anyOf" &&

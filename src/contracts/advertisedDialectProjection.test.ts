@@ -127,18 +127,10 @@ describe("portable advertised dialect projection", () => {
       },
       limit: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] },
     });
-    // Nullable values are the one construct left outside the dialect.
+    // A nullable value is a typed branch or null, within the dialect.
     expect(
       advertisedInputDialectViolations({ name: "probe", inputSchema: schema }),
-    ).toEqual([
-      {
-        tool: "probe",
-        schema: "input",
-        path: "$.properties.limit",
-        rule: "type",
-        detail: "nullable",
-      },
-    ]);
+    ).toEqual([]);
   });
 
   it("moves the root description and dropped cross-field constraints to tool guidance", () => {
