@@ -685,6 +685,10 @@ const rejectsOptionsShape = (
  *                                             which starts a child
  *   " " or any other non-empty string      -> child
  *
+ * fork validates its module as a path, not a string: a WHATWG URL, an object
+ * with own `href` and `protocol`, a class with static ones, and a Uint8Array
+ * all start a child, so an object, class or `new` value stays for fork.
+ *
  * Only a command proven by source syntax counts; a spread or computed value stays.
  */
 const rejectsCommand = (
@@ -702,18 +706,30 @@ const rejectsCommand = (
     if (literal.value.includes("\u0000")) return true;
     return literal.value === "" && candidate.method !== "fork";
   }
+  if (isUnpricedPrimitiveLiteral(value)) return true;
+  if (candidate.method === "fork")
+    return (
+      context.isArray(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isFunctionExpression(value) ||
+      t.isRegExpLiteral(value)
+    );
   // `new` always yields an object, which Node's string check refuses.
-  return (
-    context.isArray(value) ||
-    t.isObjectExpression(value) ||
-    t.isArrowFunctionExpression(value) ||
-    t.isFunctionExpression(value) ||
-    t.isClassExpression(value) ||
-    t.isRegExpLiteral(value) ||
-    t.isNewExpression(value) ||
-    isUnpricedPrimitiveLiteral(value)
-  );
+  return isObjectValuedSyntax(value, context);
 };
+
+/** Syntax whose value is always an object, never a primitive. */
+const isObjectValuedSyntax = (
+  value: t.Node,
+  context: ChildSpawnContext,
+): boolean =>
+  context.isArray(value) ||
+  t.isObjectExpression(value) ||
+  t.isArrowFunctionExpression(value) ||
+  t.isFunctionExpression(value) ||
+  t.isClassExpression(value) ||
+  t.isRegExpLiteral(value) ||
+  t.isNewExpression(value);
 
 type ChildOptionValue =
   | { readonly kind: "nullish" }
@@ -744,16 +760,7 @@ const childOptionValue = (
   if (t.isNumericLiteral(value))
     return { kind: "primitive", value: value.value };
   if (t.isBigIntLiteral(value)) return { kind: "bigint" };
-  if (
-    context.isArray(value) ||
-    t.isObjectExpression(value) ||
-    t.isArrowFunctionExpression(value) ||
-    t.isFunctionExpression(value) ||
-    t.isClassExpression(value) ||
-    t.isRegExpLiteral(value) ||
-    t.isNewExpression(value)
-  )
-    return { kind: "object" };
+  if (isObjectValuedSyntax(value, context)) return { kind: "object" };
   return { kind: "unknown" };
 };
 
