@@ -2670,9 +2670,19 @@ const probePackagedImage = async (
   context: ScanContext,
 ): Promise<void> => {
   const allowance = context.maxFileBytes - state.packagedProbeBytes;
+  const bytesReadBefore = state.memberBytesRead;
   const image = allowance > 0 ? await member.read(allowance) : null;
   if (image?.kind !== "bytes") {
-    state.packagedProbeBytes = context.maxFileBytes;
+    // Charge only the bytes actually read; a zero- or partial-byte failed
+    // probe must not consume the shared probe budget for later siblings.
+    const read = Math.max(
+      0,
+      Math.min(allowance, state.memberBytesRead - bytesReadBefore),
+    );
+    state.packagedProbeBytes = Math.min(
+      context.maxFileBytes,
+      state.packagedProbeBytes + read,
+    );
     state.unprobedImages += 1;
     noteUnexaminedPackage(state);
     pushLimitation(
