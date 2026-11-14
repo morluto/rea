@@ -1771,6 +1771,32 @@ describe("ReleaseExposureReader nested packages in a host", () => {
       await reader.close();
     }
   });
+});
+
+describe("ReleaseExposureReader packaged probe allowance", () => {
+  const withPostInventoryArchive = async <T>(
+    archive: string,
+    wrap: (reader: ArtifactReader) => ArtifactReader,
+    run: () => Promise<T>,
+  ): Promise<T> => {
+    const actual = await vi.importActual<
+      typeof import("./inventory/ArtifactInventory.js")
+    >("./inventory/ArtifactInventory.js");
+    let inventoried = false;
+    inventoryRead.impl = async (...args) => {
+      const inventory = await actual.inventoryArtifactInScope(...args);
+      inventoried = true;
+      return inventory;
+    };
+    createdReaders.wrap = (reader, path) =>
+      path === archive && inventoried ? wrap(reader) : reader;
+    try {
+      return await run();
+    } finally {
+      inventoryRead.impl = undefined;
+      createdReaders.wrap = undefined;
+    }
+  };
 
   it("keeps probing later packaged images after an unread zero-byte probe", async () => {
     const root = await createTestTempDirectory("rea-release-unread-probe-");
@@ -1785,38 +1811,38 @@ describe("ReleaseExposureReader nested packages in a host", () => {
       ]),
     );
     let brokenOpens = 0;
-    createdReaders.wrap = (reader, path) => {
-      if (path !== archive) return reader;
-      const open = reader.open.bind(reader);
-      reader.open = (entry, signal) => {
-        if (!entry.path.endsWith("01-broken.node")) return open(entry, signal);
-        brokenOpens += 1;
-        return brokenOpens === 1
-          ? open(entry, signal)
-          : Promise.reject(new Error("member read failed"));
-      };
-      return reader;
-    };
-    try {
-      const scanned = await inspect(archive);
-      expect(brokenOpens).toBe(2);
-      expect(scanned.coverage).toBe("unknown");
-      expect(scanned.limitations).toContain(
-        "Did not probe app.asar/01-broken.node for an embedded package.",
-      );
-      expect(scanned.limitations).not.toContain(
-        "Did not probe app.asar/02-embedded for an embedded package.",
-      );
-      expect(scanned.limitations.join("\n")).toContain("was not expanded");
-      expect(scanned.omitted).toContainEqual(
-        expect.objectContaining({
-          subject: "embedded package probes",
-          count: 1,
-        }),
-      );
-    } finally {
-      createdReaders.wrap = undefined;
-    }
+    const scanned = await withPostInventoryArchive(
+      archive,
+      (reader) => {
+        const open = reader.open.bind(reader);
+        reader.open = (entry, signal) => {
+          if (!entry.path.endsWith("01-broken.node")) return open(entry, signal);
+          brokenOpens += 1;
+          return Promise.reject(new Error("member read failed"));
+        };
+        return reader;
+      },
+      () => inspect(root),
+    );
+    expect(brokenOpens).toBe(1);
+    expect(scanned.coverage).toBe("unknown");
+    expect(scanned.limitations).toContainEqual(
+      expect.stringMatching(
+        /^Did not probe .*01-broken\.node for an embedded package\.$/u,
+      ),
+    );
+    expect(scanned.limitations).not.toContainEqual(
+      expect.stringMatching(
+        /^Did not probe .*02-embedded for an embedded package\.$/u,
+      ),
+    );
+    expect(scanned.limitations.join("\n")).toContain("was not expanded");
+    expect(scanned.omitted).toContainEqual(
+      expect.objectContaining({
+        subject: "embedded package probes",
+        count: 1,
+      }),
+    );
   });
 
   it("charges partial bytes of an unread probe to the packaged allowance", async () => {
@@ -1836,43 +1862,48 @@ describe("ReleaseExposureReader nested packages in a host", () => {
     );
     let firstOpens = 0;
     let secondOpens = 0;
-    createdReaders.wrap = (reader, path) => {
-      if (path !== archive) return reader;
-      const open = reader.open.bind(reader);
-      reader.open = (entry, signal) => {
-        if (entry.path.endsWith("01-first.node")) {
-          firstOpens += 1;
-          if (firstOpens > 1)
-            return Promise.resolve(
-              Readable.from(
-                (function* (): Generator<Buffer> {
-                  yield Buffer.alloc(4096);
-                  throw new Error("damaged image");
-                })(),
-              ),
-            );
-        } else if (entry.path.endsWith("02-second.node")) {
-          secondOpens += 1;
-        }
-        return open(entry, signal);
-      };
-      return reader;
-    };
     const reader = new ReleaseExposureReader();
     try {
-      const result = await reader.inspect(
-        { path: archive, max_file_bytes: 8192 },
-        undefined,
-        () => undefined,
+      const result = await withPostInventoryArchive(
+        archive,
+        (source) => {
+          const open = source.open.bind(source);
+          source.open = (entry, signal) => {
+            if (entry.path.endsWith("01-first.node")) {
+              firstOpens += 1;
+              return Promise.resolve(
+                Readable.from(
+                  (function* (): Generator<Buffer> {
+                    yield Buffer.alloc(4096);
+                    throw new Error("damaged image");
+                  })(),
+                ),
+              );
+            }
+            if (entry.path.endsWith("02-second.node")) secondOpens += 1;
+            return open(entry, signal);
+          };
+          return source;
+        },
+        () =>
+          reader.inspect(
+            { path: root, max_file_bytes: 8192 },
+            undefined,
+            () => undefined,
+          ),
       );
       if (!result.ok) throw result.error;
-      expect(firstOpens).toBe(2);
-      expect(secondOpens).toBe(1);
-      expect(result.value.limitations).toContain(
-        "Did not probe app.asar/01-first.node for an embedded package.",
+      expect(firstOpens).toBe(1);
+      expect(secondOpens).toBe(0);
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /^Did not probe .*01-first\.node for an embedded package\.$/u,
+        ),
       );
-      expect(result.value.limitations).toContain(
-        "Did not probe app.asar/02-second.node for an embedded package.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /^Did not probe .*02-second\.node for an embedded package\.$/u,
+        ),
       );
       expect(result.value.omitted).toContainEqual(
         expect.objectContaining({
@@ -1881,7 +1912,6 @@ describe("ReleaseExposureReader nested packages in a host", () => {
         }),
       );
     } finally {
-      createdReaders.wrap = undefined;
       await reader.close();
     }
   });
