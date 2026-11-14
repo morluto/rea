@@ -1763,12 +1763,18 @@ const readGhidraFailureOutput = (
     oomText: observedLines.length === 0 ? undefined : observedLines.join("\n"),
     complete:
       typeof scoped.complete === "boolean" ? scoped.complete : undefined,
+    // A bounded excerpt can omit the line that selects a recovery path; the
+    // projection retains those lines separately so classification still sees them.
     text: [scoped.stdout, scoped.stderr].flatMap((stream) =>
-      stream !== null &&
-      typeof stream === "object" &&
-      !Array.isArray(stream) &&
-      typeof stream.text === "string"
-        ? [stream.text]
+      stream !== null && typeof stream === "object" && !Array.isArray(stream)
+        ? [
+            ...(typeof stream.text === "string" ? [stream.text] : []),
+            ...(Array.isArray(stream.guidance_lines)
+              ? stream.guidance_lines.filter(
+                  (line): line is string => typeof line === "string",
+                )
+              : []),
+          ]
         : [],
     ),
   };

@@ -1,5 +1,6 @@
 import type { JsonValue } from "../domain/jsonValue.js";
 import { BoundedOutputExcerpt } from "../process/BoundedOutputExcerpt.js";
+import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
 import type {
   ProviderProcessOutputSince,
@@ -165,6 +166,29 @@ export const ghidraFailureOutput = (
   }),
 });
 
+/**
+ * Launcher lines that select a specific recovery path: a missing `-process`
+ * program and a denied `java_home.save` write. Both are matched by REA after
+ * projection, so an excerpt that drops them from its omitted middle would
+ * replace the specific failure with a generic one.
+ */
+const GHIDRA_GUIDANCE_LINE =
+  /Requested project program file\(s\) not found:|java_home\.save/iu;
+
+/** Retained guidance lines per stream; one launcher names each condition once. */
+export const GHIDRA_GUIDANCE_LINES = 8;
+
+/** Bytes allowed for the retained guidance lines of one stream. */
+export const GHIDRA_GUIDANCE_TEXT_BYTES = 8 * 1024;
+
+/** Lines the excerpt would drop but a recovery decision still reads. */
+const guidanceLines = (text: string): string[] => {
+  const lines = text
+    .split(/\r?\n/u)
+    .filter((line) => GHIDRA_GUIDANCE_LINE.test(line));
+  return lines.length === 0 ? [] : lines.slice(-GHIDRA_GUIDANCE_LINES);
+};
+
 export const ghidraDiagnosticStream = (
   stream: ProviderProcessSnapshot["stdout"],
   token: string | undefined,
@@ -176,12 +200,20 @@ export const ghidraDiagnosticStream = (
   );
   const excerpt = new BoundedOutputExcerpt(GHIDRA_DIAGNOSTIC_TEXT_BYTES);
   excerpt.append(Buffer.from(redacted, "utf8"));
+  const guidance = excerpt.truncated ? guidanceLines(redacted) : [];
   return {
     text: excerpt.text,
     // Preserve the historical total-byte counter; text is now bounded separately.
     bytes: stream.observedBytes,
     retained_bytes: stream.bytes,
     ...(excerpt.truncated ? { text_truncated: true } : {}),
+    ...(guidance.length === 0
+      ? {}
+      : {
+          guidance_lines: guidance.map(
+            (line) => boundedUtf8Text(line, GHIDRA_GUIDANCE_TEXT_BYTES).text,
+          ),
+        }),
     ...(stream.invalidUtf8 === true ? { invalid_utf8: true } : {}),
   };
 };

@@ -21,6 +21,7 @@ import { AnalysisProviderRegistry } from "../application/binary/AnalysisProvider
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
 import { analysisProviderCandidate } from "../contracts/toolOutputSchemaPrimitives.js";
 import { ProcessOutputTokenScanner } from "../process/ProcessOutputTokenScanner.js";
+import { ghidraDiagnosticStream } from "./GhidraDiagnostics.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
@@ -4636,6 +4637,7 @@ describe("Ghidra missing project program", () => {
     stdout: string,
     environment: Readonly<Record<string, string>> = {},
     stderr = "",
+    bounded = false,
   ) => {
     const root = await mkdtemp(join(tmpdir(), "rea-missing-program-"));
     onTestFinished(async () => {
@@ -4649,7 +4651,15 @@ describe("Ghidra missing project program", () => {
       {
         failure_kind: "start",
         exit_code: 1,
-        failure_output: failureOutput(stdout, stderr),
+        // Project through the production bounder so long output exercises the
+        // excerpt and retained guidance lines the classifier actually reads.
+        failure_output: bounded
+          ? {
+              ...failureOutput(stdout, stderr),
+              stdout: projectedOutput(stdout),
+              stderr: projectedOutput(stderr),
+            }
+          : failureOutput(stdout, stderr),
       },
     );
     const ghidra = provider(
@@ -4753,6 +4763,32 @@ describe("Ghidra missing project program", () => {
       "java.io.FileNotFoundException: C:\\x\\other.txt (Access is denied)\n",
     );
     expect(projected.remediation.action).not.toMatch(
+      /TMP and TEMP.*allowed tree/iu,
+    );
+  });
+
+  it("reports a missing program whose refusal a bounded excerpt omits", async () => {
+    const filler = "launcher noise\n".repeat(20_000);
+    const projected = await startFailure(
+      `${filler}${abort("fixture")}\n${filler}`,
+      {},
+      "",
+      true,
+    );
+    expectMissingProgram(projected, "fixture", false);
+  });
+
+  it("reports a denied java_home.save whose refusal a bounded excerpt omits", async () => {
+    const path = "C:\\Temp\\rea-provider-1\\config\\java_home.save";
+    const filler = "launcher noise\n".repeat(20_000);
+    const projected = await startFailure(
+      "",
+      {},
+      `${filler}java.io.FileNotFoundException: ${path} (Access is denied)\n${filler}`,
+      true,
+    );
+    expect(projected.message).toContain(path);
+    expect(projected.remediation.action).toMatch(
       /TMP and TEMP.*allowed tree/iu,
     );
   });
@@ -5716,6 +5752,16 @@ const output = (text: string) => ({
   bytes: Buffer.byteLength(text),
   retained_bytes: Buffer.byteLength(text),
 });
+/** Project launcher text the way a session does, so bounding is exercised. */
+const projectedOutput = (text: string) =>
+  ghidraDiagnosticStream(
+    {
+      text,
+      bytes: Buffer.byteLength(text),
+      observedBytes: Buffer.byteLength(text),
+    },
+    undefined,
+  );
 const failureOutput = (stdout = "", stderr = "") => ({
   stdout: output(stdout),
   stderr: output(stderr),

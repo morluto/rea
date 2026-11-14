@@ -202,3 +202,46 @@ it.each([
     expect(diagnostics.stop_requested).toBe(expected);
   },
 );
+
+it("retains the launcher lines that select a recovery path when the excerpt drops them", () => {
+  const name = "program_gamma";
+  const missing = `ERROR Abort due to Headless analyzer error: Requested project program file(s) not found: ${name} (HeadlessAnalyzer)`;
+  const denied = `java.io.FileNotFoundException: C:\\Temp\\rea-provider-1\\java_home.save (Access is denied)`;
+  const body = [
+    "launcher preamble\n".repeat(20_000),
+    `${missing}\n`,
+    "launcher middle\n".repeat(20_000),
+    `${denied}\n`,
+    "launcher epilogue\n".repeat(20_000),
+  ].join("");
+  const stream = ghidraDiagnosticStream(
+    {
+      text: body,
+      bytes: Buffer.byteLength(body),
+      observedBytes: Buffer.byteLength(body),
+    },
+    undefined,
+  ) as Record<string, unknown>;
+  expect(stream.text_truncated).toBe(true);
+  // The excerpt itself omits the middle, so classification needs the retained lines.
+  expect(stream.text as string).not.toContain(name);
+  expect(stream.guidance_lines).toEqual([missing, denied]);
+});
+
+it("keeps guidance lines inside the excerpt and out of the projection when nothing is cut", () => {
+  const text =
+    "Requested project program file(s) not found: fixture\nAccess is denied";
+  const stream = ghidraDiagnosticStream(
+    {
+      text,
+      bytes: Buffer.byteLength(text),
+      observedBytes: Buffer.byteLength(text),
+    },
+    undefined,
+  ) as Record<string, unknown>;
+  expect(stream).toEqual({
+    text,
+    bytes: Buffer.byteLength(text),
+    retained_bytes: Buffer.byteLength(text),
+  });
+});
