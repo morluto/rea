@@ -250,6 +250,7 @@ describe("recordless legacy MIPS admission", () => {
     [{ flags: 0x00000001 }, "elf32-exec-mips1-legacy-pinned-v1"],
     [{ flags: 0x50000001 }, "elf32-exec-arch32-legacy-pinned-v1"],
     [{ flags: 0x70000001 }, "elf32-exec-arch32-legacy-pinned-v1"],
+    [{ flags: 0x5000009f }, "elf32-exec-arch32-legacy-pinned-v1"],
   ] satisfies [Partial<MipsElfMetadata>, string][])(
     "admits a recordless legacy header (%j) with a pinned 32-bit language",
     async (change, lane) => {
@@ -305,6 +306,9 @@ describe("recordless legacy MIPS admission", () => {
     ],
     [{ flags: 0x50000201 }, "EF_MIPS_FP64"],
     [{ flags: 0x50000401 }, "EF_MIPS_NAN2008"],
+    [{ flags: 0x00000801 }, "unsupported e_flags bits (0x800)"],
+    [{ flags: 0x50000801 }, "unsupported e_flags bits (0x800)"],
+    [{ flags: 0x70000801 }, "unsupported e_flags bits (0x800)"],
     [{ flags: 0x60000001 }, "32R2"],
     [
       {
@@ -317,13 +321,19 @@ describe("recordless legacy MIPS admission", () => {
     ],
   ] satisfies [Partial<MipsElfMetadata>, string][])(
     "keeps refusing unverified recordless variants %j",
-    (change, reason) => {
+    async (change, reason) => {
       const ghidra = new GhidraProvider(config, silentLogger, {}, host);
-      expect(
-        ghidra.inspectTargetSupport(target({ ...change, abiFlags: null })),
-      ).toMatchObject({
+      const executable = target({ ...change, abiFlags: null });
+      expect(ghidra.inspectTargetSupport(executable)).toMatchObject({
         status: "unsupported",
         reason: expect.stringContaining(reason),
+      });
+      expect(await ghidra.resolveAnalysisProfile(executable)).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisUnsupportedTargetError",
+          reason: expect.stringContaining(reason),
+        },
       });
     },
   );

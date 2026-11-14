@@ -11,9 +11,13 @@ const MIPS_ET_REL = 1;
 const MIPS_ET_EXEC = 2;
 const MIPS_ET_DYN = 3;
 const MIPS16_HEADER_ASE = 0x04000000;
+const MIPS_ARCH_MASK = 0xf0000000;
 const MIPS_ARCH_1 = 0x00000000;
 const MIPS_ARCH_32 = 0x50000000;
 const MIPS_ARCH_32R2 = 0x70000000;
+// GNU Binutils elfcpp/mips.h defines NOREORDER, PIC, CPIC, XGOT, UCODE and
+// OPTIONS_FIRST. Preserve these bits alongside the separately checked ISA.
+const MIPS_RECORDLESS_ALLOWED_FLAGS = MIPS_ARCH_MASK | 0x9f;
 
 /** A distinct compressed shared-image shape; admission still checks every declaration. */
 const isGhidraMips16SharedTarget = (target: BinaryTarget): boolean =>
@@ -52,7 +56,7 @@ const hasLegacyMipsHeaderShape = (target: BinaryTarget): boolean => {
   )
     return false;
   const { flags, abiFlags, limitations } = target.mips;
-  const arch = flags & 0xf0000000;
+  const arch = flags & MIPS_ARCH_MASK;
   return (
     // The lane and its verification cover executable firmware images only;
     // recordless relocatable objects stay outside the inferred-o32 assumption.
@@ -135,7 +139,7 @@ export const ghidraMipsUnsupportedReason = (
     return "MIPS16, microMIPS and other ASE encodings are outside this standard-instruction MIPS lane.";
   if ((metadata.flags & 0x00ff0000) !== 0)
     return "Machine-specific MIPS variants, including PSP Allegrex, need a separately supported processor profile.";
-  const arch = metadata.flags & 0xf0000000;
+  const arch = metadata.flags & MIPS_ARCH_MASK;
   if (arch !== MIPS_ARCH_1 && arch !== MIPS_ARCH_32 && arch !== MIPS_ARCH_32R2)
     return "This Ghidra MIPS lane requires EF_MIPS_ARCH_32R2, or a recordless legacy EF_MIPS_ARCH_1 (MIPS-I) or EF_MIPS_ARCH_32 header; other ISA revisions need separate verification.";
   const recordlessShape =
@@ -151,7 +155,13 @@ export const ghidraMipsUnsupportedReason = (
       return "EF_MIPS_FP64 requires separate verification of 64-bit floating-point register semantics in this Ghidra lane.";
     if ((metadata.flags & 0x00000400) !== 0)
       return "EF_MIPS_NAN2008 requires separate verification of NaN encoding semantics in this Ghidra lane.";
-    if (hasLegacyMipsHeaderShape(target)) return null;
+    if (hasLegacyMipsHeaderShape(target)) {
+      const unsupportedFlags =
+        (metadata.flags & ~MIPS_RECORDLESS_ALLOWED_FLAGS) >>> 0;
+      return unsupportedFlags === 0
+        ? null
+        : `The recordless MIPS ELF header carries unsupported e_flags bits (0x${unsupportedFlags.toString(16)}).`;
+    }
     // A recordless relocatable object is not an incomplete inspection; the
     // lane is scoped to executable firmware images by design.
     if (metadata.type !== MIPS_ET_EXEC)
@@ -223,7 +233,7 @@ export const isLegacyMipsAdmission = (target: BinaryTarget): boolean =>
 const isMips1Header = (target: BinaryTarget): boolean =>
   target.architecture === "mips" &&
   target.mips !== undefined &&
-  (target.mips.flags & 0xf0000000) === MIPS_ARCH_1;
+  (target.mips.flags & MIPS_ARCH_MASK) === MIPS_ARCH_1;
 
 /** Whether the target is admitted through the recordless MIPS-I legacy lane. */
 export const isMips1LegacyAdmission = (target: BinaryTarget): boolean =>
