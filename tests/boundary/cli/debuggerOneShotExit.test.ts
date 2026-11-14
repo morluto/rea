@@ -195,7 +195,7 @@ const prepareLaunch = async (
       linuxGate,
       resolve("scripts/rea.mjs"),
     ] as readonly string[],
-    env: cliProcessEnvironment(
+    env: await cliProcessEnvironment(
       {
         [debuggers[name].environmentKey]: provider,
         FAKE_DEBUGGER_LOG: log,

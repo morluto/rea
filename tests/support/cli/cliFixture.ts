@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtemp, readdir, realpath, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 
 import {
@@ -218,18 +219,50 @@ const parseJson = (stdout: string): unknown | undefined => {
 };
 
 /**
- * Strip a `rea` executable from the inherited PATH.
+ * Hide a `rea` executable from the inherited PATH without removing directories.
  *
  * Setup registers a PATH alias that proves the same file as the selected
  * entrypoint, so a developer machine with a globally installed or linked `rea`
  * would change the command under test. The suite asserts the repo entrypoint;
- * give it a PATH where no such alias exists.
+ * give it a PATH where no such alias is found.
+ *
+ * Only the alias directory is shadowed, by prepending a directory of the same
+ * entries minus `rea`/`rea-agents`. Removing the directory outright would take
+ * unrelated prerequisites with it — on a usrmerged host `/bin` and `/usr/bin`
+ * are the same directory, so a `rea` install in `/usr/bin` would also hide `ps`.
  */
-const pathWithoutReaAliases = (path: string): string =>
-  path
-    .split(process.platform === "win32" ? ";" : ":")
-    .filter((directory) => directory.length > 0 && !hasReaExecutable(directory))
-    .join(process.platform === "win32" ? ";" : ":");
+const pathWithoutReaAliases = async (path: string): Promise<string> => {
+  const separator = process.platform === "win32" ? ";" : ":";
+  const directories = path.split(separator).filter((entry) => entry.length > 0);
+  const shadows = new Map<string, string>();
+  const shadowed = await Promise.all(
+    directories.map(async (directory) => {
+      if (!hasReaExecutable(directory)) return directory;
+      const existing = shadows.get(await realpathOrSelf(directory));
+      if (existing !== undefined) return existing;
+      const shadow = await mkdtemp(
+        join(await realpathOrSelf(tmpdir()), "rea-path-shadow-"),
+      );
+      for (const entry of await readdir(directory)) {
+        if (entry === "rea" || entry === "rea-agents") continue;
+        await symlink(join(directory, entry), join(shadow, entry)).catch(
+          () => undefined,
+        );
+      }
+      shadows.set(await realpathOrSelf(directory), shadow);
+      return shadow;
+    }),
+  );
+  return shadowed.join(separator);
+};
+
+const realpathOrSelf = async (path: string): Promise<string> => {
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
+  }
+};
 
 const hasReaExecutable = (directory: string): boolean => {
   for (const name of ["rea", "rea-agents"]) {
@@ -242,11 +275,11 @@ const hasReaExecutable = (directory: string): boolean => {
 };
 
 /** Child environment for one compiled CLI process, without the parent environment. */
-export const cliProcessEnvironment = (
+export const cliProcessEnvironment = async (
   environment: NodeJS.ProcessEnv | undefined,
   compileCache?: string,
-): NodeJS.ProcessEnv => ({
-  PATH: pathWithoutReaAliases(process.env.PATH ?? ""),
+): Promise<NodeJS.ProcessEnv> => ({
+  PATH: await pathWithoutReaAliases(process.env.PATH ?? ""),
   // Native Windows APIs need the system root and a writable temporary
   // directory even when the command's application environment is empty.
   ...(process.platform === "win32"
@@ -311,7 +344,7 @@ export const createTestCli = (
       [resolve("scripts/rea.mjs"), ...arguments_],
       {
         cwd: cwd ?? process.cwd(),
-        env: cliProcessEnvironment(environment, compileCache),
+        env: await cliProcessEnvironment(environment, compileCache),
         ...(input === undefined ? {} : { input }),
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
       },
@@ -369,7 +402,7 @@ export const cliTest = processTest.extend<{
     await use({
       ...cli,
       sharedMcpCall: () => mcpSession.call(),
-      sharedCliRun: (invocation) => {
+      sharedCliRun: async (invocation) => {
         if (
           invocation.input !== undefined ||
           invocation.timeoutMs !== undefined
@@ -379,7 +412,10 @@ export const cliTest = processTest.extend<{
           arguments: invocation.arguments,
           cwd: invocation.cwd ?? process.cwd(),
           environment: definedCliEnvironment(
-            cliProcessEnvironment(invocation.environment, cliCompileCache),
+            await cliProcessEnvironment(
+              invocation.environment,
+              cliCompileCache,
+            ),
           ),
         });
       },
