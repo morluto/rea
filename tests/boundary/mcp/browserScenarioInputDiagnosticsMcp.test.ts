@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { join, resolve } from "node:path";
-import { expect } from "vitest";
+import { afterAll, expect } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -12,6 +12,7 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const scenarios = [
   {

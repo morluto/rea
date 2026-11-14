@@ -3,7 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -16,6 +16,7 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 it("delivers deadline recovery guidance at initialization before any tool call", async () => {
   const { client, transport } = createResourceClient();
