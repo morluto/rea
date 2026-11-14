@@ -946,11 +946,14 @@ export class ProviderProcessSupervisor {
       );
       truncated = capture.appendTail(bytes, limit) > 0;
     } else {
-      const retained = Math.min(
+      let retained = Math.min(
         bytes.byteLength,
         aggregateRemaining,
         streamRemaining,
       );
+      if (retained < bytes.byteLength && retained > 0)
+        // A budget cut in the middle of a UTF-8 sequence would split a character.
+        retained = utf8PrefixBoundary(bytes.subarray(0, retained));
       if (retained > 0) capture.append(bytes.subarray(0, retained));
       truncated = retained < bytes.byteLength;
     }
@@ -979,6 +982,23 @@ export class ProviderProcessSupervisor {
     });
   }
 }
+
+/** A cut inside a UTF-8 sequence drops the unfinished sequence, never splits a character. */
+const utf8PrefixBoundary = (prefix: Buffer): number => {
+  let at = prefix.length;
+  while (at > 0) {
+    const starter = prefix[at - 1]!;
+    if (starter < 0x80) return at; // ASCII: complete boundary
+    if ((starter & 0xc0) === 0x80) {
+      at -= 1; // continuation byte — look further back
+      continue;
+    }
+    const needed =
+      starter < 0xe0 ? 2 : starter < 0xf0 ? 3 : starter < 0xf8 ? 4 : 1;
+    return at - 1 + needed <= prefix.length ? prefix.length : at - 1;
+  }
+  return 0;
+};
 
 class ProcessOutputCapture {
   readonly #chunks: Buffer[] = [];

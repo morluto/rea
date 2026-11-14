@@ -1,10 +1,7 @@
 import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Help } from "incur";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
-import { StringDecoder } from "node:string_decoder";
-
 import { createCatalogIdentity } from "./catalogIdentity.js";
 import { jsonLinesErrorRecord } from "./cli/jsonLines.js";
 import {
@@ -25,6 +22,7 @@ import {
   progressiveCatalogIdentity,
 } from "./catalogDiscovery.js";
 import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
+import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
 import { promptsForToolFamilies } from "./contracts/promptToolFamilyScope.js";
 import { err, ok } from "./domain/result.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
@@ -119,15 +117,26 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     () => controller.abort(new Error("Production MCP doctor deadline expired")),
     Math.max(1, Math.ceil(deadline - performance.now())),
   );
-  const stderr = captureStderr();
-  const transport = new OwnedStdioClientTransport({
-    command: options.command,
-    args: [...options.args],
-    cwd: options.cwd,
-    env: targetFreeEnvironment(options.environment),
-    stderr: "pipe",
-  });
-  transport.stderr?.on("data", stderr.append);
+  const transport = new OwnedMcpStdioTransport(
+    {
+      command: options.command,
+      arguments: [...options.args],
+      cwd: options.cwd,
+      env: targetFreeEnvironment(options.environment),
+      hostEnvironment: {},
+      expectedCommand: null,
+      // The doctor owns a process tree, or it declares what it could not stop.
+      sweepTokenOwnedProcesses: true,
+    },
+    {
+      provider: "rea-mcp-doctor",
+      label: MCP_DOCTOR_COMMAND,
+      maxFrameBytes: 8 * 1024 * 1024,
+      maxOperationBytes: 64 * 1024 * 1024,
+      gracefulInputCloseMs: 0,
+      maxDiagnosticBytes: MCP_STARTUP_POLICY.doctorStderrBytes,
+    },
+  );
   const client = new Client({ name: "rea-mcp-doctor", version: "1" });
   let result: ProductionMcpDoctorResult;
   let cleanupFailure: { readonly cause: unknown } | undefined;
@@ -195,7 +204,16 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
         },
       ],
     };
-  return { ...result, diagnostics: stderr.value() };
+  const captured = transport.diagnostics();
+  const diagnostics =
+    captured === undefined
+      ? { stderr: "", stderr_bytes: 0, stderr_truncated: false }
+      : {
+          stderr: captured.stderr,
+          stderr_bytes: captured.stderr_bytes,
+          stderr_truncated: captured.truncated,
+        };
+  return { ...result, diagnostics };
 };
 
 type ProductionMcpDoctorResult =
@@ -212,16 +230,6 @@ type ProductionMcpDoctorResult =
       };
       readonly checks: readonly McpDoctorCheck[];
     };
-
-/** Join SDK-triggered and caller-triggered close calls for the same child. */
-class OwnedStdioClientTransport extends StdioClientTransport {
-  #closePromise: Promise<void> | undefined;
-
-  override close(): Promise<void> {
-    this.#closePromise ??= super.close();
-    return this.#closePromise;
-  }
-}
 
 /** A valid scope can intentionally omit the target-free session request. */
 const MCP_DOCTOR_SESSION_SCOPE_DETAIL =
@@ -627,35 +635,6 @@ const doctorExpectationForEnvironment = (
         ]
       : contracts.map(({ name }) => name),
     expectedPromptNames: promptContracts.map(({ name }) => name),
-  };
-};
-
-const captureStderr = () => {
-  const retained = Buffer.allocUnsafe(MCP_STARTUP_POLICY.doctorStderrBytes);
-  let retainedBytes = 0;
-  let bytes = 0;
-  let truncated = false;
-  return {
-    append(chunk: unknown) {
-      const buffer = Buffer.isBuffer(chunk)
-        ? chunk
-        : Buffer.from(String(chunk), "utf8");
-      bytes += buffer.byteLength;
-      const remaining = retained.byteLength - retainedBytes;
-      const copied = Math.min(remaining, buffer.byteLength);
-      if (copied > 0) {
-        buffer.copy(retained, retainedBytes, 0, copied);
-        retainedBytes += copied;
-      }
-      if (copied < buffer.byteLength) truncated = true;
-    },
-    value: () => ({
-      stderr: truncated
-        ? new StringDecoder("utf8").write(retained.subarray(0, retainedBytes))
-        : retained.toString("utf8", 0, retainedBytes),
-      stderr_bytes: bytes,
-      stderr_truncated: truncated,
-    }),
   };
 };
 
