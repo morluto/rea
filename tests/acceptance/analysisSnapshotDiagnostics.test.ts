@@ -64,7 +64,8 @@ cliTest(
             "Analysis snapshot validation failed at target: Invalid input: expected object, received undefined (2 more issues)",
           );
       }
-      expect(mcpError.details).toEqual(cliError.details);
+      // MCP adds open-session facts; the snapshot reason must match exactly.
+      expect(mcpError.details).toMatchObject(cliError.details);
       expect(await readFile(snapshot, "utf8")).toBe(encoded);
     }
     expect(
