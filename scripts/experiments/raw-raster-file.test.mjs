@@ -49,7 +49,7 @@ test("reads a selected extent, preserves actual file offset and source bytes", a
       sha256: createHash("sha256").update(bytes.subarray(1, 5)).digest("hex"),
     });
     assert.equal(manifest.sourceSnapshot.size, 6);
-    assert.equal(manifest.sourcePath, path);
+    assert.equal(Object.hasOwn(manifest, "sourcePath"), false);
     assert.deepEqual(await readFile(path), bytes);
     await assert.rejects(writeFilePreview(path, layout, output), {
       code: "EEXIST",
@@ -238,7 +238,9 @@ test("records original relative spelling and canonical absolute selected path", 
       process.platform === "win32" ? "junction" : "dir",
     );
     const selected = relative(process.cwd(), join(alias, "source.bin"));
-    const result = await previewRawRasterFile(selected, layout);
+    const result = await previewRawRasterFile(selected, layout, {
+      includeSourcePaths: true,
+    });
     assert.equal(result.manifest.sourcePath, selected);
     assert.equal(result.manifest.sourceResolvedPath, await realpath(path));
   }));
@@ -304,4 +306,77 @@ test("indexed4 file CLI preserves explicit palette, nibble order, alpha and rang
       ],
     );
     assert.deepEqual(await readFile(path), source);
+  }));
+
+test("default manifest contains no personal path or filesystem identifiers", async () =>
+  withSource(async ({ root, path }) => {
+    const { rename } = await import("node:fs/promises");
+    const personal = join(root, "Private-Person-Home-Image.bin");
+    await rename(path, personal);
+    for (const selected of [personal, relative(process.cwd(), personal)]) {
+      const result = await previewRawRasterFile(selected, layout);
+      const serialized = JSON.stringify(result.manifest);
+      assert.ok(!serialized.includes("Private-Person-Home-Image"));
+      assert.ok(!serialized.includes(root));
+      assert.ok(!serialized.includes(selected));
+      assert.deepEqual(Object.keys(result.manifest.sourceSnapshot).sort(), [
+        "size",
+        "stability",
+      ]);
+      assert.equal(Object.hasOwn(result.manifest, "sourcePath"), false);
+      assert.equal(Object.hasOwn(result.manifest, "sourceResolvedPath"), false);
+    }
+    await assert.rejects(
+      previewRawRasterFile(personal, layout, { includeSourcePaths: "true" }),
+      /includeSourcePaths.*boolean/,
+    );
+  }));
+
+test("CLI source paths require explicit opt-in and warn without echoing the private path", async () =>
+  withSource(async ({ root, path }) => {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execute = promisify(execFile);
+    const json = join(root, "layout.json");
+    await writeFile(json, JSON.stringify(layout));
+    const command = [
+      "--import",
+      "tsx",
+      "scripts/experiments/raw-raster-file.mjs",
+    ];
+    for (const include of [false, true]) {
+      const output = join(root, include ? "opt-in" : "private");
+      const args = [
+        ...command,
+        ...(include ? ["--include-source-paths"] : []),
+        path,
+        json,
+        output,
+      ];
+      const result = await execute(process.execPath, args);
+      const manifest = JSON.parse(
+        await readFile(join(output, "manifest.json"), "utf8"),
+      );
+      assert.equal(Object.hasOwn(manifest, "sourcePath"), include);
+      assert.ok(!result.stdout.includes(path));
+      assert.ok(!result.stderr.includes(path));
+      if (include) assert.match(result.stderr, /Warning:.*paths.*sharing/);
+      else assert.equal(result.stderr, "");
+    }
+    for (const flags of [
+      ["--include-source-paths", "--include-source-paths"],
+      ["--include-source-paths=false"],
+      ["--include-source-paths", "false"],
+    ]) {
+      await assert.rejects(
+        execute(process.execPath, [
+          ...command,
+          ...flags,
+          path,
+          json,
+          join(root, "bad"),
+        ]),
+        (error) => error.code === 1,
+      );
+    }
   }));

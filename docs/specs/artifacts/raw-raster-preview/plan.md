@@ -85,12 +85,21 @@ The destination must not exist and its parent directory must already exist. The
 script writes `preview.png` and `manifest.json`, leaving the source unchanged.
 The manifest hashes the complete selected range, records its original file offset
 and describes the source metadata check without claiming REA subject identity.
-`sourcePath` retains the caller's spelling; `sourceResolvedPath` records the
-canonical absolute path observed via native resolution and checked against the
-admitted descriptor before and after reading. Relative paths use native filesystem lookup without normalizing away lookup
-errors or reinterpreting platform-specific path spellings.
-Both fields can disclose usernames and local directory names: inspect the manifest
-before sharing it. The tool does not upload or automatically redact local evidence.
+By default the manifest contains no source paths or filenames, including no
+relative spelling or basename. `sourceSnapshot` retains only size and the observed
+stability-check statement, not device/inode identifiers or timestamps. Hashes,
+range, layout and output metadata remain available for comparison. Canonical
+resolution and descriptor checks still happen internally; privacy does not weaken
+source validation.
+
+Only explicit `--include-source-paths` (API `includeSourcePaths: true`) adds
+`sourcePath` with the original spelling and `sourceResolvedPath` with the verified
+canonical absolute path. The CLI warns that these values can reveal usernames and
+local directory/filename information. Use the option only when needed and inspect
+the result before sharing. Previously generated manifests are not rewritten;
+remove their path/identity fields before sharing or regenerate without the option.
+The tool does not upload results. PNG content and palette may themselves be
+sensitive, so absence of paths does not make arbitrary outputs safe to publish.
 Leaf symlinks and non-regular source files are rejected. Layout JSON is limited to
 64 KiB. `--max-memory-mib N` selects a conservative working-buffer estimate budget
 (default 64 MiB, integer 1–512), not a process RSS limit. Admission includes selected
@@ -126,7 +135,7 @@ must be recorded separately from earlier synthetic checks below.
 
 - 41 core Vitest tests passed; 57 tests passed including existing artifact-file,
   artifact-reader and regular-file admission coverage.
-- Nineteen experimental Node tests passed, including a real subprocess CLI invocation,
+- Twenty-one experimental Node tests passed, including a real subprocess CLI invocation,
   a sparse 128 MiB file with a small selected range, source changes/truncation,
   descriptor cleanup on Linux, symlink rejection, no-clobber and source preservation.
   Additional cases cover budget rejection/override, CLI help and errors, and
@@ -183,3 +192,14 @@ source were verified. The selected-range SHA-256 is
 `007b25e71a766d530394bec4f86f73442b8a41cfc34f04dd326a47a34c0b9525`.
 This validates real external pixel data, not container autodetection or firmware
 provider behavior.
+
+## Private indexed4 validation
+
+The actual published decoder and PNG exporter at revision `0a34803b` were run on
+an authorized private firmware-derived indexed4 resource. All 88,000 pixels
+(352,000 RGBA bytes) matched both the existing decoder reference and an independent
+scalar reference; PNG integrity, manifest hashes/palette/order, and unchanged
+input were verified. This exercised the exact decoding/export source in a minimal
+Node/tsx harness, not the full file-acquisition CLI on that machine. Private raw
+bytes, palette, personal paths and reference output are not published. The generic
+core has no firmware-specific LUT/CLUT parser.

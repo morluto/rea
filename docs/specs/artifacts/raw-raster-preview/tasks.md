@@ -29,6 +29,9 @@ only from checks against the final implementation. See [spec](spec.md) and
 - [x] R9: Add generic indexed4 with explicit palette/nibble order, synthetic
       boundary cases, file CLI verification and independent matrix review.
 
+- [x] Default manifests omit personal paths and filesystem identifiers; explicit
+      path opt-in warns clearly and is covered by API/CLI privacy regressions.
+
 ## Deferred integration gates
 
 - [ ] Obtain maintainer scope and architecture decisions in #8162.

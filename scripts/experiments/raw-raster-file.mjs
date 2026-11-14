@@ -7,7 +7,6 @@ import {
 } from "../../src/artifacts/ArtifactFileSource.ts";
 import { readArtifactRange } from "../../src/artifacts/ArtifactCarrierRange.ts";
 import { resolveArtifactSourcePath } from "../../src/artifacts/ArtifactSelectedSource.ts";
-import { regularFileState } from "../../src/filesystem/RegularFile.ts";
 import {
   admitPreview,
   previewRawRasterExperiment,
@@ -23,6 +22,13 @@ export async function previewRawRasterFile(
   inputLayout,
   options = {},
 ) {
+  if (
+    options.includeSourcePaths !== undefined &&
+    typeof options.includeSourcePaths !== "boolean"
+  )
+    throw new Error(
+      "includeSourcePaths must be a boolean; only true opts in to exporting personal source paths.",
+    );
   // Let native lookup interpret the caller's spelling; do not normalize file/.. .
   const source = new ArtifactFileSource(inputPath, "Experimental raster");
   try {
@@ -70,14 +76,20 @@ export async function previewRawRasterFile(
       png: preview.value.png,
       manifest: {
         ...preview.value.manifest,
-        sourcePath: inputPath,
-        sourceResolvedPath,
+        ...(options.includeSourcePaths === true
+          ? {
+              sourcePath: inputPath,
+              sourceResolvedPath,
+              sourcePathWarning:
+                "Source paths are included by explicit opt-in and may contain personal information. Review before sharing.",
+            }
+          : {}),
         sourceRange: {
           ...preview.value.manifest.sourceRange,
           offset: layout.offset,
         },
         sourceSnapshot: {
-          ...regularFileState(descriptor.initial),
+          size: descriptor.initial.size,
           stability:
             "Descriptor and selected-path metadata matched before and after the selected-range read; no immutable snapshot guarantee.",
         },
@@ -122,7 +134,7 @@ async function readLayout(path) {
   }
 }
 
-const USAGE = `Usage: node --import tsx scripts/experiments/raw-raster-file.mjs [--max-memory-mib N] INPUT_FILE LAYOUT_JSON NEW_OUTPUT_DIRECTORY
+const USAGE = `Usage: node --import tsx scripts/experiments/raw-raster-file.mjs [--max-memory-mib N] [--include-source-paths] INPUT_FILE LAYOUT_JSON NEW_OUTPUT_DIRECTORY
 
 Read an explicit raw-pixel range and export preview.png plus manifest.json.
 Layout fields: offset, length, width, height, stride, format, rowOrder.
@@ -137,7 +149,9 @@ The budget includes selected bytes, RGBA, PNG filter/compression/copy buffers;
 it is not a process RSS limit. Source files are read-only; leaf symlinks are rejected.
 Output directory must not exist. Failed exports report the retained directory;
 .incomplete remains when it could be created.
-Manifest preserves original and resolved absolute source paths; inspect them before sharing.
+Manifest omits source paths, filenames and filesystem identifiers by default.
+--include-source-paths: explicitly include original and resolved source paths.
+Warning: these paths may contain personal information; review before sharing.
 Experimental script only; not registered as a REA CLI/MCP command.`;
 
 export async function runFilePreviewCli(args) {
@@ -160,6 +174,12 @@ export async function runFilePreviewCli(args) {
         options.maxMemoryMiB > 512
       )
         throw new Error("--max-memory-mib must be an integer from 1 to 512.");
+    } else if (args[i] === "--include-source-paths") {
+      if (options.includeSourcePaths !== undefined)
+        throw new Error(
+          "Supply --include-source-paths at most once; it is a flag without a value.",
+        );
+      options.includeSourcePaths = true;
     } else if (args[i].startsWith("--"))
       throw new Error(`Unknown option ${args[i]}. Use --help for usage.`);
     else positional.push(args[i]);
@@ -167,6 +187,10 @@ export async function runFilePreviewCli(args) {
   if (positional.length !== 3)
     throw new Error(
       "Expected INPUT_FILE LAYOUT_JSON NEW_OUTPUT_DIRECTORY. Use --help for usage.",
+    );
+  if (options.includeSourcePaths === true)
+    console.error(
+      "Warning: source paths will be included in the manifest and may contain personal information; review before sharing.",
     );
   let layout;
   try {
