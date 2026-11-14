@@ -140,6 +140,7 @@ export const regularFileCancellation = (
 
 export interface OwnedRegularFileOptions extends OwnedFileOperationOptions {
   readonly symlinks?: "follow" | "reject";
+  readonly environment?: Readonly<NodeJS.ProcessEnv> | undefined;
 }
 
 /** Run an operation while one admitted descriptor and its cleanup owner stay together. */
@@ -151,6 +152,7 @@ export const withOwnedRegularFile = async <Value>(
   const source = await openRegularFile(path, {
     symlinks: options.symlinks ?? "follow",
     signal: options.signal,
+    environment: options.environment,
   }).catch((cause: unknown) => {
     if (!(cause instanceof RegularFileAdmissionFailure)) throw cause;
     const retention = retainOwner(options.retainFailedClose, cause.owner);

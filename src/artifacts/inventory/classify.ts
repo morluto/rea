@@ -92,6 +92,7 @@ export const classifyAndHashRootForInventory = async (
   options: Pick<
     ArtifactInventoryOptions,
     | "resourceScope"
+    | "environment"
     | "signal"
     | "asarHeaderAdmission"
     | "selectedPath"
@@ -130,6 +131,7 @@ export const classifyAndHashRootForInventory = async (
     path,
     options.resourceScope,
     options.signal,
+    options.environment,
   );
   const { handle, initial } = source;
   let outcome:

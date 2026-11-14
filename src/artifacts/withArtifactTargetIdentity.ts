@@ -9,9 +9,15 @@ export const withArtifactTargetIdentity = async <T>(
   resources: ArtifactResourceScope,
   read: () => Promise<T>,
   signal?: AbortSignal,
+  environment?: Readonly<NodeJS.ProcessEnv>,
 ): Promise<T> => {
   const verify = async () => {
-    const digest = await hashStableRootArtifact(target.path, resources, signal);
+    const digest = await hashStableRootArtifact(
+      target.path,
+      resources,
+      signal,
+      environment,
+    );
     if (digest.sha256 !== target.sha256)
       throw new ArtifactReaderFailure(
         "integrity",
