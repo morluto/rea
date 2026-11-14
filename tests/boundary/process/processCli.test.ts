@@ -121,7 +121,6 @@ describe("documented process CLI workflow", () => {
         operation: "compare_process_captures",
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -212,7 +211,6 @@ describe("process CLI cleanup errors", () => {
         }
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -279,25 +277,20 @@ describe("process CLI errors", () => {
         true,
       );
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
-  it(
-    "exits unsuccessfully without writing failure-shaped evidence",
-    async () => {
-      await expect(
-        execFileAsync(
-          process.execPath,
-          ["scripts/rea.mjs", "capture-process", "/missing/scenario.json"],
-          { cwd: process.cwd() },
-        ),
-      ).rejects.toMatchObject({
-        code: 1,
-        stdout: expect.stringContaining("category: invalid_input"),
-      });
-    },
-    CLI_INTEGRATION_TIMEOUT_MS,
-  );
+  it("exits unsuccessfully without writing failure-shaped evidence", async () => {
+    await expect(
+      execFileAsync(
+        process.execPath,
+        ["scripts/rea.mjs", "capture-process", "/missing/scenario.json"],
+        { cwd: process.cwd() },
+      ),
+    ).rejects.toMatchObject({
+      code: 1,
+      stdout: expect.stringContaining("category: invalid_input"),
+    });
+  });
 
   it("rejects NUL arguments before process launch", async () => {
     const root = await createTestTempDirectory("rea-process-cli-");
@@ -489,43 +482,33 @@ describe("process CLI evidence validation", () => {
   });
 });
 
-it(
-  "reports the JSON depth constraint through the compiled comparison CLI",
-  async () => {
-    const root = await createTestTempDirectory("rea-process-cli-");
-    const left = join(root, "left.json");
-    const right = join(root, "right.json");
-    const input = INVESTIGATION_EXAMPLES.compare_process_captures.input;
-    await writeFile(left, JSON.stringify(input.left));
-    await writeFile(right, JSON.stringify(input.right));
-    const cli = fileURLToPath(
-      new URL("../../../scripts/rea.mjs", import.meta.url),
-    );
-    const cliArguments = [
-      cli,
-      "compare-process-captures",
-      left,
-      right,
-      "--json",
-    ];
-    const baseline = await execFileAsync(process.execPath, cliArguments);
-    expect(JSON.parse(baseline.stdout)).toMatchObject({
-      operation: "compare_process_captures",
-    });
-    const nested = '{"nested":'.repeat(10_000) + "1" + "}".repeat(10_000);
-    await writeFile(
-      left,
-      JSON.stringify({
-        ...input.left,
-        parameters: { attack: "depth-placeholder" },
-      }).replace('"depth-placeholder"', nested),
-    );
-    await expect(
-      execFileAsync(process.execPath, cliArguments),
-    ).rejects.toMatchObject({
-      code: 1,
-      stdout: expect.stringContaining("maximum nesting depth"),
-    });
-  },
-  CLI_INTEGRATION_TIMEOUT_MS,
-);
+it("reports the JSON depth constraint through the compiled comparison CLI", async () => {
+  const root = await createTestTempDirectory("rea-process-cli-");
+  const left = join(root, "left.json");
+  const right = join(root, "right.json");
+  const input = INVESTIGATION_EXAMPLES.compare_process_captures.input;
+  await writeFile(left, JSON.stringify(input.left));
+  await writeFile(right, JSON.stringify(input.right));
+  const cli = fileURLToPath(
+    new URL("../../../scripts/rea.mjs", import.meta.url),
+  );
+  const cliArguments = [cli, "compare-process-captures", left, right, "--json"];
+  const baseline = await execFileAsync(process.execPath, cliArguments);
+  expect(JSON.parse(baseline.stdout)).toMatchObject({
+    operation: "compare_process_captures",
+  });
+  const nested = '{"nested":'.repeat(10_000) + "1" + "}".repeat(10_000);
+  await writeFile(
+    left,
+    JSON.stringify({
+      ...input.left,
+      parameters: { attack: "depth-placeholder" },
+    }).replace('"depth-placeholder"', nested),
+  );
+  await expect(
+    execFileAsync(process.execPath, cliArguments),
+  ).rejects.toMatchObject({
+    code: 1,
+    stdout: expect.stringContaining("maximum nesting depth"),
+  });
+});
