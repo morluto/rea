@@ -35,7 +35,12 @@ it.each([false, true])(
       identity: { id: "fixture", name: "fixture", version: null },
     };
     const service = new ReverseEngineeringService({
-      commands: { objdump: () => profile, rizin: () => profile },
+      commands: {
+        objdump: () => profile,
+        rizin: () => profile,
+        radare2: () => profile,
+        radiff2: () => profile,
+      },
       runOwned: async () => {
         if (cancel) controller.abort(abortReason);
         throw owned;
@@ -70,7 +75,12 @@ it("keeps the owned producer cancellation reason authoritative", async () => {
     identity: { id: "fixture", name: "fixture", version: null },
   };
   const service = new ReverseEngineeringService({
-    commands: { objdump: () => profile, rizin: () => profile },
+    commands: {
+      objdump: () => profile,
+      rizin: () => profile,
+      radare2: () => profile,
+      radiff2: () => profile,
+    },
     runOwned: async () => {
       controller.abort(abortReason);
       throw new OwnedCommandFailure("cancelled", "owned process cancelled");
@@ -119,6 +129,16 @@ it.each([
           executable: "unused-rizin",
           arguments: [path],
           identity: { id: "test.rizin", name: "Test Rizin", version: null },
+        }),
+        radare2: () => ({
+          executable: "unused-radare2",
+          arguments: [path],
+          identity: { id: "test.radare2", name: "Test Radare2", version: null },
+        }),
+        radiff2: () => ({
+          executable: "unused-radiff2",
+          arguments: [path],
+          identity: { id: "test.radiff2", name: "Test radiff2", version: null },
         }),
       },
     });

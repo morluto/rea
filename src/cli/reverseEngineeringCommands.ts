@@ -3,6 +3,8 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
+import { RADARE2_PROVIDER_IDENTITY } from "../radare2/Radare2Command.js";
+import { RADIFF2_PROVIDER_IDENTITY } from "../radare2/Radiff2Command.js";
 
 import { createReverseEngineeringService } from "../composition/reverseEngineering.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -47,18 +49,27 @@ import {
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
+const operationProviderIds = {
+  inspect_with_objdump: OBJDUMP_PROVIDER_IDENTITY.id,
+  execute_rizin_command: RIZIN_PROVIDER_IDENTITY.id,
+  execute_radare2_command: RADARE2_PROVIDER_IDENTITY.id,
+  compare_with_radiff2: RADIFF2_PROVIDER_IDENTITY.id,
+} as const;
+
 const executeWithCleanup = async (
   service: ReverseEngineeringService,
   signal: AbortSignal,
   execute: () => Promise<Result<Evidence, AnalysisError>>,
-  operation: "inspect_with_objdump" | "execute_rizin_command",
+  operation:
+    | "inspect_with_objdump"
+    | "execute_rizin_command"
+    | "execute_radare2_command"
+    | "compare_with_radiff2",
 ) =>
   finishAnalysisCommand(
     execute,
     service,
-    operation === "inspect_with_objdump"
-      ? OBJDUMP_PROVIDER_IDENTITY.id
-      : RIZIN_PROVIDER_IDENTITY.id,
+    operationProviderIds[operation],
     operation,
     signal,
     undefined,
@@ -319,6 +330,87 @@ export const registerReverseEngineeringCommands = (
                 { signal },
               ),
             "execute_rizin_command",
+          );
+          return projectCliAnalysisResult(result);
+        }),
+      ),
+  });
+  cli.command(CLI_COMMANDS.executeRadare2Command, {
+    description: "Execute one Radare2 command against a local artifact",
+    args: z.object({
+      path: z
+        .string()
+        .min(1)
+        .describe("Path to the local artifact to analyze."),
+      command: z
+        .string()
+        .min(1)
+        .describe("One caller-selected Radare2 command."),
+    }),
+    options: z.object({
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
+      maxOutputBytes: cliDecimalField(reverseCommandOutputBytesSchema),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.executeRadare2Command, async () => {
+          const result = await executeWithCleanup(
+            service,
+            signal,
+            () =>
+              service.executeRadare2Command(
+                {
+                  ...args,
+                  ...(options.maxOutputBytes === undefined
+                    ? {}
+                    : { max_output_bytes: options.maxOutputBytes }),
+                  ...(options.commandTimeoutMs === undefined
+                    ? {}
+                    : { command_timeout_ms: options.commandTimeoutMs }),
+                },
+                { signal },
+              ),
+            "execute_radare2_command",
+          );
+          return projectCliAnalysisResult(result);
+        }),
+      ),
+  });
+  cli.command(CLI_COMMANDS.compareWithRadiff2, {
+    description: "Compare two local artifacts with radiff2",
+    args: z.object({
+      pathA: z.string().min(1).describe("Path to the first artifact."),
+      pathB: z.string().min(1).describe("Path to the second artifact."),
+      operation: z
+        .enum(["functions", "bytes"])
+        .describe("Function-level (JSON) or byte-level diff."),
+    }),
+    options: z.object({
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
+      maxOutputBytes: cliDecimalField(reverseCommandOutputBytesSchema),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.compareWithRadiff2, async () => {
+          const result = await executeWithCleanup(
+            service,
+            signal,
+            () =>
+              service.compareWithRadiff2(
+                {
+                  path_a: args.pathA,
+                  path_b: args.pathB,
+                  operation: args.operation,
+                  ...(options.maxOutputBytes === undefined
+                    ? {}
+                    : { max_output_bytes: options.maxOutputBytes }),
+                  ...(options.commandTimeoutMs === undefined
+                    ? {}
+                    : { command_timeout_ms: options.commandTimeoutMs }),
+                },
+                { signal },
+              ),
+            "compare_with_radiff2",
           );
           return projectCliAnalysisResult(result);
         }),

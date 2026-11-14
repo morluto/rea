@@ -239,9 +239,9 @@ the application. Runtime capture runs or interacts with the selected target
 using your user permissions; each runtime guide describes its effects.
 
 For offline native-binary inspection, REA also supports caller-supplied GNU
-objdump and Rizin. See the [reverse-engineering tools guide](docs/reverse-engineering-tools.md)
+objdump, Rizin, and Radare2. See the [reverse-engineering tools guide](docs/reverse-engineering-tools.md)
 for provider setup, CLI commands, and Evidence limitations. REA does not install
-or update either provider.
+or update these providers.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 

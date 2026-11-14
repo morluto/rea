@@ -2,7 +2,7 @@ import { win32 } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { resolveWindowsProviderExecutable } from "../../src/composition/resolveWindowsProviderExecutable.js";
+import { resolveWindowsProviderExecutable } from "../../src/process/resolveWindowsProviderExecutable.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 
 const windowsLookup = (cwd: string, files: readonly string[]) => {

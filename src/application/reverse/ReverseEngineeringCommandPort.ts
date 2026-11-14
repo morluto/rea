@@ -1,6 +1,8 @@
 import type { EvidenceProvider } from "../../domain/evidence.js";
 import type {
   ObjdumpSelection,
+  Radare2Input,
+  Radiff2Input,
   RizinInput,
 } from "../../domain/reverseEngineering.js";
 
@@ -23,4 +25,6 @@ export interface ReverseEngineeringProviderCommand {
 export interface ReverseEngineeringCommandPort {
   objdump(input: ObjdumpSelection): ReverseEngineeringProviderCommand;
   rizin(input: RizinInput): ReverseEngineeringProviderCommand;
+  radare2(input: Radare2Input): ReverseEngineeringProviderCommand;
+  radiff2(input: Radiff2Input): ReverseEngineeringProviderCommand;
 }

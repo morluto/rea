@@ -62,6 +62,8 @@ export const CLI_COMMANDS = Object.freeze({
   inspectWithObjdump: "inspect-with-objdump",
   listObjdumpArchitectures: "list-objdump-architectures",
   executeRizinCommand: "execute-rizin-command",
+  executeRadare2Command: "execute-radare2-command",
+  compareWithRadiff2: "compare-with-radiff2",
   debugWithGdb: "debug-with-gdb",
   debugWithRizin: "debug-with-rizin",
 

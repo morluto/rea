@@ -1,8 +1,8 @@
 # Reverse-engineering tool integrations
 
-REA can call caller-supplied GNU objdump, GDB, and Rizin installations. REA does not install or update these tools. Static objdump/Rizin workflows use the same services from CLI and MCP. GDB's persistent MCP sessions and ephemeral CLI command are available only on Linux. Persistent debugger sessions exist only for the lifetime of the REA MCP server process.
+REA can call caller-supplied GNU objdump, GDB, Rizin, and Radare2 installations. REA does not install or update these tools. Static objdump/Rizin/Radare2 workflows use the same services from CLI and MCP. GDB's persistent MCP sessions and ephemeral CLI command are available only on Linux. Persistent debugger sessions exist only for the lifetime of the REA MCP server process.
 
-In a shared MCP server, unrestricted Rizin and Cutter commands, GDB console
+In a shared MCP server, unrestricted Rizin, Radare2, and Cutter commands, GDB console
 commands, Rizin debugger start/close, and GDB debugger close retire any active
 binary analysis session after the operation. This prevents a fresh analysis
 provider from being rebound automatically while command effects may still be
@@ -45,7 +45,7 @@ rea inspect-with-objdump ./program dwarf --follow-debug-links
 
 Captured stdout and stderr share `max_output_bytes` (CLI: `--max-output-bytes`), default 16777216 bytes (16 MiB). Select an integer from 1 to 44651859 bytes. The maximum leaves room for worst-case JSON escaping of both Evidence output mirrors under Node's single-string ceiling. The selected budget applies on the next call without a restart; `output_budget_bytes` reports it and `output_budget_source` distinguishes a default from an explicit request. On exhaustion REA retains a prefix, requests provider termination, and marks `output_truncated` with unknown completion. Narrow or page the native command, or raise the selected budget. Verify command effects and outstanding cleanup before deciding whether repeating it is safe. Client deadlines and receive buffers remain separate. Concurrent one-shot captures reserve their selected budgets within a 128 MiB aggregate admission and eight-operation capacity; wait for active work or select a smaller output budget when that capacity is occupied.
 
-`inspect_with_objdump`, `rea list-objdump-architectures`, and one-shot `execute_rizin_command` accept `command_timeout_ms` (CLI: `--command-timeout-ms`). Omitted means 120000. The integer range is 1 to 2147483647. Target preflight shares one budget across stat and digest. The one-shot command receives that budget again. It applies on the next call; no restart is required. It does not raise the separately selected `max_output_bytes`, a Ghidra or Hopper startup deadline, or a debugger session deadline.
+`inspect_with_objdump`, `rea list-objdump-architectures`, one-shot `execute_rizin_command`, `execute_radare2_command`, and `compare_with_radiff2` accept `command_timeout_ms` (CLI: `--command-timeout-ms`). Omitted means 120000. The integer range is 1 to 2147483647. Target preflight shares one budget across stat and digest. The one-shot command receives that budget again. It applies on the next call; no restart is required. It does not raise the separately selected `max_output_bytes`, a Ghidra or Hopper startup deadline, or a debugger session deadline.
 
 ## GDB
 
@@ -258,6 +258,38 @@ rea execute-rizin-command ./app.bin "e io.va=true; om-*; om 3 0x40080000 0x8 0x2
 default map of the whole file at address 0. The entry address is the 32-bit
 little-endian value at file offset 4.
 
+## Radare2
+
+`execute_radare2_command` and `rea execute-radare2-command` run one selected Radare2 command against a local artifact. The one-shot profile uses `-N -q -c`, suppressing user rcfiles while leaving plugins available. Commands and plugins run with the REA process user's security context and may access files, the network, or perform other actions. REA preserves raw output and does not claim that command-specific JSON has one universal schema; JSON-producing commands (the `j` suffix) return whatever the installed Radare2 emits.
+
+Radare2 is a separate engine from Rizin; the two have diverged since the 2020 fork, and command names or JSON fields are not interchangeable between them. Point `REA_R2_COMMAND` at the radare2 executable you supply (for example via Homebrew, a distribution package, or a source build); REA never installs it or manages its `r2pm` packages.
+
+```sh
+rea execute-radare2-command ./program ij
+```
+
+Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above.
+
+Persistent analysis sessions are available through `start_radare2_session`, `radare2_command`, `radare2_session_status`, and `close_radare2_session`. A session runs `radare2 -N -q0` with NUL-delimited frames on every platform; no inferior, TTY, or `/proc` verification is involved because no target is executed. REA never runs analysis automatically — coverage is whatever commands the caller runs, so `aaa` (or a narrower variant) is the caller's first command. Commands inside a session are unrestricted like the one-shot tool and may access files, the shell, network, or loaded plugins; their effects are not bound to Evidence. Command output is returned raw, with `parsed` carrying a best-effort JSON projection when the output parses and the raw output remaining authoritative otherwise. Sessions are bounded: at most 8 concurrent sessions, 16 MiB per frame and per command, with per-command timeouts; exceeding a limit stops the session and returns retained partial output. Starting, running, or closing a session in a shared MCP server retires any active binary-analysis session, matching the one-shot tool. The session lives for the lifetime of the REA MCP server process.
+
+```text
+start_radare2_session {"path":"/tmp/program"}
+radare2_command {"session_id":"…","command":"aaa"}
+radare2_command {"session_id":"…","command":"aflj"}
+radare2_session_status {"session_id":"…"}
+close_radare2_session {"session_id":"…"}
+```
+
+Session commands speak the r2pipe2 protocol (radare2 5.9+): each command returns one JSON reply whose `res` field becomes `output`, and `command_error`, `command_code`, and `command_logs` carry the reply's error flag, return code, and log messages. radare2 reports many command failures — for example a missing decompiler plugin or decompiling at an offset with no function — with `error:false` and the reason in `logs`, so `command_logs` is preserved rather than trusting the flag alone. A frame that is not a r2pipe2 reply envelope is treated as a protocol failure and stops the session; a reply that failed before producing output (`error: true` with `logs` and no `res`) is a command failure, not a protocol failure, and keeps the session. Do not request `json:true` in the wrapper: on radare2 6.2.4 non-JSON command output produces invalid reply frames (a bare token or a missing `res` value), so REA keeps `res` as a string and applies its own lenient JSON projection. For `aflj` and `izzj`, a token-saving `summary` projection (reduced fields) accompanies the complete `parsed` value. Both listings still carry the raw output and the complete parse: on a 9.1 MiB `libc++_shared.so`, `aflj` produced 2.25 MB and `izzj` 7.17 MB of JSON, which exceeds the default 10 MiB MCP response budget; raise `REA_MCP_MAX_RESPONSE_BYTES` or use the CLI for targets that size. `start_radare2_session` accepts optional `initial_commands` (at most 16) that run once inside the start admission; a failing initial command closes the session and fails the start.
+
+Decompilation is available through either surface when the r2ghidra plugin is installed by the user (`r2pm -ci r2ghidra`; REA never installs or manages plugins): run `pdg @ <function>` after analysis. Without the plugin, the failure surfaces in `command_logs`. The r2dec decompiler (`pdd @ <function>`, `r2pm -ci r2dec`) works the same way when installed. Both the one-shot and session profiles set `scr.color=0` so output carries no ANSI escapes.
+
+`compare_with_radiff2` and `rea compare-with-radiff2` diff two local artifacts with the radare2-suite `radiff2` tool (`REA_RADIFF2_COMMAND`, default `radiff2`): `functions` maps to `-Cj -A` for a function-level JSON diff (addr/name/size/match rows), `bytes` maps to `-A` for the byte-level text diff. The comparison is read-only with a fixed operation set; Evidence digests cover `path_a` only and `path_b` remains caller-selected without a digest binding. One-shot commands use the `command_timeout_ms` budget described above.
+
+ESIL emulation is available through session commands; REA adds no dedicated tool. A typical workflow on an analyzed binary: `aei` (init VM), `aeim` (init stack), `aeip` (seek to the program counter), `aer PC=<addr>` (set registers; `aer` lists them), then `aes`/`aesu <addr>` to step or step-until, and `ar <reg>` to read state. ESIL is an imprecise interpreter: it cannot emulate syscalls, imports, or SIMD instructions, so scope it to small self-contained chunks such as decryption or unpacking routines.
+
+radare2 leaves relocations unapplied by default (`HINT: Relocs not applied`). REA keeps that engine default, because applying them never changed function or string discovery in measurements and buys cross references at an `aaa` time cost: on macOS Mach-O (`/bin/ls`, `/usr/bin/ssh`) the gain was 0.1-0.3% references for ~2% time, while on a relocation-heavy aarch64 Linux ELF (`libc++_shared.so`, 9.1 MiB) it was +2% references (95,192 → 97,124) for +5% time. When you want the fuller reference set, opt in per command by prefixing `e bin.relocs.apply=true` (for example `e bin.relocs.apply=true; aaa; axtj @ sym.func.main`); large ELF targets benefit the most.
+
 ## Cutter bridge
 
 Cutter commands use the local REA Python bridge and authenticated loopback messages.
@@ -335,6 +367,6 @@ generation error.
 
 ## Configuration and coverage
 
-The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
+The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, `REA_RIZIN_COMMAND`, and `REA_R2_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
 
 Provider capture limits are separate from the MCP response budget. A result that fits the provider limit may still exceed the default 10 MiB MCP response budget and return a transport `resource_constraint`. Configure `REA_MCP_MAX_RESPONSE_BYTES` to match a larger client receive buffer when that client supports one; otherwise use retained Evidence/export or complete CLI JSON output. See [MCP response limits](reference/mcp-contracts.md#tool-results).
