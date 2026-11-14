@@ -1073,6 +1073,8 @@ class ReaJadxBridge {
         }
         case "get_class_summary" -> {
           properties.put("class_name", CLASS_NAME_PROPERTY);
+          properties.put("method_name", property("string", "Method whose referenced prototypes are returned; only read when reference_target selects a class outside the APK."));
+          properties.put("reference_target", property("boolean", "Return referenced prototypes for a class outside the APK instead of parsed members."));
           properties.put("dex_static_values", property("boolean", "Include encoded static final field values."));
           required = List.of("class_name");
         }
@@ -1090,6 +1092,7 @@ class ReaJadxBridge {
           properties.put("class_name", CLASS_NAME_PROPERTY);
           properties.put("method_name", METHOD_NAME_PROPERTY);
           properties.put("overload_index", OVERLOAD_INDEX_PROPERTY);
+          properties.put("reference_target", property("boolean", "Return referenced prototypes for a class outside the APK instead of resolved cross-references."));
           required = List.of("class_name", "method_name");
         }
       }
