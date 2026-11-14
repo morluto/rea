@@ -1,3 +1,4 @@
+import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import { lstat, open, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -99,7 +100,10 @@ it("refuses an oversized acquisition as a fixed ceiling, not host memory", async
         },
       },
     });
-    expect(projected.remediation.action).not.toMatch(/host memory/u);
+    // Recovery comes from the fixed-allowance owner, not host-memory advice.
+    expect(projected.remediation.action).toBe(
+      fixedAllowanceRemediation("The NTFS journal file allowance", "input"),
+    );
   } finally {
     await resources.close();
   }
