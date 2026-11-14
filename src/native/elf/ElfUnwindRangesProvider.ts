@@ -1,3 +1,4 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
@@ -15,11 +16,7 @@ import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js"
 import type { ElfUnwindRangesPort } from "../../application/binaryDiagnostics/ElfUnwindRangesPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_ELF_UNWIND_FILE_BYTES,
@@ -28,10 +25,7 @@ import {
 } from "../../domain/native/elfUnwindRanges.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
 import {
   ElfUnwindSymbolTextFailure,
   parseElfUnwindRanges,
@@ -132,21 +126,8 @@ const elfUnwindFailurePrimary = (
         ),
       },
     );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(
     facts,
     OPERATION,

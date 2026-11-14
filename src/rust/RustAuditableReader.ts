@@ -9,6 +9,7 @@ import {
   type RustPackage,
 } from "../domain/rust/rustBinary.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
+import { malformedInput, ParseFailureError } from "../domain/parseFailure.js";
 
 /** Compressed zlib stream limit. */
 const RUST_SECTION_BYTES = 1024 * 1024;
@@ -36,20 +37,15 @@ const documentSchema = documentVersionSchema
   })
   .strict();
 
-/** Malformed or unsupported dependency-section bytes. */
-export class RustAuditableFormatFailure extends Error {
-  /** The image holds the metadata, in a form this reader cannot decode. */
-  readonly undecodedContent: boolean;
-  constructor(
-    readonly kind: "malformed" | "unsupported",
-    message: string,
-    options?: ErrorOptions & { readonly undecodedContent?: boolean },
-  ) {
-    super(message, options);
-    this.undecodedContent = options?.undecodedContent ?? false;
-    this.name = "RustAuditableFormatFailure";
-  }
-}
+/** The ParseFailure format of `cargo auditable` dependency sections. */
+export const RUST_AUDITABLE_FORMAT = "rust-auditable";
+
+/** Malformed section bytes, keeping the decoder or schema failure that showed it. */
+const malformedSection = (detail: string, cause: unknown) =>
+  new ParseFailureError(
+    { kind: "malformed", format: RUST_AUDITABLE_FORMAT, detail },
+    { cause },
+  );
 
 /** A resource admission limit with explicit semantic units. */
 export type RustAuditableConstraint =
@@ -85,10 +81,7 @@ export const readAuditableSection = (
   } = {},
 ): RustAuditableMetadata => {
   if (bytes.length === 0)
-    throw new RustAuditableFormatFailure(
-      "malformed",
-      "Dependency section is empty",
-    );
+    throw malformedInput(RUST_AUDITABLE_FORMAT, "Dependency section is empty");
   if (
     bytes.length > RUST_SECTION_BYTES &&
     options.peFileAlignment === undefined
@@ -172,13 +165,13 @@ const inflateSection = (
     const alignedRawSize =
       Math.ceil(compressedBytes / peFileAlignment) * peFileAlignment;
     if (bytes.length !== alignedRawSize || padding.some((byte) => byte !== 0))
-      throw new RustAuditableFormatFailure(
-        "malformed",
+      throw malformedInput(
+        RUST_AUDITABLE_FORMAT,
         "Dependency section has bytes after the zlib stream",
       );
   } else if (compressedBytes !== bytes.length) {
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedInput(
+      RUST_AUDITABLE_FORMAT,
       "Dependency section has bytes after the zlib stream",
     );
   }
@@ -219,8 +212,8 @@ const inflateFailure = (
     code.startsWith("Z_") ||
     code === "ERR_INVALID_ARG_TYPE"
   )
-    return new RustAuditableFormatFailure(
-      "malformed",
+    return malformedInput(
+      RUST_AUDITABLE_FORMAT,
       "Dependency section is not a complete zlib stream",
     );
   return cause instanceof Error ? cause : new Error(String(cause));
@@ -234,11 +227,7 @@ const parseDocument = (
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch (cause) {
-    throw new RustAuditableFormatFailure(
-      "malformed",
-      "Dependency JSON is not valid UTF-8",
-      { cause },
-    );
+    throw malformedSection("Dependency JSON is not valid UTF-8", cause);
   }
   assertDepth(text);
   let invalidJson = false;
@@ -269,42 +258,36 @@ const parseDocument = (
     },
   );
   if (invalidJson) {
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedInput(
+      RUST_AUDITABLE_FORMAT,
       "Dependency section JSON is invalid",
     );
   }
   if (duplicate !== undefined)
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedInput(
+      RUST_AUDITABLE_FORMAT,
       `Dependency JSON contains duplicate field ${JSON.stringify(duplicate)}`,
     );
   let value: unknown;
   try {
     value = JSON.parse(text);
   } catch (cause) {
-    throw new RustAuditableFormatFailure(
-      "malformed",
-      "Dependency section JSON is invalid",
-      { cause },
-    );
+    throw malformedSection("Dependency section JSON is invalid", cause);
   }
   const version = documentVersionSchema.safeParse(value);
   if (!version.success)
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedSection(
       "Dependency JSON does not match the format schema",
-      { cause: version.error },
+      version.error,
     );
   admitGraphExpansion(value, maxOutputBytes);
   // One malformed package must fail before Zod retains an issue for every field.
   rejectMalformedPackages(value);
   const parsed = documentSchema.safeParse(value);
   if (!parsed.success)
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedSection(
       "Dependency JSON does not match the package schema",
-      { cause: parsed.error },
+      parsed.error,
     );
   return parsed.data;
 };
@@ -404,8 +387,8 @@ const rejectMalformedPackages = (value: unknown): void => {
     return;
   for (const [index, pkg] of value.packages.entries()) {
     if (!packageRecord(pkg))
-      throw new RustAuditableFormatFailure(
-        "malformed",
+      throw malformedInput(
+        RUST_AUDITABLE_FORMAT,
         `Dependency package ${String(index)} does not match the package schema`,
       );
   }
@@ -475,8 +458,8 @@ const assertDepth = (text: string): void => {
     if (char === "{" || char === "[") {
       depth += 1;
       if (depth > JSON_DEPTH)
-        throw new RustAuditableFormatFailure(
-          "malformed",
+        throw malformedInput(
+          RUST_AUDITABLE_FORMAT,
           "Dependency JSON nesting exceeds 32 levels",
         );
     } else if ((char === "}" || char === "]") && depth > 0) depth -= 1;
@@ -499,8 +482,8 @@ const normalizePackages = (
 const rootIndex = (packages: readonly RustPackage[]): number | null => {
   const roots = packages.flatMap((pkg, index) => (pkg.root ? [index] : []));
   if (roots.length > 1)
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedInput(
+      RUST_AUDITABLE_FORMAT,
       "Dependency JSON declares more than one root package",
     );
   for (const [index, pkg] of packages.entries()) {
@@ -508,8 +491,8 @@ const rootIndex = (packages: readonly RustPackage[]): number | null => {
       (target) => target >= packages.length,
     );
     if (outside !== undefined)
-      throw new RustAuditableFormatFailure(
-        "malformed",
+      throw malformedInput(
+        RUST_AUDITABLE_FORMAT,
         `Dependency index ${String(outside)} from package ${String(index)} is outside the package list`,
       );
   }

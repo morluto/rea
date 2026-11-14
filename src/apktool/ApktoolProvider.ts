@@ -46,6 +46,8 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -300,7 +302,7 @@ export class ApktoolProvider {
   inspectAvailability(signal?: AbortSignal): Promise<ProviderAvailability> {
     if (this.#closing)
       return Promise.reject(
-        new AnalysisCancelledError("inspect_apktool_client"),
+        cancelledBy("inspect_apktool_client", OwnerCancellation.ownerClosed),
       );
     const operationSignal =
       signal === undefined
@@ -376,7 +378,7 @@ export class ApktoolProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (this.#closing)
       return Promise.resolve(
-        err(new AnalysisCancelledError(request.operation)),
+        err(cancelledBy(request.operation, OwnerCancellation.ownerClosed)),
       );
     const signal =
       options?.signal === undefined
