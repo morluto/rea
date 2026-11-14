@@ -59,6 +59,12 @@ it("narrows only an aborted signal for cancelledBy", () => {
   expect(cancelledBy("probe", optional).cause).toBe("caller");
 });
 
+it("reads the reason of a signal that is not this realm's AbortSignal", () => {
+  const reason = { caller: "foreign" };
+  const foreign = { aborted: true, reason } as unknown as AbortSignal;
+  expect(cancelledBy("probe", foreign).cause).toBe(reason);
+});
+
 it("does not accept a cause beside the required reason", () => {
   const controller = new AbortController();
   controller.abort("caller");

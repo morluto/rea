@@ -12,7 +12,7 @@ import {
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type {
   AnalysisClient,
@@ -368,11 +368,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
     options?: AnalysisProfileResolutionOptions,
   ) {
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError("ida:profile", {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy("ida:profile", options.signal));
     const config = await this.#configuration(options);
     if (!config.ok) return config;
     const profile = createAnalysisProfile(IDA_PROVIDER_IDENTITY, {
