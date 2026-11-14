@@ -1,9 +1,9 @@
 import { parseFailureFromCause } from "../domain/parseFailure.js";
 /**
- * Expected format-boundary failures from bounded Swift metadata reads. A host
+ * Expected format-boundary failures from bounded Apple metadata reads. A host
  * stack or capacity failure is not one: it says nothing about the metadata.
  */
-export const expectedSwiftMetadataReadFailure = (
+export const expectedAppleMetadataReadFailure = (
   cause: unknown,
 ): string | null => {
   const failure = parseFailureFromCause(cause, "macho");

@@ -10,7 +10,7 @@ import {
   type SwiftRelativeField,
   type SwiftRelativeValue,
 } from "./AppleSwiftDispatchFacets.js";
-import { expectedSwiftMetadataReadFailure } from "./AppleSwiftMetadataReadFailure.js";
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 
 /** Byte readers shared with the validated Mach-O metadata boundary. */
 export interface SwiftNominalReaders {
@@ -226,7 +226,7 @@ export const createSwiftContextReader = (
     try {
       facts = readContext(context, walk);
     } catch (cause) {
-      const reason = expectedSwiftMetadataReadFailure(cause);
+      const reason = expectedAppleMetadataReadFailure(cause);
       if (reason === null) throw cause;
       facts = unresolved(reason);
     }
@@ -279,7 +279,7 @@ export const decodeSwiftNominalTypes = (input: {
             reason: `Swift metadata accessor ${hex(value.target)} is not in executable mapped code`,
           };
     } catch (cause) {
-      const reason = expectedSwiftMetadataReadFailure(cause);
+      const reason = expectedAppleMetadataReadFailure(cause);
       if (reason === null) throw cause;
       return { address: null, reason };
     }
@@ -326,7 +326,7 @@ export const decodeSwiftNominalTypes = (input: {
       }
       name = typeName(descriptor);
     } catch (cause) {
-      const message = expectedSwiftMetadataReadFailure(cause);
+      const message = expectedAppleMetadataReadFailure(cause);
       if (message === null) throw cause;
       if (kind === null || kind === CLASS) visitor.failure({ record, message });
       issues.push(issue(FACET, "type_decode_failed", message, hex(record)));

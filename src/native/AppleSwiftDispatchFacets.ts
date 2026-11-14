@@ -13,7 +13,7 @@ import {
   requiredSwiftRelativeTarget,
   swiftImportBinding as importBinding,
 } from "./AppleSwiftConformanceTypeReference.js";
-import { expectedSwiftMetadataReadFailure } from "./AppleSwiftMetadataReadFailure.js";
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 
 /** Resolved file-backed metadata location from the Mach-O layout. */
 export interface ResolvedMetadataLocation {
@@ -128,7 +128,7 @@ const readSwiftProtocolFacts = (input: {
   try {
     descriptorKind = read.u32(target) & 31;
   } catch (cause) {
-    const reason = expectedSwiftMetadataReadFailure(cause);
+    const reason = expectedAppleMetadataReadFailure(cause);
     if (reason === null) throw cause;
     return { name: null, readable: false, reason };
   }
@@ -147,7 +147,7 @@ const readSwiftProtocolFacts = (input: {
       reason: context.reason,
     };
   } catch (cause) {
-    const reason = expectedSwiftMetadataReadFailure(cause);
+    const reason = expectedAppleMetadataReadFailure(cause);
     if (reason === null) throw cause;
     return { name: null, readable: false, reason };
   }
@@ -168,7 +168,7 @@ const readWitnessConformanceHeader = (
       ? null
       : "Witness-table conformance header is unresolved or encoded";
   } catch (cause) {
-    const reason = expectedSwiftMetadataReadFailure(cause);
+    const reason = expectedAppleMetadataReadFailure(cause);
     if (reason === null) throw cause;
     return reason;
   }
@@ -264,7 +264,7 @@ export const createSwiftRelativeReader = (input: {
         try {
           pointer = read.resolvePointer(target);
         } catch (cause) {
-          const failure = expectedSwiftMetadataReadFailure(cause);
+          const failure = expectedAppleMetadataReadFailure(cause);
           if (failure === null) throw cause;
           return unknownIndirect(failure);
         }
@@ -300,7 +300,7 @@ export const createSwiftRelativeReader = (input: {
       }
       if (target !== null) fileOffset = read.offset(target);
     } catch (cause) {
-      reason = expectedSwiftMetadataReadFailure(cause);
+      reason = expectedAppleMetadataReadFailure(cause);
       if (reason === null) throw cause;
     }
     if (budget.admit())
@@ -576,7 +576,7 @@ export const decodeSwiftDispatchFacets = (input: {
           }
         }
       } catch (cause) {
-        const message = expectedSwiftMetadataReadFailure(cause);
+        const message = expectedAppleMetadataReadFailure(cause);
         if (message === null) throw cause;
         issues.push(
           issue(

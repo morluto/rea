@@ -9,7 +9,7 @@ import type {
   SwiftRelativeField,
   SwiftRelativeValue,
 } from "./AppleSwiftDispatchFacets.js";
-import { expectedSwiftMetadataReadFailure } from "./AppleSwiftMetadataReadFailure.js";
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 
 const hex = (value: bigint) => `0x${value.toString(16)}`;
 
@@ -144,7 +144,7 @@ const decodeNominalTypeReference = (
       generic: (descriptorFlags & 0x80) !== 0,
     });
   } catch (cause) {
-    const reason = expectedSwiftMetadataReadFailure(cause);
+    const reason = expectedAppleMetadataReadFailure(cause);
     if (reason === null) throw cause;
     return typeReferenceResult({
       kind,
@@ -178,7 +178,7 @@ const decodeDirectObjcClassName = (
       reason: name.length === 0 ? "Empty inline Objective-C class name" : null,
     });
   } catch (cause) {
-    const reason = expectedSwiftMetadataReadFailure(cause);
+    const reason = expectedAppleMetadataReadFailure(cause);
     if (reason === null) throw cause;
     return typeReferenceResult({
       kind,
@@ -206,7 +206,7 @@ const decodeIndirectObjcClass = (
   try {
     pointer = read.resolvePointer(value.target);
   } catch (cause) {
-    const reason = expectedSwiftMetadataReadFailure(cause);
+    const reason = expectedAppleMetadataReadFailure(cause);
     if (reason === null) throw cause;
     return typeReferenceResult({
       kind,
@@ -261,7 +261,7 @@ export const decodeSwiftConformanceTypeReference = (
         });
     }
   } catch (cause) {
-    const reason = expectedSwiftMetadataReadFailure(cause);
+    const reason = expectedAppleMetadataReadFailure(cause);
     if (reason === null) throw cause;
     return typeReferenceResult({
       kind,
