@@ -1,6 +1,7 @@
 import { ProcessOutputTokenScanner } from "../process/ProcessOutputTokenScanner.js";
 import {
   ghidraFailureOutput,
+  ghidraDiagnosticStream,
   createGhidraDiagnostics,
 } from "./GhidraDiagnostics.js";
 import { expect, it } from "vitest";
@@ -157,3 +158,36 @@ it.each([
     expect(diagnostics.stop_requested).toBe(expected);
   },
 );
+
+it("caps diagnostics text at the tail, keeping counters", () => {
+  const prefix = "x".repeat(128 * 1024);
+  const tail = "\nend of log marker\n";
+  const full = prefix + tail;
+  const stream = {
+    text: full,
+    bytes: Buffer.byteLength(full, "utf8"),
+    observedBytes: Buffer.byteLength(full, "utf8"),
+  };
+  const result = ghidraDiagnosticStream(stream, undefined) as Record<
+    string,
+    unknown
+  >;
+  const text = result.text as string;
+  expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(64 * 1024);
+  expect(text.endsWith("end of log marker\n")).toBe(true);
+  expect(result.bytes).toBe(stream.observedBytes);
+  expect(result.retained_bytes).toBe(Buffer.byteLength(text, "utf8"));
+  const retained = result.retained_bytes as number;
+  expect(result.dropped_bytes).toBe(stream.observedBytes - retained);
+});
+
+it("keeps diagnostics text within the tail budget whole", () => {
+  const small = "small log\n";
+  const result = ghidraDiagnosticStream(
+    { text: small, bytes: small.length, observedBytes: small.length },
+    undefined,
+  ) as Record<string, unknown>;
+  expect(result.text).toBe(small);
+  expect(result).not.toHaveProperty("embedded_tail");
+  expect(result).not.toHaveProperty("dropped_bytes");
+});

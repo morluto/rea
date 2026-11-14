@@ -156,13 +156,68 @@ export const ghidraFailureOutput = (
   }),
 });
 
+/** Keep the tail, never the mid state, when a stream is large enough to matter. */
+const MAX_EMBEDDED_DIAGNOSTIC_BYTES = 64 * 1024;
+const sliceTailByBytes = (text: string, maxBytes: number): string => {
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes <= maxBytes) return text;
+  // Walk whole code points back from the end; never split a surrogate pair.
+  let acc = 0;
+  let index = text.length;
+  while (index > 0) {
+    const low = text.charCodeAt(index - 1);
+    let start = index - 1;
+    let cp = low;
+    if ((low & 0xfc00) === 0xdc00) {
+      const high = text.charCodeAt(index - 2) ?? 0;
+      if ((high & 0xfc00) === 0xd800) {
+        cp = ((high - 0xd800) << 10) + (low - 0xdc00) + 0x10000;
+        start = index - 2;
+      }
+    }
+    const bytelen = Buffer.byteLength(String.fromCodePoint(cp), "utf8");
+    if (acc + bytelen > maxBytes) break;
+    acc += bytelen;
+    index = start;
+    if (acc === maxBytes) break;
+  }
+  return text.slice(index);
+};
+
 export const ghidraDiagnosticStream = (
   stream: ProviderProcessSnapshot["stdout"],
   token: string | undefined,
-): JsonValue => ({
-  text: redactCapturedTransportCredential(stream, token, "[REDACTED]"),
-  // Preserve the historical total-byte counter; text is now bounded separately.
-  bytes: stream.observedBytes,
-  retained_bytes: stream.bytes,
-  ...(stream.invalidUtf8 === true ? { invalid_utf8: true } : {}),
-});
+): JsonValue => {
+  const text = redactCapturedTransportCredential(stream, token, "[REDACTED]");
+  const fullBytes = Buffer.byteLength(text, "utf8");
+  const inline = fullBytes > MAX_EMBEDDED_DIAGNOSTIC_BYTES;
+  const retained = inline
+    ? sliceTailByBytes(text, MAX_EMBEDDED_DIAGNOSTIC_BYTES)
+    : text;
+  return {
+    ...(inline ? { embedded_tail: slicedDiagnosticsTail(text, retained) } : {}),
+    text: retained,
+    // Preserve the historical total-byte counter; text is now bounded separately.
+    bytes: stream.observedBytes,
+    retained_bytes: Buffer.byteLength(retained, "utf8"),
+    ...(inline
+      ? { dropped_bytes: fullBytes - Buffer.byteLength(retained, "utf8") }
+      : {}),
+    ...(stream.invalidUtf8 === true ? { invalid_utf8: true } : {}),
+  };
+};
+
+/** Record the bounding event instead of silently shortening output. */
+const slicedDiagnosticsTail = (full: string, retained: string): JsonValue => {
+  const observed = Buffer.byteLength(full, "utf8");
+  const kept = Buffer.byteLength(retained, "utf8");
+  return {
+    original_bytes: observed,
+    retained_bytes: kept,
+    dropped_bytes: observed - kept,
+    message:
+      "diagnostics were capped to the last " +
+      String(MAX_EMBEDDED_DIAGNOSTIC_BYTES) +
+      " bytes; the complete log is written where the producer records it",
+  };
+};
