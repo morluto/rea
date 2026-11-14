@@ -18,7 +18,7 @@ it("assigns every Hopper operation either a reply contract or the shrinking pend
   expect(
     pending.length,
     "the pending list only shrinks; add a reply contract instead of an entry",
-  ).toBeLessThanOrEqual(31);
+  ).toBeLessThanOrEqual(9);
 });
 
 it("returns the validated source reply without dropping unlisted fields", () => {
