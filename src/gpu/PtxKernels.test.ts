@@ -1,5 +1,82 @@
 import { expect, it } from "vitest";
+import { gpuKernelSchema } from "../domain/gpu/gpuCodeObjects.js";
 import { readPtxKernels, readPtxTarget } from "./PtxKernels.js";
+
+const parameterLayouts = [
+  [
+    "entry-list",
+    ".version 8.0\n.entry k(.param .b8 big[COUNT], .param .align ALIGN .b8 aligned, .param .b8 tail) { ret; }",
+  ],
+  [
+    "body-declared",
+    ".version 1.3\n.entry k { .param .b8 big[COUNT]; .param .align ALIGN .b8 aligned; .param .b8 tail; ret; }",
+  ],
+] as const;
+
+it.each(parameterLayouts)(
+  "keeps overflowing %s parameter offsets unknown without losing declarations",
+  (_kind, template) => {
+    const [row] = [
+      ...readPtxKernels(
+        template.replace("COUNT", "9007199254740991").replace("ALIGN", "8"),
+        "object",
+      ),
+    ];
+    expect(row?.coverage).toBe("partial");
+    expect(row?.kernel.parameter_bytes).toBeNull();
+    expect(
+      row?.kernel.parameters.map(({ name, offset, size }) => ({
+        name,
+        offset,
+        size,
+      })),
+    ).toEqual([
+      { name: "big", offset: 0, size: Number.MAX_SAFE_INTEGER },
+      { name: "aligned", offset: null, size: 1 },
+      { name: "tail", offset: null, size: 1 },
+    ]);
+    expect(gpuKernelSchema.safeParse(row?.kernel).success).toBe(true);
+  },
+);
+
+it.each(parameterLayouts)(
+  "retains a safe %s offset when only the parameter end overflows",
+  (_kind, template) => {
+    const [row] = [
+      ...readPtxKernels(
+        template.replace("COUNT", "9007199254740991").replace("ALIGN", "1"),
+        "object",
+      ),
+    ];
+    expect(row?.coverage).toBe("partial");
+    expect(row?.kernel.parameter_bytes).toBeNull();
+    expect(row?.kernel.parameters.map(({ offset }) => offset)).toEqual([
+      0,
+      Number.MAX_SAFE_INTEGER,
+      null,
+    ]);
+    expect(gpuKernelSchema.safeParse(row?.kernel).success).toBe(true);
+  },
+);
+
+it.each(parameterLayouts)(
+  "preserves the complete %s layout when aligned offsets and ends stay safe",
+  (_kind, template) => {
+    const [row] = [
+      ...readPtxKernels(
+        template.replace("COUNT", "9007199254740983").replace("ALIGN", "8"),
+        "object",
+      ),
+    ];
+    expect(row?.coverage).toBe("complete");
+    expect(row?.kernel.parameter_bytes).toBe(9007199254740986);
+    expect(row?.kernel.parameters.map(({ offset }) => offset)).toEqual([
+      0, 9007199254740984, 9007199254740985,
+    ]);
+    expect(gpuKernelSchema.safeParse(row?.kernel).success).toBe(true);
+  },
+);
+
 it("recognizes directives outside comments and strings and preserves UTF-8 byte coordinates", () => {
   expect(readPtxTarget('".version 8.8\n.target sm_80\n"').recognized).toBe(
     false,
