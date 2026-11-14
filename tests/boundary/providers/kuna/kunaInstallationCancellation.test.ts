@@ -7,6 +7,10 @@ import { session } from "./kunaSessionFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
 
+// The production `kuna --version` deadline (KunaInstallation). A stop that
+// regressed would still end the gated probe there, so cancellation must win.
+const VERSION_PROBE_DEADLINE_MS = 10_000;
+
 const gatedInstallation = async () => {
   const fixture = await session("rea-kuna-installation-cancel-");
   const gate = join(fixture.root, "release-version");
@@ -52,7 +56,7 @@ it("lets one caller leave acquisition with its exact reason while a peer keeps t
   try {
     const probe = await fixture.started();
     controller.abort(reason);
-    await expect.poll(() => settled, { timeout: 1500 }).toBe(true);
+    await expect.poll(() => settled).toBe(true);
     const result = await leaving;
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error).toMatchObject({
@@ -86,7 +90,8 @@ it.each([null, "caller stopped"])(
     try {
       const probe = await fixture.started();
       controller.abort(reason);
-      await expect.poll(() => settled, { timeout: 1500 }).toBe(true);
+      await expect.poll(() => settled).toBe(true);
+      expect(Date.now() - probe.at).toBeLessThan(VERSION_PROBE_DEADLINE_MS);
       const result = await pending;
       if (result.ok) throw new Error("Expected cancellation");
       expect(result.error).toMatchObject({
@@ -118,7 +123,8 @@ it("close cancels and joins an installation probe while callers wait", async () 
     void closing.then(() => {
       closed = true;
     });
-    await expect.poll(() => closed, { timeout: 1500 }).toBe(true);
+    await expect.poll(() => closed).toBe(true);
+    expect(Date.now() - probe.at).toBeLessThan(VERSION_PROBE_DEADLINE_MS);
     expect((await closing).ok).toBe(true);
     const result = await pending;
     if (result.ok) throw new Error("Expected cancellation");

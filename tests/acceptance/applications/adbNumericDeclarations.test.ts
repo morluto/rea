@@ -9,7 +9,7 @@ import { adbDisplayPartialObservationSchema } from "../../../src/domain/adb/adbD
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 const SERIAL = "numeric-declarations-device";
 const PACKAGE = "com.example.numeric";
@@ -224,9 +224,10 @@ cliTest.skipIf(process.platform === "win32")(
         arguments: ["inspect-adb-display", SERIAL, "--json"],
         environment: fixture.environment,
       };
-      const output = await (scenario === displayScenarios[0]
-        ? cli.run(invocation)
-        : runFileCli(cli, invocation));
+      const output = await cli.run({
+        ...invocation,
+        freshProcess: scenario === displayScenarios[0],
+      });
       expect(output.exitCode, `${scenario.name}: ${output.stderr}`).toBe(0);
       const evidence = contract.outputSchema.parse(output.json);
       expect(evidence.parameters).toEqual({ serial: SERIAL });
@@ -281,9 +282,10 @@ cliTest.skipIf(process.platform === "win32")(
         arguments: ["inspect-adb-display", SERIAL, "--json"],
         environment: fixture.environment,
       };
-      const output = await (value === null
-        ? cli.run(invocation)
-        : runFileCli(cli, invocation));
+      const output = await cli.run({
+        ...invocation,
+        freshProcess: value === null,
+      });
       expect(output.exitCode, output.stderr).toBe(1);
       const projected = analysisErrorProjectionSchema.parse(output.json);
       expect(projected.code).toBe("unreadable_output");
@@ -336,6 +338,8 @@ const malformedUser = " \tuserId=unknown  \t";
 const unsafeApp = ` \tappId=${UNSAFE}  \t`;
 const overflowUser = ` \tuserId=${OVERFLOW}  \t`;
 const malformedApp = " \tappId=-1  \t";
+const attachedUser = "  userId=10123abc";
+const attachedApp = "  appId=20002abc";
 const cappedPackageIssues = Array.from({ length: 12 }, (_, index) => ({
   command: "dumpsys package",
   field: "user_id",
@@ -427,6 +431,30 @@ const packageScenarios = [
     userId: 0,
     issues: cappedPackageIssues,
   },
+  {
+    name: "attached text leaves the only declaration unknown",
+    lines: [attachedUser],
+    userId: null,
+    issues: [
+      {
+        command: "dumpsys package",
+        field: "user_id",
+        reason: "invalid_format",
+        raw_line: attachedUser,
+      },
+    ],
+  },
+  {
+    name: "attached text before and after a valid declaration",
+    lines: [attachedUser, "  userId=10456", attachedApp],
+    userId: 10456,
+    issues: [attachedUser, attachedApp].map((raw_line) => ({
+      command: "dumpsys package",
+      field: "user_id",
+      reason: "invalid_format",
+      raw_line,
+    })),
+  },
 ];
 
 cliTest.skipIf(process.platform === "win32")(
@@ -454,9 +482,10 @@ cliTest.skipIf(process.platform === "win32")(
         arguments: ["inspect-adb-package", SERIAL, PACKAGE, "--json"],
         environment: fixture.environment,
       };
-      const output = await (scenario === packageScenarios[0]
-        ? cli.run(invocation)
-        : runFileCli(cli, invocation));
+      const output = await cli.run({
+        ...invocation,
+        freshProcess: scenario === packageScenarios[0],
+      });
       expect(output.exitCode, `${scenario.name}: ${output.stderr}`).toBe(0);
       const evidence = contract.outputSchema.parse(output.json);
       expect(evidence.parameters).toEqual({ serial: SERIAL, package: PACKAGE });
@@ -482,5 +511,79 @@ cliTest.skipIf(process.platform === "win32")(
       expect(structured.normalized_result).toEqual(evidence.normalized_result);
       expect(structured.limitations).toEqual(evidence.limitations);
     }
+  },
+);
+
+cliTest.skipIf(process.platform === "win32")(
+  "retains malformed version declarations through CLI and MCP",
+  async ({ cli }) => {
+    const fixture = await createNumericAdbFixture();
+    await writeFile(
+      fixture.packageDetails,
+      [
+        `Package [${PACKAGE}]:`,
+        `  pkg=Package{fixture ${PACKAGE}}`,
+        "  versionCode=45abc minSdk=24",
+        `  versionCode=-${UNSAFE} targetSdk=34`,
+        "  versionCode=77x",
+        "",
+      ].join("\n"),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-adb-package", SERIAL, PACKAGE, "--json"],
+      environment: fixture.environment,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const schema = toolContract("inspect_adb_package").outputSchema;
+    const evidence = schema.parse(result.json);
+    expect(evidence.normalized_result).toMatchObject({
+      version_code: `-${UNSAFE}`,
+      coverage: "partial",
+      numeric_issues: {
+        total: 2,
+        sample: [
+          {
+            field: "version_code",
+            reason: "invalid_format",
+            raw_line: "  versionCode=45abc minSdk=24",
+          },
+          {
+            field: "version_code",
+            reason: "invalid_format",
+            raw_line: "  versionCode=77x",
+          },
+        ],
+      },
+    });
+    const reply = await fixture.call("inspect_adb_package", {
+      serial: SERIAL,
+      package: PACKAGE,
+    });
+    expect(reply.isError).not.toBe(true);
+    expect(schema.parse(reply.structuredContent).normalized_result).toEqual(
+      evidence.normalized_result,
+    );
+    await writeFile(
+      fixture.packageDetails,
+      [
+        `Package [${PACKAGE}]:`,
+        `  pkg=Package{fixture ${PACKAGE}}`,
+        "  versionName=observed",
+        "  versionCode=45abc minSdk=24",
+        "",
+      ].join("\n"),
+    );
+    const malformedOnly = await fixture.call("inspect_adb_package", {
+      serial: SERIAL,
+      package: PACKAGE,
+    });
+    expect(malformedOnly.isError).not.toBe(true);
+    expect(
+      schema.parse(malformedOnly.structuredContent).normalized_result,
+    ).toMatchObject({
+      version_code: null,
+      coverage: "partial",
+      numeric_issues: { total: 1 },
+    });
   },
 );

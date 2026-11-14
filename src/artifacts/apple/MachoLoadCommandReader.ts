@@ -26,6 +26,7 @@ import {
 } from "../../domain/apple/machoPlatform.js";
 import {
   classifyFatContainerIdentity,
+  fatSliceOverlapReason,
   findOverlappingFatSlices,
   hasMachoMagic,
   readFatContainerHeader,
@@ -217,7 +218,7 @@ export const readMachoContainer = async (
       return {
         kind: "issue",
         status: "malformed",
-        reason: overlapReason(overlap),
+        reason: fatSliceOverlapReason(overlap),
       };
     // Identity is only malformed through a slice range issue, which the
     // returned rangeIssues retain.
@@ -296,11 +297,6 @@ const rangeValidSlices = (
 ): FatSliceDeclaration[] =>
   header.slices.filter((_, index) => header.rangeIssues[index] === null);
 
-const overlapReason = (
-  overlap: NonNullable<ReturnType<typeof findOverlappingFatSlices>>,
-): string =>
-  `Mach-O slices ${overlap[0].index} and ${overlap[1].index} overlap.`;
-
 /**
  * Apple lipo stores one hidden ARM64 row after the declared 32-bit FAT table.
  * It is only admitted from the single table-to-first-slice slot cctools
@@ -337,7 +333,7 @@ const readAppleHiddenArm64Row = async (
     rangeIssue:
       overlap === null
         ? validateFatSlice(declaration, fileSize, end)
-        : overlapReason(overlap),
+        : fatSliceOverlapReason(overlap),
   };
 };
 

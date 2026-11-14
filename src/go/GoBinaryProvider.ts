@@ -2,9 +2,10 @@ import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
   projectSelectedArtifactFileFailure,
+  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import {
   type StableArtifactSnapshot,
@@ -14,7 +15,6 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -22,8 +22,6 @@ import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { GoBinaryPort } from "../application/go/GoBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -66,22 +64,12 @@ const failureForPrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-      cause,
-    });
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof BinaryResourceFailure) {
     const parameter =
       cause.boundary === "search"
@@ -146,11 +134,7 @@ const failureForPrimary = (
         },
       );
     if (cause.reason === "path")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
   const fileFailure = projectSelectedArtifactFileFailure(
     cause,
@@ -369,7 +353,10 @@ export class GoBinaryProvider implements GoBinaryPort {
           ...(stringLiterals === undefined
             ? {}
             : { string_literals: stringLiterals }),
-          limitations: limitationsFor(image, stringLiterals, budgets),
+          limitations: [
+            ...limitationsFor(image, stringLiterals, budgets),
+            ...selected.limitations,
+          ],
         };
         if (
           jsonValueByteLength(report, budgets.max_report_bytes) >

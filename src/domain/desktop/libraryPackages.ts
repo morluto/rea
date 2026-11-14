@@ -109,17 +109,24 @@ async function* libraryCandidates(
   machine: number,
   cache: readonly LinkerCacheEntry[],
   host: LibraryWalkHost,
-): AsyncGenerator<string> {
+): AsyncGenerator<{ path: string; unprobed: boolean }> {
   if (request.startsWith("/")) {
-    yield request;
+    yield { path: request, unprobed: false };
     return;
   }
+  const unprobed: string[] = [];
   if (!request.includes("/"))
     for (const directory of directories) {
       const candidate = `${directory}/${request}`;
-      if (await host.isFile(candidate)) yield candidate;
+      const probe = await host.isFile(candidate);
+      if (probe.kind === "file") {
+        if (probe.isFile) yield { path: candidate, unprobed: false };
+      } else if (probe.unreachable) unprobed.push(candidate);
+      else yield { path: candidate, unprobed: false };
     }
-  yield* cachedPaths(cache, request, machine);
+  for (const path of cachedPaths(cache, request, machine))
+    yield { path, unprobed: false };
+  for (const path of unprobed) yield { path, unprobed: true };
 }
 
 /** One required intermediate link: filesystem identity and ownership-query spelling. */
@@ -138,6 +145,14 @@ export interface LibraryPath {
   readonly requiredAliases: readonly LibraryLookupAlias[];
 }
 
+/** What a host check of one candidate path established. */
+export type LibraryFileProbe =
+  | { readonly kind: "file"; readonly isFile: boolean }
+  | {
+      readonly kind: "unknown";
+      /** The check settled the candidate, rather than failing transiently. */
+      readonly unreachable: boolean;
+    };
 /** Host reads the closure walk needs. */
 export interface LibraryWalkHost {
   /** Resolve through the filesystem, including symlinks before subsequent `..` components. */
@@ -146,7 +161,7 @@ export interface LibraryWalkHost {
     path: string,
     expected: ElfLibraryIdentity,
   ) => Promise<Result<ElfDependencies, ElfDependenciesFailure>>;
-  readonly isFile: (path: string) => Promise<boolean>;
+  readonly isFile: (path: string) => Promise<LibraryFileProbe>;
 }
 
 /** The shared libraries an executable loads at start, as the dynamic linker would find them. */
@@ -268,7 +283,12 @@ export const libraryClosure = async (
           }
         | undefined;
       let unresolved = false;
-      for await (const candidate of libraryCandidates(
+      // Denied search directories remain behind reachable candidates.
+      let unprobed: { path: string; reason: string } | undefined;
+      for await (const {
+        path: candidate,
+        unprobed: couldNotProbe,
+      } of libraryCandidates(
         request,
         directories,
         object.dependencies.machine,
@@ -279,6 +299,13 @@ export const libraryClosure = async (
           ? directPath
           : await host.resolvePath(candidate);
         if (resolved === undefined) {
+          if (couldNotProbe) {
+            unprobed ??= {
+              path: candidate,
+              reason: "the library's filesystem path could not be resolved",
+            };
+            continue;
+          }
           closure.unreadable.push({
             path: candidate,
             reason: "the library's filesystem path could not be resolved",
@@ -292,6 +319,10 @@ export const libraryClosure = async (
           object.dependencies,
         );
         if (!dependencies.ok && dependencies.error.identity === null) {
+          if (couldNotProbe) {
+            unprobed ??= { path, reason: dependencies.error.reason };
+            continue;
+          }
           // A failed identity read does not prove this candidate can be skipped,
           // or that its package belongs to the executable's loaded closure.
           closure.unreadable.push({
@@ -324,7 +355,8 @@ export const libraryClosure = async (
         break;
       }
       if (selected === undefined) {
-        if (!unresolved) closure.missing.push(soname);
+        if (unprobed !== undefined) closure.unreadable.push(unprobed);
+        else if (!unresolved) closure.missing.push(soname);
         continue;
       }
       const { path, resolvedPath, fileIdentity, lookupPath, dependencies } =

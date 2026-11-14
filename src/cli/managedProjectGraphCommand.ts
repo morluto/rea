@@ -11,6 +11,9 @@ import {
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
 import type { Logger } from "pino";
+import { managedApplicationGraphReferenceInputSchema } from "../domain/managed/managedApplicationGraph.js";
+import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import type { CliInstance } from "./types.js";
 
 /** Register managed static-Evidence application graph projection. */
@@ -22,9 +25,11 @@ export const registerProjectManagedApplicationGraph = (
     description:
       "Project authenticated managed static Evidence into an application graph",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe("Inline managed application graph JSON or JSON file path"),
+      inputJson: jsonInputArgument(
+        "Inline managed application graph JSON or JSON file path",
+        getEvidenceInputContract(managedApplicationGraphReferenceInputSchema)
+          .frameSchema,
+      ),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>

@@ -2,7 +2,7 @@ import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
   projectArtifactCloseFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import {
@@ -136,6 +136,7 @@ export class RustBinaryProvider implements RustBinaryPort {
           limitations: [
             ...limitationsFor(image),
             `Selected producer_limits.input_bytes=${String(limits.input_bytes)} and output_bytes=${String(limits.output_bytes)} bytes; compressed/inflated dependency parser limits remain independent.`,
+            ...selected.limitations,
           ],
         };
         retainCompilerPathsWithinReport(report, limits.output_bytes);
@@ -436,11 +437,7 @@ const artifactReaderFailure = (
       },
     );
   if (cause.reason === "path")
-    return new AnalysisInputError(
-      OPERATION,
-      { cause, ...stableArtifactInputRecovery(cause) },
-      [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-    );
+    return stableArtifactInputFailure(cause, OPERATION);
   return new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
     cause,
     diagnostics: { path, reason: cause.message },

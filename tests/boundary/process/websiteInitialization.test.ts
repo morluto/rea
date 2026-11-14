@@ -36,11 +36,11 @@ const [message, cause] = await reported;
 assert.equal(message, "Website initialization failed");
 assert.equal(cause, globalThis.translationFailure);
 `;
-    const result = await processes.run(
-      process.execPath,
-      ["--input-type=module", "--eval", source],
-      { timeoutMs: 10_000 },
-    );
+    const result = await processes.run(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      source,
+    ]);
     expect(result.signal, result.stderr).toBeNull();
     expect(result.exitCode, result.stderr).toBe(0);
   },

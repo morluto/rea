@@ -74,23 +74,42 @@ const artifactChangeSchema = z.object({
 });
 
 /** Deterministic artifact comparison with every change returned inline. */
-export const artifactComparisonResultSchema = z.object({
-  status: comparisonStatusSchema,
-  left_manifest_id: prefixedDigestSchema("agm"),
-  right_manifest_id: prefixedDigestSchema("agm"),
-  summary: z.object({
-    unchanged: z.int().min(0),
-    added: z.int().min(0),
-    removed: z.int().min(0),
-    changed: z.int().min(0),
-    unknown: z.int().min(0),
-    contradiction: z.int().min(0).default(0),
-  }),
-  changes: z.array(artifactChangeSchema),
-  // Absent on legacy records; absence does not identify a contradicting side.
-  integrity_mismatch_evidence_ids: z.array(evidenceIdSchema).optional(),
-  limitations: z.array(z.string()),
-});
+export const artifactComparisonResultSchema = z
+  .object({
+    status: comparisonStatusSchema,
+    left_manifest_id: prefixedDigestSchema("agm"),
+    right_manifest_id: prefixedDigestSchema("agm"),
+    summary: z.object({
+      unchanged: z.int().min(0),
+      added: z.int().min(0),
+      removed: z.int().min(0),
+      changed: z.int().min(0),
+      unknown: z.int().min(0),
+      contradiction: z.int().min(0).default(0),
+    }),
+    changes: z.array(artifactChangeSchema),
+    // Absent on legacy records; absence does not identify a contradicting side.
+    integrity_mismatch_evidence_ids: z.array(evidenceIdSchema).optional(),
+    limitations: z.array(z.string()),
+  })
+  .superRefine((result, context) => {
+    if (
+      result.status === "unchanged" &&
+      (result.changes.length > 0 ||
+        result.summary.added > 0 ||
+        result.summary.removed > 0 ||
+        result.summary.changed > 0 ||
+        result.summary.unknown > 0 ||
+        result.summary.contradiction > 0 ||
+        (result.integrity_mismatch_evidence_ids?.length ?? 0) > 0)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["status"],
+        message:
+          "An unchanged artifact comparison cannot retain changes, non-zero change counts, or integrity mismatches.",
+      });
+  });
 
 export type ArtifactComparisonResult = z.infer<
   typeof artifactComparisonResultSchema

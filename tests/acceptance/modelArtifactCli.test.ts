@@ -10,7 +10,7 @@ import {
 import {
   modelArtifactSummaryViewResultSchema,
   analysisViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
@@ -22,11 +22,7 @@ import {
   safetensorsFixture,
 } from "../fixtures/model/model.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import {
-  cliTest,
-  createSharedMcpSession,
-  runFileCli,
-} from "../support/cli/cliFixture.js";
+import { cliTest, createSharedMcpSession } from "../support/cli/cliFixture.js";
 
 // Model queries are target-free; share immutable registration and schema setup.
 // Portable export keeps its separate post-CLI connection below.
@@ -113,7 +109,7 @@ cliTest(
       });
       const bytes = Buffer.concat([fixture.bytes, Buffer.alloc(16)]);
       await writeFile(path, bytes);
-      const cliResult = await runFileCli(cli, {
+      const cliResult = await cli.run({
         arguments: [
           "inspect-model-artifact",
           path,
@@ -365,7 +361,7 @@ cliTest(
         tensors,
       });
       await writeFile(path, fixture.bytes);
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: [
           "inspect-model-artifact",
           path,
@@ -999,7 +995,7 @@ cliTest(
     ] as const) {
       const path = join(root, name);
       await writeFile(path, bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [
           "inspect-model-artifact",
           path,
@@ -1047,7 +1043,7 @@ cliTest(
         Buffer.alloc(0),
       ).bytes,
     );
-    const mapCli = await runFileCli(cli, {
+    const mapCli = await cli.run({
       arguments: [
         "inspect-model-artifact",
         mapPath,
@@ -1084,7 +1080,7 @@ cliTest(
         safetensorsFixture(`{"__metadata__":${numeric}}`, Buffer.alloc(0))
           .bytes,
       );
-      const malformedCli = await runFileCli(cli, {
+      const malformedCli = await cli.run({
         arguments: ["inspect-model-artifact", malformedPath, "--json"],
       });
       expect(malformedCli.exitCode).toBe(1);

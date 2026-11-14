@@ -28,7 +28,11 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { hostReadFailure, isHostFile, isRefusedRead } from "./HostFileRead.js";
+import {
+  hostReadFailure,
+  isRefusedRead,
+  probeHostFile,
+} from "./HostFileRead.js";
 import { succeeded, type QueryRunner } from "./HostQuery.js";
 
 /** The library fields of a Debian package's inventory. */
@@ -259,7 +263,8 @@ export const inspectLibraryPackages = async (
         try {
           // Admit the full lookup before deriving its ownership leaf: splitting
           // a regular file's trailing slash or dot component would erase ENOTDIR.
-          if (!(await isHostFile(path))) return undefined;
+          const probe = await probeHostFile(path);
+          if (probe.kind !== "file" || !probe.isFile) return undefined;
           const resolvedPath = await realpath(path);
           const directory = await realpath(posix.dirname(path));
           const selected = posix.join(directory, posix.basename(path));
@@ -278,7 +283,7 @@ export const inspectLibraryPackages = async (
       },
       dependencies: (path, expected) =>
         elfDependencies(path, signal, policy, expected),
-      isFile: isHostFile,
+      isFile: probeHostFile,
     },
     policy.libraries,
   );

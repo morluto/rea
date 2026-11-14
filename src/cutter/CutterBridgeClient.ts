@@ -50,10 +50,10 @@ import {
   BRIDGE_MAX_REQUEST_BYTES_SETTING,
   bridgeRequestLimitMismatchError,
   bridgeRequestOversizeError,
-  DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
   parseBridgeMaxRequestBytes,
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
+import { DEFAULT_BRIDGE_MAX_REQUEST_BYTES } from "../domain/analysisResourceLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";

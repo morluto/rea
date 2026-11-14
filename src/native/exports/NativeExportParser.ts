@@ -45,10 +45,29 @@ const retainedTextBytes = (...strings: readonly (string | null)[]): number =>
     0,
   );
 
+/** Which fixed export inventory allowance refused the image. */
+export type NativeExportLimit = "rows" | "retained_text";
+
+/**
+ * A fixed inventory allowance was exhausted. `limit` identifies the exhausted
+ * allowance so consumers derive its units from the producer, not from text:
+ * `rows` is an entry count and `retained_text` a byte budget.
+ */
+export class NativeExportLimitFailure extends BinaryResourceFailure {
+  constructor(
+    readonly limit: NativeExportLimit,
+    allowance: number,
+    message: string,
+  ) {
+    super("structure", allowance, message);
+    this.name = "NativeExportLimitFailure";
+  }
+}
+
 const checkRetainedText = (bytes: number): void => {
   if (bytes > MAXIMUM_RETAINED_TEXT_BYTES)
-    throw new BinaryResourceFailure(
-      "structure",
+    throw new NativeExportLimitFailure(
+      "retained_text",
       MAXIMUM_RETAINED_TEXT_BYTES,
       `Export names exceed the ${String(MAXIMUM_RETAINED_TEXT_BYTES)}-byte retained-text allowance`,
     );
@@ -76,8 +95,8 @@ const hex = (value: bigint | number) => `0x${value.toString(16)}`;
 
 const rowBudget = (count: number, label: string): void => {
   if (count > MAX_NATIVE_EXPORT_ROWS)
-    throw new BinaryResourceFailure(
-      "structure",
+    throw new NativeExportLimitFailure(
+      "rows",
       MAX_NATIVE_EXPORT_ROWS,
       `${label} declares ${String(count)} entries, above the ${String(MAX_NATIVE_EXPORT_ROWS)}-entry export inventory allowance`,
     );
@@ -100,6 +119,38 @@ const coverage = (
 const failureMessage = (cause: unknown): string => {
   if (isBinaryFormatOrStringLimitFailure(cause)) return cause.message;
   throw cause;
+};
+
+/**
+ * `.dynsym` entry 0 is the reserved undefined symbol. The gABI requires every
+ * field, including `st_name`, to be zero. A nonzero name does not by itself
+ * define a symbol, so the inventory continues and the deviation is recorded.
+ * Any other nonzero field means the reserved slot holds a real symbol.
+ */
+const reservedElfDynamicSymbolNote = (
+  bytes: Uint8Array,
+  bits: 32 | 64,
+  littleEndian: boolean,
+  fileOffset: number,
+): string | null => {
+  const parsed = readElfSymbol(bytes, bits, littleEndian);
+  if (!parsed.ok)
+    throw new BinaryFormatFailure(parsed.error.kind, parsed.error.message);
+  const symbol = parsed.value;
+  if (
+    symbol.binding !== 0 ||
+    symbol.type !== 0 ||
+    symbol.other !== 0 ||
+    symbol.section_index !== 0 ||
+    symbol.value !== 0n ||
+    symbol.size !== 0n
+  )
+    throw new BinaryFormatFailure(
+      "malformed",
+      "ELF dynamic symbol table null entry has nonzero fields",
+    );
+  if (symbol.name_offset === 0) return null;
+  return `ELF dynamic symbol 0 at file offset ${hex(fileOffset)} has nonzero st_name ${hex(symbol.name_offset)}. st_info, st_other, st_shndx, st_value and st_size are zero, so the entry was skipped and was not reported as an export.`;
 };
 
 const PE_LIMITATIONS = [
@@ -672,13 +723,14 @@ function* parseElfExports(
     width,
     "ELF dynamic symbols",
   );
-  // Entry zero is the reserved STN_UNDEF record. Skipping it is valid only
-  // after every field is observed as zero; neither ELF layout has padding.
-  if (bytes.subarray(table, table + width).some((byte) => byte !== 0))
-    throw new BinaryFormatFailure(
-      "malformed",
-      "ELF dynamic symbol table null entry has nonzero fields",
-    );
+  // Entry zero is skipped only after it is observed to be the undefined
+  // symbol. A stray st_name is recorded; any other nonzero field is refused.
+  const nullSymbolNote = reservedElfDynamicSymbolNote(
+    bytes.subarray(table, table + width),
+    directory.bits,
+    directory.little,
+    table,
+  );
   const nameRange = reader.fileRange(
     strings.offset,
     strings.size,
@@ -814,7 +866,10 @@ function* parseElfExports(
     exports,
     coverage: coverage(issues, count - 1, exports.length),
     issues,
-    limitations: ELF_LIMITATIONS,
+    limitations: [
+      ...ELF_LIMITATIONS,
+      ...(nullSymbolNote === null ? [] : [nullSymbolNote]),
+    ],
   };
 }
 

@@ -1,7 +1,5 @@
-import {
-  artifactInventorySummaryViewResultSchema,
-  sealAnalysisView,
-} from "./analysisView.js";
+import { sealAnalysisView } from "./analysisView.js";
+import { artifactInventorySummaryViewResultSchema } from "./analysisViewResult.js";
 import { ARTIFACT_INVENTORY_VIEW_CAVEATS } from "./artifactInventoryViewCaveats.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { evidenceSemanticContent, type Evidence } from "../evidence.js";

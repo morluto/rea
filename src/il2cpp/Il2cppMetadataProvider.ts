@@ -15,15 +15,15 @@ import {
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCompletion,
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
   assertArtifactReadActive,
 } from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -35,7 +35,6 @@ import { createIl2cppMetadataAdmission } from "./Il2cppMetadataAdmission.js";
 import { hexAddress as hex } from "./Il2cppBinaryImage.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
-  AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -117,22 +116,12 @@ const failureForPrimary = (
           },
         ]);
   }
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-      cause,
-    });
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -149,11 +138,7 @@ const failureForPrimary = (
         },
       );
     if (cause.reason === "path")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: [field], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, OPERATION, field);
   }
   const fileFailure = projectSelectedArtifactFileFailure(
     cause,

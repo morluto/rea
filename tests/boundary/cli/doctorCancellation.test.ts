@@ -11,6 +11,8 @@ import {
   type OwnedProcessGroup,
 } from "../../../src/process/ProcessOwnership.js";
 
+const PROBE_DEADLINE_MS = 10_000;
+
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for(
   (["jadx", "kuna"] as const).flatMap((provider) =>
     (
@@ -44,7 +46,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for(
       executable,
       `#!${process.execPath}
 if (!process.argv.slice(2).includes(${JSON.stringify(probeArgument)})) process.exit(7);
-require("node:fs").writeFileSync(${JSON.stringify(ready)}, JSON.stringify({pid: process.pid, runId: process.env.REA_PROCESS_RUN_ID}));
+require("node:fs").writeFileSync(${JSON.stringify(ready)}, JSON.stringify({pid: process.pid, runId: process.env.REA_PROCESS_RUN_ID, at: Date.now()}));
 process.on("SIGTERM", () => {});
 setInterval(() => { if (require("node:fs").existsSync(${JSON.stringify(release)})) process.exit(0); }, 25).unref();
 setTimeout(() => process.exit(99), 20000);
@@ -85,13 +87,11 @@ setTimeout(() => process.exit(99), 20000);
     let ownership: OwnedProcessGroup | undefined;
     try {
       await expect
-        .poll(
-          () =>
-            readFile(ready, "utf8").then(
-              () => true,
-              () => false,
-            ),
-          { timeout: 10_000 },
+        .poll(() =>
+          readFile(ready, "utf8").then(
+            () => true,
+            () => false,
+          ),
         )
         .toBe(true);
       const readyRecord: unknown = JSON.parse(await readFile(ready, "utf8"));
@@ -104,12 +104,14 @@ setTimeout(() => process.exit(99), 20000);
               .strictObject({
                 pid: z.number().int().positive(),
                 runId: z.string().uuid(),
+                at: z.number(),
               })
               .parse(readyRecord)
           : z
               .strictObject({
                 pid: z.number().int().positive(),
                 runId: z.string().min(1),
+                at: z.number(),
               })
               .parse(readyRecord);
       if (provider === "jadx") {
@@ -120,9 +122,10 @@ setTimeout(() => process.exit(99), 20000);
         };
       }
       child.kill(signal);
-      await expect
-        .poll(() => child.exitCode, { timeout: 10_000 })
-        .not.toBeNull();
+      await expect.poll(() => child.exitCode).not.toBeNull();
+      // Without cancellation, doctor would end when the probe's own deadline
+      // (JadxJavaProbe and KunaInstallation: 10 s from its start) stopped it.
+      expect(Date.now() - observed.at).toBeLessThan(PROBE_DEADLINE_MS);
       const result = await closed;
       expect(JSON.parse(stdout)).toMatchObject({ code: "cancelled" });
       if (ownership !== undefined) {

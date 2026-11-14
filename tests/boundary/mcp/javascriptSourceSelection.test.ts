@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { join, resolve } from "node:path";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 
@@ -19,12 +19,20 @@ import {
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const createSelectionClient = () => {
-  const client = new Client({
-    name: "javascript-source-selection",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "javascript-source-selection",
+      version: "1",
+    },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
