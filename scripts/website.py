@@ -17,7 +17,12 @@ from urllib.parse import quote, urlsplit
 
 
 SITE_ORIGIN = "https://rea.tools"
-NOTES_FIXTURES = {"examples/notes-electron/index.html", "examples/notes-web/index.html"}
+SHARED_HTML_FIXTURES = {
+    "examples/notes-electron/index.html",
+    "examples/notes-web/index.html",
+    "solo-x/index.html",
+}
+NOTES_FIXTURES = SHARED_HTML_FIXTURES
 NAVIGATION = (
     ("Get started", "get-started/"),
     ("Showcases", "showcase/"),
@@ -212,7 +217,7 @@ def sync_pages(root, check=False):
     site = root / "website/public"
     changes = []
     for path in sorted(site.rglob("*.html")):
-        if path.relative_to(site).as_posix() in NOTES_FIXTURES:
+        if path.relative_to(site).as_posix() in SHARED_HTML_FIXTURES:
             continue
         original = path.read_text(encoding="utf-8")
         source = original

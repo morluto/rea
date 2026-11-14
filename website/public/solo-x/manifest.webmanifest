@@ -1,0 +1,19 @@
+{
+  "name": "Solo X Focus Gate",
+  "short_name": "Solo X",
+  "description": "Focus sessions, XP, streaks and daily missions.",
+  "lang": "pt-BR",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#111614",
+  "theme_color": "#111614",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
