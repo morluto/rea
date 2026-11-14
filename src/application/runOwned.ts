@@ -1,6 +1,7 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   AnalysisError,
+  primaryAnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -199,7 +200,16 @@ export const runOwned = async <Value extends AnalysisPartialObservation>(
     !signal.aborted
   ) {
     const publication = await commit(outcome.value);
-    if (!publication.ok) outcome = publication;
+    if (!publication.ok) {
+      // Publication is the last awaited step; a cancellation during it stays
+      // attached to the publication failure without replacing it.
+      outcome = publication;
+      if (isAborted(signal))
+        analysisErrorWithCancellation(
+          publication.error,
+          cancelledBy(options.operation, signal),
+        );
+    }
   }
   if (
     cleanup.kind === "released" &&
@@ -207,8 +217,12 @@ export const runOwned = async <Value extends AnalysisPartialObservation>(
     outcome.error.cleanupIncomplete
   )
     cleanup = { kind: "retained", failure: outcome.error };
+  // The kind follows the primary failure, so a producer's composite whose
+  // primary is a cancellation is cancelled, and a failure that only retains a
+  // later cancellation as a secondary stays failed.
   let cancelled =
-    !outcome.ok && outcome.error instanceof AnalysisCancelledError;
+    !outcome.ok &&
+    primaryAnalysisError(outcome.error) instanceof AnalysisCancelledError;
   if (outcome.ok && isAborted(signal)) {
     if (committed && cleanup.kind === "released")
       return {

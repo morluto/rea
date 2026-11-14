@@ -9,6 +9,7 @@ import {
   type AnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { finalizedResult, runOwned } from "./runOwned.js";
@@ -178,6 +179,43 @@ it("classifies producer cancellation even when cleanup also fails", async () => 
   expect(primaryAnalysisError(finalized.error)).toBe(cancellation);
 });
 
+it("classifies a producer composite whose primary is a cancellation as cancelled", async () => {
+  const controller = new AbortController();
+  const cancellation = new AnalysisCancelledError("fixture_operation", {
+    cause: reason,
+  });
+  const cleanup = new ProviderCleanupError("fixture", ["owned-process"], {
+    reason: "pending",
+  });
+  const composite = analysisErrorWithCleanupFailure(
+    cancellation,
+    cleanup,
+    "fixture_operation",
+  ).bindCleanupDependencies([cancellation, cleanup]);
+  const finalized = await runOwned(
+    async () => err(composite),
+    options(controller, async () => {
+      cleanup.resolveCleanup();
+    }),
+  );
+  expect(finalized).toMatchObject({
+    kind: "cancelled",
+    error: composite,
+    cleanup: { kind: "released" },
+  });
+});
+
+it("keeps a failure with a later cancellation classified as failed", async () => {
+  const controller = new AbortController();
+  const failure = new AnalysisProtocolError("fixture failure");
+  const finalized = await runOwned(
+    async () => err(failure),
+    options(controller, closeThenAbort(controller)),
+  );
+  expect(finalized.kind).toBe("failed");
+  expect(failure.secondaryFailures).toHaveLength(1);
+});
+
 it("keeps producer cleanup retained when close does not resolve it", async () => {
   const controller = new AbortController();
   const failure = new ProviderCleanupError("fixture", ["owned-process"], {
@@ -245,6 +283,31 @@ it("keeps a recovered value when cancellation arrives during its publication", a
     value,
     lateCancellation: reason,
   });
+});
+
+it("keeps a cancellation that arrives while a recovered publication fails", async () => {
+  const controller = new AbortController();
+  const failure = new ProviderCleanupError("fixture", ["owned-process"], {
+    reason: "pending",
+  });
+  const publication = new AnalysisProtocolError("publication failed");
+  const finalized = await runOwned(async () => err(failure), {
+    ...options(controller, async () => {
+      failure.resolveCleanup();
+    }),
+    recoverCompleted: () => ({ value }),
+    commit: async () => {
+      controller.abort(reason);
+      throw publication;
+    },
+  });
+  expect(finalized.kind).toBe("failed");
+  const result = finalizedResult(finalized);
+  if (result.ok) throw new Error("expected publication failure");
+  expect(primaryAnalysisError(result.error)).toBe(publication);
+  expect(publication.secondaryFailures).toEqual([
+    expect.objectContaining({ _tag: "AnalysisCancelledError", cause: reason }),
+  ]);
 });
 
 it("retains a recovered value when its publication fails", async () => {
