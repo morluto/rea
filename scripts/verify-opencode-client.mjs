@@ -3,9 +3,10 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { currentClientRegistrationCommand } from "../dist/application/ClientRegistrationIdentity.js";
 import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
@@ -21,15 +22,12 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 
-assert(
-  process.platform !== "win32",
-  "Native OpenCode verifier requires POSIX; Windows is unverified",
-);
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
 const command = process.env.REA_VERIFY_OPENCODE_COMMAND ?? "opencode";
 const mode = process.argv[2] ?? "call";
 const configFormat = process.env.REA_VERIFY_OPENCODE_CONFIG_FORMAT ?? "jsonc";
+const dialect = process.env.REA_VERIFY_OPENCODE_DIALECT ?? "v2";
 assert(
   ["chat", "call"].includes(mode),
   "Usage: verify-opencode-client.mjs [chat|call]",
@@ -38,7 +36,24 @@ assert(
   ["json", "jsonc"].includes(configFormat),
   "REA_VERIFY_OPENCODE_CONFIG_FORMAT must be json or jsonc",
 );
+assert(
+  ["v1", "v2"].includes(dialect),
+  "REA_VERIFY_OPENCODE_DIALECT must be v1 or v2",
+);
 const verifier = createVerifierRun();
+// The advertised catalog belongs to the runtime under test. A checkout can run
+// ahead of the published package, so this checkout's own contracts would not
+// describe the server the client actually started.
+const toolContracts =
+  runtimeRoot === repo
+    ? TOOL_CONTRACTS
+    : (
+        await import(
+          pathToFileURL(
+            join(runtimeRoot, "dist", "contracts", "toolContracts.js"),
+          ).href
+        )
+      ).TOOL_CONTRACTS;
 const lab = await mkdtemp(join(tmpdir(), "rea-opencode-client-"));
 const account = join(lab, "account");
 const profile = join(lab, "selected profile");
@@ -81,16 +96,35 @@ await withVerifierCleanup(async () => {
       stdin: "pipe",
     });
     const environment = {
+      // A closed environment without PATH cannot start a client on either
+      // platform, so the host environment is inherited and the client's own
+      // directories are redirected into the lab. Clear caller OpenCode
+      // configuration overrides so an inherited OPENCODE_CONFIG path or
+      // OPENCODE_CONFIG_CONTENT payload cannot join the lab's selected layers.
+      // Pin an unscoped, full REA catalog so inherited REA_MCP_TOOL_FAMILIES
+      // or REA_MCP_TOOL_CATALOG_PROFILE=hot-cold cannot hide analysis tools
+      // the fixture requires on the first model request.
+      ...process.env,
+      HOME: account,
       USERPROFILE: account,
+      OPENCODE_CONFIG: undefined,
+      OPENCODE_CONFIG_CONTENT: undefined,
       OPENCODE_CONFIG_DIR: profile,
       XDG_CONFIG_HOME: join(lab, "config"),
       XDG_CACHE_HOME: join(lab, "cache"),
       XDG_DATA_HOME: join(lab, "data"),
       XDG_STATE_HOME: join(lab, "state"),
+      APPDATA: join(lab, "appdata", "roaming"),
+      LOCALAPPDATA: join(lab, "appdata", "local"),
       OPENCODE_DISABLE_AUTOUPDATE: "true",
       OPENCODE_DISABLE_MODELS_FETCH: "true",
-      // Use the native core without external account plugins.
-      OPENCODE_PURE: "true",
+      // OpenCode V1 isolates its native core from account plugins with this
+      // variable. OpenCode V2 dropped it, so V2 isolates external plugin
+      // packages through the `plugins` configuration and the redirected
+      // configuration directory instead.
+      ...(dialect === "v1" ? { OPENCODE_PURE: "true" } : {}),
+      REA_MCP_TOOL_FAMILIES: undefined,
+      REA_MCP_TOOL_CATALOG_PROFILE: "full",
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     try {
@@ -102,8 +136,14 @@ await withVerifierCleanup(async () => {
         })
       ).stdout.trim();
     } catch (cause) {
+      // npm installs put only an opencode.cmd shim on PATH; cross-spawn runs
+      // that shim, and a desktop installation ships a real executable.
+      const windowsHint =
+        process.platform === "win32"
+          ? " On Windows, select the opencode executable, for example the npm package's node_modules/opencode-ai/bin/opencode.exe."
+          : "";
       throw new Error(
-        `OpenCode preflight failed for ${command}; install OpenCode or set REA_VERIFY_OPENCODE_COMMAND. ${String(cause)}`,
+        `OpenCode preflight failed for ${command}; install OpenCode or set REA_VERIFY_OPENCODE_COMMAND.${windowsHint} ${String(cause)}`,
         { cause },
       );
     }
@@ -129,7 +169,7 @@ await withVerifierCleanup(async () => {
           0,
           -"analyze_javascript_application".length,
         );
-        const expected = TOOL_CONTRACTS.map((t) => prefix + t.name).sort();
+        const expected = toolContracts.map((t) => prefix + t.name).sort();
         const reaTools = tools.filter((t) => expected.includes(t.name));
         catalogSize = reaTools.length;
         assert.deepEqual(
@@ -192,7 +232,10 @@ await withVerifierCleanup(async () => {
           const skill = tools.find((t) => t.name === "skill");
           assert(skill, "OpenCode must expose its native skill tool");
           skillRequested = true;
-          return call(skill.name, { name: "reverse-engineer-anything" });
+          // OpenCode V2 names the skill argument `id`; V1 accepted `name`.
+          return call(skill.name, {
+            [dialect === "v1" ? "name" : "id"]: "reverse-engineer-anything",
+          });
         }
         assert(
           skillLoaded,
@@ -201,13 +244,50 @@ await withVerifierCleanup(async () => {
         return call(analysis.name, { input_path: target, format: "directory" });
       },
     });
+    // The registration REA's setup writes is the same launcher it selects for
+    // itself. Seeding it keeps the lane on REA's own refresh path and proves
+    // that a client-owned server option survives that refresh.
+    const reaLauncher = currentClientRegistrationCommand({
+      entrypointPath: join(runtimeRoot, "scripts/rea.mjs"),
+      environment,
+      platform: process.platform,
+    });
+    assert.equal(
+      reaLauncher.length,
+      3,
+      "REA must resolve a runtime, entry script and mcp argument",
+    );
+    // OpenCode V2 groups MCP tools behind its Code Mode tool by default. The
+    // lane observes the forwarded catalog as direct function tools, which is
+    // OpenCode's documented `codemode: false` option.
+    const reaServer = {
+      type: "local",
+      command: [...reaLauncher],
+      ...(dialect === "v2" ? { codemode: false } : {}),
+    };
+    const unrelatedServer = {
+      type: "local",
+      command: ["unrelated-server"],
+      ...(dialect === "v2" ? { disabled: true } : { enabled: false }),
+    };
     const original =
       (configFormat === "jsonc" ? "// Keep caller configuration.\n" : "") +
       JSON.stringify(
         {
           autoupdate: false,
-          skills: { paths: [join(account, ".agents", "skills")] },
-          permission: { "*": "allow" },
+          // OpenCode V2 reads additional skill sources as an array.
+          skills:
+            dialect === "v1"
+              ? { paths: [join(account, ".agents", "skills")] }
+              : [join(account, ".agents", "skills")],
+          // OpenCode V2 replaced the V1 permission map with ordered rules.
+          ...(dialect === "v1"
+            ? { permission: { "*": "allow" } }
+            : {
+                permissions: [{ action: "*", resource: "*", effect: "allow" }],
+              }),
+          // No external plugin package may join the verified run.
+          plugins: [],
           provider: {
             "rea-fixture": {
               npm: "@ai-sdk/openai-compatible",
@@ -225,13 +305,12 @@ await withVerifierCleanup(async () => {
               },
             },
           },
-          mcp: {
-            other: {
-              type: "local",
-              command: ["unrelated-server"],
-              enabled: false,
-            },
-          },
+          // OpenCode V2 keeps server names under `mcp.servers`; the V1 table
+          // placed them directly under `mcp`.
+          mcp:
+            dialect === "v2"
+              ? { servers: { other: unrelatedServer, rea: reaServer } }
+              : { other: unrelatedServer, rea: reaServer },
         },
         null,
         2,
@@ -321,6 +400,10 @@ await withVerifierCleanup(async () => {
             "run",
             "--format",
             "json",
+            // The shared background service keeps the environment it started
+            // with, so it would ignore this lane's isolated configuration
+            // directory. A private server reads the redirected one.
+            ...(dialect === "v2" ? ["--standalone"] : []),
             "--model",
             "rea-fixture/rea-client-fixture",
             mode === "chat"
@@ -360,6 +443,7 @@ await withVerifierCleanup(async () => {
       clientVersion,
       mode,
       configFormat,
+      dialect,
       passed,
       artifacts: lab,
       runtimeRoot,
@@ -372,7 +456,14 @@ await withVerifierCleanup(async () => {
         "loopback custom OpenAI-compatible provider; one-million-token fixture capacity and synthetic usage; no live provider claim",
       skillDiscovery:
         "caller-configured isolated shared directory; default OS home discovery unverified",
-      externalPlugins: "disabled through native OPENCODE_PURE",
+      externalPlugins:
+        dialect === "v1"
+          ? "disabled through native OPENCODE_PURE"
+          : "disabled through the OpenCode V2 plugins configuration and a redirected configuration directory without a plugin directory",
+      mcpToolSurface:
+        dialect === "v2"
+          ? "direct function tools through the OpenCode V2 codemode:false server option"
+          : "direct function tools",
       catalogSize,
       schemasChecked,
       evidenceSeen,

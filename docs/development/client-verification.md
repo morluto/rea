@@ -156,18 +156,32 @@ Google API compatibility remains unverified. The lane disables
 the client's memory-based relaunch to preserve the caller's Node heap budget.
 
 `verify:opencode-client` requires an installed OpenCode (verified with
-`opencode-ai@1.18.35`); select it with `REA_VERIFY_OPENCODE_COMMAND`.
-The optional POSIX lane configures isolated XDG roots and `OPENCODE_CONFIG_DIR`,
-checks setup plans, backups, preserved JSONC comments and idempotence, activates
-the installed skill, validates all forwarded input schemas and verifies complete
-JavaScript Evidence for a Unicode path. JSONC is the default fixture; set
+`opencode v2.2.7` on native Windows; POSIX V2 remains unverified; the prior
+`opencode-ai@1.18.35` POSIX result was for OpenCode V1); select it with
+`REA_VERIFY_OPENCODE_COMMAND`. The lane configures isolated XDG roots,
+`OPENCODE_CONFIG_DIR` and a redirected home, checks setup plans, backups,
+preserved JSONC comments and idempotence, activates the installed skill,
+validates all forwarded input schemas and verifies complete JavaScript Evidence
+for a Unicode path. JSONC is the default fixture; set
 `REA_VERIFY_OPENCODE_CONFIG_FORMAT=json` for JSON. Use `-- chat` for ordinary
-chat or `REA_VERIFY_RUNTIME_ROOT` for a production-only installed package.
-The native core runs with external plugins disabled through `OPENCODE_PURE`;
-the local OpenAI-compatible fixture has a caller-declared one-million-token
-context and synthetic usage. Skills use an explicit isolated `skills.paths`
-directory, so default OS-home discovery remains unverified. Live model APIs and
-native Windows are also unverified.
+chat or `REA_VERIFY_RUNTIME_ROOT` for a production-only installed package; the
+expected catalog then comes from that package rather than from this checkout,
+because a checkout can run ahead of the published release.
+The default lane targets OpenCode V2: it registers REA in the native
+`mcp.servers` table, reads additional skill sources from the `skills` array,
+grants tool access with a `permissions` ruleset, and starts a private server so
+the shared background service cannot supply the caller's own configuration.
+OpenCode V2 groups MCP tools behind its Code Mode tool by default, so the lane
+sets the documented `codemode: false` server option to observe the forwarded
+catalog as direct function tools; setup preserves that client-owned option
+across its refresh. Set `REA_VERIFY_OPENCODE_DIALECT=v1` for the OpenCode V1
+dialect, which keeps the legacy `mcp` table, the `skills.paths` map, the
+`permission` map, `OPENCODE_PURE` plugin isolation and the V1 `name` skill
+argument.
+The local OpenAI-compatible fixture has a caller-declared one-million-token
+context and synthetic usage. Skills use an explicit isolated directory, so
+default OS-home discovery remains unverified. Live model APIs and POSIX V2
+coverage are also unverified.
 
 `verify:claude-client` requires installed Claude Code (verified with
 `@anthropic-ai/claude-code@2.1.296` on POSIX and native Windows); select it
