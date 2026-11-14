@@ -103,6 +103,7 @@ export class IsolatedWebBundleAnalyzer {
           "capacity",
           "Another web-bundle capture or analysis owns this admission's source and result reservation",
           { concurrent_web_bundle_analyses: 1 },
+          { measuredExhaustion: true },
         ),
       );
     // Claim the slot before awaiting cleanup so another host cannot pass the check.
@@ -160,6 +161,7 @@ export class IsolatedWebBundleAnalyzer {
             "capacity",
             "This web analyzer already owns an active analysis",
             { concurrent_web_bundle_analyses: 1 },
+            { measuredExhaustion: true },
           ),
         ),
       );

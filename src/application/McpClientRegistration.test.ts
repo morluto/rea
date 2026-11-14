@@ -246,7 +246,7 @@ it("uses Cline's literal fallback for an empty POSIX HOME and refuses unknown sy
   );
 });
 
-it("selects Goose and Zed native settings paths for their platforms and overrides", async () => {
+it("selects Goose, Zed and Cline extension native settings paths for their platforms and overrides", async () => {
   const cases = [
     {
       agent: "goose",
@@ -277,6 +277,28 @@ it("selects Goose and Zed native settings paths for their platforms and override
       platform: "linux" as const,
       environment: { XDG_CONFIG_HOME: "/custom" },
       expected: "/custom/zed/settings.json",
+    },
+    // Zed's dirs::config_dir ignores a relative XDG_CONFIG_HOME.
+    {
+      agent: "zed",
+      platform: "linux" as const,
+      environment: { XDG_CONFIG_HOME: "relative" },
+      expected: "/home/user/.config/zed/settings.json",
+    },
+    // The Cline extension stores settings in VS Code's selected user data.
+    {
+      agent: "cline",
+      platform: "linux" as const,
+      environment: { VSCODE_APPDATA: "/vscode-data" },
+      expected:
+        "/vscode-data/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+    },
+    {
+      agent: "cline",
+      platform: "darwin" as const,
+      environment: { VSCODE_PORTABLE: "/portable" },
+      expected:
+        "/portable/user-data/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
     },
   ];
   for (const { agent, platform, environment, expected } of cases) {

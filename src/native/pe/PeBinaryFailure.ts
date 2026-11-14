@@ -1,3 +1,4 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectSelectedArtifactFileFailure,
   stableArtifactInputFailure,
@@ -13,18 +14,13 @@ import {
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
   type ResourceConstraintRecovery,
   cancelledBy,
   carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import {
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
 
 interface PeBinaryInput {
   readonly path: string;
@@ -77,21 +73,8 @@ const peBinaryFailurePrimary = <Limit extends string>(
       { cause, ...options.limitRecovery(limit) },
     );
   }
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          operation,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(operation, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(operation, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure

@@ -59,6 +59,30 @@ it("accepts only JSON whitespace around each object", () => {
   );
 });
 
+it("accepts previously recorded rows that omit newly added unknown-key fields", () => {
+  const bytes = appleIpsBytes();
+  const current = parseAppleIps(bytes, artifact(bytes), input);
+  expect(current.threads.length).toBeGreaterThan(0);
+  expect(current.threads[0]?.frames.length).toBeGreaterThan(0);
+  expect(current.images.length).toBeGreaterThan(0);
+  const historical = {
+    ...current,
+    threads: current.threads.map(
+      ({ unlisted_keys: _threadKeys, ...thread }) => ({
+        ...thread,
+        frames: thread.frames.map(
+          ({ unlisted_keys: _frameKeys, ...frame }) => frame,
+        ),
+      }),
+    ),
+    images: current.images.map(
+      ({ unlisted_keys: _imageKeys, ...image }) => image,
+    ),
+  };
+  expect(appleIpsSchema.safeParse(historical).success).toBe(true);
+  expect(appleIpsSchema.safeParse(current).success).toBe(true);
+});
+
 it.each([
   "not-a-uuid",
   "Z".repeat(32),

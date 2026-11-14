@@ -467,7 +467,7 @@ const appleDispatchMetadataPrimaryFailure = (
         {
           cause,
           remediationAction:
-            cause.kind === "malformed"
+            cause.kind !== "unsupported"
               ? "Select a Mach-O artifact with well-formed metadata sections, reopen the target, then retry."
               : "Select a supported little-endian 64-bit Mach-O artifact, reopen the target, then retry.",
         },
