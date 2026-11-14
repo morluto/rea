@@ -6461,6 +6461,7 @@ it("refuses a changed installation before creating a target-bound native client"
       "installation version differs from the selected analysis profile",
     );
     expect(projected.remediation.action).toContain("Reopen the target");
+    expect(projected.remediation.action).toContain("close_binary");
     expect(projected.remediation.action).not.toContain("doctor");
     expect(client.reuseReadiness?.()).toBe("blocked");
     expect(nativeCreates).toBe(0);

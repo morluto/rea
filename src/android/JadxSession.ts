@@ -52,7 +52,7 @@ import {
 } from "./JadxRelease.js";
 
 const JADX_REPORTED_FAILURE_REMEDIATION =
-  "jadx is running and reported this failure for the selected input, so provider readiness checks cannot repair it. Review details.diagnostics.reason, then select a different class, method or representation. Repeating the unchanged request is not expected to succeed.";
+  "jadx is running and reported this failure for the selected input, so provider readiness checks cannot repair it. Review details.diagnostics.reason and adjust the input or request if applicable. Repeating the unchanged request is not expected to succeed.";
 
 type JadxCall = {
   readonly operation: string;

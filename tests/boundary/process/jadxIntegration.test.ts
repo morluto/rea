@@ -1403,6 +1403,9 @@ it("does not send a jadx-reported request failure to doctor", async () => {
     });
     expect(projected.message).toContain("jadx reported an error");
     expect(projected.message).toContain("details.diagnostics.reason");
+    expect(projected.remediation.action).not.toMatch(
+      /different class|method or representation/u,
+    );
     for (const text of [projected.message, projected.remediation.action])
       expect(text).not.toContain("doctor");
     await verifyCleanup(launches);

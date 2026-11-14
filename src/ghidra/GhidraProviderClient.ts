@@ -291,7 +291,7 @@ const emptyReferenceCaveat = (
 };
 
 const GHIDRA_PROFILE_CONFLICT_REMEDIATION =
-  "Reopen the target with open_binary, or rerun the CLI command, so REA resolves a fresh Ghidra analysis profile from the current configuration and target. Repeating the request against the committed profile is not expected to succeed.";
+  "Reopen the target with open_binary after calling close_binary and resolving any cleanup failure, or rerun the CLI command, so REA resolves a fresh Ghidra analysis profile from the current configuration and target. Repeating the request against the committed profile is not expected to succeed.";
 
 /**
  * The committed analysis profile no longer matches the configuration,
