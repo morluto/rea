@@ -1,3 +1,8 @@
+import {
+  apkSigningPairEnd,
+  APK_SIGNING_BLOCK_MAX_PAIRS,
+} from "../domain/apkSignature/apkSigningBlock.js";
+
 /** One central-directory record's claim on the member region before the directory. */
 export interface ZipLocalRecord {
   /** Offset of the record's local file header. */
@@ -71,32 +76,8 @@ export const accountZipMemberRegion = async (
   let descriptor: ZipLocalRecord | undefined;
   const gap = async (end: number) => {
     if (end <= cursor) return;
-    if (
-      descriptor !== undefined &&
-      descriptor.crc32 !== undefined &&
-      end - cursor >= 12
-    ) {
-      const signature =
-        (await view(cursor, 4)).getUint32(0, true) ===
-        DATA_DESCRIPTOR_SIGNATURE;
-      const size = (descriptor.zip64 ? 20 : 12) + (signature ? 4 : 0);
-      if (end - cursor >= size) {
-        const data = await view(cursor, size);
-        const start = signature ? 4 : 0;
-        const compressed = descriptor.zip64
-          ? data.getBigUint64(start + 4, true)
-          : BigInt(data.getUint32(start + 4, true));
-        const uncompressed = descriptor.zip64
-          ? data.getBigUint64(start + 12, true)
-          : BigInt(data.getUint32(start + 8, true));
-        if (
-          data.getUint32(start, true) === descriptor.crc32 &&
-          compressed === BigInt(descriptor.compressedSize) &&
-          uncompressed === BigInt(descriptor.uncompressedSize)
-        )
-          cursor += size;
-      }
-    }
+    if (descriptor !== undefined)
+      cursor += await dataDescriptorBytes(descriptor, cursor, end, view);
     descriptor = undefined;
     const size = end - cursor;
     if (size <= 0) return;
@@ -136,6 +117,41 @@ export const accountZipMemberRegion = async (
   };
 };
 
+/**
+ * The bytes of the record's data descriptor at `at`, or 0 when none matches.
+ * The descriptor signature is optional and an unsigned descriptor's CRC may
+ * equal it, so both layouts are tried against the recorded CRC and sizes.
+ */
+const dataDescriptorBytes = async (
+  record: ZipLocalRecord,
+  at: number,
+  end: number,
+  view: (offset: number, length: number) => Promise<DataView>,
+): Promise<number> => {
+  if (record.crc32 === undefined) return 0;
+  const body = record.zip64 ? 20 : 12;
+  const signed =
+    end - at >= body + 4 &&
+    (await view(at, 4)).getUint32(0, true) === DATA_DESCRIPTOR_SIGNATURE;
+  for (const prefix of signed ? [4, 0] : [0]) {
+    if (end - at < prefix + body) continue;
+    const data = await view(at + prefix, body);
+    const compressed = record.zip64
+      ? data.getBigUint64(4, true)
+      : BigInt(data.getUint32(4, true));
+    const uncompressed = record.zip64
+      ? data.getBigUint64(12, true)
+      : BigInt(data.getUint32(8, true));
+    if (
+      data.getUint32(0, true) === record.crc32 &&
+      compressed === BigInt(record.compressedSize) &&
+      uncompressed === BigInt(record.uncompressedSize)
+    )
+      return prefix + body;
+  }
+  return 0;
+};
+
 /** Where a well-formed APK signing block ending at the directory starts, else the directory. */
 const apkSigningBlockStart = async (
   cursor: number,
@@ -171,7 +187,3 @@ const apkSigningBlockStart = async (
   }
   return Number(start);
 };
-import {
-  apkSigningPairEnd,
-  APK_SIGNING_BLOCK_MAX_PAIRS,
-} from "../domain/apkSignature/apkSigningBlock.js";

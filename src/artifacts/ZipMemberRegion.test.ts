@@ -189,6 +189,43 @@ describe("ZIP listing coverage against the member region", () => {
       firstUnaccountedOffset: local.length + descriptor.length,
     });
   });
+
+  it("accounts for an unsigned data descriptor whose CRC equals the descriptor signature", async () => {
+    const first = member("a.txt");
+    const local = localEntry(first);
+    // CRC 0x08074b50 makes the unsigned descriptor start with the signature bytes.
+    const descriptor = Buffer.alloc(12);
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(first.data.length, 4);
+    descriptor.writeUInt32LE(first.data.length, 8);
+    const bytes = Buffer.concat([local, descriptor]);
+    const records = [
+      {
+        offset: 0,
+        compressedSize: first.data.length,
+        uncompressedSize: first.data.length,
+        crc32: 0x08074b50,
+        zip64: false,
+        dataDescriptor: true,
+      },
+    ];
+    expect(
+      await accountZipMemberRegion(records, bytes.length, async (at, length) =>
+        bytes.subarray(at, at + length),
+      ),
+    ).toMatchObject({ unaccountedBytes: 0, unaccountedRanges: 0 });
+    // With room for a signed layout, the unsigned layout still matches.
+    const padded = Buffer.concat([bytes, Buffer.alloc(4)]);
+    expect(
+      await accountZipMemberRegion(records, padded.length, async (at, length) =>
+        padded.subarray(at, at + length),
+      ),
+    ).toMatchObject({
+      unaccountedBytes: 4,
+      unaccountedRanges: 1,
+      firstUnaccountedOffset: bytes.length,
+    });
+  });
 });
 
 describe("ZIP listing coverage from the central directory", () => {
