@@ -114,6 +114,15 @@ export const ghidraNotInProcedureLimitation = (
 ): string =>
   `Ghidra has no function at or containing this address in this session. This reflects the current function inventory, not proof that the address holds no code. ${ghidraFunctionSeedRecovery(source)}`;
 
+/**
+ * Attached to a not-in-listing instruction: Ghidra attempted no decode, so the
+ * answer does not show the bytes are data. Names the `code` seed recovery.
+ */
+export const ghidraNotInListingLimitation = (
+  source: GhidraSessionSource,
+): string =>
+  `Ghidra's listing has no instruction or defined data at this address in this session, so no decode was attempted; this is not proof that the bytes are not code. If they are initialized code that auto-analysis did not reach, declare the address as a \`code\` seed, or a \`function\` seed for an entry point, in REA_GHIDRA_SEED_FILE for a new REA process${seedSessionRestriction[source]}; that session's seed outcome limitation counts decoded, failed and unmapped seeds.`;
+
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
   operation: string,
