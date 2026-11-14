@@ -17,6 +17,7 @@ import {
   webBundleScriptAnalysisSchema,
   type WebBundleScriptAnalysis,
 } from "./webBundleScriptAnalysis.js";
+import { appendAll } from "./appendAll.js";
 
 export const buildCapturedWebBundleAnalysis = (
   inspection: WebPageInspection,
@@ -199,10 +200,6 @@ export const buildCapturedWebBundleAnalysis = (
     }),
     limitations: bundleLimitations(),
   });
-};
-
-const appendAll = <T>(target: T[], items: readonly T[]): void => {
-  for (const item of items) target.push(item);
 };
 
 const mergeScriptResults = (
