@@ -617,6 +617,29 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
+describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an apt release the check cannot reach",
+  () => {
+    it("says the release files could not be checked rather than that apt holds none", async () => {
+      const { root, inspect } = await vendorFixture();
+      const lists = join(root, "lists");
+      await chmod(lists, 0o000);
+      try {
+        const result = await inspect();
+        if (!result.ok) throw new Error(result.error.reason);
+        const repository = result.value.inventory.package.apt_repositories?.[0];
+
+        expect(repository).toMatchObject({
+          signing_key: null,
+          signing_key_reason: `apt's release files for it in ${lists} could not be checked`,
+        });
+      } finally {
+        await chmod(lists, 0o755);
+      }
+    });
+  },
+);
+
 describe.skipIf(process.platform === "win32")("library packages", () => {
   it("keeps the library packages the Ubuntu archive offers and sets aside the rest", async () => {
     const vendor = await inspected();
