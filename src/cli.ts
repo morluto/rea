@@ -14,6 +14,7 @@ import * as reverseEngineeringModule from "./cli/reverseEngineeringCommands.js";
 import * as cutterModule from "./cli/cutterCommands.js";
 import * as utilityModule from "./cli/utilityCommands.js";
 import * as binaryDiagnosticsModule from "./cli/binaryDiagnosticsCommands.js";
+import * as canonicalizeModule from "./cli/canonicalizeCommands.js";
 import * as wasmModule from "./cli/wasmCommands.js";
 import * as apkSignatureModule from "./cli/apkSignatureCommands.js";
 import * as captureModule from "./cli/captureCommands.js";
@@ -70,6 +71,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   cutter: cutterModule,
   utility: utilityModule,
   binaryDiagnostics: binaryDiagnosticsModule,
+  canonicalize: canonicalizeModule,
   wasm: wasmModule,
   apkSignature: apkSignatureModule,
   capture: captureModule,

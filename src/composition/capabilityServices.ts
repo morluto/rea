@@ -82,6 +82,7 @@ import {
   createKernelModuleService,
   createKernelBuildConfigService,
 } from "./binaryDiagnostics.js";
+import { createCanonicalizeService } from "./canonicalize.js";
 import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
@@ -363,6 +364,7 @@ const modules = {
   nativeExports: service(() => createNativeExportsService()),
   devicetree: service(() => createDevicetreeService()),
   elfNotes: service(() => createElfNotesService()),
+  canonicalizeArtifact: service(() => createCanonicalizeService()),
   nativeInitializers: service(() => createNativeInitializersService()),
   elfUnwindRanges: service(() => createElfUnwindRangesService()),
   appleIps: service(() => createAppleIpsService()),

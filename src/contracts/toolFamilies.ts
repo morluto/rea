@@ -10,6 +10,7 @@ import { RUST_TOOL_CONTRACTS } from "./rust/rustToolContracts.js";
 import { SQLITE_TOOL_CONTRACTS } from "./sqlite/sqliteToolContracts.js";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "./analysisViewToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "./native/binaryDiagnosticsToolContracts.js";
+import { CANONICALIZE_TOOL_CONTRACTS } from "./canonicalize/canonicalizeToolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "./native/nativeToolContracts.js";
 import { CUTTER_TOOL_CONTRACTS } from "./cutterToolContracts.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "./reverseEngineeringToolContracts.js";
@@ -62,6 +63,7 @@ export const TOOL_CONTRACT_GROUPS = {
   APPLICATION_TOOL_CONTRACTS,
   ARTIFACT_TOOL_CONTRACTS,
   BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  CANONICALIZE_TOOL_CONTRACTS,
   BROWSER_PROVIDER_TOOL_CONTRACTS,
   BROWSER_SCENARIO_TOOL_CONTRACTS,
   BROWSER_TOOL_CONTRACTS,
@@ -136,6 +138,7 @@ export const TOOL_FAMILY_DEFINITIONS = [
     contracts: [
       ...TOOL_CONTRACT_GROUPS.NATIVE_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+      ...TOOL_CONTRACT_GROUPS.CANONICALIZE_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.CUTTER_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.REVERSE_ENGINEERING_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.GDB_TOOL_CONTRACTS,
