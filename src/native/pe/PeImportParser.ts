@@ -297,7 +297,9 @@ export const parsePeImports = async (
       }
       const hintNameRva = Number(thunk);
       try {
-        const hintAt = map(hintNameRva, 3);
+        // The two-byte hint and the separately mapped name may occupy adjacent
+        // RVA sections with different file translations.
+        const hintAt = map(hintNameRva, 2);
         const hint = reader.u16(hintAt);
         const name = cString(hintNameRva + 2);
         retain(name);
