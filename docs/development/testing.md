@@ -324,6 +324,8 @@ Waits follow the same policy; Vitest's one-second `expect.poll` and
 test may run, less the reporting reserve: projects configure `expect.poll`
 that way, and `waitFor` from `tests/support/testWait.ts` replaces `vi.waitFor`.
 Fixture waits such as `awaitAcknowledgement` default to the same deadline.
+`expect.poll` keeps its project's budget in a `long-running` test, while
+`waitFor` follows the deadline the tag applies.
 `rea/project-wait-deadline` rejects `vi.waitFor` and explicit poll timeouts. When promptness is the behavior under test, such as
 cancellation that must preempt a slower production deadline, a wait timeout is
 not its oracle: order the condition before releasing the gate that would

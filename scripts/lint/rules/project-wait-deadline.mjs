@@ -47,15 +47,26 @@ const isVitestMethod = (sourceCode, callee, receiver, method) => {
   );
 };
 
-/** A wait timeout written at the call: a number, or an options `timeout`. */
+const keyName = (property) => {
+  if (!property.computed) return property.key.name ?? property.key.value;
+  return property.key.type === "Literal" ? property.key.value : undefined;
+};
+
+/**
+ * A wait timeout the call may set: a number or other non-literal options, an
+ * options `timeout` (including a literal computed key), or a spread whose
+ * properties the rule cannot see.
+ */
 const explicitTimeout = (options) => {
   if (options === undefined) return undefined;
   if (options.type !== "ObjectExpression") return options;
   return options.properties.find(
     (property) =>
-      property.type === "Property" &&
-      !property.computed &&
-      (property.key.name ?? property.key.value) === "timeout",
+      property.type === "SpreadElement" ||
+      (property.type === "Property" &&
+        (property.computed && property.key.type !== "Literal"
+          ? true
+          : keyName(property) === "timeout")),
   );
 };
 
