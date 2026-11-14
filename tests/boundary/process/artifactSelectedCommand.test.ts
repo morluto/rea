@@ -51,7 +51,7 @@ it.skipIf(process.platform === "win32").each(["tshark", "sigrok"] as const)(
       limiterSource = join(libexec, "limiter");
     const replacement = join(libexec, "replacement");
     const script =
-      '#!/bin/sh\nselected="${0%/*}/${0##*/}"\nIFS= read -r role < "$selected.role" || exit 19\nif [ "$role" = limiter ]; then\n  if [ -f "$selected.retarget" ]; then\n    IFS= read -r target < "$selected.retarget"\n    /bin/ln -sf "$target" "$0"\n  fi\n  while [ "$1" != -- ]; do shift; done\n  shift\n  exec "$@"\nfi\nif [ "$1" = --version ]; then\n  if [ "$role" = tshark ]; then printf "TShark (Wireshark) 4.6.9\\n"; else printf "sigrok-cli 0.7.2\\nlibsigrokdecode 0.5.3\\n"; fi\nelse\n  if [ "$role" = tshark ]; then printf "P\\tInternet Protocol\\tip\\n"; else printf "Supported protocol decoders:\\n  uart  UART\\n"; fi\nfi\n';
+      '#!/bin/sh\nselected="${0%/*}/${0##*/}"\nIFS= read -r role < "$selected.role" || exit 19\nif [ "$role" = limiter ]; then\n  case "$1" in --version) printf "prlimit from util-linux 2.39.3\\n"; exit 0;; --help) printf " --as --fsize --cpu --core\\n"; exit 0;; esac\n  if [ -f "$selected.retarget" ]; then\n    IFS= read -r target < "$selected.retarget"\n    /bin/ln -sf "$target" "$0"\n  fi\n  while [ "$1" != -- ]; do shift; done\n  shift\n  exec "$@"\nfi\nif [ "$1" = --version ]; then\n  if [ "$role" = tshark ]; then printf "TShark (Wireshark) 4.6.9\\n"; else printf "sigrok-cli 0.7.2\\nlibsigrokdecode 0.5.3\\n"; fi\nelse\n  if [ "$role" = tshark ]; then printf "P\\tInternet Protocol\\tip\\n"; else printf "Supported protocol decoders:\\n  uart  UART\\n"; fi\nfi\n';
     for (const path of [commandSource, limiterSource, replacement]) {
       await writeFile(path, script);
       await chmod(path, 0o755);

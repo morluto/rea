@@ -14,7 +14,6 @@ import {
   FIELD_RECORD_BUDGET,
 } from "./parseFieldDiscovery.js";
 import {
-  prlimitArgumentVector,
   readLinuxResourceLimits,
   type LinuxResourceLimits,
 } from "../process/LinuxResourceLimits.js";
@@ -22,7 +21,7 @@ import { parsePacketOutput } from "./parsePacketOutput.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, writeFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import {
   createAnalysisExecution,
   type AnalysisExecution,
@@ -73,9 +72,15 @@ import {
   parseWiresharkVersion,
   selectWiresharkTool,
 } from "../pcap/PcapConfiguration.js";
+import { prepareLinuxLimiter } from "../pcap/PcapNativeBound.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "inspect_packet_capture";
+/** Fixed budgets for each limiter probe (`--version`, `--help`). */
+const LIMITER_PROBE_LIMITS = {
+  command_timeout_ms: 20_000,
+  output_bytes: 64 * 1024,
+} as const;
 
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
@@ -174,32 +179,102 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         options?.signal,
       );
       const tool = wiresharkExecutableIdentity(toolSnapshot);
-      const configuredLimiter =
-        this.environment.REA_TSHARK_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
-      if (!isAbsolute(configuredLimiter))
-        throw new Error("REA_TSHARK_PRLIMIT_COMMAND must be absolute.");
-      const selectedLimiter = await selectArtifactCommandPath(
-        configuredLimiter,
-        options?.signal,
-      );
-      const limiter = selectedLimiter.resolvedPath;
-      await access(limiter, constants.X_OK);
+      phase = "workspace";
+      const runtime = await this.createRuntime();
+      root = runtime;
+      this.#resources.retain(runtime, undefined);
+      const snapshotPath = join(runtime.path, "capture");
+      const configurationPath = join(runtime.path, "configuration");
+      await mkdir(configurationPath, { mode: 0o700 });
+      phase = "configuration";
+      // Probe inside the runtime so a probe whose cleanup failed stays owned.
+      const limiter = await prepareLinuxLimiter({
+        environment: this.environment,
+        resources: this.#resources,
+        probe: async (selected, arguments_) => {
+          await assertArtifactCommandPath(selected, operation, {
+            signal: options?.signal,
+          });
+          const output = await runOwnedCommand(
+            {
+              command: selected.invocationPath,
+              arguments: arguments_,
+              cwd: runtime.path,
+              expectedCommand: null,
+              runId: `rea-tshark-${randomUUID()}`,
+              hostEnvironment: this.environment,
+            },
+            {
+              timeoutMs: LIMITER_PROBE_LIMITS.command_timeout_ms,
+              diagnosticBytes: LIMITER_PROBE_LIMITS.output_bytes,
+            },
+            {
+              ...(options?.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+              ...(this.launcher === undefined
+                ? {}
+                : { launcher: this.launcher }),
+            },
+          ).catch((cause: unknown) => {
+            if (
+              cause instanceof OwnedCommandFailure &&
+              cause.cleanupOwner !== undefined
+            )
+              this.#resources.retain(runtime, cause.cleanupOwner);
+            // Keep the failed probe's own output and reason, as pcap's runner does.
+            throw cause instanceof OwnedCommandFailure
+              ? this.#resources.commandFailure(
+                  cause,
+                  LIMITER_PROBE_LIMITS,
+                  undefined,
+                  operation,
+                )
+              : cause;
+          });
+          const probeOutput = artifactCommandOutput(output);
+          await assertArtifactCommandPath(selected, operation, {
+            capturedOutput: probeOutput,
+          });
+          const invalidUtf8Streams = [
+            ...(output.stdout.invalidUtf8 ? ["stdout"] : []),
+            ...(output.stderr.invalidUtf8 ? ["stderr"] : []),
+          ];
+          if (invalidUtf8Streams.length > 0)
+            throw new AnalysisOutputError(
+              operation,
+              "Limiter output is not valid UTF-8; retained text contains replacement characters.",
+              {
+                capturedOutput: probeOutput,
+                diagnostics: {
+                  stage: "limiter",
+                  invalid_utf8_streams: invalidUtf8Streams,
+                },
+              },
+            );
+          return { stdout: output.stdout.text, capturedOutput: probeOutput };
+        },
+        signal: options?.signal,
+        operation,
+        ceilings: {
+          address_space_bytes: limits.address_space_bytes,
+          file_bytes: limits.file_bytes,
+          cpu_seconds: limits.cpu_seconds,
+        },
+        provider: TSHARK_PROVIDER_IDENTITY.id,
+      });
+      const selectedLimiter = limiter.command;
+      const limiterPath = selectedLimiter.resolvedPath;
       const limiterIdentity = await this.#resources.read(
-        limiter,
+        limiterPath,
         64 * 1024 * 1024,
         options?.signal,
       );
-      effectiveLimits = await this.#resources.readLimits(limits);
-      const limitArguments = prlimitArgumentVector(
-        effectiveLimits,
+      effectiveLimits = limiter.limits;
+      const limitArguments = [
+        ...limiter.arguments,
         selectedCommand.invocationPath,
-      );
-      phase = "workspace";
-      root = await this.createRuntime();
-      this.#resources.retain(root, undefined);
-      const snapshotPath = join(root.path, "capture");
-      const configurationPath = join(root.path, "configuration");
-      await mkdir(configurationPath, { mode: 0o700 });
+      ];
       const execute = async (args: readonly string[]) => {
         capturedOutput = undefined;
         await assertArtifactCommandPath(selectedCommand, operation, {
@@ -212,7 +287,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           {
             command: selectedLimiter.invocationPath,
             arguments: [...limitArguments, ...args],
-            ...(root === undefined ? {} : { cwd: root.path }),
+            cwd: runtime.path,
             expectedCommand: null,
             runId: `rea-tshark-${randomUUID()}`,
             hostEnvironment: {
@@ -241,7 +316,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         });
         const current = await this.#resources.readCommandAfterRun(
           command,
-          { path: limiter, sha256: limiterIdentity.sha256 },
+          { path: limiterPath, sha256: limiterIdentity.sha256 },
           capturedOutput,
           operation,
         );
@@ -283,7 +358,6 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           );
         return output;
       };
-      phase = "configuration";
       const version = await execute(["--version"]);
       if (parseWiresharkVersion(version.stdout.text, "tshark") === null)
         throw new Error(
@@ -301,8 +375,8 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           arguments: [...args],
         },
         resource_limiter: {
-          configured_path: configuredLimiter,
-          path: limiter,
+          configured_path: limiter.configured,
+          path: limiterPath,
           sha256: limiterIdentity.sha256,
           arguments: limitArguments,
         },

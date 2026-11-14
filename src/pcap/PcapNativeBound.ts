@@ -17,7 +17,11 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import type { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResources.js";
-import { prlimitCeilingArguments } from "../process/LinuxResourceLimits.js";
+import {
+  prlimitCeilingArguments,
+  type LinuxResourceLimits,
+} from "../process/LinuxResourceLimits.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { runPcapCommand } from "./PcapCommand.js";
 import type { ArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 
@@ -27,41 +31,34 @@ const PCAP_LIMITER_REMEDIATION = `Check that ${PRLIMIT_COMMAND_ENV} (default /us
 /** Capture CPU ceiling, in seconds. */
 const PCAP_CPU_SECONDS = 300;
 
-/** Own native capture admission and the exact enforced resource profile. */
-export const preparePcapNativeBound = async (
-  environment: Readonly<Record<string, string | undefined>>,
-  resources: ArtifactAnalysisResources,
-  probe: (
-    selected: ArtifactCommandPath,
-    arguments_: string[],
-  ) => Promise<{
-    readonly stdout: string;
-    readonly capturedOutput: AnalysisCapturedOutput;
-  }>,
-  signal?: AbortSignal,
-  operation:
-    | "inspect_pcap_client"
-    | "inspect_pcap_capture" = "inspect_pcap_capture",
-): Promise<{
-  nativeBound: NonNullable<Parameters<typeof runPcapCommand>[0]["nativeBound"]>;
-  limitations: readonly string[];
+/** Answers one limiter probe (`--version` or `--help`) through the caller's owned runner. */
+type LimiterProbe = (
+  selected: ArtifactCommandPath,
+  arguments_: string[],
+) => Promise<{
+  readonly stdout: string;
+  readonly capturedOutput: AnalysisCapturedOutput;
+}>;
+
+/**
+ * Admit the selected util-linux prlimit and pin the caller's ceilings.
+ * Both TShark families share this; callers check the host first.
+ */
+export const prepareLinuxLimiter = async (admission: {
+  readonly environment: Readonly<Record<string, string | undefined>>;
+  readonly resources: ArtifactAnalysisResources;
+  readonly probe: LimiterProbe;
+  readonly signal?: AbortSignal | undefined;
+  readonly operation: string;
+  readonly ceilings: LinuxResourceLimits;
+  readonly provider: string;
+}): Promise<{
+  readonly configured: string;
+  readonly command: ArtifactCommandPath;
+  readonly limits: LinuxResourceLimits;
+  readonly arguments: string[];
 }> => {
-  if (process.platform === "win32") {
-    return {
-      nativeBound: {
-        memoryLimitBytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
-      },
-      limitations: [
-        "Each owned Windows tool tree has a 1 GiB Job Object committed-memory limit; this is not a machine-wide quota.",
-      ],
-    };
-  }
-  if (!pcapCaptureHostSupported(process.platform)) {
-    const reason = PCAP_CAPTURE_UNSUPPORTED_HOST_REASON;
-    throw new AnalysisCapabilityUnavailableError("pcap", operation, reason, {
-      userMessage: reason,
-    });
-  }
+  const { environment, resources, probe, signal, operation } = admission;
   const configured = environment[PRLIMIT_COMMAND_ENV] ?? "/usr/bin/prlimit";
   let probeFailure: AnalysisError | undefined;
   let capturedOutput: AnalysisCapturedOutput | undefined;
@@ -108,22 +105,17 @@ export const preparePcapNativeBound = async (
       if (!new RegExp(`(?:^|\\s)${flag}(?:[=\\[\\s,]|$)`, "u").test(help))
         throw new Error(`The selected limiter does not advertise ${flag}.`);
     }
-    const limits = await resources.readLimits({
-      address_space_bytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
-      file_bytes: BOUNDED_PRODUCER_LIMITS.file_bytes,
-      cpu_seconds: PCAP_CPU_SECONDS,
-    });
-    const nativeBound = {
-      limiter: {
-        command: selection,
-        arguments: prlimitCeilingArguments(limits),
-      },
+    const limits = await resources.readLimits(admission.ceilings);
+    return {
+      configured,
+      command: selection,
+      limits,
+      arguments: prlimitCeilingArguments(limits),
     };
-    const limitations = [
-      `Linux prlimit preserves stricter inherited ceilings: ${limits.address_space_bytes} bytes of per-process address space, ${limits.file_bytes} bytes per file and ${limits.cpu_seconds} CPU seconds; core dumps are disabled. These are not aggregate machine quotas.`,
-    ];
-    return { nativeBound, limitations };
   } catch (cause) {
+    // An unclosed descriptor is a cleanup fact the caller retains, not a limiter fault.
+    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
+      throw cause;
     if (signal?.aborted === true && !(cause instanceof AnalysisError))
       throw new AnalysisCancelledError(operation, {
         cause: signal.reason,
@@ -131,16 +123,74 @@ export const preparePcapNativeBound = async (
     if (cause instanceof AnalysisError) throw cause;
     const reason =
       "Cannot establish the selected Linux resource limiter before processing capture bytes.";
-    throw new AnalysisCapabilityUnavailableError("pcap", operation, reason, {
-      cause,
-      capturedOutput: probeFailure?.capturedOutput ?? capturedOutput,
-      diagnostics: {
-        ...probeFailure?.diagnostics,
-        configuration_key: PRLIMIT_COMMAND_ENV,
-        configured,
+    throw new AnalysisCapabilityUnavailableError(
+      admission.provider,
+      operation,
+      reason,
+      {
+        cause,
+        capturedOutput: probeFailure?.capturedOutput ?? capturedOutput,
+        diagnostics: {
+          ...probeFailure?.diagnostics,
+          configuration_key: PRLIMIT_COMMAND_ENV,
+          configured,
+        },
+        userMessage: `${reason} (${cause instanceof Error ? cause.message : String(cause)}) ${PCAP_LIMITER_REMEDIATION}`,
+        remediationAction: PCAP_LIMITER_REMEDIATION,
       },
-      userMessage: `${reason} (${cause instanceof Error ? cause.message : String(cause)}) ${PCAP_LIMITER_REMEDIATION}`,
-      remediationAction: PCAP_LIMITER_REMEDIATION,
+    );
+  }
+};
+
+/** Own native capture admission and the exact enforced resource profile. */
+export const preparePcapNativeBound = async (
+  environment: Readonly<Record<string, string | undefined>>,
+  resources: ArtifactAnalysisResources,
+  probe: LimiterProbe,
+  signal?: AbortSignal,
+  operation:
+    | "inspect_pcap_client"
+    | "inspect_pcap_capture" = "inspect_pcap_capture",
+): Promise<{
+  nativeBound: NonNullable<Parameters<typeof runPcapCommand>[0]["nativeBound"]>;
+  limitations: readonly string[];
+}> => {
+  if (process.platform === "win32") {
+    return {
+      nativeBound: {
+        memoryLimitBytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
+      },
+      limitations: [
+        "Each owned Windows tool tree has a 1 GiB Job Object committed-memory limit; this is not a machine-wide quota.",
+      ],
+    };
+  }
+  if (!pcapCaptureHostSupported(process.platform)) {
+    const reason = PCAP_CAPTURE_UNSUPPORTED_HOST_REASON;
+    throw new AnalysisCapabilityUnavailableError("pcap", operation, reason, {
+      userMessage: reason,
     });
   }
+  const limiter = await prepareLinuxLimiter({
+    environment,
+    resources,
+    probe,
+    signal,
+    operation,
+    ceilings: {
+      address_space_bytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
+      file_bytes: BOUNDED_PRODUCER_LIMITS.file_bytes,
+      cpu_seconds: PCAP_CPU_SECONDS,
+    },
+    provider: "pcap",
+  });
+  const { limits } = limiter;
+  return {
+    nativeBound: {
+      limiter: { command: limiter.command, arguments: limiter.arguments },
+    },
+    limitations: [
+      `Linux prlimit preserves stricter inherited ceilings: ${limits.address_space_bytes} bytes of per-process address space, ${limits.file_bytes} bytes per file and ${limits.cpu_seconds} CPU seconds; core dumps are disabled. These are not aggregate machine quotas.`,
+    ],
+  };
 };

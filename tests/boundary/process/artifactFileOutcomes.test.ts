@@ -78,7 +78,8 @@ const createFileOutcomeFixture = async ({
     command,
     kind === "signal"
       ? "if(process.argv.includes('--version')) console.log('sigrok-cli 0.7.2\\nlibsigrokdecode 0.5.3'); else console.log('annotation');"
-      : "if(process.argv.includes('--version')) console.log('TShark (Wireshark) 4.6.9 (fixture)'); else console.log('[]');",
+      : // Limiter probes run without the prlimit `--` terminator.
+        `if(!process.argv.includes('--')) console.log(process.argv.includes('--help') ? ' --as --fsize --cpu --core' : ${JSON.stringify(`${basename(limiter)} from util-linux 2.39.3`)}); else if(process.argv.includes('--version')) console.log('TShark (Wireshark) 4.6.9 (fixture)'); else console.log('[]');`,
     { mode: 0o700 },
   );
   const physical =
@@ -270,7 +271,8 @@ it.each(fileOutcomeControls)(
         });
         expect(result.error).toMatchObject({ operation, capturedOutput });
         expect(fixture.caller.signal.reason).toBe(fixture.cancellationReason);
-        expect(fixture.launches).toBe(2);
+        // Packet inspection first probes the limiter's version and help.
+        expect(fixture.launches).toBe(kind === "signal" ? 2 : 4);
         expect(result.error.cleanupResources).toEqual([
           fixture.privateCopyPath,
           fixture.runtimeRoot.path,
@@ -300,7 +302,7 @@ it.each(fileOutcomeControls)(
         });
         expect(result.error).toMatchObject({ operation, capturedOutput });
         expect(fixture.caller.signal.reason).toBe(fixture.cancellationReason);
-        expect(fixture.launches).toBe(1);
+        expect(fixture.launches).toBe(kind === "signal" ? 1 : 3);
         expect(fixture.commandReads).toBe(2);
         expect(fixture.limiterReads).toBe(2);
         if (fixture.runtimeRoot === undefined)
