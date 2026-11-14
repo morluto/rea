@@ -22,6 +22,7 @@ export const ADVERTISED_INPUT_DIALECT_BASELINE: Readonly<
     "input keyword prefixItems": 2,
     "input keyword propertyNames": 3,
     "input keyword uniqueItems": 2,
+    "input pattern escape:\\/": 12,
     "input pattern shorthand-class": 21,
     "input pattern unanchored": 9,
     "input type type-list": 11,
@@ -55,6 +56,7 @@ export const ADVERTISED_INPUT_DIALECT_BASELINE: Readonly<
     "input keyword then": 7,
     "input keyword uniqueItems": 5,
     "input pattern dot": 5,
+    "input pattern escape:\\/": 105,
     "input pattern non-ascii-or-braced-hex-escape": 1,
     "input pattern shorthand-class": 30,
     "input pattern unanchored": 98,
@@ -71,6 +73,7 @@ export const ADVERTISED_OUTPUT_DIALECT_BASELINE: Readonly<
 > = {
   full: {
     "output pattern dot": 7,
+    "output pattern escape:\\/": 7,
     "output pattern shorthand-class": 31,
     "output pattern unanchored": 29,
   },
