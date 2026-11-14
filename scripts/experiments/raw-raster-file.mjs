@@ -1,8 +1,12 @@
 // Unregistered experimental file workflow. No target execution or source writes.
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { ArtifactFileSource } from "../../src/artifacts/ArtifactFileSource.ts";
+import {
+  ArtifactFileSource,
+  assertArtifactFileSelectedSource,
+} from "../../src/artifacts/ArtifactFileSource.ts";
 import { readArtifactRange } from "../../src/artifacts/ArtifactCarrierRange.ts";
+import { resolveArtifactSourcePath } from "../../src/artifacts/ArtifactSelectedSource.ts";
 import { regularFileState } from "../../src/filesystem/RegularFile.ts";
 import {
   admitPreview,
@@ -19,9 +23,16 @@ export async function previewRawRasterFile(
   inputLayout,
   options = {},
 ) {
+  // Let native lookup interpret the caller's spelling; do not normalize file/.. .
   const source = new ArtifactFileSource(inputPath, "Experimental raster");
   try {
     const descriptor = await source.readSelectedPath();
+    const sourceResolvedPath = await resolveArtifactSourcePath(inputPath);
+    await assertArtifactFileSelectedSource(
+      sourceResolvedPath,
+      descriptor,
+      "Experimental raster resolved path",
+    );
     const admission = admitPreview(
       descriptor.initial.size,
       inputLayout,
@@ -43,6 +54,11 @@ export async function previewRawRasterFile(
       throw new Error("Selected raster range was truncated during reading.");
     // Rechecks both the descriptor and the caller-selected path against admission.
     await source.readSelectedPath();
+    await assertArtifactFileSelectedSource(
+      sourceResolvedPath,
+      descriptor,
+      "Experimental raster resolved path",
+    );
     const preview = previewRawRasterExperiment(
       bytes,
       { ...layout, offset: 0 },
@@ -55,6 +71,7 @@ export async function previewRawRasterFile(
       manifest: {
         ...preview.value.manifest,
         sourcePath: inputPath,
+        sourceResolvedPath,
         sourceRange: {
           ...preview.value.manifest.sourceRange,
           offset: layout.offset,
@@ -117,6 +134,7 @@ The budget includes selected bytes, RGBA, PNG filter/compression/copy buffers;
 it is not a process RSS limit. Source files are read-only; leaf symlinks are rejected.
 Output directory must not exist. Failed exports report the retained directory;
 .incomplete remains when it could be created.
+Manifest preserves original and resolved absolute source paths; inspect them before sharing.
 Experimental script only; not registered as a REA CLI/MCP command.`;
 
 export async function runFilePreviewCli(args) {

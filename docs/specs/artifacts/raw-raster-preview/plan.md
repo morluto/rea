@@ -77,6 +77,12 @@ The destination must not exist and its parent directory must already exist. The
 script writes `preview.png` and `manifest.json`, leaving the source unchanged.
 The manifest hashes the complete selected range, records its original file offset
 and describes the source metadata check without claiming REA subject identity.
+`sourcePath` retains the caller's spelling; `sourceResolvedPath` records the
+canonical absolute path observed via native resolution and checked against the
+admitted descriptor before and after reading. Relative paths use native filesystem lookup without normalizing away lookup
+errors or reinterpreting platform-specific path spellings.
+Both fields can disclose usernames and local directory names: inspect the manifest
+before sharing it. The tool does not upload or automatically redact local evidence.
 Leaf symlinks and non-regular source files are rejected. Layout JSON is limited to
 64 KiB. `--max-memory-mib N` selects a conservative working-buffer estimate budget
 (default 64 MiB, integer 1–512), not a process RSS limit. Admission includes selected
@@ -112,7 +118,7 @@ must be recorded separately from earlier synthetic checks below.
 
 - 24 core Vitest tests passed; 40 tests passed including existing artifact-file,
   artifact-reader and regular-file admission coverage.
-- Sixteen experimental Node tests passed, including a real subprocess CLI invocation,
+- Eighteen experimental Node tests passed, including a real subprocess CLI invocation,
   a sparse 128 MiB file with a small selected range, source changes/truncation,
   descriptor cleanup on Linux, symlink rejection, no-clobber and source preservation.
   Additional cases cover budget rejection/override, CLI help and errors, and

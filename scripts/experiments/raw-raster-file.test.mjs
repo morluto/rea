@@ -9,9 +9,11 @@ import {
   readdir,
   readlink,
   stat,
+  realpath,
+  symlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { test } from "node:test";
 import { previewRawRasterFile, writeFilePreview } from "./raw-raster-file.mjs";
 const layout = {
@@ -225,4 +227,22 @@ test("file budget is configurable before reading and default accepts over old 1M
       writeFilePreview(path, input, out, { maxMemoryMiB: 8 }),
     );
     await assert.rejects(stat(out), { code: "ENOENT" });
+  }));
+
+test("records original relative spelling and canonical absolute selected path", async () =>
+  withSource(async ({ root, path }) => {
+    const alias = join(root, "alias");
+    await symlink(
+      root,
+      alias,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const selected = relative(process.cwd(), join(alias, "source.bin"));
+    const result = await previewRawRasterFile(selected, layout);
+    assert.equal(result.manifest.sourcePath, selected);
+    assert.equal(result.manifest.sourceResolvedPath, await realpath(path));
+  }));
+test("does not normalize away invalid native file path components", async () =>
+  withSource(async ({ path }) => {
+    await assert.rejects(previewRawRasterFile(`${path}/../source.bin`, layout));
   }));

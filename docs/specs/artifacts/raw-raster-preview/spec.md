@@ -34,7 +34,9 @@ registered REA CLI or MCP tool.
   output directory. Use existing artifact-file ownership and bounded positional
   range reading, validating the layout before reading source bytes. Recheck the
   descriptor and selected-path metadata after reading; fail on observed changes.
-  Preserve the original file-relative range offset in the manifest. Matching
+  Preserve the original file-relative range offset, caller-selected source spelling
+  and verified canonical absolute path in the manifest. Warn that these local paths
+  may contain personal directory names before the user shares the output. Matching
   metadata is not an immutable snapshot guarantee. Never overwrite existing output.
 
 - R7: Expose an explicit working-memory budget for the experimental file workflow,
