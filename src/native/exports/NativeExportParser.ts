@@ -24,6 +24,10 @@ import {
   type NativeExports,
   type PeExport,
 } from "../../domain/native/nativeExports.js";
+import {
+  readElfDynamicExportTables,
+  type ElfExportTableSelection,
+} from "./ElfDynamicExportTables.js";
 
 type Artifact = NativeExports["artifact"];
 
@@ -579,53 +583,13 @@ function* readVersionNames(
   return namesByIndex;
 }
 
-/** Read defined exported entries of `.dynsym` with their symbol versions. */
-function* parseElfExports(
-  bytes: Buffer,
-  artifact: Artifact,
-): Generator<void, NativeExports> {
-  const directory = readElfDirectoryFromBuffer(bytes);
-  const reader = new BinaryReader(bytes, directory.little);
-  const result = {
-    artifact,
-    format: "elf" as const,
-    architecture: architectureForElfMachine(directory.machine),
-    bits: directory.bits,
-    byte_order: directory.little ? ("little" as const) : ("big" as const),
-  };
-  const { sections } = directory;
-  const dynsym = sections.find(({ type }) => type === SHT_DYNSYM);
-  if (
-    sections.length === 0 ||
-    (dynsym === undefined && directory.programs.some(({ type }) => type === 2))
-  )
-    return {
-      ...result,
-      exports: [],
-      coverage: {
-        status: "unsupported",
-        reason:
-          sections.length === 0
-            ? "The ELF has no section headers; enumerating dynamic symbols from the dynamic segment is not implemented"
-            : "The ELF declares a dynamic segment but has no dynamic symbol section; enumerating dynamic symbols from the dynamic segment is not implemented",
-        examined_entries: 0,
-        exports: 0,
-      },
-      issues: [],
-      limitations: ELF_LIMITATIONS,
-    };
-  if (dynsym === undefined)
-    return {
-      ...result,
-      exports: [],
-      coverage: coverage([], 0, 0),
-      issues: [],
-      limitations: [
-        "The ELF has no dynamic symbol table, so it exports no dynamic symbols.",
-        ...ELF_LIMITATIONS,
-      ],
-    };
-  const width = directory.bits === 64 ? 24 : 16;
+/** Select section-owned tables before the shared export projection. */
+const readElfSectionExportTables = (
+  reader: BinaryReader,
+  sections: readonly NativeSection[],
+  dynsym: NativeSection,
+  width: number,
+): ElfExportTableSelection => {
   const strings = sections[dynsym.link];
   const compressed = dynsym.compressed
     ? dynsym
@@ -635,14 +599,8 @@ function* parseElfExports(
   if (compressed !== null) {
     const reason = `The ELF ${compressed === dynsym ? "dynamic symbol table" : "dynamic string table"} is SHF_COMPRESSED and was not decompressed; export identities remain unknown`;
     return {
-      ...result,
-      exports: [],
-      coverage: {
-        status: "unsupported",
-        reason,
-        examined_entries: 0,
-        exports: 0,
-      },
+      state: "unavailable",
+      reason,
       issues: [
         {
           code: "table_unavailable",
@@ -650,7 +608,6 @@ function* parseElfExports(
           message: reason,
         },
       ],
-      limitations: ELF_LIMITATIONS,
     };
   }
   if (
@@ -672,19 +629,12 @@ function* parseElfExports(
     width,
     "ELF dynamic symbols",
   );
-  // Entry zero is the reserved STN_UNDEF record. Skipping it is valid only
-  // after every field is observed as zero; neither ELF layout has padding.
-  if (bytes.subarray(table, table + width).some((byte) => byte !== 0))
-    throw new BinaryFormatFailure(
-      "malformed",
-      "ELF dynamic symbol table null entry has nonzero fields",
-    );
   const nameRange = reader.fileRange(
     strings.offset,
     strings.size,
     "ELF dynamic strings",
   );
-  const names = bytes.subarray(
+  const names = reader.bytes.subarray(
     nameRange.offset,
     nameRange.offset + nameRange.size,
   );
@@ -715,7 +665,83 @@ function* parseElfExports(
       });
     }
   }
-  const versionNames = yield* readVersionNames(reader, sections, issues);
+  return {
+    state: "tables",
+    tables: {
+      table,
+      count,
+      names,
+      versions,
+      versionsDeclared: versym !== undefined,
+      issues,
+    },
+  };
+};
+
+/** Read defined exports from section or dynamic declarations with one projection. */
+function* parseElfExports(
+  bytes: Buffer,
+  artifact: Artifact,
+): Generator<void, NativeExports> {
+  const directory = readElfDirectoryFromBuffer(bytes);
+  const reader = new BinaryReader(bytes, directory.little);
+  const result = {
+    artifact,
+    format: "elf" as const,
+    architecture: architectureForElfMachine(directory.machine),
+    bits: directory.bits,
+    byte_order: directory.little ? ("little" as const) : ("big" as const),
+  };
+  const { sections } = directory;
+  const dynsym = sections.find(({ type }) => type === SHT_DYNSYM);
+  if (
+    dynsym === undefined &&
+    sections.length > 0 &&
+    !directory.programs.some(({ type }) => type === 2)
+  )
+    return {
+      ...result,
+      exports: [],
+      coverage: coverage([], 0, 0),
+      issues: [],
+      limitations: [
+        "The ELF has no dynamic symbol table, so it exports no dynamic symbols.",
+        ...ELF_LIMITATIONS,
+      ],
+    };
+  const width = directory.bits === 64 ? 24 : 16;
+  let selection: ElfExportTableSelection;
+  if (dynsym === undefined) {
+    selection = yield* readElfDynamicExportTables(bytes, directory);
+  } else {
+    selection = readElfSectionExportTables(reader, sections, dynsym, width);
+  }
+  if (selection.state === "unavailable")
+    return {
+      ...result,
+      exports: [],
+      coverage: {
+        status: "unsupported",
+        reason: selection.reason,
+        examined_entries: 0,
+        exports: 0,
+      },
+      issues: selection.issues,
+      limitations: ELF_LIMITATIONS,
+    };
+  const { count, table, names, versions, versionsDeclared, issues } =
+    selection.tables;
+  // Entry zero is the reserved STN_UNDEF record. Both table sources must
+  // establish every field as zero before the shared scan can skip it.
+  if (bytes.subarray(table, table + width).some((byte) => byte !== 0))
+    throw new BinaryFormatFailure(
+      "malformed",
+      "ELF dynamic symbol table null entry has nonzero fields",
+    );
+  const versionNames =
+    dynsym === undefined
+      ? new Map<number, DecodedElfString | null>()
+      : yield* readVersionNames(reader, sections, issues);
   const unresolvedVersions = new Set<number>();
   const retain = createRetention();
   const exports: ElfExport[] = [];
@@ -743,7 +769,7 @@ function* parseElfExports(
     )
       continue;
     let version: ElfExport["version"] = null;
-    if (versym !== undefined && versions === null) version = "unknown";
+    if (versionsDeclared && versions === null) version = "unknown";
     else if (versions !== null) {
       const raw = reader.u16(versions + index * 2);
       const versionIndex = raw & 0x7fff;
@@ -814,7 +840,13 @@ function* parseElfExports(
     exports,
     coverage: coverage(issues, count - 1, exports.length),
     issues,
-    limitations: ELF_LIMITATIONS,
+    limitations:
+      dynsym === undefined && versionsDeclared
+        ? [
+            ...ELF_LIMITATIONS,
+            "GNU version names declared through PT_DYNAMIC are not decoded; readable DT_VERSYM indices and hidden flags remain available and unresolved names make coverage partial.",
+          ]
+        : ELF_LIMITATIONS,
   };
 }
 
