@@ -136,8 +136,8 @@ it("keeps an unrelated user process with an unreadable token fail-closed", async
     ),
   ).resolves.toMatchObject({
     cleaned: false,
-    reason: expect.stringContaining(
-      "process ownership token could not be read for 1 live process(es)",
-    ),
+    failures: [
+      { pid: kernelThread.pid, reason: "environment-unreadable" },
+    ],
   });
 });
