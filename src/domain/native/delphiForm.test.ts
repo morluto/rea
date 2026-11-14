@@ -1,12 +1,27 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
-import { delphiFormResourceSchema, RESOURCE_CODE_PAGES } from "./delphiForm.js";
+import {
+  decodeDelphiExtended,
+  delphiFormResourceSchema,
+  RESOURCE_CODE_PAGES,
+} from "./delphiForm.js";
 
 describe("delphi form code pages", () => {
   it("maps every table entry to a label the host can decode", () => {
     for (const label of Object.values(RESOURCE_CODE_PAGES))
       expect(() => new TextDecoder(label)).not.toThrow();
+  });
+});
+
+describe("delphi form extended values", () => {
+  it("keeps the smallest subnormal without underflowing its scale", () => {
+    const positive = Buffer.from("00000000000000c0cc3b", "hex");
+    expect(decodeDelphiExtended(positive)).toBe(Number.MIN_VALUE);
+    const negative = Buffer.from("00000000000000c0ccbb", "hex");
+    expect(decodeDelphiExtended(negative)).toBe(-Number.MIN_VALUE);
+    const exact = Buffer.from("0000000000000080cd3b", "hex");
+    expect(decodeDelphiExtended(exact)).toBe(Number.MIN_VALUE);
   });
 });
 

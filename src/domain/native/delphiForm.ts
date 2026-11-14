@@ -293,7 +293,16 @@ export const decodeDelphiExtended = (raw: Buffer): number | null => {
   const sign = (exponentAndSign & 0x8000) === 0 ? 1 : -1;
   // Normalize the mantissa before applying the exponent. Scaling the full
   // 64-bit mantissa first underflows for values near the smallest double.
-  const value = (Number(mantissa) / 2 ** 63) * 2 ** (exponent - 16383);
+  const normalized = Number(mantissa) / 2 ** 63;
+  const scale = exponent - 16383;
+  // Split a sub-normal scale in two so each power of two is computed in the
+  // normal range. `2 ** -1075` alone rounds to zero before the mantissa is
+  // applied, which would turn the smallest subnormal into zero.
+  const lower = Math.trunc(scale / 2);
+  const value =
+    scale < -1022
+      ? normalized * 2 ** (scale - lower) * 2 ** lower
+      : normalized * 2 ** scale;
   return Number.isFinite(value) ? sign * value : null;
 };
 

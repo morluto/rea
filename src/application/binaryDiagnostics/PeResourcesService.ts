@@ -1098,7 +1098,10 @@ const stringMatchesType = (
   )
     return false;
   // A source range cannot decode to more characters than it contains bytes.
-  if (value.text.length > available) return false;
+  // Wide strings use two bytes per UTF-16 code unit, so their text is also
+  // bounded by half the available bytes.
+  if (value.text.length > (projection.wide ? available / 2 : available))
+    return false;
   const raw = Buffer.from(value.bytes_hex, "hex");
   // When the preview covers every available byte the text must be its exact
   // decode; a capped preview must agree with the start of the text. The same

@@ -27,6 +27,7 @@ import {
   delphiLString,
   delphiProperty,
   delphiUtf8String,
+  delphiWideString,
 } from "../../native/pe/DelphiForm.fixture.js";
 import { parsePeResources } from "../../native/pe/PeResourceParser.js";
 import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
@@ -3187,6 +3188,42 @@ it("rejects a capped string whose preview disagrees with its text", async () => 
       },
     },
   ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("publishes a capped wide string within its code unit range", async () => {
+  const report = await reportForPayload(
+    delphiForm(
+      delphiComponent("TForm1", "Form1", [
+        delphiProperty("Wide", delphiWideString("A".repeat(200))),
+      ]),
+    ),
+  );
+  expect(report.delphi_forms[0]?.root.properties[0]?.value).toMatchObject({
+    kind: "string",
+    truncated: true,
+    decode_truncated: false,
+  });
+  expect(await inspectReport(report)).toMatchObject({ ok: true });
+});
+
+it("rejects wide string text beyond its UTF-16 code unit range", async () => {
+  const report = await reportWithSyntheticValue(
+    "vaWString",
+    {
+      kind: "string",
+      text: "A".repeat(130),
+      bytes_hex: "4100".repeat(64),
+      code_page: "utf-16le",
+      declared_bytes: 130,
+      truncated: true,
+      decode_truncated: false,
+    },
+    134,
+  );
   expect(await inspectReport(report)).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisOutputError" },
