@@ -669,6 +669,34 @@ it("keeps argument annotations with unique values and retains removed annotation
 });
 
 describe("Hermes registration refresh around anchors and merges", () => {
+  it("keeps an alias's value when an earlier same-name anchor would capture it", () => {
+    const source =
+      "defaults: &launcher /other/rea\nmcp_servers:\n  rea:\n    command: &launcher /old/rea\n    env: {REA_LAUNCHER: *launcher}\n";
+    const out = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+      command: "/new/rea",
+      env: { REA_LAUNCHER: "/old/rea" },
+    });
+    expect(parseHermesConfigurationYaml(out)).toMatchObject({
+      defaults: "/other/rea",
+      mcp_servers: {
+        rea: { command: "/new/rea", env: { REA_LAUNCHER: "/old/rea" } },
+      },
+    });
+  });
+
+  it("keeps the comment on an alias the refresh materializes", () => {
+    const source =
+      "mcp_servers:\n  rea:\n    command: &launcher /old/rea\n    env:\n      REA_LAUNCHER: *launcher # explanation\n";
+    const out = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+      command: "/new/rea",
+      env: { REA_LAUNCHER: "/old/rea" },
+    });
+    expect(out).toContain("# explanation");
+    expect(parseHermesConfigurationYaml(out)).toMatchObject({
+      mcp_servers: { rea: { env: { REA_LAUNCHER: "/old/rea" } } },
+    });
+  });
+
   it("keeps an alias to a sibling anchor that survives the refresh", () => {
     const source =
       "mcp_servers:\n  rea:\n    command: old\n    setting: &setting keep\n    metadata: {nested: *setting}\n";

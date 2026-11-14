@@ -57,36 +57,51 @@ const containsRetainedSource = (
   return found;
 };
 
-/** The value each alias inside `root` resolves to before an edit. */
+/** What each alias inside `root` resolves to before an edit. */
+export interface YamlAliasBinding {
+  readonly target: Node;
+  readonly value: unknown;
+}
+
+/** The node and value each alias inside `root` resolves to before an edit. */
 export const yamlAliasValues = (
   root: unknown,
   document: Document,
-): ReadonlyMap<Alias, unknown> => {
-  const values = new Map<Alias, unknown>();
-  if (!isNode(root)) return values;
+): ReadonlyMap<Alias, YamlAliasBinding> => {
+  const bindings = new Map<Alias, YamlAliasBinding>();
+  if (!isNode(root)) return bindings;
   visit(root, {
     Alias: (_key, alias) => {
       const target = alias.resolve(document);
-      if (target !== undefined) values.set(alias, target.toJS(document));
+      if (target !== undefined)
+        bindings.set(alias, { target, value: target.toJS(document) });
     },
   });
-  return values;
+  return bindings;
 };
 
 /**
- * Replace each alias the edit left without a preceding anchor with the value
- * it resolved to before the edit. Aliases whose anchors survive stay aliases.
+ * Replace each alias that no longer resolves to its original node, whether
+ * its anchor is gone or an earlier same-name anchor now captures it, with the
+ * value it resolved to before the edit. Its comments and spacing are kept.
  */
 export const materializeUnresolvedYamlAliases = (
   document: Document,
-  values: ReadonlyMap<Alias, unknown>,
+  bindings: ReadonlyMap<Alias, YamlAliasBinding>,
 ): void => {
-  if (values.size === 0) return;
+  if (bindings.size === 0) return;
   visit(document, {
     Alias: (_key, alias) => {
-      if (!values.has(alias) || alias.resolve(document) !== undefined)
+      const binding = bindings.get(alias);
+      if (binding === undefined || alias.resolve(document) === binding.target)
         return undefined;
-      return document.createNode(values.get(alias));
+      const replacement = document.createNode(binding.value);
+      if (alias.comment !== undefined) replacement.comment = alias.comment;
+      if (alias.commentBefore !== undefined)
+        replacement.commentBefore = alias.commentBefore;
+      if (alias.spaceBefore !== undefined)
+        replacement.spaceBefore = alias.spaceBefore;
+      return replacement;
     },
   });
 };
