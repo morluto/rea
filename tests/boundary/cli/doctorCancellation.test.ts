@@ -46,7 +46,9 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for(
       executable,
       `#!${process.execPath}
 if (!process.argv.slice(2).includes(${JSON.stringify(probeArgument)})) process.exit(7);
-require("node:fs").writeFileSync(${JSON.stringify(ready)}, JSON.stringify({pid: process.pid, runId: process.env.REA_PROCESS_RUN_ID, at: Date.now()}));
+// The test polls for this path; publish only complete JSON by renaming.
+require("node:fs").writeFileSync(${JSON.stringify(`${ready}.pending`)}, JSON.stringify({pid: process.pid, runId: process.env.REA_PROCESS_RUN_ID, at: Date.now()}));
+require("node:fs").renameSync(${JSON.stringify(`${ready}.pending`)}, ${JSON.stringify(ready)});
 process.on("SIGTERM", () => {});
 setInterval(() => { if (require("node:fs").existsSync(${JSON.stringify(release)})) process.exit(0); }, 25).unref();
 setTimeout(() => process.exit(99), 20000);
