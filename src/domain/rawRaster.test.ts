@@ -141,3 +141,128 @@ it("admits a bounded selection in a large file without allocating file or pixels
   expect(admitRawRaster(NaN, layout, budget).ok).toBe(false);
   expect(admitRawRaster(-1, layout, budget).ok).toBe(false);
 });
+
+const palette = Array.from({ length: 16 }, (_, i) => [
+  i,
+  255 - i,
+  i * 10,
+  i * 17,
+]);
+const indexed = {
+  offset: 0,
+  length: 8,
+  width: 16,
+  height: 1,
+  stride: 8,
+  format: "indexed4",
+  rowOrder: "top-down",
+  bitOrder: "msb-first",
+  palette,
+};
+it.each(["msb-first", "lsb-first"])(
+  "decodes all indexed4 entries and straight alpha (%s)",
+  (bitOrder) => {
+    const bytes = new Uint8Array([
+      0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+    ]);
+    const result = decodeRawRaster(bytes, { ...indexed, bitOrder }, budget);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const indices = Array.from({ length: 16 }, (_, i) =>
+        bitOrder === "msb-first" ? i : i ^ 1,
+      );
+      expect([...result.value.rgba]).toEqual(
+        indices.flatMap((i) => palette[i]!),
+      );
+      expect(result.value.layout).toEqual({ ...indexed, bitOrder });
+    }
+  },
+);
+it("indexed4 ignores odd-width unused nibble, honors subview, stride and bottom-up", () => {
+  const bytes = new Uint8Array([
+    99, 88, 0x12, 0x3f, 77, 0x45, 0x6f, 66,
+  ]).subarray(1);
+  const result = decodeRawRaster(
+    bytes,
+    {
+      ...indexed,
+      offset: 1,
+      length: 5,
+      width: 3,
+      height: 2,
+      stride: 3,
+      rowOrder: "bottom-up",
+    },
+    budget,
+  );
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect([...result.value.rgba]).toEqual(
+      [4, 5, 6, 1, 2, 3].flatMap((i) => palette[i]!),
+    );
+    expect(result.value.consumedSpan).toBe(5);
+  }
+});
+it.each([
+  { palette: undefined },
+  { palette: [] },
+  { palette: palette.slice(1) },
+  { palette: [...palette, [0, 0, 0, 0]] },
+  { palette: palette.map((p, i) => (i === 0 ? [0, 0, 0] : p)) },
+  { palette: palette.map((p, i) => (i === 0 ? [0, 0, 0, 256] : p)) },
+  { palette: palette.map((p, i) => (i === 0 ? [0, 0, 0, -1] : p)) },
+  { palette: palette.map((p, i) => (i === 0 ? [0, 0, 0, 0.5] : p)) },
+  { bitOrder: undefined },
+  { bitOrder: "guess" },
+  { stride: 7 },
+  { length: 7 },
+])("rejects malformed indexed4 layout %j", (patch) => {
+  expect(
+    decodeRawRaster(new Uint8Array(8), { ...indexed, ...patch }, budget).ok,
+  ).toBe(false);
+});
+it("indexed palette is copied and indexed-only options are refused on direct formats", () => {
+  const mutable = palette.map((p) => [...p]);
+  const result = decodeRawRaster(
+    new Uint8Array(8),
+    { ...indexed, palette: mutable },
+    budget,
+  );
+  expect(result.ok).toBe(true);
+  mutable[0]![0] = 255;
+  if (result.ok && result.value.layout.format === "indexed4")
+    expect(result.value.layout.palette[0]).toEqual(palette[0]);
+  expect(
+    decodeRawRaster(new Uint8Array(3), { ...layout, palette }, budget).ok,
+  ).toBe(false);
+  expect(
+    decodeRawRaster(
+      new Uint8Array(3),
+      { ...layout, bitOrder: "msb-first" },
+      budget,
+    ).ok,
+  ).toBe(false);
+});
+
+it("rejects sparse palettes and sparse RGBA tuples", () => {
+  const sparsePalette: unknown[] = [];
+  sparsePalette.length = 16;
+  const sparseComponents: number[] = [];
+  sparseComponents.length = 4;
+  expect(
+    decodeRawRaster(
+      new Uint8Array(8),
+      { ...indexed, palette: sparsePalette },
+      budget,
+    ).ok,
+  ).toBe(false);
+  const sparseTuple = palette.map((p) => [...p]);
+  sparseTuple[0] = sparseComponents;
+  expect(
+    decodeRawRaster(
+      new Uint8Array(8),
+      { ...indexed, palette: sparseTuple },
+      budget,
+    ).ok,
+  ).toBe(false);
+});

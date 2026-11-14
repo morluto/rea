@@ -14,7 +14,7 @@ registered REA CLI or MCP tool.
 
 ## Requirements
 
-- R1: Decode `gray8`, `rgb888`, `bgr888`, `rgba8888` and `bgra8888` into
+- R1: Decode `gray8`, `rgb888`, `bgr888`, `rgba8888`, `bgra8888` and explicit-palette `indexed4` into
   top-down, straight-alpha RGBA8. Preserve 8-bit samples exactly; synthesize opaque
   alpha only for formats without alpha. Premultiplied alpha is not supported.
 - R2: Require explicit `offset`, `length`, `width`, `height`, `stride` and
@@ -47,6 +47,11 @@ registered REA CLI or MCP tool.
   clearly report incomplete output on an I/O failure; never overwrite existing
   destinations or remove unrelated files while attempting recovery.
 
+- R9: Decode packed 4-bit indices with explicitly selected nibble order and exactly
+  16 explicit RGBA8 palette entries. The generic core does not parse proprietary
+  LUT/CLUT structures or infer transparency. Preserve palette/order in the manifest;
+  ignore the unused nibble of an odd-width row rather than interpreting padding.
+
 ## Acceptance and non-goals
 
 Synthetic checks should cover exact pixels for every format, row direction,
@@ -57,7 +62,7 @@ File-boundary checks should cover range admission, unchanged source bytes, sourc
 stability failures, non-file inputs and output no-clobber behavior.
 These are intended checks, not a record of executed verification.
 
-Automatic detection, compression/container parsing, indexed and sub-byte formats,
+Automatic detection, compression/container parsing, other indexed and sub-byte formats,
 16-bit channels, color management, tiled/GPU textures and bitmap-font layout are
 out of scope. Production artifact/subject integration, stronger snapshot
 guarantees, cancellation, Evidence provenance and registered CLI/MCP workflows

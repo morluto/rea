@@ -72,6 +72,14 @@ inter-row padding byte is:
 }
 ```
 
+For `indexed4`, use `format: "indexed4"`, `bitOrder: "msb-first"` or
+`"lsb-first"`, and `palette` containing exactly 16 `[R,G,B,A]` integer tuples
+(each component 0–255). Stride is still bytes, with at least `ceil(width / 2)`
+bytes per row. The unused final nibble in an odd-width row is ignored. Palette
+entries are copied during validation and preserved in the manifest, including
+straight alpha. Container-specific LUT/CLUT conversion is the caller's job; the
+core neither infers a palette nor parses firmware resources.
+
 Supply values matching your file; this is an example, not automatic detection.
 The destination must not exist and its parent directory must already exist. The
 script writes `preview.png` and `manifest.json`, leaving the source unchanged.
@@ -116,9 +124,9 @@ must be recorded separately from earlier synthetic checks below.
 
 ## Verification recorded for this branch
 
-- 24 core Vitest tests passed; 40 tests passed including existing artifact-file,
+- 41 core Vitest tests passed; 57 tests passed including existing artifact-file,
   artifact-reader and regular-file admission coverage.
-- Eighteen experimental Node tests passed, including a real subprocess CLI invocation,
+- Nineteen experimental Node tests passed, including a real subprocess CLI invocation,
   a sparse 128 MiB file with a small selected range, source changes/truncation,
   descriptor cleanup on Linux, symlink rejection, no-clobber and source preservation.
   Additional cases cover budget rejection/override, CLI help and errors, and
@@ -136,6 +144,17 @@ synthetic binary files and the external PPM below, not representative firmware. 
 CLI/MCP, cancellation integration and artifact/subject identity remain deferred.
 Maintainer approval and human review are pending; these checks do not establish
 production or release readiness.
+
+## Indexed4 verification scope
+
+The experimental increment adds only generic packed indices with explicit RGBA
+palette, not a provider or firmware-specific parser. Synthetic checks cover all
+16 indices and alpha values, both nibble and row orders, odd-width rows, padding,
+subviews, truncated input, sparse/invalid palettes and copied metadata. A real
+subprocess file test checks PNG pixels and manifest palette/range provenance.
+An independent reviewer checked 144 size/order combinations. Private firmware
+verification is tracked separately and never requires publishing source bytes or
+palettes.
 
 ## External fixture verification
 

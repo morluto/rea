@@ -246,3 +246,62 @@ test("does not normalize away invalid native file path components", async () =>
   withSource(async ({ path }) => {
     await assert.rejects(previewRawRasterFile(`${path}/../source.bin`, layout));
   }));
+
+test("indexed4 file CLI preserves explicit palette, nibble order, alpha and range hash", async () =>
+  withSource(async ({ root, path }) => {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { inflateSync } = await import("node:zlib");
+    const palette = Array.from({ length: 16 }, (_, i) => [
+      i,
+      255 - i,
+      i * 10,
+      i * 17,
+    ]);
+    const source = Buffer.from([99, 0x12, 0x3f, 42, 0x45, 0x6f]);
+    await writeFile(path, source);
+    const input = {
+      offset: 1,
+      length: 5,
+      width: 3,
+      height: 2,
+      stride: 3,
+      format: "indexed4",
+      rowOrder: "bottom-up",
+      bitOrder: "msb-first",
+      palette,
+    };
+    const json = join(root, "indexed.json");
+    const output = join(root, "indexed");
+    await writeFile(json, JSON.stringify(input));
+    await promisify(execFile)(process.execPath, [
+      "--import",
+      "tsx",
+      "scripts/experiments/raw-raster-file.mjs",
+      path,
+      json,
+      output,
+    ]);
+    const manifest = JSON.parse(
+      await readFile(join(output, "manifest.json"), "utf8"),
+    );
+    assert.deepEqual(manifest.decoding.palette, palette);
+    assert.equal(manifest.decoding.bitOrder, "msb-first");
+    assert.equal(manifest.sourceRange.offset, 1);
+    assert.equal(
+      manifest.sourceRange.sha256,
+      createHash("sha256").update(source.subarray(1)).digest("hex"),
+    );
+    const png = await readFile(join(output, "preview.png"));
+    const rows = inflateSync(png.subarray(41, 41 + png.readUInt32BE(33)));
+    assert.deepEqual(
+      [...rows],
+      [
+        0,
+        ...[4, 5, 6].flatMap((i) => palette[i]),
+        0,
+        ...[1, 2, 3].flatMap((i) => palette[i]),
+      ],
+    );
+    assert.deepEqual(await readFile(path), source);
+  }));

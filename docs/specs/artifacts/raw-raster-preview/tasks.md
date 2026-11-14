@@ -26,6 +26,9 @@ only from checks against the final implementation. See [spec](spec.md) and
       with a marker where possible, testing real I/O failure without deleting files.
 - [x] Validate an external pinned PPM fixture against independent Pillow decoding.
 
+- [x] R9: Add generic indexed4 with explicit palette/nibble order, synthetic
+      boundary cases, file CLI verification and independent matrix review.
+
 ## Deferred integration gates
 
 - [ ] Obtain maintainer scope and architecture decisions in #8162.

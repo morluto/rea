@@ -126,7 +126,10 @@ const USAGE = `Usage: node --import tsx scripts/experiments/raw-raster-file.mjs 
 
 Read an explicit raw-pixel range and export preview.png plus manifest.json.
 Layout fields: offset, length, width, height, stride, format, rowOrder.
-Formats: gray8, rgb888, bgr888, rgba8888, bgra8888.
+Formats: gray8, rgb888, bgr888, rgba8888, bgra8888, indexed4.
+indexed4 requires bitOrder (msb-first or lsb-first) and palette: exactly 16 [R,G,B,A]
+tuples, each component an integer 0..255. Rows use ceil(width/2) bytes; an odd
+width ignores the unused last nibble. Palette alpha is straight, not premultiplied.
 rowOrder: top-down or bottom-up. offset/length/stride are bytes; width/height are pixels.
 Example layout JSON: {"offset":0,"length":12,"width":2,"height":2,"stride":6,"format":"rgb888","rowOrder":"top-down"}
 --max-memory-mib N: estimated working-buffer budget (default 64, integer 1..512).
