@@ -107,6 +107,10 @@ export const parsePeCertificates = (
       fail("WIN_CERTIFICATE dwLength is shorter than its header.");
     if (at + length > table.length)
       fail("WIN_CERTIFICATE dwLength exceeds the certificate table.");
+    const next = align8(at + length);
+    if (next <= at) fail("WIN_CERTIFICATE alignment did not advance.");
+    if (next > table.length)
+      fail("WIN_CERTIFICATE alignment padding is truncated.");
     const entryPayload = table.subarray(at + 8, at + length);
     let payload = entryPayload;
     let pkcs7: PeCertificates["entries"][number]["pkcs7"] = null;
@@ -206,8 +210,6 @@ export const parsePeCertificates = (
       },
       pkcs7,
     });
-    const next = align8(at + length);
-    if (next <= at) fail("WIN_CERTIFICATE alignment did not advance.");
     at = next;
   }
   const certificates = entries.reduce(
