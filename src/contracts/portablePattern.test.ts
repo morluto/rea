@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { INVALID_BASE64_PADDING_PATTERN } from "../domain/stringPatterns.js";
 
 import { portablePatternViolations } from "./advertisedDialect.js";
 import {
@@ -92,6 +94,8 @@ const SOURCES = [
   "^\\p{L}+$",
   "^\\bcon\\b",
   "^a{2,1001}$",
+  "^a{01}$",
+  "^(?:ab){0,02}$",
   "^(?<word>[a-z]+)-x$",
   "^\\u0041\\u{42}\\cJ$",
   "^\\S\\W\\D$",
@@ -105,8 +109,12 @@ describe("portable pattern projection", () => {
     "re-emits %s inside the grammar and its declared relation",
     (source) => {
       const projection = projectPortablePattern(source);
-      expect(projection.kind).not.toBe("unexpressible");
-      if (projection.kind === "unexpressible") return;
+      if (projection.kind === "unexpressible") {
+        expect(
+          presentOutputJsonSchema({ type: "string", pattern: source }),
+        ).not.toHaveProperty("pattern");
+        return;
+      }
       expect(portablePatternViolations(projection.pattern)).toEqual([]);
       for (const flags of ["", "u", "v"])
         expect(() => new RegExp(projection.pattern, flags)).not.toThrow();
@@ -130,7 +138,7 @@ describe("portable pattern projection", () => {
   it.each([
     ["^\\d+$", "exact", "^[0-9]+$"],
     ["^[A-Za-z0-9._-]+$", "exact", "^[\\-.0-9A-Z_a-z]+$"],
-    ["^\\/", "exact", "^\\/[^\\x00]*(?:\\x00[^\\x00]*)*$"],
+    ["^\\/", "exact", "^/[^\\x00]*(?:\\x00[^\\x00]*)*$"],
     ["^(?!con$)[a-z]+$", "wider", "^[a-z]+$"],
     ["^[^\\x00\\s\"']+$", "wider", "^[^\\x00\\x09-\\x0d \"']+$"],
   ])("projects %s %s as %s", (source, kind, pattern) => {
@@ -143,6 +151,26 @@ describe("portable pattern projection", () => {
       expect(projectPortablePattern(source)).toEqual({
         kind: "unexpressible",
       });
+    },
+  );
+
+  it("omits the unsafe unbounded base64 padding projection", () => {
+    expect(
+      projectPortablePattern(INVALID_BASE64_PADDING_PATTERN.source),
+    ).toEqual({ kind: "unexpressible" });
+  });
+
+  it.each(["^[^^]+$", "^[^^a]+$"])(
+    "preserves the literal leading caret in %s",
+    (pattern) => {
+      const projected = projectPortablePattern(pattern);
+      expect(projected.kind).toBe("exact");
+      if (projected.kind === "unexpressible")
+        throw new Error("Expected exact projection");
+      for (const input of ["abc", "^", "a", "Z"])
+        expect(new RegExp(projected.pattern, "u").test(input)).toBe(
+          new RegExp(pattern, "u").test(input),
+        );
     },
   );
 });
@@ -197,5 +225,82 @@ describe("advertised pattern presentation", () => {
   it("returns an output schema without non-portable patterns unchanged", () => {
     const schema = property({ type: "string", pattern: "^[a-z]+$" });
     expect(presentOutputJsonSchema(schema)).toBe(schema);
+  });
+
+  it.each([
+    [
+      "input",
+      (schema: Record<string, unknown>) =>
+        presentInputJsonSchema(schema, () => undefined),
+    ],
+    ["output", presentOutputJsonSchema],
+  ] as const)("does not narrow %s through a named anchor", (_kind, present) => {
+    const schema = {
+      $defs: { name: { $anchor: "name", type: "string", pattern: lookAround } },
+      type: "object",
+      properties: { name: { not: { $ref: "#name" } } },
+    };
+    const validate = new Ajv2020({ strict: false }).compile(present(schema));
+    expect(validate({ name: "con" })).toBe(true);
+  });
+
+  it.each([
+    [
+      "input",
+      (schema: Record<string, unknown>) =>
+        presentInputJsonSchema(schema, () => undefined),
+    ],
+    ["output", presentOutputJsonSchema],
+  ] as const)(
+    "does not narrow %s through a URI naming this resource",
+    (_kind, present) => {
+      const schema = {
+        $id: "https://example.test/root",
+        $defs: { name: { type: "string", pattern: lookAround } },
+        type: "object",
+        properties: {
+          name: { not: { $ref: "https://example.test/root#/$defs/name" } },
+        },
+      };
+      const validate = new Ajv2020({ strict: false }).compile(present(schema));
+      expect(validate({ name: "con" })).toBe(true);
+    },
+  );
+
+  it.each([
+    [
+      "input",
+      (schema: Record<string, unknown>) =>
+        presentInputJsonSchema(schema, () => undefined),
+    ],
+    ["output", presentOutputJsonSchema],
+  ] as const)(
+    "keeps %s pointers valid when a widened oneOf becomes anyOf",
+    (_kind, present) => {
+      const schema = {
+        $defs: {
+          choice: {
+            oneOf: [
+              { type: "string", pattern: "^\\s+$" },
+              { type: "string", pattern: "^ok$" },
+            ],
+          },
+        },
+        type: "object",
+        properties: { value: { $ref: "#/$defs/choice/oneOf/1" } },
+      };
+      const validate = new Ajv2020({ strict: false }).compile(present(schema));
+      expect(validate({ value: "ok" })).toBe(true);
+    },
+  );
+
+  it("relaxes references to nonportable schemas inside literal output data", () => {
+    const literal = { type: "string", pattern: "^\\d+$" };
+    const schema = presentOutputJsonSchema({
+      $ref: "#/default",
+      default: literal,
+    });
+    expect(schema.default).toEqual(literal);
+    expect(schema).not.toHaveProperty("$ref");
   });
 });
