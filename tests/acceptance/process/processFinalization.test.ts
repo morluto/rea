@@ -276,7 +276,6 @@ const expectIgnoringFinalization = (outcome: CaptureOutcome): void => {
 
 cliCaptureTest.for(["CLI", "MCP"] as const)(
   "captures a cooperative finalizer through the compiled %s workflow",
-  { timeout: 20_000 },
   async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-accept-");
     const scenario = captureScenario("cooperative", root, {
@@ -293,7 +292,6 @@ cliCaptureTest.for(["CLI", "MCP"] as const)(
 
 cliCaptureTest.for(["CLI", "MCP"] as const)(
   "records the non-zero exit code of a finalizer through the compiled %s workflow",
-  { timeout: 20_000 },
   async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-accept-");
     const scenario = captureScenario(
@@ -312,7 +310,6 @@ cliCaptureTest.for(["CLI", "MCP"] as const)(
 
 cliCaptureTest.for(["CLI", "MCP"] as const)(
   "forces SIGKILL after the finalization interval through the compiled %s workflow",
-  { timeout: 20_000 },
   async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-accept-");
     const scenario = captureScenario("ignoring", root, {
@@ -386,12 +383,10 @@ captureTest(
       observeProcessStartIdentity(childPid),
     ).resolves.toBeUndefined();
   },
-  20_000,
 );
 
 cliCaptureTest.for(["CLI", "MCP"] as const)(
   "keeps the default identity through the compiled %s workflow without finalization_ms",
-  { timeout: 20_000 },
   async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-default-");
     const scenario = captureScenario("ignoring", root, { timeout_ms: 500 });
@@ -583,5 +578,4 @@ captureTest(
       "MCP cancellation does not wait for the grace interval",
     ).toBeLessThan(8_000);
   },
-  20_000,
 );
