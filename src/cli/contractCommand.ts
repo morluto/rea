@@ -39,7 +39,7 @@ export interface ContractCommandContext<
   /** The contract name, which is the canonical operation. */
   readonly operation: string;
   /** Each caller-path field as the caller spelled it, before resolution. */
-  readonly callerInputs: Readonly<Record<string, string>>;
+  readonly callerInputs: CallerInputPaths;
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
   /** The projection's CLI-only options, whose effect the handler owns. */
@@ -55,22 +55,30 @@ export interface EvidenceInspectionService {
   close(): Promise<void>;
 }
 
+/** The caller's spelling of the selected target `path`. */
+export const callerTargetPath = ({
+  operation,
+  callerInputs,
+}: ContractCommandContext): string => {
+  const { path } = callerInputs;
+  if (typeof path !== "string")
+    throw new Error(`${operation} has no caller path field named path`);
+  return path;
+};
+
 /**
  * The caller's spelling of `path`, and of each other caller-path field keyed
  * by its contract field name.
  */
-const callerSpellings = ({
-  operation,
-  callerInputs,
-}: ContractCommandContext): {
+const callerSpellings = (
+  context: ContractCommandContext,
+): {
   readonly path: string;
   readonly others: CallerInputPaths | undefined;
 } => {
-  const { path, ...others } = callerInputs;
-  if (path === undefined)
-    throw new Error(`${operation} has no caller path field named path`);
+  const { path: _path, ...others } = context.callerInputs;
   return {
-    path,
+    path: callerTargetPath(context),
     others: Object.keys(others).length === 0 ? undefined : others,
   };
 };

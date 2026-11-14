@@ -202,9 +202,9 @@ describe("CLI advertised input schemas", () => {
 
     expect(options?.safeParse({}).success).toBe(true);
     expect(validate({})).toBe(true);
-    expect(options?.safeParse({ commandTimeoutMs: undefined }).success).toBe(
-      false,
-    );
+    // Argv omits an absent option rather than passing undefined, so the
+    // contract's own default applies.
+    expect(options?.parse({})).not.toHaveProperty("commandTimeoutMs");
     for (const commandTimeoutMs of [1, 30_000, 2_147_483_647]) {
       expect(options?.safeParse({ commandTimeoutMs }).success).toBe(true);
       expect(validate({ commandTimeoutMs })).toBe(true);
