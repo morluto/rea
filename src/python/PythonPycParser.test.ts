@@ -1265,11 +1265,10 @@ it("keeps one descendant list when many wrappers share a container", () => {
     marshalCode("py311", { constsObject: Buffer.concat(pieces) }),
   ]);
   const before = process.memoryUsage().heapUsed;
-  const started = Date.now();
   const report = parseWith(bytes, { max_objects: 65_536 });
   const retained = process.memoryUsage().heapUsed - before;
-  // 1,800 children and 14,000 wrappers: 49,612 reads, previously ~181 MiB.
-  expect(Date.now() - started).toBeLessThan(5000);
+  // 1,800 children and 14,000 wrappers: 49,612 reads. A copied list per wrapper
+  // previously retained ~181 MiB; retention, not host speed, shows the sharing.
   expect(retained).toBeLessThan(64 * 1024 * 1024);
   expect(report.coverage.objects).toBe(49_612);
   expect(report.code_objects).toHaveLength(children + 1);

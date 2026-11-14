@@ -10,8 +10,9 @@ import { systemProcessOwnershipHost } from "../../../src/process/ProcessOwnershi
 import { liveProcesses } from "../../../src/process/ProcessOwnershipProcessTree.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-// Stands in for /usr/bin/open: starts a detached app that inherits its environment.
-// Each stand-in records itself and leaves when the test releases it, or expires.
+// Stands in for /usr/bin/open -W: starts a detached app that inherits its
+// environment and exits once that app exits. Each stand-in records itself and
+// leaves when the test releases it, or expires.
 const standInPrelude = `
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
@@ -32,7 +33,7 @@ const coordinates = args[args.indexOf("--stdout") + 1];
 spawn(process.execPath, [new URL("./fixture.mjs", import.meta.url).pathname], {
   detached: true,
   stdio: ["ignore", openSync(coordinates, "a"), "ignore"],
-}).unref();
+}).once("exit", () => process.exit(0));
 `;
 
 const fixtureSource = `
