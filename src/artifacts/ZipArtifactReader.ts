@@ -42,6 +42,7 @@ import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import {
+  ZIP_ZSTANDARD_WINDOW_MARKER,
   ZIP_ZSTANDARD_WINDOW_LIMIT,
   ZIP_ZSTANDARD_WINDOW_LOG_MAX,
 } from "./ZipZstandardWindow.js";
@@ -540,6 +541,7 @@ export const typedZipFailure = (
     return new ArtifactReaderFailure("limit", ZIP_ZSTANDARD_WINDOW_LIMIT, {
       cause,
       boundary: "memory",
+      fixedAllowance: ZIP_ZSTANDARD_WINDOW_MARKER,
     });
   const invalidZstandard =
     compressionMethod === 93 &&
