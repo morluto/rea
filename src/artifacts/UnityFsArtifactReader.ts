@@ -120,6 +120,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
     }
     // A close while paused at yield must not turn a cleared map into completion.
     this.#assertOpen(signal);
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {

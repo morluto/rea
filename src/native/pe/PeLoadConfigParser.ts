@@ -36,6 +36,21 @@ const PE_LOAD_CONFIG_DIRECTORY = 10;
 /** Callback slots decoded between event-loop yields and cancellation checks. */
 const ENTRIES_PER_YIELD = 1024;
 
+/** Derived locations may be unmapped; ambiguous mappings remain malformed. */
+const optionalFileOffset = (
+  lookup: { offset(address: bigint, size: number): number },
+  address: bigint,
+  size: number,
+): number | null => {
+  try {
+    return lookup.offset(address, size);
+  } catch (cause) {
+    if (!(cause instanceof BinaryMappingFailure) || cause.reason !== "unmapped")
+      throw cause;
+    return null;
+  }
+};
+
 /** The parser-owned allowance an image exhausted. */
 export type PeLoadConfigLimit = "callbacks";
 
@@ -181,15 +196,7 @@ export const parsePeLoadConfig = async (
     const rva = rvaOf(va);
     let fileOffset: number | null = null;
     if (rva !== null) {
-      try {
-        fileOffset = lookup.offset(va, 1);
-      } catch (cause) {
-        if (
-          !(cause instanceof BinaryMappingFailure) ||
-          cause.reason !== "unmapped"
-        )
-          throw cause;
-      }
+      fileOffset = optionalFileOffset(lookup, va, 1);
     }
     return {
       va: hex(va),
@@ -309,7 +316,7 @@ const readTls = async ({
     const rva = rvaOf(start);
     rawSection = rva === null ? null : sectionName(rva);
   } else {
-    rawFile = lookup.offset(start, rawSize);
+    rawFile = optionalFileOffset(lookup, start, rawSize);
     const startRva = rvaOf(start);
     const last = startRva === null ? null : startRva + rawSize - 1;
     if (startRva !== null && last !== null && last <= 0xffffffff) {

@@ -7,12 +7,34 @@ import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryReader,
   BinaryStringReadLimitFailure,
   createFileMappingIndex,
   mappedFileOffset,
   readMappedCString,
   type BinaryContainer,
 } from "./BinaryContainer.js";
+
+it("preserves representable offsets for invalid file ranges", () => {
+  const reader = new BinaryReader(Buffer.alloc(120), true, "elf");
+  for (const read of [
+    () => reader.range(128, 1, "segment"),
+    () => reader.fileRange(128n, 1n, "segment"),
+  ]) {
+    try {
+      read();
+      throw new Error("Expected malformed range");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BinaryFormatFailure);
+      expect(error).toMatchObject({
+        failure: { kind: "malformed", offset: 128, field: "segment" },
+      });
+    }
+  }
+  expect(() => reader.fileRange(2n ** 60n, 1n, "segment")).toThrow(
+    BinaryFormatFailure,
+  );
+});
 
 it("distinguishes a mapped string read allowance from malformed bytes", () => {
   const bytes = Buffer.from("long-name\0");
@@ -230,5 +252,44 @@ it("keeps a JVM-sized FAT count unconfirmed while rejecting malformed zero-count
       "malformed",
       "FAT header declares no architectures",
     ),
+  );
+});
+
+/** An x86-64 ELF executable with one PT_LOAD declaring `fileSize` bytes. */
+const elfWithLoadSegment = (fileSize: bigint): Buffer => {
+  const bytes = Buffer.alloc(64 + 56);
+  bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  bytes.writeUInt16LE(2, 16); // ET_EXEC
+  bytes.writeUInt16LE(0x3e, 18); // EM_X86_64
+  bytes.writeUInt32LE(1, 20);
+  bytes.writeBigUInt64LE(64n, 32); // e_phoff
+  bytes.writeUInt16LE(64, 52);
+  bytes.writeUInt16LE(56, 54);
+  bytes.writeUInt16LE(1, 56); // e_phnum
+  bytes.writeUInt16LE(64, 58);
+  bytes.writeUInt32LE(1, 64); // PT_LOAD
+  bytes.writeUInt32LE(5, 68);
+  bytes.writeBigUInt64LE(0x400000n, 80);
+  bytes.writeBigUInt64LE(0x400000n, 88);
+  bytes.writeBigUInt64LE(fileSize, 96);
+  bytes.writeBigUInt64LE(fileSize, 104);
+  bytes.writeBigUInt64LE(0x1000n, 112);
+  return bytes;
+};
+
+it("names a load segment that runs past the end of the file as truncated", () => {
+  expect(readBinaryContainer(elfWithLoadSegment(120n)).mappings).toHaveLength(
+    1,
+  );
+  expect(() => readBinaryContainer(elfWithLoadSegment(0x1000n))).toThrow(
+    expect.objectContaining({
+      failure: {
+        kind: "truncated",
+        format: "elf",
+        detail: "ELF load segment range is outside the file",
+        offset: 0,
+        field: "ELF load segment",
+      },
+    }),
   );
 });

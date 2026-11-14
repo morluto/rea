@@ -942,7 +942,7 @@ const inspectSimulatedRows = async (
   const service = new DesktopApplicationService(
     new DesktopApplicationReader((selected) => {
       const reader = new DirectoryArtifactReader(selected);
-      reader.entries = async function* () {
+      reader.entries = async function* (_signal, options) {
         for (let index = 0; index < count; index++) {
           yielded++;
           yield {
@@ -959,6 +959,8 @@ const inspectSimulatedRows = async (
             adapterKey: `${root}/${path(index)}`,
           };
         }
+        if (typeof options !== "function")
+          options?.onCoverage?.({ status: "complete", limitations: [] });
       };
       return reader;
     }),

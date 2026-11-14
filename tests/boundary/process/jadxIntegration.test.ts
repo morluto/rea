@@ -712,6 +712,25 @@ it("exposes overload candidates and executes only an explicitly selected ambiguo
       ],
     },
   });
+  if (ambiguous.ok) throw new Error("Expected an ambiguous overload");
+  // A schema-valid ambiguous selector names its candidates, not the schema.
+  const ambiguousProjection = projectAnalysisError(ambiguous.error);
+  expect(ambiguousProjection.recovery).toBeUndefined();
+  expect(ambiguousProjection.remediation.action).toMatch(
+    /^Set overload_index to exactly one of the \d+ candidates/u,
+  );
+  expect(ambiguousProjection.details?.refusal).toMatchObject({
+    kind: "ambiguous_selector",
+    operation: "inspect_android_method",
+    field: ["overload_index"],
+    candidates: expect.arrayContaining([
+      {
+        overload_index: 1,
+        reported_signature: "choose(int): void",
+        dex_descriptor: "(I)V",
+      },
+    ]) as unknown,
+  });
   const selected = await service.execute("inspect_android_method", {
     ...input,
     overload_index: 1,
