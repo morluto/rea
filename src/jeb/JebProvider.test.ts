@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { createJebAnalysisProvider } from "../composition/jeb.js";
 import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
@@ -551,6 +552,8 @@ it("forwards in-flight cancellation to the MCP call", async () => {
     async close() {},
     async call(_name, _args, signal) {
       entered();
+      if (signal!.aborted)
+        throw new AnalysisCancelledError(_name, { cause: signal!.reason });
       await new Promise<void>((_resolve, reject) =>
         signal!.addEventListener(
           "abort",
@@ -568,13 +571,22 @@ it("forwards in-flight cancellation to the MCP call", async () => {
     { operation: "inspect_jeb_client", input: {} },
     { signal: controller.signal },
   );
-  await started;
-  controller.abort();
-  const result = await pending;
-  expect(result.ok).toBe(false);
-  if (!result.ok) {
-    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-    expect(result.error.cause).toBe(controller.signal.reason);
+  try {
+    await awaitAcknowledgement(started, pending, "JEB MCP call");
+    controller.abort();
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error.cause).toBe(controller.signal.reason);
+    }
+  } finally {
+    controller.abort();
+    try {
+      await pending;
+    } finally {
+      await provider.close();
+    }
   }
 });
 

@@ -21,10 +21,11 @@ export const rizinCommand = (input: RizinInput): readonly string[] => [
   absoluteCallerPath(input.path),
 ];
 
-/** What REA cannot attest about the decoder and map inputs it passed to Rizin. */
+/** What REA cannot attest about command outcomes and selected decoder/map inputs. */
 export const rizinCommandLimitations = (
   input: RizinInput,
 ): readonly string[] => [
+  "completion_status reports process completion. Command validity remains unverified: Rizin can reject a command while returning exit_code 0. Inspect stdout and stderr before treating an empty response as absence.",
   ...(input.asm_arch === undefined &&
   input.asm_bits === undefined &&
   input.asm_cpu === undefined

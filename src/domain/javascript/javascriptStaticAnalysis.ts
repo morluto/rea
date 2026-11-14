@@ -72,6 +72,7 @@ import type { ParsedJavaScriptSource } from "./javascriptSourceParser.js";
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
+  TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION,
   semanticStaticModuleSource,
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
@@ -279,11 +280,7 @@ const finalizeStaticAnalysis = (
       : [
           "One or more static keys, expressions, or Electron boundary values were dynamic and remain unknown.",
         ]),
-    ...(typeOnlySideEffect
-      ? [
-          "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
-        ]
-      : []),
+    ...(typeOnlySideEffect ? [TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION] : []),
     ...(electronObserved ? [ELECTRON_IDENTITY_LIMITATION] : []),
     ...(candidateElectron
       ? [

@@ -34,6 +34,10 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
     const report = await parse({ bits });
     expect(peLoadConfigSchema.safeParse(report).success).toBe(true);
     expect(report.tls?.callbacks).toHaveLength(3);
+    // The callback array starts at file offset 0x800 and includes its null slot.
+    expect(report.tls?.callback_array_locations).toEqual([
+      { offset: 0x800, bytes: bits === 32 ? 16 : 32 },
+    ]);
     expect(report.tls?.callbacks[0]).toMatchObject({
       rva: 0x2000,
       file_offset: 0x1600,

@@ -8,6 +8,7 @@ import {
   schemaArrays,
   schemaChildren,
   schemaMaps,
+  schemaSubschemas,
 } from "./jsonSchemaKeywords.js";
 
 const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -269,21 +270,6 @@ const preserveSharedDefault = (
     schema.default = defaults[0];
 };
 
-/** Schema children, excluding definitions when following validation dependencies. */
-const normalizationChildren = (
-  schema: Readonly<Record<string, unknown>>,
-  definitions: boolean,
-): unknown[] =>
-  Object.entries(schema).flatMap(([key, value]) => {
-    if (schemaMaps.has(key) && isObject(value))
-      return !definitions && (key === "$defs" || key === "definitions")
-        ? []
-        : Object.values(value);
-    if (schemaArrays.has(key) && Array.isArray(value)) return value;
-    if (schemaChildren.has(key)) return Array.isArray(value) ? value : [value];
-    return [];
-  });
-
 const hasNormalizedLiteral = (schema: Readonly<Record<string, unknown>>) =>
   typeof schema.const === "boolean" ||
   schema.const === "" ||
@@ -320,7 +306,9 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
     if (seen.has(entry.schema)) continue;
     seen.add(entry.schema);
     entries.push({ schema: entry.schema, scope });
-    for (const schema of normalizationChildren(entry.schema, true))
+    for (const schema of schemaSubschemas(entry.schema, {
+      includeDefinitions: true,
+    }))
       pending.push({ schema, scope });
   }
   const indexed = new Map<JsonSchemaScope | undefined, WeakMap<object, Fact>>();
@@ -378,7 +366,9 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
       }
     }
     if (!ignoresSiblings)
-      for (const child of normalizationChildren(schema, false))
+      for (const child of schemaSubschemas(schema, {
+        includeDefinitions: false,
+      }))
         factAt(child, scope)?.dependents.add(fact);
     if (!ignoresSiblings)
       for (const key of [

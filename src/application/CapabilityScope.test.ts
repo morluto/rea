@@ -93,7 +93,12 @@ it("joins concurrent shutdowns and seals ownership before asynchronous cleanup s
   try {
     await awaitAcknowledgement(entered, first, "capability cleanup");
     second = scope.close();
-    expect(second).toBe(first);
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
     expect(close).toHaveBeenCalledTimes(1);
     expect(() => scope.own("later-owner", {}, async () => undefined)).toThrow(
       "after host shutdown",

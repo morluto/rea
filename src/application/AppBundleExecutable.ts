@@ -88,7 +88,7 @@ export interface ResolvedAppBundleResourceRoot {
 }
 
 /** Filesystem operations used by the resolver, injectable for boundary tests. */
-export interface AppBundleFileSystem {
+interface AppBundleFileSystem {
   readonly readFile: (path: string) => Promise<Buffer>;
   readonly realpath: (path: string) => Promise<string>;
 }
@@ -101,7 +101,7 @@ const defaultFileSystem: AppBundleFileSystem = { readFile, realpath };
  * a wrapper whose `Wrapper` directory holds the iOS bundle; that bundle is
  * found by listing `Wrapper`, never by following the `WrappedBundle` link.
  */
-export const resolveAppBundleExecutable = async (
+const resolveAppBundleExecutable = async (
   path: string,
   fileSystem: AppBundleFileSystem = defaultFileSystem,
 ): Promise<Result<ResolvedAppBundle, BinaryTargetError>> => {

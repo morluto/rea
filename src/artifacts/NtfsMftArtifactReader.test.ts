@@ -7,8 +7,11 @@ import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 
-import { MFT_DEFAULT_RECORD_BYTES } from "../domain/windows/ntfsMft.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+
+// The constructed FILE records intentionally use the 1024-byte default.
+const MFT_DEFAULT_RECORD_BYTES = 1024;
 import { linkedMftFixture } from "../../tests/fixtures/ntfsMftExtension.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
@@ -212,7 +215,7 @@ it("retries a shared preparation cancelled by another traversal", async () => {
     const cancelledResult = expect(cancelled).rejects.toMatchObject({
       reason: "cancelled",
     });
-    await started;
+    await awaitAcknowledgement(started, cancelled, "NTFS traversal read");
     const other = reader.entries()[Symbol.asyncIterator]().next();
     controller.abort("cancelled first traversal");
     await cancelledResult;
@@ -221,6 +224,22 @@ it("retries a shared preparation cancelled by another traversal", async () => {
   } finally {
     controller.abort();
     spy.mockRestore();
+    await reader.close();
+  }
+});
+
+it("reports cancellation during MFT coverage", async () => {
+  const path = await writeMft("$MFT", recordBytes({}));
+  const reader = new NtfsMftArtifactReader(path);
+  const controller = new AbortController();
+  try {
+    const entries = reader
+      .entries(controller.signal, {
+        onCoverage: () => controller.abort(),
+      })
+      [Symbol.asyncIterator]();
+    await expect(entries.next()).rejects.toMatchObject({ reason: "cancelled" });
+  } finally {
     await reader.close();
   }
 });
@@ -272,4 +291,46 @@ it("delivers acquired extension metadata through the canonical inventory schema"
       ],
     },
   });
+});
+
+it("does not finish a traversal when close begins during final source verification", async () => {
+  const reader = new NtfsMftArtifactReader(
+    await writeMft("$MFT", recordBytes({})),
+  );
+  const read = ArtifactFileSource.prototype.read;
+  let calls = 0;
+  let entered!: () => void;
+  let resume!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementation(async function (this: ArtifactFileSource, signal) {
+      const result = await read.call(this, signal);
+      if (++calls === 2) {
+        entered();
+        await gate;
+      }
+      return result;
+    });
+  try {
+    const traversal = reader.entries()[Symbol.asyncIterator]().next();
+    const rejected = expect(traversal).rejects.toMatchObject({
+      reason: "unavailable",
+    });
+    await awaitAcknowledgement(started, traversal, "NTFS close read");
+    const closing = reader.close();
+    resume();
+    await rejected;
+    await closing;
+    expect(calls).toBe(2);
+  } finally {
+    resume();
+    spy.mockRestore();
+    await reader.close();
+  }
 });

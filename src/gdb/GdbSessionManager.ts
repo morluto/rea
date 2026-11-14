@@ -22,7 +22,6 @@ import type {
   GdbCommandResult,
   GdbOutputLimit,
 } from "../domain/commandObservation.js";
-import { DEBUGGER_CONTROL_REPLY_BYTES } from "../domain/analysisResourceLimits.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -381,7 +380,7 @@ const gdbMiGroupsListSpan = (
   return groupSpan;
 };
 
-/** @internal Pure parser for live PIDs in recursive GDB MI thread groups. */
+/** Parse the complete GDB MI inferior inventory without guessing missing PIDs. */
 export const gdbThreadGroupPids = (
   mi: string,
 ): readonly string[] | undefined => {
@@ -467,12 +466,6 @@ export const gdbThreadGroupPids = (
   return undefined;
 };
 
-/** @internal Pure count of recursive GDB MI groups with live PIDs. */
-export const gdbThreadGroupCount = (mi: string): number | undefined => {
-  const pids = gdbThreadGroupPids(mi);
-  return pids?.length;
-};
-
 const verifyGdbInferiorOutputSink = async (
   pid: string,
   selectedTty: string,
@@ -543,8 +536,6 @@ interface GdbSession {
   readonly verifyInferiorsEndedAfterExit: () => Promise<boolean>;
   readonly knownInferiorIdentities: Map<string, OwnedInferiorIdentity>;
   readonly inferiorTty: string | undefined;
-  /** Startup and detach MI. Separate from the caller command-output cap. */
-  readonly controlReplyBytes: number;
   readonly stdoutSettled: Promise<void>;
   readonly settleStdout: () => void;
   inferiorTtyVerified: boolean;
@@ -615,7 +606,6 @@ export class GdbSessionManager {
   readonly #maxSessions: DebuggerAdmissionLimit;
   readonly #maxPendingCommands: DebuggerAdmissionLimit;
   readonly #launchCommandOutput: DebuggerAdmissionLimit;
-  readonly #controlReplyBytes: number;
   get #commandDeadline(): DebuggerAdmissionLimit {
     const override =
       currentAnalysisOperationSnapshot()?.overrides[
@@ -668,11 +658,6 @@ export class GdbSessionManager {
       ) => Promise<void>;
       /** @internal Read-only process identity observer for lifecycle tests. */
       readonly readInferiorProcessStartTime?: ProcessStartTimeReader;
-      /**
-       * @internal Test seam for startup and detach MI truncation.
-       * Production uses the fixed control-reply budget.
-       */
-      readonly controlReplyBytes?: number;
     } = {},
   ) {
     this.#environment = { ...(options.environment ?? process.env) };
@@ -689,8 +674,6 @@ export class GdbSessionManager {
     this.#maxSessions = limits.maxSessions;
     this.#maxPendingCommands = limits.maxPendingCommands;
     this.#launchCommandOutput = limits.maxCommandOutputBytes;
-    this.#controlReplyBytes =
-      options.controlReplyBytes ?? DEBUGGER_CONTROL_REPLY_BYTES;
   }
 
   async start(
@@ -913,7 +896,6 @@ export class GdbSessionManager {
       },
       knownInferiorIdentities: new Map(),
       inferiorTty,
-      controlReplyBytes: this.#controlReplyBytes,
       stdoutSettled,
       settleStdout,
       inferiorTtyVerified: false,
@@ -1538,11 +1520,12 @@ export class GdbSessionManager {
               throw new Error(
                 "GDB could not confirm its complete, untruncated inferior list before shutdown.",
               );
-            const groupCount = gdbThreadGroupCount(groups.mi);
-            if (groupCount === undefined)
+            const pids = gdbThreadGroupPids(groups.mi);
+            if (pids === undefined)
               throw new Error(
                 "GDB returned an unknown inferior list before shutdown.",
               );
+            const groupCount = pids.length;
             if (
               groupCount > 1 ||
               (groupCount > 0 && !session.inferiorTtyVerified)
@@ -2172,7 +2155,7 @@ export class GdbSessionManager {
     const acceptedDeadline = this.#commandDeadline;
     const acceptedOutput = command.startsWith("-interpreter-exec console ")
       ? this.#commandOutput
-      : { ...debuggerControlReplyOutput, value: session.controlReplyBytes };
+      : debuggerControlReplyOutput;
     return new Promise<GdbCommandResult>((resolve, reject) => {
       let abortListener!: () => void;
       const cleanup = (): void => {

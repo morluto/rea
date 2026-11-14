@@ -767,7 +767,6 @@ cliTest(
       },
     });
   },
-  120_000,
 );
 
 for (const [client, provider] of [
@@ -903,7 +902,6 @@ for (const [client, provider] of [
         });
       }
     },
-    120_000,
   );
 
 for (const invalidSetting of [
@@ -955,7 +953,6 @@ for (const invalidSetting of [
         code: "ENOENT",
       });
     },
-    120_000,
   );
 
 cliTest(
@@ -1018,5 +1015,4 @@ cliTest(
       code: "ENOENT",
     });
   },
-  120_000,
 );

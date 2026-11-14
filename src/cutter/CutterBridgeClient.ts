@@ -222,7 +222,7 @@ const mapDiscovery = async <Input, Output>(
 export interface CutterDiscoveryOptions {
   readonly signal?: AbortSignal;
 }
-export type CutterBridgeExecutionState =
+type CutterBridgeExecutionState =
   | "not_started"
   | "complete"
   | "failed"
@@ -252,7 +252,7 @@ class CutterBridgeRequestFailure extends Error {
   }
 }
 
-export interface WindowsCutterDescriptorReader {
+interface WindowsCutterDescriptorReader {
   verifyDirectory(directory: string): boolean;
   readDescriptor(directory: string, name: string, maxBytes: number): Buffer;
 }
@@ -793,13 +793,6 @@ export class CutterBridgeClient {
         },
       ]);
     return descriptor;
-  }
-
-  async listDescriptors(): Promise<
-    readonly z.infer<typeof descriptorSchema>[]
-  > {
-    const loaded = await this.#readDescriptors("list_cutter_sessions");
-    return loaded.descriptors;
   }
 
   async #readDescriptors(

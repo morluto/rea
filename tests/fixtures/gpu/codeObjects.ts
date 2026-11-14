@@ -12,7 +12,7 @@ export const ptxFixture = `// Producer-shaped static PTX; portable tests do not 
 ret;
 }
 `;
-export interface ElfFixtureSection {
+interface ElfFixtureSection {
   name: string;
   type?: number;
   flags?: bigint;

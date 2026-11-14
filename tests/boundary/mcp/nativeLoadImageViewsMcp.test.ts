@@ -99,7 +99,7 @@ it("preserves raw and DOL verification facts and selected DOL sections through t
       limitations: expect.arrayContaining(report.limitations),
     });
   }
-}, 30_000);
+});
 
 it("delivers load-image summaries from the complete retained public-tool observation", async () => {
   const report = nativeRawLoadImageFixture();

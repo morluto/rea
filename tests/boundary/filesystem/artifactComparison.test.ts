@@ -567,7 +567,7 @@ describe("artifact comparison completeness", () => {
       summary: { unchanged: 502, unknown: 0 },
       changes: [],
     });
-  }, 15_000);
+  });
 });
 
 it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)(
@@ -974,7 +974,7 @@ describe("artifact comparison fragment integrity", () => {
         issues: [expect.objectContaining({ path: ["left"] })],
       }),
     );
-  }, 15_000);
+  });
 
   it("rejects non-inventory and tampered Evidence", async () => {
     const root = await createTestTempDirectory("rea-artifact-invalid-");

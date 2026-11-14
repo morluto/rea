@@ -4,6 +4,7 @@ import {
 } from "../../fixtures/advertisedMcpTool.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -36,6 +37,7 @@ const assertFirstSummaryDelivery = async (
     ajv: wasmAjv,
     inputSchema,
     outputSchema,
+    toolDefinition,
   } = await advertisedMcpToolSchemas(
     harness.client,
     "inspect_wasm_artifact",
@@ -43,15 +45,11 @@ const assertFirstSummaryDelivery = async (
   );
   const summaryInput = { path: value.artifact.path, detail: "summary" };
   expect(wasmAjv.validate(inputSchema, summaryInput)).toBe(true);
-  const directSummary = await harness.client.callTool({
-    name: "inspect_wasm_artifact",
-    arguments: summaryInput,
-  });
+  const directSummary = await harness.client.callTool(
+    { name: "inspect_wasm_artifact", arguments: summaryInput },
+    { toolDefinition },
+  );
   expect(directSummary.isError).not.toBe(true);
-  expect(
-    wasmAjv.validate(outputSchema, directSummary.structuredContent),
-    JSON.stringify(wasmAjv.errors),
-  ).toBe(true);
   const summaryEvidence = parseEvidence(directSummary.structuredContent);
   const summary = wasmArtifactSummaryViewResultSchema.parse(
     summaryEvidence.normalized_result,
@@ -227,14 +225,16 @@ it("records inline WASM evidence with compact inputs and canonical option checks
       approval: true,
     }),
   ).toBe(false);
-  const response = await client.callTool({
-    name: "inspect_wasm_artifact",
-    arguments: { path: value.artifact.path, command_timeout_ms: 42_000 },
-  });
+  const response = await client.callTool(
+    {
+      name: "inspect_wasm_artifact",
+      arguments: { path: value.artifact.path, command_timeout_ms: 42_000 },
+    },
+    { toolDefinition: schemas.toolDefinition },
+  );
   assertRecordedMcpEvidence(
     response,
     "inspect_wasm_artifact",
-    schemas,
     session,
     value,
     "observed",
@@ -309,45 +309,52 @@ it.each([undefined, "summary"] as const)(
       { signal: controller.signal },
     );
     const rejected = expect(cancellation).rejects.toThrow();
-    await started;
-    controller.abort(new Error("cancel after provider work starts"));
-    let serverReason: unknown;
     try {
-      await harness.client.ping();
-      serverReason = serverSignal?.reason;
-    } finally {
-      releaseProvider?.();
-    }
-    await rejected;
-    expect(inspect).toHaveBeenCalledOnce();
-    const result = await inspect.mock.results[0]?.value;
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisCancelledError",
-        partialObservation: {
-          operation: "inspect_wasm_artifact",
-          normalized_result: value,
-          confidence: "observed",
+      await awaitAcknowledgement(started, cancellation, "WASM provider start");
+      controller.abort(new Error("cancel after provider work starts"));
+      let serverReason: unknown;
+      try {
+        await harness.client.ping();
+        serverReason = serverSignal?.reason;
+      } finally {
+        releaseProvider?.();
+      }
+      await rejected;
+      expect(inspect).toHaveBeenCalledOnce();
+      const result = await inspect.mock.results[0]?.value;
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisCancelledError",
+          partialObservation: {
+            operation: "inspect_wasm_artifact",
+            normalized_result: value,
+            confidence: "observed",
+          },
         },
-      },
-    });
-    if (result === undefined || result.ok)
-      throw new Error("Expected cancelled WASM Evidence");
-    expect(serverSignal?.aborted).toBe(true);
-    expect(result.error.cause).toBe(serverReason);
-    const partial = parseEvidence(result.error.partialObservation);
-    expect(partial.parameters).toEqual({
-      path: value.artifact.path,
-      glue_paths: [],
-      candidate_paths: [],
-    });
-    await harness.client.ping();
-    await vi.waitFor(() => {
-      // Failed summary delivery retains the complete producer, without a derived view.
-      expect(session.exportEvidenceBundle().records).toEqual([partial]);
-    });
-    expect(session.evidenceById(partial.evidence_id)).toEqual(partial);
+      });
+      if (result === undefined || result.ok)
+        throw new Error("Expected cancelled WASM Evidence");
+      expect(serverSignal?.aborted).toBe(true);
+      expect(result.error.cause).toBe(serverReason);
+      const partial = parseEvidence(result.error.partialObservation);
+      expect(partial.parameters).toEqual({
+        path: value.artifact.path,
+        glue_paths: [],
+        candidate_paths: [],
+      });
+      await harness.client.ping();
+      await vi.waitFor(() => {
+        // Failed summary delivery retains the complete producer, without a derived view.
+        expect(session.exportEvidenceBundle().records).toEqual([partial]);
+      });
+      expect(session.evidenceById(partial.evidence_id)).toEqual(partial);
+    } finally {
+      controller.abort();
+      releaseProvider?.();
+      await cancellation.catch(() => undefined);
+      await rejected.catch(() => undefined);
+    }
   },
 );
 
@@ -549,7 +556,6 @@ it("reads an oversized completed WASM result through its reported retained refer
     throw new Error("Missing WASM view schemas");
   const ajv = schemaValidation.assertions;
   const input: Record<string, unknown> = advertised.inputSchema;
-  const output: Record<string, unknown> = advertised.outputSchema;
   for (const [view, expected] of [
     [
       { kind: "summary" },
@@ -581,18 +587,14 @@ it("reads an oversized completed WASM result through its reported retained refer
   ] as const) {
     const args = { source: reference, view };
     expect(ajv.validate(input, args), JSON.stringify(ajv.errors)).toBe(true);
-    const selected = await harness.client.callTool({
-      name: "inspect_analysis_view",
-      arguments: args,
-    });
+    const selected = await harness.client.callTool(
+      { name: "inspect_analysis_view", arguments: args },
+      { toolDefinition: advertised },
+    );
     expect(
       selected.isError,
       JSON.stringify(selected.structuredContent),
     ).not.toBe(true);
-    expect(
-      ajv.validate(output, selected.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(selected.structuredContent);
     expect(evidence.confidence).toBe("derived");
     expect(evidence.evidence_links).toEqual([reference.evidence_id]);

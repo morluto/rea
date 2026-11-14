@@ -92,7 +92,7 @@ const LINUX_INVENTORY_HOST: LinuxInventoryHost = {
 type Package = DesktopApplicationInventory["package"];
 
 /** Directories searched for desktop entries, most specific first. */
-export const desktopEntryDirectories = (
+const desktopEntryDirectories = (
   environment: LinuxApplicationRequest["environment"],
   home: string,
 ): readonly string[] => {
