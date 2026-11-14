@@ -1,8 +1,11 @@
 import { expect, it } from "vitest";
 import {
   computeBlockEntropy,
+  countByteValues,
+  entropyFromCounts,
   inspectByteEntropyInputSchema,
   mergeEntropyRuns,
+  wholeFileByteCounts,
 } from "./byteEntropy.js";
 
 it("computes known Shannon answers including partial and empty blocks", () => {
@@ -50,4 +53,29 @@ it("rejects unsafe windows, unknown fields and unsupported block sizes", () => {
         .success,
     ).toBe(false);
   }
+});
+it("counts a repeated byte past 2^32 without wrapping", () => {
+  // A file larger than 4 GiB with one dominant byte value. `countByteValues` is the loop both the
+  // per-block entropy and the service's whole-file census call, so exercising it here covers both
+  // — and the counter type is part of its signature, which is what keeps a narrower bin out.
+  const counts = wholeFileByteCounts();
+  // 2^32 is far too many iterations for a test; the loop is called once per chunk, so calling it
+  // with a chunk that lands just under the wrap and once more across it is enough.
+  const chunk = new Uint8Array(2 ** 16).fill(0);
+  counts[0] = 2 ** 32 - 2 ** 15;
+  countByteValues(chunk, counts);
+  expect(counts[0]).toBe(2 ** 32 + 2 ** 15);
+  expect(entropyFromCounts(counts, counts[0]!)).toBe(0);
+});
+
+it("accumulates the same census across chunks as one concatenated run", () => {
+  // The service counts chunk by chunk; a per-chunk counter would be wrong. Both chunks go into
+  // one counter here, which is what the service does.
+  const counts = wholeFileByteCounts();
+  countByteValues(new Uint8Array([0, 1, 0]), counts);
+  countByteValues(new Uint8Array([1, 0]), counts);
+  expect(Array.from(counts.slice(0, 2))).toEqual([3, 2]);
+  expect(entropyFromCounts(counts, 5)).toBe(
+    computeBlockEntropy(new Uint8Array([0, 1, 0, 1, 0])),
+  );
 });
