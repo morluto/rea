@@ -943,3 +943,17 @@ it("retains safe auxiliary paths when the direct caller path is unavailable", ()
     }),
   ).toThrow();
 });
+
+describe("evidence authority default", () => {
+  it("defaults subjectless evidence authority to analyst-inference", () => {
+    const evidence = createEvidence(undefined, PROVIDER, {
+      operation: "procedure_info",
+      parameters: {},
+      result: { name: "main" },
+    });
+    expect(evidence.authority).toBe("analyst-inference");
+    expect(evidence.limitations).toContain(
+      "Artifact identity is unavailable for this observation.",
+    );
+  });
+});

@@ -522,7 +522,11 @@ export const evidenceEnvelopeForAdmission = (
     raw_result: observation.rawResult ?? null,
     normalized_result: observation.result,
     confidence: observation.confidence ?? "observed",
-    authority: observation.authority ?? "shipped-artifact",
+    // No-subject evidence cannot carry an artifact claim; default to the
+    // weakest authority so it never qualifies a shipped-artifact contract.
+    authority:
+      observation.authority ??
+      (subject === null ? "analyst-inference" : "shipped-artifact"),
     environment: observation.environment ?? null,
     limitations: observation.limitations ?? [],
     ...(observation.relationshipCoverage === undefined
