@@ -29,6 +29,69 @@ const errorCode = (cause) =>
     ? cause.code
     : undefined;
 
+/**
+ * Transform one owned TypeScript module for import.
+ *
+ * Node 22-25 transform TypeScript in-process. Node 26 keeps only
+ * `mode: "strip"`, which rejects syntax this checkout relies on (parameter
+ * properties, enums), so fall back to the pinned compiler the build already
+ * installs: `compile:termux` and these scripts then share one TypeScript
+ * version instead of depending on a Node flag that no longer exists.
+ */
+const nodeTypeScriptTransform = (() => {
+  try {
+    nodeModule.stripTypeScriptTypes("const probe: number = 1;", {
+      mode: "transform",
+    });
+    return (source, url) =>
+      nodeModule.stripTypeScriptTypes(source, {
+        mode: "transform",
+        sourceMap: true,
+        sourceUrl: url,
+      });
+  } catch {
+    return undefined;
+  }
+})();
+
+let pinnedCompiler;
+const loadPinnedCompiler = () => {
+  if (pinnedCompiler !== undefined) return pinnedCompiler;
+  const require = nodeModule.createRequire(import.meta.url);
+  for (const name of ["typescript-termux", "typescript6", "typescript"]) {
+    try {
+      const candidate = require(name);
+      if (typeof candidate?.transpileModule === "function")
+        return (pinnedCompiler = candidate);
+    } catch {
+      // Try the next installed alias; the loop owns the final error.
+    }
+  }
+  throw new Error(
+    "This REA source loader needs Node's TypeScript transform or the pinned TypeScript compiler; run npm ci.",
+  );
+};
+
+const transformTypeScript = (source, url, format) => {
+  if (nodeTypeScriptTransform !== undefined)
+    return nodeTypeScriptTransform(source, url);
+  const compiler = loadPinnedCompiler();
+  const { outputText } = compiler.transpileModule(source, {
+    fileName: fileURLToPath(url),
+    compilerOptions: {
+      target: compiler.ScriptTarget.ESNext,
+      module:
+        format === "commonjs"
+          ? compiler.ModuleKind.CommonJS
+          : compiler.ModuleKind.ESNext,
+      inlineSourceMap: true,
+      inlineSources: true,
+      verbatimModuleSyntax: false,
+    },
+  });
+  return outputText;
+};
+
 const javascriptFormat = (format) =>
   format === "module-typescript"
     ? "module"
@@ -95,11 +158,7 @@ const loadSource = (url, context, nextLoad) => {
   return {
     ...loaded,
     format,
-    source: nodeModule.stripTypeScriptTypes(source, {
-      mode: "transform",
-      sourceMap: true,
-      sourceUrl: url,
-    }),
+    source: transformTypeScript(source, url, format),
   };
 };
 
