@@ -19,6 +19,10 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { registerProjectManagedApplicationGraph } from "./managedProjectGraphCommand.js";
 import { managedMembersInputSchema } from "../contracts/managed/managedToolContracts.js";
+import { managedReconstructionImportRequestSchema } from "../domain/managed/managedReconstruction.js";
+import { managedNativeVerificationRequestSchema } from "../domain/managed/managedNativeVerificationSchemas.js";
+import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -240,9 +244,11 @@ const registerImportManagedReconstruction = (
     description:
       "Import decompiler-produced managed reconstruction against exact static member evidence",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe("Inline managed reconstruction JSON or JSON file path"),
+      inputJson: jsonInputArgument(
+        "Inline managed reconstruction JSON or JSON file path",
+        getEvidenceInputContract(managedReconstructionImportRequestSchema)
+          .frameSchema,
+      ),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>
@@ -278,9 +284,11 @@ const registerVerifyManagedNativeBoundaries = (
     description:
       "Verify managed P/Invoke declarations against authenticated native Evidence",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe("Inline managed/native verification JSON or JSON file path"),
+      inputJson: jsonInputArgument(
+        "Inline managed/native verification JSON or JSON file path",
+        getEvidenceInputContract(managedNativeVerificationRequestSchema)
+          .frameSchema,
+      ),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>
