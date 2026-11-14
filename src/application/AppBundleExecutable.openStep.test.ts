@@ -27,3 +27,24 @@ it.each([
     value: { executable, infoPlist },
   });
 });
+
+it("resolves an OpenStep Info.plist with quoted XML-looking text", async () => {
+  const root = await createTestTempDirectory("rea-openstep-doctype-");
+  const bundle = join(root, "Fixture.app");
+  const programs = join(bundle, "Contents", "MacOS");
+  const executable = join(programs, "Fixture");
+  const infoPlist = join(bundle, "Contents", "Info.plist");
+  const source = `{ CFBundleExecutable = Fixture; Note = "<!DOCTYPE plist [ <!ENTITY x 'ok'> ]>"; }`;
+  expect(parseOpenStep(source)).toEqual({
+    CFBundleExecutable: "Fixture",
+    Note: "<!DOCTYPE plist [ <!ENTITY x 'ok'> ]>",
+  });
+  await mkdir(programs, { recursive: true });
+  await writeFile(infoPlist, source);
+  await writeFile(executable, "fixture - never executed");
+
+  expect(await resolveAppBundleExecutable(bundle)).toEqual({
+    ok: true,
+    value: { executable, infoPlist },
+  });
+});
