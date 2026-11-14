@@ -5,6 +5,9 @@ import { promisify } from "node:util";
 
 import { expect, it, onTestFinished, vi } from "vitest";
 
+import type { ProgressReporter } from "../../../../src/application/ProgressReporter.js";
+import { waitForExit } from "../../../support/process/processFixture.js";
+
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../../src/domain/result.js";
 import type {
@@ -255,6 +258,19 @@ it("preserves launcher diagnostics after a health deadline and reauthenticates f
 
 it("recovers an application exit after the first valid handshake occurs during cleanup", async () => {
   const { client, launcher } = setup("matching", "gated", "exit-without-ack");
+  const joinedExits: boolean[] = [];
+  const progress: ProgressReporter = {
+    async report(update) {
+      // Join this test-owned application's exit after shutdown/EOF and before
+      // native identity confirmation. EOF alone is not proof of retirement.
+      if (update.phase !== "hopper_cleanup" || update.completed !== 0.35)
+        return;
+      const application = launcher.fixture.processes.at(-1);
+      joinedExits.push(
+        application !== undefined && (await waitForExit(application, 5_000)),
+      );
+    },
+  };
   const starting = client.start();
   const first = await launcher.fixture.waitForRequest("health");
   const started = await starting;
@@ -276,7 +292,7 @@ it("recovers an application exit after the first valid handshake occurs during c
     },
   });
 
-  const closing = client.close();
+  const closing = client.close({ progress });
   const next = await vi.waitFor(() => {
     const request = launcher.fixture.requests.find(
       ({ method, id }) => method === "health" && id !== first.id,
@@ -313,6 +329,7 @@ it("recovers an application exit after the first valid handshake occurs during c
   const observed = await client.callTool("current_document");
   if (!observed.ok) throw observed.error;
   expect(observed.value).toBe("fixture");
-  const reclosed = await client.close();
+  const reclosed = await client.close({ progress });
   if (!reclosed.ok) throw reclosed.error;
+  expect(joinedExits).toEqual([true, true]);
 });
