@@ -23,6 +23,19 @@ question requires complete application analysis; `source_paths: []` is invalid,
 not an unfiltered request. `detail: "summary"` reduces delivery
 and does not by itself reduce analysis work.
 
+For a large packaged desktop `app.asar` when only specific files or entrypoints
+are needed, inventory first with `open_binary` then
+`inspect_artifact(detail: "summary")` (and `inspect_analysis_view` /
+`extract_artifact` as needed), then call `analyze_javascript_application` with
+narrowed `source_paths`. Omitting `source_paths` still analyzes every bundled
+source and can exceed MCP client tool deadlines even when delivery is
+`detail: "summary"`. Pass `integrity_policy: "record-and-continue"` on
+`analyze_javascript_application` and `extract_artifact` when an Electron `.app`
+bundle's `app.asar.unpacked` native companions were re-signed after ASAR
+creation and retaining declared-vs-observed digest contradictions is intended;
+the default `fail` policy otherwise returns `artifact_integrity_mismatch` on
+the first call.
+
 ASAR header/index admission defaults to 16 MiB / 16777216 bytes;
 an admission error names `asar.max_header_bytes` and its bounds (at most
 256 MiB). Call `update_analysis_settings` with that setting, `action: "set"`
