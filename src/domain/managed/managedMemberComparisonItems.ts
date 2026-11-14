@@ -334,18 +334,29 @@ const compareReferenceTargets = (
   ) {
     const leftTarget = a.aligned[index];
     const rightTarget = b.aligned[index];
-    // The same token of the same authenticated artifact names the same row, so
-    // it needs no nominal identity; a TypeSpec owner has none to give.
+    if (leftTarget == null || rightTarget == null) {
+      unknown = true;
+      continue;
+    }
+    if (leftTarget.identity != null && rightTarget.identity != null) {
+      if (leftTarget.identity !== rightTarget.identity) changed = true;
+      continue;
+    }
+    // A token that names no row — an unresolvable owner such as TypeSpec —
+    // still names one row per side when both sides read the same authenticated
+    // artifact, so the row is equal without a nominal identity. A resolved
+    // identity on the other side means the unresolved side lost information,
+    // which stays unknown.
     if (
       sameArtifact &&
-      leftTarget != null &&
-      rightTarget != null &&
+      left.signature.parse_status === "decoded" &&
+      right.signature.parse_status === "decoded" &&
+      leftTarget.identity == null &&
+      rightTarget.identity == null &&
       leftTarget.token === rightTarget.token
     )
       continue;
-    if (leftTarget?.identity == null || rightTarget?.identity == null)
-      unknown = true;
-    else if (leftTarget.identity !== rightTarget.identity) changed = true;
+    unknown = true;
   }
   return { changed, unknown };
 };

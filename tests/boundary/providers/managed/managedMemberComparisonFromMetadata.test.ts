@@ -513,22 +513,24 @@ describe("managed edge identity resolution", () => {
       });
   });
 
-  it("retains unknown identity for cyclic scope, TypeSpec and historical edges", () => {
+  it("resolves same-artifact tokens without a nominal identity and keeps historical edges unknown", () => {
     const cyclic = observeEdgeTarget({
       typeReferences: [
         { namespace: "Fixture", name: "Outer", enclosingRow: 3 },
         { namespace: "", name: "Inner", enclosingRow: 2 },
       ],
     });
+    expect(cyclic.result.call_edges[0]?.target_identity_sha256).toBeNull();
     expect(compareManagedMembers(cyclic, cyclic).methods[0]?.status).toBe(
-      "unknown",
+      "unchanged",
     );
     const spec = observeEdgeTarget({
       memberRefParentRaw: 12,
       typeSpecSignatures: [Buffer.from([0x15, 0x12, 9, 1, 8])],
     });
+    expect(spec.result.call_edges[0]?.target_identity_sha256).toBeNull();
     expect(compareManagedMembers(spec, spec).methods[0]?.status).toBe(
-      "unknown",
+      "unchanged",
     );
     const source = observeEdgeTarget();
     const historical = {
