@@ -70,6 +70,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { readPngHeaderDimensions } from "../domain/pngHeader.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { readPngHeaderDimensions } from "../domain/pngHeader.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import {
