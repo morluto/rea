@@ -66,6 +66,10 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       // Recorded tools carry their presented schemas. The selected presentation
       // still applies to transport discovery, which is not recorded.
       readonly compactPresentation?: CompactInputSchemaPresentation | undefined;
+      // Recorded tools carry complete output schemas; `off` omits them from
+      // listings while the runtime still validates structured results.
+      readonly outputSchemaProfile?: "full" | "off" | undefined;
+      readonly identity?: RecordedMcpCatalog["identity"] | undefined;
     } = {},
   ) {
     super(
@@ -80,9 +84,8 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       undefined,
       delivery,
       options.compactPresentation,
-      // `main.ts` only defers the exact full advertisement catalog.
-      "full",
-      catalog.identity,
+      options.outputSchemaProfile ?? "full",
+      options.identity ?? catalog.identity,
     );
     for (const name of catalog.evidenceReferenceAlternatives)
       this.registerEvidenceReferenceAlternative(name);

@@ -26,6 +26,7 @@ import {
 import {
   COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
   compactPresentationForMcpOutputSchemaProfile,
+  resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
 } from "./config/mcpOutputSchemaProfile.js";
 import {
@@ -252,6 +253,7 @@ export const FULL_CATALOG_IDENTITY = createCatalogIdentity();
 /** Default MCP advertisement; explicit full/custom selections have their own identity. */
 export const DEFAULT_CATALOG_IDENTITY = createCatalogIdentity({
   compactPresentation: compactPresentationForMcpInputSchemaProfile(undefined),
+  outputSchemaProfile: resolveMcpOutputSchemaProfile(undefined),
 });
 
 /**

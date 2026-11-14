@@ -210,12 +210,23 @@ const catalogProfiles = [
   },
 ];
 
+const withoutOutputProfile = (
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv => {
+  const { REA_MCP_OUTPUT_SCHEMA_PROFILE: _profile, ...rest } = environment;
+  return rest;
+};
+
 it("recognizes a hot/cold initial catalog and its inventory identity", async () => {
   const result = await runProductionMcpDoctor({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
     cwd: process.cwd(),
-    environment: { ...process.env, REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
+    // The product default output profile, not the test suite's.
+    environment: {
+      ...withoutOutputProfile(process.env),
+      REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+    },
   });
   expect(result.healthy).toBe(true);
   expect(result.inventory?.tools).toMatchObject({
@@ -229,7 +240,7 @@ it("recognizes a hot/cold initial catalog and its inventory identity", async () 
       .combined_sha256,
   );
   const environment = {
-    ...process.env,
+    ...withoutOutputProfile(process.env),
     REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
   };
   const identity = progressiveCatalogIdentity(DEFAULT_CATALOG_IDENTITY);
@@ -599,7 +610,11 @@ describe("production MCP doctor probe validation", () => {
   it("reports schema-invalid probes and mismatched inventory from the child", async () => {
     const root = await createTestTempDirectory("rea-mcp-doctor-reply-");
     const snapshotPath = join(root, "reply.json");
-    const environment = { PATH: process.env.PATH ?? "" };
+    // Reply validation needs the listed output schemas.
+    const environment = {
+      PATH: process.env.PATH ?? "",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+    };
     const client = new Client(
       { name: "doctor-reply-capture", version: "1" },
       { jsonSchemaValidator: schemaValidation },

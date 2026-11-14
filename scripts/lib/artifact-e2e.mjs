@@ -104,6 +104,9 @@ const environment = () => {
       : {}),
     REA_LOG_LEVEL: "silent",
     REA_ANALYSIS_PROVIDER: "auto",
+    // Verifiers validate every result against its complete advertised
+    // output contract, which the default profile omits.
+    REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
     // Artifact workflows have no deep-provider prerequisite or GUI authority.
     HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
   };

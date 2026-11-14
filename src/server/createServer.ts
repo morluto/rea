@@ -56,6 +56,7 @@ import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
 import {
   parseMcpOutputSchemaProfile,
+  resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
 } from "../config/mcpOutputSchemaProfile.js";
 import {
@@ -919,7 +920,7 @@ const outputSchemaProfile = (
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
   );
   if (!configured.ok) throw configured.error;
-  return configured.value ?? "full";
+  return resolveMcpOutputSchemaProfile(configured.value);
 };
 
 const selectCompactInputSchemaPresentation = (

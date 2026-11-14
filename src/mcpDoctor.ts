@@ -15,7 +15,10 @@ import {
   compactPresentationForMcpInputSchemaProfile,
   parseMcpInputSchemaProfile,
 } from "./config/mcpInputSchemaProfile.js";
-import { parseMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
+import {
+  parseMcpOutputSchemaProfile,
+  resolveMcpOutputSchemaProfile,
+} from "./config/mcpOutputSchemaProfile.js";
 import { parseMcpToolFamilies } from "./config/mcpToolFamilies.js";
 import { parseMcpToolCatalogProfile } from "./config/mcpToolCatalogProfile.js";
 import {
@@ -623,9 +626,9 @@ const doctorExpectationForEnvironment = (
       inputProfile.ok ? inputProfile.value : undefined,
     ),
     contracts,
-    outputSchemaProfile: outputProfile.ok
-      ? (outputProfile.value ?? "full")
-      : "full",
+    outputSchemaProfile: resolveMcpOutputSchemaProfile(
+      outputProfile.ok ? outputProfile.value : undefined,
+    ),
     promptContracts,
   });
   return {
