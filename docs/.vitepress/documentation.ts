@@ -349,6 +349,11 @@ export const documentationSections = [
         route: "/mcp-contracts",
       },
       {
+        text: "Analysis-run comparison foundation",
+        source: "reference/analysis-run-comparison.md",
+        route: "/analysis-run-comparison",
+      },
+      {
         text: "Reconstruction obligation ledgers",
         source: "reference/reconstruction-obligation-ledgers.md",
         route: "/reconstruction-obligation-ledgers",
