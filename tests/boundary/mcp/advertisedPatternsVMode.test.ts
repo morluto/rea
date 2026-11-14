@@ -2,6 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import { expect, it, onTestFinished } from "vitest";
 
+import { schemaSubschemas } from "../../../src/contracts/jsonSchemaKeywords.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
   BASE64_QUARTET_LENGTH_PATTERN,
@@ -17,31 +18,49 @@ interface AdvertisedPattern {
   readonly pattern: string;
 }
 
+const walkSchemaNodes = (
+  value: unknown,
+  where: string,
+  visit: (schema: Record<string, unknown>, where: string) => void,
+): void => {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) =>
+      walkSchemaNodes(entry, where + "[" + String(index) + "]", visit),
+    );
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+
+  const schema = value as Record<string, unknown>;
+  visit(schema, where);
+  schemaSubschemas(schema, { includeDefinitions: true }).forEach(
+    (child, index) =>
+      walkSchemaNodes(
+        child,
+        where + "/subschemas[" + String(index) + "]",
+        visit,
+      ),
+  );
+};
+
 const collectCanonicalBase64Leaves = (
   value: unknown,
   leaves: Record<string, unknown>[],
 ): void => {
-  if (value === null || typeof value !== "object") return;
-  if (Array.isArray(value)) {
-    value.forEach((entry) => collectCanonicalBase64Leaves(entry, leaves));
-    return;
-  }
-  const record = value as Record<string, unknown>;
-  const allOf = record.allOf;
-  if (
-    Array.isArray(allOf) &&
-    allOf.some(
-      (entry) =>
-        entry !== null &&
-        typeof entry === "object" &&
-        "pattern" in entry &&
-        entry.pattern === BASE64_QUARTET_LENGTH_PATTERN.source,
+  walkSchemaNodes(value, "schema", (schema) => {
+    const allOf = schema.allOf;
+    if (
+      Array.isArray(allOf) &&
+      allOf.some(
+        (entry) =>
+          entry !== null &&
+          typeof entry === "object" &&
+          "pattern" in entry &&
+          entry.pattern === BASE64_QUARTET_LENGTH_PATTERN.source,
+      )
     )
-  )
-    leaves.push(record);
-  Object.values(record).forEach((entry) =>
-    collectCanonicalBase64Leaves(entry, leaves),
-  );
+      leaves.push(schema);
+  });
 };
 
 const collectPatterns = (
@@ -50,19 +69,49 @@ const collectPatterns = (
   tool: string,
   found: AdvertisedPattern[],
 ): void => {
-  if (value === null || typeof value !== "object") return;
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) =>
-      collectPatterns(entry, `${where}[${String(index)}]`, tool, found),
-    );
-    return;
-  }
-  for (const [key, entry] of Object.entries(value)) {
-    if (key === "pattern" && typeof entry === "string")
-      found.push({ tool, where: `${where}/pattern`, pattern: entry });
-    collectPatterns(entry, `${where}/${key}`, tool, found);
-  }
+  walkSchemaNodes(value, where, (schema, schemaPath) => {
+    const pattern = schema.pattern;
+    if (typeof pattern === "string")
+      found.push({ tool, where: schemaPath + "/pattern", pattern });
+  });
 };
+
+it("walks schema-valued JSON Schema positions without treating instance data as schemas", () => {
+  const literal = {
+    pattern: "\\uD800",
+    allOf: [{ pattern: BASE64_QUARTET_LENGTH_PATTERN.source }],
+  };
+  const encodedSchema = {
+    type: "string",
+    allOf: [{ pattern: BASE64_QUARTET_LENGTH_PATTERN.source }],
+  };
+  const schema = {
+    type: "object",
+    properties: {
+      query: { type: "string", pattern: "^[A-Z]+$" },
+      encoded: encodedSchema,
+    },
+    $defs: {
+      identifier: { type: "string", pattern: "^[0-9]+$" },
+    },
+    examples: [literal],
+    default: literal,
+    const: literal,
+    enum: [literal],
+  };
+
+  const patterns: AdvertisedPattern[] = [];
+  collectPatterns(schema, "root", "fixture", patterns);
+  expect(patterns.map(({ pattern }) => pattern)).toEqual([
+    "^[A-Z]+$",
+    BASE64_QUARTET_LENGTH_PATTERN.source,
+    "^[0-9]+$",
+  ]);
+
+  const leaves: Record<string, unknown>[] = [];
+  collectCanonicalBase64Leaves(schema, leaves);
+  expect(leaves).toEqual([encodedSchema]);
+});
 
 const listAdvertisedTools = async (
   environment?: Readonly<NodeJS.ProcessEnv>,
