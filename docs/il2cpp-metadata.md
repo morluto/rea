@@ -206,8 +206,9 @@ unneeded rows out of agent context without discarding the source Evidence.
 ## Native method addresses
 
 `binary_path` names the native binary built with the metadata: macOS
-`GameAssembly.dylib` (Mach-O), Windows `GameAssembly.dll` (64-bit PE) or
-Android `libil2cpp.so` (64-bit ELF, AArch64 or x86-64). A
+`GameAssembly.dylib` (Mach-O), Windows `GameAssembly.dll` (64-bit PE),
+Android `libil2cpp.so` (64-bit ELF, AArch64 or x86-64) or an uncompressed Unity
+WebGL module (wasm32, below). A
 universal Mach-O needs `binary_architecture` (`arm64` or `amd64`); a thin binary
 rejects it. The file is read, never loaded or executed.
 
@@ -334,6 +335,37 @@ Dyld pointer ownership comes from the parsed bind stream, as in Apple's
 The padding, zero-fill-tail and unresolved-type cases have authored regression
 fixtures; they do not add real Unity-build verification to the checks above.
 
+### Unity WebGL (wasm32)
+
+An uncompressed Unity WebGL `Build/*.wasm` module links the same way at
+four-byte pointer width. The metadata is the `global-metadata.dat` that Unity
+packs into `Build/*.data`; pass it as `path` after extracting it. Compressed
+builds (`.wasm.br`, `.wasm.gz`) are refused; a gzip module is named as
+compressed. `binary_architecture` is refused for a module.
+
+The reader takes the module's initial linear memory from its active data
+segments (`i32.const` offsets), mapped from the lowest segment start to the
+highest end, with the rest of the initial memory as zero. Bytes below the lowest
+segment are not mapped. A method pointer in a WebGL build is a slot in function
+table 0, so a code row has `address` and `rva` null, `table_index` (the slot,
+which Il2CppDumper reports as `Address`) and `function_index` (the module
+function that table 0 holds there, counting imports). A slot that no active
+element segment fills is refused; a slot naming an imported function is
+`unknown`. Several slots can hold one function; the reason is not established.
+`binary.format` is `wasm`, `architecture` `wasm32` and `image_base` `0x0`.
+
+Passive or explicit-memory data segments, non-constant offsets, shared or
+64-bit memory, a memory or function table imported from the host (its
+initial contents are not in the file), non-funcref tables, several memories
+or tables, and reordered or repeated sections are refused. Linking does not use WABT, so the `inspect_wasm_artifact` input
+cap does not apply. The reconstructed view and the module bytes share one 1 GiB allowance, and the zero bytes the view adds between and after segments are limited to 64 MiB (`wasm-memory-capacity`, a byte allowance). A module past a parser count cap, such as data segments or table slots, is refused as `wasm-module-capacity`. `generic_instances` and Ghidra seeds are refused for a
+wasm32 module. Checked on two uncompressed Unity 2022.3.62f3 WebGL builds
+(metadata version 31, release and development, built for this check): every
+linked code row matched Il2CppDumper's slot and `Type$$Method` name (9,557 and
+9,643 rows), and in the development build each function index's name-section
+entry starts with the IL2CPP method name. Other Unity and Emscripten versions
+are unchecked.
+
 Without `binary_path`, `binary` is `null` and the four binary collections are
 empty in the complete producer report to indicate unrequested observations. Their summary counts, including state counts, are `null`, and native page requests report unavailable observations. This does not establish an empty native inventory. Missing native fields in historical Evidence remain unknown too.
 
@@ -431,25 +463,25 @@ Il2CppType byref flag in different bits, so a rendered name could gain or lose
 
 The builds checked are listed after the module search rules above.
 
-| Reason                                  | Category    | Meaning                                                                                                      |
-| --------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
-| `unsupported-container`                 | unsupported | Not a 64-bit little-endian Mach-O, PE or ELF image (ELF: AArch64 or x86-64 with dynamic section).            |
-| `slice-selection-required`              | unsupported | A universal Mach-O was given without `binary_architecture`.                                                  |
-| `ambiguous-slice-selection`             | unsupported | More than one universal slice matches the selected architecture label; select an exact subtype externally.   |
-| `slice-not-found`                       | unsupported | The requested slice is absent, or a thin binary was given an architecture.                                   |
-| `unsupported-pointer-encoding`          | unsupported | Mach-O chained fixups or Android packed (APS2) ELF relocations; pointers not decoded.                        |
-| `malformed-container`                   | input error | The container headers are damaged.                                                                           |
-| `code-gen-modules-not-found`            | input error | An image has no module record; often a binary from a different build.                                        |
-| `ambiguous-code-gen-module`             | input error | More than one module record matches an image.                                                                |
-| `code-registration-not-found`           | input error | No unique module table or executable-byte array candidate was resolved.                                      |
-| `invalid-method-token`                  | input error | A token is outside its module's method-pointer rows, or a MethodDef row is reused within one image.          |
-| `invalid-method-pointer`                | input error | A slot is unavailable or its nonzero address lacks unambiguous executable file coverage.                     |
-| `metadata-registration-not-found`       | input error | No single MetadataRegistration or code-loaded type-table candidate was resolved.                             |
-| `invalid-type`                          | input error | A type index or `Il2CppType` record is out of range, unmapped or malformed.                                  |
-| `unsupported-type-kind`                 | unsupported | A valid type kind has no implemented rendering.                                                              |
-| `generic-methods-unsupported`           | unsupported | Generic instances were requested for metadata version 24 or 39, or a build lacks either static registration. |
-| `generic-method-registration-not-found` | input error | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.        |
-| `ambiguous-generic-method-registration` | input error | More than one CodeRegistration layout bounds every genericMethodTable row.                                   |
+| Reason                                  | Category    | Meaning                                                                                                                                                                |
+| --------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `unsupported-container`                 | unsupported | Not a 64-bit little-endian Mach-O, PE or ELF image (ELF: AArch64 or x86-64 with dynamic section), nor an uncompressed wasm32 module that defines its memory and table. |
+| `slice-selection-required`              | unsupported | A universal Mach-O was given without `binary_architecture`.                                                                                                            |
+| `ambiguous-slice-selection`             | unsupported | More than one universal slice matches the selected architecture label; select an exact subtype externally.                                                             |
+| `slice-not-found`                       | unsupported | The requested slice is absent, or a thin binary was given an architecture.                                                                                             |
+| `unsupported-pointer-encoding`          | unsupported | Mach-O chained fixups or Android packed (APS2) ELF relocations; pointers not decoded.                                                                                  |
+| `malformed-container`                   | input error | The container headers are damaged.                                                                                                                                     |
+| `code-gen-modules-not-found`            | input error | An image has no module record; often a binary from a different build.                                                                                                  |
+| `ambiguous-code-gen-module`             | input error | More than one module record matches an image.                                                                                                                          |
+| `code-registration-not-found`           | input error | No unique module table or executable-byte array candidate was resolved.                                                                                                |
+| `invalid-method-token`                  | input error | A token is outside its module's method-pointer rows, or a MethodDef row is reused within one image.                                                                    |
+| `invalid-method-pointer`                | input error | A slot is unavailable or its nonzero address lacks unambiguous executable file coverage.                                                                               |
+| `metadata-registration-not-found`       | input error | No single MetadataRegistration or code-loaded type-table candidate was resolved.                                                                                       |
+| `invalid-type`                          | input error | A type index or `Il2CppType` record is out of range, unmapped or malformed.                                                                                            |
+| `unsupported-type-kind`                 | unsupported | A valid type kind has no implemented rendering.                                                                                                                        |
+| `generic-methods-unsupported`           | unsupported | Generic instances were requested for metadata version 24 or 39, or a build lacks either static registration.                                                           |
+| `generic-method-registration-not-found` | input error | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.                                                                  |
+| `ambiguous-generic-method-registration` | input error | More than one CodeRegistration layout bounds every genericMethodTable row.                                                                                             |
 
 Format and selection failures name `binary_path`; capacity refusals remain typed resource errors. Failed linking preserves the metadata source identity, validated counts, selected binary path/architecture and its SHA-256 when observed, plus prior producer observations. It never publishes an incomplete native table as complete. The binary input is bounded to 1 GiB. The virtual-pointer index has the same 1 GiB estimated representation allowance, reserving 2 KiB per distinct virtual destination before insertion for retained Maps and finish-time lookup storage. Repeated declarations of one destination share that reservation. This conservative allocation accounting is separate from actual process RSS and the report allowance; exhaustion returns a typed `native-index-capacity` refusal before another destination is retained.
 

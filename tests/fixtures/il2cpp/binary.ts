@@ -811,3 +811,160 @@ export const createGenericRegistrationImage = (
     metadataRegistration: address(registration),
   };
 };
+
+/** Linked rows by metadata method index in the wasm fixture: table slot and function index. */
+export const FIXTURE_WASM_METHODS = [
+  { table_index: 1, function_index: 10 },
+  { table_index: 2, function_index: 20 },
+  { table_index: 3, function_index: 30 },
+  { table_index: 4, function_index: 40 },
+  "no-body",
+] as const;
+
+const leb = (value: number): number[] => {
+  const out: number[] = [];
+  do {
+    let byte = value & 0x7f;
+    value = Math.floor(value / 128);
+    if (value > 0) byte |= 0x80;
+    out.push(byte);
+  } while (value > 0);
+  return out;
+};
+const sleb = (value: number): number[] => {
+  const out: number[] = [];
+  for (;;) {
+    const byte = value & 0x7f;
+    value >>= 7;
+    if ((value === 0 && !(byte & 0x40)) || (value === -1 && byte & 0x40)) {
+      out.push(byte);
+      return out;
+    }
+    out.push(byte | 0x80);
+  }
+};
+const wasmSection = (id: number, body: number[]) => [
+  id,
+  ...leb(body.length),
+  ...body,
+];
+
+/**
+ * Synthetic wasm32 module with the same registration tables as
+ * createIl2cppBinaryFixture, at 4-byte pointer width, as Unity WebGL
+ * (Emscripten) lays them out. Method pointers are funcref table slots that
+ * one element segment maps to distinct function indices. Initialized data is
+ * split into two segments with a zero gap inside mscorlib.dll's method
+ * pointer array, as a release build splits data at zero runs.
+ */
+export const createWasmFixture = (
+  /** Table slots the element segment fills, from slot 1; 4 fills all. */
+  filledSlots = 4,
+): Buffer => {
+  const memory = Buffer.alloc(SIZE);
+  const names = ["Assembly-CSharp.dll", "mscorlib.dll"];
+  const nameAt: number[] = [];
+  let cursor = STRINGS + 1;
+  for (const name of names) {
+    nameAt.push(cursor);
+    cursor += memory.write(`${name}\0`, cursor, "utf8") + 1;
+  }
+  // Slots indexed by token row id - 1, mirroring the native fixture order.
+  const tables = [
+    [2, 1, 3],
+    [4, 0],
+  ];
+  const tableAt: number[] = [];
+  let pointer = POINTERS;
+  for (const table of tables) {
+    tableAt.push(pointer);
+    for (const slot of table) {
+      memory.writeUInt32LE(slot, pointer);
+      pointer += 4;
+    }
+  }
+  const writeModule = (at: number, image: number, count: number) => {
+    memory.writeUInt32LE(nameAt[image]!, at);
+    memory.writeUInt32LE(count, at + 4);
+    memory.writeUInt32LE(tableAt[image]!, at + 8);
+  };
+  writeModule(MODULES, 0, 3);
+  writeModule(MODULES + 0x40, 1, 2);
+  memory.writeUInt32LE(MODULES, MODULE_ARRAY);
+  memory.writeUInt32LE(MODULES + 0x40, MODULE_ARRAY + 4);
+  memory.writeUInt32LE(2, REGISTRATION);
+  memory.writeUInt32LE(MODULE_ARRAY, REGISTRATION + 4);
+  const types: readonly [kind: number, data: number][] = [
+    [0x1d, TYPE_RECORDS + 8],
+    [0x15, GENERIC_CLASS],
+    [0x12, 3],
+    [0x08, 0],
+  ];
+  types.forEach(([kind, data], index) => {
+    const at = TYPE_RECORDS + index * 8;
+    memory.writeUInt32LE(data, at);
+    memory.writeUInt32LE(kind << 16, at + 4);
+    memory.writeUInt32LE(at, TYPE_POINTERS + index * 4);
+  });
+  memory.writeUInt32LE(TYPE_RECORDS + 16, GENERIC_CLASS);
+  memory.writeUInt32LE(GENERIC_INSTANCE, GENERIC_CLASS + 4);
+  memory.writeUInt32LE(1, GENERIC_INSTANCE);
+  memory.writeUInt32LE(GENERIC_ARGUMENTS, GENERIC_INSTANCE + 4);
+  memory.writeUInt32LE(TYPE_RECORDS + 24, GENERIC_ARGUMENTS);
+  const word = (slot: number, value: number) =>
+    memory.writeUInt32LE(value, METADATA_REGISTRATION + slot * 4);
+  word(6, types.length);
+  word(7, TYPE_POINTERS);
+  word(10, 4);
+  word(11, TYPE_POINTERS);
+  word(12, 4);
+  word(13, TYPE_POINTERS);
+  // mscorlib.dll's array is [4, 0] at 0x30c: the first segment ends after
+  // slot 4 and the second starts after the zero slot.
+  const split = tableAt[1]! + 4;
+  const segment = (from: number, to: number) => [
+    0,
+    0x41,
+    ...sleb(from),
+    0x0b,
+    ...leb(to - from),
+    ...memory.subarray(from, to),
+  ];
+  return Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    // One function type, () -> (), shared by every defined function.
+    ...wasmSection(1, [1, 0x60, 0, 0]),
+    // 41 defined functions, so the slots below name existing functions.
+    ...wasmSection(3, [41, ...Array<number>(41).fill(0)]),
+    // One funcref table with five initial slots.
+    ...wasmSection(4, [1, 0x70, 0, 5]),
+    ...wasmSection(5, [1, 0, 1]),
+    // Slots 1 to 4 name functions 10, 20, 30 and 40.
+    ...wasmSection(9, [
+      1,
+      0,
+      0x41,
+      1,
+      0x0b,
+      filledSlots,
+      ...[10, 20, 30, 40].slice(0, filledSlots),
+    ]),
+    // One empty body (no locals, end) per defined function.
+    ...wasmSection(10, [
+      41,
+      ...Array.from({ length: 41 }, () => [2, 0, 0x0b]).flat(),
+    ]),
+    ...wasmSection(11, [
+      2,
+      ...segment(STRINGS, split),
+      ...segment(split + 4, SIZE),
+    ]),
+  ]);
+};

@@ -33,7 +33,7 @@ export const registerIl2cppCommands = (
         binary: localPathStringSchema
           .optional()
           .describe(
-            "Matching native binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so) to link method addresses; read only",
+            "Matching binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll, ELF libil2cpp.so, or an uncompressed Unity WebGL .wasm module) to link method addresses; read only",
           ),
         architecture: z
           .enum(["arm64", "amd64"])

@@ -203,6 +203,16 @@ it("refuses an unlinked report", () => {
   expect(failure.issues[0]?.path).toEqual(["binary_path"]);
 });
 
+it("refuses a wasm32 report, whose method rows are table slots", () => {
+  const failure = inputFailure(() =>
+    il2cppGhidraSeeds(
+      { ...report, binary: { ...report.binary!, format: "wasm" } },
+      0n,
+    ),
+  );
+  expect(failure.issues[0]?.path).toEqual(["ghidra_seeds"]);
+});
+
 it("defaults to Ghidra's load base: 0x100000 for an ELF linked at 0, else the link base", () => {
   const binary = report.binary!;
   expect(ghidraDefaultBase(binary)).toBe(0x100000n);

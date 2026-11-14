@@ -126,8 +126,11 @@ const parameterRowSchema = il2cppMetadataParameterSchema.extend({
 const stringLiteralRowSchema = il2cppMetadataStringLiteralSchema.extend({
   index: indexSchema,
 });
+// wasm32 code rows add their table slot and function index; native rows omit them.
 const methodAddressRowSchema = il2cppMethodAddressSchema.extend({
   index: indexSchema,
+  table_index: indexSchema.optional(),
+  function_index: indexSchema.optional(),
 });
 const typeReferenceRowSchema = il2cppTypeReferenceSchema.extend({
   index: indexSchema,
