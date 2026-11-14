@@ -6,6 +6,7 @@ import type { Readable } from "node:stream";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { SingleFileJavaScriptArtifactReader } from "./JavaScriptArtifactReader.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
@@ -74,7 +75,11 @@ export const readJavaScriptArtifactFiles = async (
   sourcePaths?: readonly string[],
   asarHeaderAdmission?: AsarHeaderAdmission,
 ): Promise<JavaScriptArtifactFileSet> => {
-  const inventory = expectedInventory(snapshot);
+  const singleFileEntryPath =
+    reader instanceof SingleFileJavaScriptArtifactReader
+      ? reader.entryPath
+      : undefined;
+  const inventory = expectedInventory(snapshot, singleFileEntryPath);
   const expected = inventory.files;
   const selectedPaths =
     sourcePaths === undefined
@@ -419,6 +424,7 @@ const verifyEntryBytes = async (
 
 const expectedInventory = (
   snapshot: ArtifactInventorySnapshot,
+  singleFileEntryPath?: string,
 ): {
   readonly files: ReadonlyMap<string, ExpectedFile>;
   readonly containers: ReadonlyMap<string, ExpectedContainer>;
@@ -432,32 +438,36 @@ const expectedInventory = (
   const seenPaths = new Map<string, boolean>();
   let ambiguousPath: string | undefined;
   for (const occurrence of snapshot.occurrences) {
-    if (occurrence.logical_path === ".") continue;
+    const logicalPath =
+      occurrence.logical_path === "."
+        ? singleFileEntryPath
+        : occurrence.logical_path;
+    if (logicalPath === undefined) continue;
     const isNestedAsar =
+      occurrence.logical_path !== "." &&
       occurrence.entry_kind === "file" &&
-      occurrence.logical_path.toLowerCase().endsWith(".asar");
-    const kind = relevantKind(occurrence.logical_path);
+      logicalPath.toLowerCase().endsWith(".asar");
+    const kind = relevantKind(logicalPath);
     if (
       occurrence.entry_kind === "file" &&
       (isNestedAsar || kind !== undefined)
     ) {
       const available = occurrence.artifact_id !== null;
-      const priorAvailable = seenPaths.get(occurrence.logical_path);
+      const priorAvailable = seenPaths.get(logicalPath);
       if (priorAvailable !== undefined) {
         // Unavailable siblings cannot bind content to the wrong occurrence.
         // Keep them as unknown; any available sibling makes the shared path
         // ambiguous for acquisition, regardless of encounter order.
-        if (priorAvailable || available)
-          ambiguousPath ??= occurrence.logical_path;
+        if (priorAvailable || available) ambiguousPath ??= logicalPath;
         continue;
       }
-      seenPaths.set(occurrence.logical_path, available);
+      seenPaths.set(logicalPath, available);
     }
     if (occurrence.artifact_id === null) {
       if (occurrence.entry_kind === "file" && kind !== undefined)
-        unavailableFiles.add(occurrence.logical_path);
+        unavailableFiles.add(logicalPath);
       if (isNestedAsar)
-        containers.set(occurrence.logical_path, {
+        containers.set(logicalPath, {
           hash_status: occurrence.hash_status,
           format: occurrence.artifact_format,
           inventory: null,
@@ -468,26 +478,26 @@ const expectedInventory = (
     if (node === undefined)
       throw new ArtifactReaderFailure(
         "integrity",
-        `Artifact inventory node is missing: ${occurrence.logical_path}`,
+        `Artifact inventory node is missing: ${logicalPath}`,
       );
     // Inventory occurrences can have content identities for directories too.
     // Suffixes only describe file candidates; a directory such as
     // node_modules/@zip.js remains a graph node and must never be opened.
     if (occurrence.entry_kind !== "file") continue;
     if (isNestedAsar)
-      containers.set(occurrence.logical_path, {
+      containers.set(logicalPath, {
         hash_status: occurrence.hash_status,
         format: occurrence.artifact_format,
         inventory: {
-          path: occurrence.logical_path,
+          path: logicalPath,
           sha256: node.sha256,
           bytes: node.size,
           inventory_artifact_id: node.artifact_id,
         },
       });
     if (kind === undefined) continue;
-    files.set(occurrence.logical_path, {
-      path: occurrence.logical_path,
+    files.set(logicalPath, {
+      path: logicalPath,
       sha256: node.sha256,
       bytes: node.size,
       inventoryArtifactId: node.artifact_id,
@@ -538,6 +548,7 @@ const createUnanalyzedArtifactLookup = (
     }
   };
   const isOpaque = (occurrence: ArtifactOccurrence): boolean =>
+    occurrence.logical_path !== "." &&
     occurrence.entry_kind === "file" &&
     relevantKind(occurrence.logical_path) === undefined;
   const isUnavailableRelevant = (occurrence: ArtifactOccurrence): boolean =>

@@ -352,7 +352,7 @@ const layoutSummarySchema = z.strictObject({
 
 const javascriptSummarySchema = z.strictObject({
   input_path: z.string().min(1),
-  format: z.enum(["asar", "directory"]),
+  format: z.enum(["asar", "directory", "file"]),
   root_artifact_sha256: digestSchema,
   source_selection: javaScriptSourceSelectionSchema.exactOptional(),
   statistics: jsonObjectSchema,

@@ -95,6 +95,9 @@ const parameters = (
     : { semantic_precision: input.semantic_precision }),
   format: input.format,
   integrity_policy: input.integrity_policy,
+  ...(input.timeout_policy === undefined
+    ? {}
+    : { timeout_policy: input.timeout_policy }),
   ...(input.max_semantic_nodes === undefined
     ? {}
     : { max_semantic_nodes: input.max_semantic_nodes }),

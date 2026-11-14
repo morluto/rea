@@ -114,32 +114,62 @@ describe("JavaScript application input selection", () => {
     });
   });
 
-  it("reports a file that is neither a directory nor an .asar as an unsupported target", async () => {
-    const { root } = await application();
-    const binary = join(root, "program");
-    await writeFile(binary, Buffer.from([0xcf, 0xfa, 0xed, 0xfe]));
+  it.each(["program.bin", "icon.png"] as const)(
+    "reports a non-JavaScript file (%s) as an unsupported target",
+    async (filename) => {
+      const { root } = await application();
+      const binary = join(root, filename);
+      await writeFile(binary, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
 
-    expect(await analyzeFailure({ input_path: binary })).toMatchObject({
-      code: "unsupported_target",
-      category: "unsupported_target",
-      remediation: { action: expect.stringContaining(".asar") },
-      details: {
-        operation: "analyze_javascript_application",
-        path: binary,
-      },
+      expect(await analyzeFailure({ input_path: binary })).toMatchObject({
+        code: "unsupported_target",
+        category: "unsupported_target",
+        remediation: {
+          action: expect.stringMatching(/\.asar.*JavaScript/u),
+        },
+        details: {
+          operation: "analyze_javascript_application",
+          path: binary,
+        },
+      });
+    },
+  );
+
+  it("refuses a native executable disguised with a .js suffix", async () => {
+    const { root } = await application();
+    const disguised = join(root, "disguised.js");
+    // 64-bit Mach-O MH_MAGIC_64 + valid minimal header prefix bytes
+    const machoHeader = Buffer.alloc(32);
+    machoHeader.writeUInt32LE(0xfeedfacf, 0);
+    machoHeader.writeUInt32LE(0x0100000c, 4);
+    machoHeader.writeUInt32LE(0x00000000, 8);
+    machoHeader.writeUInt32LE(0x00000002, 12);
+    await writeFile(disguised, machoHeader);
+
+    expect(await analyzeFailure({ input_path: disguised })).toMatchObject({
+      code: "artifact_operation_failed",
+      details: { reason: "format" },
     });
   });
 
   it.each([
     ["a directory", "directory", "asar"],
+    ["a directory", "directory", "file"],
     ["an .asar file", "asar", "directory"],
+    ["an .asar file", "asar", "file"],
+    ["a JavaScript source file", "file", "directory"],
+    ["a JavaScript source file", "file", "asar"],
   ] as const)(
-    "reports %s selected with a contradicting format as an invalid request",
+    "reports %s selected with a contradicting format (%s vs %s) as an invalid request",
     async (_label, observed, format) => {
       const { root, directory } = await application();
       const selected =
-        observed === "directory" ? directory : join(root, "app.asar");
-      if (observed === "asar") await writeFile(selected, "not inspected");
+        observed === "directory"
+          ? directory
+          : observed === "asar"
+            ? join(root, "app.asar")
+            : join(root, "bundle.mjs");
+      if (observed !== "directory") await writeFile(selected, "export {};\n");
 
       expect(
         await analyzeFailure({ input_path: selected, format }),

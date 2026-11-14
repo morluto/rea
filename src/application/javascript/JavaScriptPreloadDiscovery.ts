@@ -5,8 +5,10 @@ import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorClean
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
+import type { JavaScriptTimeoutPolicyName } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptSourceAnalysisLimits } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -30,6 +32,7 @@ export const discoverJavaScriptPreloadPaths = async (
   limits: JavaScriptSourceAnalysisLimits,
   scope: ArtifactResourceScope,
   signal?: AbortSignal,
+  timeoutPolicy: JavaScriptTimeoutPolicyName = "stop",
 ): Promise<JavaScriptPreloadDiscovery> => {
   const paths = new Set<string>();
   const limitations: string[] = [];
@@ -73,12 +76,14 @@ export const discoverJavaScriptPreloadPaths = async (
         if (signal?.aborted === true || error instanceof AnalysisCancelledError)
           throw error;
         // Normal analysis meets the same source and owns its failure and the
-        // partial Evidence. A per-source limit only loses this source's
-        // declarations; any other failure would stop that pass here too. The
+        // partial Evidence. A per-source limit or continued timeout only loses
+        // this source's declarations; any other failure stops here too. The
         // gap stays reported even if normal analysis then reads the source.
         const skipped =
-          error instanceof AnalysisResourceConstraintError &&
-          error.reportedLimits?.parent_result_budget_exhausted !== true;
+          (error instanceof AnalysisResourceConstraintError &&
+            error.reportedLimits?.parent_result_budget_exhausted !== true) ||
+          (error instanceof AnalysisTimeoutError &&
+            timeoutPolicy === "record-and-continue");
         const later = sources.length - index - 1;
         limitations.push(
           skipped || later === 0
