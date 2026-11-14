@@ -17,6 +17,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ghidraDisabledAnalyzerPreset } from "./GhidraDisabledAnalyzers.js";
+import { ghidraBridgeSourcesDigest } from "./GhidraBridgeSources.js";
 import type { GhidraInstallationInspection } from "./GhidraInstallation.js";
 import {
   isLegacyMipsAdmission,
@@ -53,7 +54,7 @@ import {
 } from "../domain/native/nativeAotPe.js";
 
 /** Shared analysis commitments for raw and header-selected imports. */
-const sharedAnalysisSemantics = {
+const sharedAnalysisSemanticMarkers = {
   annotation_policy: "atomic-function-entry-metadata-v1",
   byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
   load_image_observations: "source-mappings-entry-context-relocation-symbol-v3",
@@ -76,6 +77,11 @@ const sharedAnalysisSemantics = {
   byte_search_coverage: "separate-loaded-overlays-v1",
   function_boundary_observations: "ghidra-function-boundary-limitations-v5",
 } as const;
+/** Marker revisions plus the bridge sources that produce every Ghidra result. */
+const sharedAnalysisSemantics = () => ({
+  ...sharedAnalysisSemanticMarkers,
+  bridge_sources_sha256: ghidraBridgeSourcesDigest(),
+});
 const loaderRelocationSemantics = "volatile-unapplied-relocation-blocks-v1";
 // Read-only sessions record relocation limitations without marking blocks volatile.
 const readOnlyLoaderRelocationSemantics = "read-only-relocation-limitations-v1";
@@ -123,7 +129,7 @@ const binaryLoaderPolicy = (
   architecture: target.architecture,
   available_architectures: [...target.availableArchitectures].sort(),
   import_mode: "ephemeral-source-immutable",
-  ...sharedAnalysisSemantics,
+  ...sharedAnalysisSemantics(),
   no_return_repair:
     installation.platform === "win32"
       ? "disabled-windows-p0"
@@ -326,7 +332,7 @@ export const resolveGhidraAnalysisProfile = async (
               windows_arm_pe_machine: target.peMachine ?? null,
             }
           : {}),
-        ...sharedAnalysisSemantics,
+        ...sharedAnalysisSemantics(),
         // Windows P0 has no database-mutation authority: limitations only.
         loader_relocation_semantics:
           installation.platform === "win32"
@@ -496,7 +502,7 @@ export const existingGhidraAnalysisProfile = (
     architecture: target.architecture ?? null,
     ...(mipsElf === undefined ? {} : { mips_elf: mipsElf }),
     import_mode: "existing-project-private-copy-v1",
-    ...sharedAnalysisSemantics,
+    ...sharedAnalysisSemantics(),
     selected_project_relationship_coverage: "prior-analysis-unknown-v1",
     annotation_policy: "read-only-existing-project-v1",
     loader_relocation_semantics: readOnlyLoaderRelocationSemantics,
