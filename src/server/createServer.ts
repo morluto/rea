@@ -44,6 +44,7 @@ import { registerRustTools } from "./registerRustTools.js";
 import { registerPythonPycTool } from "./registerPythonPycTool.js";
 import { registerErlangTools } from "./registerErlangTools.js";
 import { registerV8CodeCacheTool } from "./registerV8CodeCacheTool.js";
+import { registerMavenGradleMetadataTool } from "./registerMavenGradleMetadataTool.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { registerFridaTools } from "./registerFridaTools.js";
@@ -216,6 +217,7 @@ export const createServer = (
     rustBinary,
     erlangBeam,
     v8CodeCache,
+    mavenGradleMetadata,
     modelArtifact,
     gpuCodeObjects,
     il2cppMetadata,
@@ -669,6 +671,13 @@ export const createServer = (
       registerV8CodeCacheTool(
         server,
         v8CodeCache,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerMavenGradleMetadataTool(
+        server,
+        mavenGradleMetadata,
         toolLogger,
         recordEvidence,
         analysisAdmission,

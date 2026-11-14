@@ -553,6 +553,19 @@ The workflow reports IFF chunk names, atom tables, exports, imports, lambdas,
 and the Code chunk header. Missing optional tables stay null. See
 [Erlang BEAM files](../erlang-beam.md).
 
+Inspect a Maven POM or Gradle module-metadata file without running Maven or
+Gradle, resolving a tree, or contacting a repository:
+
+```bash
+rea inspect-maven-gradle-metadata /absolute/path/to/pom.xml --json
+rea inspect-maven-gradle-metadata /absolute/path/to/demo-1.2.3.module --json
+```
+
+The workflow reports coordinates as spelled, dependency and
+dependencyManagement rows, BOM or platform notes, Gradle variants, and
+unresolved property or parent references. See
+[Maven POM and Gradle module metadata](../maven-gradle-metadata.md).
+
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and
 `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`.

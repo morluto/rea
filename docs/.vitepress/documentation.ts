@@ -616,6 +616,11 @@ export const documentationSections = [
         route: "/kuna-provider",
       },
       {
+        text: "Maven POM and Gradle module metadata",
+        source: "maven-gradle-metadata.md",
+        route: "/maven-gradle-metadata",
+      },
+      {
         text: "Model file declarations",
         source: "model-artifacts.md",
         route: "/model-artifacts",

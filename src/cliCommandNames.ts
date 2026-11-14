@@ -78,6 +78,7 @@ export const CLI_COMMANDS = Object.freeze({
   inspectPythonPyc: "inspect-python-pyc",
   inspectErlangBeam: "inspect-erlang-beam",
   inspectV8CodeCache: "inspect-v8-code-cache",
+  inspectMavenGradleMetadata: "inspect-maven-gradle-metadata",
   inspectPeResources: "inspect-pe-resources",
   inspectPeCertificates: "inspect-pe-certificates",
   inspectPeImports: "inspect-pe-imports",

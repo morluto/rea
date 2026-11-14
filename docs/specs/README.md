@@ -30,6 +30,7 @@ for new work, roadmap granularity and producer-owned contracts.
 - [Solidity terminal metadata inspection](solidity/cbor-metadata/spec.md) ([plan](solidity/cbor-metadata/plan.md), [tasks](solidity/cbor-metadata/tasks.md), [verification](solidity/cbor-metadata/verification.md))
 - [Inspect a V8 code cache container](v8/code-cache-inspection/spec.md) ([plan](v8/code-cache-inspection/plan.md), [tasks](v8/code-cache-inspection/tasks.md))
 - [Deno compile executable inventory and extraction](artifacts/deno-standalone/spec.md) ([plan](artifacts/deno-standalone/plan.md), [tasks](artifacts/deno-standalone/tasks.md))
+- [Inspect Maven POM and Gradle module metadata](artifacts/maven-gradle-metadata/spec.md) ([plan](artifacts/maven-gradle-metadata/plan.md), [tasks](artifacts/maven-gradle-metadata/tasks.md))
 - [ELF unwind function ranges](native/elf-unwind-ranges/spec.md) ([plan](native/elf-unwind-ranges/plan.md), [tasks](native/elf-unwind-ranges/tasks.md))
 - [Linux kernel build config](native/kernel-build-config/spec.md) ([plan](native/kernel-build-config/plan.md), [tasks](native/kernel-build-config/tasks.md))
 - [Native initializers](native/native-initializers/spec.md) ([plan](native/native-initializers/plan.md), [tasks](native/native-initializers/tasks.md))
