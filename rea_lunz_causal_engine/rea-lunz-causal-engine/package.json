@@ -1,0 +1,13 @@
+{
+  "name": "rea-lunz-external-evidence-engine",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.19.0 || ^24.11.0 || >=26.0.0"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check src/external-evidence-engine/index.mjs && node --check src/external-evidence-engine/security.mjs && node --check src/external-evidence-engine/validation.mjs && node --check src/external-evidence-engine/fidelity-report.mjs && node --check scripts/install-rea-integration.mjs && node --check scripts/verify-rea-integration.mjs && node --check scripts/copy-external-evidence-engine.mjs && node --test tests/*.test.mjs"
+  }
+}
