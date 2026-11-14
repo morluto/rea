@@ -12,6 +12,10 @@ import { recoveryInstructions } from "../../../src/server/recoveryInstructions.j
 import { UNTRUSTED_CONTENT_INSTRUCTIONS } from "../../../src/server/toolResultEncoding.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { retainedEvidenceReferenceSchema } from "../../../src/domain/evidenceReference.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
 
 it("delivers deadline recovery guidance at initialization before any tool call", async () => {
   const { client, transport } = createResourceClient();
@@ -345,7 +349,10 @@ const verifyRecovery = async (
 const createResourceClient = ({
   parentHeapMb = 512,
 }: { readonly parentHeapMb?: number } = {}) => {
-  const client = new Client({ name: "javascript-resources", version: "1" });
+  const client = new Client(
+    { name: "javascript-resources", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
