@@ -667,6 +667,7 @@ it("retains established storage for stable GGUF types and zero-byte K declaratio
       { name: "integer", type: 26, shape: [3n], offset: 0n, bytes: 12 },
       { name: "empty-k", type: 10, shape: [64n, 0n], offset: 32n, bytes: 0 },
       { name: "quant", type: 2, shape: [32n], offset: 32n, bytes: 18 },
+      { name: "fp8", type: 43, shape: [3n], offset: 64n, bytes: 3 },
     ],
   });
   const { provider, path } = await providerAt(fixture.bytes);
@@ -676,8 +677,9 @@ it("retains established storage for stable GGUF types and zero-byte K declaratio
     { type: "I32", byte_length: 12, storage_validation: "consistent" },
     { type: "Q2_K", byte_length: 0, storage_validation: "consistent" },
     { type: "Q4_0", byte_length: 18, storage_validation: "consistent" },
+    { type: "F8_E4M3", byte_length: 3, storage_validation: "consistent" },
   ]);
-  expect(result.value.totals.tensor_bytes).toBe(30);
+  expect(result.value.totals.tensor_bytes).toBe(33);
   expect(result.value.coverage).toMatchObject({
     tensor_ranges: "complete",
     storage_sizes: "complete",
