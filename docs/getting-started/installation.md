@@ -531,7 +531,7 @@ entry:
 
    ```powershell
    npm.cmd cache npx rm REA_CACHE_KEY
-   npx.cmd --yes rea-agents@6.7.0 doctor --json
+   npx.cmd --yes rea-agents@6.7.0 doctor --json  # install-pin: allow — version reported in issue #5259
    ```
 
    Keep the key argument: this recovery does not require clearing all npm caches
@@ -2130,7 +2130,7 @@ without asking npm to resolve the workspace's dependency graph.
 The optional curl wrapper installs only the global npm package:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/morluto/rea/rea-agents-6.9.0/install.sh | bash
 ```
 
 It prints the version, runtime, npm command, and destination before installing. When a controlling terminal exists it starts `rea setup`; otherwise it prints the command to run later.
@@ -2138,7 +2138,7 @@ It prints the version, runtime, npm command, and destination before installing. 
 Pass options with `bash -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh |
+curl -fsSL https://raw.githubusercontent.com/morluto/rea/rea-agents-6.9.0/install.sh |
   bash -s -- --dry-run
 ```
 
@@ -2146,7 +2146,7 @@ To review a version-pinned installer before running it, select the release
 version, download its tagged script, and inspect the downloaded file:
 
 ```bash
-rea_version=6.7.0
+rea_version=6.9.0
 curl -fsSL "https://raw.githubusercontent.com/morluto/rea/rea-agents-${rea_version}/install.sh" -o rea-install.sh
 less rea-install.sh
 ```
