@@ -295,7 +295,13 @@ const guardedBodyMayCall = (body: t.BlockStatement): boolean => {
       for (const child of children)
         pending.push({ node: child, parent: node, finish: false });
     } else {
-      const direct = javaScriptExecutions(node, parent).length > 0;
+      // Without scope proof an identifier may resolve through a global accessor,
+      // including when its enclosing operator itself performs no coercion.
+      const direct =
+        javaScriptExecutions(node, parent).length > 0 ||
+        (t.isIdentifier(node) &&
+          parent !== null &&
+          t.isReferenced(node, parent));
       guardedExecutions.set(
         node,
         direct ||

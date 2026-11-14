@@ -7,6 +7,7 @@ import {
   javaScriptTypeOnlyAliases,
 } from "./javascriptSemanticExecutionPoints.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
+import { semanticPropertyReadSources } from "./javascriptSemanticIterationSources.js";
 
 const installedNodeTypes = [
   ...new Set([...Object.keys(t.VISITOR_KEYS), ...Object.keys(t.NODE_FIELDS)]),
@@ -120,3 +121,20 @@ it("exposes the enumerated object", () => {
     expect.objectContaining({ kind: "enumeration", operands: [node.right] }),
   );
 });
+
+it.each(["!trigger", "typeof trigger", "void trigger", "trigger === 1"])(
+  "retains catch property reads when %s may invoke a global accessor",
+  (expression) => {
+    const statement = parsed(`try { ${expression}; } catch ({ value }) {}`)
+      .body[0];
+    if (!t.isTryStatement(statement) || statement.handler == null)
+      throw new Error("Expected catch clause");
+    expect(semanticPropertyReadSources(statement.handler, statement)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          projection: expect.arrayContaining(["value"]),
+        }),
+      ]),
+    );
+  },
+);
