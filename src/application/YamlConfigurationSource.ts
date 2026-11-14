@@ -204,6 +204,27 @@ const retainYamlSequenceSource = (
   );
 };
 
+/** A key spelled as an alias to a plain string scalar is that string key. */
+const aliasedStringKey = (
+  key: unknown,
+  document: Document,
+): string | undefined => {
+  if (!isAlias(key)) return undefined;
+  const target = key.resolve(document);
+  return isScalar(target) && typeof target.value === "string"
+    ? target.value
+    : undefined;
+};
+
+/** A string key as YAML resolves it, whether written directly or as an alias. */
+const resolvedStringKey = (
+  key: unknown,
+  document: Document,
+): string | undefined =>
+  isScalar(key) && typeof key.value === "string"
+    ? key.value
+    : aliasedStringKey(key, document);
+
 const retainYamlMapSource = (
   previous: YAMLMap,
   next: YAMLMap,
@@ -219,26 +240,35 @@ const retainYamlMapSource = (
     document,
   );
   const entries = new Map(
-    previous.items.flatMap((pair) =>
-      isScalar(pair.key) && typeof pair.key.value === "string"
-        ? [[pair.key.value, pair] as const]
-        : [],
-    ),
+    previous.items.flatMap((pair) => {
+      const key = resolvedStringKey(pair.key, document);
+      return key === undefined ? [] : [[key, pair] as const];
+    }),
   );
   for (const pair of next.items) {
     if (previous.items.includes(pair)) continue;
     const key = isScalar(pair.key) ? pair.key.value : undefined;
     const prior = typeof key === "string" ? entries.get(key) : undefined;
     if (prior === undefined) continue;
-    pair.key = isNode(pair.key)
-      ? retainYamlConfigurationSource(
-          prior.key,
-          pair.key,
-          retainedSources,
-          document,
-          editedNodes,
-        )
-      : prior.key;
+    if (isAlias(prior.key)) {
+      // Keep the aliased spelling while its anchor survives this edit.
+      const target = prior.key.resolve(document);
+      if (
+        target !== undefined &&
+        !editedNodes.has(target) &&
+        !retainedSources.has(target)
+      )
+        pair.key = prior.key;
+    } else
+      pair.key = isNode(pair.key)
+        ? retainYamlConfigurationSource(
+            prior.key,
+            pair.key,
+            retainedSources,
+            document,
+            editedNodes,
+          )
+        : prior.key;
     if (isNode(pair.value))
       pair.value = retainYamlConfigurationSource(
         prior.value,
@@ -323,8 +353,8 @@ const retainProjectedYamlKeys = (
   for (const pair of previous.items) {
     if (isYamlMergeKey(pair.key)) continue;
     let key: string;
-    if (isScalar(pair.key) && typeof pair.key.value === "string")
-      key = pair.key.value;
+    const stringKey = resolvedStringKey(pair.key, document);
+    if (stringKey !== undefined) key = stringKey;
     else {
       const singleton = new YAMLMap(document.schema);
       singleton.items.push(new Pair(pair.key, null));

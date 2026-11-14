@@ -669,6 +669,33 @@ it("keeps argument annotations with unique values and retains removed annotation
 });
 
 describe("Hermes registration refresh around anchors and merges", () => {
+  it("edits a field whose key is an alias to a shared string, keeping the alias", () => {
+    const source =
+      "field: &field env\nmcp_servers:\n  rea:\n    command: rea\n    *field : {A: '1'}\n";
+    const out = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+      command: "rea",
+      env: { A: "2" },
+    });
+    expect(out).toContain("*field");
+    expect(parseHermesConfigurationYaml(out)).toMatchObject({
+      field: "env",
+      mcp_servers: { rea: { command: "rea", env: { A: "2" } } },
+    });
+  });
+
+  it("writes a plain key when an aliased key's anchor is rebuilt by the same edit", () => {
+    const source =
+      "mcp_servers:\n  rea:\n    command: &field env\n    *field : {A: '1'}\n";
+    const out = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+      command: "rea",
+      env: { A: "2" },
+    });
+    expect(out).not.toContain("*field");
+    expect(parseHermesConfigurationYaml(out)).toMatchObject({
+      mcp_servers: { rea: { command: "rea", env: { A: "2" } } },
+    });
+  });
+
   it("materializes an alias whose sibling anchor the refresh replaces", () => {
     const source =
       "mcp_servers:\n  rea:\n    command: &launcher /old/rea\n    env: {REA_LAUNCHER: *launcher}\n";

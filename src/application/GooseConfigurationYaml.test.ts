@@ -475,3 +475,17 @@ it("materializes an alias whose sibling anchor the refresh replaces", () => {
     },
   });
 });
+
+it("edits a field whose key is an alias to a shared string, keeping the alias", () => {
+  const source =
+    "field: &field envs\nextensions:\n  rea:\n    cmd: rea\n    *field : {A: '1'}\n";
+  const out = editGooseConfigurationYaml(source, ["extensions", "rea"], {
+    cmd: "rea",
+    envs: { A: "2" },
+  });
+  expect(out).toContain("*field");
+  expect(parseGooseConfigurationYaml(out)).toMatchObject({
+    field: "envs",
+    extensions: { rea: { cmd: "rea", envs: { A: "2" } } },
+  });
+});
