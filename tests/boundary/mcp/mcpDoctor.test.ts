@@ -610,11 +610,9 @@ describe("production MCP doctor probe validation", () => {
   it("reports schema-invalid probes and mismatched inventory from the child", async () => {
     const root = await createTestTempDirectory("rea-mcp-doctor-reply-");
     const snapshotPath = join(root, "reply.json");
-    // Reply validation needs the listed output schemas.
-    const environment = {
-      PATH: process.env.PATH ?? "",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
-    };
+    // The default output profile lists no output schemas; the doctor still
+    // validates the reply against the canonical contract.
+    const environment = { PATH: process.env.PATH ?? "" };
     const client = new Client(
       { name: "doctor-reply-capture", version: "1" },
       { jsonSchemaValidator: schemaValidation },
@@ -631,6 +629,9 @@ describe("production MCP doctor probe validation", () => {
     try {
       await client.connect(transport);
       const tools = await client.listTools();
+      expect(
+        tools.tools.filter(({ outputSchema }) => outputSchema !== undefined),
+      ).toEqual([]);
       removedToolName =
         tools.tools.find(({ name }) => name !== "binary_session")?.name ?? "";
       if (removedToolName === "")

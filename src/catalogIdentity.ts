@@ -12,7 +12,7 @@ import { CLI_COMMAND_NAMES } from "./cliCommandNames.js";
 import { compareUnicodeCodePoints } from "./domain/unicodeCodePointOrder.js";
 import {
   advertisedInputJsonSchema,
-  toolOutputSchemaWithMetadata,
+  advertisedOutputJsonSchema,
 } from "./contracts/toolSchemaMetadata.js";
 import {
   describeAdvertisedTool,
@@ -52,9 +52,7 @@ const createToolCatalog = (contracts: readonly ToolContract[]) =>
     returns_target_content: contract.returnsTargetContent,
     annotations: contract.annotations,
     input_schema: advertisedInputJsonSchema(contract),
-    output_schema: toolOutputSchemaWithMetadata(contract)[
-      "~standard"
-    ].jsonSchema.output({ target: "draft-2020-12" }),
+    output_schema: advertisedOutputJsonSchema(contract),
   }));
 
 /** The compact input schema and the tool description carrying its guidance. */
