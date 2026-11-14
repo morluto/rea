@@ -44,6 +44,8 @@ it.each([
   ["a numeric exec command", "exec(5, () => {})"],
   ["a numeric fork module", "fork(5)"],
   ["a null fork module", "fork(null)"],
+  ["an array fork module", 'fork(["worker.js"])'],
+  ["a function fork module", "fork(() => {})"],
   ["a fork module holding a NUL byte", 'fork("wor\\0ker.js")'],
 ] as const)("emits no spawn for %s", (_name, call) => {
   expect(spawnsFor(call)).toEqual([]);
@@ -56,6 +58,16 @@ it.each([
   ["a computed command", "spawn(command)", "spawn"],
   ["a spread command", "spawn(...args)", "spawn"],
   ["an empty fork module", 'fork("")', "fork"],
+  [
+    "a URL fork module",
+    'fork(new URL("./worker.js", import.meta.url))',
+    "fork",
+  ],
+  [
+    "a URL-like fork module",
+    'fork({ href: "file:///worker.js", protocol: "file:" })',
+    "fork",
+  ],
   ["an exec command line", 'exec("node --version", () => {})', "exec"],
   ["an execFile command", 'execFile("node", [], () => {})', "execFile"],
 ] as const)("keeps the spawn for %s", (_name, call, method) => {
