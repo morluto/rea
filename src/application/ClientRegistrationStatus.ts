@@ -335,13 +335,17 @@ export const readClientRegistrationInspections = async (
         continue;
       }
       const registrationEnvironment =
-        client.name === "kimi" || client.name === "codex"
+        client.name === "kimi" ||
+        client.name === "codex" ||
+        client.name === "lm_studio"
           ? await clientRegistrationEnvironmentDetailsWithBudget(
               parsed,
               client,
               {},
               "effective",
-              options.resolveProviderRequestBudget,
+              client.name === "lm_studio"
+                ? undefined
+                : options.resolveProviderRequestBudget,
               options.platform,
             )
           : undefined;
