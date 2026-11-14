@@ -13,6 +13,8 @@ import {
   describeContractCommand,
   type CliContractProjection,
   type CliEvidenceDeliveryChoice,
+  type CliOptionShape,
+  type CliOptionValues,
   type ContractCliDescription,
   type ContractField,
   type ProjectedContract,
@@ -27,7 +29,11 @@ import type { CliInstance } from "./types.js";
  */
 
 /** What a contract command's handler receives besides the contract input. */
-export interface ContractCommandContext {
+export interface ContractCommandContext<
+  CliOptions extends Readonly<Record<string, unknown>> = Readonly<
+    Record<string, unknown>
+  >,
+> {
   readonly signal: AbortSignal;
   /** The contract name, which is the canonical operation. */
   readonly operation: string;
@@ -35,6 +41,8 @@ export interface ContractCommandContext {
   readonly callerInputs: Readonly<Record<string, string>>;
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
+  /** The projection's CLI-only options, whose effect the handler owns. */
+  readonly cliOptions: CliOptions;
 }
 
 /** A closeable one-shot service that inspects one contract input. */
@@ -153,14 +161,15 @@ const incurOptions = (description: ContractCliDescription): z.ZodType => {
 export const registerContractCommand = <
   Contract extends ProjectedContract,
   Value,
+  CliOptions extends CliOptionShape = Record<never, z.ZodType>,
 >(
   cli: CliInstance,
   logger: Logger,
   contract: Contract,
-  projection: CliContractProjection<ContractField<Contract>>,
+  projection: CliContractProjection<ContractField<Contract>, CliOptions>,
   run: (
     input: z.input<Contract["inputSchema"]>,
-    context: ContractCommandContext,
+    context: ContractCommandContext<CliOptionValues<CliOptions>>,
   ) => Promise<Value>,
 ): void => {
   const description = describeContractCommand(contract, projection);
@@ -207,6 +216,9 @@ export const registerContractCommand = <
               operation: contract.name,
               callerInputs: description.callerInputs(values),
               delivery: delivery?.value,
+              cliOptions: description.cliOptionValues(
+                values,
+              ) as CliOptionValues<CliOptions>,
             },
           );
         }),
