@@ -4,9 +4,8 @@ import { pathToFileURL } from "node:url";
 import { ArtifactFileSource } from "../../src/artifacts/ArtifactFileSource.ts";
 import { readArtifactRange } from "../../src/artifacts/ArtifactCarrierRange.ts";
 import { regularFileState } from "../../src/filesystem/RegularFile.ts";
-import { admitRawRaster } from "../../src/domain/rawRaster.ts";
 import {
-  EXPERIMENT_ALLOWANCE,
+  admitPreview,
   previewRawRasterExperiment,
   writePreviewResult,
 } from "./raw-raster-preview.mjs";
@@ -15,14 +14,18 @@ import {
  * Metadata stability is observed before/after reading, not an immutable snapshot
  * guarantee. Hashes bind the exact decoded bytes, not a whole-file REA subject.
  */
-export async function previewRawRasterFile(inputPath, inputLayout) {
+export async function previewRawRasterFile(
+  inputPath,
+  inputLayout,
+  options = {},
+) {
   const source = new ArtifactFileSource(inputPath, "Experimental raster");
   try {
     const descriptor = await source.readSelectedPath();
-    const admission = admitRawRaster(
+    const admission = admitPreview(
       descriptor.initial.size,
       inputLayout,
-      EXPERIMENT_ALLOWANCE,
+      options,
     );
     if (!admission.ok)
       throw new Error(admission.error.message, { cause: admission.error });
@@ -40,7 +43,11 @@ export async function previewRawRasterFile(inputPath, inputLayout) {
       throw new Error("Selected raster range was truncated during reading.");
     // Rechecks both the descriptor and the caller-selected path against admission.
     await source.readSelectedPath();
-    const preview = previewRawRasterExperiment(bytes, { ...layout, offset: 0 });
+    const preview = previewRawRasterExperiment(
+      bytes,
+      { ...layout, offset: 0 },
+      options,
+    );
     if (!preview.ok)
       throw new Error(preview.error.message, { cause: preview.error });
     return {
@@ -64,8 +71,13 @@ export async function previewRawRasterFile(inputPath, inputLayout) {
   }
 }
 
-export async function writeFilePreview(inputPath, layout, outputDirectory) {
-  const preview = await previewRawRasterFile(inputPath, layout);
+export async function writeFilePreview(
+  inputPath,
+  layout,
+  outputDirectory,
+  options = {},
+) {
+  const preview = await previewRawRasterFile(inputPath, layout, options);
   await writePreviewResult(preview, outputDirectory);
 }
 
@@ -93,17 +105,76 @@ async function readLayout(path) {
   }
 }
 
+const USAGE = `Usage: node --import tsx scripts/experiments/raw-raster-file.mjs [--max-memory-mib N] INPUT_FILE LAYOUT_JSON NEW_OUTPUT_DIRECTORY
+
+Read an explicit raw-pixel range and export preview.png plus manifest.json.
+Layout fields: offset, length, width, height, stride, format, rowOrder.
+Formats: gray8, rgb888, bgr888, rgba8888, bgra8888.
+rowOrder: top-down or bottom-up. offset/length/stride are bytes; width/height are pixels.
+Example layout JSON: {"offset":0,"length":12,"width":2,"height":2,"stride":6,"format":"rgb888","rowOrder":"top-down"}
+--max-memory-mib N: estimated working-buffer budget (default 64, integer 1..512).
+The budget includes selected bytes, RGBA, PNG filter/compression/copy buffers;
+it is not a process RSS limit. Source files are read-only; leaf symlinks are rejected.
+Output directory must not exist. Failed exports report the retained directory;
+.incomplete remains when it could be created.
+Experimental script only; not registered as a REA CLI/MCP command.`;
+
+export async function runFilePreviewCli(args) {
+  if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
+    console.log(USAGE);
+    return;
+  }
+  const positional = [];
+  const options = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--max-memory-mib") {
+      if (options.maxMemoryMiB !== undefined || i + 1 >= args.length)
+        throw new Error(
+          "Supply --max-memory-mib once with an integer from 1 to 512. Use --help for usage.",
+        );
+      options.maxMemoryMiB = Number(args[++i]);
+      if (
+        !Number.isInteger(options.maxMemoryMiB) ||
+        options.maxMemoryMiB < 1 ||
+        options.maxMemoryMiB > 512
+      )
+        throw new Error("--max-memory-mib must be an integer from 1 to 512.");
+    } else if (args[i].startsWith("--"))
+      throw new Error(`Unknown option ${args[i]}. Use --help for usage.`);
+    else positional.push(args[i]);
+  }
+  if (positional.length !== 3)
+    throw new Error(
+      "Expected INPUT_FILE LAYOUT_JSON NEW_OUTPUT_DIRECTORY. Use --help for usage.",
+    );
+  let layout;
+  try {
+    layout = await readLayout(positional[1]);
+  } catch (cause) {
+    throw new Error(
+      `Cannot read layout JSON ${positional[1]}: ${cause.message}`,
+      { cause },
+    );
+  }
+  await writeFilePreview(
+    positional[0],
+    layout,
+    resolve(positional[2]),
+    options,
+  );
+  console.log(
+    "Created preview.png and manifest.json from the selected file range.",
+  );
+}
+
 if (
   process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url
 ) {
-  if (process.argv.length !== 5)
-    throw new Error(
-      "Usage: node --import tsx scripts/experiments/raw-raster-file.mjs INPUT_FILE LAYOUT_JSON NEW_OUTPUT_DIRECTORY",
-    );
-  const layout = await readLayout(process.argv[3]);
-  await writeFilePreview(process.argv[2], layout, resolve(process.argv[4]));
-  console.log(
-    "Created preview.png and manifest.json from the selected file range.",
-  );
+  try {
+    await runFilePreviewCli(process.argv.slice(2));
+  } catch (error) {
+    console.error(`Raster preview: ${error.message}`);
+    process.exitCode = 1;
+  }
 }

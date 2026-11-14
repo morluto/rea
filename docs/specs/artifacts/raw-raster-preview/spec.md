@@ -37,6 +37,14 @@ registered REA CLI or MCP tool.
   Preserve the original file-relative range offset in the manifest. Matching
   metadata is not an immutable snapshot guarantee. Never overwrite existing output.
 
+- R7: Expose an explicit working-memory budget for the experimental file workflow,
+  accounting for selected bytes, RGBA, PNG scanlines, compression and encoding
+  copies before reading the source range. Describe it as an estimate of working
+  buffers, not a process RSS guarantee.
+- R8: Provide help, a complete layout example and actionable CLI errors. Mark or
+  clearly report incomplete output on an I/O failure; never overwrite existing
+  destinations or remove unrelated files while attempting recovery.
+
 ## Acceptance and non-goals
 
 Synthetic checks should cover exact pixels for every format, row direction,

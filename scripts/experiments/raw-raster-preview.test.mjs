@@ -62,3 +62,100 @@ test("demo writes synthetic PNG and manifest without clobbering an existing dire
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("combined PNG memory admission counts more than RGBA and accepts raised budgets", async () => {
+  const { admitPreview } = await import("./raw-raster-preview.mjs");
+  const input = {
+    offset: 0,
+    length: 1024 * 1024,
+    width: 1024,
+    height: 1024,
+    stride: 1024,
+    format: "gray8",
+    rowOrder: "top-down",
+  };
+  assert.equal(
+    admitPreview(input.length, input, { maxMemoryMiB: 8 }).ok,
+    false,
+  );
+  assert.equal(
+    admitPreview(input.length, input, { maxMemoryMiB: 64 }).ok,
+    true,
+  );
+  assert.equal(
+    admitPreview(input.length, input, { maxMemoryMiB: 0 }).ok,
+    false,
+  );
+  assert.equal(
+    admitPreview(input.length, input, { maxMemoryMiB: 513 }).ok,
+    false,
+  );
+});
+test("writer rejects invalid JSON before creating output", async () => {
+  const { writePreviewResult } = await import("./raw-raster-preview.mjs");
+  const { stat } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "rea-raster-cleanup-"));
+  const out = join(root, "result");
+  try {
+    await assert.rejects(
+      writePreviewResult(
+        { png: Buffer.from("png"), manifest: { bad: 1n } },
+        out,
+      ),
+    );
+    await assert.rejects(stat(out), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test("writer marks failed writes incomplete and reports their directory", async () => {
+  const { writePreviewResult } = await import("./raw-raster-preview.mjs");
+  const root = await mkdtemp(join(tmpdir(), "rea-raster-retained-"));
+  const out = join(root, "result");
+  try {
+    await assert.rejects(
+      writePreviewResult({ png: 42, manifest: {} }, out),
+      /Incomplete output retained/,
+    );
+    assert.match(
+      await readFile(join(out, ".incomplete"), "utf8"),
+      /incomplete/,
+    );
+    await assert.rejects(
+      writePreviewResult({ png: Buffer.from("png"), manifest: {} }, out),
+      { code: "EEXIST" },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an I/O failure leaves the incomplete marker and reports its path", async () => {
+  const { writePreviewResult } = await import("./raw-raster-preview.mjs");
+  const fs = (await import("node:fs/promises")).default;
+  const { syncBuiltinESMExports } = await import("node:module");
+  const root = await mkdtemp(join(tmpdir(), "rea-raster-io-"));
+  const out = join(root, "result");
+  const original = fs.writeFile;
+  fs.writeFile = async function (path, ...args) {
+    if (path === join(out, "manifest.json"))
+      throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+    return original.call(this, path, ...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(
+      writePreviewResult({ png: Buffer.from("png"), manifest: {} }, out),
+      /Incomplete output retained.*disk full/,
+    );
+    assert.equal(await readFile(join(out, "preview.png"), "utf8"), "png");
+    assert.match(
+      await readFile(join(out, ".incomplete"), "utf8"),
+      /incomplete/,
+    );
+  } finally {
+    fs.writeFile = original;
+    syncBuiltinESMExports();
+    await rm(root, { recursive: true, force: true });
+  }
+});

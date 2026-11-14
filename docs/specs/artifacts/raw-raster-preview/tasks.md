@@ -20,6 +20,12 @@ only from checks against the final implementation. See [spec](spec.md) and
       checks; report blocked or unrun checks without claiming success.
 - [x] Obtain independent diff review and address actionable findings.
 
+- [x] R7: Add configurable conservative PNG working-buffer admission and test
+      rejection and explicit override without claiming an RSS ceiling.
+- [x] R8: Provide help/actionable errors; pre-serialize and retain failed output
+      with a marker where possible, testing real I/O failure without deleting files.
+- [x] Validate an external pinned PPM fixture against independent Pillow decoding.
+
 ## Deferred integration gates
 
 - [ ] Obtain maintainer scope and architecture decisions in #8162.

@@ -171,3 +171,58 @@ test(
       await assert.rejects(previewRawRasterFile(link, layout));
     }),
 );
+
+test("CLI help and usage errors are concise without stack traces", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execute = promisify(execFile);
+  const command = [
+    "--import",
+    "tsx",
+    "scripts/experiments/raw-raster-file.mjs",
+  ];
+  const help = await execute(process.execPath, [...command, "--help"]);
+  assert.match(help.stdout, /--max-memory-mib/);
+  assert.match(help.stdout, /not a process RSS limit/);
+  for (const args of [[], ["--max-memory-mib", "nope"], ["--unknown"]]) {
+    await assert.rejects(
+      execute(process.execPath, [...command, ...args]),
+      (error) => {
+        assert.equal(error.code, 1);
+        assert.match(error.stderr, /Raster preview:/);
+        assert.doesNotMatch(error.stderr, /\n\s+at /);
+        return true;
+      },
+    );
+  }
+});
+test("file budget is configurable before reading and default accepts over old 1MiB cap", async () =>
+  withSource(async ({ root, path }) => {
+    const file = await open(path, "r+");
+    try {
+      await file.truncate(1024 * 1024);
+    } finally {
+      await file.close();
+    }
+    const input = {
+      offset: 0,
+      length: 1024 * 1024,
+      width: 1024,
+      height: 1024,
+      stride: 1024,
+      format: "gray8",
+      rowOrder: "top-down",
+    };
+    await assert.rejects(
+      previewRawRasterFile(path, input, { maxMemoryMiB: 8 }),
+      /Estimated PNG working buffers/,
+    );
+    const preview = await previewRawRasterFile(path, input);
+    assert.equal(preview.manifest.memory.maxMemoryMiB, 64);
+    assert.ok(preview.manifest.memory.estimatedWorkingBytes > 8 * 1024 * 1024);
+    const out = join(root, "too-small");
+    await assert.rejects(
+      writeFilePreview(path, input, out, { maxMemoryMiB: 8 }),
+    );
+    await assert.rejects(stat(out), { code: "ENOENT" });
+  }));
