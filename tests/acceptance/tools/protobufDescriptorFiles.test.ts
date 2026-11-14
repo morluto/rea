@@ -147,7 +147,7 @@ cliTest(
           },
         };
         if (change === "declarations") {
-          const output = await cli.sharedCliRun!({
+          const output = await cli.run({
             arguments: [
               "inspect-web-network-capture",
               capture,
@@ -254,7 +254,7 @@ cliTest(
       const bytes = writer.finish();
       const descriptor = join(root, `${mode}.pb`);
       await writeFile(descriptor, bytes);
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: [
           "inspect-web-network-capture",
           capture,

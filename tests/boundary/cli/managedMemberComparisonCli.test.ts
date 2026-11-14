@@ -134,7 +134,7 @@ cliTest(
       const sha256 = createHash("sha256").update(bytes).digest("hex");
       await writeFile(path, bytes);
       await writeFile(peerPath, bytes);
-      const inspected = await cli.sharedCliRun!({
+      const inspected = await cli.run({
         arguments: ["inspect-managed-members", path, "--json"],
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
@@ -160,7 +160,7 @@ cliTest(
             : {}),
         });
       }
-      const compared = await cli.sharedCliRun!({
+      const compared = await cli.run({
         arguments: ["compare-managed-members", path, path, "--json"],
       });
       expect(compared.exitCode, compared.stderr).toBe(0);

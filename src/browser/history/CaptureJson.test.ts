@@ -21,19 +21,15 @@ it("retains escape-heavy strings within a heap near their decoded size", async (
     if (!Array.isArray(parsed) || parsed.length !== 463 || parsed.some((value) => value !== body)) process.exit(3);
   `;
 
-  const child = await processes.run(
-    process.execPath,
-    [
-      "--max-old-space-size=48",
-      "--max-semi-space-size=8",
-      "--import",
-      "tsx",
-      "--input-type=module",
-      "--eval",
-      program,
-    ],
-    { timeoutMs: 30_000 },
-  );
+  const child = await processes.run(process.execPath, [
+    "--max-old-space-size=48",
+    "--max-semi-space-size=8",
+    "--import",
+    "tsx",
+    "--input-type=module",
+    "--eval",
+    program,
+  ]);
 
   expect(child.exitCode, child.stderr).toBe(0);
 });

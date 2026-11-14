@@ -34,7 +34,6 @@ for (const [variable, profile] of [
             PI_CODING_AGENT_DIR: agent,
             [variable]: profile,
           },
-          timeoutMs: 20_000,
         });
       for (const option of ["--dry-run", "--yes"]) {
         const rejected = await run(
@@ -101,7 +100,6 @@ cliTest(
         OMP_PROFILE: " ",
         PI_PROFILE: "Bad Name",
       },
-      timeoutMs: 20_000,
     });
     expect(result.exitCode).toBe(0);
     expect(result.json).toMatchObject({ status: "ready" });

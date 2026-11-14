@@ -842,14 +842,8 @@ branches are not producers. A tier with no qualifying artifact leaves history
 unset, and Vitest uses its own assignment. A later schedule that reuses
 qualification without uploading timings leaves the previous artifact in place.
 
-On 2026-10-21 the newest full history was run
-`39545047294`, recorded before compiled-CLI session reuse. Fast run
-`39552964873` packed its eight built shards from that history, and those shard
-jobs executed for 319–591 seconds. Replaying that run's file durations through
-the sequencer's two-worker schedule balances every shard at about 404 seconds
-of file time. The same replay with the stale history weights leaves the slowest
-shard near 547 seconds and the fastest near 293. That spread is file-schedule
-time, not runner queue, which is why each tier keeps its own history.
+Each tier keeps its own history because stale weights from another tier, or
+from before a large test change, unbalance the shards.
 CI assigns discovered files by historical duration rather than dividing only
 by file count. A file with no recorded duration, such as a newly added or
 renamed test, is weighted at the median recorded duration until a published

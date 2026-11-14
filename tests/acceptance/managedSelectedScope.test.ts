@@ -27,7 +27,7 @@ cliTest(
       ["Inner", "Fixture.Inner"],
       ["Fixture.Inner"],
     ]) {
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: [
           "inspect-managed-members",
           path,
@@ -99,7 +99,7 @@ cliTest(
       const sha256 = createHash("sha256").update(content).digest("hex");
       await writeFile(path, content);
       for (const isSelected of [true, false]) {
-        const output = await cli.sharedCliRun!({
+        const output = await cli.run({
           arguments: [
             "inspect-managed-members",
             path,
