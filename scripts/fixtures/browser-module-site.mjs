@@ -1,5 +1,33 @@
 import { createServer } from "node:http";
 
+const SAFE_BROWSER_PORT_START = 49_152;
+const SAFE_BROWSER_PORT_ATTEMPTS = 64;
+
+const listenOnSafeBrowserPort = async (server) => {
+  for (let attempt = 0; attempt < SAFE_BROWSER_PORT_ATTEMPTS; attempt += 1) {
+    const port = SAFE_BROWSER_PORT_START + attempt;
+    try {
+      await new Promise((resolve, reject) => {
+        const listening = () => {
+          server.off("error", failed);
+          resolve();
+        };
+        const failed = (cause) => {
+          server.off("listening", listening);
+          reject(cause);
+        };
+        server.once("listening", listening);
+        server.once("error", failed);
+        server.listen(port, "127.0.0.1");
+      });
+      return port;
+    } catch (cause) {
+      if (cause?.code !== "EADDRINUSE" && cause?.code !== "EACCES") throw cause;
+    }
+  }
+  throw new Error("Module fixture could not bind a safe loopback browser port");
+};
+
 /** Source-owned module graph with actual native loading and an uncalled lazy edge. */
 export async function startBrowserModuleSite() {
   const requests = [];
@@ -44,12 +72,9 @@ function computed(name){return import(name)}
       );
     response.writeHead(404).end("Not selected");
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("Module fixture has no TCP address");
+  const port = await listenOnSafeBrowserPort(server);
   return {
-    origin: `http://127.0.0.1:${address.port}`,
+    origin: `http://127.0.0.1:${port}`,
     requests,
     importMap,
     main,
