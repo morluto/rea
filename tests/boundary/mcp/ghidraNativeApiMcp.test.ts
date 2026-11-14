@@ -245,7 +245,7 @@ describe("Ghidra MCP native API evidence", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 
   it("returns complete native API boundaries without output-cap unknowns", async () => {
     const harness = await connectGhidraMcp("ghidra-native-api");
@@ -290,7 +290,7 @@ describe("Ghidra MCP native API evidence", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 });
 
 it("retains unavailable Ghidra native API observations across live reobservation and provenance", async () => {
@@ -409,4 +409,4 @@ it("retains unavailable Ghidra native API observations across live reobservation
   } finally {
     await harness.close();
   }
-}, 30_000);
+});

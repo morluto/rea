@@ -421,7 +421,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
       ],
     },
   });
-}, 20_000);
+});
 
 /** Create the selected-path aliases and retained IPC-gap capture for the public workflow. */
 const activeElectronScenarioFixture = async () => {
@@ -614,7 +614,7 @@ it("runs active Electron scenarios with selected paths and inferred working dire
       ],
     },
   });
-}, 20_000);
+});
 
 it("exposes the target-free static JavaScript application workflow", async () => {
   const root = await createTestTempDirectory("rea-electron-static-mcp-");

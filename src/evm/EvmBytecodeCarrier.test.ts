@@ -40,7 +40,7 @@ it("rejects a long interior separator run without pathological backtracking", as
       killSignal: "SIGKILL",
     },
   );
-}, 20_000);
+});
 it("distinguishes raw bytes, empty code and malformed UTF-8", () => {
   const bytes = Uint8Array.from([0xff, 0x00]);
   const decoded = decodeEvmBytecodeCarrier(bytes, "raw");
