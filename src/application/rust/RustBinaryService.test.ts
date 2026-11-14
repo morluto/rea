@@ -297,3 +297,32 @@ it("retains the unchanged parent and keeps delivery selectors out of provider in
     Array.from({ length: 3 }, () => ({ path: report.artifact.path })),
   );
 });
+
+it("rejects max_inferred_crates or inferred_crates view without include_inferred_crates before reading", async () => {
+  let calls = 0;
+  const service = new RustBinaryService({
+    close: async () => {},
+    identity,
+    inspect: async () => {
+      calls += 1;
+      return ok(report);
+    },
+  });
+  for (const invalid of [
+    { path: report.artifact.path, max_inferred_crates: 10 },
+    {
+      path: report.artifact.path,
+      include_inferred_crates: false,
+      max_inferred_crates: 10,
+    },
+    {
+      path: report.artifact.path,
+      view: { collection: "inferred_crates" },
+    },
+  ]) {
+    const result = await service.inspect(invalid);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisInputError);
+  }
+  expect(calls).toBe(0);
+});

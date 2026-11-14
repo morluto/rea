@@ -2,7 +2,12 @@ import { parseCliJsonOption } from "./cliJsonOption.js";
 import { z } from "incur";
 import { producerLimitsOption } from "./producerLimitsOption.js";
 import { rustProducerLimitsSchema } from "../domain/rust/rustResourceLimits.js";
-import { inspectRustBinaryInputSchema } from "../domain/rust/rustBinary.js";
+import {
+  DEFAULT_MAX_RUST_INFERRED_CRATES,
+  inspectRustBinaryInputSchema,
+  MAX_RUST_INFERRED_CRATES_LIMIT,
+  rustMaxInferredCratesSchema,
+} from "../domain/rust/rustBinary.js";
 import { cliDecimalField } from "./options.js";
 import { createRustBinaryService } from "../composition/rust.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -28,7 +33,7 @@ export const registerRustCommands = (
 ): void => {
   cli.command(CLI_COMMANDS.inspectRustBinary, {
     description:
-      "Inspect an embedded cargo-auditable Rust dependency list without target execution",
+      "Inspect embedded cargo-auditable Rust dependencies and optional source-path crate/rustc fingerprints without target execution",
     args: z.object({
       path: localPathStringSchema.describe(
         "Local ELF, PE, thin Mach-O or universal Mach-O image",
@@ -45,6 +50,17 @@ export const registerRustCommands = (
         .describe(
           "CPU family of the slice to read from a universal Mach-O; required for universal files",
         ),
+      includeInferredCrates: z
+        .boolean()
+        .optional()
+        .describe(
+          "Also scan read-only and ELF .comment sections for Cargo crate source-path fingerprints and rustc version banners",
+        ),
+      maxInferredCrates: cliDecimalField(
+        rustMaxInferredCratesSchema.optional(),
+      ).describe(
+        `Maximum distinct inferred Cargo crates (1-${String(MAX_RUST_INFERRED_CRATES_LIMIT)}; default ${String(DEFAULT_MAX_RUST_INFERRED_CRATES)}; requires --include-inferred-crates)`,
+      ),
       detail: z
         .enum(["complete", "summary"])
         .optional()
@@ -55,7 +71,7 @@ export const registerRustCommands = (
         .string()
         .optional()
         .describe(
-          "JSON package or edge selection; retains complete Evidence with --evidence_output",
+          "JSON package, edge or inferred_crates selection; retains complete Evidence with --evidence_output",
         ),
     }),
     run: ({ args, options }) =>
@@ -65,7 +81,7 @@ export const registerRustCommands = (
             "inspect_rust_binary",
             "view",
             options.view,
-            "view must be a JSON package or edge selection",
+            "view must be a JSON package, edge or inferred_crates selection",
           );
           if (!decoded.ok) return projectAnalysisError(decoded.error);
           const view = decoded.value;
@@ -80,6 +96,12 @@ export const registerRustCommands = (
             ...(options.architecture === undefined
               ? {}
               : { architecture: options.architecture }),
+            ...(options.includeInferredCrates === undefined
+              ? {}
+              : { include_inferred_crates: options.includeInferredCrates }),
+            ...(options.maxInferredCrates === undefined
+              ? {}
+              : { max_inferred_crates: options.maxInferredCrates }),
             ...(options.detail === undefined ? {} : { detail: options.detail }),
             ...(view === undefined ? {} : { view }),
           });
@@ -107,6 +129,15 @@ export const registerRustCommands = (
                   ...(input.data.architecture === undefined
                     ? {}
                     : { architecture: input.data.architecture }),
+                  ...(input.data.include_inferred_crates === undefined
+                    ? {}
+                    : {
+                        include_inferred_crates:
+                          input.data.include_inferred_crates,
+                      }),
+                  ...(input.data.max_inferred_crates === undefined
+                    ? {}
+                    : { max_inferred_crates: input.data.max_inferred_crates }),
                 },
                 { signal },
               ),

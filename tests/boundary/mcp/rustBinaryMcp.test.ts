@@ -126,3 +126,130 @@ mcpTest(
     }
   },
 );
+
+mcpTest(
+  "recovers opt-in inferred Cargo crates and rustc banners over MCP and pages inferred_crates views",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-rust-mcp-inferred-");
+      const path = join(root, "stripped.elf");
+      await writeFile(
+        path,
+        createRustImage({
+          format: "elf",
+          omitSection: true,
+          readOnlyBytes: Buffer.from(
+            [
+              "/cargo/registry/src/index.crates.io-6f17d22bba15001f/tokio-util-0.7.13/src/lib.rs",
+              "C:\\cargo\\registry\\src\\index.crates.io-6f17d22bba15001f\\x86_64-0.15.2\\src\\lib.rs",
+              "/cargo/git/checkouts/quinn-0123456789abcdef/a1b2c3d/src/lib.rs",
+            ].join("\0") + "\0",
+            "latin1",
+          ),
+          elfComment: Buffer.from(
+            "\0rustc version 1.85.0 (4d91de4e4 2025-02-17)\0",
+            "latin1",
+          ),
+        }),
+      );
+
+      const defaultReply = await client.callTool({
+        name: "inspect_rust_binary",
+        arguments: { path },
+      });
+      expect(defaultReply.isError).not.toBe(true);
+      const defaultEvidence = toolContract(
+        "inspect_rust_binary",
+      ).outputSchema.parse(defaultReply.structuredContent);
+      const defaultReport = rustBinarySchema.parse(
+        defaultEvidence.normalized_result,
+      );
+      expect(defaultReport.inferred_crates).toBeUndefined();
+      expect(defaultReport.rustc_versions).toBeUndefined();
+
+      const refusedView = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: defaultEvidence.evidence_id,
+          },
+          view: { kind: "rust", collection: "inferred_crates" },
+        },
+      });
+      expect(refusedView.isError).toBe(true);
+      expect(parseMcpToolError(refusedView).error).toMatchObject({
+        code: "invalid_request",
+      });
+
+      const optedIn = await client.callTool({
+        name: "inspect_rust_binary",
+        arguments: {
+          path,
+          include_inferred_crates: true,
+          max_inferred_crates: 2,
+        },
+      });
+      expect(optedIn.isError, JSON.stringify(optedIn.content)).not.toBe(true);
+      const optedEvidence = toolContract(
+        "inspect_rust_binary",
+      ).outputSchema.parse(optedIn.structuredContent);
+      const optedReport = rustBinarySchema.parse(
+        optedEvidence.normalized_result,
+      );
+      expect(optedReport.inferred_crates).toMatchObject({
+        evidence_kind: "inferred",
+        discovered_count: 3,
+        max_items: 2,
+        truncated: true,
+        items: [
+          expect.objectContaining({ name: "tokio-util", version: "0.7.13" }),
+          expect.objectContaining({ name: "x86_64", version: "0.15.2" }),
+        ],
+      });
+      expect(optedReport.rustc_versions).toMatchObject({
+        evidence_kind: "inferred",
+        discovered_count: 1,
+        truncated: false,
+        items: [
+          expect.objectContaining({
+            banner: "rustc version 1.85.0 (4d91de4e4 2025-02-17)",
+            version: "1.85.0",
+            channel: "stable",
+            commit_hash: "4d91de4e4",
+            commit_date: "2025-02-17",
+          }),
+        ],
+      });
+
+      const paged = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: optedEvidence.evidence_id,
+          },
+          view: {
+            kind: "rust",
+            collection: "inferred_crates",
+            contains: "tokio",
+            fields: ["name", "version"],
+          },
+        },
+      });
+      expect(paged.isError, JSON.stringify(paged.content)).not.toBe(true);
+      expect(paged.structuredContent).toMatchObject({
+        normalized_result: {
+          source_coverage: { inferred_crates: "truncated" },
+          page: {
+            collection: "inferred_crates",
+            rows: [{ index: 0, name: "tokio-util", version: "0.7.13" }],
+          },
+        },
+      });
+    } finally {
+      await session.close();
+    }
+  },
+);
