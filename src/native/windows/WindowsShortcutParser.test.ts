@@ -938,3 +938,151 @@ it("charges the string budget before decoding a LinkInfo string", async () => {
     ),
   ).rejects.toBeInstanceOf(WindowsShortcutResourceFailure);
 });
+
+it("compares an icon with a target that Win32 trims to the same name", async () => {
+  const differsFor = async (localBasePath: string, iconLocation: string) => {
+    const report = await parse(
+      windowsShortcutBytes({ linkInfo: { localBasePath }, iconLocation }),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    );
+    return found?.kind === "icon_location_differs_from_target"
+      ? found.value
+      : undefined;
+  };
+  // Windows drops one period ending a segment, and every trailing period and space of the last
+  // one, before it opens the path, so each of these names the target itself.
+  for (const iconLocation of [
+    "C:\\Tools\\app.exe.",
+    "C:\\Tools\\app.exe ",
+    "C:\\Tools\\app.exe. .",
+    "C:\\Tools.\\app.exe",
+  ] as const)
+    expect(await differsFor("C:\\Tools\\app.exe", iconLocation)).toBe(false);
+  // Two periods ending a segment is a legal name of its own, and a space inside a segment stays.
+  expect(await differsFor("C:\\Tools\\app.exe", "C:\\Tools..\\app.exe")).toBe(
+    true,
+  );
+  expect(await differsFor("C:\\Tools\\app.exe", "C:\\ Tools\\app.exe")).toBe(
+    true,
+  );
+  // A \\?\ path skips normalization, so its trailing period names another file.
+  expect(
+    await differsFor("C:\\Tools\\app.exe", "\\\\?\\C:\\Tools\\app.exe."),
+  ).toBe(true);
+});
+
+it("derives the target extension of a name Win32 trims", async () => {
+  const extensionFor = async (localBasePath: string) => {
+    const report = await parse(
+      windowsShortcutBytes({ iconLocation: "", linkInfo: { localBasePath } }),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "target_extension",
+    );
+    return found?.kind === "target_extension" ? found.extension : undefined;
+  };
+  // The stored name ends in a period or a space, and the file it opens is `app.exe`.
+  expect(await extensionFor("C:\\Tools\\app.exe.")).toBe(".exe");
+  expect(await extensionFor("C:\\Tools\\app.exe ")).toBe(".exe");
+  // Trimmed to `report`, which has no extension.
+  expect(await extensionFor("C:\\Tools\\report.")).toBeNull();
+});
+it("keeps a path that may expand into a device path as written", async () => {
+  // An EnvironmentVariableDataBlock can supply the whole prefix, and a prefix that expands to
+  // `\\?\` keeps the trailing periods Win32 would otherwise trim. The text cannot say which way
+  // it goes, so a leading unexpanded reference leaves the segments alone.
+  const extensionFor = async (localBasePath: string) => {
+    const report = await parse(
+      windowsShortcutBytes({ iconLocation: "", linkInfo: { localBasePath } }),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "target_extension",
+    );
+    return found?.kind === "target_extension" ? found.extension : undefined;
+  };
+  expect(await extensionFor("%ROOT%\\app.exe.")).toBeNull();
+  // The same name without the trailing period is read as usual.
+  expect(await extensionFor("%ROOT%\\app.exe")).toBe(".exe");
+  // A full path whose prefix is known to be a drive still trims.
+  expect(await extensionFor("C:\\Tools\\app.exe.")).toBe(".exe");
+});
+it("does not trim a relative target that may be a URL", async () => {
+  // Without a `LinkInfo` the target comes from `RelativePath`, which can hold a URL. A trailing
+  // period addresses a different resource there, so only a filesystem path is trimmed.
+  const extensionFor = async (relativePath: string) => {
+    const report = await parse(
+      windowsShortcutBytes({ iconLocation: "", linkInfo: null, relativePath }),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "target_extension",
+    );
+    return found?.kind === "target_extension" ? found.extension : undefined;
+  };
+  expect(await extensionFor("https://example.test/app.exe.")).toBeNull();
+  expect(await extensionFor("https://example.test/app.exe")).toBe(".exe");
+  // A full path recorded in `RelativePath` is still a filesystem path and keeps its trim.
+  expect(await extensionFor("C:\\Tools\\app.exe.")).toBe(".exe");
+});
+it("reads the stored spelling to decide whether Win32 would trim", async () => {
+  // A scheme-relative URL folds to the same separators as a UNC path, so the spelling is the
+  // evidence: a filesystem path is written with backslashes and a URL keeps forward slashes.
+  const extensionFor = async (
+    path: string,
+    source: "link_info" | "relative",
+  ) => {
+    const report = await parse(
+      windowsShortcutBytes(
+        source === "link_info"
+          ? { iconLocation: "", linkInfo: { localBasePath: path } }
+          : { iconLocation: "", linkInfo: null, relativePath: path },
+      ),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "target_extension",
+    );
+    return found?.kind === "target_extension" ? found.extension : undefined;
+  };
+  // A URL's terminal period is part of the resource, whichever form it takes.
+  expect(await extensionFor("//example.test/app.exe.", "relative")).toBeNull();
+  expect(
+    await extensionFor("https://example.test/app.exe.", "relative"),
+  ).toBeNull();
+  expect(await extensionFor("//example.test/app.exe", "relative")).toBe(".exe");
+  // A real filesystem path in either source keeps the Win32 trim.
+  expect(await extensionFor("C:\\Tools\\app.exe.", "link_info")).toBe(".exe");
+  expect(await extensionFor("\\\\server\\share\\app.exe.", "link_info")).toBe(
+    ".exe",
+  );
+  expect(await extensionFor("C:\\Tools\\app.exe.", "relative")).toBe(".exe");
+});
+it("compares a scheme-relative URL with a UNC path as two resources", async () => {
+  // `foldPath` turns `//example.test/…` into the same separators a share uses, so the compare form
+  // reads the stored spelling before folding: a leading `//` is a URL, and its terminal period is
+  // part of the resource rather than a name Win32 trims.
+  const differsFor = async (relativePath: string, iconLocation: string) => {
+    const report = await parse(
+      windowsShortcutBytes({ linkInfo: null, relativePath, iconLocation }),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    );
+    return found?.kind === "icon_location_differs_from_target"
+      ? found.value
+      : undefined;
+  };
+  expect(
+    await differsFor(
+      "//example.test/share/app.exe.",
+      "\\\\example.test\\share\\app.exe",
+    ),
+  ).toBe(true);
+  // A drive path keeps the trim whichever separator it uses, because Windows accepts both.
+  expect(await differsFor("C:\\Tools\\app.exe.", "C:\\Tools\\app.exe")).toBe(
+    false,
+  );
+  expect(await differsFor("c:/tools//app.exe", "C:\\Tools\\app.exe")).toBe(
+    false,
+  );
+});
