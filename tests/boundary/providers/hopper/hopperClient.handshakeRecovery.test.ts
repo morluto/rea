@@ -254,6 +254,27 @@ it("preserves launcher diagnostics after a health deadline and reauthenticates f
 
 it("recovers an application exit after the first valid handshake occurs during cleanup", async () => {
   const { client, launcher } = setup("matching", "gated", "exit-without-ack");
+  const finishClose = async (
+    closed: Awaited<ReturnType<typeof client.close>>,
+    index: number,
+  ) => {
+    if (!closed.ok) {
+      expect(projectAnalysisError(closed.error)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          diagnostics: {
+            authenticated_application: "readable",
+            shutdown_request: { method: "shutdown_document", status: "failed" },
+          },
+        },
+      });
+      const application = launcher.fixture.processes[index];
+      if (application === undefined) throw new Error("Fixture did not launch");
+      await waitFor(() => expect(application.exitCode).toBe(0));
+      closed = await client.close();
+    }
+    expect(closed.ok ? null : projectAnalysisError(closed.error)).toBeNull();
+  };
   const starting = client.start();
   const first = await launcher.fixture.waitForRequest("health");
   const started = await starting;
@@ -286,7 +307,7 @@ it("recovers an application exit after the first valid handshake occurs during c
   });
   await launcher.fixture.release(next);
   const closed = await closing;
-  if (!closed.ok) throw closed.error;
+  await finishClose(closed, 0);
   expect(launcher.fixture.requests.map(({ method }) => method)).toEqual([
     "health",
     "health",
@@ -313,5 +334,5 @@ it("recovers an application exit after the first valid handshake occurs during c
   if (!observed.ok) throw observed.error;
   expect(observed.value).toBe("fixture");
   const reclosed = await client.close();
-  if (!reclosed.ok) throw reclosed.error;
+  await finishClose(reclosed, 1);
 });
