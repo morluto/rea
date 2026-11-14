@@ -134,7 +134,7 @@ const registeredField = (
 };
 
 const contractShape = (description: ContractCliDescription) =>
-  description.contract.inputSchema.shape as Record<string, z.ZodType>;
+  description.fields;
 
 const each = descriptions.map(
   (description) => [description.command, description] as const,
@@ -150,6 +150,10 @@ describe("CLI commands projected from tool contracts", () => {
         "inspect-devicetree",
         "inspect-go-binary",
         "inspect-v8-code-cache",
+        "inspect-rust-binary",
+        "inspect-python-pyc",
+        "inspect-erlang-beam",
+        "inspect-model-artifact",
       ]),
     );
   });
@@ -201,6 +205,12 @@ describe("CLI commands projected from tool contracts", () => {
           // Only the absolute-path rule is relaxed, and only by resolution.
           expect(admits(contractField, "rel/x"), parameter.field).toBe(false);
           expect(admits(contractField, absoluteCallerPath("rel/x"))).toBe(true);
+        }
+        if (parameter.viewSelection) {
+          // The view is JSON text decoded when the command runs; see below.
+          for (const value of [undefined, "", "{", "{}"])
+            expect(admits(cliField, value), parameter.key).toBe(true);
+          continue;
         }
         for (const value of probes(contractField)) {
           const expected = expectedAdmission(parameter, contractField, value);
@@ -285,5 +295,115 @@ describe("CLI commands projected from tool contracts", () => {
         { command: "probe", description: "Probe" },
       ),
     ).toThrow("probe input keyword not has no CLI projection");
+  });
+});
+
+const delivering = each.filter(
+  ([, description]) => description.delivery !== undefined,
+);
+
+/** Parsed option values plus a caller-relative target. */
+const argvValues = (
+  description: ContractCliDescription,
+  options: Readonly<Record<string, unknown>>,
+): Record<string, unknown> => ({
+  ...(registered.get(description.command)!.options as z.ZodObject).parse(
+    options,
+  ),
+  ...Object.fromEntries(
+    description.parameters
+      .filter(({ positional }) => positional)
+      .map(({ key }) => [key, "rel/target"]),
+  ),
+});
+
+describe("Evidence delivery of contract commands", () => {
+  it.each(delivering)(
+    "%s refuses summary delivery without --evidence_output before analysis",
+    (_command, description) => {
+      const refused = description.delivery!(
+        argvValues(description, { detail: "summary" }),
+      );
+      expect(refused.ok).toBe(false);
+      if (!refused.ok)
+        expect(refused.error.issues.map(({ path }) => path)).toEqual([
+          ["evidence_output"],
+        ]);
+      expect(
+        description.delivery!(
+          argvValues(description, {
+            detail: "summary",
+            evidence_output: "out.json",
+          }),
+        ).ok,
+      ).toBe(true);
+    },
+  );
+
+  it.each(
+    delivering.filter(([, description]) =>
+      description.parameters.some(({ viewSelection }) => viewSelection),
+    ),
+  )(
+    "%s decodes --view when it runs and admits what its contract admits",
+    (_command, description) => {
+      const view = description.parameters.find(
+        ({ viewSelection }) => viewSelection,
+      )!;
+      const malformed = description.delivery!(
+        argvValues(description, {
+          detail: "summary",
+          evidence_output: "out.json",
+          [view.key]: "{",
+        }),
+      );
+      expect(malformed.ok).toBe(false);
+      if (!malformed.ok)
+        expect(malformed.error.issues).toEqual([
+          expect.objectContaining({ path: ["view"], reason: "invalid_format" }),
+        ]);
+      const mismatches: string[] = [];
+      for (const detail of ["complete", "summary"] as const)
+        for (const text of ["{}", "[]", "null", '{"unknown":1}']) {
+          const values = argvValues(description, {
+            detail,
+            evidence_output: "out.json",
+            [view.key]: text,
+          });
+          const expected = description.contract.inputSchema.safeParse({
+            ...description.toContractInput(values),
+            detail,
+            view: JSON.parse(text) as unknown,
+          }).success;
+          if (description.delivery!(values).ok !== expected)
+            mismatches.push(`${detail} ${text} expected ${String(expected)}`);
+        }
+      expect(mismatches).toEqual([]);
+    },
+  );
+
+  it("refuses a union input whose branches differ outside the delivery", () => {
+    const inputSchema = z.discriminatedUnion("detail", [
+      z.object({
+        detail: z.literal("complete").optional(),
+        limit: z.number().optional(),
+      }),
+      z.object({
+        detail: z.literal("summary"),
+        limit: z.number().max(1).optional(),
+      }),
+    ]);
+    expect(() =>
+      describeContractCommand(
+        { name: "probe", inputSchema },
+        { command: "probe", description: "Probe", evidenceDelivery: true },
+      ),
+    ).toThrow("probe.limit differs between input branches");
+    expect(() =>
+      describeContractCommand(
+        { name: "probe", inputSchema },
+        { command: "probe", description: "Probe" },
+      ),
+    ).toThrow("probe.detail differs between input branches");
   });
 });
