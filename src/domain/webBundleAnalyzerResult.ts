@@ -201,6 +201,10 @@ export const buildCapturedWebBundleAnalysis = (
   });
 };
 
+const appendAll = <T>(target: T[], items: readonly T[]): void => {
+  for (const item of items) target.push(item);
+};
+
 const mergeScriptResults = (
   results: readonly Extract<
     WebBundleScriptAnalysis,
@@ -219,11 +223,11 @@ const mergeScriptResults = (
       accumulator.recoveredScripts.push(result.script_key);
     if (result.widened_return_references)
       accumulator.widenedScripts.push(result.script_key);
-    accumulator.edges.push(...result.observations.edges);
-    accumulator.routes.push(...result.observations.routes);
-    accumulator.endpoints.push(...result.observations.endpoints);
-    accumulator.webMcp.push(...result.observations.webmcp_declarations);
-    accumulator.inferences.push(...result.inferences);
+    appendAll(accumulator.edges, result.observations.edges);
+    appendAll(accumulator.routes, result.observations.routes);
+    appendAll(accumulator.endpoints, result.observations.endpoints);
+    appendAll(accumulator.webMcp, result.observations.webmcp_declarations);
+    appendAll(accumulator.inferences, result.inferences);
   }
   return accumulator;
 };
