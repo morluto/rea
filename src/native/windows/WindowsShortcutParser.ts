@@ -314,6 +314,12 @@ type RecordedPath = {
   readonly unicode: boolean;
 };
 
+type LinkInfoPathUncertainty = {
+  local: boolean;
+  network: boolean;
+  suffix: boolean;
+};
+
 const isAscii = (text: string): boolean =>
   [...text].every((char) => char <= "\u007f");
 
@@ -351,7 +357,10 @@ const iconDiffersFromTarget = (
 /** LinkInfo local and network base paths, each joined with CommonPathSuffix. */
 const linkInfoTargets = (
   info: NonNullable<WindowsShortcut["link_info"]>,
+  uncertainty: LinkInfoPathUncertainty,
 ): RecordedPath[] => {
+  // Neither joined LinkInfo path can be proven complete without its suffix.
+  if (uncertainty.suffix) return [];
   const suffixText = info.common_path_suffix_unicode ?? info.common_path_suffix;
   const suffix =
     suffixText === null || suffixText.length === 0
@@ -369,12 +378,16 @@ const linkInfoTargets = (
         };
   const values: RecordedPath[] = [];
   const local = info.local_base_path_unicode ?? info.local_base_path;
-  if (local !== null && (suffix !== null || local.length > 0))
+  if (
+    !uncertainty.local &&
+    local !== null &&
+    (suffix !== null || local.length > 0)
+  )
     values.push(
       withSuffix(recorded(local, info.local_base_path_unicode === null)),
     );
   const net = info.common_network_relative_link;
-  if (net !== null) {
+  if (!uncertainty.network && net !== null) {
     const share = net.net_name_unicode ?? net.net_name;
     if (share !== null)
       values.push(withSuffix(recorded(share, net.net_name_unicode === null)));
@@ -382,14 +395,19 @@ const linkInfoTargets = (
   return values;
 };
 
-const targetPaths = (report: {
-  readonly link_info: WindowsShortcut["link_info"];
-  readonly string_data: WindowsShortcut["string_data"];
-  readonly id_list: WindowsShortcut["id_list"];
-  readonly extra_data: WindowsShortcut["extra_data"];
-}): RecordedPath[] => {
+const targetPaths = (
+  report: {
+    readonly link_info: WindowsShortcut["link_info"];
+    readonly string_data: WindowsShortcut["string_data"];
+    readonly id_list: WindowsShortcut["id_list"];
+    readonly extra_data: WindowsShortcut["extra_data"];
+  },
+  uncertainty: LinkInfoPathUncertainty,
+): RecordedPath[] => {
   const values: RecordedPath[] =
-    report.link_info === null ? [] : linkInfoTargets(report.link_info);
+    report.link_info === null
+      ? []
+      : linkInfoTargets(report.link_info, uncertainty);
   const relative = report.string_data.relative_path;
   if (relative !== null)
     values.push(recorded(relative.value, relative.encoding === "ansi"));
@@ -420,7 +438,7 @@ const observationsOf = (
     WindowsShortcut,
     "header" | "link_info" | "string_data" | "id_list" | "extra_data"
   >,
-  targetPathUnknown: boolean,
+  uncertainty: LinkInfoPathUncertainty,
 ): WindowsShortcut["observations"] => {
   const argumentsDeclared = (report.header.link_flags.raw & 0x00000020) !== 0;
   const argumentsField = report.string_data.arguments;
@@ -431,7 +449,9 @@ const observationsOf = (
       : argumentsDeclared
         ? null
         : "";
-  const targets = targetPaths(report);
+  const targets = targetPaths(report, uncertainty);
+  const targetPathUnknown =
+    uncertainty.local || uncertainty.network || uncertainty.suffix;
   const iconDifference = iconDiffersFromTarget(
     report.string_data.icon_location,
     targets,
@@ -529,7 +549,7 @@ type Walk = {
   stopped: boolean;
   stringBytes: number;
   maxStringBytes: number;
-  targetPathUnknown: boolean;
+  pathUncertainty: LinkInfoPathUncertainty;
 };
 
 /** A declared preferred path that could not be decoded cannot be treated as absent. */
@@ -782,7 +802,7 @@ const parseNetwork = (
     ),
     network_provider_type: validNetType ? block.readUInt32LE(16) : null,
   };
-  walk.targetPathUnknown ||=
+  walk.pathUncertainty.network ||=
     (declaresUnicode && !unicode) ||
     selectedPathUnreadable(
       netNameOffset,
@@ -877,23 +897,24 @@ const parseLinkInfo = (
       headerSize,
     ),
   };
-  walk.targetPathUnknown ||=
-    ((flags & 0x1) !== 0 &&
-      selectedPathUnreadable(
-        localOffset,
-        info.local_base_path,
-        localUnicodeOffset,
-        info.local_base_path_unicode,
-      )) ||
+  walk.pathUncertainty.local ||=
+    (flags & 0x1) !== 0 &&
     selectedPathUnreadable(
-      suffixOffset,
-      info.common_path_suffix,
-      suffixUnicodeOffset,
-      info.common_path_suffix_unicode,
-    ) ||
-    ((flags & 0x2) !== 0 &&
-      networkOffset !== 0 &&
-      info.common_network_relative_link === null);
+      localOffset,
+      info.local_base_path,
+      localUnicodeOffset,
+      info.local_base_path_unicode,
+    );
+  walk.pathUncertainty.suffix ||= selectedPathUnreadable(
+    suffixOffset,
+    info.common_path_suffix,
+    suffixUnicodeOffset,
+    info.common_path_suffix_unicode,
+  );
+  walk.pathUncertainty.network ||=
+    (flags & 0x2) !== 0 &&
+    networkOffset !== 0 &&
+    info.common_network_relative_link === null;
   walk.offset += size;
   return info;
 };
@@ -1283,7 +1304,7 @@ export const parseWindowsShortcut = async (
     stopped: false,
     stringBytes: 0,
     maxStringBytes: input.max_string_bytes,
-    targetPathUnknown: false,
+    pathUncertainty: { local: false, network: false, suffix: false },
   };
   const idList =
     (flags & 0x00000001) !== 0
@@ -1347,7 +1368,7 @@ export const parseWindowsShortcut = async (
   const partial = walk.issues.length > 0;
   return {
     ...reportBase,
-    observations: observationsOf(reportBase, walk.targetPathUnknown),
+    observations: observationsOf(reportBase, walk.pathUncertainty),
     coverage: {
       status: partial ? "partial" : "complete",
       reason: partial

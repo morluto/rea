@@ -283,6 +283,98 @@ it("keeps icon comparison unknown when the Unicode network target points into it
   ).toMatchObject({ extension: null });
 });
 
+it.each([
+  { unicode: false, independent: false, expected: null },
+  { unicode: true, independent: false, expected: null },
+  { unicode: false, independent: true, expected: false },
+  { unicode: true, independent: true, expected: false },
+] as const)(
+  "does not match a bare base when its suffix is unreadable (Unicode $unicode, independent $independent)",
+  async ({ unicode, independent, expected }) => {
+    const bytes = windowsShortcutBytes({
+      idList: null,
+      linkInfo: {
+        localBasePath: "C:\\Apps",
+        commonPathSuffix: "run.exe",
+        unicode,
+      },
+      iconLocation: "C:\\Apps",
+      ...(independent ? { relativePath: "C:\\Apps" } : {}),
+      extraData: [],
+    });
+    bytes.writeUInt32LE(4, 76 + 24);
+    if (unicode) bytes.writeUInt32LE(4, 76 + 32);
+    const report = await parse(bytes);
+    expect(report.coverage.status).toBe("partial");
+    expect(
+      report.observations.find(
+        ({ kind }) => kind === "icon_location_differs_from_target",
+      ),
+    ).toMatchObject({ value: expected });
+  },
+);
+
+it("retains an independent network match when the local target is unreadable", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: null,
+    linkInfo: {
+      localBasePath: "C:\\Apps",
+      netName: "\\\\server\\share",
+      unicode: true,
+      networkUnicode: true,
+    },
+    iconLocation: "\\\\server\\share",
+    extraData: [],
+  });
+  bytes.writeUInt32LE(4, 76 + 28);
+  const report = await parse(bytes);
+  expect(report.coverage.status).toBe("partial");
+  expect(
+    report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    ),
+  ).toMatchObject({ value: false });
+});
+
+it("does not match an ANSI fallback when the preferred Unicode target is unreadable", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: null,
+    linkInfo: { localBasePath: "C:\\Apps\\same.exe", unicode: true },
+    iconLocation: "C:\\Apps\\same.exe",
+    extraData: [],
+  });
+  bytes.writeUInt32LE(4, 76 + 28);
+  const report = await parse(bytes);
+  expect(report.coverage.status).toBe("partial");
+  expect(
+    report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    ),
+  ).toMatchObject({ value: null });
+});
+
+it("does not match an ANSI network fallback when its Unicode target is unreadable", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: null,
+    linkInfo: {
+      netName: "\\\\server\\share",
+      unicode: true,
+      networkUnicode: true,
+    },
+    iconLocation: "\\\\server\\share",
+    extraData: [],
+  });
+  const network = 76 + bytes.readUInt32LE(76 + 20);
+  bytes.writeUInt32LE(4, network + 20);
+  const report = await parse(bytes);
+  expect(report.coverage.status).toBe("partial");
+  expect(
+    report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    ),
+  ).toMatchObject({ value: null });
+});
+
 it("retains a known target match alongside an unreadable network target", async () => {
   const bytes = windowsShortcutBytes({
     idList: null,

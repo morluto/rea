@@ -68,8 +68,8 @@ bytes is therefore not compared with a Unicode icon location, or the reverse,
 because the code page is unobserved. This workflow does not emit verdicts
 about intent.
 
-An unreadable declared `LinkInfo` target path leaves the target extension unknown and
-prevents a mismatch claim, unless another readable target matches the icon.
+An unreadable declared `LinkInfo` target path leaves the target extension unknown
+and prevents a mismatch claim, unless another complete target matches the icon.
 
 A missing optional section is observed absence of that structure. It is not
 proof the shortcut never carried that data in another container.
