@@ -47,6 +47,7 @@ import {
   type SymbolicEnvironment,
   type SymbolicFunction,
 } from "./javascriptSymbolicValues.js";
+import { appendAll } from "../appendAll.js";
 
 interface PropertyWrite {
   readonly path: readonly string[];
@@ -1395,7 +1396,7 @@ export class JavaScriptSymbolicBindings {
           returnedValue,
           depth + 1,
         );
-        possible.push(...flow.values.map(guardCurrentPath));
+        appendAll(possible, flow.values.map(guardCurrentPath));
         if (!flow.fallsThrough)
           return { values: possible, fallsThrough: false };
         continuationConditions.push(...(flow.conditions ?? []));

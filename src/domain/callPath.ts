@@ -21,6 +21,7 @@ import {
 } from "./functionDossierEvidence.js";
 import { isCallerOnlyIncompleteCoverage } from "./functionCallCoverage.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
+import { appendAll } from "./appendAll.js";
 
 /** Minimal directed caller-to-callee adjacency for call-path search. */
 class CallGraph {
@@ -287,7 +288,7 @@ const inspectSearch = ({
       const coverage = snapshot.evidence.relationship_coverage;
       for (const limitation of snapshot.limitations)
         limitations.push(limitation);
-      limitations.push(...snapshot.unresolvedCallCaveats);
+      appendAll(limitations, snapshot.unresolvedCallCaveats);
       if (coverage !== null) {
         for (const limitation of relationshipCoverageLimitations(coverage))
           limitations.push(limitation);
