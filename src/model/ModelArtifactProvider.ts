@@ -40,12 +40,14 @@ import { ModelHeaderReader } from "./ModelHeaderReader.js";
 import { GgufHeader } from "./GgufHeader.js";
 import { readSafetensorsHeader } from "./SafetensorsHeader.js";
 import {
-  ModelFormatFailure,
+  modelCapacityFailure,
+  modelCapacityLimitOf,
   MODEL_REPORT_BYTES,
   modelCapacityRemediation,
   modelCapacityReportedLimits,
 } from "./ModelFormat.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
@@ -110,8 +112,12 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       let error: AnalysisError;
       if (origin === "owned-or-classified" && primary instanceof AnalysisError)
         error = primary;
-      else if (primary instanceof ModelFormatFailure) {
-        const limit = primary.kind === "capacity" ? primary.limit : undefined;
+      else if (
+        primary instanceof ParseFailureError &&
+        (primary.kind !== "limit" ||
+          modelCapacityLimitOf(primary) !== undefined)
+      ) {
+        const limit = modelCapacityLimitOf(primary);
         error =
           limit !== undefined
             ? new AnalysisResourceConstraintError(
@@ -245,10 +251,9 @@ export class ModelArtifactProvider implements ModelArtifactPort {
   ): Promise<ModelArtifact> {
     const initial = await file.stat({ bigint: true });
     if (initial.size > BigInt(Number.MAX_SAFE_INTEGER))
-      throw new ModelFormatFailure(
-        "capacity",
-        "Model file exceeds exact host offset precision",
+      throw modelCapacityFailure(
         "exact-offset",
+        "Model file exceeds exact host offset precision",
       );
     const reader = new ModelHeaderReader(file, Number(initial.size), signal);
     const first = await reader.take(4);
@@ -430,11 +435,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       ],
     };
     if (jsonValueByteLength(report, MODEL_REPORT_BYTES) > MODEL_REPORT_BYTES)
-      throw new ModelFormatFailure(
-        "capacity",
-        "Model report exceeds 32 MiB",
-        "report-bytes",
-      );
+      throw modelCapacityFailure("report-bytes", "Model report exceeds 32 MiB");
     return modelArtifactSchema.parse(report);
   }
 }

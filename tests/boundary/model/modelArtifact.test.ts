@@ -8,11 +8,11 @@ import {
   MODEL_JSON_NESTING,
   MODEL_METADATA_NESTING,
   MODEL_REPORT_BYTES,
-  ModelFormatFailure,
   modelCapacityRemediation,
   modelCapacityReportedLimits,
 } from "../../../src/model/ModelFormat.js";
 import { readSafetensorsHeader } from "../../../src/model/SafetensorsHeader.js";
+import { ParseFailureError } from "../../../src/domain/parseFailure.js";
 import { GgufHeader } from "../../../src/model/GgufHeader.js";
 import { createModelArtifactService } from "../../../src/composition/model.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -340,14 +340,18 @@ it("retains the absolute header budget for GGUF without allocating that extent",
   await file.truncate(100_000_009);
   const reader = new ModelHeaderReader(file, 100_000_009);
   expect(() => reader.guarantee(100_000_000)).not.toThrow();
-  expect(() => reader.guarantee(100_000_001)).toThrow(ModelFormatFailure);
+  expect(() => reader.guarantee(100_000_001)).toThrow(ParseFailureError);
   try {
     reader.guarantee(100_000_001);
   } catch (cause) {
-    expect(cause).toBeInstanceOf(ModelFormatFailure);
-    if (!(cause instanceof ModelFormatFailure))
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError))
       throw new Error("Expected a model header capacity failure");
-    expect(cause.limit).toBe("header-bytes");
+    expect(cause.failure).toMatchObject({
+      kind: "limit",
+      format: "model",
+      limit: { name: "header-bytes", maximum: 100_000_000 },
+    });
     expect(cause.message).toContain("100,000,000 bytes");
     expect(cause.message).not.toContain("Safetensors");
   }
