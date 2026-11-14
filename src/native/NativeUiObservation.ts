@@ -16,7 +16,6 @@ import {
   nativeUiResultSchema,
 } from "../domain/native/nativeUiObservation.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   cancelledBy,
