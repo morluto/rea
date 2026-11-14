@@ -16,6 +16,7 @@ import type {
 } from "./SetupTypes.js";
 import {
   appDataRedirection,
+  clientRegistrationGroups,
   registrationPersistenceDetail,
   type SetupClient,
 } from "./SupportedClients.js";
@@ -252,8 +253,15 @@ export const planSetupActions = async (input: {
   return {
     plannedActions,
     selectedClients,
-    clientsToConfigure: selectedClients.filter((client) =>
-      clientPlans.some(({ client: planned }) => planned.name === client.name),
+    clientsToConfigure: clientRegistrationGroups(selectedClients).flatMap(
+      (group) =>
+        group.some((client) =>
+          clientPlans.some(
+            ({ client: planned }) => planned.name === client.name,
+          ),
+        )
+          ? group
+          : [],
     ),
     ...(blocker === undefined ? {} : { blocker }),
   };
@@ -270,15 +278,21 @@ const inspectSelectedClients = async (
     }[]
   | { readonly blocker: string }
 > => {
+  // A registration group shares one physical row: inspect the group's owner
+  // once, so the shared registration is disclosed a single time per
+  // transaction. The host projects the configure outcome to the other
+  // surfaces of the group.
   const inspections = await Promise.all(
-    selectedClients.map(async (client) => ({
-      client,
-      inspection: await input.host.inspectClientConfiguration(
-        client,
-        clientEnvironment(input, client.name),
-        input.command,
-      ),
-    })),
+    clientRegistrationGroups(selectedClients)
+      .flatMap(([owner]) => (owner === undefined ? [] : [owner]))
+      .map(async (owner) => ({
+        client: owner,
+        inspection: await input.host.inspectClientConfiguration(
+          owner,
+          clientEnvironment(input, owner.name),
+          input.command,
+        ),
+      })),
   );
   const invalid = inspections.find(
     ({ inspection }) => inspection.status === "invalid",

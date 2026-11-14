@@ -4,7 +4,10 @@ import type {
   SetupProviderEnvironment,
   SetupProgressEvent,
 } from "./SetupTypes.js";
-import type { SetupClient } from "./SupportedClients.js";
+import {
+  clientRegistrationGroups,
+  type SetupClient,
+} from "./SupportedClients.js";
 import { clientEnvironment } from "./SetupPlan.js";
 import { assertSetupActive } from "./SetupCancellation.js";
 
@@ -70,7 +73,9 @@ export const configureDetectedClients = async (options: {
   readonly signal?: AbortSignal | undefined;
 }): Promise<string | undefined> => {
   let failure: string | undefined;
-  for (const client of options.detectedClients) {
+  for (const group of clientRegistrationGroups(options.detectedClients)) {
+    const client = group[0];
+    if (client === undefined) continue;
     assertSetupActive(options.signal);
     const actionId = `configure_client:${client.name}`;
     const label = client.displayName ?? client.name;
@@ -80,7 +85,7 @@ export const configureDetectedClients = async (options: {
       clientEnvironment(options, client.name),
       options.command,
     );
-    options.clients[client.name] = result;
+    for (const surface of group) options.clients[surface.name] = result;
     if (result.status === "failed") {
       failure ??= failedConfigurationMessage(result);
       options.onProgress?.({

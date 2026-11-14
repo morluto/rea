@@ -47,6 +47,10 @@ export interface SetupClient {
    * ownership of a registration REA wrote.
    */
   readonly sharedRegistration?: boolean;
+  /** Installation evidence that overrides the shared registration paths. */
+  readonly evidencePath?: string;
+  /** Explicitly shared registration contract; skill ownership stays per client. */
+  readonly registrationGroup?: string;
   /** MSIX package storage that decides which configuration the client reads. */
   readonly msixPackage?: MsixPackageView;
   /** A running client can rewrite its configuration from memory. */
@@ -122,6 +126,12 @@ interface ClientDefinitionBase {
   readonly format: NonNullable<SetupClient["format"]>;
   readonly quitBeforeSetup?: boolean;
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
+  /**
+   * Installation evidence for surfaces whose configuration file is shared
+   * with another client; detection follows this path alone.
+   */
+  readonly evidencePath?: ClientPath;
+  readonly registrationGroup?: string;
   readonly skillPath?: ClientPath;
   readonly configPaths?: (context: ClientPathContext) => readonly string[];
   readonly geminiSettings?: (
@@ -759,9 +769,29 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       ],
     },
     displayName: "Antigravity",
+    evidencePath: [".gemini", "config", "skills"],
+    registrationGroup: "antigravity",
     skillPath: [".gemini", "config", "skills"],
     configPath: [".gemini", "config", "mcp_config.json"],
-    markerPath: [".gemini", "config"],
+    markerPath: [".gemini", "config", "skills"],
+    format: "json",
+  }),
+  defineClient({
+    name: "antigravity_cli",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["serverUrl", "url"],
+      stdio: [
+        { kind: "present", field: "serverUrl" },
+        { kind: "present", field: "url" },
+      ],
+    },
+    displayName: "Antigravity CLI",
+    registrationGroup: "antigravity",
+    skillPath: [".gemini", "antigravity-cli", "skills"],
+    configPath: [".gemini", "config", "mcp_config.json"],
+    markerPath: [".gemini", "antigravity-cli"],
+    evidencePath: [".gemini", "antigravity-cli"],
     format: "json",
   }),
   defineClient({
@@ -1085,18 +1115,26 @@ export const clientEvidencePaths = (
   client: Pick<
     SetupClient,
     "configPath" | "configPaths" | "markerPath" | "discoveryPaths"
-  >,
-): readonly string[] => [
-  ...new Set(
-    (
-      client.discoveryPaths ?? [
-        client.configPath,
-        ...(client.configPaths ?? []),
-        client.markerPath,
-      ]
-    ).filter((path): path is string => path !== undefined && path.length > 0),
-  ),
-];
+  > &
+    // A pinned evidence path overrides discovery: shared registration
+    // storage must not report a product whose own root is absent.
+    Pick<SetupClient, "evidencePath">,
+): readonly string[] =>
+  client.evidencePath !== undefined && client.evidencePath.length > 0
+    ? [client.evidencePath]
+    : [
+        ...new Set(
+          (
+            client.discoveryPaths ?? [
+              client.configPath,
+              ...(client.configPaths ?? []),
+              client.markerPath,
+            ]
+          ).filter(
+            (path): path is string => path !== undefined && path.length > 0,
+          ),
+        ),
+      ];
 
 /**
  * Paths where a recognizable REA-owned row proves ownership of a registration
@@ -1107,10 +1145,10 @@ export const clientEvidencePaths = (
 export const clientOwnershipEvidencePaths = (
   client: Pick<
     SetupClient,
-    "configPath" | "configPaths" | "sharedRegistration"
+    "configPath" | "configPaths" | "sharedRegistration" | "registrationGroup"
   >,
 ): readonly string[] =>
-  client.sharedRegistration === true
+  client.sharedRegistration === true || client.registrationGroup !== undefined
     ? [client.configPath, ...(client.configPaths ?? [])].filter(
         (path): path is string => path !== undefined && path.length > 0,
       )
@@ -1126,7 +1164,11 @@ export const clientOwnershipEvidencePaths = (
 export const clientSharedRegistrationPaths = (
   client: Pick<
     SetupClient,
-    "configPath" | "configPaths" | "sharedRegistration" | "zcodeFallbackPath"
+    | "configPath"
+    | "configPaths"
+    | "sharedRegistration"
+    | "registrationGroup"
+    | "zcodeFallbackPath"
   >,
 ): ReadonlySet<string> =>
   new Set([
@@ -1135,6 +1177,27 @@ export const clientSharedRegistrationPaths = (
       ? []
       : [client.zcodeFallbackPath]),
   ]);
+
+export const clientRegistrationKey = (client: SetupClient): string =>
+  JSON.stringify(
+    client.registrationGroup === undefined
+      ? ["client", client.name]
+      : ["shared", client.registrationGroup, client.format, client.configPath],
+  );
+
+/** Group only explicitly shared registrations with the same resolved contract. */
+export const clientRegistrationGroups = (
+  clients: readonly SetupClient[],
+): readonly (readonly SetupClient[])[] => {
+  const groups = new Map<string, SetupClient[]>();
+  for (const client of clients) {
+    const key = clientRegistrationKey(client);
+    const group = groups.get(key);
+    if (group === undefined) groups.set(key, [client]);
+    else group.push(client);
+  }
+  return [...groups.values()];
+};
 
 const resolvePath = (
   path: ClientPath,
@@ -1182,11 +1245,21 @@ export const supportedClients = (
             : { msixPackage: location.error.msixPackage }),
         };
       const { configPath, markerPath, msixPackage } = location.value;
+      const evidence =
+        definition.evidencePath === undefined
+          ? undefined
+          : resolvePath(definition.evidencePath, context);
       return {
         name: definition.name,
         registrationProfile: definition.registrationProfile,
         displayName: definition.displayName,
         configPath,
+        ...(definition.registrationGroup === undefined
+          ? {}
+          : { registrationGroup: definition.registrationGroup }),
+        ...(evidence !== undefined && evidence.ok
+          ? { evidencePath: evidence.value }
+          : {}),
         ...(definition.geminiSettings === undefined
           ? {}
           : { geminiSettings: definition.geminiSettings(context) }),
