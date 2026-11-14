@@ -9,6 +9,7 @@ import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
   omitUnretainedEvidenceFromError,
   projectAnalysisError,
+  projectAnalysisErrorWithoutPartialObservation,
   unretainedEvidenceCandidates,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
@@ -314,11 +315,19 @@ export class ToolResultDelivery {
           ...projected,
           details: {
             ...projected.details,
-            partial_observation: {
+            // The ledger states whether the record is already retained; only
+            // without that fact is retention unknown.
+            partial_observation: ledgerRetentionFact(
+              recorded.error.partialObservation,
+              partial.value,
+            ) ?? {
               kind: "inline-evidence",
               retention: "unknown",
               evidence: partial.value,
             },
+            retention_error: projectAnalysisErrorWithoutPartialObservation(
+              recorded.error,
+            ),
           },
         },
         targetContent,
@@ -478,3 +487,26 @@ export class ToolResultDelivery {
     );
   }
 }
+
+/** The ledger's own retained/unretained fact for this exact record, if it gave one. */
+const ledgerRetentionFact = (
+  fact: unknown,
+  evidence: Evidence,
+):
+  | { readonly kind: "retained-evidence"; readonly evidence_id: string }
+  | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
+  | undefined => {
+  if (typeof fact !== "object" || fact === null) return undefined;
+  const value = fact as {
+    readonly kind?: unknown;
+    readonly evidence_id?: unknown;
+  };
+  if (
+    value.kind === "retained-evidence" &&
+    value.evidence_id === evidence.evidence_id
+  )
+    return { kind: "retained-evidence", evidence_id: evidence.evidence_id };
+  if (value.kind === "unretained-evidence")
+    return { kind: "unretained-evidence", evidence };
+  return undefined;
+};
