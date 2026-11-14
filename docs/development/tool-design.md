@@ -262,6 +262,17 @@ activation independently of readiness. An owned registration may be disabled
 or stale; unresolved ownership remains unknown. Consumers use those facts
 instead of reclassifying the raw command.
 
+Owned provider commands follow the same rule. `providerOutcomeOf` in
+`src/process/ProviderOutcome.ts` reads what the supervisor observed (launch
+refusal, cancellation, deadline, output or memory limit, resource signal, exit
+status with the owner's stop state, or stream failure) together with the
+retained output and whether it was truncated. `classifyProviderOutcome` maps
+that outcome to a typed error once; a provider supplies only its settings,
+recovery text and a dialect for what an exit or launch refusal means. The
+`rea/provider-failure-classifier` lint rule keeps new `(cause: unknown) =>
+AnalysisError` functions out of `src/`; existing ones are counted in a baseline
+that may only shrink.
+
 A completed read can establish byte identity even when decoding or format
 validation fails. State which representation a digest identifies, such as file
 bytes, Fetch response-body bytes, or UTF-8 text. Preserve admitted source values

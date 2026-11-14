@@ -11,13 +11,12 @@ import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
+  type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { createPcapDiagnosticProjection } from "./PcapDiagnosticOutput.js";
 import {
   AnalysisCancelledError,
   AnalysisProtocolError,
-  AnalysisResourceConstraintError,
-  AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import {
@@ -35,7 +34,8 @@ import {
   windowsBatchCommand,
   WindowsBatchCommandError,
 } from "../process/WindowsBatchCommand.js";
-import { classifyLaunchFailure } from "../process/launchFailure.js";
+import { providerOutcomeOf } from "../process/ProviderOutcome.js";
+import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
 
 export type PcapCommandLauncher = NonNullable<
@@ -105,6 +105,33 @@ export const runPcapCommand = async (options: {
         snapshot.diagnosticTruncated === true ||
         snapshot.outputIncomplete === true,
     });
+  /** A version probe that fails names the tool; a capture read names the file. */
+  const pcapToolFailure = (
+    diagnostic: string,
+    details: AnalysisErrorOptions,
+  ): AnalysisError => {
+    if (options.inputPath === undefined)
+      return pcapToolUnavailable(
+        operation,
+        `The selected tool ${command} cannot report its version: ${diagnostic}`,
+        details,
+      );
+    if (
+      /not a capture file|file.*isn't a capture file|file format.*not supported/iu.test(
+        diagnostic,
+      )
+    )
+      return new AnalysisUnsupportedTargetError(
+        operation,
+        options.inputPath,
+        diagnostic,
+        details,
+      );
+    return new AnalysisProtocolError(
+      `Packet capture tool ${command} failed: ${diagnostic}`,
+      details,
+    );
+  };
   if (signal?.aborted)
     throw new AnalysisCancelledError(operation, { cause: signal.reason });
   const hostEnvironment = {
@@ -221,14 +248,8 @@ export const runPcapCommand = async (options: {
           ? { stdout: "", stderr: "", truncated: true }
           : captureDiagnostic(cause.snapshot),
       );
-    const details = {
-      cause,
-      ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
-        ? {
-            capturedOutput: captureDiagnostic(cause.snapshot),
-          }
-        : {}),
-      ...(cleanup !== undefined
+    const cleanupDetails =
+      cleanup !== undefined
         ? { cleanup }
         : cause instanceof OwnedCommandFailure && cause.cleanupFailure !== null
           ? {
@@ -237,97 +258,45 @@ export const runPcapCommand = async (options: {
                 resources: cause.resources,
               },
             }
-          : {}),
-    };
-    if (cause instanceof OwnedCommandFailure && cause.reason === "cancelled")
-      throw new AnalysisCancelledError(operation, {
-        ...details,
-        cause: cause.cancellation?.reason,
-      });
-    if (
-      cause instanceof OwnedCommandFailure &&
-      cause.snapshot?.memoryLimitReached === true
-    )
-      throw new AnalysisResourceConstraintError(
-        operation,
-        "memory",
-        "The owned Windows tool tree reached its enforced committed-memory limit.",
-        {
-          process_memory_limit_bytes:
-            options.nativeBound?.memoryLimitBytes ?? null,
-        },
-        details,
-      );
-    if (
-      cause instanceof OwnedCommandFailure &&
-      (cause.snapshot?.signal === "SIGXCPU" ||
-        cause.snapshot?.signal === "SIGXFSZ")
-    )
-      throw new AnalysisResourceConstraintError(
-        operation,
-        cause.snapshot.signal === "SIGXCPU" ? "cpu" : "file-size",
-        `Producer terminated with ${cause.snapshot.signal}; its exact cause is not independently established.`,
-        null,
-        details,
-      );
-    if (cause instanceof OwnedCommandFailure && cause.reason === "timeout")
-      throw new AnalysisTimeoutError(operation, limits.timeoutMs, details);
-    if (cause instanceof OwnedCommandFailure && cause.reason === "output-limit")
-      throw new AnalysisResourceConstraintError(
-        operation,
-        "memory",
-        "Tool output exceeded its complete-output budget",
-        { max_output_bytes: limits.maxOutputBytes },
-        {
-          ...details,
-          ...fixedAllowanceOptions(
-            "The packet-tool output capture allowance",
-            "capture",
-          ),
-        },
-      );
+          : {};
     if (cause instanceof WindowsBatchCommandError)
       throw pcapToolUnavailable(
         operation,
         `Cannot run selected tool ${command}: ${cause.message}`,
-        details,
+        { cause, ...cleanupDetails },
       );
-    const refusal = classifyLaunchFailure(cause);
-    if (refusal !== undefined)
-      throw pcapToolUnavailable(
-        operation,
-        refusal.kind === "missing"
-          ? `Selected tool ${command} was not found (${refusal.code})`
-          : `Selected tool ${command} exists but could not be executed (${refusal.code})`,
-        details,
+    const outcome = providerOutcomeOf(cause);
+    if (outcome === undefined)
+      throw pcapToolFailure(
+        cause instanceof Error ? cause.message : String(cause),
+        { cause, ...cleanupDetails },
       );
-    const diagnostic =
-      cause instanceof OwnedCommandFailure
-        ? cause.snapshot?.stderr.text.trim() || cause.message
-        : cause instanceof Error
-          ? cause.message
-          : String(cause);
-    if (options.inputPath === undefined)
-      throw pcapToolUnavailable(
-        operation,
-        `The selected tool ${command} cannot report its version: ${diagnostic}`,
-        details,
-      );
-    if (
-      options.inputPath !== undefined &&
-      /not a capture file|file.*isn't a capture file|file format.*not supported/iu.test(
-        diagnostic,
-      )
-    )
-      throw new AnalysisUnsupportedTargetError(
-        operation,
-        options.inputPath,
-        diagnostic,
-        details,
-      );
-    throw new AnalysisProtocolError(
-      `Packet capture tool ${command} failed: ${diagnostic}`,
-      details,
-    );
+    throw classifyProviderOutcome(outcome, {
+      operation,
+      capturedOutput: captureDiagnostic,
+      details: cleanupDetails,
+      timeout: { ms: limits.timeoutMs },
+      outputLimit: {
+        limits: { max_output_bytes: limits.maxOutputBytes },
+        recovery: fixedAllowanceOptions(
+          "The packet-tool output capture allowance",
+          "capture",
+        ),
+      },
+      memoryLimitBytes: options.nativeBound?.memoryLimitBytes,
+      dialect: (failure, details) =>
+        failure.kind === "launch-refused"
+          ? pcapToolUnavailable(
+              operation,
+              failure.refusal.kind === "missing"
+                ? `Selected tool ${command} was not found (${failure.refusal.code})`
+                : `Selected tool ${command} exists but could not be executed (${failure.refusal.code})`,
+              details,
+            )
+          : pcapToolFailure(
+              failure.output?.snapshot.stderr.text.trim() || failure.message,
+              details,
+            ),
+    });
   }
 };
