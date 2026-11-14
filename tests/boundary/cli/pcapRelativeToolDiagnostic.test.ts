@@ -16,7 +16,6 @@ cliTest.for([
     const result = await cli.run({
       arguments: ["inspect-pcap-client", "--format", "json"],
       environment,
-      timeoutMs: 10_000,
     });
     expect(result.exitCode, result.stderr).toBe(1);
     expect(result.stdout).toContain(setting);

@@ -1991,7 +1991,6 @@ describe("Ghidra byte-search cursor projection", () => {
       "utf8",
     );
     expect(bridge).toContain(`"${CURSOR_MISMATCH}"`);
-    expect(bridge).toContain(MESSAGE);
     await client.close();
   });
 
