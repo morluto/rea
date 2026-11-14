@@ -41,7 +41,8 @@ export const findDuplicateJsonMember = (
       names.add(name);
       continue;
     }
-    switch (text[index]) {
+    // charAt keeps the switch over string; index is within the text here.
+    switch (text.charAt(index)) {
       case "{":
         open.push(new Set());
         expectName = true;
