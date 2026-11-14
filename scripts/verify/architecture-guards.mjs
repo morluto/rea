@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { recordPredicateCounts } from "./record-predicate-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -166,8 +167,6 @@ check(
 // A local predicate with that body, under any name, is a copy. The listed files
 // still hold one and may only be removed from the list; a listed file that no
 // longer matches fails so the list shrinks with the code.
-const RECORD_PREDICATE_COPY =
-  /\bvalue is [^=;]+=>\s*typeof value === "object" &&\s*value !== null &&\s*!Array\.isArray\(value\)\s*;|\b(?:const|function)\s+isRecord\b/u;
 const RECORD_PREDICATE_COPIES = [
   // Exported under a module-specific name; importers still use that name.
   "src/browser/history/CaptureRedaction.ts",
@@ -181,21 +180,16 @@ const RECORD_PREDICATE_COPIES = [
   "src/pcap/PcapDnsWire.ts",
   "src/pcap/PcapOutput.ts",
 ];
-check(
-  "local non-array record predicate (import isRecord from src/domain/isRecord.ts)",
-  files,
-  RECORD_PREDICATE_COPY,
-  ["src/domain/isRecord.ts", ...RECORD_PREDICATE_COPIES],
-);
-const settledRecordCopies = RECORD_PREDICATE_COPIES.filter(
-  (path) =>
-    !files.some(
-      (file) => file.path === path && RECORD_PREDICATE_COPY.test(file.content),
-    ),
-);
-if (settledRecordCopies.length > 0)
+const mismatchedRecordCopies = files.filter(({ path, content }) => {
+  if (path === "src/domain/isRecord.ts") return false;
+  const { named, bodies } = recordPredicateCounts(content);
+  return (
+    named !== 0 || bodies !== (RECORD_PREDICATE_COPIES.includes(path) ? 1 : 0)
+  );
+});
+if (mismatchedRecordCopies.length > 0)
   failures.push(
-    `record predicate copies no longer present; remove them from RECORD_PREDICATE_COPIES:\n${settledRecordCopies.map((path) => `  ${path}`).join("\n")}`,
+    `local non-array record predicate count changed (import isRecord and update the baseline):\n${mismatchedRecordCopies.map(({ path }) => `  ${path}`).join("\n")}`,
   );
 
 if (failures.length > 0) {
