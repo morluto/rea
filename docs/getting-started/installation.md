@@ -1273,6 +1273,14 @@ repeat keeps the file and creates no new backup. The result reports exact
 unchanged, failed or not-started outcomes. A partial failure returns a nonzero
 status while retaining successful client outcomes and recovery paths.
 
+User-level registration for a client that `rea setup` also supports uses that
+client's setup definition, so the same native read rules apply. Gemini CLI
+registration fails without writing when Gemini's system, defaults or trusted
+workspace settings exclude `rea`, leave it off a nonempty allowlist, or define
+a different `rea` entry with higher precedence. On Windows, registration refuses
+to write a Claude Desktop MSIX configuration the running app could overwrite,
+or any file this process's MSIX AppData redirection would divert.
+
 `--no-global` writes only project-level settings. A selection containing Amp or
 another client without project storage fails before any writes; select those
 clients in a separate global registration. Managed `rea setup` remains available
