@@ -10,7 +10,10 @@ import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
-import { GHIDRA_RISCV_CALLING_CONVENTION_IDS } from "./GhidraRiscvProfile.js";
+import {
+  GHIDRA_RISCV_CALLING_CONVENTION_IDS,
+  GHIDRA_RISCV_REFUSAL_MAX_LENGTH,
+} from "./GhidraRiscvProfile.js";
 
 /** Exact methods proved by the selected Program bridge handshake. */
 export const GHIDRA_SESSION_CAPABILITIES = [
@@ -95,12 +98,17 @@ const sessionInfoSchema = z
       .strict()
       .optional(),
     riscv_calling_convention: z
-      .object({
-        policy: z.enum(GHIDRA_RISCV_CALLING_CONVENTION_IDS),
-        functions: z.int().nonnegative(),
-        definitions: z.int().nonnegative(),
-      })
-      .strict()
+      .union([
+        z.strictObject({
+          policy: z.enum(GHIDRA_RISCV_CALLING_CONVENTION_IDS),
+          functions: z.int().nonnegative(),
+          definitions: z.int().nonnegative(),
+        }),
+        z.strictObject({
+          policy: z.literal("ilp32f-prototype-v1"),
+          refused: z.string().min(1).max(GHIDRA_RISCV_REFUSAL_MAX_LENGTH),
+        }),
+      ])
       .optional(),
     capabilities: z.array(capabilitySchema),
     target: z
