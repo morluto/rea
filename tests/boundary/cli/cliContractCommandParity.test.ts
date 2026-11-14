@@ -62,6 +62,13 @@ const probes = (field: z.ZodType): readonly unknown[] => {
     " 1",
     "-1",
     "1.5",
+    "{}",
+    "[]",
+    "null",
+    "{",
+    '{"input_bytes":1}',
+    '{"input_bytes":0}',
+    '{"unknown":1}',
   ];
   for (const bound of ["minimum", "maximum", "minLength", "maxLength"]) {
     const value = json[bound];
@@ -92,6 +99,18 @@ const expectedAdmission = (
   contractField: z.ZodType,
   value: unknown,
 ): boolean => {
+  if (parameter.jsonText) {
+    // JSON text is decoded once, then the contract field admits the value.
+    if (typeof value !== "string")
+      return admits(contractField, value) && value === undefined;
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(value);
+    } catch {
+      return false;
+    }
+    return admits(contractField, decoded) && decoded !== undefined;
+  }
   if (parameter.callerPath) {
     // A caller path is validated as typed: an empty value never becomes the
     // working directory. A nonempty value is resolved, then the contract rules.
