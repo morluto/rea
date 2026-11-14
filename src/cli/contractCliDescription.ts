@@ -73,6 +73,18 @@ export interface CliContractProjection<
    * at argv parsing and then admitted by the contract field's own schema.
    */
   readonly jsonText?: readonly Field[];
+  /**
+   * Structured fields taken as JSON text that is decoded when the command
+   * runs, each with its refusal when the text is not JSON. The decoded input
+   * is then admitted by the contract input before any target is opened.
+   */
+  readonly runtimeJson?: { readonly [Key in Field]?: string };
+  /**
+   * Nullable limits whose null ("all remaining") is spelled by a bare flag,
+   * keyed by contract field. The limit option takes only a value; the flag
+   * and the limit are mutually exclusive.
+   */
+  readonly nullFlags?: { readonly [Key in Field]?: CliNullFlag };
   readonly fields?: { readonly [Key in Field]?: CliFieldProjection };
   /**
    * Optional fields this one-shot command does not expose, each with the
@@ -121,6 +133,12 @@ export type CliOptionShape = Readonly<Record<string, z.ZodType>>;
 export type CliOptionValues<CliOptions extends CliOptionShape> = {
   readonly [Key in keyof CliOptions]: z.output<CliOptions[Key]>;
 };
+
+/** A bare flag that sets a nullable contract field to null. */
+export interface CliNullFlag {
+  readonly key: string;
+  readonly description: string;
+}
 
 /** How a contract command takes its `view` selection. */
 export interface CliViewDelivery {
@@ -181,6 +199,20 @@ export interface ContractCliParameter {
    * with the delivery by the contract input.
    */
   readonly viewSelection: boolean;
+  /**
+   * The refusal for text that is not JSON, when the value is JSON text
+   * decoded when the command runs; undefined otherwise.
+   */
+  readonly runtimeJson: string | undefined;
+  /** The bare flag that sets this nullable field to null, if any. */
+  readonly nullFlag: string | undefined;
+}
+
+/** The contract input and delivery one invocation selected. */
+export interface ContractCliAdmission {
+  readonly input: Record<string, unknown>;
+  /** The admitted delivery, for a projection with `evidenceDelivery`. */
+  readonly delivery: CliEvidenceDeliveryChoice | undefined;
 }
 
 /** One cross-field refusal, naming CLI keys. */
@@ -216,7 +248,10 @@ export interface ContractCliDescription {
         options: Readonly<Record<string, unknown>>,
       ) => readonly ContractCliIssue[])
     | undefined;
-  /** Map parsed values, keyed by parameter key, to the contract input. */
+  /**
+   * Map parsed values, keyed by parameter key, to the contract input. Values
+   * of run-time JSON parameters must already be decoded.
+   */
   readonly toContractInput: (
     values: Readonly<Record<string, unknown>>,
   ) => Record<string, unknown>;
@@ -228,15 +263,16 @@ export interface ContractCliDescription {
   readonly cliOptionValues: (
     values: Readonly<Record<string, unknown>>,
   ) => Readonly<Record<string, unknown>>;
+  /** The command adds `--detail` and `--evidence_output`. */
+  readonly evidenceDelivery: boolean;
   /**
-   * The selected delivery, for a projection with `evidenceDelivery`, refused
-   * before any target is opened when it is not admitted.
+   * Decode run-time JSON, then map parsed values to the contract input and
+   * the selected delivery. An input or delivery that is not admitted is
+   * refused before any target is opened.
    */
-  readonly delivery:
-    | ((
-        values: Readonly<Record<string, unknown>>,
-      ) => Result<CliEvidenceDeliveryChoice, AnalysisInputError>)
-    | undefined;
+  readonly admit: (
+    values: Readonly<Record<string, unknown>>,
+  ) => Result<ContractCliAdmission, AnalysisInputError>;
 }
 
 /** One contract from a contract group, keeping its exact schema types. */
@@ -398,6 +434,7 @@ const projectObjectConstraints = (
   rename: (field: string) => string,
   deliveryFields: ReadonlySet<string>,
   cliOptionDependencies: Readonly<Record<string, readonly string[]>>,
+  nullFlagLimits: readonly (readonly [flag: string, limit: string])[],
 ): Record<string, unknown> | undefined => {
   const metadata = contract.inputSchema.meta() ?? {};
   for (const keyword of Object.keys(metadata))
@@ -429,6 +466,13 @@ const projectObjectConstraints = (
     projected.dependentRequired = {
       ...(projected.dependentRequired as object | undefined),
       ...cliOptionDependencies,
+    };
+  if (nullFlagLimits.length > 1)
+    throw new Error(`${contract.name} has more than one null flag`);
+  for (const [flag, limit] of nullFlagLimits)
+    projected.not = {
+      required: [flag, limit],
+      properties: { [flag]: { const: true } },
     };
   return Object.keys(projected).length === 0 ? undefined : projected;
 };
@@ -499,6 +543,10 @@ export const describeContractCommand = <
   const jsonTextFields: ReadonlySet<string> = new Set(
     projection.jsonText ?? [],
   );
+  const runtimeJsonFields: Readonly<Record<string, string | undefined>> =
+    projection.runtimeJson ?? {};
+  const nullFlags: Readonly<Record<string, CliNullFlag | undefined>> =
+    projection.nullFlags ?? {};
   const omitted: Readonly<Record<string, string>> = Object.fromEntries(
     Object.entries(projection.omit ?? {}).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -508,6 +556,8 @@ export const describeContractCommand = <
     ...positionals,
     ...callerPaths,
     ...jsonTextFields,
+    ...Object.keys(runtimeJsonFields),
+    ...Object.keys(nullFlags),
     ...Object.keys(fieldProjections),
     ...Object.keys(omitted),
   ])
@@ -524,10 +574,27 @@ export const describeContractCommand = <
     const delivery = deliveryFields.has(field);
     const viewSelection = delivery && field === "view";
     const jsonText = jsonTextFields.has(field);
+    const runtimeJson = viewSelection
+      ? viewDelivery?.invalidJson
+      : runtimeJsonFields[field];
+    const nullFlag = nullFlags[field]?.key;
     const key = projected?.name ?? camelCase(field);
     let schema: z.ZodType;
-    if (viewSelection) schema = z.string().optional();
-    else if (delivery)
+    if (runtimeJson !== undefined) {
+      if (!admitsOmission(declared))
+        throw new Error(`${contract.name}.${field} is required on the CLI`);
+      schema = z.string().optional();
+      if (declared.description !== undefined && !viewSelection)
+        schema = schema.describe(declared.description);
+    } else if (nullFlag !== undefined) {
+      // The flag spells null, so the option itself takes only a value.
+      if (!declared.safeParse(null).success)
+        throw new Error(`${contract.name}.${field} does not admit null`);
+      assertArgvField(contract.name, field, declared);
+      schema = cliDecimalShape({ field: core(declared).optional() }).field;
+      if (declared.description !== undefined)
+        schema = schema.describe(declared.description);
+    } else if (delivery)
       schema =
         viewDelivery?.viewSelectsSummary === true
           ? analysisEvidenceDeliveryOptions.detail.unwrap().optional()
@@ -561,6 +628,8 @@ export const describeContractCommand = <
       delivery,
       jsonText,
       viewSelection,
+      runtimeJson,
+      nullFlag,
     };
   };
   const parameters = [
@@ -571,6 +640,16 @@ export const describeContractCommand = <
   ].map(parameter);
   const cliOptions: CliOptionShape = projection.cliOptions ?? {};
   const cliOnlyOptions: readonly CliOnlyOption[] = [
+    ...Object.values(nullFlags).flatMap((flag) =>
+      flag === undefined
+        ? []
+        : [
+            [
+              flag.key,
+              z.boolean().default(false).describe(flag.description),
+            ] satisfies [string, z.ZodType],
+          ],
+    ),
     ...Object.entries(
       evidenceDelivery
         ? Object.hasOwn(shape, "detail")
@@ -614,8 +693,14 @@ export const describeContractCommand = <
           ? absoluteCallerPath(value)
           : value;
     }
+    for (const { field, nullFlag } of parameters)
+      if (nullFlag !== undefined && values[nullFlag] === true)
+        input[field] = null;
     return input;
   };
+  const nullFlagLimits = parameters.flatMap(({ key, nullFlag }) =>
+    nullFlag === undefined ? [] : [[nullFlag, key] as const],
+  );
 
   // Cross-field rules belong to the contract: run its own object checks on
   // the options mapped to contract names, then name CLI keys. Positional
@@ -625,28 +710,50 @@ export const describeContractCommand = <
     projection.crossFieldRules === "argv"
       ? (contract.inputSchema._zod.def.checks ?? [])
       : [];
+  if (
+    checks.length > 0 &&
+    parameters.some(({ runtimeJson }) => runtimeJson !== undefined)
+  )
+    throw new Error(
+      `${contract.name} decodes JSON when it runs, after argv cross-field rules`,
+    );
   const contractChecks = z
     .object({})
     .loose()
     .check(...(checks as z.core.$ZodCheck<Record<string, unknown>>[]));
   const checkOptions =
-    checks.length === 0
+    checks.length === 0 && nullFlagLimits.length === 0
       ? undefined
       : (options: Readonly<Record<string, unknown>>) => {
+          const conflicts = nullFlagLimits.flatMap(([flag, limit]) => {
+            if (options[flag] !== true || options[limit] === undefined)
+              return [];
+            const message = `${flag} and ${limit} are mutually exclusive`;
+            const issue: z.core.$ZodIssueCustom = {
+              code: "custom",
+              path: [flag],
+              message,
+              input: undefined,
+            };
+            return [{ path: [flag], message, issue }];
+          });
           const result = contractChecks.safeParse(toContractInput(options));
           return result.success
-            ? []
-            : result.error.issues.map((issue) => {
-                const [field, ...rest] = issue.path;
-                return {
-                  path:
-                    typeof field === "string"
-                      ? [rename(field), ...rest]
-                      : issue.path,
-                  message: issue.message,
-                  issue,
-                };
-              });
+            ? conflicts
+            : [
+                ...conflicts,
+                ...result.error.issues.map((issue) => {
+                  const [field, ...rest] = issue.path;
+                  return {
+                    path:
+                      typeof field === "string"
+                        ? [rename(field), ...rest]
+                        : issue.path,
+                    message: issue.message,
+                    issue,
+                  };
+                }),
+              ];
         };
 
   return {
@@ -662,6 +769,7 @@ export const describeContractCommand = <
       rename,
       deliveryFields,
       cliOptionDependencies,
+      nullFlagLimits,
     ),
     checkOptions,
     toContractInput,
@@ -680,70 +788,91 @@ export const describeContractCommand = <
           values[key] === undefined ? [] : [[key, values[key]]],
         ),
       ),
-    delivery: evidenceDelivery
-      ? (values) => {
-          const selected = selectDelivery(
-            contract,
-            viewDelivery,
-            values,
-            toContractInput,
-            rename,
-          );
-          if (!selected.ok) return selected;
-          const refused = cliEvidenceDeliveryInputError({
-            ...selected.value,
-            operation: contract.name,
-          });
-          return refused === undefined ? selected : err(refused);
-        }
-      : undefined,
+    evidenceDelivery,
+    admit: (values) =>
+      admitInvocation(
+        contract,
+        { evidenceDelivery, viewDelivery, parameters, shape },
+        values,
+        toContractInput,
+        rename,
+      ),
   };
 };
 
 /**
- * The delivery the parsed values select. A view is decoded from its JSON
- * text and admitted with the delivery and the other inputs by the contract
- * input schema, so the contract's own delivery rules and messages apply.
+ * Decode run-time JSON, then map the values to the contract input and the
+ * selected delivery. When the projection decodes JSON at run time, the
+ * decoded input, delivery and view are admitted together by the contract
+ * input schema, so the contract's own rules and messages apply.
  */
-const selectDelivery = (
+const admitInvocation = (
   contract: ProjectedContract,
-  viewDelivery: CliViewDelivery | undefined,
+  command: {
+    readonly evidenceDelivery: boolean;
+    readonly viewDelivery: CliViewDelivery | undefined;
+    readonly parameters: readonly ContractCliParameter[];
+    readonly shape: Readonly<Record<string, z.ZodType>>;
+  },
   values: Readonly<Record<string, unknown>>,
   toContractInput: ContractCliDescription["toContractInput"],
   rename: (field: string) => string,
-): Result<CliEvidenceDeliveryChoice, AnalysisInputError> => {
-  const detail = values[rename("detail")] as "complete" | "summary" | undefined;
-  const evidenceOutput = values.evidence_output as string | undefined;
-  if (viewDelivery === undefined)
-    return ok({ detail: detail ?? "complete", evidenceOutput });
-  const viewKey = rename("view");
-  const decoded = parseCliJsonOption(
-    contract.name,
-    viewKey,
-    values[viewKey] as string | undefined,
-    viewDelivery.invalidJson,
-  );
-  if (!decoded.ok) return decoded;
-  const input = {
-    ...toContractInput(values),
-    ...(detail === undefined ? {} : { detail }),
-    ...(decoded.value === undefined ? {} : { view: decoded.value }),
-  };
-  const admitted = contract.inputSchema.safeParse(input);
-  if (!admitted.success)
-    return err(
-      analysisInputErrorFromIssues(contract.name, admitted.error.issues, input),
+): Result<ContractCliAdmission, AnalysisInputError> => {
+  const { evidenceDelivery, viewDelivery, parameters, shape } = command;
+  const decoded: Record<string, unknown> = { ...values };
+  for (const { key, runtimeJson } of parameters) {
+    if (runtimeJson === undefined) continue;
+    const parsed = parseCliJsonOption(
+      contract.name,
+      key,
+      values[key] as string | undefined,
+      runtimeJson,
     );
-  const { view } = admitted.data as { readonly view?: object };
-  return ok({
+    if (!parsed.ok) return parsed;
+    decoded[key] = parsed.value;
+  }
+  const input = toContractInput(decoded);
+  const detail = evidenceDelivery
+    ? (decoded[rename("detail")] as "complete" | "summary" | undefined)
+    : undefined;
+  let view: object | undefined;
+  if (parameters.some(({ runtimeJson }) => runtimeJson !== undefined)) {
+    const selected =
+      viewDelivery === undefined ? undefined : decoded[rename("view")];
+    const candidate = {
+      ...input,
+      ...(detail === undefined || !Object.hasOwn(shape, "detail")
+        ? {}
+        : { detail }),
+      ...(selected === undefined ? {} : { view: selected }),
+    };
+    const admitted = contract.inputSchema.safeParse(candidate);
+    if (!admitted.success)
+      return err(
+        analysisInputErrorFromIssues(
+          contract.name,
+          admitted.error.issues,
+          candidate,
+        ),
+      );
+    if (viewDelivery !== undefined)
+      ({ view } = admitted.data as { readonly view?: object });
+  }
+  if (!evidenceDelivery) return ok({ input, delivery: undefined });
+  const delivery: CliEvidenceDeliveryChoice = {
     detail: detail ?? (view === undefined ? "complete" : "summary"),
-    evidenceOutput,
+    evidenceOutput: decoded.evidence_output as string | undefined,
     ...(view === undefined
       ? {}
       : {
-          view: (viewDelivery.kind === undefined
+          view: (viewDelivery?.kind === undefined
             ? view
             : { kind: viewDelivery.kind, ...view }) as AnalysisViewRequest,
         }),
+  };
+  const refused = cliEvidenceDeliveryInputError({
+    ...delivery,
+    operation: contract.name,
   });
+  return refused === undefined ? ok({ input, delivery }) : err(refused);
 };
