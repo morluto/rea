@@ -13,6 +13,7 @@ import {
   PYTHON_READER_CLEANUP,
 } from "../../../src/domain/desktop/appTaskReaders.js";
 import { runReaderHere } from "../../../src/desktop/TaskReaderProcess.js";
+import { parseExactJson } from "../../../src/domain/exactJsonNumber.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
@@ -69,6 +70,25 @@ const reporting = (app: string, fields: Partial<DesktopTaskReader> = {}) =>
     output: "json",
     ...fields,
   }) as DesktopTaskReader;
+
+it("checks numeric exactness after a reader's duplicate JSON keys settle", async () => {
+  const { home } = await computer();
+  const output = String.raw`{"version":9007199254740993,"version":1,"status":{"n":-0.0},"status":"ready","nested":{"a":1e-400,"\u0061":3}}`;
+  const expected = parseExactJson(output);
+  expect(expected).toEqual({ version: 1, status: "ready", nested: { a: 3 } });
+  const stdout = await run(home, {
+    id: "records",
+    file: NOTE,
+    argv: [
+      "python3",
+      "-c",
+      `print(${JSON.stringify(`REA ${output}`)})`,
+      "{file}",
+    ],
+    output: "json",
+  });
+  expect(readerAnswerView(stdout)).toEqual({ format: "json", view: expected });
+});
 
 it("runs the reader on a private copy of the file in a fresh home, without the display, the session bus or the control token", async () => {
   const { home, app } = await computer();
@@ -291,6 +311,16 @@ it.each([
   [
     "prints a number JSON cannot hold exactly",
     ["sh", "-c", "echo 'REA {\"id\": 9007199254740993}'; : {file}"],
+    "json",
+    ["cannot be read exactly"],
+  ],
+  [
+    "retains an inexact number beside an overwritten one",
+    [
+      "sh",
+      "-c",
+      `echo 'REA {"id":9007199254740993,"id":1,"kept":[9007199254740993]}'; : {file}`,
+    ],
     "json",
     ["cannot be read exactly"],
   ],

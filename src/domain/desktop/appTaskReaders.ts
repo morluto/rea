@@ -90,11 +90,11 @@ def _view(output: str, lines: list) -> dict:
         return {"view": {"format": "text", "view": {"lines": lines[:MAX_LINES], "line_count": len(lines),
                                                     "truncated": len(lines) > MAX_LINES}}}
     try:
-        value = json.loads("\n".join(lines), parse_int=_exact_number, parse_float=_exact_number, parse_constant=_not_json)
-    except _Inexact:
-        return {"error": "a number in the reader's view cannot be read exactly, such as an integer above 2^53"}
+        value = json.loads("\n".join(lines), parse_int=_number_or_mark, parse_float=_number_or_mark, parse_constant=_not_json)
     except (ValueError, RecursionError) as error:
         return {"error": f"the reader's marked lines are not one JSON value: {error}"}
+    if _holds_inexact(value):
+        return {"error": "a number in the reader's view cannot be read exactly, such as an integer above 2^53"}
     return {"view": {"format": "json", "view": value}}
 
 
