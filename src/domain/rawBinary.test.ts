@@ -109,16 +109,23 @@ describe("raw-binary admission", () => {
       },
     });
   });
-  it("rejects a 32-bit mapping that exceeds the architecture width", () => {
-    const result = admitRawBinary({
-      architecture: "arm",
-      entryPoint: "0xfffffffc",
-      fileBytes: 8,
-    });
-    if (result.ok) throw new Error("expected overflow rejection");
-    expect(result.error.reason).toContain("arm address width");
-    expect(result.error.constraint).toBe("load_selection_rejected");
-  });
+});
+
+describe("raw-binary address space boundary and alignment checks", () => {
+  it.each(["arm", "x86"] as const)(
+    "rejects a 32-bit mapping that exceeds the %s architecture width",
+    (architecture) => {
+      const result = admitRawBinary({
+        architecture,
+        entryPoint: "0xfffffffc",
+        fileBytes: 8,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected overflow rejection");
+      expect(result.error.reason).toContain(`${architecture} address width`);
+      expect(result.error.constraint).toBe("load_selection_rejected");
+    },
+  );
   it("allows a 64-bit mapping that would overflow 32-bit ARM", () => {
     expect(
       admitRawBinary({
@@ -127,6 +134,43 @@ describe("raw-binary admission", () => {
         fileBytes: 8,
       }).ok,
     ).toBe(true);
+  });
+  it.each(["x86_64", "arm64"] as const)(
+    "rejects a 64-bit mapping that exceeds the %s architecture width",
+    (architecture) => {
+      const result = admitRawBinary({
+        architecture,
+        entryPoint: "0xfffffffffffffffc",
+        fileBytes: 8,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected 64-bit overflow rejection");
+      expect(result.error.reason).toContain(`${architecture} address width`);
+      expect(result.error.constraint).toBe("load_selection_rejected");
+    },
+  );
+  it("admits boundary single-byte mapping at the maximum 64-bit address", () => {
+    const admitted = admitRawBinary({
+      architecture: "x86_64",
+      entryPoint: "0xffffffffffffffff",
+      fileBytes: 1,
+    });
+    expect(admitted).toEqual({
+      ok: true,
+      value: {
+        architecture: "x86_64",
+        entryPoint: "0xffffffffffffffff",
+        entryPointSource: "0xffffffffffffffff",
+      },
+    });
+    const overflow = admitRawBinary({
+      architecture: "x86_64",
+      entryPoint: "0xffffffffffffffff",
+      fileBytes: 2,
+    });
+    expect(overflow.ok).toBe(false);
+    if (overflow.ok) throw new Error("expected overflow");
+    expect(overflow.error.reason).toContain("x86_64 address width");
   });
   it.each(["arm", "arm64"])(
     "rejects unaligned %s entries before provider selection",

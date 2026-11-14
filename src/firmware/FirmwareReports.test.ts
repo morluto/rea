@@ -1174,6 +1174,122 @@ describe("firmware producer boundaries", () => {
   });
 });
 
+describe("Binwalk firmware region normalization and bounds", () => {
+  it("normalizes reported firmware signature regions across valid offsets", () => {
+    const hits = [
+      {
+        id: "uimage-1",
+        offset: 0,
+        size: 64,
+        name: "uimage",
+        description: "u-boot legacy uImage header",
+        confidence: 100,
+        always_display: true,
+        extraction_declined: false,
+      },
+      {
+        id: "gzip-1",
+        offset: 64,
+        size: 100,
+        name: "gzip",
+        description: "gzip compressed data",
+        confidence: 90,
+        always_display: false,
+        extraction_declined: false,
+      },
+    ];
+    const record = {
+      Analysis: {
+        file_path: context.inputPath,
+        file_map: hits,
+        extractions: {},
+      },
+    };
+    const regions = normalizeBinwalkReport([record], context.inputPath, 200);
+    expect(regions).toEqual([
+      {
+        provider_id: "uimage-1",
+        offset: 0,
+        reported_size: 64,
+        signature: "uimage",
+        description: "u-boot legacy uImage header",
+        reported_confidence: 100,
+        size_basis: "provider_reported_validation_unknown",
+      },
+      {
+        provider_id: "gzip-1",
+        offset: 64,
+        reported_size: 100,
+        signature: "gzip",
+        description: "gzip compressed data",
+        reported_confidence: 90,
+        size_basis: "provider_reported_validation_unknown",
+      },
+    ]);
+  });
+
+  it("rejects Binwalk reported regions outside the selected file bounds", () => {
+    const atEofZeroSize = {
+      Analysis: {
+        file_path: context.inputPath,
+        file_map: [
+          {
+            id: "overflow-0",
+            offset: 20,
+            size: 0,
+            name: "sig",
+            description: "starts at eof with zero size",
+            confidence: 50,
+            always_display: true,
+            extraction_declined: false,
+          },
+        ],
+        extractions: {},
+      },
+    };
+    expect(() =>
+      normalizeBinwalkReport([atEofZeroSize], context.inputPath, 20),
+    ).toThrow("outside the selected file");
+
+    const pastEof = {
+      Analysis: {
+        file_path: context.inputPath,
+        file_map: [
+          {
+            id: "overflow-2",
+            offset: 10,
+            size: 15,
+            name: "sig",
+            description: "extends past eof",
+            confidence: 50,
+            always_display: true,
+            extraction_declined: false,
+          },
+        ],
+        extractions: {},
+      },
+    };
+    expect(() =>
+      normalizeBinwalkReport([pastEof], context.inputPath, 20),
+    ).toThrow("outside the selected file");
+  });
+
+  it("rejects Binwalk reports with mismatched input file paths", () => {
+    const mismatched = {
+      Analysis: {
+        file_path: "/different/path.bin",
+        file_map: [],
+        extractions: {},
+      },
+    };
+    expect(() =>
+      normalizeBinwalkReport([mismatched], context.inputPath, 20),
+    ).toThrow(
+      "Expected one inspection-only report for the selected immutable input",
+    );
+  });
+});
+
 describe("selected firmware byte coverage", () => {
   const known = (id: string, start: number, end: number) => ({
     __typename__: "ChunkReport",
