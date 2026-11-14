@@ -185,6 +185,7 @@ describe.skipIf(!hasGpgv)("retained signing-key versions", () => {
       expect(replay).toMatchObject({ exitCode: 0 });
       if (typeof replay === "object")
         expect(replay.stdout).toContain("[GNUPG:] VALIDSIG ");
+      expect(verified.bytes.equals(Buffer.concat(ordered))).toBe(true);
     },
   );
 });
