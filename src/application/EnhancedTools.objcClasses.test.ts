@@ -56,8 +56,10 @@ const createPort = (
       weak: boolean;
       addend: string;
     }>;
+    provider: { id: string; name: string; version: string | null };
     targetSelection: MachoTargetSelection | null;
     nameProfile: boolean;
+    nameProfileProvider: { id: string; name: string; version: string };
   }> = {},
 ): AnalysisOperationPort => ({
   execute: async (operation: AnalysisOperation, parameters) => {
@@ -74,7 +76,15 @@ const createPort = (
             limitations: nativeOverrides.nameLimitations ?? [],
             ...(nativeOverrides.nameProfile === false
               ? {}
-              : { analysisProfile: profile }),
+              : {
+                  analysisProfile:
+                    nativeOverrides.nameProfileProvider === undefined
+                      ? profile
+                      : createAnalysisProfile(
+                          nativeOverrides.nameProfileProvider,
+                          { target_selection: selection },
+                        ),
+                }),
           },
         ),
       );
@@ -133,7 +143,7 @@ const createPort = (
           analysis_profile_digest: null,
           result,
         },
-        provider,
+        nativeOverrides.provider ?? provider,
         {
           subject: {
             ...subject,
@@ -291,6 +301,36 @@ describe("Objective-C class import identity composition", () => {
         value: { count: 2, identity_coverage: { status: "unknown" } },
       });
     }
+  });
+
+  it.each([
+    ["name", { ...provider, name: "Other native provider" }],
+    ["version", { ...provider, version: "2" }],
+  ] as const)(
+    "keeps identity unknown when embedded producer %s differs",
+    async (_field, mismatchedProvider) => {
+      const tools = new EnhancedTools(
+        createPort({ provider: mismatchedProvider }),
+      );
+      await expect(
+        tools.execute("get_objc_classes", {}),
+      ).resolves.toMatchObject({
+        ok: true,
+        value: { count: 2, identity_coverage: { status: "unknown" } },
+      });
+    },
+  );
+
+  it("keeps identity unknown when the names profile producer differs", async () => {
+    const tools = new EnhancedTools(
+      createPort({
+        nameProfileProvider: { ...namesProvider, version: "3" },
+      }),
+    );
+    await expect(tools.execute("get_objc_classes", {})).resolves.toMatchObject({
+      ok: true,
+      value: { count: 2, identity_coverage: { status: "unknown" } },
+    });
   });
 
   it("marks identity coverage partial when the selected names inventory is limited", async () => {
