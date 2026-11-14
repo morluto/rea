@@ -3,7 +3,10 @@ import { getHeapStatistics } from "node:v8";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
-import { jsonValueValidationIssue } from "../../domain/jsonValue.js";
+import {
+  jsonValueValidationIssue,
+  MAX_JSON_DEPTH,
+} from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   estimateJsonStorage,
@@ -24,6 +27,7 @@ export type RecoveryAdmission = (
     readonly valueBytes: number;
     readonly serializedUtf16Bytes: number;
   },
+  maximumDepth?: number,
 ) => Result<void, AnalysisError>;
 
 /**
@@ -53,8 +57,9 @@ export const admitInvestigationAuthentication = (
     readonly valueBytes: number;
     readonly serializedUtf16Bytes: number;
   },
+  maximumDepth = MAX_JSON_DEPTH,
 ): Result<void, AnalysisError> => {
-  const issue = jsonValueValidationIssue(input);
+  const issue = jsonValueValidationIssue(input, maximumDepth);
   if (issue !== undefined)
     return err(
       new EvidenceIntegrityError("Investigation input is not ordinary JSON", {

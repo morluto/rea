@@ -1,18 +1,22 @@
 import { expect, it } from "vitest";
+import { createAnalysisProfile } from "../../domain/analysisProfile.js";
+import { MAX_JSON_DEPTH, type JsonValue } from "../../domain/jsonValue.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { err, ok } from "../../domain/result.js";
 import {
+  recordEvidenceSources,
   retainAnalysisResultSources,
   withEvidenceSources,
 } from "./recordEvidenceSources.js";
 
-const source = createEvidence(
-  undefined,
-  { id: "fixture", name: "Fixture", version: "1" },
-  { operation: "health", parameters: {}, result: "historical" },
-);
+const provider = { id: "fixture", name: "Fixture", version: "1" };
+const source = createEvidence(undefined, provider, {
+  operation: "health",
+  parameters: {},
+  result: "historical",
+});
 
 it.each([
   { cancelled: false, sourceOwner: undefined },
@@ -99,3 +103,42 @@ it("still records caller sources when an explicit writer exists", () => {
   expect(result).toMatchObject({ ok: true, value: "complete" });
   expect(recorded).toEqual([source.evidence_id]);
 });
+
+it.each(["result", "rawResult", "parameters", "profile"] as const)(
+  "preserves a completed mutable Evidence with maximum-depth %s after source refusal",
+  (field) => {
+    let nested: JsonValue = "leaf";
+    for (let level = 0; level < MAX_JSON_DEPTH; level++)
+      nested = { child: nested };
+    const parameters = nested as Record<string, JsonValue>;
+    const evidence = createEvidence(undefined, source.provider, {
+      operation: "health",
+      parameters: field === "parameters" ? parameters : {},
+      result: field === "result" ? nested : "small",
+      rawResult: field === "rawResult" ? nested : null,
+      ...(field === "profile"
+        ? {
+            analysisProfile: createAnalysisProfile(provider, parameters),
+          }
+        : {}),
+    });
+    expect(Object.isFrozen(evidence)).toBe(false);
+    const failure = new EvidenceIntegrityError("Source recorder refused");
+    expect(
+      recordEvidenceSources(() => err(failure), [source], {
+        evidence,
+        evidenceForAnalysis: () => undefined,
+      }),
+    ).toEqual(err(failure));
+    expect(failure.sourcePublicationRecovery).toMatchObject({
+      completed: {
+        kind: "unretained-evidence",
+        evidence: { evidence_id: evidence.evidence_id },
+      },
+    });
+    const completed = failure.sourcePublicationRecovery?.completed;
+    if (completed?.kind !== "unretained-evidence")
+      throw new Error("Expected completed Evidence");
+    expect(JSON.stringify(completed.evidence)).toBe(JSON.stringify(evidence));
+  },
+);

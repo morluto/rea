@@ -32,6 +32,7 @@ import { EvidenceLedger } from "../../../src/application/investigation/EvidenceL
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
+import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   createEvidence,
@@ -44,6 +45,7 @@ import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 import { JsonInputPhysicalReadFailure } from "../../../src/application/JsonInputFile.js";
 import {
   createEvidenceBundle,
+  MAX_EVIDENCE_BUNDLE_JSON_DEPTH,
   parseEvidenceBundle,
   serializeEvidenceBundle,
   isImmutableEvidenceBundle,
@@ -53,7 +55,10 @@ import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDel
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import * as processCaptureParsing from "../../../src/domain/process/processCaptureParsing.js";
-import type { JsonValue } from "../../../src/domain/jsonValue.js";
+import {
+  MAX_JSON_DEPTH,
+  type JsonValue,
+} from "../../../src/domain/jsonValue.js";
 
 vi.mock("node:v8", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:v8")>();
@@ -71,6 +76,81 @@ const bundle = (result = true) =>
       { operation: "health", parameters: {}, result },
     ),
   ]);
+
+it.each(["normalized_result", "raw_result", "parameters", "profile"] as const)(
+  "publishes and reimports mutable Evidence with bounded %s",
+  async (field) => {
+    const root = await createTestTempDirectory("rea-deep-checkpoint-");
+    const provider = { id: "fixture", name: "Fixture", version: "1" };
+    const nested = (depth: number): Record<string, JsonValue> => {
+      let value: JsonValue = "leaf";
+      for (let level = 0; level < depth; level++) value = { result: value };
+      return value as Record<string, JsonValue>;
+    };
+    for (const depth of [999, MAX_JSON_DEPTH]) {
+      const path = join(root, `bundle-${depth}.json`);
+      const value = nested(depth);
+      const evidence = createEvidence(undefined, provider, {
+        operation: "health",
+        parameters: field === "parameters" ? value : {},
+        result: field === "normalized_result" ? value : "small",
+        rawResult: field === "raw_result" ? value : null,
+        ...(field === "profile"
+          ? { analysisProfile: createAnalysisProfile(provider, value) }
+          : {}),
+      });
+      const published = await writeBundle(
+        createEvidenceBundle([evidence]),
+        path,
+        false,
+      );
+      if (!published.ok) throw published.error;
+      const original = await readFile(path);
+      const badRecord =
+        field === "profile"
+          ? {
+              ...evidence,
+              analysis_profile: {
+                ...evidence.analysis_profile!,
+                parameters: nested(MAX_JSON_DEPTH + 1),
+              },
+            }
+          : { ...evidence, [field]: nested(MAX_JSON_DEPTH + 1) };
+      const rejected = await writeBundle(
+        createEvidenceBundle([badRecord]),
+        path,
+        true,
+      );
+      expect(rejected).toMatchObject({
+        ok: false,
+        error: { _tag: "EvidenceIntegrityError" },
+      });
+      if (rejected.ok) throw new Error("Expected over-depth refusal");
+      if (field === "profile")
+        expect(rejected.error.userMessage).toContain(
+          `maximum nesting depth of ${MAX_EVIDENCE_BUNDLE_JSON_DEPTH}`,
+        );
+      else
+        expect(rejected.error.cause).toMatchObject({
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              message: expect.stringContaining("maximum nesting depth of 1000"),
+            }),
+          ]),
+        });
+      expect((await readFile(path)).equals(original)).toBe(true);
+      const loaded = await readEvidenceBundle(path);
+      if (!loaded.ok) throw loaded.error;
+      const ledger = new EvidenceLedger();
+      const imported = ledger.import(loaded.value);
+      if (!imported.ok) throw imported.error;
+      expect(imported.value.recordsAdded).toBe(1);
+      expect(JSON.stringify(ledger.get(evidence.evidence_id))).toBe(
+        JSON.stringify(evidence),
+      );
+    }
+  },
+);
 
 it.each(["cycle", "accessor"] as const)(
   "rejects an unowned bundle containing a %s before estimating or publishing it",

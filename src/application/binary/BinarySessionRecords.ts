@@ -133,8 +133,14 @@ export abstract class BinarySessionRecords {
       readonly valueBytes: number;
       readonly serializedUtf16Bytes: number;
     },
+    maximumDepth?: number,
   ): Result<void, AnalysisError> {
-    return this.#records.admitRecoveryObservation(input, operation, additional);
+    return this.#records.admitRecoveryObservation(
+      input,
+      operation,
+      additional,
+      maximumDepth,
+    );
   }
 
   hasEvidence(evidenceId: string): boolean {

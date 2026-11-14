@@ -56,12 +56,14 @@ export class InvestigationRecords
       readonly valueBytes: number;
       readonly serializedUtf16Bytes: number;
     },
+    maximumDepth?: number,
   ): Result<void, AnalysisError> {
     return admitInvestigationAuthentication(
       input,
       operation,
       this.retentionPolicy,
       additional,
+      maximumDepth,
     );
   }
 

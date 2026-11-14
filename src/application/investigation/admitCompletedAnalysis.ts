@@ -1,8 +1,14 @@
-import { MISSING_EVIDENCE_SUBJECT_LIMITATION } from "../../domain/evidence.js";
+import {
+  evidencePayloadValidationIssue,
+  MAX_EVIDENCE_JSON_DEPTH,
+  MISSING_EVIDENCE_SUBJECT_LIMITATION,
+} from "../../domain/evidence.js";
 import {
   analysisExecutionEnvelopeForAdmission,
   type AnalysisObservation,
 } from "../../domain/analysisObservation.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { err } from "../../domain/result.js";
 import { estimateJsonArrayScalarEntry } from "../JsonAuthenticationHeadroom.js";
 import {
   admitInvestigationAuthentication,
@@ -14,8 +20,8 @@ export const admitCompletedAnalysis = (
   operation: string,
   parameters: unknown,
   observation: AnalysisObservation,
-  admit: RecoveryAdmission = (input, name, additional) =>
-    admitInvestigationAuthentication(input, name, {}, additional),
+  admit: RecoveryAdmission = (input, name, additional, maximumDepth) =>
+    admitInvestigationAuthentication(input, name, {}, additional, maximumDepth),
 ) => {
   const envelope = analysisExecutionEnvelopeForAdmission(
     operation,
@@ -38,10 +44,24 @@ export const admitCompletedAnalysis = (
     valueBytes += entry.valueBytes;
     serializedUtf16Bytes += entry.serializedUtf16Bytes;
   }
-  const admitted = admit(envelope, operation, {
-    valueBytes,
-    serializedUtf16Bytes,
-  });
+  const payloadIssue = evidencePayloadValidationIssue(envelope);
+  const admitted =
+    payloadIssue === undefined
+      ? admit(
+          envelope,
+          operation,
+          {
+            valueBytes,
+            serializedUtf16Bytes,
+          },
+          MAX_EVIDENCE_JSON_DEPTH,
+        )
+      : err(
+          new EvidenceIntegrityError(
+            "Completed Evidence payload is not ordinary JSON",
+            { userMessage: payloadIssue },
+          ),
+        );
   if (!admitted.ok)
     admitted.error.retainSourcePublication({
       kind: "omitted",

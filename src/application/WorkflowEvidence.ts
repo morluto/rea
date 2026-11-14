@@ -341,8 +341,19 @@ export const retainComposedWorkflowSources = (
     "result" | "upstreamLimitations" | "upstreamEvidenceLinks"
   >,
   evidenceForAnalysis?: (id: string) => Evidence | undefined,
-  admitRecovery: RecoveryAdmission = (input, operation, additional) =>
-    admitInvestigationAuthentication(input, operation, {}, additional),
+  admitRecovery: RecoveryAdmission = (
+    input,
+    operation,
+    additional,
+    maximumDepth,
+  ) =>
+    admitInvestigationAuthentication(
+      input,
+      operation,
+      {},
+      additional,
+      maximumDepth,
+    ),
 ): ReturnType<
   typeof retainAnalysisResultSources<{
     readonly result: JsonValue;
@@ -397,8 +408,19 @@ export const retainPartialWorkflowEvidence = (
     Parameters<typeof createWorkflowEvidence>[0],
     "target" | "operation" | "parameters" | "upstreamProfile"
   >,
-  admitRecovery: RecoveryAdmission = (input, operation, additional) =>
-    admitInvestigationAuthentication(input, operation, {}, additional),
+  admitRecovery: RecoveryAdmission = (
+    input,
+    operation,
+    additional,
+    maximumDepth,
+  ) =>
+    admitInvestigationAuthentication(
+      input,
+      operation,
+      {},
+      additional,
+      maximumDepth,
+    ),
 ): void => {
   if (
     outcome.ok ||

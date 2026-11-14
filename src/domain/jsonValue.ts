@@ -19,8 +19,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const immutableValidation = new WeakMap<object, string | undefined>();
 
 /** Validate JSON meaning and nesting without cloning a trusted immutable value. */
-export const jsonValueValidationIssue = (root: unknown): string | undefined => {
-  const steps = jsonValueValidationSteps(root);
+export const jsonValueValidationIssue = (
+  root: unknown,
+  maximumDepth = MAX_JSON_DEPTH,
+): string | undefined => {
+  const steps = jsonValueValidationSteps(root, maximumDepth);
   for (;;) {
     const step = steps.next();
     if (step.done) return step.value;
@@ -31,12 +34,16 @@ function* ownEnumerableKeys(value: Record<string, unknown>): Generator<string> {
   for (const key in value) if (Object.hasOwn(value, key)) yield key;
 }
 
-/** Validate JSON in bounded steps; cache only authenticated immutable roots. */
+/** Validate JSON in bounded steps; cache immutable verdicts only at the payload depth. */
 export function* jsonValueValidationSteps(
   root: unknown,
+  maximumDepth = MAX_JSON_DEPTH,
 ): Generator<void, string | undefined> {
   const immutable =
-    typeof root === "object" && root !== null && isImmutableJsonSnapshot(root)
+    maximumDepth === MAX_JSON_DEPTH &&
+    typeof root === "object" &&
+    root !== null &&
+    isImmutableJsonSnapshot(root)
       ? root
       : undefined;
   if (immutable !== undefined && immutableValidation.has(immutable))
@@ -69,9 +76,9 @@ export function* jsonValueValidationSteps(
         examined = 0;
         yield;
       }
-      if (depth > MAX_JSON_DEPTH)
+      if (depth > maximumDepth)
         return finish(
-          `JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}. This release has no runtime override.`,
+          `JSON value exceeds maximum nesting depth of ${maximumDepth}. This release has no runtime override.`,
         );
       if (typeof value === "object" && value !== null && types.isProxy(value))
         return finish("JSON values cannot contain proxies");
