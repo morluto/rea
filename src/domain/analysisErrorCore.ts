@@ -288,7 +288,11 @@ export class AnalysisCapabilityUnavailableError extends AnalysisError {
   }
 }
 
-/** Caller cancellation won before provider-neutral work completed. */
+/**
+ * Cancellation, by the caller or by REA closing the work's owner, won before
+ * provider-neutral work completed. Build it with `cancelledBy`, which requires
+ * the reason; `cause` holds that reason.
+ */
 export class AnalysisCancelledError extends AnalysisError {
   readonly _tag = "AnalysisCancelledError";
   override readonly userMessage: string | undefined;
@@ -303,6 +307,83 @@ export class AnalysisCancelledError extends AnalysisError {
     this.userMessage = options?.userMessage;
   }
 }
+
+/** Why REA ended work on its own authority when no caller abort exists. */
+export type OwnerCancellationKind =
+  /** The provider, session, or service owning the work was closed or disposed. */
+  "owner-closed";
+
+/**
+ * A cancellation REA initiated itself, such as a provider closing. It stands
+ * in for a caller abort reason, so it is never mistaken for one.
+ */
+export class OwnerCancellation extends Error {
+  override readonly name = "OwnerCancellation";
+  private constructor(readonly kind: OwnerCancellationKind) {
+    super("REA closed the owner of this operation before it completed");
+  }
+
+  /**
+   * One shared reason per kind, so repeated owner cancellations compare equal
+   * the way repeated observations of one caller abort do.
+   */
+  static readonly ownerClosed = new OwnerCancellation("owner-closed");
+}
+
+/** A caller abort reason recovered from an earlier observation of that abort. */
+export interface CarriedCancellationReason {
+  readonly carried: unknown;
+}
+
+/** Mark a reason already observed from the caller's abort, such as an inner failure's recorded reason. */
+export const carriedReason = (reason: unknown): CarriedCancellationReason => ({
+  carried: reason,
+});
+
+/**
+ * Where a cancellation's reason comes from:
+ * - an aborted signal, whose `reason` is the caller's (or parent operation's) reason;
+ * - an earlier `AnalysisCancelledError`, whose reason is carried unchanged;
+ * - a reason carried from another earlier observation;
+ * - an owner cancellation that REA initiated itself.
+ */
+export type CancellationReason =
+  | AbortSignal
+  | AnalysisCancelledError
+  | CarriedCancellationReason
+  | OwnerCancellation;
+
+/** A signal observed aborted, so its `reason` is the cancellation's reason. */
+export type AbortedSignal = AbortSignal & { readonly aborted: true };
+
+/** Whether an optional signal has aborted; narrows it to pass to `cancelledBy`. */
+export const isAborted = (
+  signal: AbortSignal | undefined,
+): signal is AbortedSignal => signal?.aborted === true;
+
+/** Options for a cancellation; its cause is always the required reason. */
+export type CancelledOptions = Omit<AnalysisErrorOptions, "cause"> & {
+  readonly cause?: never;
+  readonly userMessage?: string;
+};
+
+const cancellationCause = (reason: CancellationReason): unknown => {
+  if (reason instanceof AbortSignal) return reason.reason;
+  if (reason instanceof AnalysisCancelledError) return reason.cause;
+  if (reason instanceof OwnerCancellation) return reason;
+  return reason.carried;
+};
+
+/** The one constructor for a cancellation: its reason is required. */
+export const cancelledBy = (
+  operation: string,
+  reason: CancellationReason,
+  options?: CancelledOptions,
+): AnalysisCancelledError =>
+  new AnalysisCancelledError(operation, {
+    ...options,
+    cause: cancellationCause(reason),
+  });
 
 /** Provider-neutral operation exceeded its declared execution deadline. */
 export class AnalysisTimeoutError extends AnalysisError {

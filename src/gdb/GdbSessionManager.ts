@@ -12,6 +12,8 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisTimeoutError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import {
   GDB_SESSION_TOOLS,
@@ -701,7 +703,7 @@ export class GdbSessionManager {
       return err(
         signal?.aborted
           ? cancelledWithCallerReason("start_gdb_session", signal)
-          : new AnalysisCancelledError("start_gdb_session"),
+          : cancelledBy("start_gdb_session", OwnerCancellation.ownerClosed),
       );
     if (!persistentDebuggerHostSupported(this.#platform))
       return err(
@@ -1503,7 +1505,9 @@ export class GdbSessionManager {
     >
   > {
     if (this.#closing)
-      return err(new AnalysisCancelledError("close_gdb_session"));
+      return err(
+        cancelledBy("close_gdb_session", OwnerCancellation.ownerClosed),
+      );
     const session = this.#sessions.get(sessionId);
     if (session === undefined) return err(gdbCloseUnavailable());
     if (session.exited) return this.#finishSessionCleanup(session);

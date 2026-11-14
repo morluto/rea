@@ -6,7 +6,7 @@ export const STARTUP_OWNER_CLOSED = Symbol("provider startup owner closed");
 /** The final departing caller retains the producer's complete cleanup result. */
 export type SharedStartupWait<Value> =
   | { readonly status: "completed"; readonly value: Value }
-  | { readonly status: "cancelled" }
+  | { readonly status: "cancelled"; readonly reason: unknown }
   | { readonly status: "stopped"; readonly value: Value };
 
 type StartupSettlement<Value> =
@@ -68,7 +68,8 @@ export class SharedStartupAttempt<Value> {
     try {
       const waited = await waitForAbortable(this.promise, signal);
       if (waited !== ABORTED) return { status: "completed", value: waited };
-      if (this.#waiters > 1) return { status: "cancelled" };
+      if (this.#waiters > 1)
+        return { status: "cancelled", reason: signal?.reason };
       if (!this.settled) this.#controller.abort(signal?.reason);
       return { status: "stopped", value: await this.promise };
     } finally {
