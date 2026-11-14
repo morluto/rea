@@ -585,7 +585,9 @@ and rendered for the CLI framework by `registerContractCommand` in
 The projection names only what the CLI spells differently: positionals,
 caller-relative path fields, option renames and short flags, CLI help wording,
 omitted optional fields with a reason, and whether the contract's cross-field
-rules refuse at argv parsing or at the service's contract parse. Field schemas
+rules refuse at argv parsing or at the service's contract parse, and whether
+the command also takes the Evidence delivery options `--detail` and
+`--evidence_output`. Field schemas
 and decimal argv tokens are derived, and
 `tests/boundary/cli/cliContractCommandParity.test.ts` checks that each projected
 command admits what its contract admits.

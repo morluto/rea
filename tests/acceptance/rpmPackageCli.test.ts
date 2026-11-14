@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
@@ -117,5 +117,35 @@ cliTest(
     expect(report.scriptlets?.find((row) => row.kind === "prein")?.text).toBe(
       "echo prein\n",
     );
+  },
+);
+
+cliTest(
+  "delivers a summary only alongside a saved Evidence bundle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rpm-cli-summary-");
+    const path = join(root, "demo.rpm");
+    await writeFile(path, rpmBinaryPackageFixture());
+    const refused = await cli.run({
+      arguments: ["inspect-rpm-package", path, "--detail", "summary", "--json"],
+    });
+    expect(refused.exitCode).not.toBe(0);
+    expect(JSON.stringify(refused.json)).toContain("evidence_output");
+    const bundle = join(root, "evidence.json");
+    const summary = await cli.run({
+      arguments: [
+        "inspect-rpm-package",
+        path,
+        "--detail",
+        "summary",
+        "--evidence_output",
+        bundle,
+        "--json",
+      ],
+    });
+    expect(summary.exitCode, summary.stderr).toBe(0);
+    await expect(stat(bundle)).resolves.toMatchObject({
+      size: expect.any(Number),
+    });
   },
 );

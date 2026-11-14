@@ -5,6 +5,10 @@ import { logCliCommand } from "../cliLogging.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
+import {
+  analysisEvidenceDeliveryOptions,
+  deliverCliAnalysisEvidence,
+} from "./analysisEvidenceDelivery.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
@@ -30,6 +34,11 @@ export interface ContractCommandContext {
   readonly operation: string;
   /** Each caller-path field as the caller spelled it, before resolution. */
   readonly callerInputs: Readonly<Record<string, string>>;
+  /** How to deliver the Evidence, for a projection with `evidenceDelivery`. */
+  readonly delivery: {
+    readonly detail: "complete" | "summary";
+    readonly evidenceOutput: string | undefined;
+  };
 }
 
 /** A closeable one-shot service that inspects one contract input. */
@@ -70,6 +79,26 @@ export const inspectWithService =
     ).then(projectCliAnalysisResult);
   };
 
+/**
+ * Inspect through a closeable service and deliver its Evidence complete, or
+ * as a summary saved to `--evidence_output`, as the caller chose.
+ */
+export const deliverWithService =
+  (service: () => EvidenceInspectionService, providerId: string) =>
+  (input: unknown, context: ContractCommandContext) => {
+    const owned = service();
+    return deliverCliAnalysisEvidence({
+      callerInputPath: primaryCallerPath(context),
+      run: () => owned.inspect(input, { signal: context.signal }),
+      service: owned,
+      providerId,
+      operation: context.operation,
+      signal: context.signal,
+      detail: context.delivery.detail,
+      evidenceOutput: context.delivery.evidenceOutput,
+    });
+  };
+
 const descriptions = new WeakMap<CliInstance, ContractCliDescription[]>();
 
 /** Commands registered on this CLI through `registerContractCommand`. */
@@ -78,13 +107,16 @@ export const contractCommandDescriptions = (
 ): readonly ContractCliDescription[] => descriptions.get(cli) ?? [];
 
 const incurOptions = (description: ContractCliDescription): z.ZodType => {
-  const object = z.object(
-    Object.fromEntries(
+  const object = z.object({
+    ...Object.fromEntries(
       description.parameters
         .filter(({ positional }) => !positional)
         .map(({ key, schema }) => [key, schema]),
     ),
-  );
+    ...(description.deliveryOptions.length === 0
+      ? {}
+      : analysisEvidenceDeliveryOptions),
+  });
   const constrained =
     description.optionConstraints === undefined
       ? object
@@ -155,6 +187,13 @@ export const registerContractCommand = <
               signal,
               operation: contract.name,
               callerInputs: description.callerInputs(values),
+              delivery: {
+                detail: values.detail === "summary" ? "summary" : "complete",
+                evidenceOutput:
+                  typeof values.evidence_output === "string"
+                    ? values.evidence_output
+                    : undefined,
+              },
             },
           ),
         ),

@@ -61,7 +61,18 @@ export interface CliContractProjection<Field extends string> {
    * the service's contract parse reports them as an `invalid_request`.
    */
   readonly crossFieldRules?: "argv";
+  /**
+   * The command also takes `--detail` and `--evidence_output`, which choose
+   * how its Evidence result is delivered. They are not contract input.
+   */
+  readonly evidenceDelivery?: boolean;
 }
+
+/** CLI options that choose Evidence delivery rather than contract input. */
+export const EVIDENCE_DELIVERY_OPTION_KEYS = [
+  "detail",
+  "evidence_output",
+] as const;
 
 /** One positional argument or option of a contract command. */
 export interface ContractCliParameter {
@@ -102,6 +113,8 @@ export interface ContractCliDescription {
   readonly parameters: readonly ContractCliParameter[];
   /** Contract fields the command does not expose, with the reason. */
   readonly omitted: Readonly<Record<string, string>>;
+  /** Option keys that choose Evidence delivery and are not contract input. */
+  readonly deliveryOptions: readonly string[];
   /** Object-level JSON Schema constraints, renamed to CLI keys. */
   readonly optionConstraints: Readonly<Record<string, unknown>> | undefined;
   /**
@@ -339,8 +352,13 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
       (field) => !positionals.includes(field) && !Object.hasOwn(omitted, field),
     ),
   ].map(parameter);
-  const keys = new Set(parameters.map(({ key }) => key));
-  if (keys.size !== parameters.length)
+  const deliveryOptions: readonly string[] =
+    projection.evidenceDelivery === true ? EVIDENCE_DELIVERY_OPTION_KEYS : [];
+  const keys = new Set([
+    ...parameters.map(({ key }) => key),
+    ...deliveryOptions,
+  ]);
+  if (keys.size !== parameters.length + deliveryOptions.length)
     throw new Error(`${contract.name} projects two fields to one CLI key`);
   const keyOf = new Map(parameters.map(({ field, key }) => [field, key]));
   const rename = (field: string): string => keyOf.get(field) ?? field;
@@ -398,6 +416,7 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
     contract,
     parameters,
     omitted,
+    deliveryOptions,
     optionConstraints: projectObjectConstraints(contract, rename),
     checkOptions,
     toContractInput,
