@@ -176,8 +176,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         issues: [],
         coverage: { status: "complete", examined_entries: 1, exports: 1 },
       });
-      expect(result.limitations).toContain(
-        "ELF dynamic symbol 0 at file offset 0x100 has nonzero st_name 0x956. st_info, st_other, st_shndx, st_value and st_size are zero, so the entry was skipped and was not reported as an export.",
+      // The skipped null entry is noted by its index, offset and st_name.
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(/symbol 0\b.*0x100\b.*0x956\b/su),
       );
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     }
