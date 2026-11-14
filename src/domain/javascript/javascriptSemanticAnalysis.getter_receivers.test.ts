@@ -233,6 +233,24 @@ describe("getter receiver mutation aliases (#1665, #2654)", () => {
     ).toMatchObject({ status: "literal", value: 1 });
   });
 
+  it.each([
+    ["static block", "class { static { self.x = 2; } }"],
+    ["static field value", "class { static s = (self.x = 2); }"],
+    [
+      "static block of a nested heritage class",
+      "class extends (class { static { self.x = 2; } }) {}",
+    ],
+  ])(
+    "invalidates the receiver after a %s writes through a captured alias",
+    (_label, result) => {
+      expect(
+        resultValue(
+          `const box = { x: 1, get trigger() { const self = this; return ${result}; } }; box.trigger; return box.x;`,
+        ),
+      ).toMatchObject({ status: "unknown" });
+    },
+  );
+
   it("terminates recursive receiver getters", () => {
     expect(
       resultValue(

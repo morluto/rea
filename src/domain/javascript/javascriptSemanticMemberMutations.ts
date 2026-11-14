@@ -405,12 +405,27 @@ const computedDefinitionMembers = (node: t.Function | t.Class): t.Node[] => {
   );
 };
 
-/** Expressions a definition runs immediately; deferred bodies and class-receiver initializers stay out. */
+/**
+ * Expressions a definition runs immediately: heritage, computed keys, static
+ * blocks and static field values. Deferred bodies and instance initializers
+ * stay out; `this` inside static work is the class, not the enclosing receiver.
+ */
 const definitionTimeExpressions = (node: t.Function | t.Class): t.Node[] => [
   ...(t.isClass(node) && node.superClass != null ? [node.superClass] : []),
   ...computedDefinitionMembers(node).flatMap((member) =>
     "key" in member ? [member.key] : [],
   ),
+  ...(t.isClass(node)
+    ? node.body.body.flatMap((member): t.Node[] =>
+        t.isStaticBlock(member)
+          ? [member]
+          : (t.isClassProperty(member) || t.isClassPrivateProperty(member)) &&
+              member.static &&
+              member.value != null
+            ? [member.value]
+            : [],
+      )
+    : []),
 ];
 
 /** Collect invocation operands once; receiver interpretation belongs to the getter owner. */
