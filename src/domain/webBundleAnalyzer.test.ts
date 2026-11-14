@@ -1000,6 +1000,58 @@ describe("web bundle endpoint candidate classification", () => {
   });
 });
 
+describe("web bundle method-first request candidates", () => {
+  it("reads the exact target after an HTTP method token in both analyzers", () => {
+    const source = `
+      Api.request("get", "/api/v1/profile");
+      Api.request("POST", "/api/v1/items", item);
+      client.request("Patch", \`/api/v1/items/1\`);
+      http.request("DELETE", "https://api.example.test/items/1");
+      request("options", "users");
+      Api.request("delete", \`/api/v1/items/\${id}\`);
+      http.request("POST", target);
+      rpc.request("initialize", "/session");
+      octokit.request("GET /repos/{owner}/{repo}");
+      request("https://example.test/health", "GET");
+    `;
+    const expectedCandidates = [
+      // An exact string after a standard method token, in any case.
+      "/api/v1/profile",
+      "/api/v1/items",
+      "/api/v1/items/1",
+      "https://api.example.test/items/1",
+      "users",
+      // A computed target leaves the method token as the candidate.
+      "delete",
+      "POST",
+      // Any other first argument is still the candidate.
+      "initialize",
+      "GET /repos/{owner}/{repo}",
+      "https://example.test/health",
+    ].sort();
+    const result = analyzeWebBundleFixture(inspection(source));
+    expect(result.observations.endpoints).toEqual([]);
+    expect(
+      result.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value)
+        .sort(),
+    ).toEqual(expectedCandidates);
+    const staticEndpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    expect(
+      staticEndpoints
+        .filter(({ interpretation }) => interpretation === "candidate")
+        .map(({ value }) => value)
+        .sort(),
+    ).toEqual(expectedCandidates);
+    expect(
+      staticEndpoints.filter(
+        ({ interpretation }) => interpretation === undefined,
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe("web bundle configuration and navigation parity", () => {
   it("keeps configuration setting reads out of endpoints in both analyzers", () => {
     const source = `
