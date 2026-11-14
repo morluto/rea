@@ -49,6 +49,23 @@ it("does not move a closed allOf member's property scope onto another member", (
   );
 });
 
+it("does not move a single union branch's closure onto the parent's properties", () => {
+  expectWidening(
+    {
+      type: "object",
+      properties: { a: { type: "string" } },
+      anyOf: [
+        {
+          type: "object",
+          properties: { a: { type: "string" }, b: { type: "string" } },
+          additionalProperties: false,
+        },
+      ],
+    },
+    [{ a: "x", b: "y" }],
+  );
+});
+
 it("leaves objects open when dropped pattern properties admit names", () => {
   expectWidening(
     {

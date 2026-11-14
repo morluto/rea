@@ -314,8 +314,14 @@ class DialectProjection {
       return;
     }
     if (branches.length === 1 && isRecord(branches[0])) {
-      for (const [key, keyword] of Object.entries(branches[0]))
+      const branch = branches[0];
+      // As with `allOf`, a closure is scoped to its own properties: once the
+      // parent's properties win, neither closure may reject the branch's.
+      const scoped =
+        Object.hasOwn(out, "properties") && Object.hasOwn(branch, "properties");
+      for (const [key, keyword] of Object.entries(branch))
         if (!Object.hasOwn(out, key)) out[key] = keyword;
+      if (scoped) delete out.additionalProperties;
       return;
     }
     if (branches.length < 2) return;
