@@ -55,6 +55,10 @@ import {
 } from "./ToolResultDelivery.js";
 import { toolReturnsTargetContent } from "../contracts/toolEffects.js";
 import {
+  acceptStringifiedStructuredArguments,
+  rejectedInputForIssues,
+} from "./toolRegistrationOptions.js";
+import {
   carriesTargetContentMarker,
   encodeToolResult,
   measureMcpResultWithinBudget,
@@ -92,7 +96,7 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
           if (context?.tool === tool && result.issues !== undefined)
             context.validation = {
               issues: result.issues as readonly z.core.$ZodIssue[],
-              input: value,
+              input: rejectedInputForIssues(result.issues) ?? value,
             };
           return result;
         };
@@ -446,12 +450,22 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     if (canReferenceInlineEvidence(config.inputSchema))
       this.registerEvidenceReferenceAlternative(name);
     const budget = this.compactPresentation?.budgetBytes;
+    const recovered =
+      config.inputSchema === undefined
+        ? undefined
+        : acceptStringifiedStructuredArguments(config.inputSchema, {
+            tool: name,
+            maximumElements: this.maximumInputElements,
+          });
+    const normalized =
+      recovered === undefined || recovered === config.inputSchema
+        ? config
+        : { ...config, inputSchema: recovered as InputArgs };
     const inputSchema =
       budget !== undefined &&
-      config !== undefined &&
-      hasAdvertisedInputJsonSchema(config.inputSchema)
+      hasAdvertisedInputJsonSchema(normalized.inputSchema)
         ? transformAdvertisedInputJsonSchema(
-            config.inputSchema as Parameters<
+            normalized.inputSchema as Parameters<
               typeof transformAdvertisedInputJsonSchema
             >[0],
             (projected) =>
@@ -461,12 +475,12 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     const presentedSchema = inputSchema ?? config.inputSchema;
     const registeredConfig =
       presentedSchema === undefined
-        ? config
+        ? normalized
         : {
-            ...config,
+            ...normalized,
             inputSchema: captureInputValidation(
               name,
-              presentedSchema as StandardSchemaWithJSON,
+              (inputSchema ?? normalized.inputSchema) as StandardSchemaWithJSON,
             ),
           };
     const scoped = async (input: never, context: never) => {
