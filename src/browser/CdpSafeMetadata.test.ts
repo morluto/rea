@@ -792,3 +792,55 @@ describe("response metadata whitespace boundaries", () => {
     expect(captured.response.policies.referrer_policy).toBe("no-referrer");
   });
 });
+
+describe("cross-origin policy value grammars", () => {
+  const policies = (headers: UnknownRecord) =>
+    safeResponseMetadata(
+      "request-policy-grammar",
+      `${origin}/api`,
+      { headers },
+      new Set([origin]),
+    ).response.policies;
+
+  it.each([
+    // Fetch 3.7 writes the value ABNF with `%s`, so it is case-sensitive and every other
+    // spelling declares no policy; the internal check has nothing to enforce.
+    ["same-origin", "same-origin"],
+    ["same-site", "same-site"],
+    ["cross-origin", "cross-origin"],
+    ["SAME-ORIGIN", null],
+    ["Same-Site", null],
+    ["same-origin-ish", null],
+    ["same_origin", null],
+    // `unsafe-none` is an embedder-policy value; it is never a resource policy.
+    ["unsafe-none", null],
+    ["same-site, same-origin", null],
+  ] as const)(
+    "reports only a grammatical CORP value for %j",
+    (raw, expected) => {
+      expect(policies({ "Cross-Origin-Resource-Policy": raw }).corp).toBe(
+        expected,
+      );
+    },
+  );
+
+  it.each([
+    // Fetch 3.6 declares one case-insensitive value and "determine nosniff" tests values[0]
+    // of the combined header, so a repeated line and a two-member list both still declare it.
+    ["nosniff", "nosniff"],
+    ["NOSNIFF", "nosniff"],
+    [" nosniff ", "nosniff"],
+    ["nosniff\nnosniff", "nosniff"],
+    ["nosniff, sniff", "nosniff"],
+    ["sniff, nosniff", null],
+    ["nosniff-ish", null],
+    ["sniff", null],
+  ] as const)(
+    "reports only a grammatical X-Content-Type-Options value for %j",
+    (raw, expected) => {
+      expect(
+        policies({ "X-Content-Type-Options": raw }).x_content_type_options,
+      ).toBe(expected);
+    },
+  );
+});
