@@ -850,6 +850,13 @@ status with unknown coverage and are refused on extraction; no decryption is
 attempted. See
 [wxapkg](https://github.com/morluto/rea/blob/main/docs/wxapkg.md).
 
+Android binary XML documents (`AndroidManifest.xml` and compiled resource XML
+with the `03 00 08 00` chunk preamble) decode to XML text as a `document.xml`
+region; names and values come from the declared string pool and typed values
+render literally. Resource table names, DEX references and component semantics
+are not resolved. See
+[AXML](https://github.com/morluto/rea/blob/main/docs/axml.md).
+
 U-Boot legacy uImages use the same inspection/extraction workflows. Prefer a
 retained summary and selected inventory views for header facts or component
 IDs. Header addresses/CPU/OS are declarations; payloads remain as stored.

@@ -1,4 +1,5 @@
 import { artifactFormatDescriptor } from "../artifactFormats.js";
+import { hasAxmlHeader } from "../../domain/axmlFormat.js";
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
 import { hasUImageMagic } from "../../domain/uimageFormat.js";
 import { hasUnityFsHeader } from "../../domain/unityfsFormat.js";
@@ -635,6 +636,7 @@ export const classifyArtifactBytes = (
   if (hasUnityFsHeader(prefix)) return "unityfs";
   if (hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix))
     return "wxapkg";
+  if (hasAxmlHeader(prefix)) return "axml";
   if (hasUImageMagic(prefix)) return "uimage";
   const hexRecords = detectHexRecordEncoding(prefix);
   if (hexRecords !== undefined) return hexRecords;
