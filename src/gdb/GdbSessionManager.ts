@@ -51,6 +51,7 @@ import {
   debuggerResourceConstraintError,
   fixedDeadlineGuidance,
   readLinuxProcessStartTime,
+  retainedDebuggerCleanupFailure,
   stopOwnedDebuggerProcess,
   type OwnedDebuggerDetachResult,
   type OwnedInferiorIdentity,
@@ -2014,11 +2015,12 @@ export class GdbSessionManager {
     reason: string,
     options: AnalysisErrorOptions = {},
   ): AnalysisError {
-    const failure = new AnalysisCapabilityUnavailableError(
-      "gdb",
+    const failure = retainedDebuggerCleanupFailure(
+      { provider: "gdb", displayName: "GDB" },
       operation,
-      `The owned GDB process could not be confirmed stopped: ${reason}`,
-      { ...options, cleanup: { reason, resources: [session.id] } },
+      reason,
+      [session.id],
+      options,
     );
     session.cleanupFailures.add(failure);
     return failure;
@@ -2327,10 +2329,15 @@ export class GdbSessionManager {
             );
             return;
           }
+          const cancellation = new AnalysisCancelledError("gdb_console", {
+            cause: signal?.reason,
+            partialObservation: evidence,
+          });
           const cleanupFailure = this.#retainCleanupFailure(
             session,
             "gdb_console",
             stopped.reason,
+            { cause: cancellation },
           );
           pending.reject(
             new AnalysisCancelledError("gdb_console", {

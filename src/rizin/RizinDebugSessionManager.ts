@@ -56,6 +56,7 @@ import {
   fixedDeadlineGuidance,
   stopOwnedDebuggerProcess,
   readLinuxProcessStartTime,
+  retainedDebuggerCleanupFailure,
   verifyOwnedInferiorsEnded,
   type OwnedInferiorIdentity,
   type OwnedDebuggerDetachResult,
@@ -1709,24 +1710,13 @@ export class RizinDebugSessionManager {
     reason: string,
     options: AnalysisErrorOptions = {},
   ): AnalysisError {
-    const cleanup = { reason, resources: [session.id] };
-    const primary = options.cause;
-    const failure =
-      primary instanceof AnalysisCancelledError
-        ? new AnalysisCancelledError(operation, {
-            ...options,
-            cause: primary.cause,
-            capturedOutput: options.capturedOutput ?? primary.capturedOutput,
-            partialObservation:
-              options.partialObservation ?? primary.partialObservation,
-            cleanup,
-          })
-        : new AnalysisCapabilityUnavailableError(
-            "rizin",
-            operation,
-            `The owned Rizin process could not be confirmed stopped: ${reason}`,
-            { ...options, cleanup },
-          );
+    const failure = retainedDebuggerCleanupFailure(
+      { provider: "rizin", displayName: "Rizin" },
+      operation,
+      reason,
+      [session.id],
+      options,
+    );
     session.cleanupFailures.add(failure);
     return failure;
   }
