@@ -174,6 +174,11 @@ explicit refreshes; other clients' automatic refresh remains unverified.
 
 ## FastMCP and Unsloth SSE catalog limits
 
+The server now pages an oversized `tools/list` response, so a client that
+follows `nextCursor` loads the default catalog without the settings below.
+The settings remain the way to keep the whole catalog in one response and
+reduce the context it costs.
+
 If an HTTP client reports `Server-sent event exceeded the 1048576 byte limit`
 during `tools/list`, merge these settings into the **REA server process's**
 environment, then reconnect:
@@ -200,11 +205,12 @@ initial tools in 33,903 bytes, then explicitly refreshed through 34 loaded
 tools. Hot/cold alone later exceeded the SSE limit during refresh. Follow
 the [refresh requirements](#hotcold-catalogs).
 
-The Unsloth report [#9093](https://github.com/morluto/rea/issues/9093) fails at
-catalog delivery; the Unsloth application itself was not exercised in this
-trial. Schema compaction does not bound analysis results. Continue to use
-summary/detail selection and tool-specific paging for larger results; client
-receive limits and full Evidence access still apply.
+The Unsloth report [#9093](https://github.com/morluto/rea/issues/9093) failed at
+catalog delivery; pagination now delivers the default catalog to clients that
+follow cursors, and the settings above keep it in one response. The Unsloth
+application itself was not exercised in this trial. Schema compaction does not
+bound analysis results. Continue to use summary/detail selection and tool-specific
+paging for larger results; client receive limits and full Evidence access still apply.
 
 ## Fiddler Everywhere alongside REA
 

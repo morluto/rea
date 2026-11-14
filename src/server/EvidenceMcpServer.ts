@@ -13,6 +13,10 @@ import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { McpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
+import {
+  DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  type McpToolsListPageBudget,
+} from "../config/mcpToolsListPageBudget.js";
 
 /** Canonical composition retains the constructor's existing identity defaults. */
 export class EvidenceMcpServer extends EvidenceMcpServerCore {
@@ -25,6 +29,7 @@ export class EvidenceMcpServer extends EvidenceMcpServerCore {
     outputSchemaProfile: McpOutputSchemaProfile = "full",
     identity?: ReturnType<typeof createCatalogIdentity>,
     advertisedToolFamilies: ReadonlySet<string> | undefined = undefined,
+    toolsListPageBudget: McpToolsListPageBudget = DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
   ) {
     super(
       info,
@@ -40,6 +45,7 @@ export class EvidenceMcpServer extends EvidenceMcpServerCore {
           advertisedToolFamilies,
         ),
       advertisedToolFamilies,
+      toolsListPageBudget,
     );
   }
 

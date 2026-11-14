@@ -60,6 +60,11 @@ import {
   measureMcpResultWithinBudget,
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
+import {
+  DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  type McpToolsListPageBudget,
+} from "../config/mcpToolsListPageBudget.js";
+import { paginateToolsList } from "./toolListPagination.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
 import { DISCOVER_TOOLS } from "../catalogDiscovery.js";
 import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
@@ -279,12 +284,12 @@ const presentOutputSchemasForToolsList = (
 /** Release every transport-owned reference for a cancelled/completed request. */
 export const forgetPendingMcpRequest = (
   pendingTools: Map<RequestId, string>,
-  pendingToolLists: Set<RequestId>,
+  pendingToolListCursors: Map<RequestId, string | undefined>,
   pendingCompletions: Map<RequestId, AbortController>,
   id: RequestId,
 ): void => {
   pendingTools.delete(id);
-  pendingToolLists.delete(id);
+  pendingToolListCursors.delete(id);
   pendingCompletions.get(id)?.abort();
   pendingCompletions.delete(id);
 };
@@ -407,6 +412,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     readonly advertisedToolFamilies:
       | ReadonlySet<string>
       | undefined = undefined,
+    readonly toolsListPageBudget: McpToolsListPageBudget = DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
   ) {
     const maximumInputElements =
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
@@ -530,6 +536,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
         this.outputSchemaProfile,
         this.maximumInputElements,
         this.evidenceReferenceAlternatives,
+        this.toolsListPageBudget,
       ),
     );
   }
@@ -542,7 +549,11 @@ class ErrorEvidenceTransport implements Transport {
   readonly hasPerRequestStream?: boolean;
   private readonly pendingTools = new Map<RequestId, string>();
   private readonly pendingValidation = new Map<RequestId, McpToolRequest>();
-  private readonly pendingToolLists = new Set<RequestId>();
+  /** tools/list requests, including those with no cursor (`undefined`). */
+  private readonly pendingToolListCursors = new Map<
+    RequestId,
+    string | undefined
+  >();
   private readonly pendingCompletions = new Map<RequestId, AbortController>();
 
   private get recordEvidence(): EvidenceWriter["recordEvidence"] | undefined {
@@ -569,6 +580,7 @@ class ErrorEvidenceTransport implements Transport {
     private readonly outputSchemaProfile: McpOutputSchemaProfile,
     private readonly maximumInputElements: number,
     private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
+    private readonly toolsListPageBudget: McpToolsListPageBudget,
   ) {
     if (transport.hasPerRequestStream !== undefined)
       this.hasPerRequestStream = transport.hasPerRequestStream;
@@ -605,8 +617,15 @@ class ErrorEvidenceTransport implements Transport {
         validation = new McpToolRequest(message.id, message.params["name"]);
         this.pendingValidation.set(message.id, validation);
       }
-      if (isJSONRPCRequest(message) && message.method === "tools/list")
-        this.pendingToolLists.add(message.id);
+      if (isJSONRPCRequest(message) && message.method === "tools/list") {
+        const params = message.params;
+        this.pendingToolListCursors.set(
+          message.id,
+          isRecord(params) && typeof params.cursor === "string"
+            ? params.cursor
+            : undefined,
+        );
+      }
       if (isJSONRPCRequest(message) && message.method === "completion/complete")
         this.pendingCompletions.set(message.id, new AbortController());
       // The SDK suppresses replies after cancellation, so send() cannot release
@@ -621,7 +640,7 @@ class ErrorEvidenceTransport implements Transport {
           this.pendingValidation.delete(id);
           forgetPendingMcpRequest(
             this.pendingTools,
-            this.pendingToolLists,
+            this.pendingToolListCursors,
             this.pendingCompletions,
             id,
           );
@@ -645,7 +664,7 @@ class ErrorEvidenceTransport implements Transport {
       for (const validation of this.pendingValidation.values())
         validation.cancel();
       this.pendingValidation.clear();
-      this.pendingToolLists.clear();
+      this.pendingToolListCursors.clear();
       for (const completion of this.pendingCompletions.values())
         completion.abort();
       this.pendingCompletions.clear();
@@ -672,7 +691,7 @@ class ErrorEvidenceTransport implements Transport {
       for (const validation of this.pendingValidation.values())
         validation.cancel();
       this.pendingValidation.clear();
-      this.pendingToolLists.clear();
+      this.pendingToolListCursors.clear();
       for (const completion of this.pendingCompletions.values())
         completion.abort();
       this.pendingCompletions.clear();
@@ -707,7 +726,7 @@ class ErrorEvidenceTransport implements Transport {
     const rewritesOutputSchemas =
       this.outputSchemaProfile !== "full" &&
       id !== undefined &&
-      this.pendingToolLists.has(id);
+      this.pendingToolListCursors.has(id);
     try {
       const publish = async (): Promise<void> => {
         const recovered = this.recoverProtocolError(message, tool);
@@ -760,7 +779,7 @@ class ErrorEvidenceTransport implements Transport {
         this.pendingValidation.delete(id);
         forgetPendingMcpRequest(
           this.pendingTools,
-          this.pendingToolLists,
+          this.pendingToolListCursors,
           this.pendingCompletions,
           id,
         );
@@ -776,16 +795,29 @@ class ErrorEvidenceTransport implements Transport {
     request: McpToolRequest | undefined,
   ): Promise<void> {
     request?.beginPublication();
+    // Page oversized tools/list results after the output-schema presentation
+    // so the measured bytes are the advertised ones; a cursor error replaces
+    // the SDK's complete listing for that request.
+    const paged =
+      isJSONRPCResultResponse(message) &&
+      message.id !== undefined &&
+      this.pendingToolListCursors.has(message.id)
+        ? paginateToolsList(
+            message,
+            this.pendingToolListCursors.get(message.id),
+            this.toolsListPageBudget,
+          )
+        : message;
     if (
-      !isJSONRPCResultResponse(message) ||
-      !isCallToolResult(message.result) ||
-      message.result.isError !== true
+      !isJSONRPCResultResponse(paged) ||
+      !isCallToolResult(paged.result) ||
+      paged.result.isError !== true
     ) {
-      await this.transport.send(message, options);
+      await this.transport.send(paged, options);
       return;
     }
     // Oversized recovery has already consumed this private structured carrier.
-    const { structuredContent: _diagnostic, ...result } = message.result;
+    const { structuredContent: _diagnostic, ...result } = paged.result;
     // SDK-built errors bypass ToolResultDelivery's target-content marker.
     const marked =
       tool !== undefined &&
@@ -796,7 +828,7 @@ class ErrorEvidenceTransport implements Transport {
             _meta: { ...result._meta, ...TARGET_CONTENT_RESULT_META },
           }
         : result;
-    await this.transport.send({ ...message, result: marked }, options);
+    await this.transport.send({ ...paged, result: marked }, options);
   }
 
   private recoverError(
