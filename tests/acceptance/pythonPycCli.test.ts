@@ -10,7 +10,7 @@ import {
   pythonPycHeader,
 } from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 import { pythonPycEqualityGolden } from "../fixtures/python-pyc-equality/golden.js";
 
 const completePycEvidenceSchema = toolContract(
@@ -24,7 +24,7 @@ cliTest(
     const directory = await createTestTempDirectory("rea-pyc-code-equality-");
     const path = join(directory, "equality.pyc");
     await writeFile(path, Buffer.from(golden.pyc_base64, "base64"));
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-python-pyc", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -84,7 +84,7 @@ cliTest(
           }),
         ]),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -104,7 +104,7 @@ cliTest(
         }),
       ]),
     );
-    const ordinaryInt = await runFileCli(cli, {
+    const ordinaryInt = await cli.run({
       arguments: ["inspect-python-pyc", ordinaryIntPath, "--json"],
     });
     expect(ordinaryInt.exitCode, ordinaryInt.stderr).toBe(0);
@@ -122,7 +122,7 @@ cliTest(
         Buffer.alloc(7),
       ]),
     );
-    const truncated = await runFileCli(cli, {
+    const truncated = await cli.run({
       arguments: ["inspect-python-pyc", truncatedPath, "--json"],
     });
     expect(truncated.exitCode).toBe(1);
@@ -210,7 +210,7 @@ cliTest(
       const path = join(root, `inline-caches-${magic}.pyc`);
       await writeFile(path, pyc);
 
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(
@@ -305,7 +305,7 @@ cliTest(
       header[2] = 0x0d;
       header[3] = 0x0a;
       await writeFile(path, Buffer.concat([header, marshal]));
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -322,7 +322,7 @@ cliTest(
     for (const magic of [3392, 3394]) {
       const path = join(root, `${magic}.pyc`);
       await writeFile(path, Buffer.concat([pythonPycHeader(magic), marshal]));
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -381,7 +381,7 @@ cliTest(
         path,
         Buffer.concat([pythonPycHeader(magic), marshalCode(layout, fields)]),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -440,7 +440,7 @@ cliTest(
         path,
         Buffer.concat([pythonPycHeader(magic), marshalCode(layout, fields)]),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -530,7 +530,7 @@ cliTest(
           }),
         ]),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -580,7 +580,7 @@ cliTest(
           marshalCode(testCase.layout, { consts: [frozenSet, dict] }),
         ]),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -658,7 +658,7 @@ cliTest(
           marshalCode(testCase.layout, { consts: [frozenSet, dict] }),
         ]),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -689,7 +689,7 @@ cliTest(
           }),
         ]),
       );
-      const rawResult = await runFileCli(cli, {
+      const rawResult = await cli.run({
         arguments: ["inspect-python-pyc", rawPath, "--json"],
       });
       expect(rawResult.exitCode, rawResult.stderr).toBe(0);

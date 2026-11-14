@@ -47,7 +47,7 @@ const prepareInputs = async (cli: TestCli) => {
     "f0e7d2c869c811d4272a7b2916c6531c8c6cc7938336a35575e2a6b7b6346714",
   );
   await writeFile(harPath, harBytes);
-  const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+  const run = cli.run.bind(cli);
   const analyzed = await run({
     arguments: [
       "analyze-javascript-application",

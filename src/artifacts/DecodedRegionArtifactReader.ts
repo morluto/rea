@@ -118,6 +118,7 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
       );
       await this.#source.read(signal);
     });
+    this.#assertOpen(signal);
     const coverage = this.#described?.coverage;
     if (coverage !== undefined)
       options?.onCoverage?.({
@@ -131,6 +132,7 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
       this.#assertOpen(signal);
       yield copyArtifactEntry(entry);
     }
+    this.#assertOpen(signal);
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {

@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import * as files from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import * as processOutput from "../process/ExecFileOutput.js";
 
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
@@ -260,30 +261,25 @@ const samplingSession = async (route: Route) => {
     sourceSettled = true;
     sampling = false;
   });
-  const native = createSystemProcessOwnershipHost(
-    "linux",
-    {},
-    {
-      execFileOutput: async () => {
-        if (sourceSettled && retained.pending().length > 0) {
-          freshBeforeRetry += 1;
-          throw new Error("fresh lookup before sampling owner retry");
-        }
-        if (sampling && route !== "runId") {
-          if (route === "cancelledListing" || retained.pending().length > 0) {
-            nativeCancellations += 1;
-            if (route === "cancelledListing") sampling = false;
-            controller.abort(reason);
-            throw new ExecFileOutputCancelledError(reason);
-          }
-          return commandOutput(
-            "42 1 42 1000 S recording-child\n43 1 42 1000 S recording-peer\n",
-          );
-        }
-        return commandOutput("");
-      },
-    },
-  );
+  vi.spyOn(processOutput, "execFileOutput").mockImplementation(async () => {
+    if (sourceSettled && retained.pending().length > 0) {
+      freshBeforeRetry += 1;
+      throw new Error("fresh lookup before sampling owner retry");
+    }
+    if (sampling && route !== "runId") {
+      if (route === "cancelledListing" || retained.pending().length > 0) {
+        nativeCancellations += 1;
+        if (route === "cancelledListing") sampling = false;
+        controller.abort(reason);
+        throw new ExecFileOutputCancelledError(reason);
+      }
+      return commandOutput(
+        "42 1 42 1000 S recording-child\n43 1 42 1000 S recording-peer\n",
+      );
+    }
+    return commandOutput("");
+  });
+  const native = createSystemProcessOwnershipHost("linux", {});
   rejectUnexpectedNativeOperations();
   vi.spyOn(systemProcessOwnershipHost, "listProcesses").mockImplementation(
     async (signal) => {

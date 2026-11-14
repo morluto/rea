@@ -117,7 +117,7 @@ cliTest(
         // Both orders cross the actual CLI adapter; other geometries reuse
         // the production MCP session and the same application workflow.
         if (scope === "same-file") {
-          const output = await cli.sharedCliRun!({
+          const output = await cli.run({
             arguments: [
               "inspect-web-network-capture",
               capture,

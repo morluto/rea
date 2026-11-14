@@ -147,7 +147,6 @@ describe.skipIf(process.platform === "win32")(
               {
                 cwd: workspace,
                 env,
-                timeoutMs: 30_000,
               },
             );
           const checkoutReports = join(workspace, "reports", "rea");

@@ -8,7 +8,8 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { STARTUP_OWNER_CLOSED } from "../process/SharedStartupAttempt.js";
 import { constants } from "node:fs";
-import { access, stat } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
+import { posix, win32 } from "node:path";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { RetainedResourceScope } from "./AnalysisProvider.js";
 import {
@@ -151,7 +152,8 @@ export interface DoctorHost {
   ): Promise<readonly DoctorProviderInspection[]>;
   /** Resolve a parsed upstream request budget from the effective client environment. */
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
-  installationPaths?(): Promise<readonly string[]>;
+  /** `rea` launchers in PATH order, each with the installation it resolves to. */
+  installationLaunchers?(): Promise<readonly DoctorInstallationLauncher[]>;
   /** Undefined checks installed skill roots; explicit selections stay scoped. */
   installedSkillIdentity?(
     clientIds: readonly string[] | undefined,
@@ -486,7 +488,7 @@ const collectDoctorIdentity = async (
   readonly checks: readonly DoctorCheck[];
   readonly value: DoctorIdentity;
 }> => {
-  const installationPaths = (await host.installationPaths?.()) ?? [];
+  const launchers = (await host.installationLaunchers?.()) ?? [];
   const registrations =
     (await host.clientRegistrations?.(
       scope.clients,
@@ -528,8 +530,8 @@ const collectDoctorIdentity = async (
           "Call binary_session in the active client to inspect the running server identity; a registration whose saved scope omits the session family cannot report it, so include session through rea setup --tool-families and restart first.",
       },
       installations: {
-        paths: installationPaths,
-        state: installationState(installationPaths),
+        paths: launchers.map(({ path }) => path),
+        state: installationState(launchers),
       },
       skill: {
         installed_version: installedSkillIdentity?.version ?? null,
@@ -626,10 +628,41 @@ const registrationCheck = (
   remediation: registration.remediation,
 });
 
+/** A PATH launcher and the installation identity its host resolved it to. */
+export interface DoctorInstallationLauncher {
+  readonly path: string;
+  readonly installation: string;
+}
+
 const installationState = (
-  paths: readonly string[],
-): DoctorIdentity["installations"]["state"] =>
-  paths.length === 0 ? "unknown" : paths.length === 1 ? "single" : "multiple";
+  launchers: readonly DoctorInstallationLauncher[],
+): DoctorIdentity["installations"]["state"] => {
+  const installations = new Set(
+    launchers.map(({ installation }) => installation),
+  );
+  return installations.size === 0
+    ? "unknown"
+    : installations.size === 1
+      ? "single"
+      : "multiple";
+};
+
+/**
+ * One installation is one launcher directory after symlink resolution. npm
+ * writes `rea`, `rea.cmd` and `rea.ps1` side by side on Windows, where `where`
+ * lists each and directory spelling is case-insensitive; PATH can also reach
+ * one launcher through a symlinked directory. An unresolvable launcher keeps
+ * its listed path rather than joining another installation.
+ */
+const launcherInstallation = async (
+  path: string,
+  platform: NodeJS.Platform,
+): Promise<string> => {
+  const resolved = await realpath(path).catch(() => path);
+  return platform === "win32"
+    ? win32.dirname(resolved).toLowerCase()
+    : posix.dirname(resolved);
+};
 
 /** Optional outer-adapter diagnostics composed without reversing dependencies. */
 export interface SystemDoctorHostOptions {
@@ -870,13 +903,19 @@ export const systemDoctorHost = (
         return undefined;
       }
     },
-    async installationPaths() {
+    async installationLaunchers() {
       try {
         const command = platform === "win32" ? "where" : "which";
         const arguments_ = platform === "win32" ? ["rea"] : ["-a", "rea"];
-        return uniqueLines(
+        const paths = uniqueLines(
           (await hostExecFileOutput(command, arguments_, commandEnvironment))
             .stdout,
+        );
+        return await Promise.all(
+          paths.map(async (path) => ({
+            path,
+            installation: await launcherInstallation(path, platform),
+          })),
         );
       } catch (cause: unknown) {
         if (cause instanceof AnalysisCancelledError) throw cause;

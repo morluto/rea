@@ -13,7 +13,7 @@ import {
   expectKeyedArchiveNumberMetadata,
   keyedArchiveNumberMetadataFixture,
 } from "../../fixtures/keyedArchiveNumberMetadata.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 it("preserves 16-byte binary integers and adjacent 64-bit integer metadata", async () => {
   const fixture = await keyedArchiveWideIntegerFixture();
@@ -133,7 +133,7 @@ cliTest.for(archiveNumberMetadataCases)(
   "built CLI preserves numeric meaning for $name",
   async (item, { cli }) => {
     const fixture = await keyedArchiveNumberMetadataFixture(item);
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["inspect-keyed-archive", fixture.path, "--json"],
       environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
     });

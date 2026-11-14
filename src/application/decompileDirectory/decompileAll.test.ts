@@ -735,6 +735,97 @@ describe("decompile_all resume", () => {
   });
 });
 
+describe("decompile_all retained body coverage", () => {
+  const directory = useOutputDirectory();
+  const limitationsOf = (value: JsonValue): readonly string[] =>
+    (value as { limitations: string[] }).limitations;
+  const unavailableReasons = (index: {
+    readonly functions: readonly {
+      readonly body: { readonly available: boolean; readonly reason?: string };
+    }[];
+  }): string[] =>
+    index.functions.flatMap(({ body }) =>
+      !body.available && body.reason !== undefined ? [body.reason] : [],
+    );
+  const indexOf = async () =>
+    decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+          "utf8",
+        ),
+      ),
+    );
+
+  it("keeps the caveat of retained records through no-op and empty resumes", async () => {
+    const created = await run(
+      harness({ info: "unavailable" }).tools,
+      directory(),
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const createdLimitations = limitationsOf(created.value);
+    // One caveat counts the retained records and repeats their shared reason.
+    expect(createdLimitations).toHaveLength(1);
+    const createdReason = unavailableReasons(await indexOf())[0];
+    expect(createdReason).toBeDefined();
+    expect(createdLimitations[0]).toMatch(/^3 exported function record/u);
+    expect(createdLimitations[0]).toContain(createdReason);
+    const file = join(directory(), "functions/0x1000.c");
+    const before = await readFile(file, "utf8");
+
+    for (const filter of [{}, { name: "NoSuchFunction" }]) {
+      const resumed = harness();
+      const result = await run(resumed.tools, directory(), {
+        resume: true,
+        ...filter,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toMatchObject({ counts: { requested: 0 } });
+      expect(limitationsOf(result.value)).toEqual(createdLimitations);
+      expect((await indexOf()).limitations).toEqual(createdLimitations);
+      expect(of(resumed.calls, "procedure_info")).toHaveLength(0);
+    }
+    expect(await readFile(file, "utf8")).toBe(before);
+    expect(
+      (await indexOf()).functions.map((record) => record.body.available),
+    ).toEqual([false, false, false]);
+  });
+
+  it("counts retained and new unknown bodies and drops the caveat once every body is known", async () => {
+    expect(
+      (await run(harness({ info: "unavailable" }).tools, directory())).ok,
+    ).toBe(true);
+    await rm(join(directory(), "functions/0x1000.c"));
+    const mixed = await run(harness({ info: "error" }).tools, directory(), {
+      resume: true,
+    });
+    expect(mixed.ok).toBe(true);
+    if (!mixed.ok) return;
+    expect(mixed.value).toMatchObject({
+      counts: { written: 1, skipped: 2 },
+    });
+    // Differing reasons are counted together without naming either one.
+    const reasons = new Set(unavailableReasons(await indexOf()));
+    expect(reasons.size).toBe(2);
+    const mixedCaveats = limitationsOf(mixed.value).filter((limitation) =>
+      limitation.startsWith("3 exported function record"),
+    );
+    expect(mixedCaveats).toHaveLength(1);
+    for (const reason of reasons) expect(mixedCaveats[0]).not.toContain(reason);
+
+    for (const address of ["0x1000", "0x2000", "0x3000"])
+      await rm(join(directory(), `functions/${address}.c`));
+    const known = await run(harness().tools, directory(), { resume: true });
+    expect(known.ok).toBe(true);
+    if (!known.ok) return;
+    expect(known.value).toMatchObject({ counts: { written: 3 } });
+    expect(limitationsOf(known.value).join("\n")).not.toContain("body");
+    expect((await indexOf()).limitations).toEqual([]);
+  });
+});
+
 describe("decompile_all filters and layout", () => {
   const directory = useOutputDirectory();
 

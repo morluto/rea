@@ -13,7 +13,6 @@ import { findApplicationFeatureSeeds } from "../../../src/domain/javascript/java
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   cliTest,
-  runFileCli,
   type SharedMcpCall,
   type TestCli,
 } from "../../support/cli/cliFixture.js";
@@ -170,7 +169,7 @@ const traceThroughCli = async (
   const invocation = {
     arguments: ["trace-application-feature", input, "--json"],
   };
-  const response = await runFileCli(cli, invocation);
+  const response = await cli.run(invocation);
   expect(response.exitCode, `${scenario.name} via CLI`).toBe(0);
   const evidence = toolContract("trace_application_feature").outputSchema.parse(
     response.json,

@@ -99,3 +99,63 @@ describe.skipIf(process.platform === "win32")("dumpDconfDatabase", () => {
     },
   );
 });
+
+describe.skipIf(process.platform === "win32")(
+  "dconf command diagnostics",
+  () => {
+    it("retains the selected command and errno when execution is denied", async () => {
+      const root = await createTestTempDirectory("dconf-denied-command-");
+      const command = join(root, "dconf");
+      await writeFile(command, "#!/bin/sh\nexit 17\n", { mode: 0o600 });
+
+      const dump = await dumpDconfDatabase(join(root, "user"), {
+        REA_DCONF_COMMAND: command,
+      });
+
+      expect(dump).toEqual({
+        ok: false,
+        error: expect.stringContaining("EACCES"),
+      });
+      if (dump.ok) throw new Error("Expected a command failure");
+      expect(dump.error).toContain(command);
+    });
+
+    it.each(["", " \t\n", "reader refused the database\n"])(
+      "retains a nonzero command's reason with stderr %j",
+      async (stderr) => {
+        const root = await createTestTempDirectory("dconf-command-exit-");
+        const command = join(root, "dconf");
+        await writeFile(
+          command,
+          `#!/bin/sh\nprintf '%s' '${stderr}' >&2\nexit 17\n`,
+          {
+            mode: 0o755,
+          },
+        );
+
+        const dump = await dumpDconfDatabase(join(root, "user"), {
+          REA_DCONF_COMMAND: command,
+        });
+
+        expect(dump.ok).toBe(false);
+        if (dump.ok) throw new Error("Expected a command failure");
+        if (stderr.trim() === "") {
+          expect(dump.error).toContain("Command failed:");
+          expect(dump.error).toContain(command);
+        } else expect(dump.error).toBe(stderr.trim());
+      },
+    );
+
+    it("preserves the missing-command recovery", async () => {
+      const root = await createTestTempDirectory("dconf-missing-command-");
+      expect(
+        await dumpDconfDatabase(join(root, "user"), {
+          REA_DCONF_COMMAND: join(root, "absent"),
+        }),
+      ).toEqual({
+        ok: false,
+        error: "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND",
+      });
+    });
+  },
+);

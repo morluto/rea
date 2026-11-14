@@ -330,11 +330,14 @@ jobs:
       # every shard's diagnostics and coverage. Passing PRs run the full suite.
       fail-fast: ${{ github.event_name == 'pull_request' && needs.changes.outputs.tier == 'fast' }}
       matrix:
-        # Fast feedback uses one source group and eight built groups so the
-        # slowest built shard job stays inside a ten-minute execution budget.
-        # Classification, build, and report merge sit outside that job.
-        # Full qualification retains six complete shards with coverage.
-        shard: ${{ fromJSON(needs.changes.outputs.tier == 'fast' && '["1/8","2/8","3/8","4/8","5/8","6/8","7/8","8/8"]' || '["1/6","2/6","3/6","4/6","5/6","6/6"]') }}
+        # Fast feedback uses one source group and twelve built groups. Shards
+        # are balanced by recorded duration, but hosted runner speed varies,
+        # so the slowest shard sets the critical path: at eight shards it ran
+        # 24% above the mean shard. Smaller shards bound that excess at a few
+        # percent more runner time. Classification, build, and report merge
+        # sit outside these jobs. Full qualification retains six complete
+        # shards with coverage.
+        shard: ${{ fromJSON(needs.changes.outputs.tier == 'fast' && '["1/12","2/12","3/12","4/12","5/12","6/12","7/12","8/12","9/12","10/12","11/12","12/12"]' || '["1/6","2/6","3/6","4/6","5/6","6/6"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -755,7 +758,9 @@ jobs:
     needs: [changes, static, build]
     if: needs.changes.outputs.apple == 'true'
     runs-on: macos-15
-    timeout-minutes: 15
+    # Passing runs take 10-15 minutes on macOS runners of varying speed, so a
+    # 15-minute budget cancelled about a third of runs. Keep a hang bounded.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

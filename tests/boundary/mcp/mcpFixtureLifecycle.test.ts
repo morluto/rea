@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 
 /** Keep real SDK objects recoverable even when a red ownership assertion fails. */
@@ -110,7 +111,11 @@ it("registers acquisition before a producer can reenter shutdown and attach its 
     (reason: unknown) => ({ ok: false as const, reason }),
   );
   try {
-    await entered.promise;
+    await awaitAcknowledgement(
+      entered.promise,
+      opening,
+      "MCP lifecycle boundary",
+    );
     await Promise.resolve();
     await Promise.resolve();
     expect(closeSettled).toBe(false);
@@ -154,7 +159,11 @@ it("shares one concurrent close attempt and does not reclose released SDK object
         await close();
       });
     first = fixture.mcp.close();
-    await entered.promise;
+    await awaitAcknowledgement(
+      entered.promise,
+      first,
+      "MCP lifecycle boundary",
+    );
     second = fixture.mcp.close();
     await Promise.resolve();
     await Promise.resolve();
@@ -195,7 +204,11 @@ it("cancels a real initialize handshake before awaiting its held server handler"
   );
   const serverClose = vi.spyOn(server, "close");
   try {
-    await entered.promise;
+    await awaitAcknowledgement(
+      entered.promise,
+      opening,
+      "MCP lifecycle boundary",
+    );
     await fixture.mcp.close();
     expect(openingSettled).toBe(true);
     expect(await opening).toMatchObject({ ok: false });

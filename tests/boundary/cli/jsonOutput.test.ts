@@ -856,7 +856,7 @@ describe("CLI result output surface", () => {
       },
       meta: { command: "inspect-managed-members" },
     });
-  }, 60_000);
+  });
 });
 
 describe("streamed CLI filtered selections", () => {

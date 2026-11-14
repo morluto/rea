@@ -124,7 +124,7 @@ cliTest(
       },
     ];
     const call = await cli.sharedMcpCall!();
-    const run = cli.sharedCliRun!.bind(cli);
+    const run = cli.run.bind(cli);
     for (const test of cases) {
       const request = {
         source: { kind: "inline", evidence: test.evidence },

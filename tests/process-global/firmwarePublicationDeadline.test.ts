@@ -2,6 +2,7 @@ import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import * as firmwareFiles from "../../src/firmware/FirmwareFiles.js";
 import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
@@ -219,9 +220,10 @@ test("keeps each queued request's independent analysis and publication budgets",
     publication_timeout_ms: 123_456,
     analysis_timeout_ms: 234_567,
   });
+  let queued: typeof pending | undefined;
   try {
-    await entered;
-    const queued = fixture.service.execute("extract_firmware", {
+    await awaitAcknowledgement(entered, pending, "firmware publication");
+    queued = fixture.service.execute("extract_firmware", {
       path: fixture.path,
       output_directory: join(fixture.root, "second-output"),
       publication_timeout_ms: 654_321,
@@ -246,8 +248,12 @@ test("keeps each queued request's independent analysis and publication budgets",
     expect(budgets).toEqual([234_567, 123_456, 765_432, 654_321]);
   } finally {
     release();
+    try {
+      await Promise.allSettled([pending, queued]);
+    } finally {
+      await fixture.close();
+    }
   }
-  await fixture.close();
   await assertFirmwareCleanup(fixture.launches);
 });
 

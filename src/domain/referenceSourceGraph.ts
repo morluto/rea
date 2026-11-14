@@ -9,7 +9,7 @@ import {
   isPortableAbsoluteReferenceTarget,
 } from "./referenceSourcePathIdentity.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
-import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./digests.js";
 const boundedTextSchema = z.string().min(1);
 const relativePathSchema = z
   .string()
@@ -566,11 +566,6 @@ export const createHistoricalSourceGraph = (
   });
 };
 
-/** Parse a graph and reject stale or caller-invented root commitments. */
-export const parseHistoricalSourceGraph = (
-  input: unknown,
-): HistoricalSourceGraph => historicalSourceGraphSchema.parse(input);
-
 /** Commit semantic graph facts while retaining host-local diagnostic metadata separately. */
 const computeHistoricalSourceGraphSha256 = (
   graph: HistoricalSourceGraph,
@@ -589,7 +584,7 @@ const computeHistoricalSourceGraphSha256 = (
 export const createHistoricalSourceManifest = (
   input: unknown,
 ): HistoricalSourceManifest => {
-  const graph = parseHistoricalSourceGraph(input);
+  const graph = historicalSourceGraphSchema.parse(input);
   const semantic = {
     schema: "HistoricalSourceManifest" as const,
     authority: "historical-reference" as const,

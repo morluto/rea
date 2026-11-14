@@ -24,7 +24,7 @@ import {
   type NativeCommandRunner,
 } from "../../../../src/native/CommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
-import { parseLipoOutput } from "../../../../src/native/parsers/lipo.js";
+import { parseLipoFixture } from "../../../fixtures/lipo.js";
 import {
   dylibCommand,
   LC,
@@ -951,8 +951,12 @@ describe("native late cancellation with cleanup", () => {
         {},
         { signal: controller.signal },
       );
-      await started;
-      await cleanupAttempt;
+      await awaitAcknowledgement(started, pending, "native command start");
+      await awaitAcknowledgement(
+        cleanupAttempt,
+        pending,
+        "native cleanup start",
+      );
       controller.abort(cancellationReason);
       releaseFirstCleanup();
 
@@ -1143,51 +1147,59 @@ describe("native command cleanup lifecycle", () => {
     );
 
     const execution = client.execute("list_architectures", {});
-    await started;
-    const closing = client.close();
-    await Promise.resolve();
-    expect(cleanupRetries).toBe(0);
-    finishCommand(
-      err(
-        new NativeCommandFailure("lipo", "timeout", null, undefined, {
-          stdout: "partial architecture output",
-          stderr: "partial diagnostic",
-          stdoutBytes: 27,
-          stderrBytes: 19,
-          exitCode: null,
-          signal: null,
-          truncated: false,
-        }),
-      ),
+    const commandResult = err(
+      new NativeCommandFailure("lipo", "timeout", null, undefined, {
+        stdout: "partial architecture output",
+        stderr: "partial diagnostic",
+        stdoutBytes: 27,
+        stderrBytes: 19,
+        exitCode: null,
+        signal: null,
+        truncated: false,
+      }),
     );
+    try {
+      await awaitAcknowledgement(started, execution, "native command start");
+      const closing = client.close();
+      await Promise.resolve();
+      expect(cleanupRetries).toBe(0);
+      finishCommand(commandResult);
 
-    const [observed, closed] = await Promise.all([execution, closing]);
-    expect(observed.ok).toBe(false);
-    expect(closed.ok).toBe(false);
-    expect(cleanupRetries).toBe(1);
-    if (!closed.ok) {
-      expect(closed.error.cleanupResources).toEqual([
-        "run:first",
-        "process-group:1234",
-        "run:second",
-        "process-group:5678",
-      ]);
-      expect(closed.error).toHaveProperty("diagnostics", {
-        reason: "Native command process cleanup remains incomplete",
-        failures: [
-          {
-            reason: "first process group remains live",
-            resources: ["run:first", "process-group:1234"],
-          },
-          {
-            reason: "second process group remains live",
-            resources: ["run:second", "process-group:5678"],
-          },
-        ],
-      });
+      const [observed, closed] = await Promise.all([execution, closing]);
+      expect(observed.ok).toBe(false);
+      expect(closed.ok).toBe(false);
+      expect(cleanupRetries).toBe(1);
+      if (!closed.ok) {
+        expect(closed.error.cleanupResources).toEqual([
+          "run:first",
+          "process-group:1234",
+          "run:second",
+          "process-group:5678",
+        ]);
+        expect(closed.error).toHaveProperty("diagnostics", {
+          reason: "Native command process cleanup remains incomplete",
+          failures: [
+            {
+              reason: "first process group remains live",
+              resources: ["run:first", "process-group:1234"],
+            },
+            {
+              reason: "second process group remains live",
+              resources: ["run:second", "process-group:5678"],
+            },
+          ],
+        });
+      }
+      await expect(client.close()).resolves.toMatchObject({ ok: true });
+      expect(cleanupRetries).toBe(2);
+    } finally {
+      finishCommand(commandResult);
+      try {
+        await execution;
+      } finally {
+        await client.close();
+      }
     }
-    await expect(client.close()).resolves.toMatchObject({ ok: true });
-    expect(cleanupRetries).toBe(2);
   });
 });
 
@@ -1789,11 +1801,11 @@ describe("native macOS provider failures and parsing", () => {
   });
 
   it("parses thin and universal lipo fixtures", async () => {
-    expect(parseLipoOutput(await fixture("lipo-thin.txt"))).toMatchObject({
+    expect(parseLipoFixture(await fixture("lipo-thin.txt"))).toMatchObject({
       format: "thin",
       architectures: [{ name: "arm64" }],
     });
-    expect(parseLipoOutput(await fixture("lipo-fat.txt"))).toMatchObject({
+    expect(parseLipoFixture(await fixture("lipo-fat.txt"))).toMatchObject({
       format: "fat",
       architectures: [
         { name: "x86_64", file_offset: 16384, size: 4096 },
@@ -1811,7 +1823,7 @@ describe("native macOS provider failures and parsing", () => {
       "    size 0x10",
       "    align 2^14 (16384)",
     ].join("\n");
-    expect(parseLipoOutput(output).architectures).toMatchObject([
+    expect(parseLipoFixture(output).architectures).toMatchObject([
       { name: "arm64", file_offset: null, size: null, alignment: 16384 },
     ]);
   });
@@ -1824,11 +1836,11 @@ describe("native macOS provider failures and parsing", () => {
       "    align 2^14 (16384)",
     ].join("\n");
     expect(
-      parseLipoOutput(output.replace("(16384)", "(8192)")).architectures[0]
+      parseLipoFixture(output.replace("(16384)", "(8192)")).architectures[0]
         ?.alignment,
     ).toBeNull();
     expect(
-      parseLipoOutput(output.replace("2^14 (16384)", "2^14")).architectures[0]
+      parseLipoFixture(output.replace("2^14 (16384)", "2^14")).architectures[0]
         ?.alignment,
     ).toBe(16384);
   });

@@ -3,7 +3,6 @@ import { createReadStream } from "node:fs";
 import {
   open,
   readFile,
-  rm,
   rmdir,
   stat,
   utimes,
@@ -44,6 +43,10 @@ import {
 import * as regularFile from "../../../src/filesystem/RegularFile.js";
 import * as fsPromises from "node:fs/promises";
 import * as dartElf from "../../../src/flutter/DartElf.js";
+import {
+  interceptFlutterRootRemoval,
+  realRm,
+} from "../../fixtures/flutterCleanup.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -523,12 +526,11 @@ it.each(["close", "elf", "pool", "zip-library", "cleanup"] as const)(
     onTestFinished(() => {
       vi.restoreAllMocks();
     });
-    const provider = new FlutterBuildProvider({
-      removeRoot: async (root) => {
-        await rm(root, { recursive: true, force: true });
-        if (stage === "cleanup") controller.abort(reason);
-      },
+    interceptFlutterRootRemoval(async (root) => {
+      await realRm(root, { recursive: true, force: true });
+      if (stage === "cleanup") controller.abort(reason);
     });
+    const provider = new FlutterBuildProvider();
     onTestFinished(() => provider.close());
     const result = await provider.execute(
       { operation: "inspect_dart_aot", input: { path } },
@@ -559,13 +561,12 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     const controller = new AbortController();
     const reason = new Error("caller interrupted snapshot removal");
     const removedRoots: string[] = [];
-    const provider = new FlutterBuildProvider({
-      removeRoot: async (root) => {
-        await rm(root, { recursive: true, force: true });
-        removedRoots.push(root);
-        controller.abort(reason);
-      },
+    interceptFlutterRootRemoval(async (root) => {
+      await realRm(root, { recursive: true, force: true });
+      removedRoots.push(root);
+      controller.abort(reason);
     });
+    const provider = new FlutterBuildProvider();
     const result = await new FlutterBuildAnalysisService(provider).execute(
       operation,
       { path },
@@ -834,13 +835,12 @@ it("retains failed snapshot cleanup and retries it on close", async () => {
   ]);
   const roots: string[] = [];
   let failing = true;
-  const provider = new FlutterBuildProvider({
-    removeRoot: async (path) => {
-      roots.push(path);
-      if (failing) throw new Error("cleanup refused");
-      await rm(path, { recursive: true, force: true });
-    },
+  interceptFlutterRootRemoval(async (path) => {
+    roots.push(path);
+    if (failing) throw new Error("cleanup refused");
+    await realRm(path, { recursive: true, force: true });
   });
+  const provider = new FlutterBuildProvider();
   onTestFinished(async () => {
     failing = false;
     await provider.close();
@@ -1142,12 +1142,11 @@ it.each([
       streamMock.mockReset();
     });
     const removedRoots: string[] = [];
-    const provider = new FlutterBuildProvider({
-      removeRoot: async (root) => {
-        await rm(root, { recursive: true, force: true });
-        removedRoots.push(root);
-      },
+    interceptFlutterRootRemoval(async (root) => {
+      await realRm(root, { recursive: true, force: true });
+      removedRoots.push(root);
     });
+    const provider = new FlutterBuildProvider();
     onTestFinished(() => provider.close());
     const result = await provider.execute(
       { operation, input: { path } },
@@ -1301,9 +1300,10 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
         await originalClose.call(this);
       });
     const removeRoot = vi.fn((root: string) =>
-      rm(root, { recursive: true, force: true }),
+      realRm(root, { recursive: true, force: true }),
     );
-    const provider = new FlutterBuildProvider({ removeRoot });
+    interceptFlutterRootRemoval(removeRoot);
+    const provider = new FlutterBuildProvider();
     onTestFinished(async () => {
       failClose = false;
       await provider.close();
@@ -1418,9 +1418,10 @@ it.each([0, 1, 2, 3])(
         await originalClose.call(this);
       });
     const removeRoot = vi.fn((root: string) =>
-      rm(root, { recursive: true, force: true }),
+      realRm(root, { recursive: true, force: true }),
     );
-    const provider = new FlutterBuildProvider({ removeRoot });
+    interceptFlutterRootRemoval(removeRoot);
+    const provider = new FlutterBuildProvider();
     onTestFinished(async () => {
       failing = false;
       await provider.close();
@@ -1732,9 +1733,10 @@ it.each([
       });
     onTestFinished(() => admitted.mockRestore());
     const removeRoot = vi.fn((root: string) =>
-      rm(root, { recursive: true, force: true }),
+      realRm(root, { recursive: true, force: true }),
     );
-    const provider = new FlutterBuildProvider({ removeRoot });
+    interceptFlutterRootRemoval(removeRoot);
+    const provider = new FlutterBuildProvider();
     onTestFinished(() => provider.close());
     const result = await provider.execute(
       { operation: "identify_flutter_build", input: { path } },
@@ -1842,9 +1844,10 @@ it.each([
       vi.restoreAllMocks();
     });
     const removeRoot = vi.fn((root: string) =>
-      rm(root, { recursive: true, force: true }),
+      realRm(root, { recursive: true, force: true }),
     );
-    const provider = new FlutterBuildProvider({ removeRoot });
+    interceptFlutterRootRemoval(removeRoot);
+    const provider = new FlutterBuildProvider();
     onTestFinished(() => provider.close());
     const result = await provider.execute(
       { operation: "inspect_dart_aot", input: { path } },
@@ -1870,25 +1873,24 @@ it.each([false, true])(
     let retainedRoot = "";
     const controller = new AbortController();
     const reason = { caller: "cancel during refused cleanup" };
-    const provider = new FlutterBuildProvider({
-      removeRoot: async (root) => {
-        retainedRoot = root;
-        if (refuse) {
-          if (cancel) controller.abort(reason);
-          await rmdir(root); // Actual OS refusal: the owned snapshot still occupies the directory.
-        } else await rm(root, { recursive: true, force: true });
-      },
-    });
-    onTestFinished(async () => {
-      refuse = false;
-      await provider.close();
-    });
     const controlProvider = new FlutterBuildProvider();
     const control = await new FlutterBuildAnalysisService(
       controlProvider,
     ).execute("identify_flutter_build", { path });
     await controlProvider.close();
     if (!control.ok) throw control.error;
+    interceptFlutterRootRemoval(async (root) => {
+      retainedRoot = root;
+      if (refuse) {
+        if (cancel) controller.abort(reason);
+        await rmdir(root); // Actual OS refusal: the owned snapshot still occupies the directory.
+      } else await realRm(root, { recursive: true, force: true });
+    });
+    const provider = new FlutterBuildProvider();
+    onTestFinished(async () => {
+      refuse = false;
+      await provider.close();
+    });
     const result = await provider.execute(
       { operation: "identify_flutter_build", input: { path } },
       { signal: controller.signal },
@@ -1942,9 +1944,10 @@ it("drains admitted snapshot work before close and fences later execution", asyn
       return original.apply(this, args);
     });
   const removeRoot = vi.fn((root: string) =>
-    rm(root, { recursive: true, force: true }),
+    realRm(root, { recursive: true, force: true }),
   );
-  const provider = new FlutterBuildProvider({ removeRoot });
+  interceptFlutterRootRemoval(removeRoot);
+  const provider = new FlutterBuildProvider();
   onTestFinished(async () => {
     proceed();
     list.mockRestore();
@@ -1979,12 +1982,11 @@ it("drains admitted snapshot work before close and fences later execution", asyn
 it("preserves source admission failure when cancellation arrives during its root cleanup", async () => {
   const root = await createTestTempDirectory("flutter-primary-");
   const controller = new AbortController();
-  const provider = new FlutterBuildProvider({
-    removeRoot: async (path) => {
-      await rm(path, { recursive: true, force: true });
-      controller.abort({ caller: "late cleanup cancellation" });
-    },
+  interceptFlutterRootRemoval(async (path) => {
+    await realRm(path, { recursive: true, force: true });
+    controller.abort({ caller: "late cleanup cancellation" });
   });
+  const provider = new FlutterBuildProvider();
   onTestFinished(() => provider.close());
   const result = await provider.execute(
     {
@@ -2005,13 +2007,12 @@ it("retains mixed-root cleanup diagnostics and releases aggregate errors only af
   ]);
   const roots: string[] = [];
   const allowed = new Set<string>();
-  const provider = new FlutterBuildProvider({
-    removeRoot: async (root) => {
-      if (!roots.includes(root)) roots.push(root);
-      if (!allowed.has(root)) await rmdir(root);
-      else await rm(root, { recursive: true, force: true });
-    },
+  interceptFlutterRootRemoval(async (root) => {
+    if (!roots.includes(root)) roots.push(root);
+    if (!allowed.has(root)) await rmdir(root);
+    else await realRm(root, { recursive: true, force: true });
   });
+  const provider = new FlutterBuildProvider();
   onTestFinished(async () => {
     roots.forEach((root) => allowed.add(root));
     await provider.close();
@@ -2063,13 +2064,12 @@ it("retries retained cleanup before admitting replacement snapshots", async () =
   ]);
   const roots = new Set<string>();
   let refuse = true;
-  const provider = new FlutterBuildProvider({
-    removeRoot: async (root) => {
-      roots.add(root);
-      if (refuse) await rmdir(root);
-      else await rm(root, { recursive: true, force: true });
-    },
+  interceptFlutterRootRemoval(async (root) => {
+    roots.add(root);
+    if (refuse) await rmdir(root);
+    else await realRm(root, { recursive: true, force: true });
   });
+  const provider = new FlutterBuildProvider();
   onTestFinished(async () => {
     refuse = false;
     await provider.close();
@@ -2108,17 +2108,16 @@ it("does not create a replacement snapshot when cancelled during cleanup retry",
   const controller = new AbortController();
   const reason = { caller: "cancel during cleanup retry" };
   let attempts = 0;
-  const provider = new FlutterBuildProvider({
-    removeRoot: async (root) => {
-      roots.add(root);
-      attempts++;
-      if (attempts === 1) await rmdir(root);
-      else {
-        controller.abort(reason);
-        await rm(root, { recursive: true, force: true });
-      }
-    },
+  interceptFlutterRootRemoval(async (root) => {
+    roots.add(root);
+    attempts++;
+    if (attempts === 1) await rmdir(root);
+    else {
+      controller.abort(reason);
+      await realRm(root, { recursive: true, force: true });
+    }
   });
+  const provider = new FlutterBuildProvider();
   onTestFinished(() => provider.close());
   const request = {
     operation: "identify_flutter_build" as const,
@@ -2143,13 +2142,12 @@ it.each([false, true])(
     const controller = new AbortController();
     const reason = { caller: "cancel during snapshot cleanup" };
     let refuse = cleanupFails;
-    const provider = new FlutterBuildProvider({
-      removeRoot: async (root) => {
-        controller.abort(reason);
-        if (refuse) await rmdir(root);
-        else await rm(root, { recursive: true, force: true });
-      },
+    interceptFlutterRootRemoval(async (root) => {
+      controller.abort(reason);
+      if (refuse) await rmdir(root);
+      else await realRm(root, { recursive: true, force: true });
     });
+    const provider = new FlutterBuildProvider();
     onTestFinished(async () => {
       refuse = false;
       await provider.close();
@@ -2179,15 +2177,14 @@ it("retains cancellation when a prior failed root cannot be retired on admission
   const reason = { caller: "abort during failed retry" };
   let refuse = true;
   let attempts = 0;
-  const provider = new FlutterBuildProvider({
-    removeRoot: async (root) => {
-      attempts += 1;
-      if (refuse) {
-        if (attempts === 2) controller.abort(reason);
-        await rmdir(root);
-      } else await rm(root, { recursive: true, force: true });
-    },
+  interceptFlutterRootRemoval(async (root) => {
+    attempts += 1;
+    if (refuse) {
+      if (attempts === 2) controller.abort(reason);
+      await rmdir(root);
+    } else await realRm(root, { recursive: true, force: true });
   });
+  const provider = new FlutterBuildProvider();
   onTestFinished(async () => {
     refuse = false;
     await provider.close();
@@ -2220,14 +2217,13 @@ it("preserves a completed analysis failure through refused cleanup and late canc
   if (control.ok) throw new Error("Expected unsupported package control");
   const controller = new AbortController();
   let refuse = true;
-  const provider = new FlutterBuildProvider({
-    removeRoot: async (root) => {
-      if (refuse) {
-        controller.abort({ caller: "late failed cleanup" });
-        await rmdir(root);
-      } else await rm(root, { recursive: true, force: true });
-    },
+  interceptFlutterRootRemoval(async (root) => {
+    if (refuse) {
+      controller.abort({ caller: "late failed cleanup" });
+      await rmdir(root);
+    } else await realRm(root, { recursive: true, force: true });
   });
+  const provider = new FlutterBuildProvider();
   onTestFinished(async () => {
     refuse = false;
     await provider.close();

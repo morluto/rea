@@ -366,9 +366,18 @@ export const renderEmptyFilteredCliOutput = ({
   return undefined;
 };
 
+/** A refusal reported as a structured document before any command runs. */
+export interface CliPreExecutionError {
+  readonly format: StructuredOutputFormat;
+  readonly code:
+    | Exclude<CliOutputArgumentValidation, { readonly ok: true }>["code"]
+    | "AMP_PROJECT_SCOPE_UNSUPPORTED";
+  readonly message: string;
+}
+
 /** Render one complete structured error before command execution. */
 export const renderCliOutputArgumentError = (
-  error: Exclude<CliOutputArgumentValidation, { readonly ok: true }>,
+  error: CliPreExecutionError,
 ): string => {
   const value = {
     ok: false,

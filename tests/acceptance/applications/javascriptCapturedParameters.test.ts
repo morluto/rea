@@ -67,7 +67,6 @@ cliTest(
       },
     );
   },
-  120_000,
 );
 
 cliTest(
@@ -133,7 +132,6 @@ console.log(JSON.stringify([captured(5),assigned(5),between(5),intermediate(5),n
       );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -180,7 +178,6 @@ console.log(JSON.stringify([delayed(),incoming(5),delayedPrivate(),staticField()
         );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -246,7 +243,6 @@ console.log(JSON.stringify([optionalCall(null),optionalCall(receiver),optionalCa
       "app.ts",
     );
   },
-  120_000,
 );
 
 cliTest(
@@ -310,7 +306,6 @@ console.log(JSON.stringify([objectOrder(),bothSides(),arrayOrder(),computedOrder
       );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -361,7 +356,6 @@ console.log(JSON.stringify([read(),captured(object=>{object.value=3;})]));`,
       );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -431,7 +425,6 @@ console.log(JSON.stringify([objectPresent(),objectMissing(),arrayPresent(),array
         );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -508,5 +501,4 @@ cliTest(
       await harness.close();
     }
   },
-  120_000,
 );

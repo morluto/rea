@@ -45,7 +45,7 @@ export const collectNativeSymbols = (
       unsupported += 1;
     } else {
       accepted += 1;
-      symbols.push(...observation.symbols);
+      for (const symbol of observation.symbols) symbols.push(symbol);
       if (observation.exportCoverage !== undefined) {
         if (!observation.exportCoverage.exhaustive) partialExports = true;
         for (const limitation of observation.exportCoverage.limitations)

@@ -215,7 +215,9 @@ export const decompileDirectoryManifestSchema = z
       ),
     limitations: z
       .array(z.string())
-      .describe("Limits of this export. Pseudocode is not included."),
+      .describe(
+        "Limits of this export directory. The body-coverage caveat counts every retained function record, including records earlier runs wrote. Pseudocode is not included.",
+      ),
     resume: z.boolean().describe("Whether this call continued a journal."),
   })
   .superRefine((manifest, context) => {
@@ -366,7 +368,11 @@ export const decompileDirectoryIndexSchema = z.strictObject({
     .describe(
       "Selection and inventory limitations owned by the run that last rewrote this index. Absent in indexes written before this field existed.",
     ),
-  limitations: z.array(z.string()),
+  limitations: z
+    .array(z.string())
+    .describe(
+      "Limits of this export directory. The body-coverage caveat counts every retained function record, including records earlier runs wrote.",
+    ),
   functions: z.array(decompileDirectoryFunctionSchema),
 });
 

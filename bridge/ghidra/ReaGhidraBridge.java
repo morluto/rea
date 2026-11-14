@@ -77,6 +77,8 @@ import ghidra.program.model.data.StringDataInstance;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.scalar.Scalar;
+import ghidra.program.model.listing.Bookmark;
+import ghidra.program.model.listing.BookmarkType;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.DataIterator;
@@ -3987,6 +3989,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private final class FunctionBoundaryLimitations {
         private final Function function;
         private final List<String> limitations = new ArrayList<>();
+        private boolean inferredNoReturnCall;
         private Instruction beforePrevious;
         private Instruction previous;
 
@@ -3996,8 +3999,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         private void observe(Instruction instruction) throws Exception {
             monitor.checkCancelled();
-            String limitation = terminalCallLimitation(instruction);
-            if (limitation != null) limitations.add(limitation);
+            TerminalCall terminal = terminalCall(instruction);
+            if (terminal != null) {
+                limitations.add(terminal.limitation());
+                if (terminal.inferredNoReturn()) inferredNoReturnCall = true;
+            }
             if (beforePrevious != null && previous != null) {
                 String seh = borlandSehHandlerLimitation(
                     function, beforePrevious, previous, instruction);
@@ -4008,8 +4014,40 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
 
         private List<String> values() {
-            return List.copyOf(limitations);
+            if (!inferredNoReturnCall) return List.copyOf(limitations);
+            List<String> result = new ArrayList<>();
+            // One consequence and recovery per function, ahead of the call-specific facts so a
+            // bounded summary that admits limitations in order keeps it. The text names no
+            // address, so those summaries also deduplicate it across functions.
+            result.add("A terminal call in this function targets a callee that " +
+                "Ghidra's Non-Returning Functions - Discovered analyzer inferred cannot return, so Ghidra " +
+                "excluded that call's fall-through from the analyzed body and from the pseudocode and facts " +
+                "derived from it. If the callee returns, code reachable only through that fall-through is " +
+                "missing from this result. To compare, analyze a fresh import with " +
+                "REA_GHIDRA_DISABLED_ANALYZERS='Non-Returning Functions - Discovered'.");
+            result.addAll(limitations);
+            return result;
         }
+    }
+
+    /** A terminal call's limitation and whether its no-return flag was analyzer-inferred. */
+    private record TerminalCall(String limitation, boolean inferredNoReturn) {}
+
+    /**
+     * Ghidra's Non-Returning Functions - Discovered analyzer bookmarks each entry it marks with
+     * this Analysis comment; the name-list Known analyzer uses "Non-Returning Function Identified".
+     * A missing bookmark leaves the flag's origin unknown, never declared.
+     */
+    private boolean discoveredNoReturn(Function target) {
+        Function thunked = target.isThunk() ? target.getThunkedFunction(true) : null;
+        return hasDiscoveredNoReturnBookmark(target) ||
+            (thunked != null && hasDiscoveredNoReturnBookmark(thunked));
+    }
+
+    private boolean hasDiscoveredNoReturnBookmark(Function function) {
+        Bookmark bookmark = currentProgram.getBookmarkManager().getBookmark(
+            function.getEntryPoint(), BookmarkType.ANALYSIS, "Non-Returning Function");
+        return bookmark != null && "Non-Returning Function Found".equals(bookmark.getComment());
     }
 
     private String borlandSehHandlerLimitation(
@@ -4104,9 +4142,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
-    private String terminalCallLimitation(Instruction instruction) {
+    private TerminalCall terminalCall(Instruction instruction) {
         if (!instruction.getFlowType().isCall() || !instruction.getFlowType().isTerminal())
             return null;
+        boolean inferred = false;
         Address[] destinations = instruction.getFlows();
         StringBuilder limitation = new StringBuilder();
         limitation.append("Ghidra Listing reports a terminal call at ")
@@ -4135,14 +4174,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Function target = destinations.length == 1
                 ? currentProgram.getFunctionManager().getFunctionAt(destinations[0])
                 : null;
-            if (target != null && target.hasNoReturn()) {
+            if (target != null && target.hasNoReturn() && discoveredNoReturn(target)) {
+                inferred = true;
+                limitation.append(" Ghidra's Non-Returning Functions - Discovered analyzer bookmarked this callee as a non-returning function it found; the flag is an analysis inference, not an independent verification that the callee cannot return.");
+            }
+            else if (target != null && target.hasNoReturn()) {
                 limitation.append(" This records Ghidra's FunctionManager flag, not an independent verification that the callee cannot return.");
             }
             else {
                 limitation.append(" The reason for the terminal flow is not established by this observation.");
             }
         }
-        return limitation.toString();
+        return new TerminalCall(limitation.toString(), inferred);
     }
 
     private static String renderAssembly(List<Instruction> instructions) {

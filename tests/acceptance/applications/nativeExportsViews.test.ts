@@ -20,7 +20,6 @@ const viewContract = toolContract("inspect_analysis_view");
 
 cliTest.for(["pe", "elf"] as const)(
   "queries retained %s exports through CLI and actual stdio MCP after the source is deleted",
-  { timeout: 60_000 },
   async (format, { cli }) => {
     const root = await createTestTempDirectory("rea-export-views-");
     const path = join(root, `library.${format}`);
@@ -41,7 +40,7 @@ cliTest.for(["pe", "elf"] as const)(
             versionDefinitions: ["fixture", "V1"],
           });
     await writeFile(path, bytes);
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const complete = await run({
       arguments: ["inspect-native-exports", path, "--json"],
     });

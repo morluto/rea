@@ -53,7 +53,6 @@ for (const [fixture, factory, ordinaryPath, malformedPath] of [
         ["--input-type=module", "-e", program],
         {
           cwd: fileURLToPath(new URL("../../../", import.meta.url)),
-          timeoutMs: 10_000,
         },
       );
       expect(result.signal, result.stderr).toBeNull();

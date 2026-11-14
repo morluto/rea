@@ -591,7 +591,7 @@ cliTest(
 
     const result = await analyzeJavaScriptDirectory(
       "CLI",
-      { run: (invocation) => cli.run({ ...invocation, timeoutMs: 20_000 }) },
+      { run: (invocation) => cli.run({ ...invocation }) },
       root,
     );
     expect(result.statistics.parse_failures).toBe(0);

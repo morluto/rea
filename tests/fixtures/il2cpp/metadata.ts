@@ -485,16 +485,6 @@ export const fixtureRows = (options: Il2cppMetadataFixtureOptions = {}) => {
   return { types, methods };
 };
 
-/** A zero-filled section of `count` records, or none when `count` is 0. */
-const zeroFilledSection = (
-  name: SectionName,
-  count: number,
-  recordBytes: number,
-): [SectionName, SectionContent][] =>
-  count === 0
-    ? []
-    : [[name, { bytes: Buffer.alloc(count * recordBytes), count }]];
-
 /** Real rows followed by zero-filled rows that no owner claims. */
 const paddedRows = (
   rows: Buffer,

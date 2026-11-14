@@ -11,10 +11,11 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { resolve, join, dirname } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { afterAll, expect, it, onTestFinished } from "vitest";
 import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
@@ -29,6 +30,9 @@ import {
   searchGuidanceOutputSchema,
   readGuidanceSectionOutputSchema,
 } from "../../../src/contracts/guidanceContracts.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const connect = async (
   mode: "legacy" | "auto",
@@ -53,7 +57,8 @@ const connect = async (
   });
   const client = new Client(
     { name: "deferred-runtime-boundary", version: "1" },
-    { versionNegotiation: { mode } },
+    // Compile output validators for the tools a test calls, not the catalog.
+    { versionNegotiation: { mode }, jsonSchemaValidator: schemaValidation },
   );
   onTestFinished(async () => {
     await closeVerifierResources([

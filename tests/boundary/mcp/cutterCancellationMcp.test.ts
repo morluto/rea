@@ -1,6 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { chmod, rm, writeFile } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
@@ -164,7 +165,11 @@ it("shares one cleanup proof across concurrent Cutter MCP commands without Binar
     const first = call("first queued command");
     const second = call("second queued command");
     pending = [first, second];
-    await entered;
+    await awaitAcknowledgement(
+      entered,
+      Promise.race([first, second]),
+      "Cutter cleanup verification",
+    );
     await new Promise<void>((resolve) => setImmediate(resolve));
     releaseProof();
     const results = await Promise.all([first, second]);
@@ -252,7 +257,7 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
       { name: "list_cutter_sessions", arguments: {} },
       { signal: controller.signal },
     );
-    await connected;
+    await awaitAcknowledgement(connected, request, "Cutter discovery", 10_000);
     controller.abort(new Error("selected discovery cancellation"));
     await expect(request).rejects.toThrow("selected discovery cancellation");
     await expect.poll(() => settled).toBe(true);
@@ -279,9 +284,12 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
   } finally {
     controller.abort();
     for (const socket of sockets) socket.destroy();
-    await Promise.allSettled([client.close(), server.close()]);
-    await service.close();
-    await new Promise<void>((resolve) => peer.close(() => resolve()));
+    try {
+      await Promise.allSettled([client.close(), server.close()]);
+      await service.close();
+    } finally {
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
+    }
   }
 });
 

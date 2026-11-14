@@ -4,11 +4,16 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { resolve } from "node:path";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { expect } from "vitest";
+import { afterAll, expect } from "vitest";
 
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { workspaceCliTest as test } from "../../support/cli/workspaceCliFixture.js";
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const isolatedEnvironment = (workspace: TestWorkspace) => ({
   // Discovery still needs the host's process-ownership prerequisites, such as ps.
@@ -71,10 +76,13 @@ test("retains the selected endpoint when a direct JEB connection fails", async (
       },
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "jeb-endpoint-acceptance",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "jeb-endpoint-acceptance",
+        version: "1",
+      },
+      { jsonSchemaValidator: schemaValidation },
+    );
     await withVerifierCleanup(async () => {
       await client.connect(transport);
       const definition = (await client.listTools()).tools.find(
@@ -142,7 +150,10 @@ test("starts production stdio MCP and retains peer requests around a JEB configu
     env: isolatedEnvironment(workspace),
     stderr: "pipe",
   });
-  const client = new Client({ name: "jeb-isolation-acceptance", version: "1" });
+  const client = new Client(
+    { name: "jeb-isolation-acceptance", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   let stderr = "";
   transport.stderr?.on("data", (chunk: Buffer) => {
     stderr += chunk.toString("utf8");

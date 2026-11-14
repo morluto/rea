@@ -23,7 +23,6 @@ cliTest("mcp add rejects valued options without a value", async ({ cli }) => {
       arguments: [...arguments_, "--json"],
       cwd: root,
       environment: await registrationEnvironment(selectedHome),
-      timeoutMs: 20_000,
     });
 
   for (const [flag, field] of [
@@ -106,7 +105,6 @@ cliTest(
         arguments: [...arguments_, "--json"],
         cwd: root,
         environment,
-        timeoutMs: 20_000,
       });
 
     // Incur skips a stray word, so the registration used to succeed for a request
@@ -178,7 +176,6 @@ cliTest(
         arguments: [...arguments_, "--json"],
         cwd: root,
         environment,
-        timeoutMs: 20_000,
       });
 
     // A stray word alongside a missing value: the message describes the missing
@@ -223,7 +220,6 @@ cliTest(
       ],
       cwd: project,
       environment,
-      timeoutMs: 20_000,
     });
     expect(result.exitCode, result.stderr).toBe(1);
     expect(result.json).toMatchObject({

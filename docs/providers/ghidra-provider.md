@@ -338,7 +338,18 @@ handler execution or change the body. Instruction windows and dossiers also
 retain these warnings in their result limitations. An unresolved callee or
 unestablished terminal-flow basis remains explicit. These observations qualify
 the analysis; they do not prove that a no-return flag is incorrect or recover
-excluded code. Analysis profiles version this observation contract so older
+excluded code. When the callee's entry, or the function a thunk forwards to,
+carries the `Non-Returning Function Found` analysis bookmark that Ghidra's
+`Non-Returning Functions - Discovered` analyzer writes, the call's limitation
+says the flag was inferred, and the function's limitations add one statement
+that Ghidra excluded that call's fall-through from the body and pseudocode, so
+code reachable only through it is missing if the callee returns. That analyzer can mark returning callees, such as an
+imported `operator new` thunk, so a constructor may decompile to a few lines. To
+compare, open a fresh import with
+`REA_GHIDRA_DISABLED_ANALYZERS='Non-Returning Functions - Discovered'`; an
+existing project (`REA_GHIDRA_PROJECT_PATH`) keeps the flags its analysis
+already stored. A flag without that bookmark keeps an unknown origin; REA does
+not treat it as declared. Analysis profiles version this observation contract so older
 snapshots cannot replay unqualified results.
 
 On non-Windows hosts, the ephemeral import repair clears no-return flags on the
