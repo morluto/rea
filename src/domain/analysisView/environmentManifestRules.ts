@@ -486,7 +486,7 @@ const sharedShape = (bucket: readonly ToolGroup[]): ToolGroup => {
   );
 };
 
-/** Template literals at positions another tool templates by an opt-in rule after the same preceding parts, at any method or length. */
+/** Template literals at positions another tool templates by an opt-in rule after the same preceding parts, at any method, on routes within the segment limit. */
 const mergePrefixVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
   let current = [...groups];
   const longest = Math.max(0, ...current.map((group) => group.parts.length));
