@@ -623,6 +623,11 @@ npm ci
 npm run build:cached
 ```
 
+These commands build the runtime and packaged skill. They do not build the
+Windows x64 native addon or its manifest. Windows workflows that need native
+controls, including Ghidra analysis from a checkout, need the extra step in
+[Windows source checkouts](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#windows-source-checkouts).
+
 Then run `npm link` once in the checkout to put its `rea` on your `PATH`, or,
 wherever these docs say `rea …`, run
 `node /absolute/path/to/rea/scripts/rea.mjs …`. Setup run this way registers
