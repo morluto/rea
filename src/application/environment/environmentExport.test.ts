@@ -120,6 +120,15 @@ describe("readEnvironmentExportInputs", () => {
   });
 });
 
+it("does not create parents for a rejected trailing dot-dot output selection", async () => {
+  const { root, input } = await prepare("rea-environment-export-invalid-root-");
+  const parent = join(root, "untouched");
+  const directory = `${join(parent, "a", "b", "c")}/..`;
+  const result = await exportEnvironmentBundle({ ...input, directory });
+  expect(result.ok).toBe(false);
+  await expect(readdir(parent)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
 const registerBundlePublicationCases = () => {
   it("writes the bundle into an absent directory with the read bytes copied unchanged", async () => {
     const { root, files, input, directory } = await prepare(
