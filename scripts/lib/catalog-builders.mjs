@@ -48,7 +48,7 @@ export const providerCatalog = (sources) => {
       let selectedOperations = operations;
       if (!Array.isArray(operations)) {
         const contracts =
-          sources.toolFamilies.TOOL_CONTRACT_GROUPS[operations.group];
+          sources.toolContracts.TOOL_CONTRACT_GROUPS[operations.group];
         if (contracts === undefined)
           throw new TypeError(
             `Provider ${identity.id} declares an unknown contract group: ${operations.group}`,

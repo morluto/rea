@@ -1,7 +1,9 @@
 // oxlint-disable max-lines -- Keep the exhaustive static provenance bindings together; this table has no execution or host-availability logic.
 import type { ProviderIdentity } from "../application/AnalysisProvider.js";
-import type { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
-import type { ToolContractGroupId } from "../contracts/toolFamilies.js";
+import type {
+  TOOL_CONTRACTS,
+  ToolContractGroupId,
+} from "../contracts/toolContracts.js";
 import { ADB_PROVIDER_IDENTITY } from "../adb/AdbProviderIdentity.js";
 import { JADX_PROVIDER_IDENTITY } from "../android/JadxRelease.js";
 import { APK_SIGNATURE_PROVIDER_IDENTITY } from "../apkSignature/ApkSignatureRelease.js";
