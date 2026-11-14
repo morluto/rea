@@ -187,6 +187,53 @@ it.each([1, 2])(
   },
 );
 
+it.each([
+  [32, true],
+  [32, false],
+  [64, true],
+  [64, false],
+] as const)(
+  "validates ELF%i little-endian=%s decoded section-name alignment",
+  (bits, little) => {
+    const highest = 1n << BigInt(bits - 1);
+    const sample = (compressionType: number, alignment: bigint) => {
+      const bytes = compressedElfNoteFixture(bits, little, compressionType);
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
+      const wide = bits === 64;
+      const word = (at: number) =>
+        wide
+          ? Number(view.getBigUint64(at, little))
+          : view.getUint32(at, little);
+      const namesHeader =
+        word(wide ? 40 : 32) +
+        view.getUint16(wide ? 58 : 46, little) *
+          view.getUint16(wide ? 62 : 50, little);
+      const header = word(namesHeader + (wide ? 24 : 16));
+      if (wide) view.setBigUint64(header + 16, alignment, little);
+      else view.setUint32(header + 8, Number(alignment), little);
+      return bytes;
+    };
+    for (const algorithm of [1, 2]) {
+      for (const alignment of [0n, 1n, highest]) {
+        const bytes = sample(algorithm, alignment);
+        expect(parse(bytes).tables[0]?.name).toBe(".note.gnu.build-id");
+        expect(readElfDirectoryFromBuffer(bytes).sections[1]?.name).toBe(
+          ".note.gnu.build-id",
+        );
+      }
+      for (const alignment of [3n, highest + 1n]) {
+        const bytes = sample(algorithm, alignment);
+        expect(() => parse(bytes)).toThrow(
+          /compressed section-name.*alignment/u,
+        );
+        expect(() => readElfDirectoryFromBuffer(bytes)).toThrow(
+          /compressed section-name.*alignment/u,
+        );
+      }
+    }
+  },
+);
+
 it.each([1, 2])(
   "rejects malformed algorithm %i section-name storage",
   (compressionType) => {

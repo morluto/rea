@@ -44,6 +44,19 @@ export const decodeElfSectionNameTable = (
   )
     return { state: "unsupported", compressionType };
 
+  const alignment =
+    bits === 64
+      ? little
+        ? bytes.readBigUInt64LE(16)
+        : bytes.readBigUInt64BE(16)
+      : BigInt(little ? bytes.readUInt32LE(8) : bytes.readUInt32BE(8));
+  if (alignment !== 0n && (alignment & (alignment - 1n)) !== 0n)
+    return {
+      state: "malformed",
+      message:
+        "ELF compressed section-name table alignment must be zero or a power of two",
+    };
+
   const declaredSize =
     bits === 64
       ? little
