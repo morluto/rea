@@ -177,37 +177,6 @@ describe("native export text capacity", () => {
     }
   });
 
-  it("keeps count recovery for an export table above the entry allowance", async () => {
-    const root = await createTestTempDirectory("rea-native-export-rows-");
-    const path = join(root, "rows.dll");
-    await writeFile(
-      path,
-      peExportImage({ functions: [], declaredFunctions: 0x40001 }),
-    );
-    const service = createNativeExportsService();
-    try {
-      const result = await service.inspect({ path });
-      if (result.ok) throw new Error("Expected entry allowance refusal");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisResourceConstraintError",
-        resource: "capacity",
-        reportedLimits: { boundary: "structure", maximum: 262144 },
-        retryable: false,
-        fixedAllowance: {
-          name: expect.stringContaining(
-            "262144-entry native export inventory allowance",
-          ),
-          kind: "count",
-        },
-      });
-      const action = analysisErrorRemediationAction(result.error);
-      expect(action).toContain("fixed count");
-      expect(action).not.toContain("fixed byte allowance");
-    } finally {
-      await service.close();
-    }
-  });
-
   it.each(["symbol", "version"] as const)(
     "bounds UTF-8 bytes of retained ELF %s text and its exact-byte spelling",
     async (kind) => {
@@ -299,6 +268,39 @@ describe("native export text capacity", () => {
           });
         }
       }
+    } finally {
+      await service.close();
+    }
+  });
+});
+
+describe("native export entry allowance", () => {
+  it("keeps count recovery for an export table above the entry allowance", async () => {
+    const root = await createTestTempDirectory("rea-native-export-rows-");
+    const path = join(root, "rows.dll");
+    await writeFile(
+      path,
+      peExportImage({ functions: [], declaredFunctions: 0x40001 }),
+    );
+    const service = createNativeExportsService();
+    try {
+      const result = await service.inspect({ path });
+      if (result.ok) throw new Error("Expected entry allowance refusal");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        resource: "capacity",
+        reportedLimits: { boundary: "structure", maximum: 262144 },
+        retryable: false,
+        fixedAllowance: {
+          name: expect.stringContaining(
+            "262144-entry native export inventory allowance",
+          ),
+          kind: "count",
+        },
+      });
+      const action = analysisErrorRemediationAction(result.error);
+      expect(action).toContain("fixed count");
+      expect(action).not.toContain("fixed byte allowance");
     } finally {
       await service.close();
     }
