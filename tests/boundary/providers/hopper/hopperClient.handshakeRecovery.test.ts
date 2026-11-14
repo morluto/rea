@@ -262,9 +262,9 @@ it("recovers an application exit after the first valid handshake occurs during c
       expect(projectAnalysisError(closed.error)).toMatchObject({
         code: "cleanup_incomplete",
         details: {
+          resources: expect.arrayContaining(["hopper-document"]),
           diagnostics: {
             authenticated_application: "readable",
-            shutdown_request: { method: "shutdown_document", status: "failed" },
           },
         },
       });
