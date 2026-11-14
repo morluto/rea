@@ -17,10 +17,10 @@ const listing = vi.hoisted(() => ({
   directory: "",
   names: [] as string[],
   gate: undefined as Promise<void> | undefined,
-  arrived: 0,
+  onSnapshot: undefined as (() => void) | undefined,
   touchPath: "",
   touchGate: undefined as Promise<void> | undefined,
-  touched: false,
+  onTouch: undefined as (() => void) | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -29,7 +29,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     readdir: async (...args: Parameters<typeof actual.readdir>) => {
       if (String(args[0]) === listing.directory && listing.gate !== undefined) {
-        listing.arrived += 1;
+        listing.onSnapshot?.();
         await listing.gate;
         return listing.names;
       }
@@ -41,7 +41,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         String(args[0]) === listing.touchPath &&
         listing.touchGate !== undefined
       ) {
-        listing.touched = true;
+        listing.onTouch?.();
         await listing.touchGate;
       }
     },
@@ -52,10 +52,10 @@ afterEach(() => {
   listing.directory = "";
   listing.gate = undefined;
   listing.names = [];
-  listing.arrived = 0;
+  listing.onSnapshot = undefined;
   listing.touchPath = "";
   listing.touchGate = undefined;
-  listing.touched = false;
+  listing.onTouch = undefined;
 });
 
 const it = test.skipIf(process.platform === "win32");
@@ -189,11 +189,15 @@ it("protects a cache request that arrives after an eviction snapshot starts", as
   const first = await cache.build(firstInput);
   if (!first.ok) throw first.error;
   const snapshot = barrier();
+  const snapshotStarted = barrier();
   const touch = barrier();
+  const touchStarted = barrier();
   listing.directory = join(cacheRoot, "projects");
   listing.gate = snapshot.promise;
+  listing.onSnapshot = snapshotStarted.release;
   listing.touchPath = join(listing.directory, first.value.key);
   listing.touchGate = touch.promise;
+  listing.onTouch = touchStarted.release;
   const releases: (() => void)[] = [];
   const pinResult = async (pending: ReturnType<KunaProjectCache["build"]>) => {
     const result = await pending;
@@ -211,9 +215,21 @@ it("protects a cache request that arrives after an eviction snapshot starts", as
     const closed = await cache.close();
     if (!closed.ok) throw closed.error;
   });
-  await expect.poll(() => listing.arrived).toBe(1);
+  await Promise.race([
+    snapshotStarted.promise,
+    second.then(() => {
+      throw new Error(
+        "Export completed without reaching the eviction snapshot",
+      );
+    }),
+  ]);
   warm = pinResult(cache.build(firstInput));
-  await expect.poll(() => listing.touched).toBe(true);
+  await Promise.race([
+    touchStarted.promise,
+    warm.then(() => {
+      throw new Error("Cache request completed without touching its entry");
+    }),
+  ]);
   listing.names = await actual.readdir(listing.directory);
   snapshot.release();
   await second;
