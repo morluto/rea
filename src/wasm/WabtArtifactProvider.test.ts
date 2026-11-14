@@ -679,6 +679,34 @@ const assertFailedInspectionCleanupRecovery = async (
   });
 };
 
+it("keeps a rejected relative tool directory in the refusal diagnostics", async () => {
+  const provider = new WabtArtifactProvider(
+    { REA_WABT_BIN_DIRECTORY: "wabt/bin" },
+    undefined,
+    () => {
+      throw new Error("Must not allocate");
+    },
+  );
+  expect(
+    await provider.inspect({
+      path: "/module.wasm",
+      glue_paths: [],
+      candidate_paths: [],
+    }),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      reason: "directory_not_absolute",
+      diagnostics: {
+        code: "directory_not_absolute",
+        setting: "REA_WABT_BIN_DIRECTORY",
+        configured: "wabt/bin",
+      },
+    },
+  });
+});
+
 it("returns actionable unavailable without creating a workspace when tools are absent", async () => {
   const provider = new WabtArtifactProvider({}, undefined, () => {
     throw new Error("Must not allocate");
