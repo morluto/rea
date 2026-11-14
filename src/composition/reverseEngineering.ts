@@ -6,6 +6,7 @@ import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js
 import {
   rizinCommand,
   rizinCommandLimitations,
+  rizinCommandRejection,
 } from "../rizin/RizinCommand.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
 import { resolveWindowsProviderExecutable } from "./resolveWindowsProviderExecutable.js";
@@ -32,6 +33,7 @@ export const createReverseEngineeringCommandPort = (
     ),
     arguments: rizinCommand(input),
     limitations: rizinCommandLimitations(input),
+    rejection: rizinCommandRejection,
     identity: RIZIN_PROVIDER_IDENTITY,
   }),
 });

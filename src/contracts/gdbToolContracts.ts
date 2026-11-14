@@ -63,7 +63,7 @@ export const GDB_TOOL_CONTRACTS = [
     ...toolContractMetadata("gdb_session_status"),
     kind: "native-provider",
     description:
-      "Return the observed lifecycle state and bounded recent MI records and process diagnostics for one persistent REA GDB session; truncation and invalid-UTF-8 fields report discarded or lossy data.",
+      "Return the observed lifecycle state and bounded recent MI records and process diagnostics for one persistent REA GDB session; closed_reason says why a closed session stopped, and truncation and invalid-UTF-8 fields report discarded or lossy data.",
     inputSchema: z.strictObject({ session_id: sessionId }),
     outputSchema: z.strictObject({
       session_id: sessionId,
@@ -79,6 +79,12 @@ export const GDB_TOOL_CONTRACTS = [
       diagnostics_truncated: z.boolean(),
       inferior_tty: z.string().nullable(),
       inferior_tty_verified: z.boolean(),
+      closed_reason: z
+        .string()
+        .exactOptional()
+        .describe(
+          "Present when state is closed: why the session stopped accepting commands. Close it and start a new session to continue.",
+        ),
     }),
     examples: [
       {
