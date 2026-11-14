@@ -96,7 +96,7 @@ export const skillReferenceIssues = async (skillRoot) => {
 // Living prose that would restate the catalog size. Dated records keep the
 // count they measured: release notes, feature specs, verification records and
 // decision records describe a past build.
-const LIVING_PROSE_ROOTS = [
+export const LIVING_PROSE_ROOTS = [
   "README.md",
   "CONTRIBUTING.md",
   "AGENTS.md",
@@ -104,28 +104,37 @@ const LIVING_PROSE_ROOTS = [
   ".agents/skills",
   "website/public",
 ];
-const DATED_PROSE = /^docs\/(?:releases|specs|verification|adr)\//u;
+const SKIPPED_PROSE =
+  /^docs\/(?:releases|specs|verification|adr|\.vitepress\/dist)\//u;
 const PROSE_FILE = /\.(?:md|html)$/u;
 // A count of ten or more tools, such as "240 tools" or "all 1,024 MCP tools".
 const LITERAL_TOOL_COUNT =
   /\b[1-9]\d*(?:,\d{3})*\s+(?:(?:REA|public|MCP|canonical|registered|advertised|available)\s+)*tools\b/giu;
 
+/** Whether the literal tool count check scans this repository-relative path. */
+export const isLivingProsePath = (path) =>
+  PROSE_FILE.test(path) &&
+  !SKIPPED_PROSE.test(path) &&
+  LIVING_PROSE_ROOTS.some(
+    (start) => path === start || path.startsWith(`${start}/`),
+  );
+
 const proseFiles = async (root) => {
   const files = [];
   const walk = async (path) => {
-    if (path === "docs/.vitepress/dist" || DATED_PROSE.test(`${path}/`)) return;
+    if (SKIPPED_PROSE.test(`${path}/`)) return;
     for (const entry of await readdir(join(root, path), {
       withFileTypes: true,
     })) {
       const child = `${path}/${entry.name}`;
       if (entry.isDirectory()) await walk(child);
-      else if (entry.isFile() && PROSE_FILE.test(child)) files.push(child);
+      else if (entry.isFile() && isLivingProsePath(child)) files.push(child);
     }
   };
   for (const start of LIVING_PROSE_ROOTS) {
     try {
       if ((await stat(join(root, start))).isDirectory()) await walk(start);
-      else if (PROSE_FILE.test(start)) files.push(start);
+      else if (isLivingProsePath(start)) files.push(start);
     } catch (cause) {
       if (cause?.code === "ENOENT") continue;
       throw cause;

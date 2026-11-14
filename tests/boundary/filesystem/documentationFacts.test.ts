@@ -1,5 +1,5 @@
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, matchesGlob } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
+  LIVING_PROSE_ROOTS,
   documentationFactIssues,
+  isLivingProsePath,
   literalToolCountIssues,
 } from "../../../scripts/lib/docs-facts.mjs";
 import type { ProductCatalog } from "../../../scripts/lib/product-catalog.mjs";
@@ -93,6 +95,29 @@ describe("literal tool counts", () => {
       'docs/guides/rea.md:1: literal tool count "207 REA tools"; link the generated catalog instead',
       'website/public/index.html:1: literal tool count "240 public tools"; link the generated catalog instead',
     ]);
+  });
+
+  it("invalidates the cached documentation check for every scanned root", async () => {
+    const turbo = JSON.parse(
+      await readFile(join(root, "turbo.json"), "utf8"),
+    ) as {
+      tasks: Record<string, { inputs: readonly (string | object)[] }>;
+    };
+    const globs = turbo.tasks["docs:check:built"]!.inputs.filter(
+      (input): input is string => typeof input === "string",
+    );
+    const cached = (path: string) =>
+      globs.some((glob) => !glob.startsWith("!") && matchesGlob(path, glob)) &&
+      !globs.some(
+        (glob) => glob.startsWith("!") && matchesGlob(path, glob.slice(1)),
+      );
+    const samples = LIVING_PROSE_ROOTS.flatMap((start) =>
+      isLivingProsePath(start)
+        ? [start]
+        : [`${start}/nested/page.md`, `${start}/nested/page.html`],
+    );
+    expect(samples.every(isLivingProsePath)).toBe(true);
+    expect(samples.filter((path) => !cached(path))).toEqual([]);
   });
 
   it("finds none in the repository's living prose", async () => {
