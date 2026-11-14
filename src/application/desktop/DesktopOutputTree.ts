@@ -1,4 +1,5 @@
-import { lstat, mkdir, readdir } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, lstat, readdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute } from "node:path";
 
 import {
@@ -101,6 +102,68 @@ const outputCancellation = (
     : undefined;
 
 /**
+ * Admit a new or empty desktop output folder with the same destination rules
+ * `SafeOutputTree` publication enforces, before any work that would write to
+ * it starts: the path must be absolute with a usable name, its parent must
+ * already exist as a directory, and the folder itself must be absent or an
+ * existing empty real directory the host can write to. A symlink — even to
+ * an empty directory — a regular file, a non-empty folder, and an unwritable
+ * folder or parent are all refused as `SafeOutputTreeDestinationRefusal`,
+ * so a caller that maps the refusal (see `outputDirectoryAdmissionRefusal`)
+ * reports `invalid_request` on its directory argument instead of discovering
+ * the refusal only when publication fails. Nothing is created here.
+ */
+export const admitNewOrEmptyOutputDirectory = async (
+  directory: string,
+): Promise<void> => {
+  const { canonicalOutput } =
+    await SafeOutputTree.resolveDestination(directory);
+  const existing = await lstat(canonicalOutput).catch((cause: unknown) => {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      return undefined;
+    throw new SafeOutputTreeDestinationRefusal(
+      "Output destination is unavailable",
+      { cause },
+    );
+  });
+  if (existing === undefined) {
+    await access(dirname(canonicalOutput), constants.W_OK | constants.X_OK).catch(
+      (cause: unknown) => {
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output parent is not writable",
+          { cause },
+        );
+      },
+    );
+    return;
+  }
+  // `lstat` on purpose: a symlink to a directory is not itself a directory,
+  // and publication refuses it, so admission must refuse it too.
+  if (!existing.isDirectory())
+    throw new SafeOutputTreeDestinationRefusal(
+      "Output destination must be a directory",
+    );
+  const entries = await readdir(canonicalOutput).catch((cause: unknown) => {
+    throw new SafeOutputTreeDestinationRefusal(
+      "Output directory is unavailable",
+      { cause },
+    );
+  });
+  if (entries.length > 0)
+    throw new SafeOutputTreeDestinationRefusal(
+      "Output directory is not empty",
+    );
+  await access(canonicalOutput, constants.W_OK | constants.X_OK).catch(
+    (cause: unknown) => {
+      throw new SafeOutputTreeDestinationRefusal(
+        "Output directory is not writable",
+        { cause },
+      );
+    },
+  );
+};
+
+/**
  * Write a new or empty folder through the safe output tree, rolling an
  * unpublished tree back on any failure so no partial copy remains. A
  * published tree is kept; its cleanup and cancellation facts are returned. A
@@ -114,7 +177,6 @@ export const writeOutputTree = async (
 ): Promise<DesktopOutputCompletion> => {
   const cancelled = outputCancellation(refusal.operation, signal);
   if (cancelled !== undefined) throw cancelled;
-  await mkdir(dirname(plan.physical), { recursive: true, mode: 0o700 });
   const resources = new ArtifactResourceScope();
   let tree: SafeOutputTree | undefined;
   let outcome:
@@ -122,6 +184,13 @@ export const writeOutputTree = async (
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
     try {
+      // Admit the destination before creating anything: a trailing `..` no
+      // longer creates its missing parent segment, and a reserved name, an
+      // unusable parent, a symlink or file root, or a non-empty or unwritable
+      // folder is refused as a refusal the caller can attribute to its
+      // directory argument. Inside the try so the refusal is mapped to the
+      // caller's field below, like a publication refusal.
+      await admitNewOrEmptyOutputDirectory(plan.physical);
       tree = await SafeOutputTree.create(plan.physical, process.platform, {
         acceptExistingEmpty: true,
       });

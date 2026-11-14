@@ -4,7 +4,6 @@ import {
   readdir,
   readFile,
   symlink,
-  unlink,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -21,7 +20,10 @@ import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapt
 import type { Evidence } from "../../domain/evidence.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
@@ -230,6 +232,15 @@ it("retains the bundle cleanup owner when a later withheld copy fails", async ()
     normalized_result: { directory },
   });
   expect(result.cleanupPrimary).toBeInstanceOf(Error);
+  // The copy fails at admission, so its refusal names the copy argument.
+  expect(result.cleanupPrimary).toBeInstanceOf(AnalysisInputError);
+  if (!(result.cleanupPrimary instanceof AnalysisInputError)) return;
+  expect(result.cleanupPrimary.issues).toContainEqual(
+    expect.objectContaining({
+      path: ["withheld_copy"],
+      reason: "invalid_value",
+    }),
+  );
   expect(result.secondaryFailures).toEqual([
     expect.objectContaining({ cleanupIncomplete: true }),
   ]);
@@ -237,13 +248,13 @@ it("retains the bundle cleanup owner when a later withheld copy fails", async ()
   const bundle = failures.find(({ owner }) => owner.resource === directory);
   const copy = failures.find(({ owner }) => owner.resource === occupied);
   expect(bundle).toBeDefined();
-  expect(copy).toBeDefined();
-  await bundle?.lease.release();
-  expect(result.cleanupIncomplete).toBe(true);
-  await expect(copy?.lease.release()).rejects.toThrow();
+  // Admission refuses the occupied copy folder before any tree exists for
+  // it, so no copy release is attempted and nothing is retained for it; the
+  // folder itself is left untouched.
+  expect(copy).toBeUndefined();
   expect(await readFile(join(occupied, "keep"), "utf8")).toBe("existing");
-  await unlink(join(occupied, "keep"));
-  await copy?.lease.release();
+  await bundle?.lease.release();
+  // The bundle was the only retained owner, so releasing it completes cleanup.
   expect(result.cleanupIncomplete).toBe(false);
   expect(projectAnalysisError(result)).toMatchObject({
     details: { partial_observation: { normalized_result: { directory } } },
