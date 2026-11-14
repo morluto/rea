@@ -915,7 +915,12 @@ const rejectsSecureProtocolLiteral = (
     !TLS_SECURE_PROTOCOLS.has(literal.value)
   )
     return true;
-  if (staticJavaScriptTruthiness(read) !== true) return false;
+  // A literal read exactly, including a no-substitution template, decides its own
+  // truthiness; the shared truthiness reader does not price templates.
+  const truthy = literal.found
+    ? Boolean(literal.value)
+    : staticJavaScriptTruthiness(read);
+  if (truthy !== true) return false;
   return (["minVersion", "maxVersion"] as const).some((member) => {
     const version = effective(member);
     if (version === undefined || version === "unknown") return false;
