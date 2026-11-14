@@ -8,6 +8,26 @@ import {
 import { test as base } from "vitest";
 
 const SHUTDOWN_GRACE_MS = 1_000;
+/** Minimum time kept back from a test deadline to stop a child and report it. */
+const MIN_REPORT_RESERVE_MS = 5_000;
+
+/**
+ * Default child deadline: the test's remaining deadline, less a reserve for
+ * stopping the child and reporting its captured output. A hung child then fails
+ * with its output instead of an opaque test timeout, without a fixed value that
+ * assumes a host's speed. Undefined when the test itself has no deadline.
+ */
+export const remainingProcessDeadline = (
+  testDeadlineMs: number,
+  elapsedMs: number,
+): number | undefined => {
+  if (!(testDeadlineMs > 0)) return undefined;
+  const reserve = Math.max(MIN_REPORT_RESERVE_MS, testDeadlineMs / 10);
+  return Math.max(
+    SHUTDOWN_GRACE_MS,
+    Math.floor(testDeadlineMs - elapsedMs - reserve),
+  );
+};
 
 /** Captured output and termination state from one child process. */
 export interface ProcessResult {
@@ -70,13 +90,17 @@ const stopChild = async (
   return waitForExit(child, SHUTDOWN_GRACE_MS);
 };
 
-/** Create a child-process registry for a fixture composition root. */
+/**
+ * Create a child-process registry for a fixture composition root. A run without
+ * its own `timeoutMs` uses `defaultTimeoutMs`, when supplied.
+ */
 export const createTestProcessRegistry = (
   spawnChild: (
     command: string,
     arguments_: readonly string[],
     options: SpawnOptionsWithoutStdio,
   ) => ChildProcessWithoutNullStreams = nodeSpawn,
+  defaultTimeoutMs?: () => number | undefined,
 ): TestProcesses => {
   const children = new Set<ChildProcessWithoutNullStreams>();
 
@@ -98,7 +122,11 @@ export const createTestProcessRegistry = (
   return {
     spawn,
     run: async (command, arguments_, options = {}) => {
-      const { input, timeoutMs, ...spawnOptions } = options;
+      const {
+        input,
+        timeoutMs = defaultTimeoutMs?.(),
+        ...spawnOptions
+      } = options;
       const child = spawn(command, arguments_, spawnOptions);
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
@@ -196,11 +224,16 @@ export const createTestProcessRegistry = (
   };
 };
 
-/** Vitest API extended with a bounded child-process registry. */
+/**
+ * Vitest API extended with a child-process registry whose runs are bounded by
+ * the remaining test deadline unless they choose their own.
+ */
 export const processTest = base.extend<{ processes: TestProcesses }>({
-  // oxlint-disable-next-line no-empty-pattern -- Vitest parses fixture dependencies from object destructuring.
-  processes: async ({}, use) => {
-    const processes = createTestProcessRegistry();
+  processes: async ({ task }, use) => {
+    const started = performance.now();
+    const processes = createTestProcessRegistry(nodeSpawn, () =>
+      remainingProcessDeadline(task.timeout, performance.now() - started),
+    );
     try {
       await use(processes);
     } finally {

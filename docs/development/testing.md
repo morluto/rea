@@ -307,7 +307,10 @@ assertion. `vitest.config.ts` applies the deadlines in
 and 120 seconds for built projects, with hooks sharing their project's
 deadline. Coverage doubles every deadline, and so does hosted CI, where
 CPU-bound cases share every core with other workers and their subprocesses.
-Do not pass a per-test timeout to fit a slow host. Tag a bounded workload that needs longer with
+Do not pass a per-test timeout to fit a slow host. A child started through
+the `processTest` registry, including `cli.run`, gets the test's remaining
+deadline less a reporting reserve, so a hung child fails with its captured
+output. Pass `timeoutMs` only when the child's deadline is itself under test. Tag a bounded workload that needs longer with
 `{ tags: ["long-running"] }`, or a whole file with
 `// @module-tag long-running`. Assert elapsed time explicitly when speed is the
 behavior under test. Derive an explicit deadline only when a test must outlive
