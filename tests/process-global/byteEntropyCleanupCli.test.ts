@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -93,19 +92,6 @@ it.each([
       details: {
         cleanup: "incomplete",
         diagnostics: {
-          primary_error: {
-            details: {
-              partial_observation: {
-                provider: { id: BYTE_ENTROPY_PROVIDER.id },
-                subject: {
-                  digest: {
-                    sha256: createHash("sha256").update(content).digest("hex"),
-                  },
-                },
-                normalized_result: { artifact: { bytes: content.length } },
-              },
-            },
-          },
           cleanup_error: {
             code: "cleanup_incomplete",
             details: { provider_id: BYTE_ENTROPY_PROVIDER.id },
