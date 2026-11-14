@@ -242,7 +242,7 @@ describe("apktoolInvocation", () => {
         "/v:off",
         "/s",
         "/c",
-        '""C:\\ProgramData\\chocolatey\\bin\\apktool.BAT" "d" "-o" "C:\\Users\\Analyst\\AppData\\Local\\Temp\\rea out""',
+        '" "C:\\ProgramData\\chocolatey\\bin\\apktool.BAT" "d" "-o" "C:\\Users\\Analyst\\AppData\\Local\\Temp\\rea out" "',
       ],
       windowsVerbatimArguments: true,
     });
@@ -331,7 +331,7 @@ describe("Windows PATH launcher selection", () => {
             "/v:off",
             "/s",
             "/c",
-            `"${[command, ...arguments_].map((token) => `"${token}"`).join(" ")}"`,
+            `" ${[command, ...arguments_].map((token) => `"${token}"`).join(" ")} "`,
           ],
           windowsVerbatimArguments: true,
         });
