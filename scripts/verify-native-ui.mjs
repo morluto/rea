@@ -21,6 +21,10 @@ let childExit;
 let fixturePid;
 let fixtureIdentity;
 let report;
+// `open -W` exits only after the app exits, so its own exit is the proof that
+// the fixture no longer runs from the root. Without it the root is retained.
+let retainedRoot;
+const FIXTURE_EXIT_GRACE_MS = 10_000;
 try {
   const childRetrievalTest = join(root, "child-retrieval-test");
   await promisify(execFile)("/usr/bin/xcrun", [
@@ -288,10 +292,30 @@ try {
       }
     }
   }
-  if (child !== undefined && child.exitCode === null) {
+  const fixtureExited =
+    child === undefined ||
+    child.exitCode !== null ||
+    child.signalCode !== null ||
+    (await Promise.race([
+      childExit.then(() => true),
+      new Promise((resolve) =>
+        setTimeout(() => resolve(false), FIXTURE_EXIT_GRACE_MS),
+      ),
+    ]));
+  if (fixtureExited) await rm(root, { recursive: true, force: true });
+  else {
+    // The app may have been reparented away from `open`; stopping `open`
+    // does not prove the fixture exited, so its root stays in place.
     child.kill("SIGTERM");
     await childExit;
+    retainedRoot = root;
+    process.stderr.write(
+      `Source-owned UI fixture exit was not observed; retained ${root}\n`,
+    );
   }
-  await rm(root, { recursive: true, force: true });
 }
+if (retainedRoot !== undefined)
+  throw new Error(
+    `Source-owned UI fixture exit was not observed; retained ${retainedRoot}`,
+  );
 process.stdout.write(`${JSON.stringify(report)}\n`);
