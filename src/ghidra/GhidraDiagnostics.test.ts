@@ -133,6 +133,35 @@ it.each([false, true])(
   },
 );
 
+it("retains bounded, redacted launcher failure lines before clipping output", () => {
+  const line =
+    "java.io.FileNotFoundException: /tmp/secret-token/java_home.save (Access is denied)";
+  const text = `${line}\n${"later output\n".repeat(7000)}`;
+  const stream = {
+    text,
+    bytes: Buffer.byteLength(text),
+    observedBytes: Buffer.byteLength(text),
+  };
+  const empty = { text: "", bytes: 0, observedBytes: 0 };
+  const output = ghidraFailureOutput(
+    {
+      snapshot: { stdout: empty, stderr: stream, exitCode: 1, signal: null },
+      complete: true,
+    },
+    "secret-token",
+    false,
+  );
+  expect(output).toMatchObject({
+    observed_launcher_lines: {
+      lines: [
+        "java.io.FileNotFoundException: /tmp/[REDACTED]/java_home.save (Access is denied)",
+      ],
+      truncated: false,
+    },
+  });
+  expect(JSON.stringify(output)).not.toContain("secret-token");
+});
+
 it.each([
   [undefined, false],
   [true, true],

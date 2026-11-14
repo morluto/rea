@@ -1630,9 +1630,18 @@ const projectPrimarySessionError = (
     output,
   );
   const uncertainty =
-    output?.complete === false
-      ? "Ghidra's output for this operation is incomplete. No OutOfMemoryError was confirmed; a memory cause cannot be ruled out."
-      : undefined;
+    [
+      ...(output?.complete === false
+        ? [
+            "Ghidra's output for this operation is incomplete. No OutOfMemoryError was confirmed; a memory cause cannot be ruled out.",
+          ]
+        : []),
+      ...(output?.launcherLinesTruncated === true
+        ? [
+            "The launcher failure-line summary is incomplete; a more specific cause may be omitted.",
+          ]
+        : []),
+    ].join(" ") || undefined;
   if (memoryFailure !== undefined) return memoryFailure;
   if (
     programName !== undefined &&
@@ -1705,6 +1714,7 @@ const observedJvmFailureSchema = z.object({
 interface GhidraFailureOutputView {
   readonly oomText: string | undefined;
   readonly complete: boolean | undefined;
+  readonly launcherLinesTruncated: boolean;
   readonly text: readonly string[];
 }
 
@@ -1775,14 +1785,30 @@ const readGhidraFailureOutput = (
     oomText: observedLines.length === 0 ? undefined : observedLines.join("\n"),
     complete:
       typeof scoped.complete === "boolean" ? scoped.complete : undefined,
-    text: [scoped.stdout, scoped.stderr].flatMap((stream) =>
-      stream !== null &&
-      typeof stream === "object" &&
-      !Array.isArray(stream) &&
-      typeof stream.text === "string"
-        ? [stream.text]
-        : [],
-    ),
+    launcherLinesTruncated:
+      scoped.observed_launcher_lines !== null &&
+      typeof scoped.observed_launcher_lines === "object" &&
+      !Array.isArray(scoped.observed_launcher_lines) &&
+      scoped.observed_launcher_lines.truncated === true,
+    text: [scoped.stdout, scoped.stderr]
+      .flatMap((stream) =>
+        stream !== null &&
+        typeof stream === "object" &&
+        !Array.isArray(stream) &&
+        typeof stream.text === "string"
+          ? [stream.text]
+          : [],
+      )
+      .concat(
+        scoped.observed_launcher_lines !== null &&
+          typeof scoped.observed_launcher_lines === "object" &&
+          !Array.isArray(scoped.observed_launcher_lines) &&
+          Array.isArray(scoped.observed_launcher_lines.lines)
+          ? scoped.observed_launcher_lines.lines.filter(
+              (line): line is string => typeof line === "string",
+            )
+          : [],
+      ),
   };
 };
 

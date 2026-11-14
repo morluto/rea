@@ -1,4 +1,5 @@
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
+import { ghidraFailureOutput } from "./GhidraDiagnostics.js";
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
@@ -4783,7 +4784,27 @@ describe("Ghidra missing project program", () => {
       {
         failure_kind: "start",
         exit_code: 1,
-        failure_output: failureOutput(stdout, stderr),
+        failure_output: ghidraFailureOutput(
+          {
+            snapshot: {
+              stdout: {
+                text: stdout,
+                bytes: Buffer.byteLength(stdout),
+                observedBytes: Buffer.byteLength(stdout),
+              },
+              stderr: {
+                text: stderr,
+                bytes: Buffer.byteLength(stderr),
+                observedBytes: Buffer.byteLength(stderr),
+              },
+              exitCode: 1,
+              signal: null,
+            },
+            complete: true,
+          },
+          undefined,
+          false,
+        ),
       },
     );
     const ghidra = provider(
@@ -4850,6 +4871,16 @@ describe("Ghidra missing project program", () => {
     expectMissingProgram(projected, "program_gamma", true);
   });
 
+  it("keeps the missing-program diagnosis when later output exceeds the excerpt", async () => {
+    expectMissingProgram(
+      await startFailure(
+        `${abort("fixture")}\n${"later output\n".repeat(7000)}`,
+      ),
+      "fixture",
+      false,
+    );
+  });
+
   it("keeps the generic start failure when Ghidra names a different program", async () => {
     const projected = await startFailure(abort("fixture_other"));
     expect(projected.code).toBe("execution_failure");
@@ -4878,6 +4909,17 @@ describe("Ghidra missing project program", () => {
     expect(projected.remediation.action).toMatch(
       /java_home\.save.*creating that file in advance does not help/iu,
     );
+  });
+
+  it("keeps the java_home.save denial when later output exceeds the excerpt", async () => {
+    const path = "C:\\temp\\java_home.save";
+    const projected = await startFailure(
+      "",
+      {},
+      `java.io.FileNotFoundException: ${path} (Access is denied)\n${"later output\n".repeat(7000)}`,
+    );
+    expect(projected.message).toContain(path);
+    expect(projected.message).toContain("Win32 error 5");
   });
 
   it("keeps the generic start failure for other denied paths", async () => {

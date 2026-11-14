@@ -16,6 +16,7 @@ export const GHIDRA_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
  * failure is reported. The 8 MiB retention stays for scanning, not delivery.
  */
 export const GHIDRA_DIAGNOSTIC_EXCERPT_BYTES = 64 * 1024;
+const LAUNCHER_LINE_CHARACTERS = 4096;
 
 /** JVM error class located in all launcher output, beyond the retention budget. */
 export const GHIDRA_JVM_OOME_MARKER = "java.lang.OutOfMemoryError";
@@ -140,6 +141,7 @@ export const ghidraFailureOutput = (
   stdout: ghidraDiagnosticStream(scoped.snapshot.stdout, token),
   stderr: ghidraDiagnosticStream(scoped.snapshot.stderr, token),
   complete: scoped.complete && !drainIncomplete,
+  observed_launcher_lines: observedLauncherLines(scoped, token),
   observed_oome: (scoped.markers ?? []).map((marker) => {
     const bytes = Buffer.byteLength(marker.line, "utf8");
     return {
@@ -162,6 +164,35 @@ export const ghidraFailureOutput = (
     };
   }),
 });
+
+/** Keep bounded, credential-redacted launcher failure lines before cutting stream tails. */
+const observedLauncherLines = (
+  scoped: ProviderProcessOutputSince,
+  token: string | undefined,
+): JsonValue => {
+  const lines: string[] = [];
+  let truncated = false;
+  for (const stream of [scoped.snapshot.stdout, scoped.snapshot.stderr]) {
+    const text = redactCapturedTransportCredential(stream, token, "[REDACTED]");
+    for (const line of text.split(/\r?\n/u)) {
+      if (
+        !line.includes("Requested project program file(s) not found: ") &&
+        !(line.includes("java_home.save") && line.includes("Access is denied"))
+      )
+        continue;
+      if (
+        line.length > LAUNCHER_LINE_CHARACTERS ||
+        lines.length >=
+          GHIDRA_DIAGNOSTIC_EXCERPT_BYTES / LAUNCHER_LINE_CHARACTERS
+      ) {
+        truncated = true;
+        continue;
+      }
+      lines.push(line);
+    }
+  }
+  return { lines, truncated };
+};
 
 export const ghidraDiagnosticStream = (
   stream: ProviderProcessSnapshot["stdout"],
