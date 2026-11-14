@@ -1,6 +1,7 @@
 import { expect, onTestFinished, vi } from "vitest";
 
 import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
+import { waitFor } from "../support/testWait.js";
 
 /**
  * Call `cancel` once an output tree has published, inside the commit that
@@ -17,7 +18,7 @@ export const cancelDuringCommit = (cancel: () => void): void => {
     ) {
       await commit.call(this, signal);
       cancel();
-      await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+      await waitFor(() => expect(signal?.aborted).toBe(true));
     });
   onTestFinished(() => {
     spy.mockRestore();

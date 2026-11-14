@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -13,6 +13,7 @@ import { silentLogger } from "../../../src/logger.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { GhidraFixtureLauncher } from "../providers/ghidra/ghidraClient.fixture.js";
+import { waitFor } from "../../support/testWait.js";
 
 it("reports local Ghidra admission through SDK MCP without dispatching or losing the warm session", async () => {
   const launcher = new GhidraFixtureLauncher();
@@ -90,7 +91,7 @@ it("reports local Ghidra admission through SDK MCP without dispatching or losing
       arguments: {},
     });
     expect(after.isError).not.toBe(true);
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(
         launcher.requests.filter((method) => method === "list_strings"),
       ).toHaveLength(2),

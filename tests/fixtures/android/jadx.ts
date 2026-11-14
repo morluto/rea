@@ -103,17 +103,14 @@ export const createJadxProtocolFixture = async (
           // Retry retained ownership without bypassing the supervisor's proof.
           // Retain the entire stop result so an incomplete teardown failure reports its reason.
           await expect
-            .poll(
-              async () => {
-                const stopped = await supervisor.stop();
-                if (stopped.status === "incomplete")
-                  throw new Error(
-                    `Owned process cleanup incomplete: ${stopped.reason}`,
-                  );
-                return stopped.status;
-              },
-              { timeout: 5_000 },
-            )
+            .poll(async () => {
+              const stopped = await supervisor.stop();
+              if (stopped.status === "incomplete")
+                throw new Error(
+                  `Owned process cleanup incomplete: ${stopped.reason}`,
+                );
+              return stopped.status;
+            })
             .not.toBe("incomplete");
           if (options.cwd !== undefined)
             await rm(options.cwd, { recursive: true, force: true });

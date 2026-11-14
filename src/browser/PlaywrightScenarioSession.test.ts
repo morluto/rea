@@ -121,6 +121,7 @@ vi.mock("./PlaywrightScenarioEvents.js", () => ({
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { PlaywrightScenarioSession } from "./PlaywrightScenarioSession.js";
 import { PlaywrightScenarioBrowserCleanupOwner } from "./PlaywrightScenarioBrowser.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const scenario = browserScenarioSchema.parse({
   browser: { mode: "launch", executable_path: process.execPath },
@@ -1304,7 +1305,7 @@ it("can retry cleanup of a browser that opened after request cancellation", asyn
   controller.abort();
   await cancelled;
   resolveOpening?.(lateOpened);
-  await vi.waitFor(() => expect(closeBrowser).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(closeBrowser).toHaveBeenCalledTimes(1));
   expect(retained).toHaveLength(1);
   await expect(retained[0]?.release()).resolves.toBeUndefined();
   expect(closeBrowser).toHaveBeenCalledTimes(2);

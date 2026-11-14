@@ -608,12 +608,10 @@ itWithCaptureCapability(
     );
     try {
       await expect
-        .poll(
-          () =>
-            cancelling.notifications.some((note) =>
-              note.params.message?.startsWith("running:"),
-            ),
-          { timeout: 4_000 },
+        .poll(() =>
+          cancelling.notifications.some((note) =>
+            note.params.message?.startsWith("running:"),
+          ),
         )
         .toBe(true);
       controller.abort();
@@ -634,7 +632,7 @@ itWithCaptureCapability(
       cancelling.notifications
         .map((note) => note.params.message)
         .find((message) => message?.startsWith("cleanup:"));
-    await expect.poll(cleanupMessage, { timeout: 15_000 }).toBeDefined();
+    await expect.poll(cleanupMessage).toBeDefined();
     expect(cleanupMessage()).toContain("disposition=cancelled");
     expect(cleanupMessage()).toContain("owned_process_group=cleaned");
     expect(JSON.stringify(cancelling.notifications)).not.toMatch(

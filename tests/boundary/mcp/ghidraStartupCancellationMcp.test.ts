@@ -1,7 +1,7 @@
 import { access } from "node:fs/promises";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -16,6 +16,7 @@ import { createDeferred } from "../../fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import { GhidraFixtureLauncher } from "../providers/ghidra/ghidraClient.fixture.js";
+import { waitFor } from "../../support/testWait.js";
 
 it.each([0, 1])(
   "releases cancelled MCP startup caller %s while its peer completes and stays warm",
@@ -122,7 +123,7 @@ it.each([0, 1])(
         "Ghidra startup",
       );
       controllers[cancelledIndex]?.abort();
-      await vi.waitFor(() =>
+      await waitFor(() =>
         expect(startResults[cancelledIndex]).toMatchObject({
           ok: false,
           error: { kind: "cancelled" },

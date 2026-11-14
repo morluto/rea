@@ -40,6 +40,7 @@ import {
   MCP_STARTUP_POLICY,
 } from "../../../src/mcpStartupPolicy.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { waitFor } from "../../support/testWait.js";
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
@@ -790,16 +791,13 @@ describe("production MCP doctor child lifecycle", () => {
         REA_MCP_DOCTOR_DEADLINE_MS: "60000",
       },
     });
-    const pid = await vi.waitFor(
-      async () => {
-        const value = Number.parseInt(await readFile(pidPath, "utf8"), 10);
-        expect(Number.isSafeInteger(value) && value > 0).toBe(true);
-        return value;
-      },
-      { timeout: 10_000 },
-    );
+    const pid = await waitFor(async () => {
+      const value = Number.parseInt(await readFile(pidPath, "utf8"), 10);
+      expect(Number.isSafeInteger(value) && value > 0).toBe(true);
+      return value;
+    });
     await vi.advanceTimersByTimeAsync(60_000);
-    const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+    const result = await waitFor(() => pending);
     vi.useRealTimers();
     expect(result.healthy).toBe(false);
     expectDoctorDeadline(result.checks[0]?.detail, 60_000);
@@ -855,19 +853,16 @@ describe("production MCP doctor child ownership", () => {
           REA_MCP_DOCTOR_DEADLINE_MS: "60000",
         },
       });
-      const pids = await vi.waitFor(
-        async () => {
-          const value = JSON.parse(await readFile(pidPath, "utf8")) as {
-            launcher: number;
-            descendant: number;
-          };
-          expect(Number.isSafeInteger(value.descendant)).toBe(true);
-          return value;
-        },
-        { timeout: 10_000 },
-      );
+      const pids = await waitFor(async () => {
+        const value = JSON.parse(await readFile(pidPath, "utf8")) as {
+          launcher: number;
+          descendant: number;
+        };
+        expect(Number.isSafeInteger(value.descendant)).toBe(true);
+        return value;
+      });
       await vi.advanceTimersByTimeAsync(60_000);
-      const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+      const result = await waitFor(() => pending);
       vi.useRealTimers();
       // The launcher exits at once, so only owned cleanup can stop the descendant.
       // The SDK transport signaled only its direct child and reported success.
@@ -895,14 +890,11 @@ describe("production MCP doctor request-flow deadline", () => {
         REA_MCP_DOCTOR_DEADLINE_MS: "60000",
       },
     });
-    await vi.waitFor(
-      async () => {
-        await readFile(readyPath, "utf8");
-      },
-      { timeout: 10_000 },
-    );
+    await waitFor(async () => {
+      await readFile(readyPath, "utf8");
+    });
     await vi.advanceTimersByTimeAsync(60_000);
-    const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+    const result = await waitFor(() => pending);
     vi.useRealTimers();
     expect(result.server).not.toBeNull();
     const requestFlow = result.checks.find(

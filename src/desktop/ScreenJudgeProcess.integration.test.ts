@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ScreenJudgeProcess } from "./ScreenJudgeProcess.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const check = { id: "x", kind: "screen_judge", question: "ready?" } as const;
 
@@ -68,13 +69,10 @@ it.skipIf(process.platform === "win32")(
     void running.catch(() => undefined);
     let pid = 0;
     try {
-      await vi.waitFor(
-        async () => {
-          pid = Number(await readFile(marker, "utf8"));
-          expect(pid).toBeGreaterThan(0);
-        },
-        { timeout: 10000 },
-      );
+      await waitFor(async () => {
+        pid = Number(await readFile(marker, "utf8"));
+        expect(pid).toBeGreaterThan(0);
+      });
       controller.abort(new Error("cancelled by caller"));
       await expect(running).rejects.toThrow();
       let state = "";

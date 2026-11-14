@@ -358,13 +358,11 @@ it("cancels an in-flight Java readiness probe", async () => {
   );
   try {
     await expect
-      .poll(
-        () =>
-          readFile(marker, "utf8").then(
-            () => true,
-            () => false,
-          ),
-        { timeout: 10_000 },
+      .poll(() =>
+        readFile(marker, "utf8").then(
+          () => true,
+          () => false,
+        ),
       )
       .toBe(true);
     controller.abort();

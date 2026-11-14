@@ -11,6 +11,8 @@ import {
   type OwnedProcessGroup,
 } from "../../../src/process/ProcessOwnership.js";
 
+const PROBE_DEADLINE_MS = 10_000;
+
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for(
   (["jadx", "kuna"] as const).flatMap((provider) =>
     (
@@ -85,13 +87,11 @@ setTimeout(() => process.exit(99), 20000);
     let ownership: OwnedProcessGroup | undefined;
     try {
       await expect
-        .poll(
-          () =>
-            readFile(ready, "utf8").then(
-              () => true,
-              () => false,
-            ),
-          { timeout: 10_000 },
+        .poll(() =>
+          readFile(ready, "utf8").then(
+            () => true,
+            () => false,
+          ),
         )
         .toBe(true);
       const readyRecord: unknown = JSON.parse(await readFile(ready, "utf8"));
@@ -119,10 +119,12 @@ setTimeout(() => process.exit(99), 20000);
           runId: observed.runId,
         };
       }
+      const signalled = performance.now();
       child.kill(signal);
-      await expect
-        .poll(() => child.exitCode, { timeout: 10_000 })
-        .not.toBeNull();
+      await expect.poll(() => child.exitCode).not.toBeNull();
+      // Without cancellation, doctor would end when the probe's own deadline
+      // (JadxJavaProbe and KunaInstallation: 10 s) stopped the probe.
+      expect(performance.now() - signalled).toBeLessThan(PROBE_DEADLINE_MS);
       const result = await closed;
       expect(JSON.parse(stdout)).toMatchObject({ code: "cancelled" });
       if (ownership !== undefined) {

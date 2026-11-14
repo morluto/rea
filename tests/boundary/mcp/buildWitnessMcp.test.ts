@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import type {
   BuildSettle,
@@ -33,6 +33,7 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cancelDuringCommit } from "../../fixtures/outputTreeCommit.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { waitFor } from "../../support/testWait.js";
 
 const TASK = {
   name: "add-eggs",
@@ -895,7 +896,7 @@ it("keeps a completed reset when the screenshot after it is cancelled", async ()
     },
     { signal: controller.signal },
   );
-  await vi.waitFor(() => expect(witness.app.methods).toContain("data/reset"));
+  await waitFor(() => expect(witness.app.methods).toContain("data/reset"));
   controller.abort();
   await expect(resetting).rejects.toThrow();
   const near = parseMcpToolError(await witness.check({ stage: "near_miss" }));
@@ -909,7 +910,7 @@ it("checks after_reset once the reset sent before it has relaunched the app", as
   await throughNearMiss(witness);
   const order: string[] = [];
   const reset = witness.act("reset").then(() => order.push("reset"));
-  await vi.waitFor(() => expect(app.methods.at(-1)).toBe("data/reset"));
+  await waitFor(() => expect(app.methods.at(-1)).toBe("data/reset"));
   const last = await check({ stage: "after_reset" });
   order.push("check");
   await reset;
