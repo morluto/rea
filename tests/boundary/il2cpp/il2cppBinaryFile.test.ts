@@ -397,6 +397,25 @@ it("does not apply symbol relocations as RELATIVE ones", () => {
   ).toThrow(Il2cppBinaryFormatFailure);
 });
 
+it("links past relocation-backed VTT slots that cannot name a module", () => {
+  // Three consecutive R_AARCH64_ABS64 slots, as a C++ VTT leaves in
+  // .data.rel.ro: each resolves through a defined dynamic symbol to the VTT
+  // itself, never to an image name, so no module record can start here.
+  // Before the fix the unknown triple vetoed the whole scan with
+  // code-gen-modules-not-found, although the real modules were present.
+  const vtt = FIXTURE_BINARY_BASE + 0xe00n;
+  const bytes = createElfFixture(createIl2cppBinaryFixture(), {
+    symbolSize: 0n,
+    definedSymbolValue: vtt,
+    unresolvedRelocations: [
+      { offset: 0xe00, kind: 257 },
+      { offset: 0xe08, kind: 257 },
+      { offset: 0xe10, kind: 257 },
+    ],
+  });
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
 it("reads a method pointer array in zero-fill as methods without bodies", () => {
   // An iOS-only assembly in an Android build keeps its array in .bss.
   const linked = link(

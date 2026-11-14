@@ -509,6 +509,8 @@ export interface ElfFixtureOptions {
   readonly zeroFilledTable?: boolean;
   /** Declare DT_SYMTAB / DT_SYMENT with dynamic symbol 1 of this `st_size`, which sizes a COPY. */
   readonly symbolSize?: bigint;
+  /** Give dynamic symbol 1 this link address in section 1, so an absolute relocation against it resolves. */
+  readonly definedSymbolValue?: bigint;
 }
 
 /** A valid large RELA image; extra file-backed pointers do not add IL2CPP registrations. */
@@ -562,11 +564,18 @@ export const createLargeElfRelativeFixture = (
  * base: every pointer slot into the image is zeroed on disk and restored by
  * an R_AARCH64_RELATIVE entry, as a position-independent libil2cpp.so stores it.
  */
-/** The null symbol, then symbol 1 with only its size set; empty when no size is asked for. */
-const dynamicSymbols = (size: bigint | undefined): Buffer => {
-  if (size === undefined) return Buffer.alloc(0);
+/** The null symbol, then symbol 1 with only its size set; empty when no size is asked for. A defined value also records the symbol in section 1. */
+const dynamicSymbols = (
+  size: bigint | undefined,
+  value: bigint | undefined,
+): Buffer => {
+  if (size === undefined && value === undefined) return Buffer.alloc(0);
   const symbols = Buffer.alloc(48);
-  symbols.writeBigUInt64LE(size, 24 + 16);
+  if (size !== undefined) symbols.writeBigUInt64LE(size, 24 + 16);
+  if (value !== undefined) {
+    symbols.writeUInt16LE(1, 24 + 6);
+    symbols.writeBigUInt64LE(value, 24 + 8);
+  }
   return symbols;
 };
 
@@ -605,7 +614,10 @@ export const createElfFixture = (
       0n,
       relocation.kind,
     ]);
-  const symbols = dynamicSymbols(options.symbolSize);
+  const symbols = dynamicSymbols(
+    options.symbolSize,
+    options.definedSymbolValue,
+  );
   const tagCount =
     4 +
     (options.duplicateRela === true ? 1 : 0) +

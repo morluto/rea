@@ -141,6 +141,12 @@ const symbolicImage = (
     readonly destination?: bigint;
     readonly records?: number;
     readonly symbolIndex?: number;
+    /** Link address of symbol 1; also marks it defined in section 1. */
+    readonly symbolValue?: bigint;
+    /** st_info type of symbol 1 (0 unless given). */
+    readonly symbolType?: number;
+    /** RELA r_addend of each record (0 unless given). */
+    readonly addend?: bigint;
   } = {},
 ): Buffer => {
   const records = layout.records ?? 1;
@@ -165,13 +171,30 @@ const symbolicImage = (
       (BigInt(layout.symbolIndex ?? 1) << 32n) | kind,
       0x108 + record * 24,
     );
+    if (layout.addend !== undefined)
+      bytes.writeBigInt64LE(layout.addend, 0x110 + record * 24);
   }
   bytes.writeBigUInt64LE(symbolSize, 0x200 + 24 + 16);
+  if (layout.symbolValue !== undefined) {
+    bytes.writeUInt16LE(1, 0x200 + 24 + 6);
+    bytes.writeBigUInt64LE(layout.symbolValue, 0x200 + 24 + 8);
+  }
+  if (layout.symbolType !== undefined)
+    bytes.writeUInt8(layout.symbolType, 0x200 + 24 + 4);
   return bytes;
 };
 
 /** The ELF32 REL form of {@link symbolicImage}: 8-byte records, 16-byte symbols. */
-const symbolicImage32 = (kind: number, symbolSize: number): Buffer => {
+const symbolicImage32 = (
+  kind: number,
+  symbolSize: number,
+  layout: {
+    /** Link address of symbol 1; also marks it defined in section 1. */
+    readonly symbolValue?: number;
+    /** Word stored at the relocation destination, the REL addend. */
+    readonly storedAddend?: number;
+  } = {},
+): Buffer => {
   const bytes = Buffer.alloc(0x400);
   const dynamic = [
     [17, 0x100],
@@ -188,6 +211,12 @@ const symbolicImage32 = (kind: number, symbolSize: number): Buffer => {
   bytes.writeUInt32LE(0x300, 0x100);
   bytes.writeUInt32LE((1 << 8) | kind, 0x104);
   bytes.writeUInt32LE(symbolSize, 0x200 + 16 + 8);
+  if (layout.symbolValue !== undefined) {
+    bytes.writeUInt32LE(layout.symbolValue, 0x200 + 16 + 4);
+    bytes.writeUInt16LE(1, 0x200 + 16 + 14);
+  }
+  if (layout.storedAddend !== undefined)
+    bytes.writeUInt32LE(layout.storedAddend, 0x300);
   return bytes;
 };
 
@@ -276,6 +305,107 @@ it("writes nothing for a COPY of a zero-size symbol", () => {
   const { writes, result } = walk(symbolicImage(5n, 0n));
   expect(writes).toEqual([]);
   expect(result.pointer_coverage_known).toBe(true);
+});
+
+it.each([
+  ["AArch64", 183, 257],
+  ["x86-64", 62, 1],
+] as const)(
+  "resolves a %s word-sized absolute relocation against a defined symbol",
+  (_name, machine, kind) => {
+    const { writes, result } = walk(
+      symbolicImage(BigInt(kind), 0n, { symbolValue: 0x4000n }),
+      undefined,
+      machine,
+    );
+    expect(writes).toMatchObject([
+      {
+        address: 0x300n,
+        value: 0x4000n,
+        source: { encoding: "rela", kind },
+        symbol_index: 1,
+        addend: 0n,
+      },
+    ]);
+    expect(result.pointer_coverage_known).toBe(true);
+  },
+);
+
+it.each([
+  ["AArch64", 183, 257],
+  ["x86-64", 62, 1],
+] as const)(
+  "adds a nonzero RELA addend to a word-sized absolute relocation",
+  (_name, machine, kind) => {
+    const { writes, result } = walk(
+      symbolicImage(BigInt(kind), 0n, {
+        symbolValue: 0x4000n,
+        addend: 0x100n,
+      }),
+      undefined,
+      machine,
+    );
+    expect(writes).toMatchObject([
+      {
+        address: 0x300n,
+        value: 0x4100n,
+        source: { encoding: "rela", kind },
+        symbol_index: 1,
+        addend: 0x100n,
+      },
+    ]);
+    expect(result.pointer_coverage_known).toBe(true);
+  },
+);
+
+it.each([
+  ["i386", 3, 1],
+  ["ARM", 40, 2],
+] as const)(
+  "reads a REL addend from the destination word for a %s absolute relocation",
+  (_name, machine, kind) => {
+    const { writes, result } = walk(
+      symbolicImage32(kind, 0, {
+        symbolValue: 0x4000,
+        storedAddend: 0x100,
+      }),
+      undefined,
+      machine,
+      32,
+    );
+    expect(writes).toMatchObject([
+      {
+        address: 0x300n,
+        value: 0x4100n,
+        source: { encoding: "rel", kind },
+        symbol_index: 1,
+        addend: null,
+      },
+    ]);
+    expect(result.pointer_coverage_known).toBe(true);
+  },
+);
+
+it("leaves an absolute relocation unknown when its symbol is undefined", () => {
+  const { writes, result } = walk(symbolicImage(257n, 0n), undefined, 183);
+  expect(writes).toMatchObject([
+    {
+      address: 0x300n,
+      value: null,
+      source: { encoding: "rela", kind: 257 },
+      symbol_index: 1,
+    },
+  ]);
+  expect(result.pointer_coverage_known).toBe(true);
+});
+
+it("leaves an absolute relocation unknown when its symbol is an IFUNC resolver", () => {
+  const { writes } = walk(
+    symbolicImage(257n, 0n, { symbolValue: 0x4000n, symbolType: 10 }),
+    undefined,
+    183,
+  );
+  expect(writes).toMatchObject([{ address: 0x300n, value: null }]);
 });
 
 it.each([

@@ -321,6 +321,7 @@ export function* readElfRelocationWritesSteps(
       "ELF relative pointers require a matching AArch64, x86-64, ARM or i386 image",
     );
   const relative = kinds.relative;
+  const absolute = kinds.absolute;
   const wholeExtents = options.wholeExtents === true;
   const copy = wholeExtents ? kinds.copy : undefined;
   const unknownWidths = kinds.widths;
@@ -427,6 +428,39 @@ export function* readElfRelocationWritesSteps(
       ? Number(size)
       : undefined;
   };
+  /**
+   * Link address of a word-sized absolute relocation's symbol, the `S` in the
+   * loader's `S + A`. Symbol 0 is the null symbol, so its value is zero. Any
+   * other symbol must be defined in a real section with a plain data or code
+   * type: an undefined symbol has no address here, a reserved-section symbol
+   * (absolute, common) holds no link address, a TLS symbol holds an offset,
+   * and an IFUNC symbol holds its resolver, not the resolved address. When
+   * the value cannot be established the relocation stays unknown, as before.
+   */
+  const absoluteSymbolValue = (symbolIndex: number): bigint | undefined => {
+    if (symbolIndex === 0) return 0n;
+    if (symbolTable === undefined) return undefined;
+    let at: number;
+    try {
+      at = index.offset(
+        symbolTable + BigInt(symbolIndex) * BigInt(symbolBytes),
+        symbolBytes,
+      );
+    } catch (cause) {
+      if (cause instanceof BinaryMappingFailure) return undefined;
+      throw cause;
+    }
+    const symbol = readElfSymbol(
+      bytes.subarray(at, at + symbolBytes),
+      input.bits,
+      input.little,
+    );
+    if (!symbol.ok) return undefined;
+    const { section_index, type, value } = symbol.value;
+    if (section_index === 0 || section_index >= 0xff00) return undefined;
+    if (type !== 0 && type !== 1 && type !== 2) return undefined;
+    return value;
+  };
   // Consumers do work across each COPY span, which repeated or overlapping
   // records would multiply, so the spans together are limited to the file size.
   let copyAllowance = bytes.length;
@@ -504,6 +538,25 @@ export function* readElfRelocationWritesSteps(
         continue;
       }
       if (kind !== relative || symbolIndex !== 0) {
+        // A word-sized absolute relocation against a defined symbol has an
+        // established loader value, so it is resolved instead of left
+        // unknown. Other symbolic relocations keep their unknown value.
+        if (kind === absolute) {
+          const absoluteWidth = unknownWidths.get(kind);
+          const base = absoluteSymbolValue(symbolIndex);
+          if (absoluteWidth !== undefined && base !== undefined) {
+            const slot = encoding === "rela" ? null : target(destination, word);
+            const addend =
+              explicitAddend ?? (slot === null ? 0n : rawWord(slot));
+            yield write(
+              destination,
+              absoluteWidth,
+              BigInt.asUintN(input.bits, base + addend),
+              record,
+            );
+            continue;
+          }
+        }
         const width = unknownWidths.get(kind);
         if (width === undefined || (width > word && !wholeExtents)) {
           unsupported(`ELF relocation kind ${kind} is not decoded`);
