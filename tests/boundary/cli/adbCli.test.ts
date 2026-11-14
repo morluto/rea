@@ -469,7 +469,7 @@ it("retains safe structured constraints for ADB selectors", async () => {
 });
 
 it.each(["string:key", ":", "string"])(
-  "classifies malformed activity extra %j before contacting adb",
+  "rejects a malformed activity extra %j before contacting adb",
   async (extra) => {
     const result = await serve(
       [
@@ -484,15 +484,11 @@ it.each(["string:key", ":", "string"])(
       { REA_ADB_PATH: "/path/that/does/not/exist" },
     );
 
-    const error = JSON.parse(result.stdout);
-    expect(error).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
-      retryable: false,
-      remediation: { action: expect.any(String) },
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "VALIDATION_ERROR",
     });
-    expect(error.remediation.action).not.toBe("");
-    expect(error.message).not.toBe("");
+    expect(result.stdout).not.toContain("Android Debug Bridge");
   },
 );
 
@@ -594,24 +590,32 @@ exit 1
 );
 
 it.each([
-  ["bogus:key:value", "invalid_request"],
+  ["bogus:key:value", "VALIDATION_ERROR"],
   ["string:key:value", "capability_unavailable"],
   ["string:key:", "capability_unavailable"],
-  ["int:key:", "invalid_request"],
-  ["boolean:key:yes", "invalid_request"],
-  ["int:key:1.5", "invalid_request"],
-  ["long:key:1.5", "invalid_request"],
-  ["float:key:garbage", "invalid_request"],
+  ["int:key:", "VALIDATION_ERROR"],
+  ["boolean:key:yes", "VALIDATION_ERROR"],
+  ["int:key:1.5", "VALIDATION_ERROR"],
+  ["long:key:1.5", "VALIDATION_ERROR"],
+  ["float:key:garbage", "VALIDATION_ERROR"],
   ["float:key:1e-3", "capability_unavailable"],
   ["float:key:1E-3", "capability_unavailable"],
   ["float:key:.5", "capability_unavailable"],
   ["float:key:1.", "capability_unavailable"],
   ["boolean:key:false", "capability_unavailable"],
   ["int:key:-3", "capability_unavailable"],
+  ["int:key:2147483647", "capability_unavailable"],
+  ["int:key:2147483648", "VALIDATION_ERROR"],
+  ["int:key:-2147483648", "capability_unavailable"],
+  ["int:key:-2147483649", "VALIDATION_ERROR"],
+  ["long:key:9223372036854775807", "capability_unavailable"],
+  ["long:key:9223372036854775808", "VALIDATION_ERROR"],
+  ["long:key:-9223372036854775808", "capability_unavailable"],
+  ["long:key:-9223372036854775809", "VALIDATION_ERROR"],
   ["long:key:9007199254740993", "capability_unavailable"],
   ["float:key:-1.25", "capability_unavailable"],
 ] as const)(
-  "preserves downstream validation for well-delimited activity extra %j",
+  "admits an activity extra with the runtime contract before contacting adb: %j",
   async (extra, code) => {
     const result = await serve(
       [

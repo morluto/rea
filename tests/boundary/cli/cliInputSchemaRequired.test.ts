@@ -697,6 +697,30 @@ describe("ADB activity extra input schema", () => {
       expect(parser.safeParse(input).success).toBe(expected);
       expect(validate(input)).toBe(expected);
     }
+    for (const extra of [
+      "boolean:key:yes",
+      "string:bad key:value",
+      "float:key:garbage",
+      "int:key:",
+    ]) {
+      expect(parser.safeParse({ extra: [extra] }).success, extra).toBe(false);
+      expect(validate({ extra: [extra] }), extra).toBe(false);
+    }
+    for (const extra of [
+      "int:key:2147483648",
+      "int:key:-2147483649",
+      "long:key:9223372036854775808",
+      "long:key:-9223372036854775809",
+    ])
+      expect(parser.safeParse({ extra: [extra] }).success, extra).toBe(false);
+    expect(validate({ extra: ["string:key:value:rest"] })).toBe(true);
+    expect(parser.safeParse({ extra: ["string:key:"] }).success).toBe(true);
+    expect(parser.safeParse({ extra: ["int:key:2147483647"] }).success).toBe(
+      true,
+    );
+    expect(
+      parser.safeParse({ extra: ["long:key:-9223372036854775808"] }).success,
+    ).toBe(true);
   });
 });
 
