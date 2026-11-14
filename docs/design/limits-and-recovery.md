@@ -371,6 +371,35 @@ JSON values stop at `MAX_JSON_DEPTH` (1000) in
 "JSON value exceeds maximum nesting depth of 1000. This release has no runtime
 override."
 
+## Typed refusals
+
+A producer that refuses a request types the refusal instead of leaving
+recovery to the resource kind. The domain owner is
+[`analysisRefusal.ts`](https://github.com/morluto/rea/blob/main/src/domain/analysisRefusal.ts).
+It has three variants. Each one projects under `details.refusal` with the
+`operation` the error is attributed to:
+
+| Variant              | Producer fact                                                          | Projected fields                                            |
+| -------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`        | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing` |
+| `adjustable_budget`  | an `AnalysisSettingLimit` bound as `limit`                             | `control`, `setting`, `effective_value`, `unit`, `range`    |
+| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }` | `field`, `candidates`                                       |
+
+Presentation is total over these variants. Authored remediation still wins.
+Without it, the variant names the recovery: fixed ceilings and their narrowing
+step, the budget's control and range for the caller's lifetime, or the selector
+field and its candidates. A resource refusal never falls back to text about
+worker limits, the MCP transport, or doctor. An ambiguous selector conforms to
+the input contract, so it does not ask the caller to inspect the schema.
+
+A measured exhaustion or occupied admission is not a refusal. It declares
+`measuredExhaustion: true` and keeps the resource kind's recovery. The
+`rea/typed-resource-refusal` lint rule rejects a new
+`AnalysisResourceConstraintError` that names none of these. Older untyped
+constructions are counted in
+`scripts/lint/rules/typed-resource-refusal-baseline.json`, and those counts may
+only shrink.
+
 ## Recovery text
 
 The string the caller sees includes:

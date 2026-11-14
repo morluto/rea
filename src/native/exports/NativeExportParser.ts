@@ -181,7 +181,7 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
         ...PE_LIMITATIONS,
       ],
     };
-  const reader = new BinaryReader(bytes, true);
+  const reader = new BinaryReader(bytes, true, "pe");
   const mappings = imageFileMappings(image);
   const map = (rva: number, size: number): number =>
     mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
@@ -636,7 +636,7 @@ function* parseElfExports(
   artifact: Artifact,
 ): Generator<void, NativeExports> {
   const directory = readElfDirectoryFromBuffer(bytes);
-  const reader = new BinaryReader(bytes, directory.little);
+  const reader = new BinaryReader(bytes, directory.little, "elf");
   const result = {
     artifact,
     format: "elf" as const,

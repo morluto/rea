@@ -1,3 +1,4 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import { lstat, open } from "node:fs/promises";
 import {
   projectSelectedArtifactFileFailure,
@@ -24,7 +25,6 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_WINDOWS_SHORTCUT_EXTRA_DATA_BLOCKS,
@@ -37,7 +37,6 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { WINDOWS_SHORTCUT_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  WindowsShortcutFormatFailure,
   WindowsShortcutResourceFailure,
   type WindowsShortcutSelectedBoundary,
 } from "./WindowsShortcut.errors.js";
@@ -297,21 +296,8 @@ const windowsShortcutFailurePrimary = (
         remediationAction: budgetRemediation(input, cause.boundary),
       },
     );
-  if (cause instanceof WindowsShortcutFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
