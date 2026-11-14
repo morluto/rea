@@ -88,15 +88,10 @@ it("keeps pinned CPython identity separate from standalone marshal coverage", ()
     pythonVersion: "3.15",
     headerBytes: 16,
   });
-  expect(pythonBytecodeIdentity(3663)).toEqual({
-    pythonVersion: "3.15",
-    headerBytes: 16,
-  });
-  expect(pythonPycMarshalProfile(3663)?.code_layout).toBe("py311");
   expect(pythonPycMarshalProfile(3666)?.code_layout).toBe("py311");
   // Only magics checked against real CPython are pinned: the neighbouring
   // 3.14 and 3.15 pre-release magics and the 3.16 magics stay unknown.
-  for (const magic of [3600, 3626, 3650, 3662, 3664, 3665, 3706]) {
+  for (const magic of [3600, 3626, 3650, 3662, 3663, 3664, 3665, 3706]) {
     expect(pythonBytecodeIdentity(magic), String(magic)).toBeNull();
     expect(pythonPycMarshalProfile(magic), String(magic)).toBeNull();
   }
