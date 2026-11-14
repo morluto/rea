@@ -4,9 +4,6 @@ export const IL2CPP_BINARY_BYTES = 1024 * 1024 * 1024;
 export const IL2CPP_BINARY_FAILURE_REASONS = {
   unsupported: [
     "unsupported-container",
-    "slice-selection-required",
-    "slice-not-found",
-    "ambiguous-slice-selection",
     "unsupported-pointer-encoding",
     "unsupported-type-kind",
     "generic-methods-unsupported",
