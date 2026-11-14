@@ -1542,6 +1542,18 @@ const projectPrimarySessionError = (
       },
     );
   }
+  if (failure.kind === "remote" && failure.remoteCode === "decompile_oversized")
+    return new AnalysisResourceConstraintError(
+      operation,
+      "cpu",
+      failure.message,
+      null,
+      {
+        ...context,
+        remediationAction:
+          "The function body exceeds the decompiler's fail-fast ceiling, so the decompiler was not started. Call analyze_function (CLI: `rea function`) for the same procedure: it returns assembly, callers, callees, references and basic blocks from the Ghidra listing and records the oversized body under facet_availability.pseudocode. For pseudocode-shaped evidence on very large functions, read instruction ranges with `rea instructions` or inspect the smaller callers and callees that hold the logic of interest. Repeating the unchanged decompile request is not expected to succeed.",
+      },
+    );
   if (failure.kind === "analysis_timeout")
     return new AnalysisTimeoutError(
       operation,

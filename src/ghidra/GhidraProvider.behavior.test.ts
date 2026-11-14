@@ -2042,6 +2042,51 @@ it("preserves a bridge request limit when reattributing a Ghidra session failure
   expect(result.error.limit).toEqual(refusal.limit);
 });
 
+describe("Ghidra oversized decompiler body projection", () => {
+  it("reports an oversized function body as a resource constraint with fail-fast guidance", async () => {
+    const code = "decompile_oversized";
+    const message =
+      "Ghidra decompiler body limit: function body is 97024 bytes (limit 65536). Bodies beyond this limit exhaust the decompiler's restart budget; fail fast instead of burning it.";
+    const ghidra = provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () =>
+        Promise.resolve(
+          err(
+            new GhidraSessionError(
+              "remote",
+              message,
+              { remote_code: code },
+              { remoteCode: code },
+            ),
+          ),
+        ),
+      close: () => Promise.resolve(ok(null)),
+    }));
+    const client = await createElfClient(ghidra);
+    const result = await client.execute("procedure_pseudo_code", {
+      procedure: "main",
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisResourceConstraintError" },
+    });
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        details: { diagnostics: { remote_code: code } },
+      });
+      expect(projected.remediation.action).toContain("analyze_function");
+      expect(projected.remediation.action).toContain("rea instructions");
+      expect(projected.remediation.action).toContain(
+        "facet_availability.pseudocode",
+      );
+      expect(projected.remediation.action).not.toContain("rea doctor");
+    }
+  });
+});
+
 describe("Ghidra decompile deadline for a finished invocation", () => {
   const decompileDeadline = async (
     seconds: number,
