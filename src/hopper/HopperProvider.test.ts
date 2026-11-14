@@ -313,8 +313,11 @@ describe("Hopper relationship coverage", () => {
           ),
         });
       } finally {
-        await client.close();
-        callTool.mockRestore();
+        try {
+          await client.close();
+        } finally {
+          callTool.mockRestore();
+        }
       }
     },
   );
@@ -406,8 +409,11 @@ describe("Hopper caller reconciliation failures", () => {
         },
       });
     } finally {
-      await client.close();
-      callTool.mockRestore();
+      try {
+        await client.close();
+      } finally {
+        callTool.mockRestore();
+      }
     }
   });
 });

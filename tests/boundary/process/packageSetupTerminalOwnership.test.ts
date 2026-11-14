@@ -113,7 +113,6 @@ const releaseStandin = async (release: string, readyPath: string) => {
 // The PTY, deadline, process census, command owner and workspace removal are real.
 processTest.skipIf(process.platform === "win32")(
   "joins a redirected-stdout setup descendant before removing its verifier workspace",
-  { timeout: 35_000 },
   async ({ processes }) => {
     const root = await createTestTempDirectory("rea-package-setup-terminal-");
     const scratch = join(root, "scratch");
@@ -262,7 +261,6 @@ processTest
   .skipIf(process.platform === "win32")
   .each(["interactive", "redirected"] as const)(
   "preserves selected configuration and closes the real PTY for %s setup",
-  { timeout: 30_000 },
   async (mode) => {
     const root = await createTestTempDirectory("rea-package-setup-success-");
     const scratch = join(root, "scratch");

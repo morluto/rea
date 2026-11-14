@@ -31,8 +31,60 @@ const geminiWorkspace = async (cli: TestCli) => {
   const originalUser = await readFile(user);
   const run = (arguments_: readonly string[]) =>
     cli.run({ arguments: arguments_, cwd: project, environment });
-  return { workspace, user, originalUser, environment, run };
+  return { project, workspace, user, originalUser, environment, run };
 };
+
+for (const scenario of [
+  ...["/", "/."].flatMap((suffix) =>
+    [false, true].map((trusted) => ({
+      name: `the final normalized rule (${suffix}, trusted: ${String(trusted)})`,
+      trusted,
+      rules: (project: string) =>
+        Object.fromEntries([
+          [`${project}${suffix}`, trusted ? "DO_NOT_TRUST" : "TRUST_FOLDER"],
+          [project, trusted ? "TRUST_FOLDER" : "DO_NOT_TRUST"],
+        ]),
+    })),
+  ),
+  ...["__proto__", "ordinary"].map((child) => ({
+    name: `the relative TRUST_PARENT rule ${child}`,
+    trusted: true,
+    rules: () => Object.fromEntries([[child, "TRUST_PARENT"]]),
+  })),
+  {
+    name: "the more specific TRUST_PARENT key",
+    trusted: true,
+    rules: (project: string) =>
+      Object.fromEntries([
+        [project, "DO_NOT_TRUST"],
+        [join(project, "child"), "TRUST_PARENT"],
+      ]),
+  },
+])
+  cliTest(`Gemini setup and doctor honor ${scenario.name}`, async ({ cli }) => {
+    const fixture = await geminiWorkspace(cli);
+    const trust = fixture.environment.GEMINI_CLI_TRUSTED_FOLDERS_PATH;
+    if (trust === undefined) throw new Error("Expected a trust-file path");
+    const trustText = JSON.stringify(scenario.rules(fixture.project));
+    const workspaceText = JSON.stringify({ mcp: { excluded: ["rea"] } });
+    await writeFile(trust, trustText);
+    await writeFile(fixture.workspace, workspaceText);
+
+    const setup = await fixture.run(setupArguments);
+    expect(setup.exitCode, setup.stdout).toBe(scenario.trusted ? 1 : 0);
+    expect(setup.json).toMatchObject({
+      status: scenario.trusted ? "needs_human" : "ready",
+      appliedActions: [],
+    });
+    const doctor = await fixture.run(doctorArguments);
+    expect(doctor.exitCode, doctor.stdout).toBe(scenario.trusted ? 1 : 0);
+    expect(doctor.json).toMatchObject({ healthy: !scenario.trusted });
+    expect(await readFile(trust, "utf8")).toBe(trustText);
+    expect(await readFile(fixture.workspace, "utf8")).toBe(workspaceText);
+    expect(
+      Buffer.compare(await readFile(fixture.user), fixture.originalUser),
+    ).toBe(0);
+  });
 
 cliTest(
   "Gemini does not require workspace trust until workspace settings exist",

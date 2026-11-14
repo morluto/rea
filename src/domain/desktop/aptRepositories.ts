@@ -320,19 +320,38 @@ export const repositorySupplies = (
     .sort();
 };
 
-/** The `NAME='value'` lines `apt-config shell` prints, by name; apt writes a quote in a value as `'\''`. */
+/** The `NAME='value'` assignments `apt-config shell` prints; apt writes a quote in a value as `'\''`. */
 export const parseAptConfigShell = (
   output: string,
-): ReadonlyMap<string, string> =>
-  new Map(
-    output.split("\n").flatMap((line) => {
-      const match = /^(?<name>[A-Za-z_]\w*)='(?<value>.*)'$/u.exec(line);
-      const { name, value } = match?.groups ?? {};
-      return name === undefined || value === undefined
-        ? []
-        : [[name, value.replaceAll(`'\\''`, "'")] as const];
-    }),
-  );
+): ReadonlyMap<string, string> => {
+  const values = new Map<string, string>();
+  const prefix = /([A-Za-z_]\w*)='/uy;
+  let offset = 0;
+  while (offset < output.length) {
+    prefix.lastIndex = offset;
+    const match = prefix.exec(output);
+    if (match === null) {
+      const newline = output.indexOf("\n", offset);
+      if (newline < 0) break;
+      offset = newline + 1;
+      continue;
+    }
+    const start = prefix.lastIndex;
+    let end = output.indexOf("'", start);
+    // Only apt's close/escaped-quote/reopen sequence continues the value.
+    // Literal newlines inside the quotes are data, not record boundaries.
+    while (end >= 0 && output.startsWith(`'\\''`, end))
+      end = output.indexOf("'", end + 4);
+    if (end < 0) break;
+    const after = end + 1;
+    if (after === output.length || output[after] === "\n")
+      values.set(match[1]!, output.slice(start, end).replaceAll(`'\\''`, "'"));
+    const newline = output.indexOf("\n", after);
+    if (newline < 0) break;
+    offset = newline + 1;
+  }
+  return values;
+};
 
 const QUOTED = new Set('\\|{}[]<>"^~_=!@#$%^&*');
 

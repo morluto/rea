@@ -79,7 +79,6 @@ cliTest(
     }
     await client.ping();
   },
-  60000,
 );
 
 cliTest(
@@ -88,6 +87,13 @@ cliTest(
     const root = await createTestTempDirectory("rea-go-inline-budget-");
     const { client, call } = await connectLocalToolsMcp();
     const maximum = 1024 * 1024;
+    const impossibleInline = createGoBinaryFixture();
+    impossibleInline.bytes.set(
+      [0x81, 0x80, 0x40],
+      impossibleInline.headerOffset + 32,
+    );
+    const impossiblePointer = createGoBinaryFixture({ encoding: "pointer" });
+    impossiblePointer.bytes.writeBigUInt64LE(BigInt(maximum + 1), 1544);
     const cases = [
       {
         name: "exact",
@@ -102,6 +108,16 @@ cliTest(
       {
         name: "truncated",
         fixture: createGoInlineAggregateFixture(512),
+        outcome: "malformed",
+      },
+      {
+        name: "impossible-inline",
+        fixture: impossibleInline,
+        outcome: "malformed",
+      },
+      {
+        name: "impossible-pointer",
+        fixture: impossiblePointer,
         outcome: "malformed",
       },
     ] as const;
@@ -174,7 +190,6 @@ cliTest(
     }
     await client.ping();
   },
-  60000,
 );
 
 cliTest(
@@ -233,7 +248,6 @@ cliTest(
       details: { issues: [{ path: ["evidence_output"] }] },
     });
   },
-  30000,
 );
 
 cliTest(
@@ -263,7 +277,6 @@ cliTest(
     expect(parseMcpToolError(response).error).toMatchObject(expected);
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -290,7 +303,6 @@ cliTest(
     expect(infos[1]).toEqual(infos[0]);
     await client.ping();
   },
-  30000,
 );
 
 for (const bits of [32, 64] as const) {
@@ -340,7 +352,6 @@ for (const bits of [32, 64] as const) {
         expect(buildInfos[1]).toEqual(buildInfos[0]);
         await client.ping();
       },
-      30000,
     );
   }
 }
@@ -396,7 +407,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
@@ -700,5 +710,4 @@ cliTest(
     expectCliMcpEvidenceParity(evidence, mcpReply.structuredContent, path);
     await client.ping();
   },
-  60000,
 );

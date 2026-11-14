@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 it.each([
   'class Database { constructor(name) { this.name = name; } } new Database("hello");',

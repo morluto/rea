@@ -1,4 +1,3 @@
-import { samplingInspectionFailures } from "./ProcessSamplingObservation.js";
 import { ProcessAdmissionError } from "../ProcessAdmissionError.js";
 import type { IPty } from "@lydell/node-pty";
 import type { ProcessCapture } from "../../domain/process/processCaptureParsing.js";
@@ -13,6 +12,7 @@ import {
 } from "./ProcessTerminalObservation.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
+  captureInspectionFailures,
   describeProcessCaptureExecutionFailure,
   ProcessCaptureError,
   ProcessCaptureInspectionFailure,
@@ -451,7 +451,7 @@ const retainRunInspectionFailures = (
   inspections: Set<ProcessCaptureInspectionFailure>,
 ): unknown => {
   const failure = normalizeCaptureFailure(cause);
-  for (const inspection of samplingInspectionFailures(failure)) {
+  for (const inspection of captureInspectionFailures(failure)) {
     resources.retainInspectionFailure(inspection);
     inspections.add(inspection);
   }
@@ -467,7 +467,7 @@ const retainSamplingFailure = (
 ): unknown => {
   const failure = retainRunInspectionFailures(cause, resources, inspections);
   if (failure instanceof AnalysisError)
-    for (const inspection of samplingInspectionFailures(failure))
+    for (const inspection of captureInspectionFailures(failure))
       retainCaptureInspectionCancellations(failure, inspection);
   if (primary === undefined || primary === failure) return failure;
   const error =
@@ -478,7 +478,7 @@ const retainSamplingFailure = (
     failure instanceof AnalysisError
       ? failure
       : new ProcessCaptureError("process sampling failed", { cause: failure });
-  for (const inspection of samplingInspectionFailures(failure))
+  for (const inspection of captureInspectionFailures(failure))
     retainCaptureInspectionCancellations(error, inspection);
   if (error.secondaryFailures.includes(secondary)) return error;
   if (secondary.cleanupIncomplete)
@@ -788,10 +788,10 @@ const captureProgressDisposition = (
 const runProcessScenario = async (
   resourceScope: ProcessCaptureResourceScope,
   scenario: ProcessScenario,
-  signal?: AbortSignal,
-  hostEnvironment: Readonly<Record<string, string | undefined>> = process.env,
-  hostPlatform: NodeJS.Platform = process.platform,
-  captureSnapshot: typeof snapshotRoots = snapshotRoots,
+  signal: AbortSignal | undefined,
+  hostEnvironment: Readonly<Record<string, string | undefined>>,
+  hostPlatform: NodeJS.Platform,
+  captureSnapshot: typeof snapshotRoots,
   cleanupHost?: ProcessCaptureCleanupHost,
   progress?: ProcessCaptureProgress,
   finalizationHost?: FinalizationHost,

@@ -3,7 +3,7 @@ import {
   BinaryFormatFailure,
   BinaryStringReadLimitFailure,
 } from "./BinaryContainer.js";
-import { readElfString, readElfStringBytes } from "./ElfStringTable.js";
+import { readElfStringBytes } from "./ElfStringTable.js";
 
 it("preserves empty and non-UTF8 string-table bytes", () => {
   const table = Buffer.from([0, 0xff, 0x61, 0]);
@@ -11,7 +11,6 @@ it("preserves empty and non-UTF8 string-table bytes", () => {
   expect(readElfStringBytes(table, 1).equals(Buffer.from([0xff, 0x61]))).toBe(
     true,
   );
-  expect(readElfString(table, 1)).toBe("\xffa");
 });
 
 it("reads a terminator inside the scan allowance at a nonzero table offset", () => {
@@ -38,7 +37,7 @@ it.each([65_536, 70_000])(
       failure = cause;
     }
     expect(failure).toBeInstanceOf(BinaryStringReadLimitFailure);
-    expect(failure).toBeInstanceOf(BinaryFormatFailure);
+    expect(failure).not.toBeInstanceOf(BinaryFormatFailure);
     expect(failure).toMatchObject({ maximumBytes: 65_536 });
   },
 );

@@ -1,6 +1,7 @@
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
+import * as processOutput from "../../src/process/ExecFileOutput.js";
 import { OwnedCommandFailure } from "../../src/process/OwnedCommand.js";
 import {
   DarwinProcessOwnershipInspectionError,
@@ -799,15 +800,13 @@ it("restricts Linux process ownership prerequisite remediation to missing ps and
   });
 
   let currentError: Error = eioError;
-  const host = createSystemProcessOwnershipHost(
-    "linux",
-    {},
-    {
-      execFileOutput: async () => {
-        throw currentError;
-      },
-    },
-  );
+  const command = vi
+    .spyOn(processOutput, "execFileOutput")
+    .mockImplementation(async () => {
+      throw currentError;
+    });
+  onTestFinished(() => command.mockRestore());
+  const host = createSystemProcessOwnershipHost("linux", {});
 
   currentError = eioError;
   const eioFailure = (await host
@@ -871,18 +870,13 @@ it("restricts Linux process ownership prerequisite remediation to missing ps and
   });
   expect(noCodeFailure.diagnostics).not.toHaveProperty("system_code");
 
-  const emptyTableHost = createSystemProcessOwnershipHost(
-    "linux",
-    {},
-    {
-      execFileOutput: async () => ({
-        stdout: "    1     0     1     0 Ss   /sbin/init\n",
-        stderr: "",
-        stdoutBytes: 40,
-        stderrBytes: 0,
-      }),
-    },
-  );
+  command.mockResolvedValue({
+    stdout: "    1     0     1     0 Ss   /sbin/init\n",
+    stderr: "",
+    stdoutBytes: 40,
+    stderrBytes: 0,
+  });
+  const emptyTableHost = createSystemProcessOwnershipHost("linux", {});
   const unreportedFailure = (await emptyTableHost
     .prepare?.()
     .catch((error: unknown) => error)) as LinuxOwnedProcessPrerequisiteError;
@@ -1006,7 +1000,7 @@ it("retains successful architecture and artifact output for an admitted provider
 });
 
 it("tracks observed launch failures and clears them after subsequent successful launch", async () => {
-  const { directory, path } = await createArtifact();
+  const { directory } = await createArtifact();
   const command = resolve(directory, "failing-objdump");
   let failLaunch = true;
   const service = new TestReverseEngineeringService({

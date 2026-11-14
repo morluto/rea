@@ -325,7 +325,6 @@ it.each([
       await session.close();
     }
   },
-  120000,
 );
 
 it("reports omission when the primary cannot be safely authenticated", async () => {

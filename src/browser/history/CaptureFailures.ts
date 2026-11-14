@@ -1,3 +1,4 @@
+import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { captureBudgets } from "./CaptureBudgets.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
@@ -36,11 +37,8 @@ import {
   type CaptureDecoderHeap,
 } from "../../config/captureDecoderHeap.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
-import {
-  NODE_CAPTURE_HEAP_ENFORCED,
-  NODE_CAPTURE_HEAP_LIMITS,
-  captureDecoderProcessMemoryLimitBytes,
-} from "./CaptureRelease.js";
+import { NODE_CAPTURE_HEAP_ENFORCED } from "./CaptureRelease.js";
+import { CAPTURE_DECODER_SEMI_SPACE_MIB } from "../../domain/analysisResourceLimits.js";
 const OPERATION = "inspect_web_network_capture";
 
 /** Reason for a decoder whose owned process tree reached its Job Object commit limit. */
@@ -296,7 +294,7 @@ export const captureMemoryFailure = (
   cause?: unknown,
   heap: CaptureDecoderHeap = DEFAULT_CAPTURE_DECODER_HEAP,
 ): AnalysisResourceConstraintError => {
-  const processMemoryLimitBytes = captureDecoderProcessMemoryLimitBytes(
+  const processMemoryLimitBytes = javaScriptWorkerMemoryLimitBytes(
     heap.oldGenerationMiB,
   );
   const recovery = captureDecoderHeapRecovery(heap);
@@ -315,7 +313,7 @@ export const captureMemoryFailure = (
         ? {
             old_generation_heap_mib: heap.oldGenerationMiB,
             old_generation_heap_source: heap.source,
-            semi_space_heap_mib: NODE_CAPTURE_HEAP_LIMITS.semiSpaceMiB,
+            semi_space_heap_mib: CAPTURE_DECODER_SEMI_SPACE_MIB,
           }
         : {}),
       ...(input.format !== "mitmproxy" && processMemoryLimitBytes !== null

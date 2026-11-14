@@ -14,7 +14,6 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { seededLockStartNotice } from "../../../src/application/desktop/DesktopBuildComputers.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   buildComputerFakes as fakes,
@@ -333,7 +332,12 @@ it("points a bundle's start that never got ready at the lock files its seed hold
     "envs/calc/seed/Documents/q1.ods.LCK",
   ];
   expect(pointed).toContain(notReady);
-  expect(pointed).toContain(seededLockStartNotice(locks));
+  expect(pointed).toContain(
+    "The bundle's seed holds lock files, which can keep the app from starting",
+  );
+  expect(pointed).toContain(
+    "Delete them from the bundle, or export it again, which leaves them out, and start again.",
+  );
   for (const lock of locks) expect(pointed).toContain(lock);
   expect(pointed).not.toContain("Documents/notes.lck");
   expect(unlocked).not.toContain(locks[0]);
@@ -468,7 +472,7 @@ it("returns the latest frame when a retried screenshot outlasts the wait for the
   expect(progress.map(({ message }) => message)).toContainEqual(
     expect.stringContaining("waiting for the desktop to draw"),
   );
-}, 40_000);
+});
 
 it("leaves the bundle folder's files as they were when it starts a computer from it", async () => {
   const { runner } = await fakes();
@@ -685,7 +689,7 @@ it("runs one computer's calls in the order they arrive and another computer's be
     "reset",
     "screenshot behind the reset",
   ]);
-}, 30_000);
+});
 
 it("sends progress while an action waits for the call before it on its computer", async () => {
   const app = slowApp(14);
@@ -711,7 +715,7 @@ it("sends progress while an action waits for the call before it on its computer"
   expect(waited.isError, JSON.stringify(waited)).not.toBe(true);
   expect(progress.length).toBeGreaterThan(0);
   await reset;
-}, 30_000);
+});
 
 it("cancels a computer's call in progress on close and refuses the calls waiting behind it", async () => {
   const app = slowApp(600);

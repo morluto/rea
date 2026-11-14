@@ -66,16 +66,18 @@ interface LoadedObject {
   readonly loader: LoadedObject | undefined;
 }
 
+const ORIGIN_TOKEN = /\$(?:ORIGIN(?![A-Za-z0-9_])|\{ORIGIN\})/gu;
+
 /** Absolute directories with `$ORIGIN` expanded to the owner's folder; relative and other dynamic-token paths are left out. */
 const expanded = (
   owner: string,
   directories: readonly string[],
 ): readonly string[] =>
   directories
-    .map((path) =>
-      path.replace(/\$(?:ORIGIN|\{ORIGIN\})/gu, posix.dirname(owner)),
-    )
-    .filter((path) => path.startsWith("/") && !path.includes("$"))
+    // Check tokens before expansion: dollars in the owner's directory are data.
+    .filter((path) => !path.replace(ORIGIN_TOKEN, "").includes("$"))
+    .map((path) => path.replace(ORIGIN_TOKEN, () => posix.dirname(owner)))
+    .filter((path) => path.startsWith("/"))
     .map((path) => posix.normalize(path));
 
 /**

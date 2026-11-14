@@ -464,7 +464,9 @@ class ReaJadxBridge {
       if (element.getTagName().equals("uses-sdk")) {
         minSdk = element.getAttributeNS(android, "minSdkVersion");
         targetSdk = element.getAttributeNS(android, "targetSdkVersion");
-      } else if (element.getTagName().equals("uses-permission")) {
+      } else if (element.getTagName().equals("uses-permission")
+          || element.getTagName().equals("uses-permission-sdk-23")
+          || element.getTagName().equals("uses-permission-sdk-m")) {
         String permission = element.getAttributeNS(android, "name");
         if (!permission.isEmpty()) permissions.add(permission);
       }

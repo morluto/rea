@@ -185,7 +185,7 @@ sys.exit(0)
 `;
 
 /** Prepared outputs of the real CLI for the fake REA to print. */
-export interface FakeReaOutputs {
+interface FakeReaOutputs {
   readonly capture: string;
   readonly draft: string;
   readonly export: string;
@@ -195,7 +195,7 @@ export interface FakeReaOutputs {
   readonly withheld?: string;
 }
 
-export interface FakeBuildComputerRea {
+interface FakeBuildComputerRea {
   readonly home: string;
   readonly bin: string;
   readonly env: Readonly<Record<string, string>>;

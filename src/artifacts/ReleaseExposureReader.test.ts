@@ -201,6 +201,8 @@ vi.mock("node:fs/promises", async () => {
 const PLANTED_SOURCE = "release-exposure-planted-secret-7c2e9a";
 const PLANTED_KEY = "AKIAPLANT9EXPOSUREXX";
 const ignoreText = (): void => undefined;
+// Keep the marker separate so Vite does not treat fixture text as this file's source map.
+const INLINE_MAP_PREFIX = "# sourceMappingURL=data:application/json;base64,";
 
 describe("ReleaseExposureReader review regressions", () => {
   it("keeps inline CSS source-map coverage unknown in files and packages", async () => {
@@ -691,25 +693,31 @@ describe("ReleaseExposureReader limits", () => {
     }
   });
 
-  it("counts members past the package entry cap and marks coverage unknown", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-entries-");
-    const files = [
-      ...Array.from({ length: 4096 }, (_, index) => ({
-        path: `f${String(index)}.bin`,
-        bytes: Buffer.from("x"),
-      })),
-      { path: "hidden.js.map", bytes: Buffer.from("{not json") },
-      { path: "secret.txt", bytes: Buffer.from("hello\n") },
-    ];
-    await writeFile(join(root, "app.dll"), dotnetBundleFixture(files).bytes);
-    const scanned = await inspect(root);
-    expect(scanned.coverage).toBe("unknown");
-    expect(scanned.source_maps.skipped).toBeGreaterThan(0);
-    expect(scanned.text_members.skipped).toBeGreaterThan(0);
-    expect(scanned.omitted.map((item) => item.subject)).toEqual(
-      expect.arrayContaining(["source maps", "text members"]),
-    );
-  }, 60_000);
+  it(
+    "counts members past the package entry cap and marks coverage unknown",
+    { tags: ["long-running"] },
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-release-exposure-entries-",
+      );
+      const files = [
+        ...Array.from({ length: 4096 }, (_, index) => ({
+          path: `f${String(index)}.bin`,
+          bytes: Buffer.from("x"),
+        })),
+        { path: "hidden.js.map", bytes: Buffer.from("{not json") },
+        { path: "secret.txt", bytes: Buffer.from("hello\n") },
+      ];
+      await writeFile(join(root, "app.dll"), dotnetBundleFixture(files).bytes);
+      const scanned = await inspect(root);
+      expect(scanned.coverage).toBe("unknown");
+      expect(scanned.source_maps.skipped).toBeGreaterThan(0);
+      expect(scanned.text_members.skipped).toBeGreaterThan(0);
+      expect(scanned.omitted.map((item) => item.subject)).toEqual(
+        expect.arrayContaining(["source maps", "text members"]),
+      );
+    },
+  );
 
   it("does not drop native images before the service samples them", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-natives-");
@@ -1498,28 +1506,34 @@ describe("ReleaseExposureReader member allowances", () => {
     },
   );
 
-  it("keeps a later source map readable after many large binary members", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-budget-");
-    const binary = Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES);
-    const oversizedScript = Buffer.alloc(
-      MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1,
-      0x20,
-    );
-    await writeFile(
-      join(root, "app.asar"),
-      asarArchive([
-        ...Array.from({ length: 160 }, (_, index) => ({
-          name: `a${String(index)}.bin`,
-          bytes: binary,
-        })),
-        { name: "b.js", bytes: oversizedScript },
-        { name: "z.js.map", bytes: embeddedSourceMap() },
-      ]),
-    );
-    const scanned = await inspect(join(root, "app.asar"));
-    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 1 });
-    expect(scanned.extractable.readable_members).toBe(162);
-  }, 60_000);
+  it(
+    "keeps a later source map readable after many large binary members",
+    { tags: ["long-running"] },
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-release-exposure-budget-",
+      );
+      const binary = Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES);
+      const oversizedScript = Buffer.alloc(
+        MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1,
+        0x20,
+      );
+      await writeFile(
+        join(root, "app.asar"),
+        asarArchive([
+          ...Array.from({ length: 160 }, (_, index) => ({
+            name: `a${String(index)}.bin`,
+            bytes: binary,
+          })),
+          { name: "b.js", bytes: oversizedScript },
+          { name: "z.js.map", bytes: embeddedSourceMap() },
+        ]),
+      );
+      const scanned = await inspect(join(root, "app.asar"));
+      expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 1 });
+      expect(scanned.extractable.readable_members).toBe(162);
+    },
+  );
 
   it("reports an oversized linker map as a debug companion wherever it ships", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-link-");
@@ -2067,7 +2081,7 @@ const plistObject = (type: number, length: number, body: Buffer): Buffer =>
 
 describe("ReleaseExposureReader text encodings", () => {
   const marker = "-----BEGIN PRIVATE KEY-----\n";
-  const inlineMap = `//# sourceMappingURL=data:application/json;base64,${Buffer.from(
+  const inlineMap = `//${INLINE_MAP_PREFIX}${Buffer.from(
     JSON.stringify({
       version: 3,
       sources: ["src/app.ts"],
@@ -4328,7 +4342,7 @@ describe("ReleaseExposureReader script roles over a .map name", () => {
 });
 
 describe("ReleaseExposureReader HTML script references", () => {
-  const inlineMap = `//# sourceMappingURL=data:application/json;base64,${Buffer.from(
+  const inlineMap = `//${INLINE_MAP_PREFIX}${Buffer.from(
     JSON.stringify({
       version: 3,
       sources: ["src/app.ts"],
@@ -4620,7 +4634,7 @@ describe("ReleaseExposureReader cumulative text allowance", () => {
 
 describe("ReleaseExposureReader unfollowed map links", () => {
   const SCRIPT = "const value = 1;\n//# sourceMappingURL=app.js.map\n";
-  const EMBEDDED_PAYLOAD = `const value = 1;\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(
+  const EMBEDDED_PAYLOAD = `const value = 1;\n//${INLINE_MAP_PREFIX}${Buffer.from(
     JSON.stringify({
       version: 3,
       sources: ["a.ts"],

@@ -99,7 +99,7 @@ it("preserves queue failure diagnostics through the provider, CLI adapter and SD
     process.exitCode = previousExitCode;
     await harness.close();
   }
-}, 30_000);
+});
 
 it.each(
   (["cancelled", "protocol"] as const).flatMap((kind) =>
