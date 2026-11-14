@@ -5,6 +5,7 @@ import { expect } from "vitest";
 
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/reverseEngineeringToolContracts.js";
+import { rizinInputSchema } from "../../../src/domain/reverseEngineering.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -177,12 +178,15 @@ cliTest(
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "VALIDATION_ERROR",
-      fieldErrors: [
-        expect.objectContaining({
-          path: "asmBits",
-          message: "Expected one of 4, 8, 16, 32, 64",
-        }),
-      ],
+      fieldErrors: [expect.objectContaining({ path: "asmBits" })],
     });
+    // The message lists the admitted widths, taken from the owning contract;
+    // its wording is not part of the contract.
+    const [fieldError] = (
+      result.json as { fieldErrors: readonly { message: string }[] }
+    ).fieldErrors;
+    expect(fieldError!.message.match(/\d+/gu)?.map(Number)).toEqual([
+      ...rizinInputSchema.shape.asm_bits.unwrap().values,
+    ]);
   },
 );

@@ -310,16 +310,24 @@ it.skipIf(rizin === undefined)(
     // feature letters and one space (`adAeI 16 32 64   arm`), 0.7.4 four and
     // two (`adAe  16 32 64   arm`). Laj is not valid JSON in either version.
     const { lines: plugins } = await runRizin({ command: "La" }, THUMB_RETURNS);
+    // La prints no header, so every non-empty line is a plugin row. A row this
+    // parser does not read fails here rather than leaving its widths unchecked.
+    const rows = plugins.filter((line) => line.trim() !== "");
+    const parsed = rows.map((line) => ({
+      line,
+      match: /^\S{4,5}\s+(\d+(?: \d+)*)\s{2,}(\S+)/u.exec(line),
+    }));
+    expect(
+      parsed.filter(({ match }) => match === null).map(({ line }) => line),
+      "La rows this parser does not read",
+    ).toEqual([]);
     const declared = new Map(
-      plugins.flatMap((line) => {
-        const match = /^\S{4,5}\s+(\d+(?: \d+)*)\s{2,}(\S+)/u.exec(line);
-        return match === null
+      parsed.flatMap(({ match }) =>
+        match === null
           ? []
-          : [[match[2]!, match[1]!.split(" ").map(Number)] as const];
-      }),
+          : [[match[2]!, match[1]!.split(" ").map(Number)] as const],
+      ),
     );
-    // A La layout that this parser does not read fails here, not as an empty
-    // list of widths.
     expect(
       declared.size,
       `parsed no arch plugins from La:\n${plugins.join("\n")}`,
