@@ -75,7 +75,6 @@ const run = async (
   const result = await cli.run({
     arguments: [...arguments_, "--json"],
     environment,
-    timeoutMs: 30_000,
   });
   return { result, report: reportSchema.safeParse(result.json) };
 };

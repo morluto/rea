@@ -5,9 +5,41 @@ import {
   type SpawnOptionsWithoutStdio,
 } from "node:child_process";
 
-import { test as base } from "vitest";
+import { TestRunner, test as base } from "vitest";
 
 const SHUTDOWN_GRACE_MS = 1_000;
+/** Minimum time kept back from a test deadline to stop a child and report it. */
+const MIN_REPORT_RESERVE_MS = 5_000;
+
+/**
+ * Default child deadline: the test's remaining deadline, less a reserve for
+ * stopping the child and reporting its captured output. A hung child then fails
+ * with its output instead of an opaque test timeout, without a fixed value that
+ * assumes a host's speed. Undefined when the test itself has no deadline.
+ */
+export const remainingProcessDeadline = (
+  testDeadlineMs: number,
+  elapsedMs: number,
+): number | undefined => {
+  if (!(testDeadlineMs > 0)) return undefined;
+  const reserve = Math.max(MIN_REPORT_RESERVE_MS, testDeadlineMs / 10);
+  return Math.max(
+    SHUTDOWN_GRACE_MS,
+    Math.floor(testDeadlineMs - elapsedMs - reserve),
+  );
+};
+
+/**
+ * Deadline left for a child started by the running test, or undefined outside
+ * a test. Uses the real clock, so tests that fake `Date` keep a real deadline.
+ */
+const currentTestProcessDeadline = (): number | undefined => {
+  const test = TestRunner.getCurrentTest();
+  const started = test?.result?.startTime;
+  if (test === undefined || started === undefined) return undefined;
+  const now = performance.timeOrigin + performance.now();
+  return remainingProcessDeadline(test.timeout, now - started);
+};
 
 /** Captured output and termination state from one child process. */
 export interface ProcessResult {
@@ -70,7 +102,10 @@ const stopChild = async (
   return waitForExit(child, SHUTDOWN_GRACE_MS);
 };
 
-/** Create a child-process registry for a fixture composition root. */
+/**
+ * Create a child-process registry for a fixture composition root. A run without
+ * its own `timeoutMs` is bounded by the running test's remaining deadline.
+ */
 export const createTestProcessRegistry = (
   spawnChild: (
     command: string,
@@ -98,7 +133,11 @@ export const createTestProcessRegistry = (
   return {
     spawn,
     run: async (command, arguments_, options = {}) => {
-      const { input, timeoutMs, ...spawnOptions } = options;
+      const {
+        input,
+        timeoutMs = currentTestProcessDeadline(),
+        ...spawnOptions
+      } = options;
       const child = spawn(command, arguments_, spawnOptions);
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];

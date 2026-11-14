@@ -74,7 +74,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-pyc-views-");
     const path = join(root, "module.pyc");
     await writeSameNamePyc(path);
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const complete = await run({
       arguments: ["inspect-python-pyc", path, "--json"],
     });
@@ -222,7 +222,7 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pyc-invalid-delivery-");
     const output = join(root, "unused.json");
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const view = JSON.stringify({
       kind: "python-pyc",
       collection: "code_objects",

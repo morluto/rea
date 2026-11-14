@@ -26,7 +26,7 @@ cliTest(
       if (name === "writable") bytes.writeBigUInt64LE(3n, 384 + 8);
       const path = join(root, `${name}.elf`);
       await writeFile(path, bytes);
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: ["inspect-rust-binary", path, "--json"],
       });
       expect(output.exitCode, output.stderr).toBe(0);

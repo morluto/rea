@@ -354,23 +354,16 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
   }
 });
 
-it("rejects unpaired surrogates through in-memory MCP handlers without advertising them", async () => {
+// advertisedPatternsVMode.test.ts proves no schema profile advertises the
+// surrogate escape; this case proves the handlers still refuse such paths.
+it("rejects unpaired surrogates through in-memory MCP handlers", async () => {
   const firmwareCalls: string[] = [];
-  const { client, close } = await createMcp(firmwareCalls, "full");
+  const { client, close } = await createMcp(firmwareCalls);
   try {
     const absolute = resolve("rea-absolute-input");
     const cases = inputCases(absolute, `${absolute}\ud800`);
-    const listed = await client.listTools();
     const checked: string[] = [];
     for (const { name, field, invalid, issuePath } of cases) {
-      const schema = listed.tools.find(
-        (tool) => tool.name === name,
-      )?.inputSchema;
-      if (schema === undefined)
-        throw new Error(`Missing advertised tool ${name}`);
-      // Strict pattern compilers refuse the complete tools request for a
-      // `\uD800-\uDFFF` range, so the rule is enforced only by the handler.
-      expect(JSON.stringify(schema), name).not.toMatch(/\\\\u[dD][89a-fA-F]/u);
       const result = await client.callTool({ name, arguments: invalid });
       expect(result.isError, `${name}.${field}`).toBe(true);
       expect(parseMcpToolError(result).error, `${name}.${field}`).toMatchObject(

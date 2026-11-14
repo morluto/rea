@@ -201,3 +201,12 @@ export const CLI_COMMANDS = Object.freeze({
 
 /** Ordered primary CLI inventory; aliases are intentionally excluded. */
 export const CLI_COMMAND_NAMES = Object.freeze(Object.values(CLI_COMMANDS));
+
+/**
+ * Commands that announce their progress at info level when REA_LOG_LEVEL is
+ * unset, like `rea mcp --http`. Their logger writes to stderr directly.
+ */
+export const DEFAULT_INFO_LOGGING_COMMANDS: ReadonlySet<string> = new Set([
+  CLI_COMMANDS.environmentServe,
+  CLI_COMMANDS.environmentBuild,
+]);

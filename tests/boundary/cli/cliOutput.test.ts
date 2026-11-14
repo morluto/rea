@@ -293,7 +293,6 @@ describe("CLI output flag value forms", () => {
       ]) {
         const result = await cli.run({
           arguments: [...filter, "providers", "--json"],
-          timeoutMs: 10_000,
         });
         expect(result.exitCode).toBe(0);
         expect(JSON.parse(result.stdout)).toEqual({});

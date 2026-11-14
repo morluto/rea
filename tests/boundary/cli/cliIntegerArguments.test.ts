@@ -4,11 +4,7 @@ import { join } from "node:path";
 import { describe, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  cliTest,
-  runFileCli,
-  type CliResult,
-} from "../../support/cli/cliFixture.js";
+import { cliTest, type CliResult } from "../../support/cli/cliFixture.js";
 
 const SESSION_ID = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
 const NON_INTEGER_TEXT = [
@@ -132,7 +128,7 @@ describe("CLI integer arguments", () => {
   cliTest.for(NON_INTEGER_OPTION_TEXT)(
     "rejects %j as an Android reference overload index",
     async (value, { cli }) => {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [
           "trace-android-references",
           "/nonexistent/missing.apk",
@@ -149,7 +145,7 @@ describe("CLI integer arguments", () => {
   cliTest.for(NON_INTEGER_TEXT)(
     "rejects %j as a Cutter expected generation",
     async (value, { cli }) => {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["cutter-command", SESSION_ID, value, "pdi", "--json"],
       });
 
@@ -160,7 +156,7 @@ describe("CLI integer arguments", () => {
   cliTest.for(NON_INTEGER_TEXT)(
     "rejects %j as a web module script index",
     async (value, { cli }) => {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [
           "trace-web-module-imports",
           "/nonexistent/manifest.json",
@@ -176,7 +172,7 @@ describe("CLI integer arguments", () => {
   cliTest.for(NON_INTEGER_OPTION_TEXT)(
     "rejects %j in a repeated web capture record selector",
     async (value, { cli }) => {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [
           "inspect-web-network-capture",
           "/nonexistent/capture.qlog",
@@ -206,7 +202,7 @@ describe("byte-entropy window options", () => {
     cliTest.for(values)(
       `rejects %j as a byte-entropy ${flag} value`,
       async (value, { cli }) => {
-        const result = await runFileCli(cli, {
+        const result = await cli.run({
           arguments: [
             "inspect-byte-entropy",
             await entropySample(),
@@ -225,7 +221,7 @@ describe("byte-entropy window options", () => {
     async ({ cli }) => {
       const path = await entropySample();
       const window = async (...flags: string[]): Promise<unknown> => {
-        const result = await runFileCli(cli, {
+        const result = await cli.run({
           arguments: ["inspect-byte-entropy", path, ...flags, "--json"],
         });
         expect(result.exitCode, result.stdout).toBe(0);
@@ -271,7 +267,7 @@ describe("pyc and BEAM limit options", () => {
     cliTest.for(values)(
       `rejects %j as ${command} ${flag}`,
       async (value, { cli }) => {
-        const result = await runFileCli(cli, {
+        const result = await cli.run({
           arguments: [
             command,
             "/nonexistent/missing-artifact",
@@ -289,7 +285,7 @@ describe("pyc and BEAM limit options", () => {
     ["inspect-python-pyc", "--max-depth=016"],
     ["inspect-erlang-beam", "--max-chunks=016"],
   ] as const)("keeps a decimal %s limit", async ([command, flag], { cli }) => {
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: [command, "/nonexistent/missing-artifact", flag, "--json"],
     });
 
@@ -322,7 +318,7 @@ describe("artifact decimal options", () => {
     cliTest.for(values)(
       `rejects %j as ${command} ${flag}`,
       async (value, { cli }) => {
-        const result = await runFileCli(cli, {
+        const result = await cli.run({
           arguments: [
             command,
             "/nonexistent/missing-artifact",
@@ -337,7 +333,7 @@ describe("artifact decimal options", () => {
   }
 
   cliTest("keeps decimal keyed-archive offset and limit", async ({ cli }) => {
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: [
         "inspect-keyed-archive",
         "/nonexistent/missing-archive",

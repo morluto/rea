@@ -48,6 +48,8 @@ describe("client configuration filesystem lifecycle", () => {
     for (const client of supportedClients(home))
       if (client.markerPath !== undefined)
         await mkdir(client.markerPath, { recursive: true });
+    // Gemini CLI follows its own session state, not the shared .gemini root.
+    await mkdir(join(home, ".gemini", "tmp"), { recursive: true });
     const detected = await detectClients(home);
     expect(detected.map(({ name }) => name)).toEqual([
       "claude_code",
@@ -86,6 +88,21 @@ describe("client configuration filesystem lifecycle", () => {
     expect(detected.find(({ name }) => name === "devin")?.format).toBe("json");
     const emptyHome = await createTestTempDirectory("rea-empty-");
     expect(await detectClients(emptyHome)).toEqual([]);
+  });
+
+  it("does not detect Gemini CLI from Antigravity's shared .gemini storage", async () => {
+    const home = await createTestTempDirectory("rea-detect-gemini-");
+    const antigravity = supportedClients(home).find(
+      ({ name }) => name === "antigravity",
+    );
+    if (antigravity?.markerPath === undefined)
+      throw new Error("Antigravity marker is missing");
+    await mkdir(antigravity.markerPath, { recursive: true });
+    const names = async () =>
+      (await detectClients(home)).map(({ name }) => name);
+    expect(await names()).toEqual(["antigravity"]);
+    await writeFile(join(home, ".gemini", "settings.json"), "{}\n");
+    expect(await names()).toEqual(["gemini_cli", "antigravity"]);
   });
 
   it("preserves unrelated Codex TOML and supports an installed command", async () => {

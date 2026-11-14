@@ -40,7 +40,7 @@ cliTest.for(["pe", "elf"] as const)(
             versionDefinitions: ["fixture", "V1"],
           });
     await writeFile(path, bytes);
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const complete = await run({
       arguments: ["inspect-native-exports", path, "--json"],
     });

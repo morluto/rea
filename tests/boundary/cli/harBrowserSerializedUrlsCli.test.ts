@@ -79,7 +79,6 @@ cliTest(
     });
     const built = await cli.run({
       arguments: ["environment-build", har, "--dry-run", "--json"],
-      timeoutMs: 60_000,
     });
     expect(built.exitCode, built.stdout + built.stderr).toBe(0);
     expect(built.json).toMatchObject({

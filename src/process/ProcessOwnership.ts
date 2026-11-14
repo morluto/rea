@@ -110,6 +110,11 @@ export type ProcessIdentityObservation =
        * truncated. It names a process in diagnostics; never identity or lookup.
        */
       readonly name?: string;
+      /**
+       * Linux PF_KTHREAD from the same `/proc/<pid>/stat` record as `identity`.
+       * A kernel thread cannot carry a run token. Only a Linux stat read sets it.
+       */
+      readonly kernelThread?: true;
     }
   | {
       readonly state: "absent";
@@ -1911,13 +1916,17 @@ const scanWithOwnershipEvidence = async (
       fact.identityAfter.state === "readable"
         ? fact.identityAfter
         : undefined;
+    // A kernel thread has no user environment, so it cannot carry this run's
+    // token. Procfs can fail its environment read (for example with ESRCH)
+    // while it stays live, and root callers see no credential restriction.
     if (
       knownUnrelated &&
-      environmentWithheldFromInspection(
-        fact.token.reason,
-        observed?.effectiveUid,
-        observed?.environmentRestriction,
-      )
+      (observed?.kernelThread === true ||
+        environmentWithheldFromInspection(
+          fact.token.reason,
+          observed?.effectiveUid,
+          observed?.environmentRestriction,
+        ))
     ) {
       unverified.push({
         pid: fact.process.pid,

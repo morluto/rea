@@ -59,7 +59,6 @@ cliTest(
         "--json",
       ],
       cwd: root,
-      timeoutMs: 60_000,
     });
     expect(built.exitCode, built.stderr).toBe(0);
     expect(built.json).toMatchObject({
@@ -111,7 +110,6 @@ cliTest(
         join(root, "three-step"),
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(exported.exitCode, exported.stderr).toBe(0);
 
@@ -178,7 +176,6 @@ cliTest(
         "--capture-timeout-ms=030000",
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(planned.exitCode, planned.stderr).toBe(0);
     expect(planned.json).toMatchObject({
@@ -231,7 +228,6 @@ cliTest(
 
     const noDirectory = await cli.run({
       arguments: ["environment-build", har, "--json"],
-      timeoutMs: 60_000,
     });
     expect(noDirectory.exitCode).toBe(1);
     expect(noDirectory.json).toMatchObject({
@@ -265,7 +261,6 @@ cliTest.for(["--dry-run=abc", "--dry-run="] as const)(
     await writeFile(har, JSON.stringify(environmentManifestHar()));
     const result = await cli.run({
       arguments: ["environment-build", har, output, dryRun, "--json"],
-      timeoutMs: 60_000,
     });
     expect(result.exitCode).not.toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toContain("--dry-run");
@@ -284,7 +279,6 @@ cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
     await writeFile(har, JSON.stringify(environmentManifestHar()));
     const result = await cli.run({
       arguments: ["environment-build", har, output, dryRun, "--json"],
-      timeoutMs: 60_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.json).toMatchObject({
@@ -293,5 +287,28 @@ cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
     expect((await readdir(root)).includes("bundle")).toBe(
       dryRun === "--dry-run=false",
     );
+  },
+);
+
+cliTest(
+  "reports its default build-stage logging through the routed CLI driver",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-environment-build-logs-");
+    const har = join(root, "grafana.har");
+    await writeFile(har, JSON.stringify(environmentManifestHar()));
+    // Without REA_LOG_LEVEL the build logs its stages at info on stderr.
+    const invocation = {
+      arguments: ["environment-build", har, "--dry-run", "--json"],
+    };
+    const routed = await cli.run(invocation);
+    const fresh = await cli.run({ ...invocation, freshProcess: true });
+    expect(fresh.stderr).toContain("Building environment");
+    const stages = (stderr: string) =>
+      stderr
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => (JSON.parse(line) as { stage?: unknown }).stage);
+    expect(stages(routed.stderr)).toEqual(stages(fresh.stderr));
+    expect(routed.exitCode).toBe(fresh.exitCode);
   },
 );
