@@ -4,7 +4,7 @@ import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.j
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import type { DoctorCheck, DoctorHost, DoctorSkillState } from "./Doctor.js";
 import { nodeCheck } from "./DoctorDiagnostics.js";
-import { DESKTOP_BUILD_PROVIDER_ID } from "./DoctorProviderIds.js";
+import { DESKTOP_BUILD_PROVIDER_ID } from "../domain/doctorProviderIds.js";
 import type { DoctorScopeReport } from "./DoctorScope.js";
 
 /** Free space agentenv's images need where Docker keeps them. */

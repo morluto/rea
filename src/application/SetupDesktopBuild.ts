@@ -1,6 +1,6 @@
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { AGENTENV_INSTALL_COMMAND } from "./DesktopBuildDoctor.js";
-import { DESKTOP_BUILD_PROVIDER_ID } from "./DoctorProviderIds.js";
+import { DESKTOP_BUILD_PROVIDER_ID } from "../domain/doctorProviderIds.js";
 import { assertSetupActive } from "./SetupCancellation.js";
 import type {
   SetupAction,

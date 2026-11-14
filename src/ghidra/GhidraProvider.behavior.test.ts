@@ -6455,6 +6455,13 @@ it("refuses a changed installation before creating a target-bound native client"
         current_installation: { provider_version: "12.1.5" },
       },
     });
+    // The actionable reason reaches the caller, not only details.
+    const projected = projectAnalysisError(result.error);
+    expect(projected.message).toContain(
+      "installation version differs from the selected analysis profile",
+    );
+    expect(projected.remediation.action).toContain("Reopen the target");
+    expect(projected.remediation.action).not.toContain("doctor");
     expect(client.reuseReadiness?.()).toBe("blocked");
     expect(nativeCreates).toBe(0);
   } finally {

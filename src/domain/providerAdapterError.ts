@@ -25,3 +25,15 @@ export class ProviderAdapterError extends AnalysisError {
     this.remediationAction = options.remediationAction;
   }
 }
+
+/** A request reached an analysis client after its session closed that client. */
+export const closedAnalysisClientError = (
+  providerId: string,
+  operation: string,
+): ProviderAdapterError =>
+  new ProviderAdapterError(providerId, operation, {
+    userMessage: `The ${providerId} analysis client for this session was closed before ${operation} ran.`,
+    remediationAction:
+      "Open the target again with open_binary, or rerun the CLI command, then send the request to the new session.",
+    diagnostics: { reason: "client_closed" },
+  });

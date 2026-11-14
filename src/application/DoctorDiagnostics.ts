@@ -5,7 +5,7 @@ import {
 import { hopperLauncherDiscovery } from "./HopperLauncherDiscovery.js";
 import { macosMajorVersion } from "../domain/macosVersion.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
-import { isDesktopBuildCheck } from "./DoctorProviderIds.js";
+import { isDesktopBuildCheck } from "../domain/doctorProviderIds.js";
 import type {
   DoctorCheck,
   DoctorHost,

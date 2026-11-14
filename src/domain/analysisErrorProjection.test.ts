@@ -1053,6 +1053,61 @@ describe("analysis error projection: Hopper startup failures", () => {
   });
 });
 
+describe("analysis error projection: unclassified failures", () => {
+  it.each(["hopper", "ghidra", "ida", "jadx", "kuna"])(
+    "names doctor only with the provider it can check (%s)",
+    (providerId) => {
+      const projected = projectAnalysisError(
+        new ProviderAdapterError(providerId, "open_binary"),
+      );
+
+      expect(projected.code).toBe("execution_failure");
+      expect(projected.message).toContain(
+        `${providerId} provider could not complete open_binary, and REA did not classify the failure`,
+      );
+      expect(projected.message).not.toContain("doctor");
+      expect(projected.remediation.action).toContain(
+        `\`rea doctor --provider ${providerId}\``,
+      );
+    },
+  );
+
+  it.each(["firmware", "native-macos", "rizin", "rea-cdp-browser", "rea"])(
+    "does not send %s failures to a doctor that cannot check them",
+    (providerId) => {
+      const projected = projectAnalysisError(
+        new ProviderAdapterError(providerId, "inspect"),
+      );
+
+      expect(projected.message).toContain("did not classify the failure");
+      for (const text of [projected.message, projected.remediation.action])
+        expect(text).not.toContain("doctor");
+    },
+  );
+
+  it("keeps an authored provider message as the recovery", () => {
+    const projected = projectAnalysisError(
+      new ProviderAdapterError("firmware", "inspect", {
+        userMessage: "Select a smaller firmware image.",
+      }),
+    );
+
+    expect(projected.remediation.action).toBe(
+      "Select a smaller firmware image.",
+    );
+  });
+
+  it("does not attribute an unreadable result to provider readiness", () => {
+    const projected = projectAnalysisError(
+      new AnalysisOutputError("decompile", "failed"),
+    );
+
+    expect(projected.code).toBe("unreadable_output");
+    for (const text of [projected.message, projected.remediation.action])
+      expect(text).not.toContain("doctor");
+  });
+});
+
 describe("analysis error projection: retry guidance", () => {
   it.each([
     [
