@@ -24,6 +24,7 @@ import {
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
+  type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
 import {
@@ -64,7 +65,10 @@ export class AsarArtifactReader implements ArtifactReader {
     private readonly options: AsarArtifactReaderOptions = {},
   ) {}
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
     const generation = this.#snapshotGeneration;
     let paths: readonly AsarListedEntry[];
     try {
@@ -133,6 +137,8 @@ export class AsarArtifactReader implements ArtifactReader {
       yield entry;
     }
     this.#assertInventoryActive(generation, signal);
+    // The listing names every member record the header declares.
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   #assertInventoryActive(generation: number, signal?: AbortSignal): void {

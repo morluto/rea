@@ -97,7 +97,7 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
 
   async *entries(
     signal?: AbortSignal,
-    _options?: ArtifactTraversalOptions,
+    options?: ArtifactTraversalOptions,
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
@@ -116,6 +116,8 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
       yield copyArtifactEntry(entry);
     }
     this.#assertOpen(signal);
+    // Every present module region is listed; absent regions are not members.
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {

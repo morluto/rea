@@ -2980,7 +2980,7 @@ const containerEntries = async (
   const traversal = new ArtifactTraversalObservation();
   let count = 0;
   let truncated = false;
-  for await (const entry of container.reader.entries(signal, traversal)) {
+  for await (const entry of traversal.entries(container.reader, signal)) {
     count += 1;
     if (count > CONTAINER_LIST_LIMIT) {
       if (!truncated) {
