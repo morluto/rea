@@ -279,10 +279,12 @@ export const androidResultSchemas = {
     class_name: z.string(),
     method: method,
     overload_count: z.int().positive(),
-    representation: z.enum(["java", "smali"]),
+    representation: z.enum(["java", "smali"]).nullable(),
     body_status: z.enum(["available", "not_available"]),
     fell_back: z.boolean(),
     markers: z.array(z.string()),
+    /** Present only when body_status is not_available (with representation null). */
+    body_unavailable_reason: z.string().min(1).exactOptional(),
     source: textCoverage,
     mapping: androidMappingReportSchema.exactOptional(),
   }),

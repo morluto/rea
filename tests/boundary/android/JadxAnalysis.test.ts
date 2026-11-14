@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   analyzeJadxRequest,
@@ -15,6 +15,7 @@ import {
   type AndroidMappingSource,
 } from "../../../src/domain/android/androidMapping.js";
 import { parseProguardMapping } from "../../../src/domain/android/proguardMapping.js";
+import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 
 const summary = {
   full_name: "fixture.Target",
@@ -1205,4 +1206,100 @@ it("refuses inner class raw names that do not align with display names", async (
       obfuscatedTools({ ...obfuscatedSummary, inner_class_raw_names: [] }),
     ),
   ).rejects.toMatchObject({ _tag: "AnalysisOutputError" });
+});
+
+describe("inspect_android_method when jadx cannot disassemble one method body", () => {
+  const clinitSummary = {
+    ...summary,
+    method_count: 1,
+    field_count: 0,
+    inner_class_count: 0,
+    methods: [
+      {
+        name: "<clinit>",
+        raw_name: "<clinit>",
+        signature: "<clinit>(): void",
+        dex_descriptor: "()V",
+        is_constructor: false,
+        def_pos: 0,
+      },
+    ],
+  };
+  const clinitTools = (failure: () => Promise<never>): JadxToolPort => ({
+    listClasses: () =>
+      Promise.reject(new Error("unexpected class inventory call")),
+    text: () => Promise.reject(new Error("unexpected text call")),
+    json: (name, _input) => {
+      if (name === "get_class_summary") return Promise.resolve(clinitSummary);
+      if (name === "get_method_body") return failure();
+      return Promise.reject(new Error(`unexpected call: ${name}`));
+    },
+  });
+
+  it("reports a method-scoped unavailable body with its reason", async () => {
+    const result = await analyzeJadxRequest(
+      clinitTools(() =>
+        Promise.reject(
+          new ProviderAdapterError("jadx", "inspect_android_method", {
+            diagnostics: {
+              upstream_operation: "get_method_body",
+              reason:
+                "Disassembly could not establish one selected method: <clinit>()V",
+              target_path: "/fixture.apk",
+              target_sha256: "a".repeat(64),
+            },
+          }),
+        ),
+      ),
+      {
+        operation: "inspect_android_method",
+        input: {
+          path: "/fixture.apk",
+          class_name: "fixture.Target",
+          method_name: "<clinit>",
+          overload_index: 0,
+        },
+      } as never,
+      { loaded: {} as never, engine },
+    );
+    expect(result).toMatchObject({
+      class_name: "fixture.Target",
+      representation: null,
+      body_status: "not_available",
+      fell_back: false,
+      markers: [],
+    });
+    expect(result).toHaveProperty("body_unavailable_reason");
+    expect(result).toMatchObject({
+      body_unavailable_reason: expect.stringContaining(
+        "Disassembly could not establish",
+      ),
+    });
+    expect(result).toMatchObject({
+      source: { status: "complete", text: "", reported_total_bytes: 0 },
+    });
+  });
+
+  it("leaves environment-level failures alone when the body RPC error carries no upstream reason", async () => {
+    const request = {
+      operation: "inspect_android_method" as const,
+      input: {
+        path: "/fixture.apk",
+        class_name: "fixture.Target",
+        method_name: "<clinit>",
+        overload_index: 0,
+      },
+    } as never;
+    await expect(
+      analyzeJadxRequest(
+        clinitTools(() =>
+          Promise.reject(
+            new ProviderAdapterError("jadx", "inspect_android_method", {}),
+          ),
+        ),
+        request,
+        { loaded: {} as never, engine },
+      ),
+    ).rejects.toBeInstanceOf(ProviderAdapterError);
+  });
 });

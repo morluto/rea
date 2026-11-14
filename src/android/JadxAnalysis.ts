@@ -16,6 +16,7 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { AndroidNativeDeclarations } from "../domain/android/androidNativeDeclarations.js";
 import type { AndroidJniLibraries } from "./AndroidJniLibraries.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   ANDROID_JNI_REPORT_BYTES,
   projectAndroidJniBindings,
@@ -397,14 +398,52 @@ const inspectMethod = async (
       "overload_index",
       `Index ${index} is outside the ${candidates.length} matching overloads.`,
     );
-  const body = jadxMethodSchema.parse(
-    await tools.json("get_method_body", {
-      class_name: request.input.class_name,
-      method_name: request.input.method_name,
-      overload_index: index,
-      smali_fallback: true,
-    }),
-  );
+  // Any "get_method_body"-scoped upstream failure is reported as a
+  // method-level unavailable body, not as an environment-level failure:
+  // the caller can act on the method, not on rea doctor.
+  let body: z.infer<typeof jadxMethodSchema> | null;
+  let bodyUnavailableReason: string | null = null;
+  try {
+    body = jadxMethodSchema.parse(
+      await tools.json("get_method_body", {
+        class_name: request.input.class_name,
+        method_name: request.input.method_name,
+        overload_index: index,
+        smali_fallback: true,
+      }),
+    );
+  } catch (cause) {
+    const reason = extractMethodBodyFailureReason(cause);
+    if (reason === null) throw cause;
+    body = null;
+    bodyUnavailableReason = reason;
+  }
+  if (body === null) {
+    return androidResultSchemas.inspect_android_method.parse({
+      engine,
+      class_name: summary.full_name,
+      method: selected,
+      overload_count: candidates.length,
+      representation: null,
+      body_status: "not_available",
+      fell_back: false,
+      markers: [],
+      body_unavailable_reason: bodyUnavailableReason ?? undefined,
+      source: {
+        status: "complete",
+        text: "",
+        reported_total_bytes: 0,
+      },
+      ...mappingOf(mapping, () => [
+        classQuery(summary),
+        ...methodQueries(summary).filter(
+          (method) =>
+            method.name === selected.name &&
+            method.overload_index === selected.overload_index,
+        ),
+      ]),
+    });
+  }
   if (
     body.class_name !== summary.full_name ||
     body.method_name !== request.input.method_name ||
@@ -435,6 +474,22 @@ const inspectMethod = async (
       ),
     ]),
   });
+};
+
+const extractMethodBodyFailureReason = (cause: unknown): string | null => {
+  if (
+    cause instanceof ProviderAdapterError &&
+    typeof cause.diagnostics === "object" &&
+    cause.diagnostics !== null
+  ) {
+    const diagnostics = cause.diagnostics as Record<string, unknown>;
+    if (diagnostics.upstream_operation === "get_method_body") {
+      const reason = diagnostics.reason;
+      if (typeof reason === "string" && reason.length > 0) return reason.trim();
+      return "The upstream JADX bridge reported a method body failure.";
+    }
+  }
+  return null;
 };
 
 /** Normalize only the selected analyst outcome and reject ambiguous engine selectors. */
