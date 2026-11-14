@@ -10,6 +10,94 @@ import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplicat
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains source-map declarations without admitting NUL filesystem paths through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-source-map-nul-");
+    const original = "export const answer = 42;";
+    const sources = [
+      "bad%00.ts",
+      "file:///bad%00.ts",
+      "https://example.test/bad%00.ts",
+      "bad\0.ts",
+      "C:\\bad\0.ts",
+      "literal%2500.ts",
+      "valid.ts",
+    ];
+    const map = (names: string[], sourceRoot?: string) =>
+      JSON.stringify({
+        version: 3,
+        sources: names,
+        sourceRoot,
+        sourcesContent: names.map(() => original),
+        names: [],
+        mappings: "",
+      });
+    const maps = {
+      "app.js.map": map(sources),
+      "root.js.map": map(["original.ts"], "root%00"),
+    };
+    await writeFixtureFiles(root, maps);
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const originals = graph.nodes.filter(
+      (node) => node.identity.strategy === "source-map-original",
+    );
+    expect(originals).toHaveLength(sources.length + 1);
+    for (const node of originals) {
+      expect(node.observations).not.toHaveLength(0);
+      expect(node.identity).toMatchObject({
+        source_sha256: createHash("sha256").update(original).digest("hex"),
+      });
+      for (const observation of node.observations) {
+        const reference = observation.source_map_reference;
+        expect(reference).not.toBeNull();
+        if (reference === null) continue;
+        const mapPath =
+          reference.source_name === "original.ts"
+            ? "root.js.map"
+            : "app.js.map";
+        expect(reference).toMatchObject({
+          map_path: mapPath,
+          source_root: mapPath === "root.js.map" ? "root%00" : null,
+        });
+        expect(node.identity).toMatchObject({
+          original_source: reference.source_name,
+          source_root: reference.source_root,
+          source_map_sha256: createHash("sha256")
+            .update(maps[mapPath])
+            .digest("hex"),
+        });
+        const valid = ["literal%2500.ts", "valid.ts"].includes(
+          reference.source_name,
+        );
+        expect(reference.resolution).toEqual(
+          valid
+            ? {
+                kind: "artifact-relative",
+                path:
+                  reference.source_name === "literal%2500.ts"
+                    ? "literal%00.ts"
+                    : "valid.ts",
+              }
+            : {
+                kind: "unresolved",
+                reason:
+                  "Source reference contains a NUL byte and cannot name a filesystem path.",
+              },
+        );
+      }
+    }
+    expect(originals.map((node) => node.identity)).toEqual(
+      expect.arrayContaining(
+        [...sources, "original.ts"].map((source) =>
+          expect.objectContaining({ original_source: source }),
+        ),
+      ),
+    );
+    expect(graph.coverage.status).toBe("complete");
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
   "keeps missing source-map mappings partial while retaining explicit declarations through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-source-map-mappings-");
