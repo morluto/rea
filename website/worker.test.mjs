@@ -49,6 +49,11 @@ await test("HTML is the default and explicit Accept preferences select Markdown"
     ["text/markdown,text/html", false],
     ["TEXT/MARKDOWN; q=1,text/*;q=0.5", true],
     ["text/markdown;q=bad", false],
+    ["text/markdown;q=1e0", false],
+    ["text/markdown;q=+1", false],
+    ["text/markdown;q=1.0000", false],
+    ["text/markdown;q=0.125,text/html;q=0.124", true],
+    ["text/markdown;q=1.000", true],
     ["text/markdown;q=0,*/*;q=1", false],
   ]) {
     const response = await worker.fetch(
