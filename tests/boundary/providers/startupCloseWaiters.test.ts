@@ -15,6 +15,7 @@ import {
   ghidraFixturePath,
 } from "./ghidra/ghidraClient.fixture.js";
 import { HopperFixtureLauncher } from "./hopper/hopperClient.fixture.js";
+import { waitFor } from "../../support/testWait.js";
 
 const providers = [
   {
@@ -89,7 +90,7 @@ it.each(providers)(
         () => undefined,
       );
       controller.abort();
-      await vi.waitFor(() =>
+      await waitFor(() =>
         expect(settled).toMatchObject({ ok: false, error: cancelled }),
       );
       await expect(access(roots[0] ?? "")).resolves.toBeUndefined();

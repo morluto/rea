@@ -51,7 +51,10 @@ installation or connection and requires its own explicit approval. It can also
 save verified paths for an existing Ghidra installation.
 
 After selection, review the plan's exact paths and changes and approve before
-REA writes files or installs Hopper. You can cancel at any prompt.
+REA writes files or installs Hopper. The approval view also shows known manual
+completion steps for selected clients, such as Grok Bot's hosted connector.
+Approving the local changes does not complete those manual steps. You can cancel
+at any prompt.
 
 Before applying changes, REA checks your current configuration. The plan lists:
 
@@ -975,8 +978,16 @@ reports `busy` at stage `launch`; `analysis_activity` describes bridge requests
 and can remain idle until the socket is ready. Cleanup work reports `busy` at
 stage `connection`.
 
-If macOS denies Apple Events, allow the application that starts REA under
-**System Settings → Privacy & Security → Automation**, then retry. REA releases
+If macOS denies Apple Events, REA reports
+`details.launch_rejection.boundary: "apple_events_authorization"` with
+`reason: "not_authorized"`, category `unavailable`, and `retryable: false`.
+Allow the application that starts REA under
+**System Settings → Privacy & Security → Automation** when that client can be
+authorized. A hardened-runtime application requires the
+`com.apple.security.automation.apple-events` entitlement before macOS will
+prompt; without it, ask the client developer to add the entitlement or start
+REA from a client macOS can authorize, such as Terminal. Retrying from the same
+unauthorized client will not succeed until authorization changes. REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,

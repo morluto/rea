@@ -213,10 +213,7 @@ import {
   artifactGraphManifestSchema,
   artifactInventoryCoverageSchema,
 } from "../artifactGraph.js";
-import {
-  apiSurfaceFields,
-  apiSurfaceViewSchema,
-} from "./webNetworkApiSurfaceView.js";
+import { apiSurfaceFields, apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 import {
   evmViewRequestSchema,
   evmViewItemSchema,
@@ -261,10 +258,8 @@ import {
   captureViewItemsSchema,
   captureSummarySchema,
 } from "./webNetworkCaptureView.js";
-import {
-  environmentManifestFields,
-  environmentManifestViewRequestSchema,
-} from "./environmentManifestView.js";
+import { environmentManifestFields } from "./environmentManifestSchema.js";
+import { environmentManifestViewRequestSchema } from "./environmentManifestView.js";
 import {
   environmentStateFields,
   environmentStateViewRequestSchema,
@@ -286,13 +281,15 @@ import {
 import {
   androidPackageSummarySchema,
   androidManifestViewItemSchema,
-  androidManifestViewRequestSchema,
-  androidComponentsViewRequestSchema,
-  androidComponentSummaryViewRequestSchema,
   androidComponentViewRowSchema,
   androidComponentViewContextSchema,
   androidComponentSummarySchema,
 } from "./androidPackageView.js";
+import {
+  androidManifestViewRequestSchema,
+  androidComponentsViewRequestSchema,
+  androidComponentSummaryViewRequestSchema,
+} from "../android/androidPackageQuery.js";
 import {
   androidClassSummarySchema,
   androidMethodSummarySchema,

@@ -479,7 +479,18 @@ through the producing owner and affected CLI/MCP consumers.
 ## Implement and evaluate
 
 Put provider wire-protocol parsing in adapters and shared CLI/MCP workflows in
-the application layer. Reusable format declarations may live in pure domain
+the application layer.
+
+CLI commands register through
+[`cliCommandRegistrations.ts`](https://github.com/morluto/rea/blob/main/src/cli/cliCommandRegistrations.ts):
+add the registrar to its family there and its module to `src/cli.ts`. The build
+records which registrar defines each top-level command, and a one-shot command
+loads only that registrar's module graph; help, completions, `--llms` and unknown
+names load the complete CLI. A registrar's command definitions must not depend
+on other registrars, and `tests/boundary/cli/cliLazyRegistration.test.ts` checks
+that each one registers alone with the definitions the complete CLI gives it.
+Modules that every registrar imports set the startup cost of every command; load
+optional heavy services where a command needs them. Reusable format declarations may live in pure domain
 owners: [`peOptionalHeader.ts`](https://github.com/morluto/rea/blob/main/src/domain/peOptionalHeader.ts)
 decodes PE structure, while consumers retain machine admission, directory-address
 interpretation, and file/mapping bounds. Share Evidence provenance, unknown

@@ -1,6 +1,6 @@
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
+import { stableArtifactInputFailure } from "../artifacts/StableArtifactFailure.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -53,6 +53,13 @@ export const mapApkBlockError = (
         OPERATION,
         path,
         `This archive uses a Zip64 structure this reader does not decode (${error.detail}).`,
+      );
+    case "multi-disk-unsupported":
+      return new AnalysisUnsupportedTargetError(
+        OPERATION,
+        path,
+        `The selected archive declares an unsupported multi-disk ZIP layout (${error.detail}).`,
+        { remediationAction: "Select a complete single-disk APK/ZIP archive." },
       );
     case "malformed-zip":
       return inputError(
@@ -231,11 +238,7 @@ const artifactReaderFailure = (
         },
       );
     case "path":
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
     default:
       return adapterFailure(cause, path);
   }

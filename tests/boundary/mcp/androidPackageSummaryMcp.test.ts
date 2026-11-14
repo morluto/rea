@@ -21,7 +21,7 @@ import {
   androidJniSummaryViewResultSchema,
   androidJniPageViewResultSchema,
   analysisViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   createEvidence,
   parseEvidence,
@@ -129,6 +129,11 @@ const createJniSummaryContractFixture = async () => {
             examined_methods: 2,
           },
           unknowns: [],
+          manifest_splits: {
+            status: "observed",
+            required_split_types: [],
+            split_required: false,
+          },
         },
         library_inventory: {
           status: "complete",

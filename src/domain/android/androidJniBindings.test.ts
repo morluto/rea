@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   androidJniReportSchema,
   expectedJniNames,
@@ -36,6 +36,11 @@ const inventory = (methods = [declaration()]): AndroidNativeDeclarations => ({
     examined_methods: methods.length,
   },
   unknowns: [],
+  manifest_splits: {
+    status: "observed",
+    required_split_types: [],
+    split_required: false,
+  },
 });
 
 const exportRow = (
@@ -352,6 +357,91 @@ it("keeps an explicit empty library selection without introducing ABI candidates
     abi: "arm64-v8a",
     status: "unmatched",
     candidate_ids: [],
+  });
+});
+
+describe("split APK requirements", () => {
+  const withSplits = (
+    manifest_splits: AndroidNativeDeclarations["manifest_splits"],
+  ) =>
+    projectAndroidJniBindings({
+      apk: { path: "/selected/base.apk", sha256: "a".repeat(64) },
+      selection: { abis: ["arm64-v8a"] },
+      inventory: { ...inventory(), manifest_splits },
+      libraries: [],
+      libraryInventory: {
+        status: "complete",
+        examined_entries: 2776,
+        selected_libraries: 0,
+        unknowns: [],
+      },
+    });
+
+  it("qualifies the library inventory when the manifest requires splits", () => {
+    const splits: AndroidNativeDeclarations["manifest_splits"] = {
+      status: "observed",
+      required_split_types: ["base__abi", "base__density"],
+      split_required: true,
+    };
+    const result = withSplits(splits);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(androidJniReportSchema.safeParse(result.value).success).toBe(true);
+    expect(result.value.native_inventory.manifest_splits).toEqual(splits);
+    expect(result.value.library_inventory).toMatchObject({
+      status: "partial",
+      examined_entries: 2776,
+      unknowns: [expect.stringContaining("base__abi, base__density")],
+    });
+    // A split may hold the library, so no binding is claimed absent.
+    expect(result.value.bindings[0]).toMatchObject({
+      abi: "arm64-v8a",
+      status: "unknown",
+      coverage: "partial",
+    });
+  });
+
+  it("keeps the library inventory unknown-qualified when split requirements are unknown", () => {
+    const result = withSplits({
+      status: "unknown",
+      reason: "Root AndroidManifest.xml is absent",
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.value.library_inventory).toMatchObject({
+      status: "partial",
+      unknowns: [expect.stringContaining("Root AndroidManifest.xml is absent")],
+    });
+  });
+
+  it("still reads a saved report from before split facts were recorded", () => {
+    const result = withSplits({
+      status: "observed",
+      required_split_types: [],
+      split_required: false,
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const { manifest_splits: _omitted, ...native_inventory } =
+      result.value.native_inventory;
+    expect(
+      androidJniReportSchema.safeParse({ ...result.value, native_inventory })
+        .success,
+    ).toBe(true);
+  });
+
+  it("leaves an APK without required splits complete", () => {
+    const result = withSplits({
+      status: "observed",
+      required_split_types: [],
+      split_required: false,
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.value.library_inventory).toMatchObject({
+      status: "complete",
+      unknowns: [],
+    });
+    expect(result.value.bindings[0]).toMatchObject({
+      status: "unmatched",
+      coverage: "complete",
+    });
   });
 });
 

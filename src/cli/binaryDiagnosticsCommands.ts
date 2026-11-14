@@ -48,6 +48,7 @@ import { inspectKernelBuildConfigInputSchema } from "../domain/native/kernelBuil
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import { BYTE_ENTROPY_PROVIDER } from "../domain/investigationProviders.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
@@ -118,7 +119,7 @@ export const registerBinaryDiagnosticsCommands = (
       architecture: machoSliceArchitectureSchema
         .optional()
         .describe(
-          "CPU family of the slice to read from a universal Mach-O; required for universal files",
+          "Slice to read from a universal Mach-O, by CPU family; when several slices share a family, arm64 (arm64 or arm64v8), arm64e (arm64e or arm64e.x1) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
         ),
     }),
     run: ({ args, options }) =>
@@ -476,7 +477,7 @@ export const registerBinaryDiagnosticsCommands = (
                 { signal },
               ),
             entropy,
-            "rea-byte-entropy",
+            BYTE_ENTROPY_PROVIDER.id,
             "inspect_byte_entropy",
             signal,
           ).then(projectCliAnalysisResult);

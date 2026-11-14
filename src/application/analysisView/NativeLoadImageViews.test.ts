@@ -1,9 +1,7 @@
 import { expect, it } from "vitest";
 import { createEvidence } from "../../domain/evidence.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-} from "../../domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisViewRequest.js";
+import { analysisViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import {
   RELOCATION_SYMBOL_UNRECORDED,
   projectNativeLoadImageView,

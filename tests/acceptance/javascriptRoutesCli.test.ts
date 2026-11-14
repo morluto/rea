@@ -7,7 +7,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 
 const routeViewFromEvidence = (evidence: unknown) =>
   javaScriptRoutesViewResultSchema.parse(

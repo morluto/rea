@@ -1,10 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-} from "../../../src/domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
 import {
@@ -355,7 +352,13 @@ it.skipIf(process.platform === "win32")(
     expect((await first).ok).toBe(true);
     const second = await queued;
     expect(second.ok).toBe(false);
-    if (!second.ok) expect(second.error).toBeInstanceOf(AnalysisInputError);
+    if (!second.ok)
+      expect(second.error).toMatchObject({
+        _tag: "AnalysisCapabilityUnavailableError",
+        reason: expect.stringContaining(
+          "The Rizin process exited (exit code null, signal SIGTERM)",
+        ),
+      });
     expect(writes.some((text) => text.includes("second\n"))).toBe(false);
   },
 );

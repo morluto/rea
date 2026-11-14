@@ -252,6 +252,61 @@ it("retains the compressed-stream limit for a PE section with padding", () => {
   );
 });
 
+it("names the padded-storage basis when a padded section overflows inflate allocation", () => {
+  // A short stream padded to FileAlignment: the stream-based limit is unknown
+  // when inflate stops, so the enforced bound comes from the storage size.
+  const document = Buffer.concat([
+    Buffer.from(JSON.stringify({ packages: [] })),
+    Buffer.alloc(40_000, 0x20),
+  ]);
+  const compressed = deflateSync(document);
+  const fileAlignment = 512;
+  expect(compressed.length).toBeLessThan(fileAlignment);
+  const stored = Buffer.alloc(fileAlignment);
+  compressed.copy(stored);
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, stored, {
+      peFileAlignment: fileAlignment,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      constraint: {
+        resource: "memory",
+        reported_limits: { maximum_bytes: fileAlignment * 64 },
+      },
+      message: expect.stringContaining("padded section's storage size"),
+    }),
+  );
+  // Without padding the reported limit is still the plain size limit.
+  expect(() => readAuditableSection(".dep-v0", 0, compressed)).toThrow(
+    "Inflated dependency JSON exceeds the size limit",
+  );
+});
+
+it("names the fixed cap when it bounds a large padded section's inflate allocation", () => {
+  // Storage above 128 KiB derives more than the fixed 8 MiB cap, so the cap,
+  // not the padded storage size, is the enforced bound.
+  const compressed = deflateSync(Buffer.alloc(9 * 1024 * 1024, 0x20));
+  const fileAlignment = 512;
+  const stored = Buffer.alloc(132 * 1024);
+  compressed.copy(stored);
+  let failure: unknown;
+  try {
+    readAuditableSection(".dep-v0", 0, stored, {
+      peFileAlignment: fileAlignment,
+    });
+  } catch (cause: unknown) {
+    failure = cause;
+  }
+  expect(failure).toMatchObject({
+    constraint: {
+      resource: "memory",
+      reported_limits: { maximum_bytes: 8 * 1024 * 1024 },
+    },
+  });
+  expect((failure as Error).message).not.toContain("storage size");
+});
+
 it.each([0, 8])("reads documented cargo-auditable revision %i", (format) => {
   const parsed = section({
     format,

@@ -511,11 +511,45 @@ parent environment does not establish that Qwen removed Homebrew from it.
 Antigravity 2.0 discovers personal skills in `~/.gemini/config/skills`.
 Setup installs its selected skill copy there.
 
+## Cursor
+
+For Cursor, setup writes `mcpServers.rea` into the user-level `~/.cursor/mcp.json`
+(`%USERPROFILE%\.cursor\mcp.json` on Windows). Entries carry `command`, `args`,
+and `env`; stdio is the default transport. Setup manages only this user-scope
+file. Cursor has no client-specific skill directory, so setup installs the
+bundled skill under the shared `~/.agents/skills`.
+
+## Windsurf
+
+For Windsurf, setup writes `mcpServers.rea` into the user-level
+`~/.codeium/windsurf/mcp_config.json` (`%USERPROFILE%\.codeium\windsurf\mcp_config.json`
+on Windows). Entries carry `command`, `args`, and `env`; stdio is the default
+transport. Setup manages only this user-scope file. Windsurf has no
+client-specific skill directory, so setup installs the bundled skill under the
+shared `~/.agents/skills`.
+
+## Command Code
+
+For Command Code, setup writes `mcpServers.rea` into the user-level
+`~/.commandcode/mcp.json` (`%USERPROFILE%\.commandcode\mcp.json` on Windows).
+Entries carry `transport: "stdio"`, `enabled: true`, `command`, `args`, and
+`env`. Doctor reads the entry's transport from `transport`, falling back to
+`type`, case-insensitively. An entry with `http` or `sse`, or with a `url` and
+no `command`, selects a remote connection rather than REA's stdio launcher, so
+its alignment is reported as unknown. A transport tag that is not text is
+invalid.
+Setup manages only this user-scope file, and installs the bundled skill under
+the shared `~/.agents/skills`.
+
 ## Gemini CLI
 
 Gemini CLI uses `$GEMINI_CLI_HOME/.gemini/settings.json` when that home override
 is nonempty, including its shared personal skills at
-`$GEMINI_CLI_HOME/.agents/skills`. Setup and doctor check MCP allow/exclude
+`$GEMINI_CLI_HOME/.agents/skills`. Automatic detection uses Gemini CLI's own
+settings, trusted-folder records or `.gemini/tmp` session state; the `.gemini`
+directory alone does not identify it, because Antigravity keeps its
+configuration there too. Select `--client gemini_cli` explicitly before those
+files exist. Setup and doctor check MCP allow/exclude
 policies from system defaults, user settings, trusted workspace settings, and
 system overrides. Workspace trust follows `GEMINI_CLI_TRUST_WORKSPACE`,
 `GEMINI_RESTRICTED_MODE`, the effective `security.folderTrust.enabled` setting,

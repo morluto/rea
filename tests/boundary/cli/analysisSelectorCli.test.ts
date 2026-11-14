@@ -1,7 +1,7 @@
 import { describe, expect } from "vitest";
 
 import { nativeDataTypeInputSchema } from "../../../src/domain/native/nativeDataType.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 const selectors = [
   ["function", "procedure", "analyze_function"],
@@ -101,7 +101,7 @@ describe("CLI analysis selector boundaries", () => {
           ["selector", `--${option}=selector`],
         ]) {
           const label = `${command} ${selection.join(" ")}`;
-          const result = await runFileCli(cli, {
+          const result = await cli.run({
             arguments: [
               command,
               "does-not-exist",
@@ -174,7 +174,7 @@ cliTest(
       [["--address", "0x1000"], { code: "target_unavailable" }],
     ] as const) {
       const label = `inspect-native-data-type ${selection.join(" ")}`;
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [
           "inspect-native-data-type",
           "does-not-exist",

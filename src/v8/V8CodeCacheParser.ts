@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
   V8_CODE_CACHE_COMPILE_FUNCTION_BIT,
+  V8_CODE_CACHE_LEGACY_MODULE_BIT,
   V8_CODE_CACHE_MODULE_BIT,
   V8_CODE_CACHE_HEADER_BYTES,
   V8_CODE_CACHE_MAGIC_HIGH,
@@ -47,6 +48,9 @@ const LIMITATIONS = [
   "Header field roles beyond magic, source length, and payload length are inferred from one producer and are version-dependent; treat them as observations, not a fixed ABI.",
   "An unflagged producer word is reported as unknown: whether V8 marks a vm.compileFunction cache at all is a build detail, so the container cannot separate a vm.Script from an unmarked function cache on its own.",
 ];
+
+/** Bit 30 (V8 13.4+) or bit 31 (earlier V8, including Node 22) marks a module cache. */
+const MODULE_BITS = V8_CODE_CACHE_MODULE_BIT | V8_CODE_CACHE_LEGACY_MODULE_BIT;
 
 /** Printable ASCII and horizontal tab, the run alphabet of one observation. */
 const isPrintable = (byte: number): boolean =>
@@ -105,7 +109,7 @@ export const parseV8CodeCache = (
   // separates them. `fields` keeps the observed word so a caller can resolve it against a
   // build fingerprint it trusts.
   const producer =
-    (sourceWord & V8_CODE_CACHE_MODULE_BIT) !== 0
+    (sourceWord & MODULE_BITS) !== 0
       ? ("module" as const)
       : (sourceWord & V8_CODE_CACHE_COMPILE_FUNCTION_BIT) !== 0
         ? ("compile_function" as const)

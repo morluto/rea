@@ -522,17 +522,23 @@ const versionProbeFailure = (
         ...apktoolVersionProbeTimeoutGuidance(),
       },
     );
+  // EPERM is the other errno a refused exec can surface (for example a launcher
+  // blocked by an operating-system security policy), so it joins EACCES as a
+  // permission failure, not a missing launcher.
   if (
     cause instanceof Error &&
     "code" in cause &&
-    (cause.code === "ENOENT" || cause.code === "EACCES")
-  )
+    (cause.code === "ENOENT" ||
+      cause.code === "EACCES" ||
+      cause.code === "EPERM")
+  ) {
+    const execDenied = cause.code === "EACCES" || cause.code === "EPERM";
     return new ApktoolConfigurationFailure(
-      cause.code === "EACCES" ? "command_not_executable" : "command_missing",
-      cause.code === "EACCES"
+      execDenied ? "command_not_executable" : "command_missing",
+      execDenied
         ? `Execution of the selected apktool launcher was denied: ${selection.command}`
         : `The selected apktool launcher was not found: ${selection.command}`,
-      cause.code === "EACCES"
+      execDenied
         ? APKTOOL_NOT_EXECUTABLE_REMEDIATION
         : APKTOOL_MISSING_REMEDIATION,
       {
@@ -542,6 +548,7 @@ const versionProbeFailure = (
       },
       { cause },
     );
+  }
   const snapshot = cause instanceof OwnedCommandFailure ? cause.snapshot : null;
   if (cause instanceof OwnedCommandFailure && cause.reason === "output-limit")
     return new AnalysisResourceConstraintError(

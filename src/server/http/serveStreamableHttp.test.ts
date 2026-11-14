@@ -25,6 +25,7 @@ import { StreamableHttpListenError } from "./streamableHttpListenError.js";
 import { mcpAllowedHostsTextSchema } from "../../config/mcpHttpEndpoint.js";
 import { parseMcpHttpArguments } from "../../main/mcpHttpArguments.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
+import { waitFor } from "../../../tests/support/testWait.js";
 
 const servers: StreamableHttpServer[] = [];
 
@@ -1318,7 +1319,7 @@ it.each(["chunk", "headers"])(
       .catch(() => undefined);
     let closing: Promise<void> | undefined;
     try {
-      await vi.waitFor(() => {
+      await waitFor(() => {
         expect(cancelled).toBe(1);
       });
       expect((await fetch(new URL("/health", served.url))).status).toBe(503);
@@ -1403,7 +1404,7 @@ it("retains failed response cleanup and blocks provider teardown and further adm
   const response = await fetch(new URL("/failed", served.url));
   try {
     await response.body?.cancel();
-    await vi.waitFor(async () => {
+    await waitFor(async () => {
       expect((await fetch(new URL("/health", served.url))).status).toBe(503);
     });
     await expect(served.prepareShutdown()).rejects.toMatchObject({
@@ -1459,7 +1460,7 @@ it("retains plain-response admission until asynchronous cancellation settles", a
     expect((await fetch(new URL("/health", served.url))).status).toBe(503);
     expect(health).not.toHaveBeenCalled();
     cleanup.release();
-    await vi.waitFor(async () => {
+    await waitFor(async () => {
       expect((await fetch(new URL("/health", served.url))).status).toBe(200);
     });
   } finally {
@@ -1562,10 +1563,10 @@ it.each(["pending handler", "open response"])(
       await first.promise;
       socket.write(request("/second"));
       socket.write(request("/health").repeat(32));
-      await vi.waitFor(() => {
+      await waitFor(() => {
         expect(socket.destroyed).toBe(true);
       });
-      await vi.waitFor(() => {
+      await waitFor(() => {
         expect(finalized).toBe(mode === "pending handler" ? 1 : 0);
       });
       expect(secondCalled).toBe(0);
@@ -1687,12 +1688,12 @@ it("retains admission for an unread upload attached to a long response", async (
   upload.once("error", () => undefined);
   upload.write("prefix");
   try {
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(received).toBe(true);
     });
     expect((await fetch(new URL("/health", served.url))).status).toBe(503);
     upload.destroy();
-    await vi.waitFor(async () => {
+    await waitFor(async () => {
       expect((await fetch(new URL("/health", served.url))).status).toBe(200);
     });
   } finally {
@@ -1737,7 +1738,7 @@ it("bounds HTTP input dispatch globally and releases admission when an upload le
     }
     // A plain route observes the same budget while both sessionless MCP probes
     // wait for the rest of their bodies. Idle SSE connections consume no permit.
-    await vi.waitFor(async () => {
+    await waitFor(async () => {
       expect((await fetch(new URL("/health", served.url))).status).toBe(503);
     });
     const refused = await rawHttpRequest(new URL(served.url), {
@@ -1752,7 +1753,7 @@ it("bounds HTTP input dispatch globally and releases admission when an upload le
     expect(refused.headers.connection).toBe("close");
     uploads[0]?.destroy();
     await pending[0];
-    await vi.waitFor(async () => {
+    await waitFor(async () => {
       expect((await fetch(new URL("/health", served.url))).status).toBe(200);
     });
     expect(await echo(first.client, "kept during overload")).toEqual([
@@ -1862,7 +1863,7 @@ it.each(["DELETE", "shutdown"])(
       upload.write('{"jsonrpc":"2.0","id":2,"method":"tools/call",');
     });
     try {
-      await vi.waitFor(() => {
+      await waitFor(() => {
         expect(
           entered.mock.calls.some(
             ([request]) =>

@@ -1,10 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { nativeInventoryRowsSchemas } from "../native/nativeInventory.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 afterEach(() => vi.restoreAllMocks());
