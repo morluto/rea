@@ -236,15 +236,19 @@ export class BuildComputerLongRuns {
           { timeoutS: CANCEL_S },
         ),
       );
-      if (answer.finished === true && answer.settled === false)
+      if (answer.finished === true && answer.settled === false) {
+        const completed = this.#receipt(job, answer);
+        for (const reference of job.failures)
+          reference.deref()?.retainDiagnostics({ completed_command: completed });
         return {
           verified: false,
           reason:
             typeof answer.error === "string"
               ? answer.error
               : "The REA command did not confirm that its process had exited.",
-          completed: this.#receipt(job, answer),
+          completed,
         };
+      }
       if (answer.absent !== true && answer.finished !== true)
         return {
           verified: false,

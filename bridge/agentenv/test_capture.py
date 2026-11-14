@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -90,7 +91,17 @@ class LongRunTest(unittest.TestCase):
             "    sys.stderr.write('x' * 100000 + 'TAIL')\n"
             "if len(sys.argv) > 1 and sys.argv[1] == 'hold':\n"
             "    held = subprocess.Popen([sys.executable, '-c', 'import os,sys,time\\nwhile not os.path.exists(sys.argv[1]): time.sleep(0.02)', sys.argv[2]], stdout=subprocess.DEVNULL, stderr=sys.stderr, start_new_session=True)\n"
-            "    open(sys.argv[2] + '.pid', 'w').write(str(held.pid))\n"
+            "    open(sys.argv[2] + '.pid.tmp', 'w').write(str(held.pid))\n"
+            "    os.replace(sys.argv[2] + '.pid.tmp', sys.argv[2] + '.pid')\n"
+            "    open(sys.argv[2] + '.leader.tmp', 'w').write(str(os.getpid()))\n"
+            "    os.replace(sys.argv[2] + '.leader.tmp', sys.argv[2] + '.leader')\n"
+            "    sys.exit(0)\n"
+            "if len(sys.argv) > 1 and sys.argv[1] == 'group':\n"
+            "    code = 'import os,signal,sys,time\\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\\nsignal.signal(signal.SIGHUP, signal.SIG_IGN)\\ntemporary = sys.argv[1] + \".tmp\"\\nopen(temporary, \"w\").write(str(os.getpid()))\\nos.replace(temporary, sys.argv[1])\\nwhile not os.path.exists(sys.argv[2]): time.sleep(0.02)\\n'\n"
+            "    held = subprocess.Popen([sys.executable, '-c', code, sys.argv[2] + '.pid', sys.argv[2]], stdout=subprocess.DEVNULL, stderr=sys.stderr)\n"
+            "    open(sys.argv[2] + '.leader.tmp', 'w').write(str(os.getpid()))\n"
+            "    os.replace(sys.argv[2] + '.leader.tmp', sys.argv[2] + '.leader')\n"
+            "    while not os.path.exists(sys.argv[2] + '.pid'): time.sleep(0.02)\n"
             "    sys.exit(0)\n"
             "if len(sys.argv) > 1 and sys.argv[1] == 'resist':\n"
             "    signal.signal(signal.SIGINT, signal.SIG_IGN)\n"
@@ -114,6 +125,36 @@ class LongRunTest(unittest.TestCase):
         return self.command("run-begin", job=str(self.job), work=str(self.root), stdout=str(self.output),
                             token="owner-token", argv=argv, files={}, timeout_s=timeout)
 
+    def wait_until(self, ready, seconds=5):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if ready():
+                return True
+            time.sleep(0.02)
+        return False
+
+    def leader_has_exited(self, pid):
+        try:
+            data = Path(f"/proc/{pid}/stat").read_bytes()
+        except FileNotFoundError:
+            return True
+        end = data.rfind(b")")
+        if end < 0:
+            return False
+        fields = data[end + 2:].split()
+        return bool(fields) and fields[0] == b"Z"
+
+    def assert_process_gone(self, pid):
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            if time.monotonic() >= deadline:
+                self.fail(f"pid {pid} still exists")
+            time.sleep(0.05)
+
     def test_runs_and_reports_its_output(self):
         self.assertEqual(self.begin([]), {"started": True})
         result = self.command("run-poll", job=str(self.job), token="owner-token", timeout_s=5)
@@ -135,7 +176,6 @@ class LongRunTest(unittest.TestCase):
     def test_cancels_a_running_child_and_confirms_exit(self):
         ready = self.root / "ready"
         self.assertEqual(self.begin(["wait", str(ready)]), {"started": True})
-        import time
         deadline = time.monotonic() + 5
         while not ready.exists() and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -197,7 +237,12 @@ class LongRunTest(unittest.TestCase):
     def test_cancel_during_inherited_stderr_drain_stays_unsettled(self):
         release = self.root / "release"
         self.assertEqual(self.begin(["hold", str(release)], timeout=30), {"started": True})
+        pid_path = self.root / "release.pid"
+        leader_path = self.root / "release.leader"
         try:
+            self.assertTrue(self.wait_until(lambda: pid_path.exists() and leader_path.exists()))
+            leader = int(leader_path.read_text())
+            self.assertTrue(self.wait_until(lambda: self.leader_has_exited(leader)))
             result = self.command(
                 "run-cancel", job=str(self.job), token="owner-token", timeout_s=8, command_timeout=15,
             )
@@ -205,9 +250,32 @@ class LongRunTest(unittest.TestCase):
             self.assertTrue(result["cancelled"])
             self.assertFalse(result["settled"])
             self.assertEqual(result["exit_code"], 0)
-            pid = int((self.root / "release.pid").read_text())
+            pid = int(pid_path.read_text())
             self.assertEqual(os.getsid(pid), pid)
             os.kill(pid, 0)
+        finally:
+            release.touch()
+
+    def test_cancel_after_leader_exit_kills_a_same_session_child_holding_stderr(self):
+        release = self.root / "release"
+        self.assertEqual(self.begin(["group", str(release)], timeout=30), {"started": True})
+        pid_path = self.root / "release.pid"
+        leader_path = self.root / "release.leader"
+        try:
+            self.assertTrue(self.wait_until(lambda: pid_path.exists() and leader_path.exists()))
+            leader = int(leader_path.read_text())
+            child = int(pid_path.read_text())
+            self.assertTrue(self.wait_until(lambda: self.leader_has_exited(leader)))
+            self.assertEqual(os.getpgid(child), leader)
+            self.assertEqual(os.getsid(child), leader)
+            result = self.command(
+                "run-cancel", job=str(self.job), token="owner-token", timeout_s=12, command_timeout=20,
+            )
+            self.assertTrue(result["finished"])
+            self.assertTrue(result["cancelled"])
+            self.assertTrue(result["settled"])
+            self.assertEqual(result["exit_code"], 0)
+            self.assert_process_gone(child)
         finally:
             release.touch()
 

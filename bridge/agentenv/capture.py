@@ -291,15 +291,17 @@ def run(arguments: dict) -> int:
 
 
 # The controller is sent with python -c, so a detached supervisor needs its
-# own source. It alone holds the child process handle and signals its group.
-# One SIGINT is not enough: a leader can ignore it, and a descendant that
-# called setsid can keep stderr open after the leader exits. Stopping stays
-# inside this process group. A new session is reported, not treated as exited.
+# own source. It alone holds the child process handle. One SIGINT is not
+# enough: a leader can ignore it, and a child in the same session can outlive
+# the leader and keep stderr open. Signals go only to processes still in that
+# session. A descendant that called setsid is reported, not signaled, and is
+# not treated as exited.
 LONG_RUN = r'''
 import json, os, signal, subprocess, sys, threading, time
 job = sys.argv[1]
 result = {}
 child = None
+pgid = None
 drainer = None
 request = {}
 stderr_tail, stderr_errors = bytearray(), []
@@ -346,45 +348,153 @@ def stop_requested():
         interrupted = True
     return force_stop or timed_out or cancelled
 
+def proc_identity(pid):
+    """Return state, process group, and session from /proc, or None.
+
+    The command name is inside parentheses and can itself contain parentheses,
+    so the fields after the last closing parenthesis are the ones that count.
+    """
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return None
+    end = data.rfind(b")")
+    if end < 0:
+        return None
+    fields = data[end + 2:].split()
+    if len(fields) < 4:
+        return None
+    try:
+        return fields[0].decode("ascii", "replace"), int(fields[2]), int(fields[3])
+    except ValueError:
+        return None
+
+def live_owned_members():
+    """Pids whose process group and session are still the leader's session.
+
+    The leader's pid is that session id because it was started in a new
+    session. A zombie is not a member: it cannot hold stderr. After the leader
+    is reaped, the numeric id can be reused, so this never uses killpg.
+    """
+    if pgid is None or child is None:
+        return []
+    found = []
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        names = []
+    for name in names:
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        identity = proc_identity(pid)
+        if identity is None:
+            continue
+        state, group, session = identity
+        if group == pgid and session == pgid and state not in ("Z", "X"):
+            found.append(pid)
+    if child.poll() is None and child.pid not in found:
+        found.append(child.pid)
+    return found
+
+def signal_owned(sig):
+    """Signal current session members.
+
+    An unreaped leader is still the process this supervisor started. Every
+    other pid is read from /proc again immediately before the signal.
+    """
+    leader = child.pid if child is not None else None
+    for pid in live_owned_members():
+        if leader is not None and pid == leader and child.poll() is None:
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
+            continue
+        identity = proc_identity(pid)
+        if (
+            identity is None
+            or identity[0] in ("Z", "X")
+            or identity[1] != pgid
+            or identity[2] != pgid
+        ):
+            continue
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            pass
+
 def escalate():
     """Send SIGINT, then SIGTERM, then SIGKILL, each once, with GRACE_S between them.
 
-    Returns true only after the last grace has elapsed and the leader is still running.
+    Returns true only after the last grace. The leader exiting does not end
+    the sequence while a same-session child is still alive.
     """
     global interrupted, stop_step, stop_next
     forced = force_stop
-    if not stop_requested() or child is None or child.poll() is not None:
+    if not stop_requested() or child is None:
+        return False
+    if child.poll() is not None and not live_owned_members():
         return False
     if not forced:
         interrupted = True
     now = time.monotonic()
     if stop_step < len(STOP_SIGNALS) and (stop_next is None or now >= stop_next):
-        try:
-            os.killpg(child.pid, STOP_SIGNALS[stop_step])
-        except OSError:
-            pass
+        signal_owned(STOP_SIGNALS[stop_step])
         stop_step += 1
         stop_next = now + GRACE_S
     return stop_step >= len(STOP_SIGNALS) and stop_next is not None and now >= stop_next
 
-def abandon_drain():
-    """After the leader exits, wait out the budget, then one grace, then stop.
+def stop_owned():
+    """Finish the signal sequence for the leader and same-session children."""
+    global leader_unsettled
+    while child is not None and child.poll() is None:
+        if escalate():
+            if child.poll() is None or live_owned_members():
+                leader_unsettled = True
+            return
+        time.sleep(0.2)
+    while stop_requested() and live_owned_members():
+        if escalate():
+            if live_owned_members():
+                leader_unsettled = True
+            return
+        time.sleep(0.2)
 
-    A descendant outside this process group can hold the pipe. Closing the
-    leader's group does not prove that descendant exited.
+def abandon_drain():
+    """After owned processes are gone, one grace, then report an outside holder.
+
+    A same-session child that still holds stderr stays in the signal sequence.
+    A descendant outside the session is not signaled and is not reported as exited.
     """
-    global output_incomplete
+    global output_incomplete, leader_unsettled
     if drainer is None or not drainer.is_alive():
         return
     grace_end = None
     while drainer.is_alive():
-        if stop_requested():
+        if stop_requested() and live_owned_members():
+            grace_end = None
+            if escalate() and live_owned_members():
+                leader_unsettled = True
+                output_incomplete = True
+                return
+        elif stop_requested():
             if grace_end is None:
                 grace_end = time.monotonic() + GRACE_S
             elif time.monotonic() >= grace_end:
                 output_incomplete = True
                 return
+        else:
+            grace_end = None
         drainer.join(0.2)
+
+def finish_stop():
+    stop_owned()
+    if leader_unsettled and drainer is not None and drainer.is_alive():
+        output_incomplete = True
+    elif not leader_unsettled:
+        abandon_drain()
 
 def write_result():
     if result.get("absent") is True:
@@ -430,18 +540,11 @@ try:
         with open(request["stdout"], "wb") as out:
             child = subprocess.Popen(request["argv"], cwd=request["home"], stdin=subprocess.DEVNULL,
                                      stdout=out, stderr=subprocess.PIPE, start_new_session=True)
+            pgid = child.pid
             drainer = threading.Thread(target=drain, args=(child.stderr,), daemon=True)
             drainer.start()
             deadline = time.monotonic() + request["timeout_s"]
-            while child.poll() is None:
-                if escalate() and child.poll() is None:
-                    leader_unsettled = True
-                    break
-                time.sleep(0.2)
-            if leader_unsettled and drainer is not None and drainer.is_alive():
-                output_incomplete = True
-            elif not leader_unsettled:
-                abandon_drain()
+            finish_stop()
             result = {"exit_code": child.returncode, "stdout_bytes": os.path.getsize(request["stdout"]),
                       "timed_out": timed_out, "cancelled": interrupted and not timed_out,
                       "stderr": bytes(stderr_tail).decode("utf-8", "replace")}
@@ -449,17 +552,9 @@ try:
                 result["error"] = f"The REA command's stderr could not be read: {stderr_errors[0]}"
 except Exception as error:
     result["error"] = f"The REA command supervisor failed: {error}"
-    # The supervisor can no longer report a normal exit, so stop the leader it still owns.
+    # The supervisor can no longer report a normal exit, so stop processes it still owns.
     force_stop = True
-    while child is not None and child.poll() is None:
-        if escalate() and child.poll() is None:
-            leader_unsettled = True
-            break
-        time.sleep(0.2)
-    if leader_unsettled and drainer is not None and drainer.is_alive():
-        output_incomplete = True
-    else:
-        abandon_drain()
+    finish_stop()
 write_result()
 '''
 
