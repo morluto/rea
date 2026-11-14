@@ -1234,6 +1234,35 @@ it("names a range from an STT_GNU_IFUNC resolver symbol at its exact start", () 
   );
 });
 
+it("names an ARM Thumb range from a function symbol whose value sets bit 0", () => {
+  // AAELF32: a Thumb STT_FUNC value is the code address with bit 0 set, and
+  // an IFUNC resolver in Thumb code is marked the same way.
+  for (const variant of [
+    { symbolSource: "symtab" },
+    { symbolSource: "dynsym" },
+    { ifunc: true },
+  ] as const) {
+    const report = parse(
+      elfUnwindFixture({
+        bits: 32,
+        machine: 40,
+        header: "match",
+        thumb: true,
+        ...variant,
+      }),
+    );
+    expect(report.ranges[0]).toMatchObject({
+      start: address(UNWIND_FN_A),
+      symbol: { text: "alpha" },
+    });
+  }
+  // Another machine keeps the value as written, so bit 0 names no FDE start.
+  const x86 = parse(
+    elfUnwindFixture({ bits: 32, machine: 3, header: "match", thumb: true }),
+  );
+  expect(x86.ranges[0]?.symbol?.text).toBe("$t");
+});
+
 it("excludes load mappings whose file size exceeds memory size", () => {
   const bytes = elfUnwindSectionlessFixture();
   const phoff = Number(bytes.readBigUInt64LE(32));

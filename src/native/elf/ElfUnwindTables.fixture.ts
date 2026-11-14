@@ -125,6 +125,11 @@ export interface ElfUnwindFixtureOptions {
   readonly suffixNames?: number;
   /** `alpha` at `UNWIND_FN_A` is a global `STT_GNU_IFUNC` resolver symbol. */
   readonly ifunc?: boolean;
+  /**
+   * Function symbols set bit 0, as ARM Thumb code does, and a local `$t`
+   * mapping symbol marks `UNWIND_FN_A` at the even address.
+   */
+  readonly thumb?: boolean;
   /** Append this many `S` letters to the first CIE's augmentation. */
   readonly longAugmentation?: number;
 }
@@ -535,10 +540,12 @@ const buildSymbolTable = (
   bits: 32 | 64,
   little: boolean,
   ifunc = false,
+  thumb = false,
 ): { readonly symbols: Buffer; readonly strings: Buffer } => {
-  const strings = Buffer.from("\0alpha\0mid\0obj\0", "latin1");
+  const strings = Buffer.from("\0alpha\0mid\0obj\0$t\0", "latin1");
   const width = bits === 64 ? 24 : 16;
-  const symbols = Buffer.alloc(width * 4);
+  const symbols = Buffer.alloc(width * (thumb ? 5 : 4));
+  const code = thumb ? 1 : 0;
   const writeSymbol = (
     index: number,
     name: number,
@@ -561,9 +568,17 @@ const buildSymbolTable = (
     symbols[at + 12] = info;
     write16(symbols, at + 14, section, little);
   };
-  writeSymbol(1, 1, ifunc ? 0x1a : 0x12, 1, UNWIND_FN_A, UNWIND_FN_A_SIZE);
-  writeSymbol(2, 7, 0x12, 1, UNWIND_FN_A + 4, 1);
+  writeSymbol(
+    1,
+    1,
+    ifunc ? 0x1a : 0x12,
+    1,
+    UNWIND_FN_A + code,
+    UNWIND_FN_A_SIZE,
+  );
+  writeSymbol(2, 7, 0x12, 1, UNWIND_FN_A + 4 + code, 1);
   writeSymbol(3, 11, 0x11, 1, UNWIND_FN_A, UNWIND_FN_A_SIZE);
+  if (thumb) writeSymbol(4, 15, 0x00, 1, UNWIND_FN_A, 0);
   return { symbols, strings };
 };
 
@@ -827,7 +842,12 @@ export const elfUnwindFixture = (
         ? buildSharedNameSymbolTable(bits, little, options.sharedName)
         : options.suffixNames !== undefined
           ? buildSuffixNameSymbolTable(bits, little, options.suffixNames)
-          : buildSymbolTable(bits, little, options.ifunc === true);
+          : buildSymbolTable(
+              bits,
+              little,
+              options.ifunc === true,
+              options.thumb === true,
+            );
   const debug =
     options.debugFrame === false || !unwind ? null : Buffer.alloc(4);
   const sections: SectionSpec[] = [
