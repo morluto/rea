@@ -94,6 +94,7 @@ const createRizinCommandEvidence = ({
   limitations,
 }: RizinCommandEvidenceInput): Evidence =>
   createEvidence(undefined, RIZIN_DEBUGGER_PROVIDER_IDENTITY, {
+    authority: "controlled-replay",
     predicateType: "rea.debugger.command-observation",
     operation: "rizin_debug_command",
     parameters: {

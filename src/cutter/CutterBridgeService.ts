@@ -180,6 +180,7 @@ export class CutterBridgeService {
           version: output.cutterVersion,
         },
         {
+          authority: "controlled-replay",
           predicateType: "rea.cutter.command-observation",
           operation: "cutter_command",
           parameters: {

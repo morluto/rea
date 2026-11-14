@@ -1111,6 +1111,7 @@ export class GdbSessionManager {
         startupEvidencePayload === undefined
           ? undefined
           : createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+              authority: "controlled-replay",
               predicateType: "rea.debugger.startup-observation",
               operation: "start_gdb_session",
               parameters: {
@@ -1297,6 +1298,7 @@ export class GdbSessionManager {
               undefined,
               { id: "gnu.gdb", name: "GNU GDB", version: null },
               {
+                authority: "controlled-replay",
                 predicateType: "rea.debugger.console-observation",
                 operation: "gdb_console",
                 parameters: { session_id: sessionId, command },
@@ -1373,6 +1375,7 @@ export class GdbSessionManager {
                 undefined,
                 { id: "gnu.gdb", name: "GNU GDB", version: null },
                 {
+                  authority: "controlled-replay",
                   predicateType: "rea.debugger.console-observation",
                   operation: "gdb_console",
                   parameters: { session_id: sessionId, command },
@@ -1931,6 +1934,7 @@ export class GdbSessionManager {
       partial === undefined
         ? undefined
         : createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+            authority: "controlled-replay",
             predicateType: "rea.debugger.console-observation",
             operation: "gdb_console",
             parameters: {
@@ -2189,6 +2193,7 @@ export class GdbSessionManager {
           },
         );
         const evidence = createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+          authority: "controlled-replay",
           predicateType:
             operation === "start_gdb_session"
               ? "rea.debugger.startup-observation"
@@ -2281,6 +2286,7 @@ export class GdbSessionManager {
           completion_status: "unknown",
         };
         const evidence = createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+          authority: "controlled-replay",
           predicateType: "rea.debugger.console-observation",
           operation: "gdb_console",
           parameters: {
