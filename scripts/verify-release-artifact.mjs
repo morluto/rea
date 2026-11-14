@@ -1,4 +1,5 @@
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
+import { scrubNpmInstallPolicy } from "./lib/verifier-env.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,10 +24,10 @@ if (
 const source = resolve(tarball);
 const verifierRun = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-release-rehearsal-"));
-const environment = {
+const environment = scrubNpmInstallPolicy({
   ...process.env,
   npm_config_cache: join(workspace, "npm-cache"),
-};
+});
 delete environment.HOPPER_TARGET_PATH;
 const commands = await createPackageVerifierCommands({
   workspace: {

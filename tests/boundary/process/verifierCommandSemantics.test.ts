@@ -27,6 +27,29 @@ const deferred = () => {
   return { promise, resolve };
 };
 
+it("does not pass the caller's npm install-script policy to verifier children", async () => {
+  const directory = await createTestTempDirectory("rea-verify-env-scrub-");
+  const marker = "npm_config_allow_scripts";
+  const previous = process.env[marker];
+  process.env[marker] = "frida,onnxruntime-node,protobufjs";
+  const commands = await createVerifierCommands({});
+  try {
+    const output = await commands.exec(
+      process.execPath,
+      [
+        "-e",
+        `process.stdout.write(process.env[${JSON.stringify(marker)}] ?? "absent")`,
+      ],
+      { cwd: directory },
+    );
+    expect(output.stdout).toBe("absent");
+  } finally {
+    if (previous === undefined) delete process.env[marker];
+    else process.env[marker] = previous;
+    await commands.close();
+  }
+});
+
 it("rejects unsupported stdin before acquiring a launcher", async () => {
   const directory = await createTestTempDirectory("rea-verifier-stdin-");
   const forbidden = join(directory, "forbidden launch");
