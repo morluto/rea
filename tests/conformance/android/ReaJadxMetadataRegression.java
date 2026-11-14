@@ -78,6 +78,21 @@ public class ReaJadxMetadataRegression {
       catch (IllegalArgumentException expected) { refused = true; }
       require(refused, "Malformed or externally described XML was accepted");
     }
+    verifyManifestSplitFacts();
+  }
+
+  private static void verifyManifestSplitFacts() {
+    String android = "xmlns:a=\"http://schemas.android.com/apk/res/android\"";
+    Map<String, Object> split = ReaJadxBridge.manifestSplitFacts("<manifest " + android
+        + " a:requiredSplitTypes=\"base__abi, base__density\"><application a:isSplitRequired=\"true\"/>"
+        + "<other a:isSplitRequired=\"true\"/></manifest>");
+    require(split.get("required_split_types").equals(List.of("base__abi", "base__density"))
+        && split.get("split_required").equals(true), "Required split facts were lost: " + split);
+    Map<String, Object> plain = ReaJadxBridge.manifestSplitFacts("<manifest " + android
+        + " requiredSplitTypes=\"unnamespaced\"><application a:isSplitRequired=\"false\"/></manifest>");
+    require(plain.get("required_split_types").equals(List.of())
+        && plain.get("split_required").equals(false),
+        "Split facts came from an unnamespaced or false declaration: " + plain);
   }
 
   private static void verifyRootManifests(SessionHolder holder, SessionConfig config,

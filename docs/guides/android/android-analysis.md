@@ -410,6 +410,14 @@ original ZIP spelling. Omitted filters include all scoped facts; `[]` matches
 none. Class selection never narrows the global inventory used for table-class
 attribution.
 
+Only libraries inside the selected APK are examined. `native_inventory.manifest_splits`
+reports the root manifest's `android:requiredSplitTypes` and the
+`<application>` `android:isSplitRequired` flag, decoded without loading the APK.
+When the manifest requires splits, or those requirements cannot be read, native
+libraries may live in split APKs that were not examined: `library_inventory` is
+then `partial` with an unknown that says so, and a binding with no candidate is
+`unknown` rather than `unmatched`.
+
 Independent `declarations`, `libraries`, `candidates` and `bindings` collections
 have stable IDs and source ordinals. Candidates retain APK/library digests,
 ABI, function addresses and file offsets. Table candidates also retain section,
