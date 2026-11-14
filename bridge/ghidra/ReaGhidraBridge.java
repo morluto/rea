@@ -125,6 +125,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private final Map<FileBytes, Boolean> targetSourceIdentity = new IdentityHashMap<>();
     private String admittedTargetSha256;
+    // Universal-file offset of an imported Mach-O slice. Public offsets add it.
+    private long targetFileOffsetBase;
     private static final Set<String> DESCRIPTOR_KEYS = Set.of(
         "transport",
         "endpoint_path",
@@ -248,6 +250,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             return;
         }
         admittedTargetSha256 = descriptor.targetSha256;
+        targetFileOffsetBase = descriptor.targetFileOffsetBase;
         // GhidraScript wraps run() in a transaction. End it before serving so
         // each edit owns a real outer transaction and can roll back immediately.
         end(true);
@@ -1006,7 +1009,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             offset = candidate;
             mappings++;
         }
-        return new TargetFileOffset(mappings == 1 && offset <= 9007199254740991L ? offset : null, mappings);
+        return new TargetFileOffset(
+            mappings == 1 && offset <= 9007199254740991L - targetFileOffsetBase ? offset + targetFileOffsetBase : null,
+            mappings
+        );
     }
 
     private JsonObject addressToFileOffset(JsonObject params) throws Exception {
@@ -1120,6 +1126,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (parsed.compareTo(BigInteger.valueOf(9007199254740991L)) > 0)
             throw new RequestFailure("invalid_request", "File offset exceeds the exact JSON integer range");
         long offset = parsed.longValueExact();
+        // Selectors name universal-file offsets; the imported slice starts at the base.
+        long localOffset = offset - targetFileOffsetBase;
         monitor.checkCancelled();
         // Ghidra's convenience lookup spans every FileBytes and uses coordinates
         // local to each object. Only a complete, digest-matched target source
@@ -1130,7 +1138,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 monitor.checkCancelled();
                 FileBytes backing = source.getFileBytes().orElse(null);
                 if (backing == null || !isTargetSource(backing)) continue;
-                Address mapped = source.locateAddressForFileOffset(offset);
+                Address mapped = localOffset < 0 ? null : source.locateAddressForFileOffset(localOffset);
                 if (mapped != null) mappedAddresses.add(mapped);
             }
         }
@@ -5199,11 +5207,24 @@ public final class ReaGhidraBridge extends HeadlessScript {
             keys.add("decompile_timeout_seconds");
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("existing_project"))
             keys.add("existing_project");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("target_file_offset_base"))
+            keys.add("target_file_offset_base");
         JsonObject object = requireObject(parsed, keys);
         int decompileTimeout = 0;
         if (object.has("decompile_timeout_seconds")) {
             decompileTimeout = requireInteger(object, "decompile_timeout_seconds");
             if (decompileTimeout < 1 || decompileTimeout > MAX_DECOMPILE_TIMEOUT_SECONDS)
+                throw new IllegalArgumentException("REA session descriptor is invalid");
+        }
+        long fileOffsetBase = 0;
+        if (object.has("target_file_offset_base")) {
+            JsonElement value = object.get("target_file_offset_base");
+            try {
+                fileOffsetBase = value.getAsJsonPrimitive().getAsBigDecimal().longValueExact();
+            } catch (RuntimeException failure) {
+                throw new IllegalArgumentException("REA session descriptor is invalid");
+            }
+            if (fileOffsetBase < 0 || fileOffsetBase > 9007199254740991L)
                 throw new IllegalArgumentException("REA session descriptor is invalid");
         }
         return new SessionDescriptor(
@@ -5216,7 +5237,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             requireString(object, "profile_digest"),
             object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray(),
             decompileTimeout,
-            object.has("existing_project") && requireBoolean(object, "existing_project")
+            object.has("existing_project") && requireBoolean(object, "existing_project"),
+            fileOffsetBase
         );
     }
 
@@ -5468,7 +5490,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String profileDigest,
         JsonArray analysisExtensions,
         int decompileTimeoutSeconds,
-        boolean existingProject
+        boolean existingProject,
+        long targetFileOffsetBase
     ) {}
     private static ValueFlowLimits defaultValueFlowLimits() {
         return new ValueFlowLimits(DEFAULT_HIGH_PCODE_OPS, DEFAULT_HIGH_PCODE_INPUTS_PER_OP, DEFAULT_HIGH_PCODE_DEF_USE_EDGES);
