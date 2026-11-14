@@ -40,13 +40,21 @@ const msixClaudeDesktop = (
   displayName: "Claude Desktop",
   configPath: PRIVATE_CONFIG,
   quitBeforeSetup: true,
-  msixPackage: {
+  ...msixPackageViews({
     packageFamilyName: "Claude_pzs8sxrjxfjjc",
     privateConfigPath: PRIVATE_CONFIG,
     appDataConfigPath: APPDATA_CONFIG,
     virtualizedRoots: [ROAMING, LOCAL],
     processView,
-  },
+  }),
+});
+
+/** The package decides the file the client reads and how this process sees it. */
+const msixPackageViews = (
+  view: MsixPackageView,
+): Pick<SetupClient, "msixPackage" | "processPackage"> => ({
+  msixPackage: view,
+  processPackage: view,
 });
 
 describe("setup workflow", () => {
@@ -801,6 +809,55 @@ describe("MSIX Claude Desktop setup", () => {
     );
     expect(skillOnly.status).toBe("ready");
     expect(host.skillInstalls).toBe(1);
+  });
+});
+
+describe("MSIX Claude Desktop setup after migration", () => {
+  it("blocks redirected AppData writes after Claude hands off to migrated storage", async () => {
+    const home = await createTestTempDirectory("setup-claude-handoff-");
+    const local = join(home, "Local");
+    const roaming = join(home, "Roaming");
+    const family = "Claude_pzs8sxrjxfjjc";
+    const privateRoaming = join(
+      local,
+      "Packages",
+      family,
+      "LocalCache",
+      "Roaming",
+    );
+    const privateClaude = join(privateRoaming, "Claude");
+    const migrated = join(local, "Claude-Data", family.toLowerCase());
+    await mkdir(privateClaude, { recursive: true });
+    // Through the junction this one marker is seen in both older folders.
+    await writeFile(
+      join(privateClaude, `.user-data-left.${family.toLowerCase()}`),
+      "",
+    );
+    await mkdir(migrated, { recursive: true });
+    await symlink(privateRoaming, roaming, "junction");
+
+    const host = new FakeSetupHost("win32");
+    host.hopper = join(home, "Hopper");
+    host.skill = "unchanged";
+    host.clients = supportedClients(home, "win32", {
+      APPDATA: roaming,
+      LOCALAPPDATA: local,
+    });
+    const claude = host.clients.find(({ name }) => name === "claude_desktop");
+    expect(claude?.configPath).toBe(
+      join(migrated, "claude_desktop_config.json"),
+    );
+    expect(claude?.msixPackage).toBeUndefined();
+    expect(claude?.processPackage?.processView).toBe("redirected");
+
+    for (const clientIds of [["vscode"], ["claude_desktop"]]) {
+      const blocked = await runSetup({ ...options(true), clientIds }, host);
+      expect(blocked.status).toBe("needs_human");
+      expect(blocked.remediation).toContain(
+        "would not reach the files other apps read.",
+      );
+    }
+    expect(host.configurations).toBe(0);
   });
 });
 

@@ -101,6 +101,9 @@ describe("Claude Desktop MSIX process view", () => {
           ...(hasLegacyStorage
             ? {
                 msixPackage: expect.objectContaining({ processView: "direct" }),
+                processPackage: expect.objectContaining({
+                  processView: "direct",
+                }),
               }
             : {}),
         },
@@ -537,6 +540,74 @@ describe("Claude Desktop MSIX process view when a probe changes during the compa
       },
     });
     expect(view).toBe("unknown");
+  });
+});
+
+describe("Claude Desktop migrated storage the app handed off to", () => {
+  const marker = `.user-data-left.${CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase()}`;
+  const appDataMarker = join(appDataDirectory, marker);
+  const privateMarker = join(privateDirectory, marker);
+  const migratedConfig = join(migratedDirectory, "claude_desktop_config.json");
+  const resolveWith = (
+    present: readonly string[],
+    hasPackage = true,
+  ): ReturnType<typeof resolveWindowsClaudeDesktopLocation> =>
+    resolveWindowsClaudeDesktopLocation(home, env, {
+      readdir: (path) => {
+        if (path === packages)
+          return hasPackage ? [CLAUDE_DESKTOP_PACKAGE_FAMILY] : [];
+        throw failure("ENOENT");
+      },
+      lstat: (path) => {
+        if (path === migratedDirectory) return folder;
+        if (present.includes(path)) return file;
+        throw failure("ENOENT");
+      },
+      realpath: (path) => path,
+    });
+  const selected = {
+    ok: true,
+    value: { configPath: migratedConfig, markerPath: migratedDirectory },
+  };
+
+  /** The package no longer picks the file, but this process's view of it is kept. */
+  const selectedWithPackage = (
+    location: ReturnType<typeof resolveWindowsClaudeDesktopLocation>,
+  ): void => {
+    expect(location).toMatchObject(selected);
+    expect(location.ok && location.value.msixPackage).toBeUndefined();
+    expect(location.ok && location.value.processPackage).toMatchObject({
+      packageFamilyName: CLAUDE_DESKTOP_PACKAGE_FAMILY,
+      virtualizedRoots: [env.APPDATA, env.LOCALAPPDATA],
+    });
+  };
+
+  it("selects the migrated file when every older folder holds the marker", () => {
+    selectedWithPackage(resolveWith([appDataMarker, privateMarker]));
+  });
+
+  it("selects the migrated file without package storage", () => {
+    expect(resolveWith([appDataMarker], false)).toEqual(selected);
+  });
+
+  it("accepts a package folder that has no configuration of its own", () => {
+    selectedWithPackage(resolveWith([appDataMarker]));
+  });
+
+  it.each([
+    ["no AppData marker", [privateMarker]],
+    [
+      "a private configuration without a marker",
+      [appDataMarker, privateConfig],
+    ],
+  ])("stays unresolved with %s", (_label, present) => {
+    expect(resolveWith(present)).toMatchObject({
+      ok: false,
+      error: {
+        path: migratedConfig,
+        message: expect.stringContaining("migrated Claude Desktop storage"),
+      },
+    });
   });
 });
 
