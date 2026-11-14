@@ -1,4 +1,5 @@
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { classifyLaunchFailureCode } from "../process/launchFailure.js";
 import { randomUUID } from "node:crypto";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import {
@@ -283,21 +284,21 @@ const commandProbeRefusal = (
     command?.processError ?? (cause instanceof Error ? cause : undefined);
   const systemCode =
     processError === undefined ? undefined : Reflect.get(processError, "code");
+  const missing = classifyLaunchFailureCode(systemCode)?.kind === "missing";
   const limited = command?.reason === "output-limit";
   const timedOut = command?.reason === "timeout";
   return {
-    code:
-      systemCode === "ENOENT"
-        ? "runtime_missing"
-        : limited || timedOut
-          ? "version_unresolved"
-          : "runtime_unavailable",
-    kind: systemCode === "ENOENT" ? "java_runtime" : "java_probe",
+    code: missing
+      ? "runtime_missing"
+      : limited || timedOut
+        ? "version_unresolved"
+        : "runtime_unavailable",
+    kind: missing ? "java_runtime" : "java_probe",
     message: limited
       ? `The selected Java launcher ${java} exceeded the ${String(JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES)}-byte module-listing output budget. This release has no runtime override. REA retained partial output but could not establish compiler or version availability. Inspect the selected launcher for verbose or unbounded output; java --list-modules should return a concise module listing. REA_JADX_OPERATION_TIMEOUT_MS does not raise this probe.`
       : timedOut
         ? `The selected Java launcher ${java} did not finish the module-listing probe within ${String(timeoutMs)} ms. This release has no runtime override. Inspect its startup responsiveness and verify it with java --list-modules. REA_JADX_OPERATION_TIMEOUT_MS does not raise this probe.`
-        : `Cannot inspect selected Java runtime ${java}: ${systemCode === "ENOENT" ? "spawn java ENOENT" : cause instanceof Error ? cause.message : cause === undefined ? `exit ${String(output?.exit_code ?? "unknown")}${output?.signal == null ? "" : ` (${output.signal})`}` : String(cause)}. Review the selected launcher and retained diagnostics.`,
+        : `Cannot inspect selected Java runtime ${java}: ${missing ? `spawn java ${String(systemCode)}` : cause instanceof Error ? cause.message : cause === undefined ? `exit ${String(output?.exit_code ?? "unknown")}${output?.signal == null ? "" : ` (${output.signal})`}` : String(cause)}. Review the selected launcher and retained diagnostics.`,
     diagnostics: {
       java_executable: java,
       phase: "module-inspection",

@@ -19,7 +19,7 @@ import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { isUnresolvedPathErrorCode } from "../filesystem/RegularFile.js";
+import { classifyLaunchFailureCode } from "../process/launchFailure.js";
 
 /** Environment key selecting the caller's adb binary. */
 export const ADB_BINARY_ENV = "REA_ADB_PATH";
@@ -267,8 +267,9 @@ export const inspectAdbClient = async (
         path_source: selection.pathSource,
         filesystem_error: code,
       };
+      const refusal = classifyLaunchFailureCode(code);
       // Nothing executable resolves at the selected path.
-      if (isUnresolvedPathErrorCode(code))
+      if (refusal?.kind === "missing")
         throw new AdbConfigurationFailure(
           "binary_missing",
           `The selected adb binary was not found: ${selection.binary}`,
@@ -288,7 +289,7 @@ export const inspectAdbClient = async (
         );
       throw new AdbConfigurationFailure(
         "binary_not_executable",
-        code === "EACCES" || code === "EPERM"
+        refusal?.code === "EACCES" || refusal?.code === "EPERM"
           ? `Execution of the selected adb binary was denied (${code}): ${selection.binary}`
           : `The selected adb binary could not be started (${code}): ${selection.binary}`,
         code === "EACCES"
