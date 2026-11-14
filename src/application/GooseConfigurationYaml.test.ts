@@ -461,3 +461,17 @@ describe("pinned Goose serde_yaml scalar resolution", () => {
     },
   );
 });
+
+it("materializes an alias whose sibling anchor the refresh replaces", () => {
+  const source =
+    "extensions:\n  rea:\n    cmd: &launcher /old/rea\n    envs: {REA_LAUNCHER: *launcher}\n";
+  const out = editGooseConfigurationYaml(source, ["extensions", "rea"], {
+    cmd: "/new/rea",
+    envs: { REA_LAUNCHER: "/old/rea" },
+  });
+  expect(parseGooseConfigurationYaml(out)).toMatchObject({
+    extensions: {
+      rea: { cmd: "/new/rea", envs: { REA_LAUNCHER: "/old/rea" } },
+    },
+  });
+});

@@ -417,6 +417,17 @@ export const editHermesConfigurationYaml = (
       document.setIn(parent, document.createNode({}));
     }
   }
+  // A registration inherited whole through a merge keeps that inheritance:
+  // override it with the merge, then write only the fields that differ.
+  const inheritedSourcePath = resolveYamlEditPath(document, path);
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    !document.hasIn(inheritedSourcePath) &&
+    projectedYamlPathExists(document, path)
+  )
+    inheritedYamlMapOverride(document, inheritedSourcePath, path.at(-1)!);
   const sourcePath = resolveYamlEditPath(document, path);
   const previous = document.getIn(sourcePath, true);
   // Deletion removes the pair's key too; replacement retains that key node.

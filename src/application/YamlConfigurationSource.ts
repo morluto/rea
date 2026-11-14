@@ -1,4 +1,5 @@
 import {
+  isAlias,
   isMap,
   isNode,
   isScalar,
@@ -55,12 +56,57 @@ const containsRetainedSource = (
   return found;
 };
 
+const yamlNodes = (root: Node): Set<Node> => {
+  const nodes = new Set<Node>([root]);
+  visit(root, {
+    Node: (_key, node) => {
+      nodes.add(node);
+    },
+  });
+  return nodes;
+};
+
+/**
+ * A reused collection keeps its aliases verbatim. Each must still resolve
+ * after the edit: to an anchor inside the reused collection, or to one
+ * outside the replaced value whose anchor is not being moved.
+ */
+const aliasesSurviveReuse = (
+  collection: Node,
+  editedNodes: ReadonlySet<Node>,
+  retainedSources: ReadonlySet<Node>,
+  document: Document,
+): boolean => {
+  let reusedNodes: Set<Node> | undefined;
+  let survives = true;
+  visit(collection, {
+    Alias: (_key, alias) => {
+      const target = alias.resolve(document);
+      reusedNodes ??= yamlNodes(collection);
+      if (
+        target === undefined ||
+        (!reusedNodes.has(target) &&
+          (editedNodes.has(target) || retainedSources.has(target)))
+      ) {
+        survives = false;
+        return visit.BREAK;
+      }
+      return undefined;
+    },
+  });
+  return survives;
+};
+
 /** Keep source nodes and annotations when updating a value. */
 export const retainYamlConfigurationSource = (
   previous: unknown,
   next: Node,
   retainedSources: ReadonlySet<Node>,
   document: Document,
+  // Nodes of the value being replaced; their anchors may not survive.
+  editedNodes: ReadonlySet<Node> = isNode(previous)
+    ? yamlNodes(previous)
+    : new Set(),
 ): Node => {
   if (
     (isMap(previous) || isSeq(previous)) &&
@@ -70,6 +116,7 @@ export const retainYamlConfigurationSource = (
     // collection before reconstructing its children from that projection.
     if (
       !containsRetainedSource([previous], retainedSources) &&
+      aliasesSurviveReuse(previous, editedNodes, retainedSources, document) &&
       isDeepStrictEqual(
         previous.toJS(document, { reviver: normalizeYamlInteger }),
         next.toJS(document, { reviver: normalizeYamlInteger }),
@@ -105,9 +152,15 @@ export const retainYamlConfigurationSource = (
       next.spaceBefore = previous.spaceBefore;
   }
   if (isMap(previous) && isMap(next)) {
-    retainYamlMapSource(previous, next, retainedSources, document);
+    retainYamlMapSource(previous, next, retainedSources, document, editedNodes);
   } else if (isSeq(previous) && isSeq(next)) {
-    retainYamlSequenceSource(previous, next, retainedSources, document);
+    retainYamlSequenceSource(
+      previous,
+      next,
+      retainedSources,
+      document,
+      editedNodes,
+    );
   }
   return next;
 };
@@ -117,6 +170,7 @@ const retainYamlSequenceSource = (
   next: YAMLSeq,
   retainedSources: ReadonlySet<Node>,
   document: Document,
+  editedNodes: ReadonlySet<Node>,
 ): void => {
   const stringItems = (items: readonly unknown[]) =>
     items.every((item) => isScalar(item) && typeof item.value === "string");
@@ -131,6 +185,7 @@ const retainYamlSequenceSource = (
           target,
           retainedSources,
           document,
+          editedNodes,
         ),
       (source) => !retainedSources.has(source),
     );
@@ -143,6 +198,7 @@ const retainYamlSequenceSource = (
           item,
           retainedSources,
           document,
+          editedNodes,
         )
       : item,
   );
@@ -153,6 +209,7 @@ const retainYamlMapSource = (
   next: YAMLMap,
   retainedSources: ReadonlySet<Node>,
   document: Document,
+  editedNodes: ReadonlySet<Node>,
 ): void => {
   const hasMerges = retainYamlMergeSources(previous, next, document);
   const hasSourceOnlyKeys = retainProjectedYamlKeys(
@@ -179,6 +236,7 @@ const retainYamlMapSource = (
           pair.key,
           retainedSources,
           document,
+          editedNodes,
         )
       : prior.key;
     if (isNode(pair.value))
@@ -187,6 +245,7 @@ const retainYamlMapSource = (
         pair.value,
         retainedSources,
         document,
+        editedNodes,
       );
   }
   if (hasSourceOnlyKeys || hasMerges) {

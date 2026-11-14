@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import {
+  effectiveClientServer,
   parseClientConfiguration,
   serializeClientConfiguration,
   withClientServers,
 } from "./ClientConfigurationDocument.js";
+import { refreshClientRegistration } from "./ClientRegistration.js";
+import { supportedClients } from "./SupportedClients.js";
 
 import {
   editHermesConfigurationYaml,
@@ -663,4 +666,84 @@ it("keeps argument annotations with unique values and retains removed annotation
     "second duplicate",
   ])
     expect(updated.split(comment)).toHaveLength(2);
+});
+
+describe("Hermes registration refresh around anchors and merges", () => {
+  it("materializes an alias whose sibling anchor the refresh replaces", () => {
+    const source =
+      "mcp_servers:\n  rea:\n    command: &launcher /old/rea\n    env: {REA_LAUNCHER: *launcher}\n";
+    const out = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+      command: "/new/rea",
+      env: { REA_LAUNCHER: "/old/rea" },
+    });
+    expect(parseHermesConfigurationYaml(out)).toMatchObject({
+      mcp_servers: {
+        rea: { command: "/new/rea", env: { REA_LAUNCHER: "/old/rea" } },
+      },
+    });
+  });
+
+  it("materializes an alias to an anchor moved to an outside consumer", () => {
+    const source =
+      "mcp_servers:\n  rea:\n    command: rea\n    setting: &setting keep\n    metadata: {nested: *setting}\nobserver: *setting\n";
+    const out = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+      command: "rea2",
+      setting: "changed",
+      metadata: { nested: "keep" },
+    });
+    expect(parseHermesConfigurationYaml(out)).toMatchObject({
+      observer: "keep",
+      mcp_servers: {
+        rea: { setting: "changed", metadata: { nested: "keep" } },
+      },
+    });
+  });
+
+  it("keeps an inherited stdio transport through a launcher refresh", () => {
+    const source =
+      "defaults: &defaults\n  transport: stdio\n  command: rea\n  args: [mcp]\nmcp_servers:\n  rea:\n    <<: *defaults\n";
+    const client = supportedClients("/home/rea-test").find(
+      ({ name }) => name === "hermes",
+    )!;
+    const parsed = parseClientConfiguration(source, "hermes");
+    const registration = refreshClientRegistration(
+      client,
+      "hermes",
+      ["rea", "mcp"],
+      { A: "1" },
+      effectiveClientServer(parsed, "rea"),
+      {
+        analysisProvider: "auto",
+        ghidraStartupTimeoutMs: 1,
+        hopperStartupTimeoutMs: 1,
+      },
+    );
+    if (!registration.ok) throw registration.error;
+    const written = serializeClientConfiguration(
+      withClientServers(parsed, { ...parsed.servers, rea: registration.value }),
+      "hermes",
+      source,
+    );
+    if (!written.ok) throw written.error;
+    expect(written.value).toContain("<<: *defaults");
+    expect(parseHermesConfigurationYaml(written.value)).toMatchObject({
+      mcp_servers: {
+        rea: { transport: "stdio", command: "rea", env: { A: "1" } },
+      },
+    });
+  });
+
+  it("overrides an inherited registration with only its changed fields", () => {
+    const source =
+      "shared: &shared\n  rea: {command: rea, metadata: {marker: old}}\nmcp_servers:\n  <<: *shared\n";
+    const out = editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
+      command: "rea",
+      metadata: { marker: "old" },
+      env: { A: "1" },
+    });
+    const changed = out.replace("marker: old", "marker: new");
+    expect(parseHermesConfigurationYaml(changed)).toMatchObject({
+      mcp_servers: { rea: { metadata: { marker: "new" }, env: { A: "1" } } },
+    });
+  });
 });
