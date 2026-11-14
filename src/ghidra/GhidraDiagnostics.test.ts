@@ -1,5 +1,7 @@
 import { ProcessOutputTokenScanner } from "../process/ProcessOutputTokenScanner.js";
 import {
+  GHIDRA_DIAGNOSTIC_EXCERPT_BYTES,
+  ghidraDiagnosticStream,
   ghidraFailureOutput,
   createGhidraDiagnostics,
 } from "./GhidraDiagnostics.js";
@@ -157,3 +159,35 @@ it.each([
     expect(diagnostics.stop_requested).toBe(expected);
   },
 );
+
+it("carries only the latest launcher output in an error, with its byte counts", () => {
+  const retained = `${"early line\n".repeat(400_000)}last line: startup timed out\n`;
+  const bytes = Buffer.byteLength(retained);
+  const projected = ghidraDiagnosticStream(
+    { text: retained, bytes, observedBytes: bytes + 1_000 },
+    undefined,
+  ) as {
+    text: string;
+    bytes: number;
+    retained_bytes: number;
+    text_bytes: number;
+  };
+  expect(projected.text.endsWith("last line: startup timed out\n")).toBe(true);
+  expect(Buffer.byteLength(projected.text)).toBe(projected.text_bytes);
+  expect(projected.text_bytes).toBeLessThanOrEqual(
+    GHIDRA_DIAGNOSTIC_EXCERPT_BYTES,
+  );
+  expect(projected).toMatchObject({
+    bytes: bytes + 1_000,
+    retained_bytes: bytes,
+  });
+});
+
+it("keeps short launcher output whole", () => {
+  expect(
+    ghidraDiagnosticStream(
+      { text: "ok\n", bytes: 3, observedBytes: 3 },
+      undefined,
+    ),
+  ).toEqual({ text: "ok\n", bytes: 3, retained_bytes: 3 });
+});
