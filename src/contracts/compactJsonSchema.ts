@@ -7,7 +7,6 @@ import {
   schemaChildren,
   schemaMaps,
   schemaLiteralValues,
-  schemaSubschemas,
 } from "./jsonSchemaKeywords.js";
 
 // Shared compact JSON Schema projection primitives; canonical validation stays separate.
@@ -26,9 +25,9 @@ const jsonValueTypes = [
   "string",
 ];
 // An empty item schema accepts every JSON value, including arbitrarily nested
-// arrays, while satisfying clients that require `items` for array types.
-// Gemini rejects `items` beside a type list; the compact catalog test fails
-// if a tool would advertise this presentation.
+// arrays, while satisfying clients that require `items` for array types. The
+// portable advertised dialect has no any-value form, so a compact input that
+// needs this presentation is reduced instead.
 export const jsonValueSchema = () => ({ type: [...jsonValueTypes], items: {} });
 
 const enumValueTypes = (values: readonly unknown[]): readonly string[] => [
@@ -426,81 +425,6 @@ const reducedItemSchema = (
   };
 };
 
-/** Give homogeneous array-item unions the type required by strict gateways. */
-export const typeArrayItemUnions = (
-  schema: Record<string, unknown>,
-): Record<string, unknown> => {
-  const references = new JsonSchemaReferences(schema);
-  const visit = (node: unknown): unknown => {
-    const rebuilt = rebuildSchemaPositions(node, visit);
-    if (!isSchemaObject(rebuilt) || rebuilt.type !== "array") return rebuilt;
-    const items = rebuilt.items;
-    if (
-      !isSchemaObject(items) ||
-      items.type !== undefined ||
-      (!Array.isArray(items.oneOf) && !Array.isArray(items.anyOf))
-    )
-      return rebuilt;
-    const types = detectedTypes(items, references, references.rootScope);
-    return types?.length === 1
-      ? { ...rebuilt, items: { ...items, type: types[0] } }
-      : rebuilt;
-  };
-  return visit(schema) as Record<string, unknown>;
-};
-
-/**
- * Strict gateways reject some nested combinators, primitive enums without a
- * type, and array items whose union has no explicit type. Homogeneous item
- * unions gain their shared type; remaining incompatible shapes use the shallow
- * projection while canonical runtime validation stays intact.
- */
-export const hasGatewayIncompatibleShape = (schema: unknown): boolean => {
-  if (Array.isArray(schema)) return schema.some(hasGatewayIncompatibleShape);
-  if (!isSchemaObject(schema)) return false;
-  if (Array.isArray(schema.anyOf) && schema.anyOf.length === 0) return true;
-  if (
-    schema.type === "array" &&
-    isSchemaObject(schema.items) &&
-    schema.items.type === undefined &&
-    (Array.isArray(schema.items.oneOf) || Array.isArray(schema.items.anyOf))
-  )
-    return true;
-  if (Array.isArray(schema.required) && isSchemaObject(schema.properties)) {
-    for (const name of schema.required) {
-      const property = schema.properties[name];
-      if (isSchemaObject(property) && containsGatewayCombinator(property))
-        return true;
-    }
-  }
-  if (
-    Array.isArray(schema.enum) &&
-    schema.enum.length > 0 &&
-    schema.type === undefined
-  ) {
-    const types = enumValueTypes(schema.enum);
-    if (
-      types.length === 1 &&
-      types.every((type) =>
-        ["string", "number", "boolean", "null"].includes(type),
-      )
-    )
-      return true;
-  }
-  return schemaSubschemas(schema, { includeDefinitions: true }).some(
-    hasGatewayIncompatibleShape,
-  );
-};
-
-const containsGatewayCombinator = (schema: unknown): boolean => {
-  if (Array.isArray(schema)) return schema.some(containsGatewayCombinator);
-  if (!isSchemaObject(schema)) return false;
-  if (schema.oneOf !== undefined || schema.allOf !== undefined) return true;
-  return schemaSubschemas(schema, { includeDefinitions: true }).some(
-    containsGatewayCombinator,
-  );
-};
-
 /**
  * Present a reduced property's reference-resolved types. Reduced inputs omit
  * nested validation, but clients still require an item schema for an array
@@ -541,20 +465,6 @@ export const reduceToShallowProperties = (
   const properties = isSchemaObject(schema.properties) ? schema.properties : {};
   const description = [
     typeof schema.description === "string" ? schema.description : undefined,
-    ...Object.entries(
-      isSchemaObject(schema.dependentRequired)
-        ? schema.dependentRequired
-        : isSchemaObject(schema.dependencies)
-          ? schema.dependencies
-          : {},
-    ).flatMap(([property, partners]) =>
-      Array.isArray(partners) &&
-      partners.every((partner) => typeof partner === "string")
-        ? [
-            `When ${property} is provided, also provide ${partners.join(" and ")}.`,
-          ]
-        : [],
-    ),
     reducedAnnotation,
   ]
     .filter((text) => text !== undefined)
@@ -586,5 +496,12 @@ export const reduceToShallowProperties = (
     ...(schema.additionalProperties === false
       ? { additionalProperties: false }
       : {}),
+    // Root property dependencies still apply to the shallow properties; a
+    // dialect projection states them as tool guidance.
+    ...Object.fromEntries(
+      ["dependentRequired", "dependencies"].flatMap((key) =>
+        isSchemaObject(schema[key]) ? [[key, schema[key]]] : [],
+      ),
+    ),
   };
 };

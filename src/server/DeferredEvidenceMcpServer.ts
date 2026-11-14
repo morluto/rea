@@ -217,6 +217,21 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     return this.partialClose?.() ?? Promise.resolve();
   }
 
+  /**
+   * Recorded tools already list their presented description; keep it rather
+   * than project every canonical input schema when the runtime materializes.
+   */
+  protected override describeTool(
+    name: string,
+    description: string | undefined,
+    guidance: () => readonly string[],
+  ): { description?: string } {
+    const recorded = this.tools.get(name)?.registered.description;
+    if (this.materializing && recorded !== undefined)
+      return { description: recorded };
+    return super.describeTool(name, description, guidance);
+  }
+
   protected override bindTool(
     name: string,
     config: ToolConfig,

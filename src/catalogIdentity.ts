@@ -15,7 +15,8 @@ import {
   toolOutputSchemaWithMetadata,
 } from "./contracts/toolSchemaMetadata.js";
 import {
-  presentAdvertisedInputSchema,
+  describeAdvertisedTool,
+  presentAdvertisedInput,
   type CompactInputSchemaPresentation,
 } from "./contracts/compactInputSchema.js";
 import {
@@ -55,6 +56,19 @@ const createToolCatalog = (contracts: readonly ToolContract[]) =>
     ].jsonSchema.output({ target: "draft-2020-12" }),
   }));
 
+/** The compact input schema and the tool description carrying its guidance. */
+const presentedInput = (
+  description: string,
+  schema: Record<string, unknown>,
+  presentation: CompactInputSchemaPresentation,
+) => {
+  const input = presentAdvertisedInput(schema, presentation);
+  return {
+    description: describeAdvertisedTool(description, input.guidance),
+    input_schema: input.schema,
+  };
+};
+
 const presentToolCatalog = (
   catalog: ReturnType<typeof createToolCatalog>,
   presentation: CompactInputSchemaPresentation | undefined,
@@ -66,12 +80,7 @@ const presentToolCatalog = (
         ...tool,
         ...(presentation === undefined
           ? {}
-          : {
-              input_schema: presentAdvertisedInputSchema(
-                tool.input_schema,
-                presentation,
-              ),
-            }),
+          : presentedInput(tool.description, tool.input_schema, presentation)),
         ...(outputPresentation === undefined
           ? {}
           : {

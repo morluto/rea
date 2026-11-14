@@ -90,8 +90,10 @@ const PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,53}$/u;
 const PROPERTY_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u;
 const TOOL_DESCRIPTION_LIMIT = 4096;
-const DESCRIPTION_LIMIT = 1024;
-const BOUND_LIMIT = 1999;
+/** VS Code truncates a nested description above this many characters. */
+export const ADVERTISED_DESCRIPTION_MAX_CHARACTERS = 1024;
+/** llama.cpp grammars fail at length and item bounds of this value or more. */
+export const ADVERTISED_BOUND_LIMIT = 1999;
 // Moonshot's function-calling API rejects requests while any single tool
 // parameters schema exceeds its literal serialized size cap. Community
 // measurements bound the cap between ~13.7 KB (accepted) and ~15 KB
@@ -362,6 +364,35 @@ const patternViolations = (
     })),
   );
 
+const isNullBranch = (branch: unknown): boolean =>
+  isRecord(branch) &&
+  branch.type === "null" &&
+  Object.keys(branch).length === 1;
+
+/** `[T, "null"]`: the one type list several clients rewrite to `nullable`. */
+const isNullableTypeList = (type: readonly unknown[]): boolean =>
+  type.length === 2 &&
+  type.includes("null") &&
+  type.some(
+    (member) => typeof member === "string" && PRIMITIVE_TYPES.has(member),
+  );
+
+/**
+ * One typed branch or null. The dialect has no null type, so a nullable value
+ * cannot be advertised without narrowing it; such unions are counted under
+ * their own detail rather than as an arbitrary untyped node.
+ */
+const isNullableUnion = (node: Readonly<Record<string, unknown>>): boolean =>
+  Array.isArray(node.anyOf) &&
+  node.anyOf.length === 2 &&
+  node.anyOf.some(isNullBranch) &&
+  node.anyOf.some(
+    (branch) =>
+      isRecord(branch) &&
+      typeof branch.type === "string" &&
+      PRIMITIVE_TYPES.has(branch.type),
+  );
+
 const nodeViolations = (
   tool: string,
   node: unknown,
@@ -389,8 +420,17 @@ const nodeViolations = (
   for (const key of Object.keys(node))
     if (!ALLOWED_KEYWORDS.has(key)) add("keyword", key);
   const { type } = node;
-  if (Array.isArray(type)) add("type", "type-list");
-  else if (type === undefined) add("type", "untyped");
+  if (Array.isArray(type))
+    add("type", isNullableTypeList(type) ? "nullable" : "type-list");
+  else if (type === undefined)
+    add("type", isNullableUnion(node) ? "nullable" : "untyped");
+  // A null branch is reported once, by the union that offers it.
+  else if (
+    type === "null" &&
+    keyword === "anyOf" &&
+    Object.keys(node).length === 1
+  )
+    return violations;
   else if (typeof type !== "string" || !PRIMITIVE_TYPES.has(type))
     add("type", `type:${String(type)}`);
   if (type === "array" && node.items === undefined)
@@ -419,11 +459,14 @@ const nodeViolations = (
   }
   if (
     typeof node.description === "string" &&
-    node.description.length > DESCRIPTION_LIMIT
+    node.description.length > ADVERTISED_DESCRIPTION_MAX_CHARACTERS
   )
     add("description-length");
   for (const bound of ["minLength", "maxLength", "minItems", "maxItems"])
-    if (typeof node[bound] === "number" && node[bound] >= BOUND_LIMIT)
+    if (
+      typeof node[bound] === "number" &&
+      node[bound] >= ADVERTISED_BOUND_LIMIT
+    )
       add("bound", bound);
   if (isRecord(node.properties))
     for (const name of Object.keys(node.properties))
