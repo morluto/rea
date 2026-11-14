@@ -219,11 +219,18 @@ const mergeScriptResults = (
       accumulator.recoveredScripts.push(result.script_key);
     if (result.widened_return_references)
       accumulator.widenedScripts.push(result.script_key);
-    accumulator.edges.push(...result.observations.edges);
-    accumulator.routes.push(...result.observations.routes);
-    accumulator.endpoints.push(...result.observations.endpoints);
-    accumulator.webMcp.push(...result.observations.webmcp_declarations);
-    accumulator.inferences.push(...result.inferences);
+    // Append iteratively: spreading a wide list into push(...) expands
+    // every element onto the call stack as an argument and throws
+    // RangeError: Maximum call stack size exceeded.
+    for (const edge of result.observations.edges) accumulator.edges.push(edge);
+    for (const route of result.observations.routes)
+      accumulator.routes.push(route);
+    for (const endpoint of result.observations.endpoints)
+      accumulator.endpoints.push(endpoint);
+    for (const declaration of result.observations.webmcp_declarations)
+      accumulator.webMcp.push(declaration);
+    for (const inference of result.inferences)
+      accumulator.inferences.push(inference);
   }
   return accumulator;
 };

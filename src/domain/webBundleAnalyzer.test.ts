@@ -2243,3 +2243,134 @@ it.each([
     );
   },
 );
+
+describe("wide captured web bundle analysis", () => {
+  it(
+    "retains wide script observation and inference lists without overflowing the call stack",
+    { timeout: 60_000 },
+    () => {
+      const captured = inspection(
+        "import './module.js'; const routes = [{ path: '/known' }]; fetch('/api'); form.get('candidate'); document.modelContext.registerTool({ name: 'lookup' });",
+      );
+      const script = captured.scripts.items.find(isIncludedScript);
+      if (script === undefined)
+        throw new Error("Missing included script fixture");
+      const outcome = analyzeCapturedWebScript(script);
+      if (outcome.status !== "analyzed")
+        throw new Error("Expected a completed script analysis fixture");
+      const firstEdge = outcome.observations.edges[0];
+      const firstRoute = outcome.observations.routes[0];
+      const firstEndpoint = outcome.observations.endpoints[0];
+      const firstDeclaration = outcome.observations.webmcp_declarations[0];
+      const firstInference = outcome.inferences[0];
+      if (
+        firstEdge === undefined ||
+        firstRoute === undefined ||
+        firstEndpoint === undefined ||
+        firstDeclaration === undefined ||
+        firstInference === undefined
+      )
+        throw new Error("Expected a completed script analysis fixture");
+      // One analyzed script reporting more entries than the engine's
+      // call-argument capacity in this test worker (200k spreads still
+      // fit; 500k does not): spreading these into push(...) throws
+      // RangeError: Maximum call stack size exceeded.
+      // Each list carries distinct first/middle/last entries so the
+      // assertions below catch a merge that reorders entries, not just
+      // one that drops them: repeating one identical entry 500_000
+      // times would pass length and last-item checks even with the
+      // order reversed.
+      const withOrderMarkers = <T>(
+        first: T,
+        mark: (item: T, tag: string) => T,
+      ) => {
+        const marked = {
+          first: mark(first, "first"),
+          middle: mark(first, "middle"),
+          last: mark(first, "last"),
+        };
+        const list = Array.from({ length: 500_000 }, () => first);
+        list[0] = marked.first;
+        list[250_000] = marked.middle;
+        list[499_999] = marked.last;
+        return { list, ...marked };
+      };
+      const wideEdges = withOrderMarkers(firstEdge, (item, tag) => ({
+        ...item,
+        specifier: `${item.specifier}#${tag}`,
+      }));
+      const wideRoutes = withOrderMarkers(firstRoute, (item, tag) => ({
+        ...item,
+        value: `${item.value}#${tag}`,
+      }));
+      const wideEndpoints = withOrderMarkers(firstEndpoint, (item, tag) => ({
+        ...item,
+        value: `${item.value}#${tag}`,
+      }));
+      const wideDeclarations = withOrderMarkers(
+        firstDeclaration,
+        (item, tag) => ({
+          ...item,
+          name: `${item.name}#${tag}`,
+        }),
+      );
+      const wideInferences = withOrderMarkers(firstInference, (item, tag) => ({
+        ...item,
+        value: `${item.value}#${tag}`,
+      }));
+      const wide = {
+        ...outcome,
+        observations: {
+          ...outcome.observations,
+          edges: wideEdges.list,
+          routes: wideRoutes.list,
+          endpoints: wideEndpoints.list,
+          webmcp_declarations: wideDeclarations.list,
+        },
+        inferences: wideInferences.list,
+      };
+      const result = buildCapturedWebBundleAnalysis(
+        captured,
+        {
+          status: "not_requested",
+          requested: 0,
+          processed: 0,
+          items: [],
+        },
+        [wide],
+      );
+      expect(result.observations.chunks.edges).toHaveLength(500_000);
+      expect(result.observations.routes).toHaveLength(500_000);
+      expect(result.observations.endpoints).toHaveLength(500_000);
+      expect(result.observations.webmcp_declarations).toHaveLength(500_000);
+      expect(result.inferences).toHaveLength(500_000);
+      expect(result.observations.chunks.edges[0]).toEqual(wideEdges.first);
+      expect(result.observations.chunks.edges[250_000]).toEqual(
+        wideEdges.middle,
+      );
+      expect(result.observations.chunks.edges[499_999]).toEqual(wideEdges.last);
+      expect(result.observations.routes[0]).toEqual(wideRoutes.first);
+      expect(result.observations.routes[250_000]).toEqual(wideRoutes.middle);
+      expect(result.observations.routes[499_999]).toEqual(wideRoutes.last);
+      expect(result.observations.endpoints[0]).toEqual(wideEndpoints.first);
+      expect(result.observations.endpoints[250_000]).toEqual(
+        wideEndpoints.middle,
+      );
+      expect(result.observations.endpoints[499_999]).toEqual(
+        wideEndpoints.last,
+      );
+      expect(result.observations.webmcp_declarations[0]).toEqual(
+        wideDeclarations.first,
+      );
+      expect(result.observations.webmcp_declarations[250_000]).toEqual(
+        wideDeclarations.middle,
+      );
+      expect(result.observations.webmcp_declarations[499_999]).toEqual(
+        wideDeclarations.last,
+      );
+      expect(result.inferences[0]).toEqual(wideInferences.first);
+      expect(result.inferences[250_000]).toEqual(wideInferences.middle);
+      expect(result.inferences[499_999]).toEqual(wideInferences.last);
+    },
+  );
+});
