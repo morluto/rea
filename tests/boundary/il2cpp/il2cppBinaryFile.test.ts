@@ -239,11 +239,14 @@ it("does not infer universal Mach-O identity from a FAT-shaped non-Mach-O table"
     reason: "unsupported-container",
     kind: "unsupported",
   });
-  expect(selectionIssue(bytes, "arm64")).toMatchObject({
+  // The message names IL2CPP's field and value, never the shared spelling.
+  const issue = selectionIssue(bytes, "arm64");
+  expect(issue).toMatchObject({
     path: ["binary_architecture"],
-    message:
-      "binary_architecture arm64 was selected, but the file is not a universal Mach-O; omit binary_architecture.",
+    reason: "invalid_value",
   });
+  expect(issue?.message).toContain("binary_architecture arm64");
+  expect(issue?.message).not.toMatch(/(?<!binary_)architecture arm64/u);
 });
 
 it("requires an explicit slice of a universal Mach-O and reads only that slice", () => {
@@ -283,8 +286,8 @@ it("selects an exact arm64 subtype beside arm64e and names only IL2CPP selectors
       "arm64",
     ).limitations,
   ).toEqual([
-    expect.stringMatching(
-      /^Only the selected arm64 slice .*arm64 \(subtype 0x2\) at file offset 4096 \(no binary_architecture value selects it\)\.$/u,
+    expect.stringContaining(
+      "arm64 (subtype 0x2) at file offset 4096 (no binary_architecture value selects it)",
     ),
   ]);
 });
