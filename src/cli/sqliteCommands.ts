@@ -4,6 +4,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createSqliteDatabaseService } from "../composition/sqlite.js";
 import { SQLITE_TOOL_CONTRACTS } from "../contracts/sqlite/sqliteToolContracts.js";
 import {
+  contractNamed,
   inspectWithService,
   registerContractCommand,
 } from "./contractCommand.js";
@@ -16,7 +17,10 @@ export const registerSqliteCommands = (
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
   const service = createSqliteDatabaseService(environment);
-  const [contract] = SQLITE_TOOL_CONTRACTS;
+  const contract = contractNamed(
+    SQLITE_TOOL_CONTRACTS,
+    "inspect_sqlite_database",
+  );
   registerContractCommand(
     cli,
     logger,

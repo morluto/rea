@@ -174,28 +174,44 @@ const assertArgvField = (
   field: string,
   schema: z.ZodType,
 ) => {
-  let current: z.ZodType = schema;
-  while (
-    current instanceof z.ZodOptional ||
-    current instanceof z.ZodExactOptional ||
-    current instanceof z.ZodDefault ||
-    current instanceof z.ZodPrefault ||
-    current instanceof z.ZodNullable ||
-    current instanceof z.ZodReadonly
-  )
-    current = current.unwrap() as z.ZodType;
-  if (
-    current instanceof z.ZodPipe ||
-    current instanceof z.ZodObject ||
-    current instanceof z.ZodRecord ||
-    current instanceof z.ZodUnion
-  )
+  const core = (value: z.ZodType): z.ZodType => {
+    let current = value;
+    while (
+      current instanceof z.ZodOptional ||
+      current instanceof z.ZodExactOptional ||
+      current instanceof z.ZodDefault ||
+      current instanceof z.ZodPrefault ||
+      current instanceof z.ZodNullable ||
+      current instanceof z.ZodReadonly
+    )
+      current = current.unwrap() as z.ZodType;
+    return current;
+  };
+  const scalar = (value: z.ZodType): boolean =>
+    value instanceof z.ZodString ||
+    value instanceof z.ZodNumber ||
+    value instanceof z.ZodBoolean ||
+    value instanceof z.ZodEnum;
+  const current = core(schema);
+  const supported =
+    scalar(current) ||
+    (current instanceof z.ZodArray &&
+      (core(current.element as z.ZodType) instanceof z.ZodString ||
+        core(current.element as z.ZodType) instanceof z.ZodEnum));
+  if (!supported)
     throw new Error(
       `${contract}.${field} has no argv projection; declare one before exposing it on the CLI`,
     );
 };
 
 const OBJECT_CONSTRAINTS = ["dependentRequired", "if", "then", "else"] as const;
+
+/** Contract-level presentation that CLI help states in its own words. */
+const ROOT_ANNOTATIONS: ReadonlySet<string> = new Set([
+  "description",
+  "title",
+  "examples",
+]);
 
 /** Rename the field names inside the object constraints the contract advertises. */
 const renameConstraint = (
@@ -232,6 +248,14 @@ const projectObjectConstraints = (
 ): Record<string, unknown> | undefined => {
   const metadata = contract.inputSchema.meta();
   if (metadata === undefined) return undefined;
+  for (const keyword of Object.keys(metadata))
+    if (
+      !ROOT_ANNOTATIONS.has(keyword) &&
+      !(OBJECT_CONSTRAINTS as readonly string[]).includes(keyword)
+    )
+      throw new Error(
+        `${contract.name} input keyword ${keyword} has no CLI projection`,
+      );
   const projected: Record<string, unknown> = {};
   for (const keyword of OBJECT_CONSTRAINTS) {
     const value = metadata[keyword];

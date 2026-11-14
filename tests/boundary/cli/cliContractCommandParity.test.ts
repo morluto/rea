@@ -1,11 +1,13 @@
-import { z } from "incur";
+import { Cli, z } from "incur";
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 import {
   contractCommandBindings,
+  registerContractCommand,
   type ContractCommandBinding,
 } from "../../../src/cli/contractCommand.js";
+import { silentLogger } from "../../../src/logger.js";
 import {
   visitRegisteredCommands,
   type RegisteredCommand,
@@ -188,4 +190,41 @@ describe("CLI commands projected from tool contracts", () => {
           expect(input[field.field]).toBe(absoluteCallerPath("rel/target"));
     },
   );
+
+  it.each([
+    ["an object", z.object({ value: z.string() }).optional()],
+    ["a record", z.record(z.string(), z.string()).optional()],
+    ["a union", z.union([z.string(), z.boolean()]).optional()],
+    ["a pipe", z.string().pipe(z.string()).optional()],
+    ["an array of objects", z.array(z.object({})).optional()],
+    ["an array of numbers", z.array(z.number()).optional()],
+    ["a tuple", z.tuple([z.string()]).optional()],
+  ])("refuses to register a field that is %s", (_kind, field) => {
+    expect(() =>
+      registerContractCommand(
+        Cli.create("probe"),
+        silentLogger,
+        { name: "probe", inputSchema: z.object({ field }) },
+        { command: "probe", description: "Probe" },
+        async () => null,
+      ),
+    ).toThrow("probe.field has no argv projection");
+  });
+
+  it("refuses an input constraint the CLI schema cannot carry", () => {
+    expect(() =>
+      registerContractCommand(
+        Cli.create("probe"),
+        silentLogger,
+        {
+          name: "probe",
+          inputSchema: z
+            .object({ value: z.string().optional() })
+            .meta({ not: { required: ["value"] } }),
+        },
+        { command: "probe", description: "Probe" },
+        async () => null,
+      ),
+    ).toThrow("probe input keyword not has no CLI projection");
+  });
 });
