@@ -6,8 +6,6 @@ import { rawHttpRequest } from "../../support/http/rawRequest.js";
 import { startMcpHttpProcess } from "../../support/mcp/streamableHttpProcess.js";
 import { processTest } from "../../support/process/processFixture.js";
 
-const SHUTDOWN_TIMEOUT_MS = 90_000;
-
 const shutdownSignals: readonly (readonly [NodeJS.Signals, number])[] = [
   ["SIGTERM", 143],
   ["SIGINT", 130],
@@ -32,7 +30,6 @@ describe.skipIf(process.platform === "win32")("rea mcp --http shutdown", () => {
           code: "ECONNREFUSED",
         });
       },
-      SHUTDOWN_TIMEOUT_MS,
     );
 
   processTest(
@@ -47,6 +44,5 @@ describe.skipIf(process.platform === "win32")("rea mcp --http shutdown", () => {
       expect(signalCode).toBeNull();
       expect(started.stderr()).not.toContain(MCP_SHUTDOWN_FAILED);
     },
-    SHUTDOWN_TIMEOUT_MS,
   );
 });

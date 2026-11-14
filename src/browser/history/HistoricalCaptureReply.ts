@@ -158,5 +158,6 @@ const excludeNormalizedNumbers = (
   projection.numeric_literals = projection.numeric_literals.filter(
     (number) => !excluded.has(number.pointer),
   );
-  projection.redactions.push(...redaction.redactions);
+  for (const excludedValue of redaction.redactions)
+    projection.redactions.push(excludedValue);
 };

@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../domain/jsonPointer.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -231,7 +232,7 @@ export class JsonSchemaReferences {
     for (const token of fragment.slice(1).split("/")) {
       if (/~(?:[^01]|$)/u.test(token))
         return { kind: "unresolved", reason: "pointer" };
-      const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+      const key = unescapeJsonPointerToken(token);
       if (
         value === null ||
         typeof value !== "object" ||

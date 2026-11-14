@@ -60,5 +60,4 @@ it
       await fixture.cleanup([probe, commands.close()]);
     }
   },
-  30_000,
 );

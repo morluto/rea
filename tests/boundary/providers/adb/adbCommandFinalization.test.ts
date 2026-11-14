@@ -313,7 +313,6 @@ nativeClientTest.each([false, true])(
     expect(prerequisite.capturedOutput).toEqual(capturedOutput);
     expect(result.error.capturedOutput).toEqual(capturedOutput);
   },
-  20000,
 );
 
 nativeClientTest(
@@ -350,5 +349,4 @@ nativeClientTest(
       details: { timeout_ms: 10000 },
     });
   },
-  20000,
 );

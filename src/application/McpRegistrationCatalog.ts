@@ -356,7 +356,7 @@ const ALIASES = {
 const isClientId = (value: string): value is McpRegistrationClientId =>
   Object.hasOwn(MCP_REGISTRATION_CLIENTS, value);
 
-export const resolveMcpRegistrationClientId = (
+const resolveMcpRegistrationClientId = (
   input: string,
 ): McpRegistrationClientId | undefined => {
   const lower = input.toLowerCase();

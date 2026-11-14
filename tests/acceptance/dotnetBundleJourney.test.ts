@@ -219,7 +219,7 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
         outputs.map((output) => rm(output, { recursive: true, force: true })),
       );
     }
-  }, 120_000);
+  });
 }
 
 test("reports excessive bundle path depth as a public CLI limit", async ({

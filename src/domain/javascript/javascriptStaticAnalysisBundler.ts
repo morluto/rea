@@ -230,7 +230,7 @@ const recoverBundlerModules = (
     );
     if (recovered === null) continue;
     modules.push(recovered.module);
-    asyncChunkKeys.push(...recovered.asyncChunkKeys);
+    for (const key of recovered.asyncChunkKeys) asyncChunkKeys.push(key);
     unknownAsyncChunkKeys += recovered.unknownAsyncChunkKeys;
   }
   return {

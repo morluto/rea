@@ -17,6 +17,34 @@ export const INVALID_BASE64_PADDING_PATTERN = /(?:=[^=]|===)/;
 export const INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN =
   /(?:[^AQgw]==$|[BCDFGHJKLNOPRSTVWXZabdefhijlmnpqrtuvxyz1235679+\x2f]=$)/;
 
+// In `u` mode a well-formed surrogate pair is one code point outside this
+// range, so the class matches only unpaired surrogates.
+const UNPAIRED_SURROGATE_PATTERN = /[\uD800-\uDFFF]/u;
+
+/**
+ * Reject unpaired UTF-16 surrogates without advertising a pattern.
+ *
+ * ECMA-262 spells the surrogate block only as `\uD800-\uDFFF`. RE2 has no `\u`
+ * escape and Rust's `regex` and `jsonschema` crates refuse non-scalar code
+ * points, and a client that cannot compile one advertised pattern refuses the
+ * complete tools request rather than the affected call. The issue keeps the
+ * `invalid_format` regex shape an advertised `.regex` raises, so input issue
+ * projection still reports `message`.
+ */
+export const rejectUnpairedSurrogates = <Schema extends z.ZodString>(
+  schema: Schema,
+  message: string,
+): Schema =>
+  schema.superRefine((value, context) => {
+    if (UNPAIRED_SURROGATE_PATTERN.test(value))
+      context.addIssue({
+        code: "invalid_format",
+        format: "regex",
+        message,
+        input: value,
+      });
+  });
+
 export const isPaddedBase64 = (value: string): boolean =>
   value.length % 4 === 0 &&
   !INVALID_BASE64_CHARACTER_PATTERN.test(value) &&

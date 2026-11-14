@@ -369,11 +369,6 @@ const checkApkSize = (operation: string, bytes: number): void => {
     );
 };
 
-export interface FlutterProviderOptions {
-  /** Deterministic root removal for tests; production removes recursively. */
-  readonly removeRoot?: (path: string) => Promise<void>;
-}
-
 /**
  * Flutter build identification by pure parsing: reads `lib/<abi>/libapp.so`
  * and `libflutter.so` through the hardened ZIP reader and reports the Dart
@@ -385,16 +380,12 @@ export class FlutterBuildProvider {
     string,
     Set<{ close(): Promise<void> }>
   >();
-  private readonly removeRoot: (path: string) => Promise<void>;
   private readonly cleanupFailures = new Map<string, readonly unknown[]>();
   private readonly rootLeases = new Map<string, AnalysisCleanupLease>();
   private readonly operations = new ArtifactResourceScope();
 
-  constructor(options: FlutterProviderOptions = {}) {
+  constructor() {
     this.operations.addCloseHook(() => this.closeRoots());
-    this.removeRoot =
-      options.removeRoot ??
-      ((path) => rm(path, { recursive: true, force: true }));
   }
 
   /**
@@ -578,7 +569,7 @@ export class FlutterBuildProvider {
       return false;
     }
     try {
-      await this.removeRoot(root);
+      await rm(root, { recursive: true, force: true });
       this.ownedRoots.delete(root);
       this.cleanupFailures.delete(root);
       return true;

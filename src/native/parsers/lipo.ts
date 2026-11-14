@@ -63,10 +63,7 @@ interface LipoOutput {
 }
 
 /** Parse `lipo -detailed_info` framing and deterministic slice metadata. */
-export const parseLipoOutput = (
-  output: string,
-  operandPath?: string,
-): LipoOutput => {
+const parseLipoOutput = (output: string, operandPath?: string): LipoOutput => {
   // The echoed FAT operand is one value, even when its pathname contains lines.
   if (operandPath !== undefined) {
     const header = `Fat header in: ${operandPath}`;
