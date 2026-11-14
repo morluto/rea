@@ -89,6 +89,7 @@
       "files": ["src/**/*.ts"],
       "rules": {
         "rea/no-babel-visitor-keys": "error",
+        "rea/no-raw-file-handle-close": "error",
         "typescript/no-misused-promises": "error"
       }
     },
@@ -101,6 +102,7 @@
       ],
       "rules": {
         "rea/no-babel-visitor-keys": "off",
+        "rea/no-raw-file-handle-close": "off",
         "max-lines": "off",
         "max-lines-per-function": [
           "error",
@@ -112,6 +114,10 @@
         ],
         "typescript/no-misused-promises": "warn"
       }
+    },
+    {
+      "files": ["src/filesystem/Owned*.ts"],
+      "rules": { "rea/no-raw-file-handle-close": "off" }
     },
     {
       "files": ["src/domain/javascript/javascriptSemanticTraversal.ts"],

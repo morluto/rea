@@ -1,5 +1,7 @@
 import { open } from "node:fs/promises";
 import { posix } from "node:path";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { withOwnedFileHandle } from "../filesystem/OwnedRegularFile.js";
 
 /** Memory facts for the cgroup v2 group that holds this process. */
 export interface LinuxCgroupMemoryState {
@@ -171,25 +173,27 @@ const readKernelFile = async (
   maxBytes = KERNEL_FILE_BYTES,
 ): Promise<string | undefined> => {
   try {
-    const handle = await open(path, "r");
-    try {
-      const buffer = Buffer.alloc(maxBytes + 1);
-      let length = 0;
-      for (;;) {
-        const { bytesRead } = await handle.read(
-          buffer,
-          length,
-          buffer.length - length,
-          null,
-        );
-        if (bytesRead === 0) break;
-        length += bytesRead;
-        if (length > maxBytes) return undefined;
-      }
-      return buffer.subarray(0, length).toString("utf8");
-    } finally {
-      await handle.close();
-    }
+    return await withOwnedFileHandle(
+      path,
+      new OwnedFileHandle(await open(path, "r")),
+      {},
+      async (handle) => {
+        const buffer = Buffer.alloc(maxBytes + 1);
+        let length = 0;
+        for (;;) {
+          const { bytesRead } = await handle.read(
+            buffer,
+            length,
+            buffer.length - length,
+            null,
+          );
+          if (bytesRead === 0) break;
+          length += bytesRead;
+          if (length > maxBytes) return undefined;
+        }
+        return buffer.subarray(0, length).toString("utf8");
+      },
+    );
   } catch {
     return undefined;
   }
