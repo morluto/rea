@@ -34,6 +34,22 @@ it.each([
     `export function observe() { const state = { v: 1 }; const dec = (c) => c; @dec class C { static s = state; } return state.v; }`,
   ],
   [
+    "a decorated instance method returning the value",
+    `export function observe() { const state = { v: 1 }; const dec = (target, key, descriptor) => { descriptor.value().v = 2; }; class C { @dec m() { return state; } } return state.v; }`,
+  ],
+  [
+    "a decorated instance field initialized with the value",
+    `export function observe() { const state = { v: 1 }; const dec = (target, key) => {}; class C { @dec f = () => state; } return state.v; }`,
+  ],
+  [
+    "a class decorator receiving a getter's receiver",
+    `export function observe() { const consume = (o) => { o.v = 2; return (c) => c; }; const state = { v: 1, get trigger() { @consume(this) class C {} return 0; } }; const x = state.trigger; return state.v; }`,
+  ],
+  [
+    "a member decorator receiving a getter's receiver",
+    `export function observe() { const consume = (o) => { o.v = 2; return () => {}; }; const state = { v: 1, get trigger() { class C { @consume(this) m() {} } return 0; } }; const x = state.trigger; return state.v; }`,
+  ],
+  [
     "a with-statement scope object",
     `export function observe() { const state = { v: 1, get x() { this.v = 2; return 0; } }; with (state) { x; } return state.v; }`,
   ],

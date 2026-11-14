@@ -296,10 +296,27 @@ const classDefinition: Classifier<t.ClassDeclaration | t.ClassExpression> = (
 ) => [
   // Evaluating heritage reads `prototype` from the superclass.
   execution("class-definition", node, [node.superClass]),
-  // Each decorator is called with the class or one of its members.
+  // Each decorator is called with the class or one of its members, and a
+  // member decorator reaches the member's function or initializer, including
+  // an instance member the class itself does not run.
   ...(classDecorators(node).length === 0
     ? []
-    : [execution("decorator", node, [node])]),
+    : [
+        execution("decorator", node, [
+          node,
+          ...node.body.body.flatMap((member): t.Node[] =>
+            !("decorators" in member) || (member.decorators ?? []).length === 0
+              ? []
+              : t.isClassMethod(member) || t.isClassPrivateMethod(member)
+                ? [member]
+                : "value" in member &&
+                    member.value !== null &&
+                    member.value !== undefined
+                  ? [member.value]
+                  : [],
+          ),
+        ]),
+      ]),
 ];
 
 const jsxElement: Classifier<t.JSXElement | t.JSXFragment> = (node) => {
