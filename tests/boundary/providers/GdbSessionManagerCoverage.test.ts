@@ -3233,6 +3233,25 @@ it("retains an exited GDB session when no inferior identity was captured", async
   expect(manager.status(started.value.session_id)).toBeDefined();
 });
 
+it("labels the retained process-exit observation as controlled replay", async () => {
+  const manager = await managerFor(
+    responsiveProvider(`
+      if (match[2].includes('auto-load off')) process.stdout.write(match[1] + '^done\\n');
+      else process.exit(3);
+    `),
+  );
+  const started = await expectGdbSessionStarted(manager);
+
+  const executed = await manager.execute(started.value.session_id, "exit now");
+  expect(executed).toMatchObject({
+    ok: false,
+    error: {
+      cleanupIncomplete: true,
+      partialObservation: { authority: "controlled-replay" },
+    },
+  });
+});
+
 it("retains a session when closing cannot confirm the debugger process stopped", async () => {
   let stopCalls = 0;
   const provider = await createProvider(responsiveProvider());
