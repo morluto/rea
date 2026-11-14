@@ -88,6 +88,11 @@ it.each([
   ["an Infinity timeout", 'spawn("node", [], { timeout: Infinity })'],
   ["an overflowing timeout", 'spawn("node", [], { timeout: 1e400 })'],
   ["a BigInt timeout", 'spawn("node", [], { timeout: 0n })'],
+  ["a negative BigInt timeout", 'spawn("node", [], { timeout: -1n })'],
+  [
+    "a negative overflowing maxBuffer",
+    'execFile("node", [], { maxBuffer: -1e400 }, () => {})',
+  ],
   ["a timeout after argv is omitted", 'fork("worker.js", { timeout: -1 })'],
   ["a numeric detached flag", 'spawn("node", [], { detached: 1 })'],
   [
@@ -117,6 +122,7 @@ it.each([
     "spawn",
   ],
   ["a null timeout", 'spawn("node", [], { timeout: null })', "spawn"],
+  ["a negative-zero timeout", 'spawn("node", [], { timeout: -0 })', "spawn"],
   ["a computed timeout", 'spawn("node", [], { timeout: args })', "spawn"],
   ["a boolean detached flag", 'spawn("node", [], { detached: true })', "spawn"],
   [
