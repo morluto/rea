@@ -1884,7 +1884,10 @@ by this source proposal. For local source development, run `npm ci && npm run bu
 the runtime and packaged skill before loading the repository as a plugin.
 A source plugin uses the locally built runtime and generated skill; rebuild after
 source changes. Missing builds and mismatched version pins fail with an actionable
-error. The authored `.agents/skills/` tree is not the plugin's shipped skill layout.
+error. So does a Node.js outside the package's `engines` range: the plugin starts
+REA with whichever `node` the client finds, so the launcher names that version and
+its path instead of starting on an untested runtime. The authored `.agents/skills/`
+tree is not the plugin's shipped skill layout.
 Windows source workflows that need native controls still require the
 [Windows source-checkout build](https://github.com/morluto/rea/blob/main/native/windows/README.md#build).
 
