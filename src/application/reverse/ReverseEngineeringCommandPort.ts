@@ -1,6 +1,7 @@
 import type { EvidenceProvider } from "../../domain/evidence.js";
 import type {
   ObjdumpSelection,
+  ProviderVersionProbe,
   RizinInput,
 } from "../../domain/reverseEngineering.js";
 
@@ -17,6 +18,8 @@ export interface ReverseEngineeringProviderCommand {
    */
   readonly rejection?: (stderr: string) => string | undefined;
   readonly environmentOverrides?: Readonly<NodeJS.ProcessEnv>;
+  /** Identifies the selected executable once per digest; never refuses it. */
+  readonly versionProbe?: ProviderVersionProbe;
 }
 
 /** Provider-specific command construction stays outside the application layer. */
