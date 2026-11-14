@@ -254,6 +254,130 @@ it("keeps function declarations hoisted and checks closures at invocation", () =
   });
 });
 
+// Compiled `enum Channel { Ping = "app:ping", Retries = 3 }` from tsc 7.0.2
+// (CommonJS), Babel 8.0.7 with its TypeScript and CommonJS transforms, esbuild
+// 0.28.2, and esbuild's minifier over tsc and Babel output. Whitespace and the
+// minified enum binding's name are normalized.
+const tscEnum = `var Channel;
+(function (Channel) {
+    Channel["Ping"] = "app:ping";
+    Channel[Channel["Retries"] = 3] = "Retries";
+})(Channel || (Channel = {}));`;
+const babelEnum = `var Channel = /*#__PURE__*/function (Channel) {
+  Channel["Ping"] = "app:ping";
+  Channel[Channel["Retries"] = 3] = "Retries";
+  return Channel;
+}(Channel || {});`;
+
+it.each([
+  ["tsc", tscEnum],
+  [
+    "exported tsc",
+    tscEnum.replace("(Channel = {})", "(exports.Channel = Channel = {})"),
+  ],
+  [
+    "minified tsc",
+    `var Channel;(function(e){e.Ping="app:ping",e[e.Retries=3]="Retries"})(Channel||(Channel={}));`,
+  ],
+  ["Babel", babelEnum],
+  [
+    "exported Babel",
+    babelEnum
+      .replace("var Channel =", "let Channel = exports.Channel =")
+      .replace("(Channel || {})", "({})"),
+  ],
+  [
+    "minified Babel",
+    `var Channel=(function(e){return e.Ping="app:ping",e[e.Retries=3]="Retries",e})(Channel||{});`,
+  ],
+  [
+    "esbuild",
+    `var Channel = /* @__PURE__ */ ((Channel2) => {
+  Channel2["Ping"] = "app:ping";
+  Channel2[Channel2["Retries"] = 3] = "Retries";
+  return Channel2;
+})(Channel || {});`,
+  ],
+  [
+    "minified esbuild",
+    `var Channel=(e=>(e.Ping="app:ping",e[e.Retries=3]="Retries",e))(Channel||{});`,
+  ],
+])("reads %s enum members after their initializer", (_emitter, source) => {
+  const [ping, retries, reverse, missing] = inspectedValues(`${source}
+    inspect(Channel.Ping); inspect(Channel.Retries);
+    inspect(Channel[3]); inspect(Channel.Missing);`);
+  expect(ping).toEqual({ kind: "literal", value: "app:ping" });
+  expect(retries).toEqual({ kind: "literal", value: 3 });
+  expect(reverse).toEqual({ kind: "literal", value: "Retries" });
+  expect(missing).toMatchObject({ kind: "unknown" });
+});
+
+it("reads a function-local enum only after its initializer", () => {
+  const values = inspectedValues(`function run() {
+      inspect(Channel.Ping);
+      ${tscEnum}
+      return Channel.Ping;
+    }
+    inspect(run());`);
+  expect(values).toEqual([
+    expect.objectContaining({ kind: "unknown" }),
+    { kind: "literal", value: "app:ping" },
+  ]);
+});
+
+it("keeps an enum read before its initializer unresolved", () => {
+  const { resolver, values } = inspectFixture(`inspect(Channel);\n${tscEnum}`);
+  expect(values).toEqual([
+    {
+      kind: "unknown",
+      reason: "initializer not available at this read",
+    },
+  ]);
+  expect(resolver.unresolved).toBe(true);
+});
+
+it.each([
+  ["a later member write", `${tscEnum}\nChannel.Ping = "app:other";`],
+  ["a dynamic member write", `${tscEnum}\nChannel[key] = "app:other";`],
+  ["a deleted member", `${babelEnum}\ndelete Channel.Ping;`],
+  ["a compound member write", `${babelEnum}\nChannel.Ping += "-other";`],
+  [
+    "a defined member",
+    `${babelEnum}\nObject.defineProperty(Channel, "Ping", { value: "app:other" });`,
+  ],
+  ["a reassignment", `${babelEnum}\nChannel = other;`],
+  [
+    "a merged declaration",
+    `${tscEnum}\n(function (Channel) { Channel["Other"] = "app:other"; })(Channel || (Channel = {}));`,
+  ],
+  ["a computed key", tscEnum.replace(`Channel["Ping"]`, "Channel[key]")],
+  ["a computed value", babelEnum.replace(`"app:ping"`, `prefix + "ping"`)],
+  [
+    "another body statement",
+    tscEnum.replace(`] = "Retries";`, `] = "Retries"; register(Channel);`),
+  ],
+  [
+    "a write to another object",
+    tscEnum.replace(`Channel["Ping"]`, "other.Ping"),
+  ],
+  ["a supplied object", babelEnum.replace("(Channel || {})", "(base)")],
+  [
+    "another returned value",
+    babelEnum.replace("return Channel;", "return other;"),
+  ],
+  ["a conditional tsc initializer", `if (flag) {\n${tscEnum}\n}`],
+  ["a conditional Babel initializer", `if (flag) {\n${babelEnum}\n}`],
+  [
+    "an initializer in another function",
+    `var Channel;\nfunction init() {\n${tscEnum.replace("var Channel;", "")}\n}\ninit();`,
+  ],
+])("keeps an enum member unresolved with %s", (_name, source) => {
+  const value = inspectOne(`${source}\ninspect(Channel.Ping);`);
+  expect(
+    symbolicVariants(value).filter(({ kind }) => kind !== "unknown"),
+  ).toEqual([]);
+});
+
 it("keeps a synchronous cross-function callback before initialization unresolved", () => {
   const { parsed, resolver } = resolverFor(`function outer() {
       const value = require("electron");
