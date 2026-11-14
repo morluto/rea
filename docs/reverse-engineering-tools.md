@@ -269,6 +269,40 @@ they use `%LOCALAPPDATA%\REA\CutterBridge` on Windows when `LOCALAPPDATA` is set
 and `~/.cache/rea/cutter-bridge` otherwise. The two processes must resolve the
 same directory for discovery to find the published sessions.
 
+REA's npm package includes the plugin as `bridge/cutter/rea_bridge.py`. Use the
+copy from the REA version you run (`rea --version`, or the version in an
+`npx rea-agents@<version>` registration). An `npx` installation keeps that
+package in npm's cache rather than a stable folder, so take the file from the
+published package of the same version instead (in Windows PowerShell, use
+`npm.cmd`):
+
+```sh
+npm pack rea-agents@<version>
+tar -xzf rea-agents-<version>.tgz package/bridge/cutter/rea_bridge.py
+```
+
+Copy the extracted `package/bridge/cutter/rea_bridge.py` into the `python`
+subdirectory of Cutter's plugin directory, then restart Cutter. Cutter shows that
+directory and the loaded plugins under Edit > Preferences > Plugins. When no
+session in the bridge directory answers, `list_cutter_sessions` reports
+`no_live_bridge_found` with a limitation that names the possible causes. Whether
+or not a session answers, it also counts descriptor files it could not read,
+without claiming they belong to a session, and published sessions that did not
+answer, because neither is listed. If Cutter lists the plugin as loaded but
+discovery still finds no session, check that the bridge directory is writable
+and has free space: the bridge does not log a failure to publish its session.
+
+Official Cutter 2.5.0 builds have been observed to reject Python plugins at
+startup: Cutter's own sample plugin in the Linux AppImage, and this bridge and a
+minimal independent plugin on macOS arm64
+([rizinorg/cutter#3659](https://github.com/rizinorg/cutter/issues/3659)). The
+log then shows `Plugin's create_cutter_plugin() function did not return an
+instance of CutterPlugin` and `Loaded 0 plugin(s)`, and no session is
+published. Because a minimal plugin fails the same way, a change to REA's
+bridge is not expected to help; the cause is unconfirmed upstream. Cutter 2.4.1
+loaded the bridge on the same macOS arm64 host, where discovery and an `ij`
+command worked. Other hosts and Cutter builds have not been checked.
+
 The client and plugin must support the current v2 handshake; older peers are
 rejected before dispatch because they cannot preserve cross-caller recovery proof.
 The client checks the final encoded request against
