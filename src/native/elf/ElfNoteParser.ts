@@ -35,6 +35,7 @@ const PT_NOTE = 4;
 const SHT_NOTE = 7;
 const SHT_STRTAB = 3;
 const HEX_DESCRIPTOR_LIMIT = 64;
+const GNU_NOTE_OWNER = Buffer.from("GNU\0", "ascii");
 
 /** The existing Linux note layouts do not establish another declared ABI. */
 const isLinuxCoreProfile = (header: ElfFixedHeader): boolean =>
@@ -167,6 +168,7 @@ interface ParsedNote {
   readonly type: number;
   readonly owner: string;
   readonly owner_bytes_hex: string;
+  readonly gnuOwner: boolean;
   readonly descriptor: Buffer;
   readonly descriptor_offset: number;
 }
@@ -230,6 +232,7 @@ const parseNoteStream = (
           ? nameBytes.toString("latin1")
           : nameBytes.subarray(0, ownerEnd).toString("latin1"),
       owner_bytes_hex: nameBytes.toString("hex"),
+      gnuOwner: nameBytes.equals(GNU_NOTE_OWNER),
       descriptor,
       descriptor_offset: header + descRel,
     });
@@ -244,13 +247,11 @@ const parseNoteStream = (
 };
 
 const decodeGnu = (
-  owner: string,
   type: number,
   descriptor: Buffer,
   little: boolean,
   text: TextBudget,
 ): ElfNotes["entries"][number]["gnu"] => {
-  if (owner !== "GNU") return null;
   if (type === 3 && descriptor.length > 0) {
     chargeText(text, descriptor.length * 2);
     return {
@@ -939,7 +940,7 @@ const toEntry = (
   text: TextBudget,
 ): Omit<ElfNotes["entries"][number], "index"> => {
   const little = header.byteOrder === "little";
-  const gnuOwner = note.owner === "GNU";
+  const { gnuOwner } = note;
   const coreOwner = note.owner === "CORE" && isLinuxCoreProfile(header);
   const androidOwner = note.owner === "Android";
   const range = `${String(note.descriptor_offset)}:${String(note.descsz)}`;
@@ -974,7 +975,7 @@ const toEntry = (
           ? note.descriptor.toString("hex")
           : null,
     },
-    gnu: decodeGnu(note.owner, note.type, note.descriptor, little, text),
+    gnu: gnuOwner ? decodeGnu(note.type, note.descriptor, little, text) : null,
     core: coreOwner
       ? decodeCore(
           note.owner,
@@ -1008,7 +1009,7 @@ export interface ElfNoteTableWalk {
 }
 
 export interface ElfWalkedNote {
-  readonly owner: string;
+  readonly gnuOwner: boolean;
   readonly type: number;
   readonly descriptor: Buffer;
   readonly descriptorOffset: number;
@@ -1052,7 +1053,7 @@ export const walkElfNoteTables = (
       signal,
     ))
       notes.push({
-        owner: note.owner,
+        gnuOwner: note.gnuOwner,
         type: note.type,
         descriptor: note.descriptor,
         descriptorOffset: note.descriptor_offset,
@@ -1069,7 +1070,7 @@ export const readGnuPropertyWords = (
 ): Map<number, GnuPropertyWord> => {
   const found = new Map<number, GnuPropertyWord>();
   for (const note of notes) {
-    if (note.owner !== "GNU" || note.type !== NT_GNU_PROPERTY_TYPE_0) continue;
+    if (!note.gnuOwner || note.type !== NT_GNU_PROPERTY_TYPE_0) continue;
     const descriptor = note.descriptor;
     let cursor = 0;
     while (cursor < descriptor.length) {
