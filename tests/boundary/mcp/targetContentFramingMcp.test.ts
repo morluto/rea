@@ -240,21 +240,25 @@ describe.each([
         });
         const projected = parseMcpToolError(result);
         expect(projected.error.code).toBe("unreadable_output");
-        expect(projected.error.details).toEqual(
-          expect.objectContaining({
-            captured_output: output,
-            partial_observation:
-              recording === "retained"
-                ? {
-                    kind: "retained-evidence",
-                    evidence_id: partial.evidence_id,
-                  }
-                : {
-                    kind: "inline-evidence",
-                    retention: "unknown",
-                    evidence: partial,
-                  },
-          }),
+        expect(projected.error.details).toMatchObject(
+          recording === "retained"
+            ? {
+                captured_output: output,
+                partial_observation: {
+                  kind: "retained-evidence",
+                  evidence_id: partial.evidence_id,
+                },
+              }
+            : {
+                captured_output: output,
+                partial_observation: {
+                  kind: "unretained-evidence",
+                  evidence: partial,
+                },
+                retention_error: {
+                  code: "evidence_integrity_mismatch",
+                },
+              },
         );
         expect(attempts).toEqual([partial]);
         expect(retained.get(partial.evidence_id)).toEqual(

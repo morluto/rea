@@ -316,13 +316,12 @@ export class ToolResultDelivery {
           details: {
             ...projected.details,
             // The ledger states whether the record is already retained; only
-            // without that fact is retention unknown.
+            // without that fact treat the refused record as unretained.
             partial_observation: ledgerRetentionFact(
               recorded.error.partialObservation,
               partial.value,
             ) ?? {
-              kind: "inline-evidence",
-              retention: "unknown",
+              kind: "unretained-evidence",
               evidence: partial.value,
             },
             retention_error: projectAnalysisErrorWithoutPartialObservation(
