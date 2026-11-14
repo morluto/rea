@@ -330,3 +330,41 @@ it("preserves cancellation before decoding even a malformed blob", async () => {
     decodeNodeSeaBlob(Buffer.alloc(0), AbortSignal.abort(reason)),
   ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
 });
+
+// `node --experimental-sea-config` from Node v26.12.1 with main.js holding
+// `console.log(1)\n` and asset "a b/ü.txt" holding "x". Node 25.7 added the
+// main code format byte at offset 9 without changing the magic.
+const NODE_26_BLOB = Buffer.from(
+  "20da43010800000001000700000000000000" +
+    "6d61696e2e6a730f00000000000000636f6e736f6c652e" +
+    "6c6f672831290a01000000000000000a0000000000000061" +
+    "20622fc3bc2e747874010000000000000078",
+  "hex",
+);
+
+it("decodes a blob written by Node 26 with its main code format byte", async () => {
+  const decoded = await decodeNodeSeaBlob(NODE_26_BLOB);
+  expect(decoded).toMatchObject({
+    codePath: "main.js",
+    execArgvExtension: "env",
+    includeAssets: true,
+    assets: [{ name: "a b/ü.txt", range: { offset: 82, length: 1 } }],
+  });
+  const main = decoded.mainScript;
+  expect(main).not.toBeNull();
+  expect(
+    NODE_26_BLOB.subarray(main!.offset, main!.offset + main!.length).toString(),
+  ).toBe("console.log(1)\n");
+});
+
+it("decodes a module main code format and rejects an unknown one", async () => {
+  await expect(
+    decodeNodeSeaBlob(buildNodeSeaBlob({ mainCodeFormat: 1 })),
+  ).resolves.toMatchObject({ codePath: "sea.js" });
+  await expect(
+    decodeNodeSeaBlob(buildNodeSeaBlob({ mainCodeFormat: 2 })),
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/main code format.*unknown/iu),
+  });
+});

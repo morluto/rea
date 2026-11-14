@@ -27,6 +27,7 @@ const NODE_SEA_BAD_MAGIC = "Node SEA blob magic is not 0x143da20";
 export const NODE_SEA_TRUNCATED = "Node SEA blob is truncated";
 const NODE_SEA_UNKNOWN_FLAGS = "Node SEA blob flags contain unknown bits";
 const NODE_SEA_UNKNOWN_EXTENSION = "Node SEA exec argv extension is unknown";
+const NODE_SEA_UNKNOWN_MAIN_FORMAT = "Node SEA main code format is unknown";
 const NODE_SEA_TRAILING_BYTES = "Node SEA blob has trailing bytes";
 export const NODE_SEA_DUPLICATE_BLOB =
   "Node SEA blob is declared more than once";
@@ -97,7 +98,8 @@ const formatFailure = (
   );
 
 /**
- * Decode one SEA blob the way Node 24's `SeaDeserializer` reads it.
+ * Decode one SEA blob the way Node 24's or Node 25.7+'s `SeaDeserializer`
+ * reads it.
  * Lengths are 64-bit little-endian `size_t` values. Trailing zero padding is
  * admitted; any other trailing byte fails closed. 32-bit `size_t` producers
  * are outside this reader.
@@ -124,6 +126,11 @@ export const decodeNodeSeaBlob = async (
   const flags = cursor.u32();
   if ((flags & ~KNOWN_FLAGS) !== 0) throw formatFailure(NODE_SEA_UNKNOWN_FLAGS);
   const execArgvExtension = extensionName(cursor.u8());
+  // Node 25.7 writes a main code format byte (0 CommonJS, 1 module) here
+  // without changing the magic. The code-path length that follows it ends in a
+  // zero byte at offset 17; in the older layout that byte begins the code path.
+  if (bytes[17] === 0 && cursor.u8() > 1)
+    throw formatFailure(NODE_SEA_UNKNOWN_MAIN_FORMAT);
   const codePath = cursor.text(false, NODE_SEA_EMPTY_CODE_PATH);
   const useSnapshot = (flags & FLAG_USE_SNAPSHOT) !== 0;
   const body = cursor.byteRange();
