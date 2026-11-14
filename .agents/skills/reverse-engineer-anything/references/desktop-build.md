@@ -808,8 +808,8 @@ export and witness again, rather than count it as difficulty.
 When the requester wants tasks worth evaluating or training on, harden a
 task that came out `too_easy` and measure it again, within the budget. The
 solver sees and fixes its slips on screen, so one edit with the value in the
-prompt is solved almost every time; so far, on TreeLine with Sonnet 5.5, so
-were one more dialog, a conditional move of seven records, and ten
+prompt is solved almost every time; in measurements on TreeLine with a Sonnet 5.5
+solver, so were one more dialog, a conditional move of seven records, and ten
 corrections read from a second document and applied across the list. Try,
 one at a time, measuring each:
 
