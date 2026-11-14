@@ -7,6 +7,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const closeFailureControl = vi.hoisted(() => ({
   failure: null as Error | null,
@@ -1140,7 +1141,11 @@ describe("state response cleanup", () => {
       signal: AbortSignal.timeout(10_000),
     }).catch(() => undefined);
     try {
-      await held.fetching;
+      await awaitAcknowledgement(
+        held.fetching,
+        answered,
+        "state fetch admission",
+      );
       await environment.close();
       giveResponse(
         new Response(
@@ -1152,7 +1157,7 @@ describe("state response cleanup", () => {
           }),
         ),
       );
-      await entered;
+      await awaitAcknowledgement(entered, cleanup, "late response cleanup");
       await expect(environment.close()).rejects.toMatchObject({
         _tag: "AnalysisOutputError",
         cleanupIncomplete: true,
@@ -1161,6 +1166,7 @@ describe("state response cleanup", () => {
       release();
       await expect(environment.close()).resolves.toBeUndefined();
     } finally {
+      giveResponse(new Response(null, { status: 500 }));
       release();
       await answered;
       await environment.close();

@@ -651,7 +651,8 @@ export class PwntoolsDecoder<
               }),
         );
       }
-    } catch (cause: unknown) {
+    } catch (caught: unknown) {
+      let cause = caught;
       if (replyFinalization !== undefined && cause !== replyFinalization) {
         const primary = failure(cause);
         cause = replyFinalization.cleanupIncomplete

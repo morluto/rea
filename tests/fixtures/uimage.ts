@@ -5,7 +5,7 @@ const UIMAGE_HEADER_SIZE = 64;
 const UIMAGE_MAGIC = 0x27051956;
 const UIMAGE_NAME_LENGTH = 32;
 
-export interface UImageFixtureOptions {
+interface UImageFixtureOptions {
   readonly arch?: number;
   readonly os?: number;
   readonly type?: number;

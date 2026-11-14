@@ -120,7 +120,6 @@ it.for([
   { unpacked: true, label: "unpacked" },
 ])(
   "returns actionable local details for an $label ASAR integrity error",
-  { timeout: 20_000 },
   async ({ unpacked }, { mcp, onTestFinished }) => {
     const root = await createTestTempDirectory("rea-asar-integrity-mcp-");
     const source = join(root, "source");

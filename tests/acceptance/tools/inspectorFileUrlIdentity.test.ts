@@ -131,4 +131,4 @@ it("preserves file URL scheme spelling and script identity after real Inspector 
   expect(original.predicate_type).toBe(first.predicate_type);
   expect(original.normalized_result).toEqual(first.normalized_result);
   expect(await readFile(source, "utf8")).toBe(sourceText);
-}, 30_000);
+});

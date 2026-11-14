@@ -13,7 +13,7 @@ import {
 import { evidenceSchema, type Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
-import { err, ok } from "../domain/result.js";
+import { ok } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   OBJDUMP_ARTIFACT_OPERATIONS,
