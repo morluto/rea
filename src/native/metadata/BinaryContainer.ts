@@ -219,7 +219,11 @@ export class BinaryReader {
       throw new BinaryFormatFailure(
         "malformed",
         `${label} range is truncated or outside the file`,
-        { format: this.format, field: label },
+        {
+          format: this.format,
+          field: label,
+          ...(Number.isSafeInteger(offset) ? { offset } : {}),
+        },
       );
     if (size > this.bytes.length - offset)
       throw new BinaryFormatFailure(
@@ -252,7 +256,14 @@ export class BinaryReader {
       throw new BinaryFormatFailure(
         "malformed",
         `${label} range is outside the file`,
-        { format: this.format, field: label },
+        {
+          format: this.format,
+          field: label,
+          ...(offset >= BigInt(Number.MIN_SAFE_INTEGER) &&
+          offset <= BigInt(Number.MAX_SAFE_INTEGER)
+            ? { offset: Number(offset) }
+            : {}),
+        },
       );
     if (size > length - offset)
       throw new BinaryFormatFailure(
