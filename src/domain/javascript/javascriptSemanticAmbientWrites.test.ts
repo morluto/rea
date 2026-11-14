@@ -288,6 +288,50 @@ it("indexes unknown-key stores of fresh objects in linear stored-value work", ()
   expect(work(64)).toBeLessThan(3 * work(32));
 });
 
+it("escapes a looping alias cycle in linear initializer work", () => {
+  // Every copy in the loop reads a binding whose initializers are the other
+  // binding's reads. Count reads of the copied values' own syntax only.
+  const work = (count: number): number => {
+    const copies = Array.from({ length: count }, (_, i) =>
+      i % 2 === 0 ? "a=b;" : "b=a;",
+    ).join("");
+    const parsed = parseJavaScriptSource(
+      `function run(){var a={},b=globalThis;while(flag){${copies}}consume(a);}`,
+    );
+    if (parsed === null) throw new Error("Expected alias-cycle fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    let counting = false;
+    let reads = 0;
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (!t.isAssignmentExpression(node)) return;
+        const value = node.right;
+        const type = value.type;
+        Object.defineProperty(value, "type", {
+          enumerable: true,
+          configurable: true,
+          get: () => {
+            if (counting) reads += 1;
+            return type;
+          },
+        });
+      },
+    });
+    counting = true;
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    counting = false;
+    expect(index.bindings.ambientEscapeEffects.map(({ path }) => path)).toEqual(
+      [["global", null]],
+    );
+    return reads;
+  };
+  // The escape query takes each copied value once. Requeueing every
+  // initializer at each read of the other binding grows quadratically.
+  expect(work(64)).toBeLessThan(3 * work(32));
+});
+
 it.each([
   [
     "before and after a direct replacement",
