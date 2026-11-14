@@ -1,4 +1,4 @@
-import { inject, TestRunner, vi } from "vitest";
+import { TestRunner, vi } from "vitest";
 
 import { remainingTestDeadline, TEST_DEADLINE_MS } from "./testDeadlines.js";
 
@@ -10,13 +10,13 @@ export interface WaitForOptions {
 /**
  * Deadline for a wait: as long as its test may run, less the reporting reserve,
  * matching the project's `expect.poll` policy. Outside a test, as in
- * `beforeAll`, it uses the shortest project deadline. A wait that starts late
- * may outlast the test, which then fails with Vitest's own timeout.
+ * `beforeAll`, it uses the unscaled source deadline, which no project's hook
+ * deadline is shorter than. A wait that starts late may outlast the test,
+ * which then fails with Vitest's own timeout.
  */
 export const testWaitDeadline = (): number => {
   const testDeadlineMs =
-    TestRunner.getCurrentTest()?.timeout ??
-    TEST_DEADLINE_MS.source * inject("testDeadlineScale");
+    TestRunner.getCurrentTest()?.timeout ?? TEST_DEADLINE_MS.source;
   return remainingTestDeadline(testDeadlineMs, 0) ?? TEST_DEADLINE_MS.source;
 };
 
