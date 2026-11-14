@@ -17,6 +17,8 @@ import {
   spawnOwnedProviderProcess,
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { withOwnedFileHandle } from "../filesystem/OwnedRegularFile.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -67,15 +69,21 @@ const executable = async (path: string): Promise<boolean> =>
     () => false,
   );
 
-const readHead = async (path: string): Promise<string> => {
-  const file = await open(path, "r");
-  try {
-    const { buffer, bytesRead } = await file.read(Buffer.alloc(512), 0, 512, 0);
-    return buffer.subarray(0, bytesRead).toString("utf8");
-  } finally {
-    await file.close();
-  }
-};
+const readHead = async (path: string): Promise<string> =>
+  withOwnedFileHandle(
+    path,
+    new OwnedFileHandle(await open(path, "r")),
+    {},
+    async (file) => {
+      const { buffer, bytesRead } = await file.read(
+        Buffer.alloc(512),
+        0,
+        512,
+        0,
+      );
+      return buffer.subarray(0, bytesRead).toString("utf8");
+    },
+  );
 
 /**
  * The Python the agentenv runner runs with, so the helper can import
