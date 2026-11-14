@@ -32,14 +32,11 @@ describe.skipIf(process.platform === "win32")("probeHostFile", () => {
     });
   });
 
-  it("keeps a transient failure unresolved", async () => {
-    // EIO is not a refusal and does not settle the candidate, so the walk still
-    // treats it as a check that may succeed on a retry.
+  it("reports a readable regular file as a file", async () => {
+    // The transient (EIO) branch is covered in HostFileRead.transient.test.ts.
     const root = await createTestTempDirectory("rea-host-file-probe-");
     const path = join(root, "libcore.so");
     await writeFile(path, "carrier");
-    // A regular file is probeable; this asserts the settled side of the probe
-    // still reports the kind, so the transient branch is not reached by mistake.
     await expect(probeHostFile(path)).resolves.toEqual({
       kind: "file",
       isFile: true,

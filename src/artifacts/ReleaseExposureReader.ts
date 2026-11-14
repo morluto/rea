@@ -3110,19 +3110,29 @@ const readSpan = async (
             `Artifact changed before read: ${filePath}`,
           );
         if (offset + length > observed.size) return null;
-        const bytes = await readFileHandleRange(handle, offset, length, () => {
-          if (signal?.aborted)
-            throw new AnalysisCancelledError(OPERATION, {
-              cause: signal.reason,
-            });
-        });
+        // Charge bytes as they arrive, so a read that fails after partial
+        // progress still counts what it consumed against the allowance.
+        let charged = 0;
+        const bytes = await readFileHandleRange(
+          handle,
+          offset,
+          length,
+          (bytesRead) => {
+            state.memberBytesRead += bytesRead - charged;
+            charged = bytesRead;
+            if (signal?.aborted)
+              throw new AnalysisCancelledError(OPERATION, {
+                cause: signal.reason,
+              });
+          },
+        );
         const after = await handle.stat();
         if (!sameRegularFileState(initial, after))
           throw new ArtifactReaderFailure(
             "integrity",
             `Artifact changed during read: ${filePath}`,
           );
-        state.memberBytesRead += bytes.length;
+        state.memberBytesRead += bytes.length - charged;
         return Buffer.from(bytes);
       },
     );
