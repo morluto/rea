@@ -27,10 +27,9 @@ const codexServerConfigSchema = z.object({
     rea: z.object({
       command: z.literal("node"),
       args: z.tuple([
-        z.literal("./scripts/plugin-mcp-launcher.mjs"),
+        z.literal("${PLUGIN_ROOT}/scripts/plugin-published-mcp-launcher.mjs"),
         z.string(),
       ]),
-      cwd: z.literal("."),
       startup_timeout_sec: z.number().int().positive(),
     }),
   }),
@@ -232,23 +231,28 @@ async function validateCandidate(git, sha, version, commits) {
   );
   // A stale manifest keeps the previous plugin cache key or launches the
   // previous server, so both are version authority like server.json.
-  const launches = [];
+  const launcherPins = [];
+  const packagePins = [];
   for (const path of PLUGIN_MANIFEST_PATHS) {
     const manifest =
       path === ".codex-plugin/plugin.json"
         ? await readJson(git, sha, path, codexPluginManifestSchema)
         : await readJson(git, sha, path, inlinePluginManifestSchema);
     versions.push([path, manifest.version]);
-    const server =
-      path === ".codex-plugin/plugin.json"
-        ? await readJson(
-            git,
-            sha,
-            ".codex-plugin/mcp.json",
-            codexServerConfigSchema,
-          )
-        : manifest;
-    launches.push([path, server.mcpServers.rea.args[1]]);
+    if (path === ".codex-plugin/plugin.json") {
+      const server = await readJson(
+        git,
+        sha,
+        ".codex-plugin/mcp.json",
+        codexServerConfigSchema,
+      );
+      launcherPins.push([
+        ".codex-plugin/mcp.json",
+        server.mcpServers.rea.args[1],
+      ]);
+    } else {
+      launcherPins.push([path, manifest.mcpServers.rea.args[1]]);
+    }
   }
   const cursorManifest = await readJson(
     git,
@@ -263,7 +267,7 @@ async function validateCandidate(git, sha, version, commits) {
     cursorPluginServer,
     cursorServerConfigSchema,
   );
-  const cursorPin = cursorServer.mcpServers.rea.args[1];
+  packagePins.push([cursorPluginServer, cursorServer.mcpServers.rea.args[1]]);
   // Catalogs are generated and checked from this candidate by the release job;
   // they are not version authority stored in the immutable source tree.
   const generated = await git([
@@ -285,18 +289,22 @@ async function validateCandidate(git, sha, version, commits) {
       );
     }
   }
-  // The launcher checks the scalar pin against the runtime in its own package.
+  // Claude's npm plugin launcher checks a scalar pin against its own package.
+  // Codex marketplace checkouts launch through the published-package launcher
+  // pin; Cursor Marketplace still uses the rea-agents@VERSION npx pin.
   // Compare manifest versions first so a wholly stale candidate reports the
-  // shared version authority before this Marketplace package specifier.
-  if (cursorPin !== `rea-agents@${version}`) {
-    throw new Error(
-      `${cursorPluginServer}@${sha} launches ${cursorPin}; release branch requires rea-agents@${version}.`,
-    );
-  }
-  for (const [location, launched] of launches) {
+  // shared version authority before these package specifiers.
+  for (const [location, launched] of launcherPins) {
     if (launched !== version) {
       throw new Error(
         `${location}@${sha} launches version ${launched ?? "no version"}; release branch requires ${version}.`,
+      );
+    }
+  }
+  for (const [location, pin] of packagePins) {
+    if (pin !== `rea-agents@${version}`) {
+      throw new Error(
+        `${location}@${sha} launches ${pin}; release branch requires rea-agents@${version}.`,
       );
     }
   }

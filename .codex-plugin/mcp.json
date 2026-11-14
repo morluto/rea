@@ -3,11 +3,10 @@
     "rea": {
       "command": "node",
       "args": [
-        "./scripts/plugin-mcp-launcher.mjs",
+        "${PLUGIN_ROOT}/scripts/plugin-published-mcp-launcher.mjs",
         "6.9.0"
       ],
-      "cwd": ".",
-      "startup_timeout_sec": 30
+      "startup_timeout_sec": 300
     }
   }
 }

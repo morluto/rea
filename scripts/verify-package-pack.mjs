@@ -237,21 +237,27 @@ export async function verifyPackagePack({ root, workspace, commands }) {
           ).stdout,
         )
       : manifest;
-    const expectedArgs = [
-      `${path.startsWith(".claude") ? "${CLAUDE_PLUGIN_ROOT}/" : "./"}scripts/plugin-mcp-launcher.mjs`,
+    const expectedClaudeArgs = [
+      "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
+      packedManifest.version,
+    ];
+    const expectedCodexArgs = [
+      "${PLUGIN_ROOT}/scripts/plugin-published-mcp-launcher.mjs",
       packedManifest.version,
     ];
     if (
       manifest.version !== packedManifest.version ||
-      manifest.skills !== "./skills" ||
       (path.startsWith(".codex")
-        ? manifest.mcpServers !== "./.codex-plugin/mcp.json" ||
-          serverConfig.mcpServers?.rea?.cwd !== "." ||
-          serverConfig.mcpServers?.rea?.startup_timeout_sec !== 30
-        : false) ||
-      serverConfig.mcpServers?.rea?.command !== "node" ||
-      JSON.stringify(serverConfig.mcpServers?.rea?.args) !==
-        JSON.stringify(expectedArgs)
+        ? manifest.skills !== ".cursor-plugin/skills" ||
+          manifest.mcpServers !== "./.codex-plugin/mcp.json" ||
+          serverConfig.mcpServers?.rea?.command !== "node" ||
+          serverConfig.mcpServers?.rea?.startup_timeout_sec !== 300 ||
+          JSON.stringify(serverConfig.mcpServers?.rea?.args) !==
+            JSON.stringify(expectedCodexArgs)
+        : manifest.skills !== "./skills" ||
+          serverConfig.mcpServers?.rea?.command !== "node" ||
+          JSON.stringify(serverConfig.mcpServers?.rea?.args) !==
+            JSON.stringify(expectedClaudeArgs))
     )
       throw new Error(
         `Packaged plugin ${path} does not match the exact runtime and canonical skill release`,
@@ -305,6 +311,14 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     throw new Error("Packaged Codex MCP server declaration is missing");
   if (!packedFiles.includes("package/scripts/plugin-mcp-launcher.mjs"))
     throw new Error("Packaged plugin launcher is missing");
+  if (
+    !packedFiles.includes("package/scripts/plugin-published-mcp-launcher.mjs")
+  )
+    throw new Error("Packaged published-package plugin launcher is missing");
+  if (!packedFiles.includes("package/scripts/lib/npm-invocation.mjs"))
+    throw new Error(
+      "Packaged published-package plugin launcher is missing its shell-free npm helper",
+    );
   if (
     skill.includes(`${packedManifest.name}@latest`) ||
     !skill.includes(`${packedManifest.name}@${packedManifest.version}`)

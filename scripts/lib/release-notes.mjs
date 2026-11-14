@@ -393,14 +393,24 @@ function pluginMetadataWithoutVersions(path, text) {
   if (manifest === null || typeof manifest !== "object") return text;
   if (path.endsWith("marketplace.json")) {
     if (Array.isArray(manifest.plugins))
-      for (const plugin of manifest.plugins)
+      for (const plugin of manifest.plugins) {
+        if (plugin?.name !== "rea") continue;
+        // Claude marketplace pins an entry version and a published-launcher
+        // version argument. Codex/agents marketplace uses a versionless local path.
+        if (typeof plugin.version === "string") plugin.version = "";
+        const launch = plugin.mcpServers?.rea?.args;
+        if (Array.isArray(launch) && typeof launch[1] === "string")
+          launch[1] = launch[1].replace(
+            /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/u,
+            "",
+          );
         if (
-          plugin?.name === "rea" &&
           plugin?.source?.source === "npm" &&
           plugin.source.package === "rea-agents" &&
           typeof plugin.source.version === "string"
         )
           plugin.source.version = "";
+      }
     return JSON.stringify(manifest);
   }
   if ("version" in manifest) manifest.version = "";
@@ -418,8 +428,9 @@ function pluginMetadataWithoutVersions(path, text) {
 
 /**
  * Plugin metadata also carries behavior, so a release may change only
- * its version, pinned server launch, and exact REA marketplace version. Any other difference, an unreadable
- * side, or a manifest added by the release counts as a product change.
+ * its version, pinned server launch, and Claude marketplace version/pin.
+ * Any other difference, an unreadable side, or a manifest added by the
+ * release counts as a product change.
  */
 async function changesOnlyPluginVersions(run, path, from, to) {
   try {

@@ -65,12 +65,12 @@
         {
           "type": "json",
           "path": ".claude-plugin/marketplace.json",
-          "jsonpath": "$.plugins[0].source.version"
+          "jsonpath": "$.plugins[0].version"
         },
         {
           "type": "json",
-          "path": ".agents/plugins/marketplace.json",
-          "jsonpath": "$.plugins[0].source.version"
+          "path": ".claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[0].mcpServers.rea.args[1]"
         }
       ]
     }

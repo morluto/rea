@@ -1854,25 +1854,37 @@ Ghidra/JDK installation; neither is inferred from startup alone.
 
 ## Agent plugins and marketplaces
 
-REA's npm package is the shared Claude Code and Codex plugin artifact. It
-contains `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and the
-canonical generated `skills/` tree. Both manifests select `./skills` and run a plain Node bootstrap pinned to
-that exact package version. The client must have a supported standalone `node`
-on its PATH. Claude expands its documented `CLAUDE_PLUGIN_ROOT` in the script
-argument; Codex resolves `cwd: "."` from the installed plugin root before
-launching the relative script. The bootstrap verifies the package version and runs its bundled runtime in
-the same process, preserving stdio and REA's provider/worker cleanup. It does
-not start another package runner or download a different runtime. The existing release skill
-generator also pins CLI recovery commands to the same version.
+REA's npm package remains the Claude Code package-plugin artifact. It contains
+`.claude-plugin/plugin.json` with the canonical generated `skills/` tree and a
+plain Node bootstrap pinned to that exact package version. Claude expands its
+documented `CLAUDE_PLUGIN_ROOT` in the launcher script argument; the bootstrap
+verifies the package version and runs its bundled runtime in the same process,
+preserving stdio and REA's provider/worker cleanup. Marketplace installs instead
+use the repository checkout: Claude Code reads the local marketplace entry,
+Codex reads `.codex-plugin/plugin.json` with the committed
+`.cursor-plugin/skills` tree, and both launch MCP through
+`scripts/plugin-published-mcp-launcher.mjs`, which installs
+`rea-agents@<version>` under an owner-private cache in the OS temporary
+directory and runs that published runtime in-process so the plugin client owns
+REA's shutdown handlers. Installer output is kept off the MCP stdout stream,
+and npm is invoked through Node without a shell so temporary paths with spaces
+stay intact. The client must have a supported standalone `node` and `npm` on
+its PATH. The existing release skill generator also pins CLI recovery commands
+to the same version.
 
 The repository's single-plugin marketplaces are declared in
 `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`.
-Both select an exact `rea-agents` npm version instead of mutable source-checkout
-contents. Release Please updates their selectors alongside the plugin manifests.
-Claude Code and Codex do not need plugin-only publication or generated skill
-files committed to Git. The Cursor Marketplace plugin is the exception in
-[Cursor Marketplace](#cursor-marketplace): its skill copy is committed because
-that install is a Git checkout.
+Both select the local repository checkout (`./`) so marketplace clients that
+resolve Git sources can list and install the plugin. The Claude Code entry uses
+`strict: false` with an explicit committed skill path
+(`.cursor-plugin/skills/reverse-engineer-anything`), icon, and the published
+launcher under `${CLAUDE_PLUGIN_ROOT}`. The Codex / agents marketplace entry
+uses a local path source and reads `.codex-plugin/plugin.json`, which points at
+the same committed skill tree and the same published launcher under
+`${PLUGIN_ROOT}`. Release Please updates the Claude marketplace version and
+server pin alongside the plugin manifests. The npm package still ships Claude's
+`.claude-plugin/plugin.json` with generated `./skills` and the bundled launcher
+for package-based installs.
 The qualified release archive contains a runtime-only manifest and
 `npm-shrinkwrap.json` plus bundled runtime dependencies, including PTY packages
 for each supported OS and CPU; development dependencies and development-only overrides

@@ -366,9 +366,9 @@ The synchronization must include `.release-please-manifest.json`,
 `server.json`, the Claude Code and Codex plugin manifests
 (`.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`), the Codex
 server declaration (`.codex-plugin/mcp.json`), the Cursor Marketplace manifest
-(`.cursor-plugin/plugin.json`) and server pin (`mcp.json`), both
-marketplaces (`.claude-plugin/marketplace.json` and
-`.agents/plugins/marketplace.json`), and the versioned documentation examples. Run
+(`.cursor-plugin/plugin.json`) and server pin (`mcp.json`), the Claude
+marketplace pins in `.claude-plugin/marketplace.json` (local source; agents
+marketplace path has no version pin), and the versioned documentation examples. Run
 `npm run docs:generate`, `npm run docs:check`, and the release configuration
 tests against the combined tree. After the merge, verify that the released
 tag is an ancestor of main:
@@ -415,5 +415,6 @@ without installing dependencies. The producer includes all locked PTY platform
 archives after checking their integrity, without re-resolving the runtime tree.
 Optional Frida stays outside the bundle so ordinary npm installation can retain
 its host-specific installer. This also lets Claude install locked dependencies under its plugin policy while
-retaining development security overrides. Both plugin marketplaces select the
-same qualified npm artifact, which the release workflow publishes unchanged.
+retaining development security overrides. Marketplace installs resolve the local
+repository checkout and launch the published `rea-agents@<version>` package for
+MCP; the release workflow still publishes that qualified npm artifact unchanged.
