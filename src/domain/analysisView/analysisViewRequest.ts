@@ -1,3 +1,4 @@
+import { objdumpOutputViewRequestSchema } from "./commandObservationView.js";
 import { webSourceLocationViewRequestSchema } from "./webSourceLocationView.js";
 import { nativeProcedureReferencesViewRequestSchema } from "./nativeProcedureReferencesView.js";
 import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
@@ -78,6 +79,7 @@ export const recordedArrayViewSchema = z.strictObject({
 
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
+  objdumpOutputViewRequestSchema,
   nativeInstructionReferencesRequestSchema,
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,
