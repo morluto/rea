@@ -1,5 +1,6 @@
-import { resolve } from "node:path";
+import { accessSync, constants, statSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   productionMcpDoctorArguments,
   splitIncurBuiltinArguments,
@@ -226,12 +227,62 @@ const parseJson = (stdout: string): unknown | undefined => {
   }
 };
 
+/**
+ * Hide `rea` executables from the inherited PATH without disturbing the tools
+ * a CLI child needs.
+ *
+ * Setup registers a PATH alias that proves the same file as the selected
+ * entrypoint (`sameFileExecutableAlias`), so a developer machine with a
+ * globally installed or linked `rea` would change the command under test. The
+ * suite asserts the repo entrypoint, so those aliases must not be reachable —
+ * including when a link sits beside the running `node`, which is where `npm
+ * link` puts it.
+ *
+ * A directory leaves the child PATH only when it holds an executable
+ * `rea`/`rea-agents`. Nothing else is touched: dropping every directory that
+ * merely *contained* an alias took unrelated tools with it, because on a
+ * usrmerged host `/bin` and `/usr/bin` are one directory, so a `rea` install
+ * there also removed `ps` and the supervised-process check failed with ENOENT.
+ * The runtime directory needs no exception: it holds `node` and, on a clean
+ * install, no alias at all, and when a link does sit beside it that link is
+ * exactly what must be hidden.
+ */
+const hideReaAliasDirectories = (path: string): string => {
+  const separator = process.platform === "win32" ? ";" : ":";
+  return path
+    .split(separator)
+    .filter(
+      (directory) =>
+        directory.length > 0 && !holdsExecutableReaAlias(directory),
+    )
+    .join(separator);
+};
+
+const holdsExecutableReaAlias = (directory: string): boolean =>
+  ["rea", "rea-agents"].some((name) => {
+    const candidate = join(directory, name);
+    try {
+      return statSync(candidate).isFile() && isExecutable(candidate);
+    } catch {
+      return false;
+    }
+  });
+
+const isExecutable = (path: string): boolean => {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /** Child environment for one compiled CLI process, without the parent environment. */
 export const cliProcessEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
   compileCache?: string,
 ): NodeJS.ProcessEnv => ({
-  PATH: process.env.PATH ?? "",
+  PATH: hideReaAliasDirectories(process.env.PATH ?? ""),
   // Native Windows APIs need the system root and a writable temporary
   // directory even when the command's application environment is empty.
   ...(process.platform === "win32"

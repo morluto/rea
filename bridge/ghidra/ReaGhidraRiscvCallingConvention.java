@@ -212,7 +212,8 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     pair.add(FloatDataType.dataType);
     pair.add(FloatDataType.dataType);
     VariableStorage[] storage =
-        model.getStorageLocations(
+        ReaGhidraStorageLocations.of(
+            model,
             currentProgram,
             new DataType[] {
               DoubleDataType.dataType, FloatDataType.dataType, DoubleDataType.dataType,

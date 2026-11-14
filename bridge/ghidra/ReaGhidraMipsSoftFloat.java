@@ -61,7 +61,8 @@ public final class ReaGhidraMipsSoftFloat extends GhidraScript {
     if (soft == null)
       throw new IllegalStateException("REA soft-float prototype was not installed");
     requireIntegerStorage(
-        soft.getStorageLocations(
+        ReaGhidraStorageLocations.of(
+            soft,
             currentProgram,
             new DataType[] {
               FloatDataType.dataType, IntegerDataType.dataType, DoubleDataType.dataType,

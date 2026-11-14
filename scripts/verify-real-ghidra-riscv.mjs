@@ -23,6 +23,7 @@ import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import {
   buildRiscvFixture,
   stripRiscvFixture,
@@ -61,7 +62,7 @@ const installation = await inspectVerifierGhidraInstallation({
     : { javaHome: process.env.JAVA_HOME }),
 });
 assert.equal(installation.status, "available", JSON.stringify(installation));
-assert.equal(installation.providerVersion, "12.1.4");
+assert.equal(installation.providerVersion, SUPPORTED_GHIDRA_VERSION);
 
 const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));

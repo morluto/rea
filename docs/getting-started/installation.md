@@ -1147,8 +1147,9 @@ even when it is an otherwise accepted 64-bit full JDK. Select a matching JDK
 through `JAVA_HOME`; adding another decompiler in the JVM-selected directory
 does not satisfy this host-validated admission rule. Current 12.1 releases require
 JDK 21 or newer; Ghidra 12.2 declares JDK 25 or newer. Neither sets a maximum.
-The bridge is verified with Ghidra 12.1.4
-and JDK 21. Each installation must include the native decompiler for the host
+The bridge is verified with Ghidra 12.2
+on JDK 25, the JDK that release requires; its sources are compiled for the
+Java 21 target. Each installation must include the native decompiler for the host
 architecture in `Ghidra/Features/Decompiler/os/<platform>/` or the corresponding
 `build/os/<platform>/` directory. Linux ARM64 uses `linux_arm_64`; official
 release archives may require you to build that native component separately.

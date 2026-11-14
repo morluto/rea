@@ -10,21 +10,22 @@ import {
 
 describe("ghidraReleaseCompatibility", () => {
   it("marks the verified build", () => {
-    const compatibility = ghidraReleaseCompatibility("12.1.4");
+    const compatibility = ghidraReleaseCompatibility("12.2");
     expect(compatibility.status).toBe("verified");
     if (compatibility.status !== "verified") return;
-    expect(compatibility.raw).toBe("12.1.4");
+    expect(compatibility.raw).toBe("12.2");
   });
 
-  it("marks the rest of the verified line compatible", () => {
+  it("marks earlier accepted-line releases compatible", () => {
+    expect(ghidraReleaseCompatibility("12.1.4").status).toBe("compatible");
     expect(ghidraReleaseCompatibility("12.1.2").status).toBe("compatible");
   });
 
   it("admits a newer minor release as compatible", () => {
-    const compatibility = ghidraReleaseCompatibility("12.2");
+    const compatibility = ghidraReleaseCompatibility("12.3");
     expect(compatibility.status).toBe("compatible");
     if (compatibility.status !== "compatible") return;
-    expect(compatibility.raw).toBe("12.2");
+    expect(compatibility.raw).toBe("12.3");
   });
 
   it("rejects other majors and older minors", () => {
@@ -40,27 +41,33 @@ describe("ghidraReleaseCompatibility", () => {
 });
 
 describe("ghidraReleaseAccepted", () => {
-  it("accepts the verified build and newer compatible releases", () => {
-    expect(ghidraReleaseAccepted("12.1.4")).toBe(true);
+  it("accepts the verified build and other accepted-line releases", () => {
     expect(ghidraReleaseAccepted("12.2")).toBe(true);
+    expect(ghidraReleaseAccepted("12.1.4")).toBe(true);
+    expect(ghidraReleaseAccepted("12.3")).toBe(true);
   });
 
   it("rejects unsupported releases", () => {
     expect(ghidraReleaseAccepted("13.0")).toBe(false);
     expect(ghidraReleaseAccepted("latest")).toBe(false);
+    expect(ghidraReleaseAccepted("11.4")).toBe(false);
+    expect(ghidraReleaseAccepted("12.0.4")).toBe(false);
+    expect(ghidraReleaseAccepted(undefined)).toBe(false);
+    expect(ghidraReleaseAccepted(null)).toBe(false);
+    expect(ghidraReleaseAccepted("")).toBe(false);
   });
 });
 
 describe("unverifiedGhidraBuildLimitation", () => {
-  it("reports a newer compatible build against the verified build", () => {
-    const limitation = unverifiedGhidraBuildLimitation("12.2");
+  it("reports an accepted build against the verified build", () => {
+    const limitation = unverifiedGhidraBuildLimitation("12.1.4");
     expect(limitation).toBeDefined();
-    expect(limitation).toContain("12.2");
+    expect(limitation).toContain("12.1.4");
     expect(limitation).toContain(SUPPORTED_GHIDRA_VERSION);
   });
 
   it("stays silent for the verified build and unsupported releases", () => {
-    expect(unverifiedGhidraBuildLimitation("12.1.4")).toBeUndefined();
+    expect(unverifiedGhidraBuildLimitation("12.2")).toBeUndefined();
     expect(unverifiedGhidraBuildLimitation("13.0")).toBeUndefined();
   });
 });
@@ -72,9 +79,27 @@ describe("ghidraReleaseLine", () => {
 });
 
 describe("ghidraVersionDetail", () => {
-  it("describes a newer compatible release against the verified build", () => {
-    const detail = ghidraVersionDetail("12.2");
+  it("describes an accepted build against the verified build", () => {
+    const detail = ghidraVersionDetail("12.1.4");
     expect(detail).toContain("compatible");
     expect(detail).toContain(SUPPORTED_GHIDRA_VERSION);
+  });
+
+  it("names the verified build alone, with no accepted-line suffix", () => {
+    // The doctor's `ghidra-version` detail is user-visible; the certified build
+    // must read as plain "12.2", not "12.2; compatible ... (verified build 12.2)".
+    expect(ghidraVersionDetail("12.2")).toBe("12.2");
+  });
+
+  it("keeps the accepted line while naming the verified build", () => {
+    expect(ghidraVersionDetail("12.1.4")).toBe(
+      `12.1.4; compatible ${ghidraReleaseLine()} release (verified build ${SUPPORTED_GHIDRA_VERSION})`,
+    );
+  });
+
+  it("states the accepted line for an unsupported build", () => {
+    expect(ghidraVersionDetail("13.0")).toBe(
+      `13.0; accepted releases are ${ghidraReleaseLine()} (verified build ${SUPPORTED_GHIDRA_VERSION})`,
+    );
   });
 });

@@ -37,7 +37,7 @@ const installation = await inspectVerifierGhidraInstallation({
 });
 if (process.platform !== "darwin" || installation.status !== "available")
   throw new Error(
-    "verify:ghidra:swift requires macOS, Ghidra 12.1.4 with its native decompiler, and JDK 21; set GHIDRA_INSTALL_DIR and JAVA_HOME.",
+    "verify:ghidra:swift requires macOS, Ghidra 12.2 with its native decompiler, and JDK 25 or newer (12.2 declares application.java.min=25); set GHIDRA_INSTALL_DIR and JAVA_HOME.",
   );
 try {
   await execute("swiftc", ["--version"], { timeout: 10_000 });

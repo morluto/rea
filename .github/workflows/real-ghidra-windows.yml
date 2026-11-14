@@ -57,7 +57,7 @@ jobs:
           if-no-files-found: error
 
   verify:
-    name: Real Ghidra 12.1.4 Windows x64 PE proof
+    name: Real Ghidra 12.2 Windows x64 PE proof
     if: github.ref == 'refs/heads/main'
     needs: native-artifact
     environment: real-ghidra-windows

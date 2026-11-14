@@ -16,8 +16,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      GHIDRA_RELEASE_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
-      GHIDRA_RELEASE_SHA256: ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
+      GHIDRA_RELEASE_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.2_build/ghidra_12.2_PUBLIC_20261016.zip
+      GHIDRA_RELEASE_SHA256: 2c2cd776db3c1f6a097ba418922378ac3649cadd5e844a6f5f088ae628a7be67
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -43,13 +43,13 @@ jobs:
       - name: Compile bridge sources with the verified runner JDK
         shell: bash
         run: |
-          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          java_home_variable="JAVA_HOME_${GHIDRA_RUNTIME_JAVA_MAJOR}_X64"
           test -n "${!java_home_variable}"
           JAVA_HOME="${!java_home_variable}" npm run verify:ghidra:bridge-sources -- --verified-sdk
       - name: Inspect real ARM, Thumb and MIPS instruction context through the bridge
         shell: bash
         run: |
-          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          java_home_variable="JAVA_HOME_${GHIDRA_RUNTIME_JAVA_MAJOR}_X64"
           export JAVA_HOME="${!java_home_variable}"
           probe_root="${RUNNER_TEMP}/rea-arm-context"
           mkdir -p "${probe_root}/project"
@@ -80,7 +80,7 @@ jobs:
       - name: Decode M-profile ARM and Xtensa bytes in their default context
         shell: bash
         run: |
-          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          java_home_variable="JAVA_HOME_${GHIDRA_RUNTIME_JAVA_MAJOR}_X64"
           export JAVA_HOME="${!java_home_variable}"
           probe_root="${RUNNER_TEMP}/rea-decode"
           mkdir -p "${probe_root}"
@@ -112,7 +112,7 @@ jobs:
       - name: Keep computed-call targets non-exhaustive in callee coverage
         shell: bash
         run: |
-          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          java_home_variable="JAVA_HOME_${GHIDRA_RUNTIME_JAVA_MAJOR}_X64"
           export JAVA_HOME="${!java_home_variable}"
           probe_root="${RUNNER_TEMP}/rea-computed-call"
           mkdir -p "${probe_root}/project"

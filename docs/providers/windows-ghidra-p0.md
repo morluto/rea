@@ -15,7 +15,7 @@ additional permission flag or degraded mode is required.
 
 - Windows 10+ x64 with fixed local NTFS/ReFS target and temporary volumes;
 - Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+;
-- an operator-installed Ghidra 12.x (>=12.1) distribution (verified with 12.1.4);
+- an operator-installed Ghidra 12.x (>=12.1) distribution (verified with 12.2);
 - a 64-bit full JDK inside that installation's declared Java range (JDK 21 or newer, with no maximum, for current 12.1 releases);
 - an explicit native, non-managed x86, x86-64, ARMNT (Thumb-2) or ARM64 PE application/DLL, a
   [DOS MZ executable](ghidra-dos.md), or a
