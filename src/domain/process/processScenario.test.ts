@@ -30,6 +30,14 @@ it("advertises the same unsupported PTY environment name as runtime admission", 
     }),
   ).toBe(true);
   expect(validate({ REA_PROCESS_RUN_ID: "reserved" })).toBe(false);
+  for (const name of ["", "A=B", "A\0B"]) {
+    const environment = { [name]: "value" };
+    expect(validate(environment), name).toBe(false);
+    expect(
+      processScenarioSchema.safeParse({ ...baseScenario, environment }).success,
+      name,
+    ).toBe(false);
+  }
   // Only the exact reserved name is refused, in the schema and at runtime.
   for (const name of [
     "REA_PROCESS_RUN_ID_2",
