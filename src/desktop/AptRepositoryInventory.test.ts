@@ -13,9 +13,118 @@ import {
 import { runHostQuery, type QueryRunner } from "./HostQuery.js";
 import {
   GPGV_A_ONLY,
+  SIGNED_BY_BOTH,
   VENDOR_A,
   VENDOR_B,
 } from "../domain/desktop/aptKeys.fixture.js";
+import {
+  aptListFileName,
+  declaredPackageFiles,
+  parseAptIndexTargets,
+} from "../domain/desktop/aptRepositories.js";
+
+describe.skipIf(
+  process.platform !== "linux" || !existsSync("/usr/bin/apt-get"),
+)("repository identity from real APT targets", () => {
+  it.each(["list", "sources"] as const)(
+    "preserves commas in %s repository fields through key retention and package attribution",
+    async (format) => {
+      const root = await createTestTempDirectory("apt-source-commas-");
+      const sources = join(root, `vendor.${format}`);
+      const key = join(root, "vendor.gpg");
+      const lists = join(root, "lists");
+      await mkdir(lists);
+      await writeFile(key, VENDOR_A.key);
+      const uris = ["https://vendor.invalid/repo,stable"];
+      if (format === "sources") uris.push("https://mirror.invalid/repo");
+      const declaredUris = uris.map((uri) =>
+        uri.replace(
+          "vendor.invalid",
+          "fixture-user:fixture,password@vendor.invalid",
+        ),
+      );
+      await writeFile(
+        sources,
+        format === "list"
+          ? `deb [arch=amd64,arm64 signed-by=${key}] ${declaredUris[0]} stable,updates main,extra contrib\n`
+          : `Types: deb\nURIs: ${declaredUris.join("/\n ")}/\nSuites: stable,updates\nComponents: main,extra contrib\nArchitectures: amd64 arm64\nSigned-By: ${key}\n`,
+      );
+      // No update, download or package installation: APT only describes the
+      // configured targets, with source and state paths confined to this root.
+      const query: QueryRunner = async (command, argv, signal) => {
+        // Key verification uses the existing captured status fixture; only
+        // APT's source grammar and target coordinates are exercised natively.
+        if (command === "gpgv") return { stdout: GPGV_A_ONLY, exitCode: 2 };
+        if (command !== "apt-get")
+          throw new Error(`Unexpected query ${command}`);
+        return runHostQuery(
+          "/usr/bin/apt-get",
+          [
+            "-o",
+            `Dir::Etc::sourcelist=${sources}`,
+            "-o",
+            "Dir::Etc::sourceparts=-",
+            "-o",
+            `Dir::State::lists=${lists}`,
+            ...argv,
+            "--no-release-info",
+          ],
+          signal,
+        );
+      };
+      const output = await query(
+        "apt-get",
+        ["indextargets", "Created-By: Packages"],
+        undefined,
+      );
+      if (typeof output !== "object" || output.exitCode !== 0)
+        throw new Error(`APT target query failed: ${JSON.stringify(output)}`);
+      const targets = parseAptIndexTargets(output.stdout);
+      const selected = targets.filter(
+        (target) =>
+          target.component === "main,extra" &&
+          target.description.endsWith(" amd64 Packages"),
+      );
+      expect(
+        selected.map((target) => target.repoUri.replace(/\/$/u, "")),
+      ).toEqual(uris);
+      for (const target of selected)
+        await writeFile(
+          join(lists, `${aptListFileName(target.baseUri)}InRelease`),
+          SIGNED_BY_BOTH,
+        );
+      const facts = await inspectAptRepositories(
+        {
+          sources: selected.map((target) => target.description),
+          origins: selected.map(() => "Vendor"),
+        },
+        { runQuery: query, apt: { lists, trustedParts: root, trusted: key } },
+        undefined,
+      );
+      expect(facts.repositories).toEqual(
+        uris.map((uri) =>
+          expect.objectContaining({
+            uri,
+            uri_credentials_removed: uri === uris[0],
+            suite: "stable,updates",
+            components: ["main,extra", "contrib"],
+            architectures: ["amd64", "arm64"],
+            signing_key: expect.objectContaining({
+              path: key,
+              fingerprint: VENDOR_A.fingerprint,
+            }),
+          }),
+        ),
+      );
+      expect([...facts.keys.values()]).toEqual([VENDOR_A.key]);
+      expect(JSON.stringify(facts)).not.toContain("fixture-user");
+      expect(JSON.stringify(facts)).not.toContain("fixture,password");
+      expect(declaredPackageFiles(facts.repositories, targets)).toEqual(
+        new Set(targets.map((target) => target.description)),
+      );
+    },
+  );
+});
 
 it.each(["list", "sources"] as const)(
   "does not broaden %s Signed-By fingerprint restrictions to every key in a keyring",
