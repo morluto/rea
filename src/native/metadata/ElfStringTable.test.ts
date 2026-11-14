@@ -37,7 +37,7 @@ it.each([65_536, 70_000])(
       failure = cause;
     }
     expect(failure).toBeInstanceOf(BinaryStringReadLimitFailure);
-    expect(failure).toBeInstanceOf(BinaryFormatFailure);
+    expect(failure).not.toBeInstanceOf(BinaryFormatFailure);
     expect(failure).toMatchObject({ maximumBytes: 65_536 });
   },
 );

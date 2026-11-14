@@ -1076,6 +1076,12 @@ describe("saved response JSON pointers", () => {
     vi.unstubAllGlobals();
   });
 
+  it("selects the root and decodes escaped response keys once", () => {
+    const value = { "a/b": { "~1": "literal", "/": "slash" } };
+    expect(responsePointerValue(value, "")).toBe(value);
+    expect(responsePointerValue(value, "/a~1b/~01")).toBe("literal");
+  });
+
   it("does not coerce a terminal newline in an array index", () => {
     expect(responsePointerValue({ items: ["record-7"] }, "/items/0\n")).toBe(
       undefined,

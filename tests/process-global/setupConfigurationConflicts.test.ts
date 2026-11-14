@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 
 const writers = vi.hoisted(() => ({
   before: undefined as undefined | ((path: string) => Promise<void>),
@@ -371,9 +372,14 @@ it.skipIf(process.platform === "win32")(
         },
         { FIRST: "1" },
       );
+      let second: ReturnType<typeof configureClientConfiguration> | undefined;
       try {
-        await started;
-        const second = configureClientConfiguration(
+        await awaitAcknowledgement(
+          started,
+          first,
+          "setup configuration writer",
+        );
+        second = configureClientConfiguration(
           {
             name: "cursor",
             registrationProfile: supportedClientRegistrationProfile("cursor"),
@@ -413,6 +419,7 @@ it.skipIf(process.platform === "win32")(
       } finally {
         releaseFirst();
         writers.before = undefined;
+        await Promise.allSettled([first, second]);
       }
     }
   },
@@ -466,26 +473,35 @@ it("releases a failed setup transaction so a queued request can configure the fi
   };
 
   const first = configureClientConfiguration(client, { FIRST: "1" });
-  await started;
-  const second = configureClientConfiguration(client, { SECOND: "2" });
-  releaseWriter();
-  const [failed, queued] = await Promise.all([first, second]);
+  let second: ReturnType<typeof configureClientConfiguration> | undefined;
+  try {
+    await awaitAcknowledgement(started, first, "setup configuration writer");
+    second = configureClientConfiguration(client, { SECOND: "2" });
+    releaseWriter();
+    const [failed, queued] = await Promise.all([first, second]);
 
-  expect(failed).toMatchObject({
-    status: "failed",
-    reason: "write",
-    failure: {
-      operation: "publish",
-      path,
-      detail: "The first writer could not stage its configuration",
-    },
-  });
-  expect(queued.status).toBe("configured");
-  expect(JSON.parse(await readFile(path, "utf8")).mcpServers.rea.env).toEqual({
-    SECOND: "2",
-  });
-  expect(await readdir(root)).toEqual(["config.json"]);
-  expect(await configureClientConfiguration(client)).toEqual({
-    status: "unchanged",
-  });
+    expect(failed).toMatchObject({
+      status: "failed",
+      reason: "write",
+      failure: {
+        operation: "publish",
+        path,
+        detail: "The first writer could not stage its configuration",
+      },
+    });
+    expect(queued.status).toBe("configured");
+    expect(JSON.parse(await readFile(path, "utf8")).mcpServers.rea.env).toEqual(
+      {
+        SECOND: "2",
+      },
+    );
+    expect(await readdir(root)).toEqual(["config.json"]);
+    expect(await configureClientConfiguration(client)).toEqual({
+      status: "unchanged",
+    });
+  } finally {
+    releaseWriter();
+    writers.before = undefined;
+    await Promise.allSettled([first, second]);
+  }
 });

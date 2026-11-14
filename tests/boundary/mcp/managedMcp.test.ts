@@ -193,7 +193,7 @@ it("runs every managed static inspection independently of an active native targe
     },
   });
   await assertFieldMemberRefToken(client, fieldTokenPath);
-}, 30_000);
+});
 
 it("compares observed call-target names through the managed MCP contract", async () => {
   const directory = await createTestTempDirectory("rea-managed-call-target-");
@@ -308,7 +308,7 @@ it("opens a managed PE and executes the managed static provider through MCP", as
     rightPath,
     assertOutput,
   );
-}, 30_000);
+});
 
 const verifyManagedCatalogAndNativeWorkflow = async (
   client: Client,

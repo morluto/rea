@@ -1000,7 +1000,7 @@ it("retains successful architecture and artifact output for an admitted provider
 });
 
 it("tracks observed launch failures and clears them after subsequent successful launch", async () => {
-  const { directory, path } = await createArtifact();
+  const { directory } = await createArtifact();
   const command = resolve(directory, "failing-objdump");
   let failLaunch = true;
   const service = new TestReverseEngineeringService({
