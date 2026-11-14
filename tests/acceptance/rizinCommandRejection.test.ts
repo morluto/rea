@@ -113,7 +113,7 @@ cliTest.skipIf(process.platform === "win32")(
     // Both adapters share the service's classification; the CLI checks one
     // refusal and one command diagnostic.
     for (const outcome of [outcomes[0]!, outcomes[5]!]) {
-      const response = await cli.sharedCliRun!({
+      const response = await cli.run({
         arguments: [
           "execute-rizin-command",
           artifact,

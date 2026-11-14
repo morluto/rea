@@ -1,4 +1,4 @@
-import { Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import { access } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,10 @@ const { default: packageJson } = await import(
   new URL("../../../package.json", import.meta.url),
   { with: { type: "json" } }
 );
+
+// Present the launcher's entrypoint, as a fresh `rea` process does. The
+// runtime derives the current registration command from it at load time.
+process.argv[1] = resolve(packageRoot, "scripts/rea.mjs");
 
 const runtimeFiles = [
   "dist/cli-runtime/cli.js",
@@ -158,6 +162,15 @@ async function runOneShot(args) {
   const originalStderrWrite = process.stderr.write.bind(process.stderr);
   process.stdout.write = captureWrite(stdoutChunks);
   process.stderr.write = captureWrite(stderrChunks);
+  // This process's stdin carries session frames. Give each command the empty,
+  // ended stdin a fresh process receives when the caller supplies no input.
+  const stdinDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+  const commandStdin = Readable.from([]);
+  Object.defineProperty(process, "stdin", {
+    configurable: true,
+    enumerable: stdinDescriptor?.enumerable ?? true,
+    get: () => commandStdin,
+  });
   const destination = new Writable({
     write(chunk, encoding, callback) {
       process.stdout.write(chunk, encoding, callback);
@@ -209,6 +222,8 @@ async function runOneShot(args) {
   } finally {
     process.stdout.write = originalStdoutWrite;
     process.stderr.write = originalStderrWrite;
+    if (stdinDescriptor !== undefined)
+      Object.defineProperty(process, "stdin", stdinDescriptor);
   }
   const exitCode =
     explicitExit ??

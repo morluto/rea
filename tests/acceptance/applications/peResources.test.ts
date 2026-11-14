@@ -9,11 +9,7 @@ import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import {
-  cliTest,
-  runFileCli,
-  type TestCli,
-} from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 type PeResourceCall = (
   arguments_: Record<string, unknown>,
@@ -26,7 +22,7 @@ const expectPeInputFailureAcrossAdapters = async (input: {
   readonly reason: "invalid_format" | "invalid_value";
 }) => {
   const { cli, call, path, reason } = input;
-  const result = await runFileCli(cli, {
+  const result = await cli.run({
     arguments: ["inspect-pe-resources", path, "--json"],
   });
   expect(result.exitCode).toBe(1);
@@ -117,7 +113,7 @@ const expectPeWordAlignedRecordsAcrossAdapters = async (input: {
       );
       const path = join(root, `word-aligned-${plus}-${index}.exe`);
       await writeFile(path, fixture.bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-pe-resources", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -208,7 +204,7 @@ const expectPeMappingOwnershipAcrossAdapters = async (
       });
       continue;
     }
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-pe-resources", path, "--json"],
     });
     expect(result.exitCode, name).toBe(0);
@@ -266,9 +262,7 @@ const expectPeInventoriesAcrossAdapters = async (
     };
     // Keep an independent public-wrapper process for both PE32 and PE32+.
     // The empty-payload variants reuse only compiled-command startup.
-    const result = await (empty
-      ? runFileCli(cli, invocation)
-      : cli.run(invocation));
+    const result = await (empty ? cli.run(invocation) : cli.run(invocation));
     expect(result.exitCode).toBe(0);
     const evidence = contract.outputSchema.parse(result.json);
     const report = peResourcesSchema.parse(evidence.normalized_result);
@@ -348,7 +342,7 @@ const expectPeEmptyBranchesAcrossAdapters = async (
       shared ? "shared-empty64.exe" : "empty-branches32.exe",
     );
     await writeFile(path, fixture.bytes);
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-pe-resources", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);

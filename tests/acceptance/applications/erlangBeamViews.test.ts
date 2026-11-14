@@ -107,7 +107,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-beam-views-");
     const path = join(root, "app.beam");
     await writeFile(path, erlangBeamFixture("views"));
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const complete = await run({
       arguments: ["inspect-erlang-beam", path, "--json"],
     });
@@ -312,7 +312,7 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-beam-invalid-view-");
     const output = join(root, "unused.json");
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const view = JSON.stringify({ kind: "beam", collection: "exports" });
     for (const [flags, key] of [
       [["--detail", "summary"], "evidence_output"],

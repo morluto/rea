@@ -8,7 +8,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 const PACKAGE_LINE = "package:/data/app/example/base.apk=com.example.app";
 
@@ -139,9 +139,10 @@ process.exit(91);
           arguments: [command, "emulator-5554", ...tail, "--json"],
           environment,
         };
-        const output = await (count === 0
-          ? cli.run(invocation)
-          : runFileCli(cli, invocation));
+        const output = await cli.run({
+          ...invocation,
+          freshProcess: count === 0,
+        });
         expect(output.exitCode, output.stderr).toBe(0);
         const evidence = parseEvidence(output.json);
         expect(

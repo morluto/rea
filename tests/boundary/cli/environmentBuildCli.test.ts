@@ -289,3 +289,26 @@ cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
     );
   },
 );
+
+cliTest(
+  "reports its default build-stage logging through the routed CLI driver",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-environment-build-logs-");
+    const har = join(root, "grafana.har");
+    await writeFile(har, JSON.stringify(environmentManifestHar()));
+    // Without REA_LOG_LEVEL the build logs its stages at info on stderr.
+    const invocation = {
+      arguments: ["environment-build", har, "--dry-run", "--json"],
+    };
+    const routed = await cli.run(invocation);
+    const fresh = await cli.run({ ...invocation, freshProcess: true });
+    expect(fresh.stderr).toContain("Building environment");
+    const stages = (stderr: string) =>
+      stderr
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => (JSON.parse(line) as { stage?: unknown }).stage);
+    expect(stages(routed.stderr)).toEqual(stages(fresh.stderr));
+    expect(routed.exitCode).toBe(fresh.exitCode);
+  },
+);

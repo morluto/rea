@@ -360,11 +360,17 @@ The process restarts when the environment changes, after 32 commands, or when
 the worker reports a resident set of at least 1 GiB. A fatal worker failure
 or a broken session frame retires that process and waits for it to exit before
 the next command starts.
-`cli.run` still starts a fresh process, including stdin and explicit deadlines.
-`runFileCli` uses the file session for commands that have neither. Go binary,
-IL2CPP metadata, and dylib-resolution commands use that session. File teardown
-stops the shared CLI process, including startup still in flight, and does not
-open another after close.
+In a `cliTest` file, `cli.run` uses that shared process when it reports the
+command exactly as a fresh `rea` process would. Both run the same one-shot
+owner (`src/cliOneShot.ts`), and the shared process presents the launcher's
+entrypoint. A command starts a fresh process instead when it supplies stdin or
+an explicit deadline, enters MCP or the MCP doctor (which the launcher routes
+first), sets `NODE_OPTIONS`, or enables logging, which writes outside the
+per-command capture. Pass `freshProcess: true` for process-level facts such as
+startup, signals, or exit, and keep one fresh check beside reused cases where
+dispatch itself is under test. `createTestCli` drivers always start a fresh
+process. File teardown stops the shared CLI process, including startup still in
+flight, and does not open another after close.
 `exportedFunctionBindingsCli.test.ts` uses the shared compiled CLI session for
 its file and compares its JSON command results with the MCP session. It selects
 20-second startup and command deadlines; other callers retain their existing

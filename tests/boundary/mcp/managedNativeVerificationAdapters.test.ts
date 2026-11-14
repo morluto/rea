@@ -15,7 +15,7 @@ import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js"
 import { fileLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 const fileMcp = fileLocalToolsMcp();
 
@@ -330,10 +330,10 @@ cliTest(
       const invocation = {
         arguments: ["verify-managed-native-boundaries", request, "--json"],
       };
-      const cliRun =
-        index === 0
-          ? await cli.run(invocation)
-          : await runFileCli(cli, invocation);
+      const cliRun = await cli.run({
+        ...invocation,
+        freshProcess: index === 0,
+      });
       expect(cliRun.exitCode, cliRun.stderr).toBe(0);
       const cliResult = managedNativeVerificationResultSchema.parse(
         parseEvidence(cliRun.json).normalized_result,
