@@ -273,7 +273,7 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "keeps initial identity stable and retains legacy data without guessing its origin",
+  "keeps initial identity stable and rejects an unknown manifest version without rewriting it",
   async () => {
     const f = await fixture();
     await f.owner.acquire("initial");
@@ -290,29 +290,12 @@ it.skipIf(process.platform === "win32")(
     const record = JSON.parse(await readFile(path, "utf8"));
     expect(record.version).toBe(2);
     expect(record.source.kind).toBe("initial-analysis");
-    const legacy = {
-      ...record,
-      version: 1,
-      source: { file: record.source.file, sha256: record.source.sha256 },
-    };
-    await writeFile(path, JSON.stringify(legacy));
-    const selected = await resolveGhidraCheckpoint(
-      f.root,
-      target,
-      profile,
-      f.resources,
-    );
-    expect(selected.state).toEqual({
-      kind: "retained",
-      sha256: record.source.sha256,
-    });
-    const resumed = new GhidraCheckpoint(selected, f.resources);
-    owners.push(resumed);
-    expect((await resumed.acquire("legacy"))?.sha256).toBe(
-      record.source.sha256,
-    );
-    await resumed.close();
-    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(legacy);
+    const unknown = JSON.stringify({ ...record, version: 1 });
+    await writeFile(path, unknown);
+    await expect(
+      resolveGhidraCheckpoint(f.root, target, profile, f.resources),
+    ).rejects.toThrow(/manifest is malformed/);
+    expect(await readFile(path, "utf8")).toBe(unknown);
   },
 );
 
