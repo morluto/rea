@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture, and of Linux desktop apps with a task from a request. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "62"
+  version: "63"
 ---
 
 # REA
@@ -586,7 +586,9 @@ as complete while required questions remain open.
 - Native instrumentation, debugger and process capture; browser/Electron
   observation; static/runtime comparison:
   [references/runtime-observation.md](references/runtime-observation.md)
-- Evidence paging, comparisons, residual unknowns, and verification:
+- Captured browser script export, source-map locations, and module attribution:
+  [references/web-feature-attribution.md](references/web-feature-attribution.md)
+- Evidence paging, comparisons, residual unknowns, and investigation handoff:
   [references/evidence-workflows.md](references/evidence-workflows.md)
 - Agent environments (AgentEnv bundles) of a web application, recorded from
   a live instance or a HAR:
