@@ -1,4 +1,5 @@
 import { Cli } from "incur";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, vi } from "vitest";
 import { registerArtifactCommands } from "../../../src/cli/artifactCommands.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
@@ -129,6 +130,32 @@ it.each([
         expect.objectContaining({ path: field, code: "too_small" }),
       ],
     });
+  },
+);
+
+it.each([
+  {
+    command: "inspect-plist",
+    field: "relativePath",
+    valid: "Contents/Info.plist",
+    invalid: ["", "Contents/a\x00b"],
+  },
+  {
+    command: "trace-dylib-resolution",
+    field: "root",
+    valid: ["Contents/MacOS/app"],
+    invalid: [[""], ["Contents/a\x00b"], ["../outside"]],
+  },
+])(
+  "advertises the $field option constraints",
+  async ({ command, field, valid, invalid }) => {
+    const { serve } = registry();
+    const schema = (await serve([command, "--schema"])) as { options: object };
+    const validate = new Ajv2020({ strict: false }).compile(schema.options);
+    expect(validate({})).toBe(true);
+    expect(validate({ [field]: valid })).toBe(true);
+    for (const value of invalid)
+      expect(validate({ [field]: value })).toBe(false);
   },
 );
 
