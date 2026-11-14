@@ -188,6 +188,8 @@ describe("CLI commands projected from tool contracts", () => {
         "inspect-apk-signature",
         "inspect-desktop-application",
         "inspect-evm-interface",
+        "audit-release-exposure",
+        "inspect-il2cpp-metadata",
       ]),
     );
   });
@@ -321,6 +323,58 @@ describe("CLI commands projected from tool contracts", () => {
         { command: "probe", description: "Probe" },
       ),
     ).toThrow("probe input keyword not has no CLI projection");
+  });
+});
+
+describe("CLI-only options of contract commands", () => {
+  it.each(each)(
+    "%s keeps its CLI-only options out of the contract input",
+    (_command, description) => {
+      const cliKeys = description.cliOnlyOptions.map(({ key }) => key);
+      const values = Object.fromEntries(cliKeys.map((key) => [key, "set"]));
+      const input = description.toContractInput(values);
+      for (const key of cliKeys) {
+        expect(Object.values(input), key).not.toContain("set");
+        expect(Object.keys(description.fields), key).not.toContain(key);
+      }
+    },
+  );
+
+  it("refuses CLI-only options that collide with or depend on unknown keys", () => {
+    const contract = {
+      name: "probe",
+      inputSchema: z.object({ value: z.string().optional() }),
+    };
+    expect(() =>
+      describeContractCommand(contract, {
+        command: "probe",
+        description: "Probe",
+        cliOptions: { value: z.string().optional() },
+      }),
+    ).toThrow("probe projects two fields to one CLI key");
+    expect(() =>
+      describeContractCommand(contract, {
+        command: "probe",
+        description: "Probe",
+        cliOptions: { extra: z.string().optional() },
+        cliOptionDependencies: { extra: ["missing"] },
+      }),
+    ).toThrow("probe has no CLI option missing");
+    const described = describeContractCommand(contract, {
+      command: "probe",
+      description: "Probe",
+      cliOptions: { extra: z.string().optional() },
+      cliOptionDependencies: { extra: ["value"] },
+    });
+    expect(described.optionConstraints).toEqual({
+      dependentRequired: { extra: ["value"] },
+    });
+    expect(described.cliOptionValues({ value: "a", extra: "b" })).toEqual({
+      extra: "b",
+    });
+    expect(described.toContractInput({ value: "a", extra: "b" })).toEqual({
+      value: "a",
+    });
   });
 });
 
