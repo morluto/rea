@@ -25,7 +25,7 @@ import { abortIfNeeded } from "./ArtifactHash.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
 
 export const INES_LIMITATION =
-  "Classic iNES file regions are observed; mapper execution, CPU bank mappings, CHR-RAM contents, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. NES 2.0 and UNIF are unsupported.";
+  "iNES and NES 2.0 file regions are observed; header mapper, RAM/NVRAM, timing, console and expansion-device values are declarations. Mapper execution, CPU bank mappings, CHR-RAM contents, miscellaneous ROM boundaries, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. UNIF is unsupported.";
 
 /** Actual concatenated bytes observed by the inventory's ordered region scan. */
 export type InesRegionScan = Omit<InesInventory["reconstruction"], "verified">;

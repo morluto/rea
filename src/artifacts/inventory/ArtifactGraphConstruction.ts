@@ -50,10 +50,7 @@ import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
-import {
-  nesContainerFormat,
-  parseInesLayout,
-} from "../../domain/inesContainer.js";
+import { parseInesLayout } from "../../domain/inesContainer.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -625,11 +622,7 @@ export const classifyArtifactBytes = (
   const { prefix, suffix, mzWindowsHeaderSignature } = evidence;
   // A header-only region has the signature but not the declared cartridge
   // extent. Keep it as a file instead of inventing another container.
-  if (
-    nesContainerFormat(prefix) === "ines" &&
-    parseInesLayout(prefix, fileSize).ok
-  )
-    return "ines";
+  if (parseInesLayout(prefix, fileSize).ok) return "ines";
   if (hasZipSignature(prefix)) return "zip";
   if (hasGodotPckHeader(prefix)) return "godot-pck";
   if (hasUnityFsHeader(prefix)) return "unityfs";

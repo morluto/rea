@@ -7,7 +7,7 @@ import { InesArtifactReader } from "../../../src/artifacts/InesArtifactReader.js
 import { scanReader } from "../../../src/artifacts/inventory/scanReader.js";
 import { hashStableRootArtifactHandle } from "../../../src/artifacts/inventory/hashStableRootArtifact.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
-import { inesFixture } from "../../fixtures/ines.js";
+import { inesFixture, nes2Fixture } from "../../fixtures/ines.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { RetainedRegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
 
@@ -68,12 +68,9 @@ const cancelAfterNextStat = (
 
 const malformed = (format: string) => {
   if (format === "UNIF") return Buffer.from("UNIF");
-  const bytes = inesFixture();
-  if (format === "NES 2.0") {
-    bytes[7] = 8;
-    return bytes;
-  }
-  return bytes.subarray(0, 20);
+  // PRG-ROM MSB nibble 1 declares more bytes than the file holds.
+  if (format === "NES 2.0") return nes2Fixture({ header: { 9: 0x01 } });
+  return inesFixture().subarray(0, 20);
 };
 
 it.each(["default", "caller-error", "failed-close"])(
