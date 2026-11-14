@@ -2,7 +2,7 @@ import { SetupSkillInstallError, type SkillDestination } from "./SetupSkill.js";
 import type { LinuxPackageFamily } from "./HopperReleaseFeed.js";
 import {
   linuxHopperInstallDisclosure,
-  LINUX_HOPPER_SETUP_HOSTS,
+  unsupportedLinuxHopperSetupRemediation,
   type LinuxDistribution,
 } from "./LinuxHopper.js";
 import { macHopperInstallDisclosure } from "./MacHopper.js";
@@ -460,7 +460,8 @@ const hopperInstallEligibility = (
       ? { supported: true }
       : {
           supported: false,
-          remediation: `Automated Hopper setup requires ${LINUX_HOPPER_SETUP_HOSTS}; configure an existing supported provider instead.`,
+          remediation:
+            unsupportedLinuxHopperSetupRemediation(linuxDistribution),
         };
   return {
     supported: false,

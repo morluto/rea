@@ -9,6 +9,7 @@ import {
   linuxSharedLibrariesAvailable,
   parseLinuxDistribution,
   supportsReaHost,
+  unsupportedLinuxHopperSetupRemediation,
   LinuxHopperTemporaryCleanupOwner,
   systemLinuxHopperInstallHost,
   type LinuxDistribution,
@@ -219,6 +220,33 @@ describe("Linux Hopper host classification", () => {
     },
   );
 
+  it("names the detected host when automated Hopper setup does not apply", () => {
+    const bazzite = parseLinuxDistribution(
+      'ID=bazzite\nID_LIKE="fedora"\nVERSION_ID=43\n',
+      "x64",
+    );
+    expect(bazzite).toMatchObject({
+      id: "bazzite",
+      versionId: "43",
+      packageFamily: "rpm",
+      architecture: "x64",
+      hopperSetupSupported: false,
+    });
+    expect(unsupportedLinuxHopperSetupRemediation(bazzite)).toBe(
+      "This host reports bazzite 43, rpm packages on x64. Automated Hopper setup requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy; configure an existing supported provider instead.",
+    );
+    const ubuntuArm64 = parseLinuxDistribution(
+      'ID=ubuntu\nVERSION_ID="24.04"\n',
+      "arm64",
+    );
+    expect(unsupportedLinuxHopperSetupRemediation(ubuntuArm64)).toContain(
+      "This host reports ubuntu 24.04, deb packages on arm64.",
+    );
+    expect(unsupportedLinuxHopperSetupRemediation(undefined)).toBe(
+      "This Linux distribution could not be read. Automated Hopper setup requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy; configure an existing supported provider instead.",
+    );
+  });
+
   it("withholds host support from a distribution with no package family", () => {
     expect(supportsReaHost(parseLinuxDistribution("ID=nixos\n", "x64"))).toBe(
       false,
@@ -368,6 +396,9 @@ describe("Linux Hopper installation failure classification", () => {
     expect(await installFixture(host)).toMatchObject({
       status: "failed",
       reason,
+      ...(scenario === "unsupported host"
+        ? { distribution: host.distributionValue }
+        : {}),
       ...(scenario === "package manager failure"
         ? { packageFailure: host.packageFailure }
         : {}),
