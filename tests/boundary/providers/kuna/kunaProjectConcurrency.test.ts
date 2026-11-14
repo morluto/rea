@@ -9,6 +9,7 @@ import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaR
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
 import type { KunaExportStatus } from "../../../../src/kuna/KunaProjectExport.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 
 // Reproduce concurrent eviction's shared directory snapshot while retaining
@@ -17,10 +18,10 @@ const listing = vi.hoisted(() => ({
   directory: "",
   names: [] as string[],
   gate: undefined as Promise<void> | undefined,
-  arrived: 0,
+  onSnapshot: undefined as (() => void) | undefined,
   touchPath: "",
   touchGate: undefined as Promise<void> | undefined,
-  touched: false,
+  onTouch: undefined as (() => void) | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -29,7 +30,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     readdir: async (...args: Parameters<typeof actual.readdir>) => {
       if (String(args[0]) === listing.directory && listing.gate !== undefined) {
-        listing.arrived += 1;
+        listing.onSnapshot?.();
         await listing.gate;
         return listing.names;
       }
@@ -41,7 +42,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         String(args[0]) === listing.touchPath &&
         listing.touchGate !== undefined
       ) {
-        listing.touched = true;
+        listing.onTouch?.();
         await listing.touchGate;
       }
     },
@@ -52,10 +53,10 @@ afterEach(() => {
   listing.directory = "";
   listing.gate = undefined;
   listing.names = [];
-  listing.arrived = 0;
+  listing.onSnapshot = undefined;
   listing.touchPath = "";
   listing.touchGate = undefined;
-  listing.touched = false;
+  listing.onTouch = undefined;
 });
 
 const it = test.skipIf(process.platform === "win32");
@@ -187,11 +188,15 @@ it("protects a cache request that arrives after an eviction snapshot starts", as
   const first = await cache.build(firstInput);
   if (!first.ok) throw first.error;
   const snapshot = barrier();
+  const snapshotStarted = barrier();
   const touch = barrier();
+  const touchStarted = barrier();
   listing.directory = join(cacheRoot, "projects");
   listing.gate = snapshot.promise;
+  listing.onSnapshot = snapshotStarted.release;
   listing.touchPath = join(listing.directory, first.value.key);
   listing.touchGate = touch.promise;
+  listing.onTouch = touchStarted.release;
   const releases: (() => void)[] = [];
   const pinResult = async (pending: ReturnType<KunaProjectCache["build"]>) => {
     const result = await pending;
@@ -199,19 +204,29 @@ it("protects a cache request that arrives after an eviction snapshot starts", as
     releases.push(cache.pin(result.value.key));
     return result.value;
   };
-  const second = pinResult(cache.build(await request("second")));
-  let warm: ReturnType<typeof pinResult> | undefined;
+  const pending: ReturnType<typeof pinResult>[] = [];
   onTestFinished(async () => {
     snapshot.release();
     touch.release();
-    await Promise.allSettled(warm === undefined ? [second] : [second, warm]);
+    await Promise.allSettled(pending);
     for (const release of releases) release();
     const closed = await cache.close();
     if (!closed.ok) throw closed.error;
   });
-  await expect.poll(() => listing.arrived).toBe(1);
-  warm = pinResult(cache.build(firstInput));
-  await expect.poll(() => listing.touched).toBe(true);
+  const second = pinResult(cache.build(await request("second")));
+  pending.push(second);
+  await awaitAcknowledgement(
+    snapshotStarted.promise,
+    second,
+    "Kuna eviction snapshot",
+  );
+  const warm = pinResult(cache.build(firstInput));
+  pending.push(warm);
+  await awaitAcknowledgement(
+    touchStarted.promise,
+    warm,
+    "Kuna retained-entry touch",
+  );
   listing.names = await actual.readdir(listing.directory);
   snapshot.release();
   await second;

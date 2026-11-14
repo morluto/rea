@@ -28,6 +28,7 @@ import io
 import json
 import math
 import os
+import errno
 import re
 import sqlite3
 import struct
@@ -176,9 +177,45 @@ def _ensure_state_aliases(home: Path) -> None:
         link.symlink_to(destination)
 
 
-def _dconf(arguments: list, environment: dict) -> str:
-    return subprocess.run(["dconf", *arguments], env={**os.environ, **environment}, capture_output=True, text=True,
-                          check=True).stdout
+def _dconf(arguments: list, environment: dict, stdin=None) -> str:
+    child_environment = {**os.environ, **environment}
+    refusal = None
+    missing = None
+    for directory in os.get_exec_path(child_environment):
+        command = os.path.join(directory, "dconf")
+        if not os.path.isabs(command):
+            command = os.path.join(os.getcwd(), command)
+        try:
+            child = subprocess.Popen([command, *arguments], env=child_environment,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=stdin)
+        except OSError as error:
+            # Popen identifies an exec failure with the executable filename;
+            # parent capacity, pipe setup and cwd failures are not PATH misses.
+            if error.filename != command:
+                raise
+            # Match Python's executable search: retain the first non-missing
+            # spawn error, but never retry a child that actually started.
+            if error.errno in (errno.ENOENT, errno.ENOTDIR):
+                missing = error
+            elif refusal is None:
+                refusal = error
+            continue
+        break
+    else:
+        if refusal is not None:
+            raise refusal
+        if missing is not None:
+            raise missing
+        raise FileNotFoundError(errno.ENOENT, "dconf is not installed (dconf-cli)", "dconf")
+    with child:
+        try:
+            stdout, stderr = child.communicate()
+        except BaseException:
+            child.kill()
+            raise
+        result = subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
+        result.check_returncode()
+        return result.stdout
 
 
 def _load_dconf(home: Path) -> None:
@@ -195,8 +232,11 @@ def _load_dconf(home: Path) -> None:
             keyfiles.mkdir()
             if database.is_file():
                 profile = Path(scratch, "profile")
-                profile.write_text(f"file-db:{database}\n")
-                existing = _dconf(["dump", "/"], {"DCONF_PROFILE": str(profile)})
+                profile.write_text("file-db:/dev/fd/0\n")
+                with database.open("rb") as source:
+                    # Missing descriptor paths must not become a successful empty dump.
+                    os.stat(f"/dev/fd/{source.fileno()}")
+                    existing = _dconf(["dump", "/"], {"DCONF_PROFILE": str(profile.resolve())}, stdin=source)
                 (keyfiles / "00-existing").write_text(existing)
             (keyfiles / "01-captured").write_text(_respelled(DCONF, home))
             _dconf(["compile", str(Path(scratch, "user")), str(keyfiles)], {})

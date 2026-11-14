@@ -21,29 +21,36 @@ export interface FoundProgram {
   readonly fromRelativeEntry: boolean;
 }
 
+/** Candidate spellings in launch order, anchored without reserializing PATH. */
+export function* programCandidates(
+  program: string,
+  environment: Readonly<Record<string, string | undefined>>,
+  startedIn: string,
+): IterableIterator<FoundProgram> {
+  const from = (path: string) =>
+    tidy(isAbsolute(path) ? path : `${startedIn}/${path}`);
+  if (program.includes("/")) {
+    yield { path: from(program), fromRelativeEntry: false };
+    return;
+  }
+  for (const directory of environment.PATH?.split(delimiter) ?? [])
+    yield {
+      path: from(directory === "" ? program : `${directory}/${program}`),
+      fromRelativeEntry: !isAbsolute(directory),
+    };
+}
+
 /**
- * Find a program as the launch will, without running a shell: a relative path,
- * or an empty or relative PATH entry, is read from the directory the program
- * is started in, in PATH order. `..` is kept, so after a symbolic link it
- * means what it means to the launch.
+ * Inspect availability in the original launch context. This does not establish
+ * that execution will succeed: an executable can have a missing interpreter.
+ * Callers that launch must retain execution-time PATH fallback themselves.
  */
 export const resolveProgram = async (
   program: string,
   environment: Readonly<Record<string, string | undefined>>,
   startedIn: string,
 ): Promise<FoundProgram | undefined> => {
-  const from = (path: string) =>
-    tidy(isAbsolute(path) ? path : `${startedIn}/${path}`);
-  if (program.includes("/")) {
-    const path = from(program);
-    return (await isExecutable(path))
-      ? { path, fromRelativeEntry: false }
-      : undefined;
-  }
-  for (const directory of environment.PATH?.split(delimiter) ?? []) {
-    const path = from(directory === "" ? program : `${directory}/${program}`);
-    if (await isExecutable(path))
-      return { path, fromRelativeEntry: !isAbsolute(directory) };
-  }
+  for (const candidate of programCandidates(program, environment, startedIn))
+    if (await isExecutable(candidate.path)) return candidate;
   return undefined;
 };

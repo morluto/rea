@@ -12,6 +12,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import type { Evidence } from "../domain/evidence.js";
 import { localPathStringSchema } from "../domain/localPath.js";
@@ -192,9 +193,11 @@ const withStateReaders = async (
     import("../desktop/DconfDatabaseReader.js"),
   ]);
   const sqlite = createSqliteDatabaseService(environment);
+  const resources = new ArtifactResourceScope();
   return finishAnalysisCommand(
     async () => {
       const result = await run({
+        resources,
         sqlite: (database, readSignal, policy) =>
           readSqliteStateView(sqlite, database, readSignal, policy),
         dconf: (database, readSignal) =>
@@ -205,6 +208,11 @@ const withStateReaders = async (
     {
       close: async () => {
         const failures: unknown[] = [];
+        try {
+          await resources.close();
+        } catch (cause: unknown) {
+          failures.push(cause);
+        }
         try {
           await sqlite.close();
         } catch (cause: unknown) {
