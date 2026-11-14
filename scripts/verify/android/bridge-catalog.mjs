@@ -18,7 +18,12 @@ const expectedInputs = {
     required: [],
   },
   get_class_summary: {
-    properties: { class_name: "string", dex_static_values: "boolean" },
+    properties: {
+      class_name: "string",
+      method_name: "string",
+      reference_target: "boolean",
+      dex_static_values: "boolean",
+    },
     required: ["class_name"],
   },
   get_method_body: {
@@ -38,6 +43,7 @@ const expectedInputs = {
       class_name: "string",
       method_name: "string",
       overload_index: "integer",
+      reference_target: "boolean",
     },
     required: ["class_name", "method_name"],
   },
