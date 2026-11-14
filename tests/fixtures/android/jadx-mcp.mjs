@@ -6,6 +6,14 @@ import { JADX_BRIDGE_IDENTITY } from "../../../src/android/JadxRelease.ts";
 // An actual child MCP server exercising the production stdio/process seam.
 // It is a protocol fixture, not evidence of JADX decompiler support.
 const mode = process.env.REA_FAKE_JADX_MODE ?? "normal";
+// A worker heap too small for the bridge stops the JVM before the handshake,
+// so the retained stderr is the only heap evidence.
+if (mode === "start-heap-exhausted") {
+  process.stderr.write(
+    'Exception in thread "main" java.lang.OutOfMemoryError: Java heap space\n',
+  );
+  process.exit(1);
+}
 const server = new McpServer({
   name: mode === "empty-server-identity" ? "" : "rea-jadx-bridge",
   version:

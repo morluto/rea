@@ -5,8 +5,27 @@ import {
   parseJadxJson,
   normalizeJadxText,
   parseJadxFailure,
+  jadxHeapExhausted,
 } from "../../../src/android/JadxProtocol.js";
 import { androidInputSchemas } from "../../../src/domain/android/androidAnalysis.js";
+
+it("recognizes only HotSpot heap-exhaustion OutOfMemoryError reasons", () => {
+  for (const text of [
+    'Exception in thread "main" java.lang.OutOfMemoryError: Java heap space',
+    "java.lang.OutOfMemoryError: GC overhead limit exceeded",
+  ])
+    expect(jadxHeapExhausted(text), text).toBe(true);
+  // Other memory areas are not fixed by the worker heap, and unanchored text
+  // that merely mentions the heap is not a JVM failure.
+  for (const text of [
+    "java.lang.OutOfMemoryError: Metaspace",
+    "java.lang.OutOfMemoryError: Direct buffer memory",
+    "java.lang.OutOfMemoryError: unable to create new native thread",
+    "warning: Java heap space is low",
+    "",
+  ])
+    expect(jadxHeapExhausted(text), text).toBe(false);
+});
 
 it("recognizes named bridge failures without reinterpreting arbitrary engine text", () => {
   const failure = {

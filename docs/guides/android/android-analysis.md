@@ -665,9 +665,13 @@ uses native memory. A typed JVM memory allocation failure during APK loading
 reports `resource_constraint` with the observed maximum heap in bytes. Known
 heap failures name `REA_JADX_HEAP_MIB` in remediation; other memory regions
 remain unknown. A healthy doctor configuration check does not establish that
-any particular APK fits. Failures before the bridge can report a typed result
-and upstream errors from other operations retain their existing diagnostics;
-error text alone does not establish memory exhaustion.
+any particular APK fits. If the launcher stops before the bridge answers and
+its retained stderr carries HotSpot's `java.lang.OutOfMemoryError: Java heap
+space` or `GC overhead limit exceeded`, REA reports `resource_constraint` with
+`observed_max_heap_bytes: null`, since no runtime fact measured the heap, and
+the same `REA_JADX_HEAP_MIB` remediation. Other failures before the bridge can
+report a typed result and upstream errors from other operations retain their
+existing diagnostics; error text alone does not establish memory exhaustion.
 
 Independent REA instances have independent queues. Whole
 operations have a **120-second** execution deadline by default, starting after
