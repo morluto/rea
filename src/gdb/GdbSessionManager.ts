@@ -1,6 +1,7 @@
 import { GDB_PROVIDER_IDENTITY } from "./GdbProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { classifyLaunchFailure } from "../process/launchFailure.js";
 import { snapshotGdbCommandRecords } from "./GdbCommandRecords.js";
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -850,16 +851,11 @@ export class GdbSessionManager {
         cause instanceof AnalysisCancelledError
       )
         return err(new AnalysisCancelledError("start_gdb_session", { cause }));
-      const code: unknown =
-        cause instanceof Error && "code" in cause ? cause.code : undefined;
-      if (
-        cause instanceof Error &&
-        typeof code === "string" &&
-        ["ENOENT", "EACCES", "EPERM", "ENOEXEC", "ENOTDIR", "EISDIR"].includes(
-          code,
-        )
-      )
-        return err(new GdbExecutableRefusal(this.#command, code, cause));
+      const refusal = classifyLaunchFailure(cause);
+      if (refusal !== undefined && cause instanceof Error)
+        return err(
+          new GdbExecutableRefusal(this.#command, refusal.code, cause),
+        );
       return err(
         new AnalysisCapabilityUnavailableError(
           "gdb",

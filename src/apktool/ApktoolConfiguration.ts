@@ -10,6 +10,7 @@ import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { classifyLaunchFailure } from "../process/launchFailure.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
@@ -522,17 +523,9 @@ const versionProbeFailure = (
         ...apktoolVersionProbeTimeoutGuidance(),
       },
     );
-  // EPERM is the other errno a refused exec can surface (for example a launcher
-  // blocked by an operating-system security policy), so it joins EACCES as a
-  // permission failure, not a missing launcher.
-  if (
-    cause instanceof Error &&
-    "code" in cause &&
-    (cause.code === "ENOENT" ||
-      cause.code === "EACCES" ||
-      cause.code === "EPERM")
-  ) {
-    const execDenied = cause.code === "EACCES" || cause.code === "EPERM";
+  const refusal = classifyLaunchFailure(cause);
+  if (refusal !== undefined) {
+    const execDenied = refusal.kind === "not_executable";
     return new ApktoolConfigurationFailure(
       execDenied ? "command_not_executable" : "command_missing",
       execDenied
@@ -542,7 +535,7 @@ const versionProbeFailure = (
         ? APKTOOL_NOT_EXECUTABLE_REMEDIATION
         : APKTOOL_MISSING_REMEDIATION,
       {
-        filesystem_error: cause.code,
+        filesystem_error: refusal.code,
         selected_command: selection.command,
         command_source: selection.commandSource,
       },
