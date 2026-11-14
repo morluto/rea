@@ -154,7 +154,6 @@ processTest(
       [reporter, "typed-lint", ...Object.keys(sources)],
       {
         cwd: root,
-        timeoutMs: 20_000,
         env: { ...process.env, GOMAXPROCS: "2", GOMEMLIMIT: "1GiB" },
       },
     );

@@ -102,7 +102,6 @@ it("repairs equal-launcher Copilot JSONC syntax while strict JSON and standard J
       process.execPath,
       ["--import", "tsx", entrypoint],
       {
-        timeoutMs: 20_000,
         env: {
           PATH: process.env.PATH,
           SystemRoot: process.env.SystemRoot,

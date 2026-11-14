@@ -41,7 +41,7 @@ processTest.skipIf(process.platform === "win32")(
       console.log(JSON.stringify(await completeVerifierRun(run)));
     `,
       ],
-      { env: { ...process.env, TSX_DISABLE_CACHE: "1" }, timeoutMs: 20_000 },
+      { env: { ...process.env, TSX_DISABLE_CACHE: "1" } },
     );
     expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
@@ -220,7 +220,6 @@ process.stdout.write(JSON.stringify({ pids, liveAtRemoval, rootRemoved: !existsS
     );
     try {
       const result = await processes.run(process.execPath, [driver], {
-        timeoutMs: 20_000,
         env: {
           ...process.env,
           npm_execpath: entry,

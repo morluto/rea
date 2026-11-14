@@ -174,7 +174,6 @@ process.stdout.write(JSON.stringify({ ready, liveAtRemoval, configurationAtRemov
     );
     try {
       const result = await processes.run(process.execPath, [driver], {
-        timeoutMs: 25_000,
         cwd: process.cwd(),
         env: {
           ...process.env,

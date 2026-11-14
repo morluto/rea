@@ -26,11 +26,11 @@ processTest(
     const entry = join(root, "scripts/fixtures/android/fetch.mjs");
     // Invalid arguments stop before downloads while exercising Node's real
     // source-module loading, without Vitest's .js-to-.ts resolution.
-    const result = await processes.run(
-      process.execPath,
-      [entry, "extra", "argument"],
-      { timeoutMs: 10000 },
-    );
+    const result = await processes.run(process.execPath, [
+      entry,
+      "extra",
+      "argument",
+    ]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain(
       "Usage: npm run fixtures:android -- [DIRECTORY]",

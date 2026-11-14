@@ -48,7 +48,6 @@ processTest
           TMP: temporary,
           TEMP: temporary,
         },
-        timeoutMs: 40_000,
       },
     );
     expect(result.exitCode, result.stderr + result.stdout).toBe(0);

@@ -212,7 +212,6 @@ cliTest(
         "md",
         "--full-output",
       ],
-      timeoutMs: 20_000,
     });
     expect(markdown.exitCode, markdown.stderr).toBe(0);
     const renderer = await createMarkdownRenderer(root, { linkify: false });

@@ -156,7 +156,6 @@ setTimeout(() => process.exit(92), 12000);
         GHIDRA_INSTALL_DIR: install,
         REA_LOG_LEVEL: "silent",
       },
-      timeoutMs: 15000,
     });
     // Capture the actual group while the selected process is alive; the PID
     // alone is never used as cleanup authority. Release is a private protocol.

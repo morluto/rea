@@ -57,11 +57,11 @@ processTest(
       /Ghidra session commitment drifted/,
     );
   `;
-    const result = await processes.run(
-      process.execPath,
-      ["--input-type=module", "--eval", source],
-      { timeoutMs: 10_000 },
-    );
+    const result = await processes.run(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      source,
+    ]);
     expect(result.signal, result.stderr).toBeNull();
     expect(result.exitCode, result.stderr).toBe(0);
   },
@@ -102,11 +102,11 @@ processTest(
       result = "EACCES";
       await assert.rejects(assertCleanup(coordinates), { code: "EACCES" });
     `;
-    const result = await processes.run(
-      process.execPath,
-      ["--input-type=module", "--eval", source],
-      { timeoutMs: 10_000 },
-    );
+    const result = await processes.run(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      source,
+    ]);
     expect(result.signal, result.stderr).toBeNull();
     expect(result.exitCode, result.stderr).toBe(0);
   },
