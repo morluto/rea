@@ -293,6 +293,30 @@ const frameJoinSchema = z.strictObject({
   static_address: recordedIntegerSchema
     .nullable()
     .describe("Slice __TEXT vmaddr plus the frame's recorded imageOffset."),
+  symbol: z
+    .strictObject({
+      name: z
+        .string()
+        .min(1)
+        .describe("Symbol-table name of the containing symbol, e.g. _main."),
+      runtime_name: z
+        .string()
+        .min(1)
+        .nullable()
+        .describe(
+          "Runtime spelling without the one leading underscore Darwin compilers add; the table name when unprefixed.",
+        ),
+      address: recordedIntegerSchema.describe(
+        "Static address of the containing symbol.",
+      ),
+      offset: recordedIntegerSchema.describe(
+        "Byte offset of the frame's static address from the containing symbol.",
+      ),
+    })
+    .nullable()
+    .describe(
+      "Containing LC_SYMTAB symbol for the joined static address, or null when the joined slice carries no usable symbol table.",
+    ),
 });
 
 /** Slice identity resolution against one caller-selected Mach-O or dSYM. */
@@ -393,6 +417,14 @@ export const appleIpsIntegerTextBytes = (
 ): number =>
   value === null ? 0 : 2 * (value.decimal.length + (value.hex?.length ?? 0));
 
+/** Retained integer text of one joined frame, including its symbol. */
+const appleIpsJoinFrameIntegerTextBytes = (
+  frame: Extract<AppleIpsJoin, { status: "selected" }>["frames"][number],
+): number =>
+  appleIpsIntegerTextBytes(frame.static_address) +
+  appleIpsIntegerTextBytes(frame.symbol?.address ?? null) +
+  appleIpsIntegerTextBytes(frame.symbol?.offset ?? null);
+
 /** The named report fields own which observed and derived integers are retained. */
 export const appleIpsReportIntegerTextBytes = (report: AppleIps): number => {
   let bytes =
@@ -432,7 +464,7 @@ export const appleIpsReportIntegerTextBytes = (report: AppleIps): number => {
         appleIpsIntegerTextBytes(match.text_vmaddr) +
         appleIpsIntegerTextBytes(match.runtime_base);
     for (const frame of report.join.frames)
-      bytes += appleIpsIntegerTextBytes(frame.static_address);
+      bytes += appleIpsJoinFrameIntegerTextBytes(frame);
   }
   return bytes;
 };

@@ -25,7 +25,7 @@ const recordedUuidPattern =
   /^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/u;
 const IPS_LIMITATIONS = [
   "Rows reproduce the selected .ips JSON; they do not establish that the process still exists or that a live kernel agrees with the recorded state.",
-  "Frames join a caller-selected Mach-O or dSYM only by matching slice LC_UUID and architecture; function and symbol resolution at a joined static address stays unobserved.",
+  "Frames join a caller-selected Mach-O or dSYM only by matching slice LC_UUID and architecture; a joined frame reports its containing symbol-table symbol when the joined slice carries LC_SYMTAB, and no symbol otherwise.",
   "Symbol names printed inside the report are recorded claims and are not verified.",
 ];
 

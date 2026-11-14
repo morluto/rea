@@ -115,15 +115,22 @@ The parsed slice facts remain available even when no match can be derived.
 slice's offset, arch, CPU type and subtype, UUID, and `__TEXT` vmaddr, plus
 `image_matches`, per-frame results, and join-specific limitations. A joined
 frame reports `static_address`, the slice `__TEXT` vmaddr plus the frame's
-recorded `imageOffset`, in decimal and hexadecimal. An unjoined frame reports
+recorded `imageOffset`, in decimal and hexadecimal, and `symbol`, the
+containing symbol from the joined slice's `LC_SYMTAB` symbol table: the
+table name, its runtime spelling, the symbol's static address, and the byte
+offset of the frame inside it. The symbol is the nearest preceding section
+symbol in the same segment as the static address. When the joined slice
+carries no `LC_SYMTAB`, or its table is unusable, the frame reports
+`symbol: null` and the join records why in its limitations. An unjoined frame reports
 a reason instead; an unknown image UUID, an absent `imageIndex` row, and a
 frame without `imageOffset` all stay unjoined rather than treated as aligned.
 
 An artifact that is not a Mach-O image or FAT container reports
 `join.status: "unreadable"` with a typed reason and leaves every report fact
-intact. Symbol names printed inside the report stay recorded claims. Function
-or symbol lookup at a joined static address, and matching dSYM symbol tables,
-are not performed by this step.
+intact. Symbol names printed inside the report stay recorded claims; a joined
+frame's `symbol` is derived from the joined artifact's own symbol table
+instead. DWARF debug-info lookup and matching dSYM symbol tables are not
+performed by this step.
 
 Symbol names printed inside the report are recorded claims and are not
 verified. Linux ELF cores use the separate

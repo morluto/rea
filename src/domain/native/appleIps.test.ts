@@ -72,7 +72,7 @@ it("rejects extra caller arguments and admits an empty crash inventory", () => {
     unlisted_body_keys: [],
     join: null,
     limitations: [
-      "Frames join a caller-selected Mach-O or dSYM only by matching slice LC_UUID and architecture; function and symbol resolution at a joined static address stays unobserved.",
+      "Frames join a caller-selected Mach-O or dSYM only by matching slice LC_UUID and architecture; a joined frame reports its containing symbol-table symbol when the joined slice carries LC_SYMTAB, and no symbol otherwise.",
     ],
   });
   expect(report.metadata.bug_type).toBe("309");
