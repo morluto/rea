@@ -204,6 +204,7 @@ describe("canonical catalog source composition", () => {
   it.each([
     "export const TOOL_CONTRACTS = buildCatalog();",
     "export const TOOL_CONTRACTS = Object.values(groups).flat();",
+    "const groups = buildGroups(); export const TOOL_CONTRACTS = Object.values(groups).flat();",
     "const groups = { get X() { return []; } }; export const TOOL_CONTRACTS = Object.values(groups).flat();",
     "export const OTHER = [];",
     "const alias = alias; export const TOOL_CONTRACTS = [...alias];",

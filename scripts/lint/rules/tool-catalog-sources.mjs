@@ -123,7 +123,17 @@ export const collectToolCatalogSources = (
       }
       const grouped = flattenedObjectValues(expression);
       if (grouped !== undefined) {
-        composition(grouped, localPath);
+        let object = arrayExpression(grouped);
+        const seen = new Set();
+        while (object?.type === "Identifier") {
+          if (seen.has(object.name) || !facts.locals.has(object.name))
+            throw new Error(`Expected static catalog groups: ${path}#${name}`);
+          seen.add(object.name);
+          object = arrayExpression(facts.locals.get(object.name));
+        }
+        if (object?.type !== "ObjectExpression")
+          throw new Error(`Expected static catalog groups: ${path}#${name}`);
+        composition(object, localPath);
         return;
       }
       // Calls such as HOPPER_MEMORY_TOOL_DEFINITIONS.map(official) construct
