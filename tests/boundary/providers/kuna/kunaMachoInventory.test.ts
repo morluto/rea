@@ -111,6 +111,35 @@ it("keeps code, stubs and import slots but omits Mach-O data symbols from proced
       ok: false,
       error: { userMessage: expect.stringContaining("__TEXT,__const") },
     });
+    // In the executable __TEXT segment, a section that declares no
+    // instructions does not by itself prove the bytes are not code.
+    const executableData = await client.execute("procedure_address", {
+      procedure: "table",
+    });
+    if (executableData.ok) throw new Error("Expected a data refusal");
+    expect(executableData.error).toMatchObject({
+      userMessage:
+        "table (0x1000004a0) lies in __TEXT,__const, a Mach-O section whose attributes declare no instructions, so REA's Kuna lane does not treat it as a procedure. Its segment is executable, so that declaration alone does not prove the bytes are not code. address_name and xrefs accept its address.",
+    });
+    expect(
+      projectAnalysisError(executableData.error).remediation.action,
+    ).toContain(
+      "To decode it as code, open the target with the Ghidra provider.",
+    );
+    expect(
+      (await run(client, "address_name", { address: "0x1000004a0" }))
+        .limitations,
+    ).toContain(
+      "Kuna lists table in its function inventory, but 0x1000004a0 lies in __TEXT,__const, a Mach-O section whose attributes declare no instructions, so REA treats the name as a data label. Its segment is executable, so that declaration alone does not prove the bytes are not code.",
+    );
+    // Non-executable data keeps the categorical wording and no Ghidra route.
+    const plainData = await client.execute("procedure_address", {
+      procedure: "global_count",
+    });
+    if (plainData.ok) throw new Error("Expected a data refusal");
+    expect(
+      projectAnalysisError(plainData.error).remediation.action,
+    ).not.toContain("Ghidra");
     expect(
       (await fakeKunaCalls(kuna)).filter(
         ({ argv }) => argv[0] === "decompile" || argv[0] === "decompile-graph",

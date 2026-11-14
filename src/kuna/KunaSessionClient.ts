@@ -86,7 +86,9 @@ import {
 import {
   KUNA_LAYOUT_NOT_APPLICABLE,
   kunaDataEntryMessage,
+  kunaDataEntryRemediation,
   kunaDataNameLimitation,
+  type KunaDataPlacement,
   kunaEntryLimitations,
   kunaInventoryLimitations,
   MACHO_LOAD_COMMAND_PREFIX,
@@ -148,8 +150,8 @@ type AnswerSource =
 interface InventoryIndex {
   readonly inventory: readonly KunaInventoryFunction[];
   readonly layout: KunaInventoryLayout;
-  /** The data region of each entry the layout places in data. */
-  readonly data: ReadonlyMap<KunaInventoryFunction, string>;
+  /** The data placement of each entry the layout places in data. */
+  readonly data: ReadonlyMap<KunaInventoryFunction, KunaDataPlacement>;
   readonly unplaced: ReadonlySet<KunaInventoryFunction>;
   readonly byAddress: ReadonlyMap<string, KunaInventoryFunction>;
   readonly byName: ReadonlyMap<string, readonly KunaInventoryFunction[]>;
@@ -1060,9 +1062,9 @@ export class KunaSessionClient implements AnalysisClient {
           ? row
           : matchProcedureNames(row, entry.aliases, matches);
       if (selected === undefined) continue;
-      const region = data.get(entry);
-      if (region !== undefined) {
-        omitted.push(region);
+      const placement = data.get(entry);
+      if (placement !== undefined) {
+        omitted.push(placement.region);
         continue;
       }
       if (unplaced.has(entry)) unclassified += 1;
@@ -1274,15 +1276,16 @@ export class KunaSessionClient implements AnalysisClient {
     const address = normalizeKunaAddress(selector);
     const refused = (entry: KunaInventoryFunction) =>
       field === "procedure" && index.data.has(entry);
-    const dataRefusal = (entry: KunaInventoryFunction) =>
-      err(
+    const dataRefusal = (entry: KunaInventoryFunction) => {
+      const placement = index.data.get(entry)!;
+      return err(
         new AnalysisInputError(operation, {
-          userMessage: kunaDataEntryMessage(entry, index.data.get(entry)!),
+          userMessage: kunaDataEntryMessage(entry, placement),
           conformsToInputContract: true,
-          remediationAction:
-            "Inspect the data address with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call.",
+          remediationAction: kunaDataEntryRemediation(placement),
         }),
       );
+    };
     const selected = (entry: KunaInventoryFunction) => {
       const placement = placeKunaEntry(index.layout, entry);
       return ok({
@@ -1410,7 +1413,7 @@ export class KunaSessionClient implements AnalysisClient {
         locations,
         limitations:
           placement.kind === "data"
-            ? [kunaDataNameLimitation(entry, placement.region)]
+            ? [kunaDataNameLimitation(entry, placement)]
             : kunaEntryLimitations(index.layout, placement),
       });
     }
