@@ -12,6 +12,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { javaScriptSourcePathsSchema } from "../domain/javascript/javascriptSourceSelection.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
+import { ownCliProcessResource } from "./cliResources.js";
 
 const OPERATION = "analyze_javascript_application";
 
@@ -93,6 +94,10 @@ const processJavaScriptAnalysis = new CliJavaScriptAnalysisHost();
 export const closeCliJavaScriptResources = (
   host: CliJavaScriptAnalysisHost = processJavaScriptAnalysis,
 ): Promise<void> => host.close();
+
+ownCliProcessResource("javascript-analysis", () =>
+  closeCliJavaScriptResources(),
+);
 
 /** Execute the shared CLI boundary for static JavaScript analysis. */
 export const runCliJavaScriptApplicationAnalysis = async (
