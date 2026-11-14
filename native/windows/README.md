@@ -36,15 +36,40 @@ from another REA version; the loader verifies the manifest version, ABI,
 architecture, and addon digest before it grants authority.
 
 From the checkout root, replace `<matching-version>` with the `version` in
-`package.json`:
+`package.json`. Verify the tarball digest against the npm registry before
+extracting.
+
+In PowerShell (Windows 10+):
+
+```powershell
+npm view rea-agents@<matching-version> dist.integrity
+npm pack rea-agents@<matching-version>
+[Convert]::ToBase64String([System.Security.Cryptography.SHA512]::Create().ComputeHash([System.IO.File]::ReadAllBytes((Resolve-Path .\rea-agents-<matching-version>.tgz))))
+New-Item -ItemType Directory -Path .tmp-restore -Force
+tar -xzf rea-agents-<matching-version>.tgz -C .tmp-restore package/native/windows/build
+New-Item -ItemType Directory -Force -Path native/windows/build
+Copy-Item .tmp-restore/package/native/windows/build/* native/windows/build/ -Force
+Remove-Item -Recurse -Force .tmp-restore, rea-agents-<matching-version>.tgz
+npm run verify:windows-native:artifact
+```
+
+In POSIX shell (Git Bash / WSL):
 
 ```sh
+npm view rea-agents@<matching-version> dist.integrity
 npm pack rea-agents@<matching-version>
-tar -xzf rea-agents-<matching-version>.tgz
-mkdir -p native/windows/build
-cp package/native/windows/build/manifest.json native/windows/build/
-cp package/native/windows/build/rea-windows-x64.node native/windows/build/
+openssl dgst -sha512 -binary rea-agents-<matching-version>.tgz | openssl base64 -A
+mkdir -p .tmp-restore native/windows/build
+tar -xzf rea-agents-<matching-version>.tgz -C .tmp-restore package/native/windows/build
+cp .tmp-restore/package/native/windows/build/manifest.json native/windows/build/
+cp .tmp-restore/package/native/windows/build/rea-windows-x64.node native/windows/build/
+rm -rf .tmp-restore rea-agents-<matching-version>.tgz
+npm run verify:windows-native:artifact
 ```
+
+The computed base64 digest must match the `dist.integrity` value after its
+`sha512-` prefix. Extracting only `package/native/windows/build` skips the rest of
+the package.
 
 This is a manual recovery step. REA does not fetch or install the artifact
 automatically. Alternatively, build it using the Linux/MinGW lane above.
