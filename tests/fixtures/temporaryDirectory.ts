@@ -31,3 +31,40 @@ export const createTestTempDirectory = async (
   });
   return canonicalDirectory;
 };
+
+/** Characters Node's Inspector discovery metadata cannot carry losslessly. */
+const NODE_DISCOVERY_AMBIGUOUS = /[_"\\]/u;
+
+/**
+ * Like `createTestTempDirectory`, for fixtures whose paths Node reports through
+ * Inspector discovery metadata.
+ *
+ * Node replaces `"` and `\` with `_` in that metadata, so
+ * `authorizeRuntimeTargetLocation` never stats a reported POSIX path containing
+ * `_`, `"` or `\`. A temporary root such as macOS's per-user
+ * `/private/var/folders/<x>/<y>/T`, where `<y>` often contains `_`, would make
+ * every fixture unverifiable. On POSIX this uses the canonical temporary
+ * directory when it is free of those characters, otherwise the canonical
+ * `/tmp`, and fails when neither is. Windows keeps `createTestTempDirectory`:
+ * Node discovery paths are never verified there.
+ */
+export const createNodeDiscoveryTempDirectory = async (
+  prefix: string,
+): Promise<string> => {
+  if (process.platform === "win32") return createTestTempDirectory(prefix);
+  const primary = await realpath(tmpdir());
+  const base = NODE_DISCOVERY_AMBIGUOUS.test(primary)
+    ? await realpath("/tmp")
+    : primary;
+  const canonicalDirectory = await realpath(
+    await mkdtemp(join(base, normalizeTestTemporaryPrefix(prefix))),
+  );
+  onTestFinished(async () => {
+    await removeTestWorkspace(canonicalDirectory);
+  });
+  if (NODE_DISCOVERY_AMBIGUOUS.test(canonicalDirectory))
+    throw new Error(
+      `No temporary directory free of '_', '"' and '\\' for Node discovery fixtures: ${canonicalDirectory}`,
+    );
+  return canonicalDirectory;
+};
