@@ -292,13 +292,27 @@ def run(arguments: dict) -> int:
 
 # The controller is sent with python -c, so a detached supervisor needs its
 # own source. It alone holds the child process handle and signals its group.
+# One SIGINT is not enough: a leader can ignore it, and a descendant that
+# called setsid can keep stderr open after the leader exits. Stopping stays
+# inside this process group. A new session is reported, not treated as exited.
 LONG_RUN = r'''
 import json, os, signal, subprocess, sys, threading, time
 job = sys.argv[1]
 result = {}
 child = None
 drainer = None
+request = {}
 stderr_tail, stderr_errors = bytearray(), []
+deadline = None
+timed_out = False
+interrupted = False
+force_stop = False
+output_incomplete = False
+leader_unsettled = False
+stop_step = 0
+stop_next = None
+GRACE_S = 2.0
+STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGKILL)
 
 def drain(stream):
     try:
@@ -313,11 +327,100 @@ def drain(stream):
         except OSError as error:
             stderr_errors.append(str(error))
 
-def timed_out_marker():
+def mark_timed_out():
+    global timed_out
+    if timed_out:
+        return
+    timed_out = True
     try:
         open(os.path.join(job, "timed_out"), "x").close()
     except FileExistsError:
         pass
+
+def stop_requested():
+    global interrupted
+    if deadline is not None and time.monotonic() >= deadline:
+        mark_timed_out()
+    cancelled = os.path.exists(os.path.join(job, "cancel"))
+    if cancelled:
+        interrupted = True
+    return force_stop or timed_out or cancelled
+
+def escalate():
+    """Send SIGINT, then SIGTERM, then SIGKILL, each once, with GRACE_S between them.
+
+    Returns true only after the last grace has elapsed and the leader is still running.
+    """
+    global interrupted, stop_step, stop_next
+    forced = force_stop
+    if not stop_requested() or child is None or child.poll() is not None:
+        return False
+    if not forced:
+        interrupted = True
+    now = time.monotonic()
+    if stop_step < len(STOP_SIGNALS) and (stop_next is None or now >= stop_next):
+        try:
+            os.killpg(child.pid, STOP_SIGNALS[stop_step])
+        except OSError:
+            pass
+        stop_step += 1
+        stop_next = now + GRACE_S
+    return stop_step >= len(STOP_SIGNALS) and stop_next is not None and now >= stop_next
+
+def abandon_drain():
+    """After the leader exits, wait out the budget, then one grace, then stop.
+
+    A descendant outside this process group can hold the pipe. Closing the
+    leader's group does not prove that descendant exited.
+    """
+    global output_incomplete
+    if drainer is None or not drainer.is_alive():
+        return
+    grace_end = None
+    while drainer.is_alive():
+        if stop_requested():
+            if grace_end is None:
+                grace_end = time.monotonic() + GRACE_S
+            elif time.monotonic() >= grace_end:
+                output_incomplete = True
+                return
+        drainer.join(0.2)
+
+def write_result():
+    if result.get("absent") is True:
+        result["settled"] = True
+    else:
+        if child is not None:
+            result.setdefault("exit_code", child.returncode)
+            result.setdefault("stderr", bytes(stderr_tail).decode("utf-8", "replace"))
+            stdout = request.get("stdout")
+            if isinstance(stdout, str):
+                try:
+                    result.setdefault("stdout_bytes", os.path.getsize(stdout))
+                except OSError:
+                    pass
+        result.setdefault("timed_out", timed_out)
+        result.setdefault("cancelled", interrupted and not timed_out)
+        if stderr_errors and "error" not in result:
+            result["error"] = f"The REA command's stderr could not be read: {stderr_errors[0]}"
+        if leader_unsettled:
+            result["settled"] = False
+            result.setdefault("error", "The REA command did not exit after SIGINT, SIGTERM, and SIGKILL.")
+        elif output_incomplete:
+            result["settled"] = False
+            result.setdefault(
+                "error",
+                "A process outside the supervised group still holds the command's stderr, so its output is incomplete.",
+            )
+        elif child is None or child.poll() is not None:
+            result["settled"] = True
+        else:
+            result["settled"] = False
+            result.setdefault("error", "The REA command supervisor lost the command before it exited.")
+    temporary = os.path.join(job, "result.tmp")
+    with open(temporary, "w", encoding="utf-8") as out:
+        json.dump(result, out)
+    os.replace(temporary, os.path.join(job, "result.json"))
 
 try:
     request = json.loads("".join(sys.argv[2:]))
@@ -330,26 +433,15 @@ try:
             drainer = threading.Thread(target=drain, args=(child.stderr,), daemon=True)
             drainer.start()
             deadline = time.monotonic() + request["timeout_s"]
-            interrupted = False
-            timed_out = False
             while child.poll() is None:
-                timed_out = timed_out or time.monotonic() >= deadline
-                if not interrupted and (timed_out or os.path.exists(os.path.join(job, "cancel"))):
-                    interrupted = True
-                    if timed_out:
-                        timed_out_marker()
-                    try:
-                        os.killpg(child.pid, signal.SIGINT)
-                    except OSError:
-                        pass
+                if escalate() and child.poll() is None:
+                    leader_unsettled = True
+                    break
                 time.sleep(0.2)
-            # A descendant can still hold stderr after the leader exits. Do
-            # not publish completion until that stream has actually closed.
-            while drainer.is_alive():
-                drainer.join(0.2)
-                if time.monotonic() >= deadline:
-                    timed_out = True
-                    timed_out_marker()
+            if leader_unsettled and drainer is not None and drainer.is_alive():
+                output_incomplete = True
+            elif not leader_unsettled:
+                abandon_drain()
             result = {"exit_code": child.returncode, "stdout_bytes": os.path.getsize(request["stdout"]),
                       "timed_out": timed_out, "cancelled": interrupted and not timed_out,
                       "stderr": bytes(stderr_tail).decode("utf-8", "replace")}
@@ -357,29 +449,18 @@ try:
                 result["error"] = f"The REA command's stderr could not be read: {stderr_errors[0]}"
 except Exception as error:
     result["error"] = f"The REA command supervisor failed: {error}"
-    # Keep the child handle until it exits, including when cancellation arrives
-    # after an unexpected supervisor error.
+    # The supervisor can no longer report a normal exit, so stop the leader it still owns.
+    force_stop = True
     while child is not None and child.poll() is None:
-        if os.path.exists(os.path.join(job, "cancel")):
-            try:
-                os.killpg(child.pid, signal.SIGINT)
-            except OSError:
-                pass
+        if escalate() and child.poll() is None:
+            leader_unsettled = True
+            break
         time.sleep(0.2)
-    if drainer is not None and drainer.ident is not None:
-        drainer.join()
-    if child is not None:
-        result.setdefault("exit_code", child.returncode)
-        result.setdefault("stderr", bytes(stderr_tail).decode("utf-8", "replace"))
-        try:
-            result.setdefault("stdout_bytes", os.path.getsize(request["stdout"]))
-        except OSError:
-            pass
-if child is None or child.poll() is not None:
-    temporary = os.path.join(job, "result.tmp")
-    with open(temporary, "w", encoding="utf-8") as out:
-        json.dump(result, out)
-    os.replace(temporary, os.path.join(job, "result.json"))
+    if leader_unsettled and drainer is not None and drainer.is_alive():
+        output_incomplete = True
+    else:
+        abandon_drain()
+write_result()
 '''
 
 

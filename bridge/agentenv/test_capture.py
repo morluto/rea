@@ -5,6 +5,7 @@ import io
 from contextlib import redirect_stdout
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -88,8 +89,14 @@ class LongRunTest(unittest.TestCase):
             "if len(sys.argv) > 1 and sys.argv[1] == 'stderr':\n"
             "    sys.stderr.write('x' * 100000 + 'TAIL')\n"
             "if len(sys.argv) > 1 and sys.argv[1] == 'hold':\n"
-            "    subprocess.Popen([sys.executable, '-c', 'import os,sys,time\\nwhile not os.path.exists(sys.argv[1]): time.sleep(0.02)', sys.argv[2]], stdout=subprocess.DEVNULL, stderr=sys.stderr, start_new_session=True)\n"
+            "    held = subprocess.Popen([sys.executable, '-c', 'import os,sys,time\\nwhile not os.path.exists(sys.argv[1]): time.sleep(0.02)', sys.argv[2]], stdout=subprocess.DEVNULL, stderr=sys.stderr, start_new_session=True)\n"
+            "    open(sys.argv[2] + '.pid', 'w').write(str(held.pid))\n"
             "    sys.exit(0)\n"
+            "if len(sys.argv) > 1 and sys.argv[1] == 'resist':\n"
+            "    signal.signal(signal.SIGINT, signal.SIG_IGN)\n"
+            "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "    open(sys.argv[2], 'w').close()\n"
+            "    while True: time.sleep(0.05)\n"
             "print(os.environ.get('AGENTENV_CONTROL_TOKEN', 'no token'))\n"
         )
         rea.chmod(0o755)
@@ -98,9 +105,9 @@ class LongRunTest(unittest.TestCase):
         self.job = self.root / "job"
         self.output = self.root / "out.json"
 
-    def command(self, name, **values):
+    def command(self, name, command_timeout=10, **values):
         result = subprocess.run([sys.executable, str(CONTROLLER), name, json.dumps(values)],
-                                env=self.environment, text=True, capture_output=True, timeout=10, check=True)
+                                env=self.environment, text=True, capture_output=True, timeout=command_timeout, check=True)
         return json.loads(result.stdout)
 
     def begin(self, argv, timeout=60):
@@ -169,17 +176,52 @@ class LongRunTest(unittest.TestCase):
             release.touch()
             self.command("run-poll", job=str(self.job), token="owner-token", timeout_s=5)
 
-    def test_waits_for_an_inherited_stderr_pipe_after_the_child_exits(self):
+    def test_reports_incomplete_stderr_while_a_new_session_descendant_holds_the_pipe(self):
         release = self.root / "release"
-        self.assertEqual(self.begin(["hold", str(release)], timeout=3), {"started": True})
+        self.assertEqual(self.begin(["hold", str(release)], timeout=1), {"started": True})
         try:
-            result = self.command("run-poll", job=str(self.job), token="owner-token", timeout_s=4)
-            self.assertTrue(result["pending"])
+            result = self.command(
+                "run-poll", job=str(self.job), token="owner-token", timeout_s=8, command_timeout=15,
+            )
+            self.assertTrue(result["finished"])
             self.assertTrue(result["timed_out"])
+            self.assertFalse(result["settled"])
+            self.assertEqual(result["exit_code"], 0)
+            self.assertIn("outside the supervised group", result["error"])
+            pid = int((self.root / "release.pid").read_text())
+            self.assertEqual(os.getsid(pid), pid)
+            os.kill(pid, 0)
         finally:
             release.touch()
-            result = self.command("run-poll", job=str(self.job), token="owner-token", timeout_s=5)
+
+    def test_cancel_during_inherited_stderr_drain_stays_unsettled(self):
+        release = self.root / "release"
+        self.assertEqual(self.begin(["hold", str(release)], timeout=30), {"started": True})
+        try:
+            result = self.command(
+                "run-cancel", job=str(self.job), token="owner-token", timeout_s=8, command_timeout=15,
+            )
             self.assertTrue(result["finished"])
+            self.assertTrue(result["cancelled"])
+            self.assertFalse(result["settled"])
+            self.assertEqual(result["exit_code"], 0)
+            pid = int((self.root / "release.pid").read_text())
+            self.assertEqual(os.getsid(pid), pid)
+            os.kill(pid, 0)
+        finally:
+            release.touch()
+
+    def test_kills_a_leader_that_ignores_sigint_and_sigterm(self):
+        ready = self.root / "ready"
+        self.assertEqual(self.begin(["resist", str(ready)], timeout=1), {"started": True})
+        result = self.command(
+            "run-poll", job=str(self.job), token="owner-token", timeout_s=12, command_timeout=20,
+        )
+        self.assertTrue(result["finished"])
+        self.assertTrue(result["timed_out"])
+        self.assertTrue(result["settled"])
+        self.assertFalse(result.get("pending", False))
+        self.assertEqual(result["exit_code"], -signal.SIGKILL)
 
     def test_failure_closing_supervisor_log_after_launch_does_not_claim_exit(self):
         ready = self.root / "ready"
