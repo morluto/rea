@@ -159,7 +159,7 @@ const installFacts = async (
       ...(libraries?.library_packages ?? []),
       ...(program === undefined ? [] : [program]),
     ],
-    { origins, declared },
+    { origins, declared, statusFile: context.host.apt.status },
     runQuery,
     context.signal,
   );
@@ -304,7 +304,7 @@ export const debianPackage = async (
       "No apt package lists are present, so whether the installed version comes from a package archive is unknown.",
     );
   const sources =
-    policy === undefined ? [] : [...parseAptPolicySources(policy)];
+    policy === undefined ? [] : [...parseAptPolicySources(policy, apt.status)];
   // A local install's library packages are matched to the archive by origin too.
   const origins = await policyOrigins(context);
   const installed = {
