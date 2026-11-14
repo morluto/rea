@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
@@ -341,5 +342,9 @@ describe("build bundle host settings", () => {
     }
 
     expect(parse({ REA_EXTRA_SETTING: "handle" }).success).toBe(true);
+    // The advertised schema states the same reservation with `not`, not look-around.
+    const advertised = JSON.stringify(z.toJSONSchema(buildSourceSchema));
+    expect(advertised).not.toMatch(/\(\?<?[=!]/u);
+    expect(advertised).toContain('"not":{"enum":["REA_AGENT_ENV_COMMAND"');
   });
 });

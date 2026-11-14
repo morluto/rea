@@ -5,7 +5,7 @@ export const BUILD_COMPUTER_SETTINGS = [
   "REA_BUILD_COMPUTER_REA_ARCHIVE",
 ] as const;
 
-/** Bundle variable names advertised to clients; host controls are refused at runtime. */
+/** Bundle variable names; schemas advertise the host-control exclusion with `not`. */
 export const BUNDLE_SETTING_VARIABLE = /^REA_[A-Z0-9_]{1,60}$/u;
 
 /** Whether a bundle setting name is portable and not a host-control name. */

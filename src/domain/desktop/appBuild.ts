@@ -1,4 +1,5 @@
 import {
+  BUILD_COMPUTER_SETTINGS,
   BUNDLE_SETTING_VARIABLE,
   isBundleSettingVariable,
 } from "./buildComputerSettings.js";
@@ -154,7 +155,8 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
           .refine(
             isBundleSettingVariable,
             "Build host control names are reserved.",
-          ),
+          )
+          .meta({ not: { enum: [...BUILD_COMPUTER_SETTINGS] } }),
         buildSecretHandleSchema,
       )
       .optional()
