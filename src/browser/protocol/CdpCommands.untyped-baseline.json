@@ -38,9 +38,6 @@
     "Page.getLayoutMetrics": 1,
     "Page.captureScreenshot": 1
   },
-  "src/browser/CdpScriptSourceCapture.ts": {
-    "Debugger.getScriptSource": 1
-  },
   "src/browser/CdpWebMcpDiscovery.ts": {
     "WebMCP.enable": 1
   },
@@ -64,14 +61,7 @@
     "DOM.resolveNode": 1,
     "DOMDebugger.getEventListeners": 1
   },
-  "src/browser/execution/CdpExecutionCapture.ts": {
-    "Profiler.startPreciseCoverage": 1,
-    "Profiler.takePreciseCoverage": 1
-  },
   "src/browser/execution/CdpListenerSelector.ts": {
     "DOM.querySelector": 2
-  },
-  "src/browser/execution/CdpRuntimeSources.ts": {
-    "Debugger.getScriptSource": 1
   }
 }

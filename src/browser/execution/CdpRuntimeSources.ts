@@ -247,29 +247,25 @@ export class CdpRuntimeSources {
   }
 
   private async capture(scriptId: string): Promise<WebRuntimeSource["source"]> {
-    let raw: unknown;
+    let text: string;
     try {
-      raw = await this.session.command("Debugger.getScriptSource", {
-        scriptId,
-      });
+      ({ scriptSource: text } = await this.session.command(
+        "Debugger.getScriptSource",
+        { scriptId },
+      ));
     } catch (cause: unknown) {
       if (
         this.session.options.signal?.aborted ||
         !(cause instanceof AnalysisError)
       )
         throw cause;
+      // A failed or malformed reply limits only this script. The reason is the
+      // boundary's own failure text, which names a malformed reply's pointer.
       return {
         state: "unavailable",
         reason: cause.userMessage ?? cause.message,
       };
     }
-    const source = z.object({ scriptSource: z.string() }).safeParse(raw);
-    if (!source.success)
-      throw new AnalysisOutputError(
-        this.session.operation,
-        "Debugger.getScriptSource returned malformed source text.",
-      );
-    const text = source.data.scriptSource;
     this.#sourceBytes += Buffer.byteLength(text);
     assertRuntimeRetention(
       this.session.operation,
