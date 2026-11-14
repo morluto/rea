@@ -121,6 +121,14 @@ const expectedAdmission = (
   if (parameter.callerPath) {
     // A caller path is validated as typed: an empty value never becomes the
     // working directory. A nonempty value is resolved, then the contract rules.
+    if (Array.isArray(value))
+      return (
+        value.every((path) => typeof path === "string" && path !== "") &&
+        admits(
+          contractField,
+          value.map((path: string) => absoluteCallerPath(path)),
+        )
+      );
     if (typeof value !== "string") return admits(contractField, value);
     return value !== "" && admits(contractField, absoluteCallerPath(value));
   }
@@ -143,6 +151,20 @@ const registeredField = (
 const contractShape = (description: ContractCliDescription) =>
   description.fields;
 
+/** The contract schema one parameter supplies: a field, or a flattened member. */
+const suppliedField = (
+  description: ContractCliDescription,
+  parameter: ContractCliParameter,
+): z.ZodType => {
+  const field = contractShape(description)[parameter.field]!;
+  if (parameter.member === undefined) return field;
+  let object: z.ZodType = field;
+  while (object instanceof z.ZodOptional) object = object.unwrap() as z.ZodType;
+  return (
+    (object as z.ZodObject).shape[parameter.member] as z.ZodType
+  ).optional();
+};
+
 /** A caller-relative target, or the first probe the argument admits. */
 const requiredValue = (
   description: ContractCliDescription,
@@ -150,7 +172,7 @@ const requiredValue = (
 ): unknown =>
   parameter.callerPath
     ? "rel/target"
-    : probes(contractShape(description)[parameter.field]!).find(
+    : probes(suppliedField(description, parameter)).find(
         (value) =>
           value !== undefined &&
           admits(registeredField(description, parameter), value),
@@ -217,6 +239,9 @@ describe("CLI commands projected from tool contracts", () => {
         "decode-signal-recording",
         "inspect-packet-fields",
         "inspect-packet-capture",
+        "inspect-wasm-artifact",
+        "inspect-firmware-regions",
+        "extract-firmware",
       ]),
     );
   });
@@ -226,7 +251,7 @@ describe("CLI commands projected from tool contracts", () => {
     (_command, description) => {
       expect(
         [
-          ...description.parameters.map(({ field }) => field),
+          ...new Set(description.parameters.map(({ field }) => field)),
           ...Object.keys(description.omitted),
         ]
           .toSorted()
@@ -261,13 +286,19 @@ describe("CLI commands projected from tool contracts", () => {
       const mismatches: string[] = [];
       for (const parameter of description.parameters) {
         const cliField = registeredField(description, parameter);
-        const contractField = contractShape(description)[parameter.field]!;
+        const contractField = suppliedField(description, parameter);
         // Incur's help reads flag and choice types only through `optional`.
         expect(cliField, parameter.key).not.toBeInstanceOf(z.ZodExactOptional);
         if (parameter.callerPath) {
           // Only the absolute-path rule is relaxed, and only by resolution.
-          expect(admits(contractField, "rel/x"), parameter.field).toBe(false);
-          expect(admits(contractField, absoluteCallerPath("rel/x"))).toBe(true);
+          const spelled = (path: string) =>
+            parameter.repeatable ? [path] : path;
+          expect(admits(contractField, spelled("rel/x")), parameter.field).toBe(
+            false,
+          );
+          expect(
+            admits(contractField, spelled(absoluteCallerPath("rel/x"))),
+          ).toBe(true);
         }
         if (parameter.runtimeJson !== undefined) {
           // JSON text decoded when the command runs; see below.
@@ -320,7 +351,9 @@ describe("CLI commands projected from tool contracts", () => {
         }
     },
   );
+});
 
+describe("Registration refusals of contract commands", () => {
   it.each([
     ["an object", z.object({ value: z.string() }).optional()],
     ["a record", z.record(z.string(), z.string()).optional()],
@@ -510,6 +543,60 @@ describe("Null-limit flags of contract commands", () => {
       expect(description.toContractInput(bounded)[parameter.field]).toBe(1);
     },
   );
+});
+
+const flattening = each.filter(([, description]) =>
+  description.parameters.some(({ member }) => member !== undefined),
+);
+
+describe("Flattened object fields of contract commands", () => {
+  it.each(flattening)(
+    "%s supplies the whole object when any member is given",
+    (_command, description) => {
+      const members = description.parameters.filter(
+        ({ member }) => member !== undefined,
+      );
+      const field = members[0]!.field;
+      expect(
+        field in description.toContractInput(argvValues(description, {})),
+      ).toBe(false);
+      for (const given of members) {
+        const input = description.toContractInput(
+          argvValues(description, { [given.key]: 1 }),
+        );
+        expect(Object.keys(input[field] as object).toSorted()).toEqual(
+          members.map(({ member }) => member).toSorted(),
+        );
+        expect((input[field] as Record<string, unknown>)[given.member!]).toBe(
+          1,
+        );
+      }
+    },
+  );
+
+  it("refuses to flatten part of an object or a non-object field", () => {
+    const contract = {
+      name: "probe",
+      inputSchema: z.object({
+        range: z.object({ a: z.number(), b: z.number() }).optional(),
+        value: z.string().optional(),
+      }),
+    };
+    expect(() =>
+      describeContractCommand(contract, {
+        command: "probe",
+        description: "Probe",
+        flatten: { range: { a: {} } },
+      }),
+    ).toThrow("probe.range flattens other members");
+    expect(() =>
+      describeContractCommand(contract, {
+        command: "probe",
+        description: "Probe",
+        flatten: { range: { a: {}, b: {} }, value: { a: {} } },
+      }),
+    ).toThrow("probe.value is not an optional object");
+  });
 });
 
 const delivering = each.filter(
