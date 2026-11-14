@@ -12,11 +12,6 @@ import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMeta
 import { presentAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
 import { createCatalogDigests } from "../../../src/catalogIdentity.js";
 import {
-  schemaArrays,
-  schemaChildren,
-  schemaMaps,
-} from "../../../src/contracts/jsonSchemaKeywords.js";
-import {
   COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
   parseMcpInputSchemaProfile,
 } from "../../../src/config/mcpInputSchemaProfile.js";
@@ -40,160 +35,6 @@ interface AdvertisedTool {
 
 const serializedBytes = (value: unknown): number =>
   Buffer.byteLength(JSON.stringify(value), "utf8");
-
-const schemaDepth = (value: unknown, depth = 0): number => {
-  if (Array.isArray(value))
-    return Math.max(
-      depth,
-      ...value.map((child) => schemaDepth(child, depth + 1)),
-    );
-  if (typeof value !== "object" || value === null) return depth;
-  return Math.max(
-    depth,
-    ...Object.values(value).map((child) => schemaDepth(child, depth + 1)),
-  );
-};
-
-const unsupportedDependencyKeywords = (
-  schema: unknown,
-  path = "$",
-): readonly string[] => {
-  if (Array.isArray(schema))
-    return schema.flatMap((child, index) =>
-      unsupportedDependencyKeywords(child, `${path}[${index}]`),
-    );
-  if (typeof schema !== "object" || schema === null) return [];
-  return Object.entries(schema).flatMap(([key, value]) => {
-    const childPath = `${path}.${key}`;
-    if (key === "dependencies" || key === "dependentRequired")
-      return [childPath];
-    if (["const", "enum", "default", "examples"].includes(key)) return [];
-    if (schemaMaps.has(key) && typeof value === "object" && value !== null)
-      return Object.entries(value).flatMap(([name, child]) =>
-        unsupportedDependencyKeywords(child, `${childPath}.${name}`),
-      );
-    if (schemaArrays.has(key) && Array.isArray(value))
-      return unsupportedDependencyKeywords(value, childPath);
-    if (schemaChildren.has(key))
-      return unsupportedDependencyKeywords(value, childPath);
-    return [];
-  });
-};
-
-// Moonshot rejects a $ref whose target is a oneOf/anyOf whose branches
-// contain another $ref (morluto/rea#9581): "detected infinite recursion
-// without termination condition". The rejection is about the reference
-// shape, not the union itself, so this checks the pattern rather than
-// banning references outright: a genuinely recursive schema still needs
-// $ref, but never in this shape.
-const resolveLocalPointer = (root: unknown, reference: string): unknown => {
-  if (!reference.startsWith("#/")) return undefined;
-  let current: unknown = root;
-  for (const token of reference
-    .slice(2)
-    .split("/")
-    .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))) {
-    if (typeof current !== "object" || current === null) return undefined;
-    current = (current as Record<string, unknown>)[token];
-  }
-  return current;
-};
-
-const collectSchemaReferences = (
-  node: unknown,
-  path: string,
-  collected: { path: string; reference: string }[],
-): void => {
-  if (Array.isArray(node)) {
-    node.forEach((child, index) =>
-      collectSchemaReferences(child, `${path}[${index}]`, collected),
-    );
-    return;
-  }
-  if (typeof node !== "object" || node === null) return;
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "$ref" && typeof value === "string") {
-      collected.push({ path: `${path}.$ref`, reference: value });
-      continue;
-    }
-    if (["const", "enum", "default", "examples"].includes(key)) continue;
-    if (schemaMaps.has(key) && typeof value === "object" && value !== null) {
-      for (const [name, child] of Object.entries(value))
-        collectSchemaReferences(child, `${path}.${key}.${name}`, collected);
-    } else if (schemaArrays.has(key) && Array.isArray(value)) {
-      value.forEach((child, index) =>
-        collectSchemaReferences(child, `${path}.${key}[${index}]`, collected),
-      );
-    } else if (schemaChildren.has(key)) {
-      if (Array.isArray(value))
-        value.forEach((child, index) =>
-          collectSchemaReferences(child, `${path}.${key}[${index}]`, collected),
-        );
-      else collectSchemaReferences(value, `${path}.${key}`, collected);
-    }
-  }
-};
-
-/** Paths of $refs Moonshot rejects: targets that are a oneOf/anyOf with a nested $ref. */
-const moonshotRejectedReferences = (
-  schema: Record<string, unknown>,
-): readonly string[] => {
-  const collected: { path: string; reference: string }[] = [];
-  collectSchemaReferences(schema, "$", collected);
-  return collected
-    .filter(({ reference }) => {
-      const target = resolveLocalPointer(schema, reference);
-      if (typeof target !== "object" || target === null) return false;
-      for (const key of ["oneOf", "anyOf"]) {
-        const branches = (target as Record<string, unknown>)[key];
-        if (!Array.isArray(branches)) continue;
-        const nested: { path: string; reference: string }[] = [];
-        for (const branch of branches)
-          collectSchemaReferences(branch, "$", nested);
-        if (nested.length > 0) return true;
-      }
-      return false;
-    })
-    .map(({ path }) => path);
-};
-
-it("distinguishes rejected references from allowed references and literal data", () => {
-  const union = {
-    oneOf: [
-      { type: "object", properties: { a: { $ref: "#/$defs/s" } } },
-      { type: "object", properties: { a: { $ref: "#/$defs/t" } } },
-    ],
-  };
-  const definitions = { s: { type: "string" }, t: { type: "number" } };
-  const rejected = {
-    type: "object",
-    properties: { c: { $ref: "#/$defs/u" } },
-    $defs: { ...definitions, u: union },
-  };
-  expect(moonshotRejectedReferences(rejected)).toEqual(["$.properties.c.$ref"]);
-  expect(
-    moonshotRejectedReferences({
-      type: "object",
-      properties: { c: { $ref: "#/$defs/s" } },
-      $defs: definitions,
-    }),
-  ).toEqual([]);
-  expect(
-    moonshotRejectedReferences({
-      type: "object",
-      properties: { c: { $ref: "#/$defs/a~1b~0c" } },
-      $defs: { ...definitions, "a/b~c": union },
-    }),
-  ).toEqual(["$.properties.c.$ref"]);
-  expect(
-    moonshotRejectedReferences({
-      const: rejected,
-      enum: [rejected],
-      default: rejected,
-      examples: [rejected],
-    }),
-  ).toEqual([]);
-});
 
 const listToolsThroughTransport = async (
   server: EvidenceMcpServer,
@@ -295,24 +136,13 @@ describe("MCP compact input schema profile", () => {
   });
 });
 
-it("advertises every tool input schema within the provider budget", async () => {
+it("advertises item schemas strict gateways accept", async () => {
   const server = compactServer();
   registerCatalog(server);
   const tools = await listToolsThroughTransport(server);
   expect(tools.map(({ name }) => name).sort()).toEqual(
     TOOL_CONTRACTS.map(({ name }) => name).sort(),
   );
-  const oversized = tools.filter(
-    ({ inputSchema }) =>
-      serializedBytes(inputSchema) > COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-  );
-  expect(oversized.map(({ name }) => name)).toEqual([]);
-  const tooDeep = tools.filter(
-    ({ inputSchema }) => schemaDepth(inputSchema) > 10,
-  );
-  expect(
-    tooDeep.map(({ name, inputSchema }) => [name, schemaDepth(inputSchema)]),
-  ).toEqual([]);
   expect(
     tools.flatMap(({ name, inputSchema }) =>
       strictGatewayItemSchemaErrors(inputSchema, name),
@@ -532,7 +362,7 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
   expect(checkedFullRestrictions).toBe(true);
 });
 
-it("omits Gemini-unsupported dependency keywords from both catalog profiles", async () => {
+it("states dependency keywords as prose in both catalog profiles", async () => {
   const full = fullServer();
   const compact = compactServer();
   registerCatalog(full);
@@ -541,14 +371,6 @@ it("omits Gemini-unsupported dependency keywords from both catalog profiles", as
     listToolsThroughTransport(full),
     listToolsThroughTransport(compact),
   ]);
-  for (const tools of [fullTools, compactTools])
-    expect(
-      tools.flatMap(({ name, inputSchema }) =>
-        unsupportedDependencyKeywords(inputSchema).map(
-          (path) => `${name}${path.slice(1)}`,
-        ),
-      ),
-    ).toEqual([]);
   const sqlite = fullTools.find(
     ({ name }) => name === "inspect_sqlite_database",
   );
@@ -595,55 +417,6 @@ it("retains parameter types and avoids client-side reference expansion", async (
     coverage: { type: "object" },
     boundary_id: { type: "string" },
   });
-});
-
-it("advertises Moonshot-accepted input schemas without the rejected reference pattern in both profiles", async () => {
-  // morluto/rea#9581: Kimi/Moonshot rejects a $ref whose target is a
-  // oneOf/anyOf with another $ref inside, which broke every Kimi request
-  // because clients send the whole tool list. The nine tools named in the
-  // issue must stay advertised with inlined schemas in both profiles.
-  const rejectedInIssue = [
-    "capture_browser_scenario",
-    "capture_native_ui_scenario",
-    "observe_native_calls",
-    "inspect_analysis_view",
-    "compare_web_captures",
-    "trace_javascript_semantics",
-    "compare_process_captures",
-    "correlate_static_and_runtime",
-    "verify_reconstruction",
-  ];
-  for (const profile of ["full", "compact"] as const) {
-    const server = profile === "full" ? fullServer() : compactServer();
-    registerCatalog(server);
-    const tools = await listToolsThroughTransport(server);
-    const byName = new Map(tools.map((tool) => [tool.name, tool]));
-    for (const name of rejectedInIssue) {
-      const tool = byName.get(name);
-      if (tool === undefined)
-        throw new Error(`${profile} profile: ${name} was not advertised`);
-      expect(
-        tool.inputSchema,
-        `${profile} profile: ${name}`,
-      ).not.toHaveProperty("$defs");
-      expect(
-        moonshotRejectedReferences(tool.inputSchema),
-        `${profile} profile: ${name}`,
-      ).toEqual([]);
-    }
-    expect(
-      tools.flatMap(({ name, inputSchema }) =>
-        moonshotRejectedReferences(inputSchema).map(
-          (path) => `${profile} profile: ${name}${path.slice(1)}`,
-        ),
-      ),
-    ).toEqual([]);
-    expect(
-      tools
-        .filter(({ inputSchema }) => Object.hasOwn(inputSchema, "$defs"))
-        .map(({ name }) => `${profile} profile: ${name}`),
-    ).toEqual([]);
-  }
 });
 
 it("parses the profile selection the server startup reads", () => {

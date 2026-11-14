@@ -1,14 +1,12 @@
 import { z } from "zod";
 
+import { ADVERTISED_INPUT_SCHEMA_MAX_BYTES } from "../contracts/advertisedDialect.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
-// Moonshot's function-calling API rejects requests while any single tool
-// parameters schema exceeds its literal serialized size cap. Community
-// measurements bound the cap between ~13.7 KB (accepted) and ~15 KB
-// (rejected); 13 KiB leaves margin under the lower bound. See
-// https://github.com/morluto/rea/issues/1484 for the measured evidence.
-export const COMPACT_INPUT_SCHEMA_BUDGET_BYTES = 13 * 1024;
+/** The compact profile fits the portable dialect's per-tool size cap. */
+export const COMPACT_INPUT_SCHEMA_BUDGET_BYTES =
+  ADVERTISED_INPUT_SCHEMA_MAX_BYTES;
 
 export const mcpInputSchemaProfileSchema = z.enum(["full", "compact"]);
 
