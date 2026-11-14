@@ -25,7 +25,7 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../domain/safeJson.js";
-import { boundedUtf8Text } from "./boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { createDarwinHelperCache } from "./DarwinHelperCache.js";
 import { snapshotEnvironment } from "./snapshotEnvironment.js";
 import {
@@ -266,8 +266,8 @@ const compilerFailureFacts = (
   | undefined => {
   const failure = execFileOutputFailure(cause);
   if (failure === undefined) return undefined;
-  const stderr = boundedUtf8Text(failure.stderr, MAX_COMPILER_OUTPUT_BYTES);
-  const stdout = boundedUtf8Text(failure.stdout, MAX_COMPILER_OUTPUT_BYTES);
+  const stderr = utf8HeadExcerpt(failure.stderr, MAX_COMPILER_OUTPUT_BYTES);
+  const stdout = utf8HeadExcerpt(failure.stdout, MAX_COMPILER_OUTPUT_BYTES);
   const outcome =
     failure.code === "ETIMEDOUT"
       ? "timed_out"
@@ -336,7 +336,7 @@ const compilerInspectionError = (
     code === "ENOENT"
       ? `macOS process ownership inspection requires the Apple Swift compiler via ${launcher}`
       : `macOS process ownership helper compilation failed via ${launcher}`;
-  const stderr = boundedUtf8Text(outcome?.stderr ?? "", STDERR_EXCERPT_LIMIT);
+  const stderr = utf8HeadExcerpt(outcome?.stderr ?? "", STDERR_EXCERPT_LIMIT);
   const diagnostics = stderr.text.trim();
   const truncated =
     stderr.truncated ||

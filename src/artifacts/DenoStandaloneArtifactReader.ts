@@ -120,11 +120,11 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
       );
       await this.#source.readSelectedPath(signal);
     });
-    if (this.#header?.vfs_listing === "unsupported")
-      options?.onCoverage?.({
-        status: "unknown",
-        limitations: [UNLISTED_VFS_LIMITATION],
-      });
+    options?.onCoverage?.(
+      this.#header?.vfs_listing === "unsupported"
+        ? { status: "unknown", limitations: [UNLISTED_VFS_LIMITATION] }
+        : { status: "complete", limitations: [] },
+    );
     let index = 0;
     for (const entry of this.#entries.values()) {
       if (index++ % 256 === 0) await setImmediate();

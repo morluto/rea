@@ -11,9 +11,9 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
 import {
   selectCdpFrameIdentity,
-  cdpFrameRecordFacts,
   cdpFrameEventFacts,
 } from "./CdpFrameIdentity.js";
+import type { CdpFrameTree } from "./protocol/CdpFrameTree.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import {
@@ -23,7 +23,6 @@ import {
 } from "./CdpCaptureValues.js";
 import {
   observeCdpFrameUrl,
-  observeMainFrameUrl,
   classifyCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
 
@@ -63,10 +62,7 @@ export const captureCdpScreenshot = async (
     context.sessionId,
     context.signal,
   );
-  const initialFrame = recordValue(
-    recordValue(recordValue(before)?.frameTree)?.frame,
-  );
-  const beforeObservation = observeCdpFrameUrl(initialFrame);
+  const beforeObservation = before.root.url;
   const beforeFacts = classifyCdpFrameUrl(beforeObservation, origins);
   if (
     beforeFacts.scope === "outside_policy" ||
@@ -76,7 +72,7 @@ export const captureCdpScreenshot = async (
   if (beforeObservation.kind !== "observed")
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const beforeUrl = beforeFacts.url;
-  const mainFrame = cdpFrameRecordFacts(initialFrame);
+  const mainFrame = before.root.facts;
   if (
     beforeUrl === undefined ||
     beforeFacts.origin === null ||
@@ -114,7 +110,7 @@ export const captureCdpScreenshot = async (
       throw new BrowserObservationError("inspect_web_page", "target_changed");
   };
   let screenshot: Awaited<ReturnType<typeof captureScreenshotImage>>;
-  let after: unknown;
+  let after: CdpFrameTree;
   try {
     const viewport = await readScreenshotViewport(context);
     assertCurrentDocument();
@@ -153,7 +149,7 @@ export const captureCdpScreenshot = async (
   assertCurrentDocument();
   if (navigation.leftScope)
     throw cdpOriginScopeRefusal("capture_web_screenshot");
-  const afterObservation = observeMainFrameUrl(after);
+  const afterObservation = after.root.url;
   const afterFacts = classifyCdpFrameUrl(afterObservation, origins);
   if (
     afterFacts.scope === "outside_policy" ||
@@ -163,9 +159,7 @@ export const captureCdpScreenshot = async (
   if (navigation.invalidIdentity || afterObservation.kind !== "observed")
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const afterUrl = afterFacts.url;
-  const afterFrame = cdpFrameRecordFacts(
-    recordValue(recordValue(recordValue(after)?.frameTree)?.frame),
-  );
+  const afterFrame = after.root.facts;
   if (
     afterFrame.identityIssue !== null ||
     afterFrame.parentRelation !== "root" ||
