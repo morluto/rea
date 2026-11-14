@@ -1,4 +1,5 @@
 import {
+  WEB_SOURCE_MAP_LIMITS,
   sourceMapLimitSelection,
   sourceMapLimitRecovery,
   type SourceMapLimits,
@@ -23,7 +24,6 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, type Result } from "../../domain/result.js";
 import {
   DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
-  WEB_SOURCE_MAP_LIMITS,
   webSourceMapDecodeTimeoutRecovery,
   type WebSourceMapReport,
 } from "../../domain/webSourceLocation.js";

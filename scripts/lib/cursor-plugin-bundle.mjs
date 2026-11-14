@@ -7,14 +7,13 @@ import { ensureGeneratedFile } from "./generated-file.mjs";
 // publication (name, release version, repository, skill, and icon). The
 // Marketplace checkout has no dist/, so the server is the pinned npm command
 // instead of the bundled launcher.
-export const CURSOR_PLUGIN_MANIFEST = ".cursor-plugin/plugin.json";
-export const CURSOR_PLUGIN_MCP = "mcp.json";
-export const AUTHORED_SKILL_DIRECTORY =
-  ".agents/skills/reverse-engineer-anything";
-export const CURSOR_PLUGIN_SKILLS = ".cursor-plugin/skills";
-export const CURSOR_PLUGIN_SKILL = "reverse-engineer-anything";
-export const CURSOR_PLUGIN_LOGO = "assets/rea-plugin.png";
-export const CURSOR_PLUGIN_REPOSITORY = "https://github.com/morluto/rea";
+const CURSOR_PLUGIN_MANIFEST = ".cursor-plugin/plugin.json";
+const CURSOR_PLUGIN_MCP = "mcp.json";
+const AUTHORED_SKILL_DIRECTORY = ".agents/skills/reverse-engineer-anything";
+const CURSOR_PLUGIN_SKILLS = ".cursor-plugin/skills";
+const CURSOR_PLUGIN_SKILL = "reverse-engineer-anything";
+const CURSOR_PLUGIN_LOGO = "assets/rea-plugin.png";
+const CURSOR_PLUGIN_REPOSITORY = "https://github.com/morluto/rea";
 const GENERATE_COMMAND = "node scripts/generate-cursor-plugin-skill.mjs";
 const INSTALL_LINK_MARKERS = ["install-mcp", "deeplink/mcp", "mcp-install"];
 
@@ -27,7 +26,7 @@ const failure = (code, detail) => {
 const cursorServerArgs = (version) => ["-y", `rea-agents@${version}`, "mcp"];
 
 /** Relative file inventory for one skill directory, in stable order. */
-export const cursorPluginSkillPaths = async (directory, prefix = "") => {
+const cursorPluginSkillPaths = async (directory, prefix = "") => {
   const paths = [];
   let entries;
   try {

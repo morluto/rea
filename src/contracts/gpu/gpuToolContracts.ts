@@ -6,7 +6,7 @@ import {
 import {
   gpuCodeObjectsSummaryViewResultSchema,
   gpuCodeObjectsPageViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";

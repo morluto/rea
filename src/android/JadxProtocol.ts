@@ -10,11 +10,6 @@ import {
   dexDescriptorSchema,
   dexTypeSchema,
 } from "../domain/android/dexTypes.js";
-import { androidNativeDeclarationsSchema } from "../domain/android/androidNativeDeclarations.js";
-
-/** Native-only raw DEX facts authored before decompiler deduplication. */
-export const jadxNativeDeclarationsSchema = androidNativeDeclarationsSchema;
-
 const count = z.int().nonnegative();
 /** Typed allocation failures authored before upstream erases the JVM exception. */
 const jadxMemoryFailureSchema = z.strictObject({

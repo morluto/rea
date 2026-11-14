@@ -6,7 +6,7 @@ import {
   apiContractSummaryViewResultSchema,
   apiContractPageViewResultSchema,
   graphqlContractPageViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
+} from "../domain/analysisView/analysisViewResult.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import type { ToolContract } from "./toolContractTypes.js";

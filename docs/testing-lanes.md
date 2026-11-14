@@ -549,6 +549,26 @@ does not call CLI `search-bytes`, and does not page an overlay search across a
 snapshot reopen. AArch64 remains covered by deterministic tests rather than this
 real-provider lane. See [raw binary analysis](providers/raw-binary.md).
 
+`npm run verify:ghidra:loader-relocation` runs
+`tests/conformance/ghidra/ReaLoaderRelocationProbe.java` inside a real Linux
+Ghidra ELF import. The source-owned PIE fixture reads a `const` object from a
+provider library, which the linker copies into `.data.rel.ro` with a copy
+relocation that Ghidra imports as unapplied, the shape of #4177. The probe
+requires that relocation and the reader's read reference to it, a non-writable
+file-backed block, and the bridge's volatile marking and limitation. Source
+`FileBytes` and block permissions must be unchanged. Applied GOT relocations
+must stay non-volatile, and a full-RELRO `-fno-plt` GOT caller must decompile
+identically before and after protection. Ghidra 12.1.4 already shows this
+x86-64 read by name without protection, so the report records whether the
+baseline folded the file-backed zero and compares before and after only when it
+did. The decompiler effect on the original MIPS case was observed on the
+reporter's binary, not in this lane. The lane never executes the fixture and
+needs Ghidra/JDK with the native decompiler and a Linux C compiler. The
+change-selected [Ghidra bridge CI lane](https://github.com/morluto/rea/blob/main/.github/workflows/ghidra-bridge-sources.yml)
+runs it with its checksum-verified Ghidra distribution. Read-only sessions
+(Windows P0 and caller-owned existing projects) record the same limitation but
+do not mark blocks volatile; no real-provider lane covers them.
+
 `npm run verify:ghidra:address-context` runs on Linux with a caller-installed
 Ghidra, full JDK, and an x86-64 ELF GCC toolchain (`CC` selects another compatible
 compiler). It builds
@@ -719,7 +739,7 @@ push: changes from failed or cancelled intermediate runs remain in scope.
 Missing, untrusted, or non-ancestor history selects the fast Linux x64
 baseline: portable checks and the Linux runtime lane. The lookup is
 bounded to the last 100 successful push runs; lookup failures broaden selection.
-Every code change still selects the source group and all eight fast built shards, without coverage
+Every code change still selects the source group and every fast built shard, without coverage
 instrumentation in this fast tier. Ordinary PR matrices cancel remaining
 shards after the first failure; passing PRs execute the complete suite. Main,
 `ci:full`, scheduled, manual, and release qualification retain every shard's
@@ -851,7 +871,7 @@ artifact records it. Each file keeps its full duration on one worker. Extra
 workers overlap other files in the same sequence group, and `process-boundary`
 runs after that group. Every discovered file still belongs to exactly one shard;
 worker limits and project ordering remain unchanged. Fast qualification keeps
-eight built shards without coverage. The merge job rejects successful reports
+twelve built shards without coverage. The merge job rejects successful reports
 with missing, unexpected, or duplicate portable files. Coverage instrumentation
 and aggregate thresholds remain enforced in full qualification.
 Missing or unusable history falls back to Vitest's default assignment. Only

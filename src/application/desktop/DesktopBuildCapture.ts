@@ -28,7 +28,11 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
-import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import {
+  controller,
+  type Answer,
+  type ControlledComputer,
+} from "../../desktop/BuildComputerController.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import {
   endedCapture,
@@ -37,12 +41,10 @@ import {
 } from "./DesktopBuildCaptureFailure.js";
 import {
   adapterError,
-  controller,
   errorText,
   refused,
   runRea,
   WORK,
-  type Answer,
 } from "./DesktopBuildCommands.js";
 import {
   exportBuild,

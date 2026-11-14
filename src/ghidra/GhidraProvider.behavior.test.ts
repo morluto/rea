@@ -108,6 +108,7 @@ import {
   functionCoordinateContextsEqual,
 } from "../domain/native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
+import { existingGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
 import {
   createAnalysisExecution,
   type AnalysisOperation,
@@ -855,6 +856,33 @@ describe("Ghidra platform support", () => {
     }
   });
 
+  it("versions loader relocation semantics by database-mutation authority", async () => {
+    const semantics = async (platform: NodeJS.Platform) => {
+      const resolved = await provider(
+        installationHost(platform),
+      ).resolveAnalysisProfile(peTarget("x86_64"));
+      if (!resolved.ok) throw resolved.error;
+      return resolved.value.profile?.parameters.loader_relocation_semantics;
+    };
+    // Windows P0 cannot mark blocks volatile, so its snapshots must not replay
+    // as volatile-protected pseudocode.
+    expect(await semantics("win32")).toBe(
+      "read-only-relocation-limitations-v1",
+    );
+    expect(await semantics("linux")).toBe(
+      "volatile-unapplied-relocation-blocks-v1",
+    );
+    // A caller's existing project is read-only too, so its saved results must
+    // not match a profile that predates the relocation limitation.
+    expect(
+      existingGhidraAnalysisProfile(
+        peTarget("x86_64"),
+        { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+        { project_name: "fixture" },
+      ).parameters.loader_relocation_semantics,
+    ).toBe("read-only-relocation-limitations-v1");
+  });
+
   it("commits the PE role and managed classification to profile identity", async () => {
     const ghidra = provider(installationHost("win32"));
     const application = peTarget("x86_64");
@@ -1455,6 +1483,7 @@ describe("Ghidra client projection", () => {
       call_relationship_coverage: "observed-call-inventory-and-discovery-v7",
       function_dossier_coverage: "observed-facets-and-call-relationships-v1",
       native_value_flow_projection: "accepted-runtime-budgets-v1",
+      loader_relocation_semantics: "volatile-unapplied-relocation-blocks-v1",
     });
 
     const result = await ghidra

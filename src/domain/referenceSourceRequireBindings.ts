@@ -6,7 +6,7 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascript/javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticGlobalReference.js";
 import {
   indexJavaScriptBindingsWithReceiversSteps,
   type JavaScriptReceiverIndex,

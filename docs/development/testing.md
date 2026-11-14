@@ -1023,8 +1023,8 @@ partial diagnostics and preflights do not establish complete mutation outcomes
 or qualify the release revision for mutation coverage.
 
 Fast CI starts the source-only projects after classification, independently of
-build and static checks, and runs eight built-dependent shards after the build.
-Those nine test jobs still select every portable test. Full qualification keeps six
+build and static checks, and runs twelve built-dependent shards after the build.
+Those thirteen test jobs still select every portable test. Full qualification keeps six
 complete Vitest shards with coverage. Neither tier retries tests. Canonical
 project ownership lives in `scripts/lib/test-projects.mjs`, shared by Vitest,
 CI group execution, and development-test preparation. A test importing compiled
@@ -1130,8 +1130,8 @@ memory usage, or billing. Step names identify samples, not complete transfer
 costs. Its queue, execution, and failures are independent of the required gate
 and publication. CPU time and peak process-family memory are not measured by this API.
 
-The build job saves portable Turbo outputs across runs. Eight Linux real-system
-lanes reuse its current-run artifact; standalone dispatches restore the cross-run cache. The shared action
+The build job saves portable Turbo outputs across runs. Linux real-system lanes
+that pass `build_cache_artifact` reuse its current-run artifact; standalone dispatches restore the cross-run cache. The shared action
 derives its key from `test:prepare --dry=json` task hashes, runner OS and
 architecture, `.npmrc`, `.nvmrc`, and the lockfile; test-only changes can reuse compiled outputs. Every
 build and verification command still runs, so Turbo checks task inputs and

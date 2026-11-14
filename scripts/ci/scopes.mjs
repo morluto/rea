@@ -640,6 +640,9 @@ const PATH_SCOPES = {
     "tests/conformance/ghidra/ReaInstructionContextProbe.java",
     "tests/conformance/ghidra/ReaComputedCallCoverageProbe.java",
     "tests/conformance/ghidra/ReaDecodeProbe.java",
+    "scripts/verify-ghidra-loader-relocation.mjs",
+    "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
+    "tests/conformance/ghidra/loader-relocation*.c",
     ".github/workflows/ghidra-bridge-sources.yml",
   ],
   website: [

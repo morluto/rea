@@ -3,12 +3,12 @@ import { z } from "zod";
 import { androidComponentsViewRequestSchema } from "../android/androidPackageQuery.js";
 import { createEvidence } from "../evidence.js";
 import { immutableJsonSnapshotMember } from "../immutableJson.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+} from "./analysisViewResult.js";
 import type { AdmittedView } from "./analysisViewShape.js";
 import {
   androidClassSummarySchema,

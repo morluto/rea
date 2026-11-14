@@ -15,8 +15,8 @@ import {
   renderEnvToml,
   renderInstallScript,
   renderSmokeTask,
-  shellQuote,
 } from "./appExport.js";
+import { shellQuote } from "./shellQuote.js";
 import {
   COMPUTER_ARCHITECTURES,
   DOWNLOAD_INSTALL_SCRIPT,

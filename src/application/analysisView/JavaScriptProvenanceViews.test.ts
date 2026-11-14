@@ -6,7 +6,7 @@ import {
   analysisViewJavaScriptEvidence,
 } from "../../../tests/fixtures/analysisView.js";
 import { SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE } from "../../contracts/javascript/javascriptApplicationWorkflowExamples.js";
-import { analysisViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { jsonValueValidationIssue } from "../../domain/jsonValue.js";
 import { compareSourceToBundle } from "../../domain/javascript/sourceToBundleComparison.js";

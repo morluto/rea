@@ -14,7 +14,7 @@ import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplicat
 import {
   analysisViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 
 const sourcePositionSchema = z.object({ line: z.number(), column: z.number() });
 const callPathConditionSchema = z.object({

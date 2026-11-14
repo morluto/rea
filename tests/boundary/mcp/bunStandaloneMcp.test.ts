@@ -7,7 +7,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { artifactInventorySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { artifactInventorySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   bunModuleGraphPayload,
   elfAppendedBunPayload,

@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE } from "../../contracts/managed/managedWorkflowExamples.js";
 import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
 import { managedMemberInspectionSchema } from "../managed/managedArtifact.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   managedMembersViewRequestSchema,
   managedMembersViewPageSchema,

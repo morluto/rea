@@ -1,4 +1,4 @@
-import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js";
+import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../domain/investigationProviders.js";
 import { createProgressReporter } from "../application/ProgressReporter.js";

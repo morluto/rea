@@ -9,7 +9,7 @@ import { z } from "zod";
 import {
   erlangBeamSummaryViewResultSchema,
   erlangBeamTableViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import {
   erlangBeamCompleteDeliveryShape,
   erlangBeamSummaryDeliveryShape,

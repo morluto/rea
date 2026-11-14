@@ -3,10 +3,8 @@ import type { WebBundleAnalysis } from "../webBundleAnalysis.js";
 import { sampleWebBundleAnalysis } from "../../../tests/fixtures/webBundleAnalysis.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const makeParent = (

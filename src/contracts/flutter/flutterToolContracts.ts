@@ -4,7 +4,7 @@ import {
   dartAotInspectionInputSchema,
   flutterResultSchemas,
 } from "../../domain/flutter/flutterBuildAnalysis.js";
-import { dartAotSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { dartAotSummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "../toolEffects.js";

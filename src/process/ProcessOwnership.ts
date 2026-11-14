@@ -286,6 +286,8 @@ export type ProcessCleanupResult =
 export interface ProcessCleanupFailure {
   readonly cleaned: false;
   readonly reason: string;
+  /** Observed signals survive a later failure; absence does not prove none. */
+  readonly signaled?: boolean;
   readonly failures?: readonly ProcessOwnershipValidationFailure[];
   readonly unverified?: readonly OwnershipSweepUnverifiedProcess[];
 }
@@ -382,9 +384,32 @@ const implicitEvidenceOwners = new WeakMap<
   ProcessOwnershipEvidenceOwner
 >();
 
+// Failures thrown after this module signaled an owned group, so callers can
+// keep the observed intervention without changing the failure's identity.
+const failuresAfterSignal = new WeakSet<object>();
+
+/** Whether a thrown cleanup failure followed an observed owned-group signal. */
+export const cleanupFailureFollowedSignal = (cause: unknown): boolean =>
+  typeof cause === "object" && cause !== null && failuresAfterSignal.has(cause);
+
 export const cleanupOwnedProcessGroup = async (
   ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost = systemHost,
+): Promise<ProcessCleanupResult> => {
+  const attempt = { signaled: false };
+  try {
+    return await cleanupOwnedProcessGroupAttempt(ownership, host, attempt);
+  } catch (cause: unknown) {
+    if (attempt.signaled && typeof cause === "object" && cause !== null)
+      failuresAfterSignal.add(cause);
+    throw cause;
+  }
+};
+
+const cleanupOwnedProcessGroupAttempt = async (
+  ownership: OwnedProcessGroup,
+  host: ProcessOwnershipHost,
+  attempt: { signaled: boolean },
 ): Promise<ProcessCleanupResult> => {
   if (ownership.evidenceOwner === undefined) {
     let evidenceOwner = implicitEvidenceOwners.get(ownership);
@@ -408,7 +433,15 @@ export const cleanupOwnedProcessGroup = async (
     exitSettlement,
   );
   if ("cleaned" in plan) return plan;
-  let signaled = false;
+  // A later verification or signal failure cannot erase earlier intervention.
+  const finish = (
+    result: ProcessCleanupResult,
+    unverified: readonly OwnershipSweepUnverifiedProcess[] = plan.unverified,
+  ): ProcessCleanupResult =>
+    mergeUnverifiedObservations(
+      attempt.signaled ? { ...result, signaled: true } : result,
+      unverified,
+    );
   const pendingGroups = [...plan.signalOrder];
   const pending = new Set(pendingGroups);
   const passes = new Map<number, number>();
@@ -418,13 +451,10 @@ export const cleanupOwnedProcessGroup = async (
     pending.delete(processGroupId);
     const seen = passes.get(processGroupId) ?? 0;
     if (seen >= OWNED_GROUP_REVALIDATION_LIMIT)
-      return mergeUnverifiedObservations(
-        {
-          cleaned: false,
-          reason: `owned process group ${String(processGroupId)} reappeared after ${String(OWNED_GROUP_REVALIDATION_LIMIT)} revalidation passes. This release has no runtime override.`,
-        },
-        plan.unverified,
-      );
+      return finish({
+        cleaned: false,
+        reason: `owned process group ${String(processGroupId)} reappeared after ${String(OWNED_GROUP_REVALIDATION_LIMIT)} revalidation passes. This release has no runtime override.`,
+      });
     passes.set(processGroupId, seen + 1);
     const revalidation = await revalidateOwnedProcessGroup(
       processGroupId,
@@ -433,40 +463,33 @@ export const cleanupOwnedProcessGroup = async (
       plan.tokenOwnedIdentities,
       exitSettlement,
     );
-    if ("cleaned" in revalidation)
-      return mergeUnverifiedObservations(revalidation, plan.unverified);
+    if ("cleaned" in revalidation) return finish(revalidation);
     for (const groupId of revalidation.escapedProcessGroupIds) {
       if (groupId === processGroupId || pending.has(groupId)) continue;
       if ((passes.get(groupId) ?? 0) >= OWNED_GROUP_REVALIDATION_LIMIT)
-        return mergeUnverifiedObservations(
-          {
-            cleaned: false,
-            reason: `owned process group ${String(groupId)} reappeared after ${String(OWNED_GROUP_REVALIDATION_LIMIT)} revalidation passes. This release has no runtime override.`,
-          },
-          plan.unverified,
-        );
+        return finish({
+          cleaned: false,
+          reason: `owned process group ${String(groupId)} reappeared after ${String(OWNED_GROUP_REVALIDATION_LIMIT)} revalidation passes. This release has no runtime override.`,
+        });
       pending.add(groupId);
       pendingGroups.push(groupId);
     }
     if (revalidation.empty) continue;
     try {
       host.signalGroup(processGroupId, "SIGKILL");
-      signaled = true;
+      attempt.signaled = true;
     } catch (cause: unknown) {
       const code =
         cause instanceof Error && "code" in cause ? cause.code : undefined;
       if (code !== "ESRCH")
-        return mergeUnverifiedObservations(
-          {
-            cleaned: false,
-            reason: `owned process group signal failed: ${errorMessage(cause)}`,
-          },
-          plan.unverified,
-        );
+        return finish({
+          cleaned: false,
+          reason: `owned process group signal failed: ${errorMessage(cause)}`,
+        });
     }
   }
   if (plan.unresolved.length > 0)
-    return cleanupValidationFailure(plan.unresolved, plan.unverified);
+    return finish(cleanupValidationFailure(plan.unresolved));
   if (ownership.sweepTokenOwnedProcesses === true) {
     let verification: ProcessCleanupResult;
     try {
@@ -503,26 +526,18 @@ export const cleanupOwnedProcessGroup = async (
       }
     } catch (cause: unknown) {
       rethrowProcessInspectionFailure(cause);
-      return mergeUnverifiedObservations(
-        {
-          cleaned: false,
-          reason: `final process ownership verification failed: ${errorMessage(cause)}`,
-        },
-        plan.unverified,
-      );
+      return finish({
+        cleaned: false,
+        reason: `final process ownership verification failed: ${errorMessage(cause)}`,
+      });
     }
-    if (!verification.cleaned)
-      return mergeUnverifiedObservations(verification, plan.unverified);
-    return mergeUnverifiedObservations({ cleaned: true, signaled }, [
+    if (!verification.cleaned) return finish(verification);
+    return finish({ cleaned: true, signaled: attempt.signaled }, [
       ...plan.unverified,
       ...(verification.unverified ?? []),
     ]);
   }
-  return {
-    cleaned: true,
-    signaled,
-    ...(plan.unverified.length === 0 ? {} : { unverified: plan.unverified }),
-  };
+  return finish({ cleaned: true, signaled: attempt.signaled });
 };
 
 /** Verify that no live process still carries an owned capture run token. */

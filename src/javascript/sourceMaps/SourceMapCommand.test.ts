@@ -17,10 +17,8 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../../process/ProviderProcess.js";
-import {
-  WEB_SOURCE_MAP_LIMITS,
-  type WebSourceMapReport,
-} from "../../domain/webSourceLocation.js";
+import { WEB_SOURCE_MAP_LIMITS } from "../../domain/sourceMapLimits.js";
+import type { WebSourceMapReport } from "../../domain/webSourceLocation.js";
 import { traceSourceMap } from "./TraceSourceMap.js";
 import {
   runSourceMapCommand,

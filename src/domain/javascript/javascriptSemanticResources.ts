@@ -20,7 +20,7 @@ import {
   staticObjectCopyPropertyReader,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
