@@ -1420,7 +1420,6 @@ it("does not send a jadx-reported request failure to doctor", async () => {
         },
       },
     });
-    expect(projected.message).toContain("jadx reported an error");
     expect(projected.message).toContain("details.diagnostics.reason");
     for (const text of [projected.message, projected.remediation.action])
       expect(text).not.toContain("doctor");

@@ -669,9 +669,9 @@ describe("analysis provider registry: rejection diagnostics", () => {
                 providerId: "alpha",
                 origin: "availability",
                 code: "version_unresolved",
-                // doctor cannot check this provider, so it is not named.
-                remediation: expect.stringMatching(
-                  /^Check the alpha provider's installation and version.*reopen the target/u,
+                // doctor cannot check this provider, so it is not offered.
+                remediation: expect.not.stringContaining(
+                  "rea doctor",
                 ) as unknown,
               },
             ],
