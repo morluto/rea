@@ -403,6 +403,19 @@ cliTest(
     expect(trailing.normalized_result.form.location.bytes).toBe(
       formBytes.length,
     );
+    // The declared form parses identically, but the surplus bytes are disclosed
+    // rather than silently folded into complete coverage.
+    expect(control.normalized_result.coverage).toMatchObject({
+      status: "complete",
+      trailing_bytes: 0,
+    });
+    expect(trailing.normalized_result.coverage).toMatchObject({
+      status: "partial",
+      trailing_bytes: trailer.length,
+    });
+    expect(trailing.normalized_result.limitations).toContain(
+      `The declared FOR1 form ends at offset ${String(formBytes.length)}; ${String(trailer.length)} trailing bytes were not examined.`,
+    );
   },
 );
 

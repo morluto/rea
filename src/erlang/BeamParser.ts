@@ -344,6 +344,9 @@ export const parseErlangBeam = (
     codeChunk === undefined
       ? null
       : parseCode(codeChunk.payload, codeChunk.offset);
+  // A conformant FOR1 form sizes itself to the file; any surplus bytes trail an
+  // unexamined region. Disclose them instead of reporting complete coverage.
+  const trailingBytes = bytes.length - formEnd;
   return {
     artifact,
     form: { location: { offset: 0, bytes: formEnd }, size: formSize },
@@ -356,10 +359,17 @@ export const parseErlangBeam = (
     code,
     module: atoms?.[0]?.name ?? null,
     coverage: {
-      status: "complete",
+      status: trailingBytes > 0 ? "partial" : "complete",
       examined_chunks: chunks.length,
       atoms: atoms?.length ?? 0,
+      trailing_bytes: trailingBytes,
     },
-    limitations: [...LIMITATIONS],
+    limitations:
+      trailingBytes > 0
+        ? [
+            ...LIMITATIONS,
+            `The declared FOR1 form ends at offset ${String(formEnd)}; ${String(trailingBytes)} trailing ${trailingBytes === 1 ? "byte was" : "bytes were"} not examined.`,
+          ]
+        : [...LIMITATIONS],
   };
 };
