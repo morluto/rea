@@ -1748,7 +1748,23 @@ export const observeProcessStartIdentityExit = async (
   host: ProcessOwnershipHost = systemProcessOwnershipHost,
 ): Promise<"exited" | "present" | "unverified"> => {
   try {
-    const observed = await observeProcessStartIdentity(pid, host);
+    let observed = await observeProcessStartIdentity(pid, host);
+    // An exiting process closes its sockets before it becomes a zombie, so a
+    // caller that reacts to the closed transport can observe the same
+    // generation mid-exit. Wait only for that positively observed state.
+    const deadline = performance.now() + PROCESS_CLEANUP_VERIFICATION_GRACE_MS;
+    while (
+      observed?.state === "readable" &&
+      observed.identity === expectedIdentity &&
+      processIdentityIsExiting(observed)
+    ) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) break;
+      await delay(
+        Math.min(PROCESS_CLEANUP_VERIFICATION_INTERVAL_MS, remaining),
+      );
+      observed = await observeProcessStartIdentity(pid, host);
+    }
     if (observed === undefined) return "exited";
     if (observed.state !== "readable") return "unverified";
     return observed.identity === expectedIdentity ? "present" : "exited";
