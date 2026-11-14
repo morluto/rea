@@ -2243,3 +2243,74 @@ it.each([
     );
   },
 );
+
+describe("wide captured web bundle analysis", () => {
+  it(
+    "retains wide script observation and inference lists without overflowing the call stack",
+    { timeout: 60_000 },
+    () => {
+      const captured = inspection(
+        "import './module.js'; const routes = [{ path: '/known' }]; fetch('/api'); form.get('candidate'); document.modelContext.registerTool({ name: 'lookup' });",
+      );
+      const script = captured.scripts.items.find(isIncludedScript);
+      if (script === undefined)
+        throw new Error("Missing included script fixture");
+      const outcome = analyzeCapturedWebScript(script);
+      if (outcome.status !== "analyzed")
+        throw new Error("Expected a completed script analysis fixture");
+      const firstEdge = outcome.observations.edges[0];
+      const firstRoute = outcome.observations.routes[0];
+      const firstEndpoint = outcome.observations.endpoints[0];
+      const firstDeclaration = outcome.observations.webmcp_declarations[0];
+      const firstInference = outcome.inferences[0];
+      if (
+        firstEdge === undefined ||
+        firstRoute === undefined ||
+        firstEndpoint === undefined ||
+        firstDeclaration === undefined ||
+        firstInference === undefined
+      )
+        throw new Error("Expected a completed script analysis fixture");
+      // One analyzed script reporting more entries than the engine's
+      // call-argument capacity in this test worker (200k spreads still
+      // fit; 500k does not): spreading these into push(...) throws
+      // RangeError: Maximum call stack size exceeded.
+      const wide = {
+        ...outcome,
+        observations: {
+          ...outcome.observations,
+          edges: Array.from({ length: 500_000 }, () => firstEdge),
+          routes: Array.from({ length: 500_000 }, () => firstRoute),
+          endpoints: Array.from({ length: 500_000 }, () => firstEndpoint),
+          webmcp_declarations: Array.from(
+            { length: 500_000 },
+            () => firstDeclaration,
+          ),
+        },
+        inferences: Array.from({ length: 500_000 }, () => firstInference),
+      };
+      const result = buildCapturedWebBundleAnalysis(
+        captured,
+        {
+          status: "not_requested",
+          requested: 0,
+          processed: 0,
+          items: [],
+        },
+        [wide],
+      );
+      expect(result.observations.chunks.edges).toHaveLength(500_000);
+      expect(result.observations.routes).toHaveLength(500_000);
+      expect(result.observations.endpoints).toHaveLength(500_000);
+      expect(result.observations.webmcp_declarations).toHaveLength(500_000);
+      expect(result.inferences).toHaveLength(500_000);
+      expect(result.observations.chunks.edges[499_999]).toEqual(firstEdge);
+      expect(result.observations.routes[499_999]).toEqual(firstRoute);
+      expect(result.observations.endpoints[499_999]).toEqual(firstEndpoint);
+      expect(result.observations.webmcp_declarations[499_999]).toEqual(
+        firstDeclaration,
+      );
+      expect(result.inferences[499_999]).toEqual(firstInference);
+    },
+  );
+});
