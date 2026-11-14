@@ -86,7 +86,7 @@ O MCP usa esquemas de entrada compactos por padrão. Para obter todas as orienta
 
 A configuração registra diretamente o runtime escolhido e o script de entrada do REA. Ao usar um executor de pacotes, mantenha sua entrada de cache e o runtime; obtenha o pacote em um diretório confiável fora do projeto alvo. Consulte o guia de instalação.
 
-Os esquemas de saída completos são anunciados por padrão. Se o cliente limitar `tools/list`, defina `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ou `off` no registro MCP. A validação do servidor e os resultados estruturados continuam completos. Consulte “Output schemas” no guia de contratos MCP.
+Os esquemas de saída são omitidos de `tools/list` por padrão: nenhuma API de modelo os lê, e o REA valida cada resultado por conta própria. Defina `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` no registro MCP para anunciar cada esquema de saída dentro de 4096 bytes, ou `full` para esquemas de saída completos (para clientes MCP que validam resultados). Em todas as configurações, a validação do servidor e os resultados estruturados continuam completos. Consulte “Output schemas” no guia de contratos MCP.
 
 ### Peça ao seu agente
 
