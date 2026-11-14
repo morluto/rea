@@ -88,6 +88,7 @@ const methodDefRow = ({
   flags = 0x0016,
   implFlags = 0,
   name,
+  paramList,
   rva,
   signature,
 }) =>
@@ -97,8 +98,11 @@ const methodDefRow = ({
     u16(flags),
     u16(name),
     u16(signature),
-    u16(0),
+    u16(paramList),
   ]);
+
+const paramRow = ({ flags = 0, name, sequence }) =>
+  Buffer.concat([u16(flags), u16(sequence), u16(name)]);
 
 const memberRefRow = (name, signature) =>
   Buffer.concat([u16((1 << 3) | 1), u16(name), u16(signature)]);
@@ -290,13 +294,32 @@ const buildManagedMetadata = (options, methods) => {
       options.targetFramework ?? ".NETCoreApp,Version=v8.0",
     ),
   );
+  // Each method's run starts after the preceding methods' Param rows.
+  const paramLists = methods.map((_, index) =>
+    methods
+      .slice(0, index)
+      .reduce((start, method) => start + (method.params?.length ?? 0), 1),
+  );
+  const paramRows = methods.flatMap((method) =>
+    (method.params ?? []).map((param, index) =>
+      paramRow({
+        flags: param.flags,
+        sequence: param.sequence ?? index + 1,
+        name: strings.add(param.name),
+      }),
+    ),
+  );
   const methodRows = methods.map((method, index) =>
     methodDefRow({
       name: stringsForMethods[index],
-      signature: methodSignature,
+      signature:
+        method.signature === undefined
+          ? methodSignature
+          : blobs.add(method.signature),
       rva: method.rva,
       flags: method.flags ?? 0x0016,
       implFlags: method.implFlags ?? 0,
+      paramList: method.paramList ?? paramLists[index],
     }),
   );
   const rows = new Map([
@@ -305,6 +328,10 @@ const buildManagedMetadata = (options, methods) => {
     [2, [typeDefRow(typeName, typeNamespace, 1, 1)]],
     [4, fieldRows],
     [6, methodRows],
+    ...(options.paramPointers === undefined
+      ? []
+      : [[7, options.paramPointers.map(u16)]]),
+    ...(paramRows.length === 0 ? [] : [[8, paramRows]]),
     [10, [memberRefRow(constructorName, constructorSignature)]],
     ...(constantRows.length === 0 ? [] : [[11, constantRows]]),
     [12, [customAttributeRow(attributeBlob)]],

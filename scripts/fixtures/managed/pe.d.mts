@@ -3,6 +3,16 @@ export interface ManagedPeFixtureMethod {
   readonly flags?: number;
   readonly implFlags?: number;
   readonly name: string;
+  /** Param rows owned by this method; sequence defaults to the one-based position. */
+  readonly params?: readonly {
+    readonly name: string;
+    readonly flags?: number;
+    readonly sequence?: number;
+  }[];
+  /** A raw ParamList coordinate; defaults to the run after earlier methods' params. */
+  readonly paramList?: number;
+  /** MethodDefSig blob; defaults to a static void method without parameters. */
+  readonly signature?: Buffer;
   /** An explicit metadata RVA; zero represents a method without an IL body. */
   readonly rva?: number;
 }
@@ -16,7 +26,7 @@ export interface ManagedPeFixtureOptions {
     readonly flags?: number;
     readonly signature?: Buffer;
   }[];
-  /** Constant rows: HasConstant parent defaults to Field row 1. */
+  /** Constant rows: HasConstant parent defaults to Field row 1; Param row r is (r << 2) | 1. */
   readonly constants?: readonly {
     readonly typeCode: number;
     readonly padding?: number;
@@ -30,6 +40,8 @@ export interface ManagedPeFixtureOptions {
   readonly methodName?: string;
   readonly methods?: readonly ManagedPeFixtureMethod[];
   readonly mvid?: Buffer;
+  /** ParamPtr rows; method ParamList coordinates then index this table. */
+  readonly paramPointers?: readonly number[];
   readonly pinvoke?: {
     readonly importName?: string;
     readonly mappingFlags?: number;

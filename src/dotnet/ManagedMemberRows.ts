@@ -1,5 +1,5 @@
 import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
-import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
+import type { ManagedConstantReader } from "./ManagedConstants.js";
 import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
 import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
@@ -45,6 +45,7 @@ import {
   readManagedValue,
 } from "./ManagedReaderFailure.js";
 import { methodBody } from "./ManagedMethodBodyReader.js";
+import { createManagedParameterDefaultReader } from "./ManagedParameterDefaults.js";
 import { memberDeclaringTypeRowLookup } from "./ManagedMemberOwnership.js";
 import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";
 
@@ -69,11 +70,14 @@ export const parseFields = (
     signatureTypeName,
     displayTypeName,
     declarationTypeName,
+    constant,
     selected = null,
   }: {
     readonly signatureTypeName: SignatureTypeName;
     readonly displayTypeName: SignatureDisplayTypeName;
     readonly declarationTypeName: DeclarationTypeName;
+    /** The inspection's Constant-table owner, shared with Param defaults. */
+    readonly constant: ManagedConstantReader;
     readonly selected?: SelectedTypeTokens;
   },
 ): {
@@ -84,7 +88,6 @@ export const parseFields = (
   const fields: ManagedField[] = [];
   const core = new Map<string, MemberCore>();
   const issues: ManagedParseIssue[] = [];
-  const constant = createManagedFieldConstantReader(bytes, layout, issues);
   const table = layout.table(4);
   const ownerRow = readManagedValue(
     () => memberDeclaringTypeRowLookup(bytes, layout, 4, memberLists),
@@ -157,7 +160,7 @@ export const parseFields = (
         name,
         flags,
         signature: decoded,
-        constant: constant(row, flags),
+        constant: constant(4, row, flags),
       });
     }, issues);
   }
@@ -328,6 +331,8 @@ interface ParseMethodsInput {
   readonly declarationTypeName: DeclarationTypeName;
   readonly memberRefKinds: ReadonlyMap<string, "field" | "method">;
   readonly memberLists: TypeMemberListFacts;
+  /** The inspection's Constant-table owner, shared with field defaults. */
+  readonly constant: ManagedConstantReader;
   readonly selected?: SelectedTypeTokens;
   readonly methodOffset?: number;
   readonly methodLimit?: number;
@@ -343,6 +348,7 @@ export const parseMethods = ({
   declarationTypeName,
   memberRefKinds,
   memberLists,
+  constant,
   selected = null,
   methodOffset = 0,
   methodLimit = Number.MAX_SAFE_INTEGER,
@@ -360,6 +366,12 @@ export const parseMethods = ({
   const core = new Map<string, MemberCore>();
   const issues: ManagedParseIssue[] = [];
   let unscannedMethods = 0;
+  const parameterDefaults = createManagedParameterDefaultReader(
+    bytes,
+    layout,
+    issues,
+    constant,
+  );
   const table = layout.table(6);
   const ownerRow = readManagedValue(
     () => memberDeclaringTypeRowLookup(bytes, layout, 6, memberLists),
@@ -475,6 +487,7 @@ export const parseMethods = ({
           flags,
           signature: decoded,
           body: read.body,
+          parameter_defaults: parameterDefaults(row),
         },
       });
     }, issues);

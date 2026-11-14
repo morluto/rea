@@ -1,5 +1,5 @@
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
-import type { ManagedFieldConstant } from "../domain/managed/managedFieldConstant.js";
+import type { ManagedConstant } from "../domain/managed/managedConstant.js";
 import {
   admitManagedProjection,
   managedDecodeBudget,
@@ -23,15 +23,26 @@ import {
   managedConstantType,
 } from "./ManagedConstantValue.js";
 
-type Declaration = ManagedFieldConstant["declarations"][number];
+type Declaration = ManagedConstant["declarations"][number];
 
-/** Index physical declarations once; only selected fields decode their blobs. */
-const fieldConstantDeclarations = (
+/** Field and Param parents; Property defaults are not decoded. */
+export type ManagedConstantParentTable = 4 | 8;
+
+/** FieldAttributes.HasDefault and ParamAttributes.HasDefault (ECMA-335 II.23.1.5, II.23.1.13). */
+const OWNERS: Readonly<
+  Record<ManagedConstantParentTable, { name: string; hasDefault: number }>
+> = {
+  4: { name: "field", hasDefault: 0x8000 },
+  8: { name: "parameter", hasDefault: 0x1000 },
+};
+
+/** Index physical declarations once; only selected owners decode their blobs. */
+const constantDeclarations = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   issues: ManagedParseIssue[],
-): ReadonlyMap<number, Declaration[]> => {
-  const result = new Map<number, Declaration[]>();
+): ReadonlyMap<string, Declaration[]> => {
+  const result = new Map<string, Declaration[]>();
   const budget = managedDecodeBudget(layout);
   for (let row = 1; row <= (layout.table(11)?.rowCount ?? 0); row++) {
     const cursor = metadataRowCursor(bytes, layout, 11, row);
@@ -59,34 +70,46 @@ const fieldConstantDeclarations = (
       });
       continue;
     }
-    if (parent.table !== 4) continue;
+    if (parent.table !== 4 && parent.table !== 8) continue;
     const declaration: Declaration = {
       row_offset: cursor.start,
       type_code: typeAndPadding & 255,
       padding: typeAndPadding >>> 8,
       blob_index: blobIndex,
     };
-    const previous = result.get(parent.row);
-    if (previous === undefined) result.set(parent.row, [declaration]);
+    const previous = result.get(parent.token);
+    if (previous === undefined) result.set(parent.token, [declaration]);
     else previous.push(declaration);
   }
   return result;
 };
 
-/** The shared metadata budget owns both decoding allocations and retained values. */
-export const createManagedFieldConstantReader = (
+/**
+ * One Constant-table owner per inspection: Field and Param consumers share its
+ * declaration index, and the layout budget owns decoding allocations and
+ * retained values. Null means the row has neither HasDefault nor a Constant row.
+ */
+export type ManagedConstantReader = (
+  table: ManagedConstantParentTable,
+  row: number,
+  flags: number,
+) => ManagedConstant | null;
+
+export const createManagedConstantReader = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   issues: ManagedParseIssue[],
-): ((row: number, flags: number) => ManagedFieldConstant | null) => {
-  let declarations: ReadonlyMap<number, Declaration[]> | undefined;
-  return (row, flags) => {
-    declarations ??= fieldConstantDeclarations(bytes, layout, issues);
-    const rows = declarations.get(row) ?? [];
-    const hasDefault = (flags & 0x8000) !== 0;
+): ManagedConstantReader => {
+  let declarations: ReadonlyMap<string, Declaration[]> | undefined;
+  return (table, row, flags) => {
+    declarations ??= constantDeclarations(bytes, layout, issues);
+    const token = metadataToken(table, row);
+    const rows = declarations.get(token) ?? [];
+    const owner = OWNERS[table];
+    const hasDefault = (flags & owner.hasDefault) !== 0;
     if (rows.length === 0 && !hasDefault) return null;
     const budget = managedDecodeBudget(layout);
-    const result: ManagedFieldConstant = {
+    const result: ManagedConstant = {
       state: "unavailable",
       declarations: rows,
       element_type: null,
@@ -94,16 +117,16 @@ export const createManagedFieldConstantReader = (
       value: null,
       limitation: null,
     };
-    const scope = `metadata.Constant:${metadataToken(4, row)}`;
+    const scope = `metadata.Constant:${token}`;
     const first = rows[0];
     const offset =
-      first?.row_offset ?? metadataRowCursor(bytes, layout, 4, row).start;
+      first?.row_offset ?? metadataRowCursor(bytes, layout, table, row).start;
     try {
       if (!hasDefault || rows.length !== 1 || first === undefined)
         throw managedFailure(
           "invalid-row",
           scope,
-          "A field default requires HasDefault and exactly one Constant row.",
+          `A ${owner.name} default requires HasDefault and exactly one Constant row.`,
           offset,
         );
       if (first.padding !== 0)

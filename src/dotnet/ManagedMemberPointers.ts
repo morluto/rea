@@ -8,14 +8,15 @@ import {
   ManagedReaderFailure,
 } from "./ManagedReaderFailure.js";
 
-type MemberTable = 4 | 6;
+/** Field, MethodDef and Param rows; each pointer table precedes its definition table. */
+type MemberTable = 4 | 6 | 8;
 type ListRowLookup = (definitionRow: number) => number;
 const lookups = new WeakMap<
   ManagedMetadataLayout,
   Map<MemberTable, ListRowLookup | ManagedReaderFailure>
 >();
 
-/** TypeDef list coordinates refer to the nonempty pointer table when present. */
+/** TypeDef and MethodDef list coordinates refer to the nonempty pointer table when present. */
 export const memberListTable = (
   layout: ManagedMetadataLayout,
   table: MemberTable,
@@ -112,4 +113,21 @@ export const memberListRowLookup = (
     if (cause instanceof ManagedReaderFailure) byTable.set(table, cause);
     throw cause;
   }
+};
+
+/** Resolve a validated list position to its physical definition row. */
+export const memberListDefinitionRow = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  table: MemberTable,
+  position: number,
+): number => {
+  const pointers = layout.table(table - 1);
+  if (pointers === undefined || pointers.rowCount === 0) return position;
+  // The reverse lookup validates every pointer row once and replays its failure.
+  memberListRowLookup(bytes, layout, table);
+  const offset = pointers.offset + (position - 1) * pointers.rowSize;
+  return layout.tableIndexSize(table) === 2
+    ? bytes.readUInt16LE(offset)
+    : bytes.readUInt32LE(offset);
 };

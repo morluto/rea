@@ -4,7 +4,7 @@ import {
   managedDecodeBudget,
   ManagedRepresentationFailure,
 } from "./ManagedDecodeBudget.js";
-import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
+import { createManagedConstantReader } from "./ManagedConstants.js";
 import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import { readManagedPeLayout } from "./ManagedPeReader.js";
 
@@ -26,6 +26,6 @@ it("uses the layout's existing representation capacity instead of an independent
   expect(() => {
     for (let i = 0; i < 1024; i++) budget.reserve(1024, null);
   }).toThrow(ManagedRepresentationFailure);
-  const read = createManagedFieldConstantReader(bytes, layout, []);
-  expect(() => read(1, 0x8056)).toThrow(ManagedRepresentationFailure);
+  const read = createManagedConstantReader(bytes, layout, []);
+  expect(() => read(4, 1, 0x8056)).toThrow(ManagedRepresentationFailure);
 });
