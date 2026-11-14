@@ -22,6 +22,7 @@ import {
   type CliOutputArgumentValidation,
 } from "../cliOutput.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import { describeReaOutputFormats } from "./outputFormatHelp.js";
 import {
   mcpRegistrationOptionsSchema,
   mcpRegistrationReportSchema,
@@ -227,15 +228,16 @@ const serveRegistrationDiscovery = async (
   presentation: RegistrationPresentation,
 ): Promise<boolean> => {
   if (flags.has("--help") || flags.has("-h")) {
-    presentation.write(
-      `${Help.formatCommand("rea mcp add", {
+    const help = describeReaOutputFormats(
+      Help.formatCommand("rea mcp add", {
         description:
           "Register exact stdio launcher arguments in selected client settings, with backups and verified publication.",
         options: mcpRegistrationOptionsSchema,
         alias: { command: "c" },
         hint: "No package acquisition or server execution. --no-global never writes global settings.",
-      })}\n`,
+      }),
     );
+    presentation.write(`${help}\n`);
     return true;
   }
   const discovery = classifyMcpAddDiscovery(flags);
