@@ -506,7 +506,10 @@ export const inspectAndroidJniLibrary = async (
     )
       return err({ kind: "capacity", message: cause.message });
     if (cause instanceof BinaryFormatFailure)
-      return err({ kind: cause.kind, message: cause.message });
+      return err({
+        kind: cause.kind === "unsupported" ? "unsupported" : "malformed",
+        message: cause.message,
+      });
     if (cause instanceof ElfPointerRelocationFailure)
       return err({
         kind:

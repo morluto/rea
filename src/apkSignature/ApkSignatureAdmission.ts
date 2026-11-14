@@ -29,6 +29,7 @@ class ApkSignatureAdmission {
             max_active_scans: 1,
             max_waiting_scans: APK_SIGNATURE_LIMITS.waitingScans,
           },
+          { measuredExhaustion: true },
         ),
       );
     return new Promise((resolve, reject) => {
