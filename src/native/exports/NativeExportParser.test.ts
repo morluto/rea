@@ -1142,9 +1142,11 @@ describe("export inventory review regressions", () => {
     (bits) => {
       for (const little of [true, false]) {
         // ELF32/64 symbol records have no padding: every field in entry zero
-        // is reserved as zero by the ABI, independently of host endianness.
+        // after st_name (bytes 0-3) is reserved as zero by the ABI,
+        // independently of host endianness. st_name alone is tolerated; see
+        // the regression test below.
         const width = bits === 64 ? 24 : 16;
-        for (let byte = 0; byte < width; byte++) {
+        for (let byte = 4; byte < width; byte++) {
           const bytes = elfExportImage({
             bits,
             little,
@@ -1164,6 +1166,30 @@ describe("export inventory review regressions", () => {
             }),
           ).exports.map(({ name }) => name),
         ).toEqual(["kept_export"]);
+      }
+    },
+  );
+
+  it.each([32, 64] as const)(
+    "accepts a nonzero st_name in the ELF%s null symbol",
+    (bits) => {
+      for (const little of [true, false]) {
+        // Real Android arm64 libraries ship a nonzero st_name in entry zero
+        // with every other field zero (libjnidispatch.so: st_name 0x956).
+        // st_name is never read for the null entry, so even an offset
+        // outside the string table cannot affect the reported exports.
+        for (const stName of [0x956, 0xffffffff]) {
+          const bytes = elfExportImage({
+            bits,
+            little,
+            symbols: [{ name: "kept_export" }],
+          });
+          if (little) bytes.writeUInt32LE(stName, 0x100);
+          else bytes.writeUInt32BE(stName, 0x100);
+          expect(parse(bytes).exports.map(({ name }) => name)).toEqual([
+            "kept_export",
+          ]);
+        }
       }
     },
   );

@@ -84,8 +84,11 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ...encoding,
         symbols: [{ name: "kept_export" }],
       });
-      // The authored fixture's dynamic symbol table starts at file offset 0x100.
-      bytes[0x100] = 1;
+      // The authored fixture's dynamic symbol table starts at file offset
+      // 0x100. Corrupt the first byte past st_name (st_info in ELF64,
+      // st_value in ELF32): st_name alone is tolerated, a nonzero reserved
+      // field must still reject the table.
+      bytes[0x100 + 4] = 1;
       await writeFile(path, bytes);
       let error: unknown;
       if (surface === "CLI") {
@@ -112,7 +115,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         },
       });
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-      bytes[0x100] = 0;
+      bytes[0x100 + 4] = 0;
       await writeFile(path, bytes);
       const document =
         surface === "CLI"

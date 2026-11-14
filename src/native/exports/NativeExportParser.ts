@@ -692,11 +692,18 @@ function* parseElfExports(
     "ELF dynamic symbols",
   );
   // Entry zero is the reserved STN_UNDEF record. Skipping it is valid only
-  // after every field is observed as zero; neither ELF layout has padding.
-  if (bytes.subarray(table, table + width).some((byte) => byte !== 0))
+  // after every field but its name offset is observed as zero; neither ELF
+  // layout has padding. st_name is the first u32 in both layouts and is
+  // never read for entry zero (iteration starts at index 1), so a nonzero
+  // st_name cannot hide or alias an export — real Android arm64 libraries
+  // ship one (e.g. libjnidispatch.so with st_name 0x956 and every other
+  // field zero). A nonzero st_info, st_other, st_shndx, st_value or st_size
+  // still rejects the table, so the malformed null entry #7528 guarded
+  // against for #7389 is not re-admitted.
+  if (bytes.subarray(table + 4, table + width).some((byte) => byte !== 0))
     throw new BinaryFormatFailure(
       "malformed",
-      "ELF dynamic symbol table null entry has nonzero fields",
+      "ELF dynamic symbol table null entry has nonzero fields other than st_name",
     );
   const nameRange = reader.fileRange(
     strings.offset,
