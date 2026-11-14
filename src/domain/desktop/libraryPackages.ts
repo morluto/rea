@@ -122,13 +122,20 @@ async function* libraryCandidates(
   yield* cachedPaths(cache, request, machine);
 }
 
+/** One required intermediate link: filesystem identity and ownership-query spelling. */
+export interface LibraryLookupAlias {
+  readonly path: string;
+  readonly ownershipPath: string;
+}
+
 /** A selected leaf name and the target reached through the filesystem. */
 export interface LibraryPath {
   readonly path: string;
+  readonly ownershipPath: string;
   readonly resolvedPath: string;
   /** Device and inode identify one loaded object across hard-link names. */
   readonly fileIdentity: string;
-  readonly directoryAliases: readonly string[];
+  readonly requiredAliases: readonly LibraryLookupAlias[];
 }
 
 /** Host reads the closure walk needs. */
@@ -144,11 +151,13 @@ export interface LibraryWalkHost {
 
 /** The shared libraries an executable loads at start, as the dynamic linker would find them. */
 export interface LibraryClosure {
-  /** Required directory-link entries outside the captured application folder. */
-  readonly directoryAliases: readonly string[];
+  /** Required intermediate file/directory links outside the captured application folder. */
+  readonly requiredAliases: readonly LibraryLookupAlias[];
   /** Required paths or targets outside the application's own folder, by their declared soname. */
   readonly libraries: readonly {
     readonly soname: string;
+    /** Filesystem-checked ownership spelling, keeping directory aliases. */
+    readonly ownershipPath: string;
     readonly path: string;
     readonly resolvedPath: string;
   }[];
@@ -179,8 +188,13 @@ export const libraryClosure = async (
 ): Promise<LibraryClosure> => {
   const seen = new Set<string>();
   const closure = {
-    directoryAliases: [] as string[],
-    libraries: [] as { soname: string; path: string; resolvedPath: string }[],
+    requiredAliases: [] as LibraryLookupAlias[],
+    libraries: [] as {
+      soname: string;
+      ownershipPath: string;
+      path: string;
+      resolvedPath: string;
+    }[],
     missing: [] as string[],
     unreadable: [] as { path: string; reason: string }[],
     truncated: false,
@@ -220,7 +234,10 @@ export const libraryClosure = async (
         : compositeKey([
             "lookup",
             request,
-            ...(directPath?.directoryAliases ?? []),
+            ...(directPath?.requiredAliases.flatMap((alias) => [
+              alias.path,
+              alias.ownershipPath,
+            ]) ?? []),
           ]);
       if (seen.has(key)) continue;
       if (seen.size >= limit) return { ...closure, truncated: true };
@@ -245,7 +262,8 @@ export const libraryClosure = async (
             resolvedPath: string;
             fileIdentity: string;
             lookupPath: string;
-            directoryAliases: readonly string[];
+            ownershipPath: string;
+            requiredAliases: readonly LibraryLookupAlias[];
             dependencies: Result<ElfDependencies, ElfDependenciesFailure>;
           }
         | undefined;
@@ -299,7 +317,8 @@ export const libraryClosure = async (
           resolvedPath,
           fileIdentity: resolved.fileIdentity,
           lookupPath: request.startsWith("/") ? expandedRequest : candidate,
-          directoryAliases: resolved.directoryAliases,
+          ownershipPath: resolved.ownershipPath,
+          requiredAliases: resolved.requiredAliases,
           dependencies,
         };
         break;
@@ -310,17 +329,23 @@ export const libraryClosure = async (
       }
       const { path, resolvedPath, fileIdentity, lookupPath, dependencies } =
         selected;
-      for (const alias of selected.directoryAliases) {
-        if (isWithinAny(alias, [ownFolder]) || retainedAliases.has(alias))
+      for (const alias of selected.requiredAliases) {
+        const key = compositeKey([alias.path, alias.ownershipPath]);
+        if (isWithinAny(alias.path, [ownFolder]) || retainedAliases.has(key))
           continue;
-        retainedAliases.add(alias);
-        closure.directoryAliases.push(alias);
+        retainedAliases.add(key);
+        closure.requiredAliases.push(alias);
       }
       if (
         !isWithinAny(path, [ownFolder]) ||
         !isWithinAny(resolvedPath, [ownFolder])
       )
-        closure.libraries.push({ soname, path, resolvedPath });
+        closure.libraries.push({
+          soname,
+          ownershipPath: selected.ownershipPath,
+          path,
+          resolvedPath,
+        });
       if (dependencies.ok) {
         if (!walkedObjects.has(fileIdentity)) {
           walkedObjects.add(fileIdentity);

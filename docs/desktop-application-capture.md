@@ -281,15 +281,21 @@ to the object declaring that dependency before full-path lookup and request
 deduplication; the same spelling in two libraries can name two different files.
 Lookup paths retain directory symlinks and subsequent `..` components until the
 filesystem resolves them. The selected leaf name and its physical target are
-both queried for package ownership, with the required name's owner first.
+queried for package ownership, keeping the original alias-qualified lookup
+filename separate from canonical identity and trying its owner first.
 Distinct required links are retained even when they reach one physical object;
 that object's dependencies are walked once through its first load path, which
-supplies its own `$ORIGIN`. Directory symlink entries needed to reach a library are retained separately
-from the physical object, including when that object is inside the application's
-folder. External directory aliases need their own package owner; ownership of
-their target directory cannot hide an unowned alias. A library is app-contained
+supplies its own `$ORIGIN`. Intermediate file and directory symlink entries
+needed to reach a library are retained separately from the physical object, including directory links reached through file-link
+targets and when the object is inside the application's folder. The exact
+usr-merge links supplied by the Ubuntu 24.04 computer base (`/bin`, `/sbin`,
+`/lib`, and amd64 `/lib64` to their `/usr` counterparts) need no extra package;
+packages merely registering those shared directories are not inferred as
+library dependencies. Other link targets retain their own ownership. External
+lookup aliases need their own package owner; ownership of their physical target
+cannot hide an unowned alias. A library is app-contained
 only when its required leaf and physical target are inside the application's
-folder and its required directory aliases are captured there as well.
+folder and its required lookup aliases are captured there as well.
 A combination with another dollar expression that REA does not expand remains
 unresolved with a reason, rather than selecting a literal token-named file.
 Each candidate's ELF machine, class and byte order must match the

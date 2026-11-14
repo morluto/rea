@@ -1,4 +1,12 @@
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  readlink,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { inspectLibraryPackages } from "../../../src/desktop/LibraryPackageInventory.js";
@@ -243,7 +251,9 @@ it.skipIf(process.platform === "win32").each(["$ORIGIN", "${ORIGIN}"])(
         return {
           stdout: args
             .slice(1)
-            .map((path) => `${owners.get(path)}: ${path}`)
+            .flatMap((path) =>
+              owners.has(path) ? [`${owners.get(path)}: ${path}`] : [],
+            )
             .join("\n"),
           exitCode: 0,
         };
@@ -534,5 +544,172 @@ it.skipIf(process.platform === "win32")(
       missing_libraries: [],
       unpackaged_libraries: [],
     });
+  },
+);
+
+it.skipIf(process.platform === "win32").each([
+  { relative: false, owned: true, chain: false },
+  { relative: true, owned: true, chain: false },
+  { relative: true, owned: false, chain: false },
+  { relative: true, owned: true, chain: true },
+])(
+  "follows a file link into lookup aliases (relative=$relative, owned=$owned, chain=$chain)",
+  async ({ relative, owned, chain }) => {
+    const root = await createTestTempDirectory("rea-needed-leaf-directory-");
+    const bin = join(root, "app");
+    const external = join(root, "external");
+    await mkdir(bin);
+    await mkdir(external);
+    const executable = join(bin, "app");
+    const physical = join(bin, "libreal.so");
+    const alias = join(root, "current");
+    const leaf = join(external, "lib.so");
+    await writeFile(physical, elfImage({}));
+    await symlink("app", alias);
+    const intermediate = join(root, "intermediate.so");
+    if (chain) await symlink("current/libreal.so", intermediate);
+    await symlink(
+      chain
+        ? "../intermediate.so"
+        : relative
+          ? "../current/libreal.so"
+          : `${alias}/libreal.so`,
+      leaf,
+    );
+    await writeFile(executable, elfImage({ needed: [leaf] }));
+    const owners = new Map([
+      [leaf, "leaf-package"],
+      ...(owned ? [[alias, "alias-package"] as [string, string]] : []),
+      ...(chain
+        ? [[intermediate, "intermediate-package"] as [string, string]]
+        : []),
+    ]);
+    const report = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) =>
+        command === "ldconfig"
+          ? { stdout: "", exitCode: 0 }
+          : {
+              stdout: args
+                .slice(1)
+                .flatMap((path) =>
+                  owners.has(path) ? [`${owners.get(path)}: ${path}`] : [],
+                )
+                .join("\n"),
+              exitCode: 0,
+            },
+      undefined,
+    );
+    expect(report).toEqual({
+      library_packages: [
+        ...(owned ? ["alias-package"] : []),
+        ...(chain ? ["intermediate-package"] : []),
+        "leaf-package",
+      ],
+      missing_libraries: [],
+      unpackaged_libraries: owned ? [] : [alias],
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32").each([false, true])(
+  "queries the original alias-qualified library filename separately from identity (intermediate=%s)",
+  async (intermediate) => {
+    const root = await createTestTempDirectory("rea-needed-lookup-owner-");
+    const bin = join(root, "bin");
+    const physical = join(root, "release");
+    await mkdir(bin);
+    await mkdir(physical);
+    const alias = join(root, "current");
+    await symlink("release", alias);
+    const rawLookup = `${alias}/lib.so`;
+    const leaf = join(root, "leaf.so");
+    const lookup = intermediate ? leaf : rawLookup;
+    if (intermediate) {
+      await symlink("libreal.so", join(physical, "lib.so"));
+      await writeFile(join(physical, "libreal.so"), elfImage({}));
+      await symlink(rawLookup, leaf);
+    }
+    const executable = join(bin, "app");
+    if (!intermediate) await writeFile(join(physical, "lib.so"), elfImage({}));
+    await writeFile(executable, elfImage({ needed: [lookup] }));
+    const owners = new Map([
+      [rawLookup, "payload-package"],
+      ...(intermediate ? [[leaf, "leaf-package"] as [string, string]] : []),
+      [alias, "alias-package"],
+    ]);
+    const report = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) =>
+        command === "ldconfig"
+          ? { stdout: "", exitCode: 0 }
+          : {
+              stdout: args
+                .slice(1)
+                .flatMap((path) =>
+                  owners.has(path) ? [`${owners.get(path)}: ${path}`] : [],
+                )
+                .join("\n"),
+              exitCode: 0,
+            },
+      undefined,
+    );
+    expect(report).toEqual({
+      library_packages: intermediate
+        ? ["alias-package", "leaf-package", "payload-package"]
+        : ["alias-package", "payload-package"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+    });
+  },
+);
+
+it.skipIf(process.platform !== "linux" || process.arch !== "x64")(
+  "does not install incidental owners of the Ubuntu base's exact usr-merge aliases",
+  async (context) => {
+    const libTarget = await readlink("/lib").catch(() => undefined);
+    if (libTarget !== "usr/lib" && libTarget !== "/usr/lib") {
+      context.skip();
+      return;
+    }
+    const root = await createTestTempDirectory("rea-needed-usr-merge-");
+    const executable = join(root, "app");
+    await copyFile("/usr/bin/true", executable);
+    const queried: string[] = [];
+    const report = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) => {
+        if (command === "ldconfig")
+          return {
+            ...(await execFileOutput("/sbin/ldconfig", ["-p"], {
+              timeout: 5000,
+            })),
+            exitCode: 0,
+          };
+        queried.push(...args.slice(1));
+        return {
+          stdout: args
+            .slice(1)
+            .flatMap((path) =>
+              path === "/lib" || path === "/lib64"
+                ? [`incidental-a, incidental-b: ${path}`]
+                : [`libc6: ${path}`],
+            )
+            .join("\n"),
+          exitCode: 0,
+        };
+      },
+      undefined,
+    );
+    expect(report).toEqual({
+      library_packages: ["libc6"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+    });
+    expect(queried).not.toContain("/lib");
+    expect(queried).not.toContain("/lib64");
   },
 );
