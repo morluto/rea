@@ -31,6 +31,10 @@ const requestsFor = (call: string) =>
 it.each([
   ["a URL with a user name", 'fetch("https://user@api.example.test/x")'],
   ["a URL with a password", 'fetch("https://:pw@api.example.test/x")'],
+  [
+    "a URL with a user name and surrounding spaces",
+    'fetch(" https://user@api.example.test/x ")',
+  ],
   ["a method that is not a token", 'fetch(url, { method: "G ET" })'],
   ["an empty method", 'fetch(url, { method: "" })'],
   ["the CONNECT method", 'fetch(url, { method: "CONNECT" })'],
@@ -89,6 +93,16 @@ it.each([
   ["a token header name", 'fetch(url, { headers: { "x-ok": "1" } })', "fetch"],
   ["empty credentials", 'fetch("http://:@api.example.test/x")', "fetch"],
   ["a relative fetch URL", 'fetch("/api/items")', "fetch"],
+  [
+    "a header record that iterates its own pairs",
+    'fetch(url, { headers: { "a b": "x", *[Symbol.iterator]() { yield ["x-ok", "1"]; } } })',
+    "fetch",
+  ],
+  [
+    "a header record after a spread",
+    'fetch(url, { headers: { ...init, "a b": "x" } })',
+    "fetch",
+  ],
   [
     "a same-scheme relative URL with an at sign",
     'fetch("http:user@api.example.test/x")',
