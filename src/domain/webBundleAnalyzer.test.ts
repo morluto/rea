@@ -946,6 +946,40 @@ describe("web bundle endpoint candidate classification", () => {
     expect(webBundleAnalysisSchema.parse(result)).toEqual(result);
   });
 
+  it("names minified receiverless import calls by their final callee in both analyzers", () => {
+    // Webpack and Next.js emit `(0, module.export)(...)` for imported calls.
+    const source =
+      `(self.webpackChunk_N_E=self.webpackChunk_N_E||[]).push([[7],{4821:(e,t,n)=>{"use strict";var r=n(9113),o=n(2201);` +
+      `(0,r.fetch)("/api/a");(0,o.get)("/api/b");(0,0,(0,o.post))("/api/c");(0,navigator.sendBeacon)("/api/beacon");` +
+      `(track(),r.fetch)("/api/effect");(r.fetch=other,r.fetch)("/api/rebound");(0,r.client())("/api/factory");(0,e?r.fetch:o.fetch)("/api/branch")}}]);`;
+    const result = analyzeWebBundleFixture(inspection(source));
+    expect(result.observations.endpoints).toEqual([]);
+    expect(
+      result.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value, basis }) => [value, basis[0]?.detector]),
+    ).toEqual([
+      ["/api/a", "call:r.fetch:unverified-network-receiver"],
+      ["/api/b", "call:o.get:unverified-network-receiver"],
+      ["/api/c", "call:o.post:unverified-network-receiver"],
+      // The comma drops the Navigator receiver, so the spelling proves nothing.
+      ["/api/beacon", "call:navigator.sendBeacon:unverified-network-receiver"],
+    ]);
+    expect(
+      analyzeJavaScriptStaticSource(source).endpoints.map(
+        ({ value, mechanism, interpretation }) => [
+          value,
+          mechanism,
+          interpretation,
+        ],
+      ),
+    ).toEqual([
+      ["/api/a", "call:r.fetch", "candidate"],
+      ["/api/b", "call:o.get", "candidate"],
+      ["/api/c", "call:o.post", "candidate"],
+    ]);
+  });
+
   it("deduplicates repeated candidate sites while keeping script, value and detector identity", () => {
     const source = `${'form.get("name");\n'.repeat(5_000)}translate.get("name");\nform.get("other");`;
     const captured = inspection(source);
