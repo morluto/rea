@@ -4,6 +4,7 @@ import {
   runOwnedCommand,
 } from "../../dist/process/OwnedCommand.js";
 import { prepareProcessOwnershipInspection } from "../../dist/process/ProcessOwnershipObservation.js";
+import { retainOwnedCommandCleanup } from "../../dist/providers/OwnedCommandCleanup.js";
 
 /** Physical cleanup facts, without serializing a live process owner. */
 export class ExperimentCommandCleanupFailure extends Error {
@@ -15,10 +16,16 @@ export class ExperimentCommandCleanupFailure extends Error {
 }
 
 /** One interpreter and retry owner for the remaining retained commands. */
-async function settleCommandOwners(owners) {
+async function settleOwnedResources(owners, preparationOwners) {
   const failures = [];
   for (const owner of owners) {
     try {
+      if (preparationOwners.has(owner)) {
+        await owner.close();
+        owners.delete(owner);
+        preparationOwners.delete(owner);
+        continue;
+      }
       const stopped = await owner.stop();
       if (stopped.status === "incomplete" || stopped.status === "not-owned")
         failures.push(new ExperimentCommandCleanupFailure(stopped));
@@ -30,7 +37,7 @@ async function settleCommandOwners(owners) {
   if (failures.length) {
     const error = new AggregateError(failures, "Experiment cleanup failed");
     error.cleanupOwners = owners;
-    error.retryCleanup = () => settleCommandOwners(owners);
+    error.retryCleanup = () => settleOwnedResources(owners, preparationOwners);
     throw error;
   }
 }
@@ -55,6 +62,14 @@ export async function withCommands(
       cancellation: { reason: controller.signal.reason },
     });
   const owners = new Set();
+  // Native preparation and commands expose different, producer-owned close capabilities.
+  const preparationOwners = new Set();
+  const preparationScope = {
+    retain: (owner) => {
+      owners.add(owner);
+      preparationOwners.add(owner);
+    },
+  };
   const active = new Set();
   // Pending-work ownership and durable failed outcomes have different lifetimes.
   // Do not retain successful output, but keep every failed cause until scope
@@ -70,7 +85,16 @@ export async function withCommands(
       if (controller.signal.aborted) throw controller.signal.reason;
       await prepareOwnership(controller.signal);
     } catch (cause) {
-      if (controller.signal.aborted) throw cancelled();
+      retainOwnedCommandCleanup(
+        cause,
+        preparationScope,
+        "aapt2-prototype",
+        "prepare_command",
+      );
+      // Only the actual abort reason is replaceable. Other preparation failures
+      // retain their diagnostics and cleanup; finalization adds cancellation separately.
+      if (controller.signal.aborted && cause === controller.signal.reason)
+        throw cancelled();
       throw cause;
     }
     const result = await runCommand(
@@ -135,7 +159,7 @@ export async function withCommands(
       if (!failures.includes(cause)) failures.push(cause);
     let cleanup;
     try {
-      await settleCommandOwners(owners);
+      await settleOwnedResources(owners, preparationOwners);
     } catch (cause) {
       cleanup = cause;
     }

@@ -16,7 +16,7 @@ rebuild CLI/MCP contracts are registered or included in the package allowlist.
 ```sh
 npm ci
 npm run build:cached
-node --test tests/support/command-scope.test.mjs tests/support/aapt2/prototype.test.mjs
+npm run test:focused -- tests/boundary/process/aapt2PrototypeNodeTests.test.ts
 node tests/support/aapt2/verify.mjs --aapt2 /tools/aapt2 --apktool /tools/apktool \
   --framework /sdk/android.jar --output /lab/aapt2-result
 ```
@@ -29,6 +29,9 @@ not signed or signature-verified by this workflow. A receipt retains tool output
 selected arguments, artifact hashes and timing; failed runs keep their output.
 Failure receipts retain earlier commands, bounded stdout/stderr snapshots,
 exit/signal observations, truncation flags and reported cleanup diagnostics.
+File hashes are recorded individually, so a later traversal failure does not
+erase earlier facts. Completed hashes survive cancellation or failed final
+close; `decoded_before` retains the decoded-project baseline before rebuilding.
 Compound failures retain their members without serializing live process owners
 or the ambient environment. Terminal failures report the receipt path/publication
 status and compact failure facts, not a second expanded copy of producer output
@@ -76,7 +79,7 @@ The real automated test is opt-in and reports a named skip without prerequisites
 REA_AAPT2_PROBE_COMMAND=/tools/aapt2 \
 REA_AAPT2_PROBE_FRAMEWORK=/sdk/android.jar \
 REA_APKTOOL_COMMAND=/tools/apktool \
-node --test tests/support/command-scope.test.mjs tests/support/aapt2/prototype.test.mjs
+npm run test:focused -- tests/boundary/process/aapt2PrototypeNodeTests.test.ts
 ```
 
 ## Fixture verification — 2026-10-22

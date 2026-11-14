@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -7,13 +7,15 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { major } from "semver";
 import { parseApktoolVersionOutput } from "../../../dist/apktool/ApktoolConfiguration.js";
 import { toolContract } from "../../../dist/contracts/toolContracts.js";
-import { hashStableFile } from "../../../dist/filesystem/StableFileHash.js";
 import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
 import { OwnedCommandFailure } from "../../../dist/process/OwnedCommand.js";
+import { DarwinProcessOwnershipInspectionError } from "../../../dist/process/DarwinProcessRunTokenReader.js";
+import { projectAnalysisError } from "../../../dist/domain/analysisErrorProjection.js";
 import {
   ExperimentCommandCleanupFailure,
   withCommands,
 } from "../command-scope.mjs";
+import { createIdentityRecorder } from "./identities.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -75,6 +77,16 @@ const failureRecord = (
   }
   if (cause instanceof ExperimentCommandCleanupFailure)
     record.cleanup_result = cause.result;
+  if (cause instanceof DarwinProcessOwnershipInspectionError) {
+    record.compiler_outcome = cause.compilerOutcome;
+    record.captured_output = cause.capturedOutput;
+    if (cause.cleanupFailure !== undefined)
+      record.cleanup_failure = projectAnalysisError(cause.cleanupFailure);
+    if (cause.cancellation !== undefined)
+      record.cancellation = {
+        reason: failureRecord(cause.cancellation.reason, { diagnostics, seen }),
+      };
+  }
   if ("code" in cause && ["string", "number"].includes(typeof cause.code))
     record.code = cause.code;
   if (cause instanceof AggregateError)
@@ -91,37 +103,15 @@ const env = {
   JAVA_TOOL_OPTIONS: "-Xmx512m",
 };
 await withCommands(async (run, signal) => {
-  const identity = (path) =>
-    files.run(() =>
-      hashStableFile(path, {
-        signal,
-        retainFailedClose: (handle) =>
-          files.retain({ kind: "file-handle", resource: path, handle }),
-      }),
-    );
-  const tree = async (path, prefix = "") => {
-    const entries = [];
-    for (const entry of await readdir(path, { withFileTypes: true })) {
-      if (entry.isDirectory())
-        entries.push(
-          ...(await tree(join(path, entry.name), prefix + entry.name + "/")),
-        );
-      else {
-        assert(entry.isFile());
-        entries.push({
-          path: prefix + entry.name,
-          ...(await identity(join(path, entry.name))),
-        });
-      }
-    }
-    return entries.sort((a, b) => a.path.localeCompare(b.path));
-  };
+  const { identity, tree } = createIdentityRecorder(files, signal);
   let failed = false;
   let primary;
   try {
-    const before = await tree(fixture);
-    receipt.source = before;
-    Object.assign(receipt.framework, await identity(receipt.framework.path));
+    receipt.source = [];
+    const before = await tree(fixture, receipt.source);
+    await identity(receipt.framework.path, (value) =>
+      Object.assign(receipt.framework, value),
+    );
     const selectedFramework = receipt.framework;
     const command = async (binary, args, options = {}) => {
       const started = performance.now();
@@ -209,8 +199,9 @@ await withCommands(async (run, signal) => {
       apk,
       compiled,
     ]);
-    const linked = await identity(apk);
-    receipt.linked = linked;
+    const linked = await identity(apk, (value) => {
+      receipt.linked = value;
+    });
     const dumps = {};
     receipt.dumps = dumps;
     for (const kind of ["badging", "resources", "strings", "configurations"])
@@ -235,7 +226,8 @@ await withCommands(async (run, signal) => {
     const decoded = join(output, "decoded");
     const frames = join(output, "framework-cache");
     await command(apktool, ["d", "--no-src", "-p", frames, "-o", decoded, apk]);
-    const decodedBefore = await tree(decoded);
+    receipt.decoded_before = [];
+    const decodedBefore = await tree(decoded, receipt.decoded_before);
     const rebuildSource = join(output, "rebuild-source");
     await cp(decoded, rebuildSource, {
       recursive: true,
@@ -254,8 +246,9 @@ await withCommands(async (run, signal) => {
       rebuilt,
       rebuildSource,
     ]);
-    const rebuiltIdentity = await identity(rebuilt);
-    receipt.rebuilt = rebuiltIdentity;
+    const rebuiltIdentity = await identity(rebuilt, (value) => {
+      receipt.rebuilt = value;
+    });
     const rebuiltStrings = (await command(aapt2, ["dump", "strings", rebuilt]))
       .stdout;
     assert.match(rebuiltStrings, /Hello & welcome/u);
@@ -341,14 +334,31 @@ await withCommands(async (run, signal) => {
         { cause: mcpPrimary },
       );
     if (mcpFailed) throw mcpPrimary;
-    assert.deepEqual(await tree(fixture), before);
-    assert.deepEqual(await tree(decoded), decodedBefore);
-    assert.deepEqual(await identity(apk), linked);
-    assert.deepEqual(await identity(rebuilt), rebuiltIdentity);
-    assert.deepEqual(await identity(selectedFramework.path), {
-      bytes: selectedFramework.bytes,
-      sha256: selectedFramework.sha256,
-    });
+    receipt.source_after = [];
+    assert.deepEqual(await tree(fixture, receipt.source_after), before);
+    receipt.decoded_after = [];
+    assert.deepEqual(await tree(decoded, receipt.decoded_after), decodedBefore);
+    assert.deepEqual(
+      await identity(apk, (value) => {
+        receipt.linked_after = value;
+      }),
+      linked,
+    );
+    assert.deepEqual(
+      await identity(rebuilt, (value) => {
+        receipt.rebuilt_after = value;
+      }),
+      rebuiltIdentity,
+    );
+    assert.deepEqual(
+      await identity(selectedFramework.path, (value) => {
+        receipt.framework_after = value;
+      }),
+      {
+        bytes: selectedFramework.bytes,
+        sha256: selectedFramework.sha256,
+      },
+    );
     Object.assign(receipt, {
       tokens: "unmeasured",
       process_family_peak: "unmeasured",

@@ -1,12 +1,158 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withCommands } from "../command-scope.mjs";
+import { createIdentityRecorder } from "./identities.mjs";
+import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import {
+  RegularFileCancelled,
+  RegularFileCleanupFailure,
+} from "../../../dist/filesystem/OwnedRegularFile.js";
+
+test("retains earlier physical hashes when a later directory read fails", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-aapt2-partial-hashes-"));
+  const files = new ArtifactResourceScope();
+  const failure = new Error("later directory unavailable");
+  try {
+    await writeFile(join(root, "a.txt"), "observed");
+    await mkdir(join(root, "z"));
+    const { tree } = createIdentityRecorder(files, undefined, {
+      directory: async (path, options) => {
+        if (path === join(root, "z")) throw failure;
+        return readdir(path, options);
+      },
+    });
+    const entries = [];
+    await assert.rejects(tree(root, entries), (error) => error === failure);
+    assert.deepEqual(entries, [
+      {
+        path: "a.txt",
+        sha256: createHash("sha256").update("observed").digest("hex"),
+        bytes: 8,
+      },
+    ]);
+  } finally {
+    await files.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+for (const kind of ["cancelled", "cleanup-completed", "cleanup-failed"])
+  test(`publishes only producer-confirmed completed file facts: ${kind}`, async () => {
+    const files = new ArtifactResourceScope();
+    const value = { sha256: "a".repeat(64), bytes: 7 };
+    const outcome =
+      kind === "cleanup-failed"
+        ? { kind: "failed", cause: new Error("read failed") }
+        : { kind: "completed", value };
+    const failure =
+      kind === "cancelled"
+        ? new RegularFileCancelled(
+            "selected",
+            {},
+            { outcome, reason: new Error("cancel during close") },
+          )
+        : new RegularFileCleanupFailure({
+            path: "selected",
+            owner: {},
+            outcome,
+            cleanupCause: new Error("close denied"),
+          });
+    const { identity } = createIdentityRecorder(files, undefined, {
+      hash: async () => {
+        throw failure;
+      },
+    });
+    let observed;
+    await assert.rejects(
+      identity("selected", (fact) => {
+        observed = fact;
+      }),
+      (error) => error === failure,
+    );
+    assert.deepEqual(observed, kind === "cleanup-failed" ? undefined : value);
+    await files.close();
+  });
 
 const script = fileURLToPath(new URL("./verify.mjs", import.meta.url));
+test(
+  "retains decoded and linked identities in the actual verifier's failed rebuild receipt",
+  {
+    skip:
+      process.platform === "win32"
+        ? "POSIX selected executable fixture"
+        : false,
+  },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-aapt2-decoded-identity-"));
+    const binary = join(root, "producer");
+    const framework = join(root, "framework.jar");
+    const output = join(root, "result");
+    try {
+      await writeFile(framework, "selected framework");
+      await writeFile(
+        binary,
+        `#!${process.execPath}
+const fs=require('node:fs'),path=require('node:path'),args=process.argv.slice(2);
+const destination=()=>args[args.indexOf('-o')+1];
+if(args[0]==='version') console.log('Android Asset Packaging Tool (aapt) 2.19-fixture');
+else if(args[0]==='--version') console.log('3.0.3');
+else if(args[0]==='compile'||args[0]==='link') fs.writeFileSync(destination(),'linked fixture');
+else if(args[0]==='dump') console.log(args[1]==='badging'?"package: name='com.rea.aapt2.probe' versionCode='7' versionName='1.2.3'":args[1]==='resources'?'string/greeting':args[1]==='strings'?'Hello & welcome; Hallo & willkommen':'TextView');
+else if(args[0]==='d') { fs.mkdirSync(destination());fs.writeFileSync(path.join(destination(),'settings.ini'),'decoded settings'); }
+else if(args[0]==='b') { console.error('authored rebuild refusal');process.exitCode=9; }
+else { console.error('Unmodeled command');process.exitCode=97; }
+`,
+        { mode: 0o700 },
+      );
+      await assert.rejects(
+        withCommands((run) =>
+          run(process.execPath, [
+            script,
+            "--aapt2",
+            binary,
+            "--apktool",
+            binary,
+            "--framework",
+            framework,
+            "--output",
+            output,
+          ]),
+        ),
+      );
+      const receipt = JSON.parse(
+        await readFile(join(output, "receipt.json"), "utf8"),
+      );
+      assert.equal(receipt.outcome, "failed");
+      assert.equal(receipt.commands.at(-1).arguments[0], "b");
+      assert.deepEqual(receipt.decoded_before, [
+        {
+          path: "settings.ini",
+          bytes: 16,
+          sha256: createHash("sha256").update("decoded settings").digest("hex"),
+        },
+      ]);
+      assert.deepEqual(receipt.linked, {
+        bytes: 14,
+        sha256: createHash("sha256").update("linked fixture").digest("hex"),
+      });
+      assert(receipt.source.length > 0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 test("persists an admitted preflight failure before any producer starts", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-aapt2-preflight-"));
   const output = join(root, "result");

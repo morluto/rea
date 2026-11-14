@@ -13,6 +13,7 @@ import {
   withCommands,
 } from "./command-scope.mjs";
 import { OwnedCommandFailure } from "../../dist/process/OwnedCommand.js";
+import { DarwinProcessOwnershipInspectionError } from "../../dist/process/DarwinProcessRunTokenReader.js";
 import { cleanupOwnedProcessGroup } from "../../dist/process/ProcessOwnership.js";
 import {
   observeProcessStartIdentity,
@@ -35,6 +36,94 @@ test("retains bounded producer diagnostics and a nonzero process outcome", async
     },
   );
 });
+
+for (const initiallyDenied of [false, true])
+  test(`preserves cancelled native preparation and its exact cleanup owner (denied: ${initiallyDenied})`, async () => {
+    let denied = initiallyDenied,
+      closes = 0,
+      stops = 0,
+      prepares = 0,
+      runs = 0,
+      selectedSignal,
+      preparation;
+    const cleanupFailure = new Error("native helper close denied");
+    const cleanupOwner = {
+      close: async () => {
+        closes++;
+        if (denied) throw cleanupFailure;
+      },
+    };
+    const capturedOutput = {
+      stdout: "compiler stdout",
+      stderr: "compiler diagnostic",
+      truncated: false,
+    };
+    const outcome = await withCommands(
+      async (run, signal) => {
+        selectedSignal = signal;
+        await run("first", []);
+        await run("second", []);
+      },
+      {
+        prepareOwnership: async (signal) => {
+          if (++prepares === 1) return;
+          process.emit("SIGINT");
+          preparation = new DarwinProcessOwnershipInspectionError(
+            "cancelled native preparation",
+            {
+              cleanupOwner,
+              capturedOutput,
+              cancellation: { reason: signal.reason },
+            },
+          );
+          throw preparation;
+        },
+        runCommand: async (_input, _limits, options) => {
+          runs++;
+          options.retainCleanup({
+            stop: async () => {
+              stops++;
+              return { status: "verified-cleanup" };
+            },
+          });
+          return {
+            stdout: { text: "first completed" },
+            stderr: { text: "" },
+            exitCode: 0,
+          };
+        },
+      },
+    ).then(
+      () => {
+        throw new Error("Expected preparation failure");
+      },
+      (error) => error,
+    );
+    assert(outcome instanceof AggregateError);
+    assert(outcome.errors.includes(preparation));
+    assert.equal(preparation.capturedOutput, capturedOutput);
+    assert.equal(preparation.cleanupOwner, cleanupOwner);
+    assert(
+      outcome.errors.some(
+        (error) =>
+          error instanceof OwnedCommandFailure &&
+          error.cancellation.reason === selectedSignal.reason,
+      ),
+    );
+    assert.equal(runs, 1);
+    assert.equal(stops, 1);
+    assert.equal(closes, 1);
+    if (initiallyDenied) {
+      assert(outcome.errors.includes(cleanupFailure));
+      assert.equal(outcome.cleanupOwners.size, 1);
+      denied = false;
+      await outcome.retryCleanup();
+      await outcome.retryCleanup();
+      assert.equal(closes, 2);
+      assert.equal(stops, 1);
+      assert.equal(outcome.cleanupOwners.size, 0);
+    }
+  });
 test("refuses incomplete output instead of accepting a truncated result", async () => {
   await assert.rejects(
     withCommands((run) =>
