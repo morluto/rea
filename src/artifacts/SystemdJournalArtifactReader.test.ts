@@ -255,7 +255,9 @@ it("ends the chain at the declared tail object instead of walking arena capacity
     truncated_object_count: 0,
     trailing_bytes: 64,
   });
-  expect(inventory.limitations.join(" ")).not.toMatch(/declared size does not fit/iu);
+  expect(inventory.limitations.join(" ")).not.toMatch(
+    /declared size does not fit/iu,
+  );
 });
 
 it("refuses to describe objects under incompatible flags it does not know", async () => {
@@ -320,7 +322,9 @@ it("does not claim compressed payloads were skipped when no object is compressed
   );
   const limitations = inventory.limitations.join(" ");
   expect(limitations).toMatch(/advertises a compression algorithm/u);
-  expect(limitations).not.toMatch(/compressed object payloads are not decompressed/u);
+  expect(limitations).not.toMatch(
+    /compressed object payloads are not decompressed/u,
+  );
 });
 
 it("refuses a file that does not begin with the journal signature", async () => {

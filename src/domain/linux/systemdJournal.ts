@@ -291,9 +291,7 @@ const readIdFacts = (bytes: Uint8Array) => ({
   tail_entry_boot_id: formatId128(
     bytes.subarray(HEADER.tailEntryBootId, HEADER.tailEntryBootId + 16),
   ),
-  seqnum_id: formatId128(
-    bytes.subarray(HEADER.seqnumId, HEADER.seqnumId + 16),
-  ),
+  seqnum_id: formatId128(bytes.subarray(HEADER.seqnumId, HEADER.seqnumId + 16)),
 });
 
 /** Facts for a header too short to anchor its object area; only what was read holds. */
@@ -358,10 +356,7 @@ const readHeaderFacts = (
       HEADER.dataHashTableOffset,
       "data_hash_table_offset",
     ),
-    data_hash_table_size: u64(
-      HEADER.dataHashTableSize,
-      "data_hash_table_size",
-    ),
+    data_hash_table_size: u64(HEADER.dataHashTableSize, "data_hash_table_size"),
     field_hash_table_offset: u64(
       HEADER.fieldHashTableOffset,
       "field_hash_table_offset",
@@ -592,7 +587,10 @@ class JournalScanner {
 
   #acceptObjectHeader(): void {
     const offset = this.#offset;
-    if (this.#tailObjectOffset !== null && BigInt(offset) > this.#tailObjectOffset) {
+    if (
+      this.#tailObjectOffset !== null &&
+      BigInt(offset) > this.#tailObjectOffset
+    ) {
       this.#limitations.push(
         `the object chain continues past the declared tail object at ${this.#tailObjectOffset.toString()}; later objects are not inspected`,
       );
@@ -628,7 +626,8 @@ class JournalScanner {
     const index = this.#objectCount;
     this.#objectCount += 1;
     this.#typeCounts.set(type, (this.#typeCounts.get(type) ?? 0) + 1);
-    if (!OBJECT_TYPES.has(rawType & OBJECT_TYPE_MASK)) this.#unknownTypeCount += 1;
+    if (!OBJECT_TYPES.has(rawType & OBJECT_TYPE_MASK))
+      this.#unknownTypeCount += 1;
     if (object.compressed) this.#compressedCount += 1;
     if (this.#objectHeaders.length < JOURNAL_MAX_INLINE_OBJECTS)
       this.#objectHeaders.push(object);
@@ -644,7 +643,10 @@ class JournalScanner {
     }
     this.#validCount += 1;
     this.#lastObjectEnd = offset + Number(declaredSize);
-    if (this.#tailObjectOffset !== null && BigInt(offset) === this.#tailObjectOffset) {
+    if (
+      this.#tailObjectOffset !== null &&
+      BigInt(offset) === this.#tailObjectOffset
+    ) {
       this.#phase = "closed";
       return;
     }
