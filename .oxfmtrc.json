@@ -16,6 +16,7 @@
     "mcp.json",
     "_reference/**",
     "third_party/**",
-    ".codex-plugin/mcp.json"
+    ".codex-plugin/mcp.json",
+    "studio/**"
   ]
 }

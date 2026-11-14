@@ -1,0 +1,20 @@
+{
+  "name": "@rea-studio/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@rea-studio/agent": "0.1.0",
+    "@rea-studio/core": "0.1.0",
+    "ai": "7.0.155"
+  },
+  "bin": {
+    "rea-studio-worker": "./dist/index.js"
+  }
+}
