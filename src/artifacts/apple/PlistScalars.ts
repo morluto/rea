@@ -263,9 +263,13 @@ export const scanBinaryPlistScalars = (
   const safeMaximum = BigInt(Number.MAX_SAFE_INTEGER);
   if (countRaw === 0n || countRaw > safeMaximum || tableRaw > safeMaximum)
     return result(true);
-  if (tableRaw < 8n || tableRaw >= BigInt(trailer)) return result(true);
+  // Decoder bounds admit an offset table that runs into the trailer. Observe
+  // dates that end before both the table and the trailer: a payload inside
+  // the trailer would share its width bytes.
+  if (tableRaw < 8n || tableRaw >= BigInt(bytes.length)) return result(true);
   const offsetTable = Number(tableRaw);
-  const capacity = Math.floor((trailer - offsetTable) / offsetWidth);
+  const datesEnd = Math.min(offsetTable, trailer);
+  const capacity = Math.floor((bytes.length - offsetTable) / offsetWidth);
   if (countRaw > BigInt(capacity)) return result(true);
   const count = Number(countRaw);
   const tableEnd = offsetTable + count * offsetWidth;
@@ -307,7 +311,7 @@ export const scanBinaryPlistScalars = (
       const marker = bytes[offset] ?? 0;
       if (
         marker === 0x33 &&
-        offset + 9 <= offsetTable &&
+        offset + 9 <= datesEnd &&
         (scalarPlan === undefined ||
           containsSortedOffset(scalarPlan.reachableDateOffsets, offset))
       ) {
@@ -473,26 +477,28 @@ const cloneBinaryPlistObjects = (
   const replacementLengths = cloneEntries.map(([, record]) => record.length);
   const newOffsetSize =
     normalizedOffsetSize ??
-    binaryPlistCloneOffsetWidth(offsetSize, trailerOffset, replacementLengths);
+    binaryPlistCloneOffsetWidth(offsetSize, bytes.length, replacementLengths);
   if (newOffsetSize === undefined)
     throw new RangeError(
       "binary plist cloned scalar offset exceeds supported width",
     );
-  // Preserve every source offset, including objects after the old table. The
-  // decoder copy keeps the old table as inert bytes and appends a new one.
-  const cloneStart = trailerOffset;
+  // Preserve every source offset, including objects after the old table and
+  // any that decoder bounds admit inside the old trailer. The decoder copy
+  // keeps the old table and trailer as inert bytes and appends new ones.
+  const cloneStart = bytes.length;
   const cloneBytes = replacementLengths.reduce(
     (sum, length) => sum + length,
     0,
   );
   const newTableOffset = cloneStart + cloneBytes;
-  const newLength = bytes.length + cloneBytes + objectCount * newOffsetSize;
+  const newLength =
+    bytes.length + cloneBytes + objectCount * newOffsetSize + 32;
   if (!Number.isSafeInteger(newLength))
     throw new RangeError(
       "binary plist cloned scalar representation is too large",
     );
   const compatible = Buffer.alloc(newLength);
-  bytes.copy(compatible, 0, 0, trailerOffset);
+  bytes.copy(compatible, 0);
   const cloneOffsetBySource = new Map<number, bigint>();
   let cloneCursor = cloneStart;
   cloneEntries.forEach(([sourceOffset, replacement]) => {

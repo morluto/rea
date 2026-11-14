@@ -4,8 +4,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { build, buildBinary, type PlistValue } from "plist";
+import { build, buildBinary, parseBinary, type PlistValue } from "plist";
 import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
+import { scanBinaryPlistScalars } from "./PlistScalars.js";
 import {
   decodeKeyedArchiveBytes,
   inspectBundleKeyedArchive,
@@ -577,6 +578,17 @@ const mutateCanonicalDate = (
   return bytes;
 };
 
+/** Move the last offset-table entry into the trailer's unused first byte. */
+const runOffsetTableIntoTrailer = (bytes: Buffer): Buffer => {
+  const trailer = bytes.length - 32;
+  const shifted = Buffer.concat([
+    bytes.subarray(0, trailer - 1),
+    bytes.subarray(trailer),
+  ]);
+  shifted[shifted.length - 32] = bytes[trailer - 1] ?? 0;
+  return shifted;
+};
+
 const dateScalar = (iso8601: string | null) => ({
   id: 1,
   kind: "scalar" as const,
@@ -855,6 +867,150 @@ describe("binary plist date object region", () => {
     expect(() =>
       decodeKeyedArchiveBytes(bytes, { offset: 0, limit: 1 }),
     ).toThrow(/date.*truncated/iu);
+  });
+
+  it("keeps a sub-millisecond instant unknown when the offset table runs into the trailer", () => {
+    const submillisecond = mutateCanonicalDate((offset, copy) => {
+      copy.writeDoubleBE(0.1005, offset + 1);
+    });
+    // Decoder bounds admit this table, and plist@5 reads the same graph.
+    const overlapping = runOffsetTableIntoTrailer(submillisecond);
+    const decoded = parseBinary(overlapping) as { $objects: unknown[] };
+    expect(decoded.$objects[1]).toBeInstanceOf(Date);
+    const original = Buffer.from(overlapping);
+
+    const graph = decodeKeyedArchiveBytes(overlapping, {
+      offset: 0,
+      limit: 10,
+    });
+
+    expect(graph.objects[1]).toMatchObject(dateScalar(null));
+    expect(graph.limitations).toContainEqual(
+      expect.stringMatching(oneUnknownDate),
+    );
+    expect(graph.limitations).not.toContainEqual(
+      expect.stringMatching(/number metadata.*could not.*observed/iu),
+    );
+    expect(Buffer.compare(overlapping, original)).toBe(0);
+  });
+
+  it("rebuilds a complete trailer when isolating an overlapping date whose table runs into the trailer", () => {
+    // Isolating the sub-millisecond date clones it and rebuilds the offset
+    // table; only the old table's bytes before the trailer are replaced.
+    const bytes = runOffsetTableIntoTrailer(binaryArchiveWithOverlappingDate());
+    const decoded = parseBinary(bytes) as { $objects: unknown[] };
+    expect(decoded.$objects[1]).toBeInstanceOf(Date);
+    const original = Buffer.from(bytes);
+
+    const graph = decodeKeyedArchiveBytes(bytes, {
+      root: "root",
+      offset: 0,
+      limit: 4,
+    });
+
+    expect(graph.objects).toContainEqual(
+      expect.objectContaining({
+        id: 1,
+        value: { $plist_type: "date", iso8601: null },
+      }),
+    );
+    expect(graph.objects).toContainEqual(
+      expect.objectContaining({
+        id: 2,
+        value: { $plist_type: "data", base64: "" },
+      }),
+    );
+    expect(Buffer.compare(bytes, original)).toBe(0);
+  });
+});
+
+describe("binary plist clone rewrite", () => {
+  /** A sub-millisecond date overlapped by an empty data object, plus data <07>. */
+  const overlappingDateWithSpareObject = () => {
+    const bytes = Buffer.from(
+      buildBinary({
+        ...archive,
+        $objects: [
+          "$null",
+          new Date("2001-01-01T00:00:00.000Z"),
+          Buffer.alloc(0),
+          Buffer.from([7]),
+        ],
+        $top: { root: { UID: 1 } },
+      }),
+    );
+    const date = scanBinaryPlistScalars(bytes).dates[0];
+    if (date === undefined) throw new Error("fixture lost its date");
+    // 0.0005 s encodes 0x40 as its second payload byte: an empty data record.
+    bytes.writeDoubleBE(0.0005, date.payloadOffset);
+    const table = readBinaryPlistObjectTableLayout(bytes);
+    const objectWith = (record: readonly number[]) => {
+      for (let objectId = 0; objectId < table.objectCount; objectId += 1) {
+        const offset = readBinaryPlistObjectOffset(bytes, table, objectId);
+        if (record.every((byte, index) => bytes[offset + index] === byte))
+          return objectId;
+      }
+      throw new Error("fixture lost an object");
+    };
+    const empty = objectWith([0x40]);
+    const spare = objectWith([0x41, 7]);
+    writeBinaryPlistObjectOffset(bytes, table, empty, date.payloadOffset + 1);
+    return { bytes, spare };
+  };
+
+  it("keeps an object stored in the trailer's spare bytes when isolating an overlapping date", () => {
+    const fixture = overlappingDateWithSpareObject();
+    // Run the table into the trailer, then move data <07> into the trailer's
+    // spare bytes after the table. Decoder bounds admit both placements.
+    const bytes = runOffsetTableIntoTrailer(fixture.bytes);
+    const trailer = bytes.length - 32;
+    bytes.set([0x41, 7], trailer + 1);
+    writeBinaryPlistObjectOffset(
+      bytes,
+      readBinaryPlistObjectTableLayout(bytes),
+      fixture.spare,
+      trailer + 1,
+    );
+    const decoded = parseBinary(bytes) as { $objects: unknown[] };
+    expect([...(decoded.$objects[3] as Uint8Array)]).toEqual([7]);
+    const original = Buffer.from(bytes);
+
+    const graph = decodeKeyedArchiveBytes(bytes, {
+      root: "root",
+      offset: 0,
+      limit: 5,
+    });
+
+    expect(graph.objects.map(({ id, value }) => [id, value])).toEqual([
+      [0, "$null"],
+      [1, { $plist_type: "date", iso8601: null }],
+      [2, { $plist_type: "data", base64: "" }],
+      [3, { $plist_type: "data", base64: "Bw==" }],
+    ]);
+    expect(Buffer.compare(bytes, original)).toBe(0);
+  });
+
+  it("leaves the trailer intact when a reachable date's payload runs into it", () => {
+    // Root array <0x200> at 0x100. The date at trailer - 1 stores its
+    // payload in the trailer, ending with the offset and reference widths.
+    // The 8-byte offset table at trailer + 9 reads the object count and top
+    // object fields, each shifted by one byte: 0x200 and 0x100.
+    const bytes = Buffer.alloc(545);
+    bytes.write("bplist00", 0, "latin1");
+    const trailer = bytes.length - 32;
+    bytes.set([0xa1, 0], 0x100);
+    bytes[trailer - 1] = 0x33;
+    bytes.set([0x3f, 0xb9, 0x99, 0x99, 0x99, 0x99, 8, 1], trailer);
+    bytes.writeBigUInt64BE(2n, trailer + 8);
+    bytes.writeBigUInt64BE(1n, trailer + 16);
+    bytes.writeBigUInt64BE(BigInt(trailer + 9), trailer + 24);
+    expect(parseBinary(bytes)).toEqual([expect.any(Date)]);
+    const original = Buffer.from(bytes);
+
+    expect(() =>
+      decodeKeyedArchiveBytes(bytes, { offset: 0, limit: 1 }),
+    ).toThrow("NSKeyedArchiver");
+    expect(Buffer.compare(bytes, original)).toBe(0);
   });
 });
 
