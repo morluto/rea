@@ -393,7 +393,6 @@ describe("unclosed CLI output filter slices", () => {
             "--filter-output",
             "result[0,1].name[",
           ],
-          timeoutMs: 3000,
         });
         expect(result.exitCode).toBe(1);
         expect(result.stdout).toContain("INVALID_OUTPUT_FILTER");
@@ -402,7 +401,6 @@ describe("unclosed CLI output filter slices", () => {
       }
       const splitPath = await cli.run({
         arguments: ["providers", "--json", "--filter-output", "][,]"],
-        timeoutMs: 3000,
       });
       expect(splitPath.exitCode).toBe(1);
       expect(splitPath.json).toMatchObject({
@@ -422,7 +420,6 @@ describe("unclosed CLI output filter slices", () => {
           "--filter-output",
           "capabilities[0,1].provider.id,open",
         ],
-        timeoutMs: 3000,
       });
       expect(result.exitCode).toBe(0);
       expect(result.json).toEqual({
