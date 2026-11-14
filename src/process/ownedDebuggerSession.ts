@@ -7,7 +7,15 @@ import {
 } from "../config/debuggerSessionLimits.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
 import { OwnedDebuggerCleanupError } from "./ownedDebuggerCleanupError.js";
@@ -126,6 +134,38 @@ export const debuggerResourceConstraintError = (
       diagnostics: facts,
       ...(limit === undefined ? {} : { limit }),
     },
+  );
+};
+
+/**
+ * Failure a debugger session keeps while its process is not confirmed stopped.
+ * A later cleanup retry reports it again, so it keeps the primary outcome: a
+ * cancellation stays a cancellation with the caller's reason instead of
+ * becoming a capability refusal for the target.
+ */
+export const retainedDebuggerCleanupFailure = (
+  debugger_: { readonly provider: string; readonly displayName: string },
+  operation: string,
+  reason: string,
+  resources: readonly string[],
+  options: AnalysisErrorOptions = {},
+): AnalysisError => {
+  const cleanup = { reason, resources: [...resources] };
+  const primary = options.cause;
+  if (primary instanceof AnalysisCancelledError)
+    return new AnalysisCancelledError(operation, {
+      ...options,
+      cause: primary.cause,
+      capturedOutput: options.capturedOutput ?? primary.capturedOutput,
+      partialObservation:
+        options.partialObservation ?? primary.partialObservation,
+      cleanup,
+    });
+  return new AnalysisCapabilityUnavailableError(
+    debugger_.provider,
+    operation,
+    `The owned ${debugger_.displayName} process could not be confirmed stopped: ${reason}`,
+    { ...options, cleanup },
   );
 };
 

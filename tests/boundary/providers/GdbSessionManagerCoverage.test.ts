@@ -3360,6 +3360,38 @@ it("retains caller cancellation and cleanup authority after active-command stop 
   expect(stopCalls).toBe(2);
 });
 
+it("keeps a cancelled startup a cancellation when a cleanup retry reports it again", async () => {
+  const controller = new AbortController();
+  const reason = { source: "caller" };
+  const fake = createFakeSpawner(undefined, {
+    deferPrompt: true,
+    afterPrompt: () => controller.abort(reason),
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    stopProcess: async () => ({
+      status: "incomplete",
+      reason: "stop unconfirmed",
+    }),
+  });
+
+  const started = await manager.start(controller.signal);
+  expect(started).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", cleanupIncomplete: true },
+  });
+
+  const retried = await manager.retryCleanupFailures();
+  expect(retried).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      operation: "start_gdb_session",
+      cause: reason,
+      cleanup: { reason: "stop unconfirmed" },
+    },
+  });
+});
+
 it.each(["tagged", "unexpected"] as const)(
   "retains %s stop failures while closing and resolves them after retry",
   async (failureKind) => {
