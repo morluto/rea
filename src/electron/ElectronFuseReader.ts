@@ -1,4 +1,5 @@
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
+import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import { readElfFixedHeader } from "../domain/elfFixedHeader.js";
 import { decodePeMachine } from "../domain/peMachine.js";
@@ -57,17 +58,6 @@ interface SliceRange {
   readonly size: number;
   readonly architecture: string | null;
   readonly hidden?: boolean;
-}
-
-/** The selected container is malformed or outside the supported formats. */
-export class ElectronFuseFormatFailure extends Error {
-  constructor(
-    readonly kind: "malformed" | "unsupported",
-    message: string,
-  ) {
-    super(message);
-    this.name = "ElectronFuseFormatFailure";
-  }
 }
 
 /** A measured bound was hit before a complete fuse report could be returned. */
@@ -130,8 +120,8 @@ export const readElectronFuseImage = async (
   )
     throw new RegularFileChangedError(path);
   if (!before.isFile() || before.isSymbolicLink())
-    throw new ElectronFuseFormatFailure(
-      "unsupported",
+    throw unsupportedInput(
+      "native-binary",
       `Expected a regular file without a symlink: ${path}`,
     );
   if (before.size > BigInt(ELECTRON_FUSE_LIMITS.maximumFileBytes))
@@ -227,8 +217,8 @@ const identifyContainer = async (
         { index: 0, fileOffset: 0, size, architecture: pe.architecture },
       ],
     };
-  throw new ElectronFuseFormatFailure(
-    "unsupported",
+  throw unsupportedInput(
+    "native-binary",
     `Selected artifact ${path} does not contain a Mach-O, ELF, or PE container.`,
   );
 };
@@ -248,10 +238,9 @@ const identifyMacho = async (
       facts.status === "not-mach-o"
         ? `Selected artifact ${path} does not contain a Mach-O, ELF, or PE container.`
         : facts.reason;
-    throw new ElectronFuseFormatFailure(
-      facts.status === "malformed" ? "malformed" : "unsupported",
-      reason,
-    );
+    throw facts.status === "malformed"
+      ? malformedInput("macho", reason)
+      : unsupportedInput("macho", reason);
   }
   const fat = readFatHeaderPrefix(head);
   const format =

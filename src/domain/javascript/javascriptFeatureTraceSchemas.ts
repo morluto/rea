@@ -3,11 +3,11 @@ import { z } from "zod";
 import { evidenceSchema, providerSchema } from "../evidence.js";
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
 const edgeIdSchema = prefixedDigestSchema("jag_edge");
-const boundedTextSchema = z.string().min(1);
 
 /** Matching mode for a literal seed: string seeds default to containment. */
 export const featureSeedMatchMode = (seed: {
@@ -19,7 +19,7 @@ export const featureSeedMatchMode = (seed: {
 const apiSeedSchema = z.union([
   z.strictObject({
     kind: z.literal("api"),
-    value: boundedTextSchema,
+    value: nonEmptyTextSchema,
     match: z.enum(["exact", "contains"]).nullable().default(null),
     case_sensitive: z.boolean().default(false),
   }),
@@ -34,7 +34,7 @@ const apiSeedSchema = z.union([
 const apiPathSeedSchema = z.union([
   z.strictObject({
     kind: z.literal("api"),
-    value: boundedTextSchema,
+    value: nonEmptyTextSchema,
     match: z.enum(["exact", "contains"]).nullable().default(null),
     case_sensitive: z.boolean().default(false),
     entry_path: z.array(z.string()).min(1),
@@ -63,7 +63,7 @@ export const applicationFeatureSeedSchema = z.union([
       "module",
       "native-export",
     ]),
-    value: boundedTextSchema,
+    value: nonEmptyTextSchema,
     match: z.enum(["exact", "contains"]).nullable().default(null),
     case_sensitive: z.boolean().default(false),
   }),
@@ -220,7 +220,7 @@ export const applicationFeatureTraceResultSchema = z.strictObject({
     total_seed_matches: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).min(1),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type TraceApplicationFeatureInput = z.infer<

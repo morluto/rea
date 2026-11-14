@@ -1,5 +1,9 @@
 import { dirname, join, relative } from "node:path";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  vscodeUserDirectory,
+  xdgConfigHomeOrDefault,
+} from "./ClientConfigRoots.js";
 import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
 import {
   resolveKiloRegistrationWorktree,
@@ -7,7 +11,7 @@ import {
 } from "./McpRegistrationGit.js";
 import {
   selectedPath,
-  platformPaths,
+  rootContext,
   present,
   type McpRegistrationLocationContext,
   type McpRegistrationLocation,
@@ -67,8 +71,12 @@ const kiloInline = (
     );
   }
 };
+/** Kilo's Global.Path.config: xdg-basedir's config home joined with "kilo". */
 const kiloRoot = (context: McpRegistrationLocationContext): string =>
-  selectedPath(join(platformPaths(context).config, "kilo"), context);
+  selectedPath(
+    join(xdgConfigHomeOrDefault(rootContext(context)), "kilo"),
+    context,
+  );
 const kiloHomeDirectories = async (
   context: McpRegistrationLocationContext,
 ): Promise<KiloConfigDirectory[]> => {
@@ -162,7 +170,7 @@ export const kiloLocation = async (
     markers: [
       root,
       join(
-        platformPaths(context).vscode,
+        vscodeUserDirectory(rootContext(context)),
         "globalStorage",
         "kilocode.kilo-code",
       ),
