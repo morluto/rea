@@ -46,8 +46,11 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for(
       executable,
       `#!${process.execPath}
 if (!process.argv.slice(2).includes(${JSON.stringify(probeArgument)})) process.exit(7);
-require("node:fs").writeFileSync(${JSON.stringify(ready)}, JSON.stringify({pid: process.pid, runId: process.env.REA_PROCESS_RUN_ID, at: Date.now()}));
+const readyFs = require("node:fs");
 process.on("SIGTERM", () => {});
+const pendingReady = ${JSON.stringify(ready + ".pending")};
+readyFs.writeFileSync(pendingReady, JSON.stringify({pid: process.pid, runId: process.env.REA_PROCESS_RUN_ID, at: Date.now()}));
+readyFs.renameSync(pendingReady, ${JSON.stringify(ready)});
 setInterval(() => { if (require("node:fs").existsSync(${JSON.stringify(release)})) process.exit(0); }, 25).unref();
 setTimeout(() => process.exit(99), 20000);
 `,
