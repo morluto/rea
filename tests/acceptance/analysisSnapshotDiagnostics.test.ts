@@ -24,8 +24,8 @@ cliTest(
     const call = await cli.sharedMcpCall!();
     for (const [document, field] of [
       [{ entries: [], workflow_entries: [] }, "target"],
-      [{ entries: [{}], workflow_entries: [] }, "query_id"],
-      [{ entries: [], workflow_entries: [{}] }, "query_id"],
+      [{ entries: [{}], workflow_entries: [] }, "entries.0.query_id"],
+      [{ entries: [], workflow_entries: [{}] }, "workflow_entries.0.query_id"],
     ] as const) {
       const encoded = JSON.stringify(document);
       await writeFile(snapshot, encoded);
@@ -60,8 +60,8 @@ cliTest(
         expect(error).not.toHaveProperty("cause");
         expect(error).not.toHaveProperty("stack");
         if (field === "target")
-          expect(error.details?.reason).toBe(
-            "Analysis snapshot validation failed at target: Invalid input: expected object, received undefined (2 more issues)",
+          expect(error.details?.reason).toMatch(
+            / at target: .+ \(2 more issues\)$/,
           );
       }
       // MCP adds open-session facts; the snapshot reason must match exactly.

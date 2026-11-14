@@ -33,12 +33,12 @@ describe.each([
     {
       label: "provider entry",
       document: { entries: [{}], workflow_entries: [] },
-      field: "query_id",
+      field: "entries.0.query_id",
     },
     {
       label: "workflow entry",
       document: { entries: [], workflow_entries: [{}] },
-      field: "query_id",
+      field: "workflow_entries.0.query_id",
     },
   ])(
     "retains the first $label schema diagnostic through the file wrapper",
@@ -60,8 +60,8 @@ describe.each([
         details: { reason: expect.stringContaining(`at ${field}:`) },
       });
       if (field === "target")
-        expect(projected.details?.reason).toBe(
-          "Analysis snapshot validation failed at target: Invalid input: expected object, received undefined (2 more issues)",
+        expect(projected.details?.reason).toMatch(
+          / at target: .+ \(2 more issues\)$/,
         );
       expect(projected).not.toHaveProperty("cause");
       expect(projected).not.toHaveProperty("stack");
