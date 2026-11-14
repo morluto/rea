@@ -182,3 +182,55 @@ it("preserves string display and decoding facts, while empty results retain unkn
       .coverage,
   ).toMatchObject({ status: "empty", total: 0, exhausted: true });
 });
+
+it("bounds aliases separately and rejects invalid source rows", () => {
+  const original = rows();
+  const source = parent(
+    freezeJsonSnapshot([
+      {
+        ...original[0],
+        matched_aliases: ["x".repeat(600_000), "y".repeat(600_000)],
+      },
+    ]),
+  );
+  expect(() =>
+    project(source, {
+      kind: "native-inventory-aliases",
+      source_index: 0,
+      limit: 2,
+    }),
+  ).toThrow(/byte allowance/u);
+  const page = project(source, {
+    kind: "native-inventory-aliases",
+    source_index: 0,
+    limit: 1,
+  });
+  expect(page.coverage).toMatchObject({ total: 2, next_offset: 1 });
+  expect(() =>
+    project(source, { kind: "native-inventory-aliases", source_index: 1 }),
+  ).toThrow();
+  expect(() =>
+    project(
+      { ...source, operation: "list_procedures" },
+      { kind: "native-inventory-aliases", source_index: 0 },
+    ),
+  ).toThrow();
+});
+
+it("admits a larger alias selection when it fits the response budget", () => {
+  const aliases = Array.from({ length: 200 }, (_, index) => `alias_${index}`);
+  const source = parent(
+    freezeJsonSnapshot([{ ...rows()[0], matched_aliases: aliases }]),
+  );
+  const page = project(source, {
+    kind: "native-inventory-aliases",
+    source_index: 0,
+    limit: 200,
+  });
+  expect(page).toMatchObject({
+    items: {
+      aliases: aliases.map((name, alias_index) => ({ alias_index, name })),
+    },
+    coverage: { total: 200, exhausted: true },
+  });
+});

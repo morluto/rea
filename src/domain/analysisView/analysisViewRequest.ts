@@ -26,7 +26,10 @@ import { rustBinaryViewRequestSchema } from "../rust/rustBinaryQuery.js";
 import { goBinaryViewRequestSchema } from "./goBinaryView.js";
 import { nativeFunctionMatchingViewRequestSchema } from "./nativeFunctionMatchingView.js";
 import { protobufViewRequestSchema } from "./protobufCaptureView.js";
-import { nativeInventoryViewRequestSchema } from "./nativeInventoryView.js";
+import {
+  nativeInventoryAliasViewRequestSchema,
+  nativeInventoryViewRequestSchema,
+} from "./nativeInventoryView.js";
 
 import {
   evidenceFileReferenceSchema,
@@ -78,6 +81,7 @@ export const recordedArrayViewSchema = z.strictObject({
 
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
+  nativeInventoryAliasViewRequestSchema,
   nativeInstructionReferencesRequestSchema,
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,

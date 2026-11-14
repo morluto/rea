@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { analysisStringSchema } from "../native/nativeString.js";
 import { inventoryDiscoveryCoverageSchema } from "../native/inventoryCoverage.js";
-import { jsonValueSchema } from "../jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
+import { jsonValueByteLength } from "../jsonValueByteLength.js";
+import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import {
   addressedValueSchema,
   isNativeInventoryOperation,
@@ -14,7 +16,10 @@ import {
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  analysisViewInputError,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -46,6 +51,23 @@ export const nativeInventoryViewRequestSchema = z.strictObject({
     ),
 });
 
+export const nativeInventoryAliasViewRequestSchema = z.strictObject({
+  kind: z.literal("native-inventory-aliases"),
+  source_index: z.int().nonnegative().describe("Original procedure row index."),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(32),
+});
+
+export const nativeInventoryAliasItemsSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("recorded"),
+    aliases: z.array(
+      z.strictObject({ alias_index: z.int().nonnegative(), name: z.string() }),
+    ),
+  }),
+  z.strictObject({ state: z.literal("not-recorded"), aliases: z.null() }),
+]);
+
 /** Parent Evidence ID plus source_index identifies even same-address alternatives. */
 export const nativeInventoryViewRowSchema = z.strictObject({
   source_index: z.number().int().nonnegative(),
@@ -73,7 +95,9 @@ export const projectNativeInventoryView = (
 ) => {
   if (
     !isNativeInventoryOperation(parent.operation) ||
-    (view.kind !== "summary" && view.kind !== "native-inventory")
+    (view.kind !== "summary" &&
+      view.kind !== "native-inventory" &&
+      view.kind !== "native-inventory-aliases")
   )
     return err(
       analysisViewInputError([
@@ -81,13 +105,28 @@ export const projectNativeInventoryView = (
           path: ["view"],
           reason: "invalid_value",
           message:
-            "Native inventory Evidence supports summary and native-inventory views.",
+            "Use summary or native-inventory for inventory Evidence, or native-inventory-aliases for search_procedures Evidence.",
         },
       ]),
     );
   assertOwnedView<
-    SummaryAnalysisView | z.output<typeof nativeInventoryViewRequestSchema>
-  >(view, "summary", "native-inventory");
+    | SummaryAnalysisView
+    | z.output<typeof nativeInventoryViewRequestSchema>
+    | z.output<typeof nativeInventoryAliasViewRequestSchema>
+  >(view, "summary", "native-inventory", "native-inventory-aliases");
+  if (
+    view.kind === "native-inventory-aliases" &&
+    parent.operation !== "search_procedures"
+  )
+    return err(
+      analysisViewInputError([
+        {
+          path: ["view", "kind"],
+          reason: "invalid_value",
+          message: "Alias pages require search_procedures Evidence.",
+        },
+      ]),
+    );
   const strings =
     parent.operation === "list_strings" ||
     parent.operation === "search_strings";
@@ -131,6 +170,73 @@ export const projectNativeInventoryView = (
       },
       coverage: completeWithinViewCoverage(rows.length, rows.length),
     });
+  if (view.kind === "native-inventory-aliases") {
+    const row = rows[view.source_index];
+    if (row === undefined)
+      return err(
+        analysisViewInputError([
+          {
+            path: ["view", "source_index"],
+            reason: "out_of_range",
+            message: `Select an original row index from the ${rows.length} retained procedure rows.`,
+          },
+        ]),
+      );
+    const { matched_aliases: names } = row;
+    const items: z.output<typeof nativeInventoryAliasItemsSchema> =
+      names === undefined
+        ? { state: "not-recorded", aliases: null }
+        : { state: "recorded", aliases: [] };
+    const count = Math.max(
+      0,
+      Math.min(view.limit, (names?.length ?? 0) - view.offset),
+    );
+    const result = {
+      ...shared,
+      kind: view.kind,
+      parent_operation: "search_procedures" as const,
+      view,
+      procedure: {
+        address: row.address,
+        value: row.value,
+        source_index: view.source_index,
+      },
+      items,
+      coverage:
+        names === undefined
+          ? null
+          : pageViewCoverage(view.offset, count, names.length),
+    };
+    const pageBytes = 1024 * 1024;
+    const tooLarge = () =>
+      err(
+        new AnalysisResourceConstraintError(
+          "inspect_analysis_view",
+          "transport",
+          "The procedure alias page cannot fit the analysis-view byte allowance.",
+          { parent_evidence_id: parent.evidenceId, limit_bytes: pageBytes },
+          ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+        ),
+      );
+    // Measure the result header, including the future digest and empty alias
+    // array, then count only the requested aliases before retaining each row.
+    let bytes = jsonValueByteLength(
+      { ...result, view_digest: "0".repeat(64) } as JsonValue,
+      pageBytes,
+    );
+    if (bytes > pageBytes) return tooLarge();
+    if (names !== undefined && items.state === "recorded") {
+      for (let index = 0; index < count; index++) {
+        const aliasIndex = view.offset + index;
+        const alias = { alias_index: aliasIndex, name: names[aliasIndex]! };
+        bytes +=
+          jsonValueByteLength(alias, pageBytes - bytes) + (index === 0 ? 0 : 1);
+        if (bytes > pageBytes) return tooLarge();
+        items.aliases.push(alias);
+      }
+    }
+    return ok(result);
+  }
   // Normalize the selection once: repeated caller fields must not multiply
   // work or temporary entries for every retained row. Keep the original view.
   const fields =

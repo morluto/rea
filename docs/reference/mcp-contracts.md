@@ -412,6 +412,15 @@ MCP encoding. An oversized single row remains in the complete parent, which
 can be exported. Page exhaustion describes retained rows, not discovery or
 runtime access.
 
+For retained `search_procedures` Evidence, use
+`view: {"kind":"native-inventory-aliases","source_index":0,"offset":0,"limit":32}`
+to page the matching secondary names of one procedure row. Get the original
+`source_index` from a `native-inventory` page. The alias page keeps the primary
+name and address, and each `alias_index` identifies its position in the parent
+row. Follow `coverage.next_offset` for subsequent aliases. If the parent did
+not record matched aliases, the view reports `not-recorded` with null coverage.
+Alias coverage describes the retained search matches.
+
 For oversized native function Evidence, `details.reported_limits.continuation`
 contains a ready-to-call `inspect_analysis_view` request for the retained
 pseudocode's first page. Use its `name` and `arguments` directly, then follow
