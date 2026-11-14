@@ -850,20 +850,12 @@ the sequencer's two-worker schedule balances every shard at about 404 seconds
 of file time. The same replay with the stale history weights leaves the slowest
 shard near 547 seconds and the fastest near 293. That spread is file-schedule
 time, not runner queue, which is why each tier keeps its own history.
-CI assigns discovered files by historical duration, with a deterministic
-fallback weight for new files, rather than dividing only by file count.
-Each file keeps its full duration on one worker. Extra workers overlap other
-files in the same sequence group, and `process-boundary` runs after that
-group. History published before the competing-loader split still names only
-`javascriptLiteralPercentPaths.test.ts`. Until an artifact records
-`javascriptLiteralLoaderOwnership.test.ts`, the sequencer assigns that
-recorded duration by the pre-split case counts: 54/192 stays with the
-percent-path file and 138/192 goes to the consolidated loader file. History
-that names the retired Early, Middle, and Late shards sums those durations
-onto the consolidated file instead, and scales a partial set as three equal
-shares. That weight is the old dual-surface cost. The demoted file runs every
-loader once through the shared stdio MCP session, so the first schedule
-overestimates it. Every discovered file still belongs to exactly one shard;
+CI assigns discovered files by historical duration rather than dividing only
+by file count. A file with no recorded duration, such as a newly added or
+renamed test, is weighted at the median recorded duration until a published
+artifact records it. Each file keeps its full duration on one worker. Extra
+workers overlap other files in the same sequence group, and `process-boundary`
+runs after that group. Every discovered file still belongs to exactly one shard;
 worker limits and project ordering remain unchanged. Fast qualification keeps
 eight built shards without coverage. The merge job rejects successful reports
 with missing, unexpected, or duplicate portable files. Coverage instrumentation
