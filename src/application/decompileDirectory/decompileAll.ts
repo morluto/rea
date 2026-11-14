@@ -25,6 +25,8 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisTimeoutError,
+  isAborted,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
@@ -119,10 +121,10 @@ export const decompileAll = async (
     input.resume,
   );
   if (!placement.ok) return placement;
-  if (isAborted(signal)) return err(cancelled(signal));
+  if (isAborted(signal)) return err(cancelledBy("decompile_all", signal));
   const loaded = await loadProcedures(analysis, input.layout, signal);
   if (!loaded.ok) return loaded;
-  if (isAborted(signal)) return err(cancelled(signal));
+  if (isAborted(signal)) return err(cancelledBy("decompile_all", signal));
   const selection = selectProcedures(
     loaded.value.procedures,
     input,
@@ -225,7 +227,7 @@ export const decompileAll = async (
         primary.cause === signal?.reason
       )
     )
-      primary.retainSecondaryFailure(cancelled(signal));
+      primary.retainSecondaryFailure(cancelledBy("decompile_all", signal));
     for (const failure of failures.slice(1))
       primary.retainSecondaryFailure(failure);
     if (
@@ -247,7 +249,7 @@ export const decompileAll = async (
   // resume, but a caller abort that stopped the loop or arrived meanwhile is
   // not a success. Report it with the caller's own reason.
   if (isAborted(signal)) {
-    const failure = cancelled(signal);
+    const failure = cancelledBy("decompile_all", signal);
     if (publishedOutput !== undefined)
       failure.retainPrimaryDiagnostics({ published_output: publishedOutput });
     return err(failure);
@@ -397,14 +399,16 @@ const publishSelected = async (
 ): Promise<Result<void, AnalysisError>> => {
   let bodySupport: "unknown" | "unavailable" = "unknown";
   for (const procedure of input.procedures) {
-    if (isAborted(input.signal)) return err(cancelled(input.signal));
+    if (isAborted(input.signal))
+      return err(cancelledBy("decompile_all", input.signal));
     const existing = await existingFile(
       input.session,
       procedure.address,
       input.signal,
     );
     if (typeof existing === "object") return err(existing.error);
-    if (isAborted(input.signal)) return err(cancelled(input.signal));
+    if (isAborted(input.signal))
+      return err(cancelledBy("decompile_all", input.signal));
     if (existing === "skip") {
       input.state.skipped += 1;
       // A file that reads back and verifies shows the directory works.
@@ -577,7 +581,7 @@ const publishOne = async (input: {
     if (!recorded.ok) return { result: recorded, bodySupport: body.support };
     if (isAborted(input.signal))
       return {
-        result: err(cancelled(input.signal)),
+        result: err(cancelledBy("decompile_all", input.signal)),
         bodySupport: body.support,
       };
     attemptedIndependent = true;
@@ -670,7 +674,10 @@ const publishOne = async (input: {
   // Classify and journal settled failures before a later caller abort. A valid
   // result still needs an active caller before publishing a new function file.
   if (isAborted(input.signal))
-    return { result: err(cancelled(input.signal)), bodySupport: body.support };
+    return {
+      result: err(cancelledBy("decompile_all", input.signal)),
+      bodySupport: body.support,
+    };
   const relativePath = input.session.pathFor(input.procedure.address);
   const bytes = Buffer.from(
     functionFileText({
@@ -1165,12 +1172,6 @@ const executionOptions = (signal: AbortSignal | undefined) => ({
   ...(signal === undefined ? {} : { signal }),
   selectorOrigin: "provider" as const,
 });
-
-const cancelled = (signal: AbortSignal | undefined): AnalysisCancelledError =>
-  new AnalysisCancelledError("decompile_all", { cause: signal?.reason });
-
-const isAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
 
 const nodeAbsent = (cause: unknown): boolean =>
   typeof cause === "object" &&

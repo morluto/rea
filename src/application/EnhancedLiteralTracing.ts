@@ -5,9 +5,9 @@ import type {
   AnalysisOperation,
 } from "./AnalysisProvider.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -212,11 +212,7 @@ const traceReferences = async (
           )
             return resolved;
           if (request.signal?.aborted === true)
-            return err(
-              new AnalysisCancelledError("trace_feature", {
-                cause: request.signal.reason,
-              }),
-            );
+            return err(cancelledBy("trace_feature", request.signal));
           containingProcedure = {
             query_address: source,
             status: "unavailable",

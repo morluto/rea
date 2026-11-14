@@ -1,8 +1,9 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  cancelledBy,
+  isAborted,
 } from "../../domain/analysisErrorCore.js";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
 import { admitFilesystemObservationRoots } from "../../process/capture/FilesystemSnapshot.js";
@@ -26,11 +27,7 @@ export const prepareProcessScenarioPlan = async (
   signal?: AbortSignal,
 ): Promise<Result<ResolvedProcessScenario, AnalysisError>> => {
   if (signal?.aborted === true)
-    return err(
-      new AnalysisCancelledError("capture_process_scenario", {
-        cause: signal.reason,
-      }),
-    );
+    return err(cancelledBy("capture_process_scenario", signal));
   const ownershipReason = processCaptureOwnershipUnavailableReason(platform);
   if (ownershipReason !== undefined)
     return err(
@@ -41,25 +38,24 @@ export const prepareProcessScenarioPlan = async (
         { userMessage: ownershipReason },
       ),
     );
-  const cancelled = () =>
-    err(
-      new AnalysisCancelledError("capture_process_scenario", {
-        cause: signal?.reason,
-      }),
-    );
-  const aborted = () => signal?.aborted === true;
   try {
     const { dry_run: _dryRun, ...resolved } =
       await resolveProcessScenarioRuntimePaths(scenario, environment, platform);
-    if (aborted()) return cancelled();
+    if (isAborted(signal))
+      return err(cancelledBy("capture_process_scenario", signal));
     const privacy = createProcessSensitiveOutput(scenario);
     if (!privacy.ok) return privacy;
     const admitted = await admitFilesystemObservationRoots(resolved, signal);
-    if (!admitted.ok) return aborted() ? cancelled() : admitted;
-    if (aborted()) return cancelled();
+    if (!admitted.ok)
+      return isAborted(signal)
+        ? err(cancelledBy("capture_process_scenario", signal))
+        : admitted;
+    if (isAborted(signal))
+      return err(cancelledBy("capture_process_scenario", signal));
     return ok(resolved);
   } catch (cause: unknown) {
-    if (aborted()) return cancelled();
+    if (isAborted(signal))
+      return err(cancelledBy("capture_process_scenario", signal));
     return err(
       cause instanceof AnalysisError
         ? cause

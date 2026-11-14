@@ -9,7 +9,11 @@ import {
   processInspectionCancellationError,
   retainOwnedCommandCleanup,
 } from "../providers/OwnedCommandCleanup.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -75,16 +79,22 @@ const gitFailure = (
   const cancelled =
     inspectionCancellation === undefined && cancellation === undefined
       ? undefined
-      : new AnalysisCancelledError("Kilo project root discovery", {
-          cause:
+      : cancelledBy(
+          "Kilo project root discovery",
+          carriedReason(
             inspectionCancellation === undefined
               ? cancellation?.reason
               : inspectionCancellation.cause,
-          ...(inspectionCancellation?.capturedOutput === undefined
-            ? {}
-            : { capturedOutput: inspectionCancellation.capturedOutput }),
-          ...(!primaryCancellation || cleanup === undefined ? {} : { cleanup }),
-        });
+          ),
+          {
+            ...(inspectionCancellation?.capturedOutput === undefined
+              ? {}
+              : { capturedOutput: inspectionCancellation.capturedOutput }),
+            ...(!primaryCancellation || cleanup === undefined
+              ? {}
+              : { cleanup }),
+          },
+        );
   const failure =
     primaryCancellation && cancelled !== undefined
       ? cancelled
@@ -263,9 +273,7 @@ export const resolveKiloRegistrationWorktree = async (
     if (context.signal?.aborted === true)
       analysisErrorWithCancellation(
         failure,
-        new AnalysisCancelledError("Kilo project root discovery", {
-          cause: context.signal.reason,
-        }),
+        cancelledBy("Kilo project root discovery", context.signal),
       );
     throw failure;
   }

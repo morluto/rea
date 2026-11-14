@@ -22,6 +22,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   AnalysisCancelledError,
   type AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { safeParseProcessCapture } from "../domain/process/processCaptureParsing.js";
 import {
@@ -105,20 +106,10 @@ const readBundle = async (
   resources?: ArtifactResourceScope,
   operation = "import_evidence_bundle",
 ): Promise<Result<EvidenceBundle, EvidenceBundleFileFailure>> => {
-  if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
-      }),
-    );
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
   const loaded = await readJsonFile(path, signal, resources, operation);
   if (!loaded.ok) return loaded;
-  if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
-      }),
-    );
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
   return authenticateEvidenceBundleValue(loaded.value, path, {
     operation,
     immutable,
@@ -224,12 +215,7 @@ export const writeEvidenceBundle = async (
     EvidenceBundleFileFailure
   >
 > => {
-  if (signal?.aborted === true)
-    return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
-      }),
-    );
+  if (signal?.aborted === true) return err(cancelledBy(operation, signal));
   if (!isImmutableEvidenceBundle(bundle)) {
     const issue = jsonValueValidationIssue(bundle);
     if (issue !== undefined)
