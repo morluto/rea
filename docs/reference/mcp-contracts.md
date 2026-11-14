@@ -156,6 +156,11 @@ Each container reader declares its own traversal coverage, including complete
 coverage. A traversal that ends without that declaration, or that stops before
 its reader finishes, is `unknown` with a limitation naming the reader format;
 a complete traversal of one container never covers another.
+ZIP members are listed from the central directory. Coverage is `complete` only
+when its records account for every byte before the directory (a well-formed
+APK signing block is accounted for); otherwise coverage is `unknown` and a
+limitation gives the unaccounted bytes, which may hold local entries the
+directory does not list.
 PyInstaller inventory also preserves distinct table rows that share a logical
 path, including decoded children beneath a colliding file/directory path.
 Inventory coverage describes observed archive facts; extraction still refuses
