@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { FULL_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
@@ -18,6 +18,7 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const mainPath = fileURLToPath(
   new URL("../../../dist/main.js", import.meta.url),

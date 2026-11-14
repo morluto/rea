@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { expect } from "vitest";
+import { afterAll, expect } from "vitest";
 
 import { dotnetBundleFixture } from "../../src/artifacts/dotnet/DotnetBundle.fixture.js";
 import { cArchiveExecutable } from "../../src/artifacts/pyinstaller/CArchive.fixture.js";
@@ -20,6 +20,7 @@ import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const checkProjectedMember = async (
   client: Client,

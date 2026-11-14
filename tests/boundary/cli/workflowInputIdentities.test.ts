@@ -4,7 +4,7 @@ import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verifi
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { expect, onTestFinished } from "vitest";
+import { afterAll, expect, onTestFinished } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -14,6 +14,7 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const compareContract = toolContract("compare_application_versions");
 const analyzeContract = toolContract("analyze_javascript_application");
