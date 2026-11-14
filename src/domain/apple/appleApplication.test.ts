@@ -30,6 +30,31 @@ const artifactId = (sha256: string): string =>
   `art_${digestCanonicalValue({ sha256 }, "Artifact inventory")}`;
 
 /** Build one complete, content-addressed inventory page for pure projection tests. */
+/**
+ * The next occurrence ID for a path. Repeated paths, as in archives with
+ * duplicate members, carry the inventory's duplicate ordinal.
+ */
+const fixtureOccurrenceId = (
+  rootId: string,
+  path: string,
+  kind: EntryKind,
+  ordinals: Map<string, number>,
+): string => {
+  if (path === ".")
+    return `occ_${digestCanonicalValue({ root: rootId }, "Artifact inventory")}`;
+  const ordinal = ordinals.get(path) ?? 0;
+  ordinals.set(path, ordinal + 1);
+  return `occ_${digestCanonicalValue(
+    {
+      root_artifact_id: rootId,
+      logical_path: path,
+      entry_kind: kind,
+      ...(ordinal === 0 ? {} : { duplicate_ordinal: ordinal }),
+    },
+    "Artifact inventory",
+  )}`;
+};
+
 const inventoryEvidence = (
   rootFormat: RootFormat,
   subjectName: string,
@@ -56,19 +81,14 @@ const inventoryEvidence = (
     content_state: "materialized",
     limitations: [],
   });
+  const ordinals = new Map<string, number>();
   const occurrence = (
     path: string,
     kind: EntryKind,
     id: string | null,
     format: ArtifactOccurrence["artifact_format"] = "file",
   ): ArtifactOccurrence => ({
-    occurrence_id:
-      path === "."
-        ? `occ_${digestCanonicalValue({ root: rootId }, "Artifact inventory")}`
-        : `occ_${digestCanonicalValue(
-            { root_artifact_id: rootId, logical_path: path, entry_kind: kind },
-            "Artifact inventory",
-          )}`,
+    occurrence_id: fixtureOccurrenceId(rootId, path, kind, ordinals),
     artifact_id: id,
     parent_occurrence_id: null,
     logical_path: path,
@@ -98,6 +118,7 @@ const inventoryEvidence = (
     format = "file",
     unavailable = false,
   } of entries) {
+    const ordinal = ordinals.get(path) ?? 0;
     if (kind === "symlink" || unavailable) {
       occurrences.push({
         ...occurrence(path, kind, null, format),
@@ -108,7 +129,9 @@ const inventoryEvidence = (
       });
       continue;
     }
-    const contentSha = sha(`${kind}:${path}`);
+    const contentSha = sha(
+      `${kind}:${path}${ordinal === 0 ? "" : `#${ordinal}`}`,
+    );
     const id = artifactId(contentSha);
     nodes.set(
       id,
@@ -1136,7 +1159,7 @@ describe("Apple bundle placement findings", () => {
         macho("Contents/PlugIns/Waffles/Belgian.plugin/Contents/MacOS/Belgian"),
         { path: "Contents/PlugIns/Docs/readme.txt" },
         macho("Contents/PlugIns/Good.plugin/Contents/MacOS/Good"),
-        // Bundle anatomy without a recognized extension is not a grouping directory.
+        // A dotted directory with bundle anatomy is a bundle, evaluated as one.
         macho("Contents/Library/Automator/Act.action/Contents/MacOS/Act"),
       ]),
     );
@@ -1219,12 +1242,12 @@ describe("Apple bundle placement findings", () => {
       },
     ]);
     expect(ruleCoverage(result)).toEqual({
-      "code-in-resource-location": ["complete", 6],
+      "code-in-resource-location": ["complete", 7],
       "standalone-dynamic-library": ["not-evaluated", 0],
       "framework-in-nested-bundle": ["not-evaluated", 0],
       "framework-root-content": ["complete", 1],
-      "grouping-directory-in-code-location": ["complete", 6],
-      "dotted-directory-name": ["complete", 6],
+      "grouping-directory-in-code-location": ["complete", 7],
+      "dotted-directory-name": ["complete", 7],
     });
     for (const { apple_rule: rule } of placement?.rules ?? [])
       expect(rule.length).toBeGreaterThan(0);
@@ -1394,5 +1417,92 @@ describe("Apple bundle placement coverage", () => {
     expect(placement).toBeDefined();
     const parsed = appleApplicationProjectionResultSchema.parse(historical);
     expect("bundle_placement" in parsed).toBe(false);
+  });
+});
+
+describe("Apple bundle placement ownership", () => {
+  it("evaluates a dotted directory with bundle anatomy as a bundle", () => {
+    const action = "Contents/Library/Automator/Act.action";
+    const result = project(
+      inventoryEvidence("directory", "Fixture.app", [
+        { path: "Contents/Info.plist", format: "plist" },
+        macho("Contents/MacOS/Fixture"),
+        { path: `${action}/Contents/Info.plist`, format: "plist" },
+        macho(`${action}/Contents/MacOS/Act`),
+        macho(`${action}/Contents/Resources/stray`),
+      ]),
+    );
+    expect(result.bundles).toContainEqual(
+      expect.objectContaining({
+        path: action,
+        role: "bundle",
+        layout: "macos-deep",
+      }),
+    );
+    expect(result.bundle_placement?.findings).toEqual([
+      expect.objectContaining({
+        rules: ["code-in-resource-location"],
+        bundle_path: action,
+        path: `${action}/Contents/Resources/stray`,
+      }),
+    ]);
+  });
+
+  it("applies framework-only rules to frameworks, not to any Versions directory", () => {
+    const root = "Payload/Mobile.app";
+    const result = project(
+      inventoryEvidence("ipa", "Mobile.ipa", [
+        { path: `${root}/Info.plist`, format: "plist" },
+        macho(`${root}/Mobile`),
+        { path: `${root}/Versions/notes.txt` },
+        { path: `${root}/Assets.car` },
+      ]),
+    );
+    expect(result.bundles[0]).toMatchObject({
+      path: root,
+      role: "application",
+      layout: "versioned-framework",
+    });
+    expect(result.bundle_placement?.findings).toEqual([]);
+    expect(ruleCoverage(result)["framework-root-content"]).toEqual([
+      "complete",
+      0,
+    ]);
+  });
+
+  it("keeps a repeated inventory path unknown instead of trusting its last occurrence", () => {
+    const result = project(
+      inventoryEvidence("directory", "Fixture.app", [
+        { path: "Contents/Info.plist", format: "plist" },
+        macho("Contents/MacOS/Fixture"),
+        macho("Contents/Resources/payload"),
+        { path: "Contents/Resources/payload" },
+      ]),
+    );
+    expect(result.bundle_placement?.findings).toEqual([]);
+    const rule = result.bundle_placement?.rules.find(
+      ({ rule }) => rule === "code-in-resource-location",
+    );
+    expect(rule).toMatchObject({ status: "partial" });
+    expect(rule?.limitations).toContainEqual(
+      expect.stringContaining("a path the inventory repeats"),
+    );
+  });
+
+  it("does not place an application found inside an inventoried archive", () => {
+    const app = "Fixture.zip/Fixture.app";
+    const result = project(
+      inventoryEvidence("directory", "Downloads", [
+        { path: "Fixture.zip" },
+        { path: `${app}/Contents/Info.plist`, format: "plist" },
+        macho(`${app}/Contents/MacOS/Fixture`),
+        macho(`${app}/Contents/Resources/stray`),
+      ]),
+    );
+    expect(result.bundle_placement?.findings).toEqual([]);
+    expect(ruleCoverage(result)["code-in-resource-location"]).toEqual([
+      "complete",
+      0,
+    ]);
   });
 });

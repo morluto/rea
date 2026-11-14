@@ -158,14 +158,24 @@ const applicationRoots = (
     .sort(compare);
 };
 
+/**
+ * Bundles are directories with a recognized extension, or a dotted name and
+ * bundle anatomy: the code-signing machinery treats a dotted directory as a
+ * bundle, so an Automator `.action` with Contents/ is one. An undotted
+ * directory is never a bundle, even when it holds Info.plist (as Contents/
+ * itself does).
+ */
 const detectBundles = (tree: Tree, roots: readonly string[]): Bundle[] => {
   const paths = new Set<string>(roots);
+  const byAnatomy = new Set<string>();
   for (const path of directoryPaths(tree)) {
-    if (
-      APPLE_BUNDLE_EXTENSION.test(path.split("/").at(-1) ?? "") &&
-      roots.some((root) => isWithin(path, root))
-    )
+    if (!roots.some((root) => isWithin(path, root))) continue;
+    const name = path.split("/").at(-1) ?? "";
+    if (APPLE_BUNDLE_EXTENSION.test(name)) paths.add(path);
+    else if (name.includes(".") && hasBundleAnatomy(tree, path)) {
       paths.add(path);
+      byAnatomy.add(path);
+    }
   }
   return [...paths].sort(compare).map((path) => {
     const layout = bundleLayout(path, tree);
@@ -173,7 +183,11 @@ const detectBundles = (tree: Tree, roots: readonly string[]): Bundle[] => {
       path,
       parent_path: enclosingBundle(path, paths),
       layout,
-      role: roots.includes(path) ? "application" : bundleRole(path),
+      role: roots.includes(path)
+        ? "application"
+        : byAnatomy.has(path)
+          ? "bundle"
+          : bundleRole(path),
       role_basis: "path-convention",
       info_plist_path: infoPlistPath(path, layout, tree),
       executable_candidates: executableCandidates(path, layout, tree),
@@ -190,6 +204,8 @@ export interface AppleBundleTree {
   readonly directories: ReadonlyMap<string, ReadonlySet<string>>;
   readonly files: ReadonlyMap<string, ReadonlyMap<string, Entry>>;
   readonly links: ReadonlyMap<string, ReadonlySet<string>>;
+  /** File paths that occur more than once; `files` keeps only the last occurrence. */
+  readonly duplicateFiles: ReadonlySet<string>;
 }
 type Tree = AppleBundleTree;
 
@@ -197,6 +213,7 @@ const indexTree = (entries: readonly Entry[]): Tree => {
   const directories = new Map<string, Set<string>>();
   const files = new Map<string, Map<string, Entry>>();
   const links = new Map<string, Set<string>>();
+  const duplicateFiles = new Set<string>();
   for (const entry of entries) {
     const { path, kind } = entry;
     if (isSidecar(path)) continue;
@@ -210,6 +227,7 @@ const indexTree = (entries: readonly Entry[]): Tree => {
         directories.set(parent, names);
       } else if (kind === "file") {
         const children = files.get(parent) ?? new Map<string, Entry>();
+        if (children.has(segment)) duplicateFiles.add(path);
         children.set(segment, entry);
         files.set(parent, children);
       } else if (kind === "symlink") {
@@ -220,7 +238,7 @@ const indexTree = (entries: readonly Entry[]): Tree => {
       parent = joinPath(parent, segment);
     }
   }
-  return { directories, files, links };
+  return { directories, files, links, duplicateFiles };
 };
 
 function* directoryPaths(tree: Tree): Iterable<string> {
@@ -251,6 +269,11 @@ const enclosingBundle = (
   }
   return bundles.has(".") ? "." : null;
 };
+
+const hasBundleAnatomy = (tree: Tree, directory: string): boolean =>
+  namedDirectory(tree, directory, "Contents") !== null ||
+  namedDirectory(tree, directory, "Versions") !== null ||
+  namedFile(tree, directory, "Info.plist") !== null;
 
 const bundleLayout = (bundle: string, tree: Tree): Bundle["layout"] => {
   const directory = directoryOf(bundle);

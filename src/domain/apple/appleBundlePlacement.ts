@@ -10,7 +10,6 @@ import {
   isWithin,
   joinPath,
   namedDirectory,
-  namedFile,
   type AppleAnatomyEntry,
   type AppleBundleAnatomy,
   type AppleBundleTree,
@@ -114,7 +113,8 @@ const IOS_FAMILY_CODE_LOCATIONS = [["Frameworks"], ["PlugIns"]] as const;
 /**
  * Evaluate the placement rules whose facts the anatomy owns: observed layout,
  * entry kind, path, and Mach-O content format from magic. Archive members
- * (paths below another inventoried file) are not placed in the bundle.
+ * (paths below another inventoried file, including an application found
+ * inside an inventoried archive) are not placed in the bundle.
  */
 export const projectAppleBundlePlacement = (
   anatomy: AppleBundleAnatomy,
@@ -175,8 +175,7 @@ export const projectAppleBundlePlacement = (
       coverage("framework-in-nested-bundle", 0, []),
       coverage(
         "framework-root-content",
-        evaluated.filter(({ layout }) => layout === "versioned-framework")
-          .length,
+        evaluated.filter(isVersionedFramework).length,
         [],
       ),
       coverage(
@@ -207,11 +206,11 @@ const placementScope = ({
   const files = new Set(fileEntries(tree).map(({ path }) => path));
   return {
     ancestors: (path) => {
-      const root = roots.find((candidate) => isWithin(path, candidate));
-      if (root === undefined) return null;
+      if (!roots.some((root) => isWithin(path, root))) return null;
+      // A selected archive is the inventory itself, not an entry, so only a
+      // file inside the inventory can make this path an archive member.
       const ancestors = ancestorsOf(path);
-      const depth = root === "." ? 0 : root.split("/").length;
-      return ancestors.slice(depth).some((ancestor) => files.has(ancestor))
+      return ancestors.some((ancestor) => files.has(ancestor))
         ? null
         : ancestors;
     },
@@ -240,7 +239,10 @@ const scanEntries = (
   const findings = new Map<string, Finding>();
   const unknown: string[] = [];
   for (const entry of fileEntries(tree)) {
-    const content = contentOf(entry);
+    // The index keeps one occurrence of a repeated path, so its content is unknown.
+    const content = tree.duplicateFiles.has(entry.path)
+      ? "unknown"
+      : contentOf(entry);
     if (content === "other") continue;
     const ancestors = placement.ancestors(entry.path);
     if (ancestors === null) continue;
@@ -365,7 +367,7 @@ const unknownFormatLimitation = (paths: readonly string[]): string[] => {
   if (first === undefined) return [];
   const count = paths.length;
   return [
-    `${count} examined ${count === 1 ? "file has" : "files have"} no byte-established format (unknown, unavailable, or outside the supplied pages); whether ${count === 1 ? "it is a Mach-O image" : "they are Mach-O images"} is unknown. First path: ${JSON.stringify(first)}.`,
+    `${count} examined ${count === 1 ? "file has" : "files have"} no byte-established format (unknown, unavailable, outside the supplied pages, or a path the inventory repeats); whether ${count === 1 ? "it is a Mach-O image" : "they are Mach-O images"} is unknown. First path: ${JSON.stringify(first)}.`,
   ];
 };
 
@@ -398,12 +400,20 @@ const childKinds = (
   return kinds;
 };
 
+/**
+ * Framework-only rules need both facts: the anatomy derives the versioned
+ * layout from an observed Versions/ directory, which any bundle can contain,
+ * and the framework role from the bundle's extension.
+ */
+const isVersionedFramework = ({ layout, role }: Bundle): boolean =>
+  layout === "versioned-framework" && role === "framework";
+
 /** Root entries other than Versions and symlinks, and Versions entries other than versions and Current. */
 const frameworkRootContent = (
   bundle: Bundle,
   tree: AppleBundleTree,
 ): Target[] => {
-  if (bundle.layout !== "versioned-framework") return [];
+  if (!isVersionedFramework(bundle)) return [];
   const root = directoryOf(bundle.path);
   const versions = namedDirectory(tree, root, "Versions");
   const offender = (location: string, name: string, kind: EntryKind) => ({
@@ -430,8 +440,7 @@ const frameworkRootContent = (
 
 const codeLocationNames = (bundle: Bundle): readonly (readonly string[])[] => {
   if (bundle.layout === "macos-deep") return MACOS_CODE_LOCATIONS;
-  if (bundle.layout === "versioned-framework")
-    return FRAMEWORK_VERSION_CODE_LOCATIONS;
+  if (isVersionedFramework(bundle)) return FRAMEWORK_VERSION_CODE_LOCATIONS;
   return hasIosFamilyLayout(bundle) ? IOS_FAMILY_CODE_LOCATIONS : [];
 };
 
@@ -446,12 +455,7 @@ const codeLocations = (bundle: Bundle, tree: AppleBundleTree): string[] =>
     }),
   );
 
-const hasBundleAnatomy = (tree: AppleBundleTree, directory: string): boolean =>
-  namedDirectory(tree, directory, "Contents") !== null ||
-  namedDirectory(tree, directory, "Versions") !== null ||
-  namedFile(tree, directory, "Info.plist") !== null;
-
-/** Directories directly in a code location that have no bundle anatomy of their own. */
+/** Directories directly in a code location that the anatomy does not identify as bundles. */
 const groupingDirectories = (
   bundle: Bundle,
   tree: AppleBundleTree,
@@ -460,12 +464,7 @@ const groupingDirectories = (
   codeLocations(bundle, tree).flatMap((location) =>
     [...childKinds(tree, location)].flatMap(([name, kind]) => {
       const path = joinPath(location, name);
-      if (
-        kind !== "directory" ||
-        bundlePaths.has(path) ||
-        hasBundleAnatomy(tree, path)
-      )
-        return [];
+      if (kind !== "directory" || bundlePaths.has(path)) return [];
       const rules: Finding["rules"] = name.includes(".")
         ? ["grouping-directory-in-code-location", "dotted-directory-name"]
         : ["grouping-directory-in-code-location"];
