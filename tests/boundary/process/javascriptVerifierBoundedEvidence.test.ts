@@ -100,7 +100,6 @@ process.on('exit', () => fs.writeSync(2, 'Evidence close attempts: ' + attempts 
       );
     }
   },
-  30_000,
 );
 
 it("refuses oversized Evidence before a whole-file read", async () => {
@@ -147,4 +146,4 @@ syncBuiltinESMExports();
       `Runtime Evidence exceeds 64 MiB: ${evidence}`,
     ),
   });
-}, 30_000);
+});

@@ -140,5 +140,4 @@ cliTest.skipIf(process.platform !== "darwin")(
     });
     expect(await attachedImagePaths()).not.toContain(resolvedImage);
   },
-  60_000,
 );

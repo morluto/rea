@@ -103,7 +103,6 @@ const checkSelectors = async (
 
 cliTest(
   "queries same-name BEAM export arities through CLI/MCP after deleting the source",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-beam-views-");
     const path = join(root, "app.beam");

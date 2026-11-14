@@ -78,7 +78,7 @@ describe("Ghidra MCP capability routing", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 
   it("keeps a Ghidra null-pseudocode observation's limitations on its batch item", async () => {
     const bodyless = "0x401020";
@@ -136,5 +136,5 @@ describe("Ghidra MCP capability routing", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 });

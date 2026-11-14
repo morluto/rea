@@ -108,4 +108,4 @@ it("reports local Ghidra admission through SDK MCP without dispatching or losing
     for (const child of launcher.processes)
       expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
   }
-}, 30_000);
+});

@@ -176,6 +176,8 @@ const expectColumnOutOfRange = (
 
 cliTest(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
+  // Allow cold CLI and MCP ownership preparation across the full parity sequence.
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-source-map-cli-");
     const fixture = webSourceLocationFixture(
@@ -324,12 +326,11 @@ cliTest(
       fixture.sourceMap.text,
     );
   },
-  // Allow cold CLI and MCP ownership preparation across the full parity sequence.
-  180_000,
 );
 
 cliTest(
   "applies the shared version constraint to nested indexed maps through CLI and stdio MCP",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-indexed-map-version-");
     const fixture = webSourceLocationFixture();
@@ -438,11 +439,11 @@ cliTest(
       }
     }
   },
-  180_000,
 );
 
 cliTest(
   "traces empty equal-offset sections while rejecting decreasing offsets and represented overlaps",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-empty-indexed-map-");
     const fixture = webSourceLocationFixture();
@@ -538,11 +539,11 @@ cliTest(
       }
     }
   },
-  180_000,
 );
 
 cliTest(
   "resolves empty-sourceRoot sources against the map URL through CLI and stdio MCP",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-empty-source-root-");
     // webpack 5 and tsc emit `"sourceRoot": ""` for map-relative sources.
@@ -613,7 +614,6 @@ cliTest(
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     expect(response.structuredContent).toEqual(result.json);
   },
-  180_000,
 );
 
 cliTest(
@@ -690,6 +690,7 @@ cliTest(
 
 cliTest(
   "admits a complete map above 4 MiB by default while honoring a smaller caller budget",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-map-default-admission-");
     const fixture = webSourceLocationFixture(
@@ -840,5 +841,4 @@ cliTest(
       },
     });
   },
-  180_000,
 );

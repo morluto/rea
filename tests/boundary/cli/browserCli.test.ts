@@ -12,7 +12,6 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 
 const browsers: FakeCdpBrowser[] = [];
-const INTEGRATION_TEST_TIMEOUT_MS = 60_000;
 
 const partialScriptEvents: FakeOptions["commandEvents"] = (
   { method },
@@ -118,7 +117,6 @@ cliTest(
       });
     }
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 cliTest(
@@ -208,7 +206,6 @@ cliTest(
     });
     await assertScenarioComparisonPolicy(cli);
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 cliTest(
@@ -295,7 +292,6 @@ cliTest(
       },
     });
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 cliTest(
@@ -349,7 +345,6 @@ cliTest(
     });
     expect(JSON.stringify(refused)).not.toContain("not-this-browser");
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 describe("scenario comparison CLI diagnostics", () => {
@@ -721,7 +716,6 @@ describe("browser CLI capture parity", () => {
         normalized_result: { status: "identical", changed_pixels: 0 },
       });
     },
-    INTEGRATION_TEST_TIMEOUT_MS,
   );
 });
 
@@ -1003,7 +997,6 @@ cliTest(
       normalized_result: { overall_status: "changed" },
     });
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 const scenarioCaptureWithConsole = (

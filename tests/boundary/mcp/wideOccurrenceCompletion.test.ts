@@ -4,7 +4,6 @@ import { processTest } from "../../support/process/processFixture.js";
 
 processTest.for([3, 130_000])(
   "completes an authenticated inventory with %i child occurrences on the server stack",
-  { timeout: 45_000 },
   async (count, { processes }) => {
     // Thread-pool tests have a larger stack than the stdio server. Use a fresh
     // main thread and enough heap for the ledger's conservative admission.

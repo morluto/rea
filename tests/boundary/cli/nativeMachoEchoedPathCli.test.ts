@@ -98,7 +98,6 @@ describe.skipIf(process.platform !== "darwin")(
           expect(forged).toEqual(ordinary);
           expect(JSON.stringify(forged)).not.toMatch(/forged|4242/u);
         },
-        60_000,
       );
     }
   },

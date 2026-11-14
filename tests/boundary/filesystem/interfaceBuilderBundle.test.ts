@@ -663,7 +663,6 @@ describe("keyed archive hierarchy coverage", () => {
         analysis.graph.edges.filter(({ relation }) => relation === "contains"),
       ).toHaveLength(41);
     },
-    120_000,
   );
 });
 

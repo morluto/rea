@@ -45,6 +45,5 @@ describe("projected CLI failures", () => {
             expect(result.json).toMatchObject({ code: "invalid_request" });
         }
     },
-    30_000,
   );
 });

@@ -197,7 +197,7 @@ it("honors explicit ABI and old full requests, validates SDK schemas and reuses 
   });
   if (!portable.ok) throw portable.error;
   expect(portable.value.normalized_result).toEqual(view);
-}, 30000);
+});
 
 it("preserves null snapshot facts and pool lower bounds after exhaustion, rejecting malformed and conflicting identities", async () => {
   const report = {

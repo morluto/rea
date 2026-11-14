@@ -97,7 +97,6 @@ const CHECK = "registration_environment:claude_code";
 
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   "doctor does not let a configured terminal stand in for an unconfigured registration",
-  { timeout: 120_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-doctor-registration-env-");
     const home = join(root, "home");

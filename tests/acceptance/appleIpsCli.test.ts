@@ -44,7 +44,6 @@ cliTest(
     ).toBe(createHash("sha256").update(name).digest("hex"));
     expect(evidence.normalized_result.coverage.status).toBe("complete");
   },
-  45000,
 );
 
 cliTest(

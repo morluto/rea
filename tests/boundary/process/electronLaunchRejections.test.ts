@@ -1,7 +1,7 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, vi } from "vitest";
+import { expect } from "vitest";
 import type { AnalysisErrorProjection } from "../../../src/domain/analysisErrorProjection.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -123,7 +123,7 @@ console.log(JSON.stringify({
 
 // A cold macOS Swift toolchain may spend up to 120 seconds building the
 // ownership reader before any child launch reaches its assertion.
-vi.setConfig({ testTimeout: 180_000 });
+// @module-tag long-running
 
 type Outcome = {
   readonly before: number;

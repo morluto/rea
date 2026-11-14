@@ -1269,6 +1269,7 @@ it.skipIf(process.platform === "win32")(
 
 it.skipIf(!onDarwin)(
   "parses exact NUL-delimited token records and rejects truncated argv",
+  { tags: ["long-running"] },
   async () => {
     const root = await mkdtemp(
       join(tmpdir(), "rea-process-token-parser-test-"),
@@ -1397,11 +1398,11 @@ it.skipIf(!onDarwin)(
       await rm(root, { recursive: true, force: true });
     }
   },
-  150_000,
 );
 
 it.skipIf(!onDarwin)(
   "retries a growing process table after ENOMEM and preserves other sysctl errors",
+  { tags: ["long-running"] },
   async () => {
     const root = await mkdtemp(
       join(tmpdir(), "rea-process-snapshot-retry-test-"),
@@ -1444,7 +1445,6 @@ it.skipIf(!onDarwin)(
       await rm(root, { recursive: true, force: true });
     }
   },
-  150_000,
 );
 
 it.skipIf(!onDarwin)(
@@ -1512,6 +1512,7 @@ it.skipIf(!onDarwin)(
 
 it.skipIf(!onDarwin)(
   "keeps a long title overwrite unknown when it hides the child's token",
+  { tags: ["long-running"] },
   async () => {
     const host = createSystemProcessOwnershipHost("darwin");
     const children: ChildProcess[] = [];
@@ -1580,7 +1581,6 @@ it.skipIf(!onDarwin)(
       }
     }
   },
-  150_000,
 );
 
 it.skipIf(!onDarwin)(

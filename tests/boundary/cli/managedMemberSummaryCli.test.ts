@@ -243,6 +243,7 @@ cliTest(
 
 cliTest(
   "retains complete member Evidence for exact CLI pages after process exit and target removal",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-member-summary-cli-");
     const path = join(root, "fixture.dll");
@@ -359,7 +360,6 @@ cliTest(
     await verifyCliSelection(pageContext);
     expect(await readFile(bundlePath, "utf8")).toBe(originalBytes);
   },
-  180_000,
 );
 
 cliTest(

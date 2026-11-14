@@ -70,7 +70,6 @@ const assertSparseSelectors = async (
 
 cliTest(
   "queries same-name pyc objects through CLI/MCP after deleting the source",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pyc-views-");
     const path = join(root, "module.pyc");

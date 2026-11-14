@@ -607,7 +607,6 @@ cliTest(
       await browser.close();
     }
   },
-  120000,
 );
 
 it("keeps a large source's partial route facts queryable through SDK delivery", async () => {
@@ -662,4 +661,4 @@ it("keeps a large source's partial route facts queryable through SDK delivery", 
   expect(
     routeViewFromEvidence(unknowns.structuredContent).items.length,
   ).toBeGreaterThan(0);
-}, 60000);
+});

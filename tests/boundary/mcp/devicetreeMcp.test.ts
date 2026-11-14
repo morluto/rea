@@ -103,8 +103,6 @@ mcpTest(
       await session.close();
     }
   },
-  // Includes SDK schema conversion, dialect validation and two public calls.
-  60_000,
 );
 mcpTest(
   "pages nodes without repeating a large bootargs summary",
@@ -166,7 +164,6 @@ mcpTest(
       await session.close();
     }
   },
-  60_000,
 );
 mcpTest(
   "keeps a malformed canonical phandle unresolved in retained reference pages",
@@ -231,7 +228,6 @@ mcpTest(
       await session.close();
     }
   },
-  60_000,
 );
 mcpTest("rejects relative paths and unsupported versions", async ({ mcp }) => {
   const session = createTestBinarySession(() => {

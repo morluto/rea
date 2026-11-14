@@ -157,7 +157,6 @@ cliTest(
       await transport.close();
     }
   },
-  120_000,
 );
 
 interface EndpointWorkflowInput {

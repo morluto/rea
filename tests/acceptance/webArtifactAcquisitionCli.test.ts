@@ -81,5 +81,4 @@ cliTest(
     expect(response.structuredContent).toBeUndefined();
     expect(result.json).not.toHaveProperty("normalized_result");
   },
-  90_000,
 );

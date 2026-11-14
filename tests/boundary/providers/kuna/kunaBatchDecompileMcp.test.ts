@@ -192,4 +192,4 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
       expect(await session.close()).toEqual({ ok: true, value: null });
     },
   ]);
-}, 60_000);
+});

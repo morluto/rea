@@ -197,7 +197,7 @@ it("reports file-backed, uninitialized and unmapped addresses through MCP withou
   } finally {
     await mcp.close();
   }
-}, 30_000);
+});
 
 const segments = z.array(
   z.object({ name: z.string(), start: z.string(), end: z.string() }),
@@ -259,7 +259,7 @@ it("maps the last byte of a file-backed block and refuses the first address past
   } finally {
     await mcp.close();
   }
-}, 30_000);
+});
 
 it("gives the CLI analysis path the same unbacked-address outcome as MCP", async () => {
   const launcher = new GhidraFixtureLauncher();
@@ -308,4 +308,4 @@ it("gives the CLI analysis path the same unbacked-address outcome as MCP", async
   } finally {
     await expectReleased(launcher);
   }
-}, 30_000);
+});

@@ -140,7 +140,6 @@ const fixtures = [
 
 cliTest.for(fixtures)(
   "preserves entry kinds in $family projections through CLI and stdio MCP",
-  { timeout: 60_000 },
   async (fixture, { cli }) => {
     const root = await createTestTempDirectory("rea-mobile-directory-");
     const environment = { HOME: root, USERPROFILE: root };
@@ -320,7 +319,6 @@ cliTest.for([
   },
 ])(
   "preserves encrypted $family path facts through CLI and stdio MCP",
-  { timeout: 60_000 },
   async (fixture, { cli }) => {
     const root = await createTestTempDirectory("rea-mobile-encrypted-paths-");
     const environment = { HOME: root, USERPROFILE: root };

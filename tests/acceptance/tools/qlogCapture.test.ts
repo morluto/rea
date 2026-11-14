@@ -306,7 +306,7 @@ it("pages original trace-scoped facts after source deletion without conflating s
         }),
       ),
     ).toMatchObject({ error: { code: "invalid_request" } });
-}, 60_000);
+});
 
 runtimeTest.runIf(!hasMemoryBound && runtimeSupported)(
   "refuses qlog when this runtime cannot enforce a decoder memory bound",
@@ -417,7 +417,7 @@ it("runs built CLI and real stdio SDK with exact evidence parity, selection, ret
     error: { code: "invalid_request" },
   });
   expect(JSON.stringify(invalid)).not.toContain("mysecret");
-}, 60_000);
+});
 
 it("fails whole-capture validation before selection and survives malformed, unsupported and oversized qlog", async () => {
   const root = await createTestTempDirectory("rea-qlog-errors-");
@@ -524,7 +524,7 @@ it("fails whole-capture validation before selection and survives malformed, unsu
   await writeFile(path, qlog([event]));
   await client.ping();
   await expectRecoveredCapture(call, path);
-}, 60_000);
+});
 
 runtimeTest.skipIf(
   process.versions.bun !== undefined || !hasMemoryBound || !runtimeSupported,
@@ -566,5 +566,4 @@ runtimeTest.skipIf(
     await client.ping();
     await expectRecoveredCapture(call, path);
   },
-  60_000,
 );

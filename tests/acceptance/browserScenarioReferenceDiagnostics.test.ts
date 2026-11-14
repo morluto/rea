@@ -19,7 +19,6 @@ cliTest.for([
   ["stdio MCP", "cookie"],
 ] as const)(
   "reports undeclared references through %s for a wide %s list",
-  { timeout: 60_000 },
   async ([surface, placement], { cli }) => {
     const home = await createTestTempDirectory("rea-scenario-reference-");
     const input = browserScenarioReferences(placement, 130_000);

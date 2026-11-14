@@ -366,7 +366,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
       },
     });
     expect(result.catalogs).toHaveLength(1);
-  }, 5_000);
+  });
 
   it("cancels the Interface Builder analysis and reports a catalog failure", async () => {
     let cancelled = false;

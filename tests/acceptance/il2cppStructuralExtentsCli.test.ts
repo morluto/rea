@@ -57,5 +57,4 @@ cliTest(
       expect(parseMcpToolError(result).error).toMatchObject(expected);
     }
   },
-  30000,
 );

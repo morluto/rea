@@ -19,8 +19,6 @@ import {
   parseCliOutputArguments,
 } from "../../../src/cliOutput.js";
 
-const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
-
 describe("CLI output argument boundary", () => {
   it("requires an exact row selector and explicit columns for delimited formats", () => {
     expect(
@@ -302,7 +300,6 @@ describe("CLI output flag value forms", () => {
         expect(result.stderr).toBe("");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   it("splits only the equals forms of valued output flags", () => {
@@ -413,7 +410,6 @@ describe("unclosed CLI output filter slices", () => {
         error: { code: "INVALID_OUTPUT_FILTER" },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -434,7 +430,6 @@ describe("unclosed CLI output filter slices", () => {
         open: false,
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -455,7 +450,6 @@ describe("CLI output valued-flag parsing", () => {
         });
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -470,7 +464,6 @@ describe("CLI output valued-flag parsing", () => {
         error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -558,7 +551,6 @@ describe("CLI output valued-flag parsing", () => {
         expect(result.stdout).not.toContain("[truncated:");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -644,7 +636,6 @@ describe("compiled CLI output boundary", () => {
         },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -679,7 +670,6 @@ describe("compiled CLI output boundary", () => {
         expect(result.stdout).toContain("expected string");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -710,7 +700,6 @@ describe("compiled CLI output boundary", () => {
         },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -735,7 +724,6 @@ describe("compiled CLI output boundary", () => {
       );
       expect(result.stdout).toContain("See below for usage.");
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -766,7 +754,6 @@ describe("compiled CLI artifact diagnostics", () => {
         },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -1061,6 +1048,5 @@ describe("unknown MCP subcommand output", () => {
       expect(toon.exitCode).toBe(1);
       expect(toon.stdout).toMatch(/^code: COMMAND_NOT_FOUND\n/u);
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });

@@ -145,7 +145,7 @@ describe("production stdio runtime", () => {
     );
     expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
     expect(stderr).not.toContain(fixturePath);
-  }, 15_000);
+  });
 
   it.runIf(process.platform === "darwin")(
     "returns the selected document on macOS through MCP and structured logs",
@@ -175,7 +175,6 @@ describe("production stdio runtime", () => {
       expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
       expect(stderr).not.toContain(fixturePath);
     },
-    15_000,
   );
 
   // Use the suite's bounded acceptance deadline, including its coverage allowance.
@@ -315,6 +314,5 @@ describe("production stdio saved-database admission", () => {
         ),
       ).toBe(false);
     },
-    15_000,
   );
 });

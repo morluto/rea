@@ -184,7 +184,7 @@ itWithCaptureCapability(
     onTestFinished(async () => {
       now.mockRestore();
       await resources.close();
-    }, 10_000);
+    });
     try {
       const result = await captureProcessScenario(
         processScenarioSchema.parse({

@@ -109,7 +109,6 @@ cliTest(
     });
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -176,7 +175,6 @@ cliTest(
       }
     }
   },
-  30000,
 );
 
 cliTest(
@@ -238,7 +236,6 @@ cliTest(
       }
     }
   },
-  30000,
 );
 
 cliTest(
@@ -312,7 +309,6 @@ cliTest(
       expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
     }
   },
-  30000,
 );
 
 cliTest(
@@ -431,7 +427,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -487,7 +482,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -562,7 +556,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 const metadataPageReader =
@@ -750,7 +743,7 @@ it("queries compact retained metadata through the real SDK with exact row identi
   });
   expect(parseMcpToolError(invalid).error.code).toBe("invalid_request");
   await client.ping();
-}, 30000);
+});
 
 it("imports historical metadata Evidence with unavailable member collections without inventing empty results", async () => {
   const root = await createTestTempDirectory("rea-il2cpp-history-"),
@@ -827,7 +820,7 @@ it("imports historical metadata Evidence with unavailable member collections wit
     view: { kind: "il2cpp-metadata", collection: "parameters" },
   });
   expect(parseMcpToolError(unavailable).error.code).toBe("invalid_request");
-}, 30000);
+});
 
 cliTest(
   "exports complete metadata Evidence for compact CLI delivery and portable selected reads",
@@ -906,7 +899,6 @@ cliTest(
       parent_evidence_id: evidence.evidence_id,
     });
   },
-  30000,
 );
 
 cliTest.skipIf(process.platform === "win32")(
@@ -950,7 +942,6 @@ cliTest.skipIf(process.platform === "win32")(
     expect(read.exitCode, read.stderr).toBe(0);
     expect(read.stdout).toContain(saved.value.records[0]?.evidence_id);
   },
-  30000,
 );
 
 cliTest(
@@ -1042,7 +1033,6 @@ cliTest(
     );
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -1088,7 +1078,6 @@ cliTest(
     ).toEqual(report.method_addresses);
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -1157,7 +1146,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -1218,7 +1206,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -1301,7 +1288,6 @@ cliTest(
     }
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -1339,7 +1325,6 @@ cliTest(
       ),
     ).toBe(true);
   },
-  30000,
 );
 
 cliTest(
@@ -1653,5 +1638,4 @@ cliTest(
       ).toEqual(entry.methods);
     }
   },
-  60000,
 );

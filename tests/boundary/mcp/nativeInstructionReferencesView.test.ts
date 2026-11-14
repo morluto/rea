@@ -275,7 +275,6 @@ it.each(["full", "compact"] as const)(
       if (!closed.ok) throw closed.error;
     }
   },
-  90_000,
 );
 
 it("recovers the complete parent when a single reference exceeds the page budget", async () => {
@@ -363,4 +362,4 @@ it("recovers the complete parent when a single reference exceeds the page budget
     const closed = await session.close();
     if (!closed.ok) throw closed.error;
   }
-}, 90_000);
+});

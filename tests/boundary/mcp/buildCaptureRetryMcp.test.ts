@@ -208,7 +208,7 @@ it("releases a capture whose start was cancelled after launch, so another start 
     computer_id: id,
   });
   expect(again.structuredContent).toMatchObject({ package_lists: 1 });
-}, 60_000);
+});
 
 it("stops a detached capture when the computer closes", async () => {
   const { rea, client, computer } = await fakes();
@@ -225,7 +225,7 @@ it("stops a detached capture when the computer closes", async () => {
   expect(running().length).toBeGreaterThan(0);
   await computer.close();
   expect(running()).toEqual([]);
-}, 60_000);
+});
 
 it("cancels a capture's start when the computer closes while it waits for the opened app's screenshot", async () => {
   // The start's own screenshot answers at once; the capture's waits until its request is cancelled.
@@ -238,7 +238,7 @@ it("cancels a capture's start when the computer closes while it waits for the op
   await vi.waitFor(() => expect(screenshots()).toBe(2), { timeout: 30_000 });
   await callOk(client, "close_build_computer", { computer_id: id });
   expect(parseMcpToolError(await started).error.code).toBe("cancelled");
-}, 60_000);
+});
 
 it("reports cancellation and the published bundle when the computer closes during commit", async () => {
   const { client } = await fakes();
@@ -265,7 +265,7 @@ it("reports cancellation and the published bundle when the computer closes durin
   });
   expect((await readdir(directory)).length).toBeGreaterThan(0);
   await closed;
-}, 60_000);
+});
 
 /** Capture and export an app the request installs with `install`; the start's result, the bundle's folder and the stand-in's argv for a command. */
 const captureRequest = async (
@@ -496,4 +496,4 @@ it("brings back a bundle whose file list outgrows a command's 1 MiB of output", 
   expect(
     await readdir(join(directory, "seed", long("a"), long("b"))),
   ).toHaveLength(1500);
-}, 120_000);
+});

@@ -12,7 +12,6 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
   "retains unknown timer delays and unrelated facts through public CLI and MCP",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-timer-delay-");
     const source = [

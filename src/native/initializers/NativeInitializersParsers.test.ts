@@ -921,45 +921,49 @@ describe("ELF section lookups", () => {
     ]);
   });
 
-  it("resolves a full slot budget against a near-maximal section table in one pass", async () => {
-    const base = elf64PieInitializers();
-    const slots = MAX_NATIVE_INITIALIZER_ENTRIES;
-    const payload = Buffer.alloc(slots * 8);
-    for (let slot = 0; slot < slots; slot += 1)
-      payload.writeBigUInt64LE(0x100n, slot * 8);
-    // Allocated, unnamed sections that cover every slot and target address.
-    const extra = Buffer.alloc((0xffff - 12) * 64);
-    for (let at = 0; at < extra.length; at += 64) {
-      extra.writeUInt32LE(1, at + 4);
-      extra.writeBigUInt64LE(2n, at + 8);
-      extra.writeBigUInt64LE(0x100000n, at + 32);
-    }
-    const bytes = Buffer.concat([
-      base,
-      payload,
-      base.subarray(0x800, 0x800 + 12 * 64),
-      extra,
-    ]);
-    bytes.writeBigUInt64LE(BigInt(base.length + payload.length), 40);
-    bytes.writeUInt16LE(0xffff, 60);
-    // The single PT_LOAD maps the whole file; DT_INIT_ARRAY moves to the payload.
-    bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 32);
-    bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 40);
-    bytes.writeBigUInt64LE(BigInt(base.length), 0x300 + 2 * 16 + 8);
-    bytes.writeBigUInt64LE(BigInt(slots * 8), 0x300 + 3 * 16 + 8);
-    const started = performance.now();
-    const report = await read(bytes);
-    // A per-lookup header walk is about 4e9 comparisons here; the index is a few hundred ms.
-    expect(performance.now() - started).toBeLessThan(10_000);
-    expect(report.coverage.examined_entries).toBe(slots);
-    const slot = report.entries.find((entry) => entry.kind === "init_array");
-    expect(slot).toMatchObject({
-      value_va: "0x100",
-      slot_section: null,
-      section: { name: ".text" },
-      symbol: { name: "ctor_a" },
-    });
-  }, 180_000);
+  it(
+    "resolves a full slot budget against a near-maximal section table in one pass",
+    { tags: ["long-running"] },
+    async () => {
+      const base = elf64PieInitializers();
+      const slots = MAX_NATIVE_INITIALIZER_ENTRIES;
+      const payload = Buffer.alloc(slots * 8);
+      for (let slot = 0; slot < slots; slot += 1)
+        payload.writeBigUInt64LE(0x100n, slot * 8);
+      // Allocated, unnamed sections that cover every slot and target address.
+      const extra = Buffer.alloc((0xffff - 12) * 64);
+      for (let at = 0; at < extra.length; at += 64) {
+        extra.writeUInt32LE(1, at + 4);
+        extra.writeBigUInt64LE(2n, at + 8);
+        extra.writeBigUInt64LE(0x100000n, at + 32);
+      }
+      const bytes = Buffer.concat([
+        base,
+        payload,
+        base.subarray(0x800, 0x800 + 12 * 64),
+        extra,
+      ]);
+      bytes.writeBigUInt64LE(BigInt(base.length + payload.length), 40);
+      bytes.writeUInt16LE(0xffff, 60);
+      // The single PT_LOAD maps the whole file; DT_INIT_ARRAY moves to the payload.
+      bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 32);
+      bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 40);
+      bytes.writeBigUInt64LE(BigInt(base.length), 0x300 + 2 * 16 + 8);
+      bytes.writeBigUInt64LE(BigInt(slots * 8), 0x300 + 3 * 16 + 8);
+      const started = performance.now();
+      const report = await read(bytes);
+      // A per-lookup header walk is about 4e9 comparisons here; the index is a few hundred ms.
+      expect(performance.now() - started).toBeLessThan(10_000);
+      expect(report.coverage.examined_entries).toBe(slots);
+      const slot = report.entries.find((entry) => entry.kind === "init_array");
+      expect(slot).toMatchObject({
+        value_va: "0x100",
+        slot_section: null,
+        section: { name: ".text" },
+        symbol: { name: "ctor_a" },
+      });
+    },
+  );
 });
 
 describe("Mach-O symbol tables", () => {

@@ -785,7 +785,7 @@ it("answers an oversized sessionless POST promptly instead of stalling on the pr
     { type: "text", text: "still served" },
   ]);
   await client.close();
-}, 20_000);
+});
 
 it("closes the connection after a reply sent before the request body was read, on a keep-alive client", async () => {
   const { served } = await start();
