@@ -3,16 +3,22 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/reverseEngineeringToolContracts.js";
+import { rizinInputSchema } from "../../../src/domain/reverseEngineering.js";
 import { rizinCommandLimitations } from "../../../src/rizin/RizinCommand.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { assertRequiredRizin } from "../../support/requiredRizin.js";
 import { createProviderEnvironmentMcpHarness } from "../../support/reverseDebuggerMcpTestHelpers.js";
 
 // Real-provider gate for execute_rizin_command's decoder and map inputs. It
 // runs the Rizin found on PATH and skips without one; put another Rizin's
-// bin directory first on PATH to check that version.
+// bin directory first on PATH to check that version. With REA_REQUIRE_RIZIN
+// set to a version, a missing or different Rizin fails instead of skipping.
 const rizin = findRizin();
+assertRequiredRizin("RizinDecoderInputs", rizin);
 const banner = rizin === undefined ? "no Rizin on PATH" : versionBanner(rizin);
 
 // Cortex-M vector table head (SP 0x20002000, Reset 0x08000109), then the
@@ -22,6 +28,11 @@ const CORTEX_M_IMAGE = Buffer.from([
 ]);
 // Thumb `msr primask, r0`, which only an M-profile decoder knows.
 const MSR_PRIMASK = Buffer.from([0x80, 0xf3, 0x10, 0x88]);
+// Thumb `bx lr; bx lr`, then `nop; nop`. As ARM32, the first word is invalid
+// and the second is `svclt 0xbf00`.
+const THUMB_RETURNS = Buffer.from([
+  0x70, 0x47, 0x70, 0x47, 0x00, 0xbf, 0x00, 0xbf,
+]);
 // 6502 `nop; rts`; no host decodes 6502 by default.
 const MOS_6502_IMAGE = Buffer.from([0xea, 0x60]);
 // Raw images that Rizin's loaders claim unless REA passes -n. Rizin 0.9.1's
@@ -235,6 +246,99 @@ it.skipIf(rizin === undefined)(
       CORTEX_M_IMAGE,
     );
     expect(unsupported.lines[0]).not.toBe("8");
+  },
+);
+
+it.skipIf(rizin === undefined)(
+  `admits only the widths that Rizin's arch plugins declare (${banner})`,
+  async () => {
+    // Rizin applies a width that shares a bit with a declared one, so it
+    // would decode this Thumb `bx lr` as ARM32 at 17 with no message. REA
+    // rejects the width before it starts Rizin.
+    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-decoder-"));
+    const { client } = await createProviderEnvironmentMcpHarness({
+      directory,
+      clientName: "real-rizin-decoder-widths",
+      serverOptions: { environment: { REA_RIZIN_COMMAND: rizin! } },
+    });
+    const path = join(directory, "image.bin");
+    await writeFile(path, THUMB_RETURNS);
+    for (const asm_bits of [17, 48]) {
+      const response = await client.callTool({
+        name: "execute_rizin_command",
+        arguments: {
+          path,
+          command: "e asm.bits; pi 2",
+          asm_arch: "arm",
+          asm_bits,
+        },
+      });
+      expect(response.isError).toBe(true);
+      expect(parseMcpToolError(response as CallToolResult).error).toMatchObject(
+        {
+          code: "invalid_request",
+          details: {
+            issues: [{ path: ["asm_bits"], reason: "invalid_value" }],
+          },
+        },
+      );
+    }
+
+    // The declared ARM widths 16 and 32 are applied as given and change the
+    // decoding.
+    const decode = async (bits: 16 | 32) =>
+      runRizin(
+        {
+          command: "e asm.bits; pi 2",
+          asm_arch: "arm",
+          asm_bits: bits,
+          base_address: "0x0",
+        },
+        THUMB_RETURNS,
+      );
+    const thumb = await decode(16);
+    expect(thumb.lines).toEqual(["16", "bx lr", "bx lr"]);
+    expect(thumb.stderr).toBe("");
+    const arm32 = await decode(32);
+    expect(arm32.lines[0]).toBe("32");
+    expect(arm32.lines.slice(1)).not.toEqual(["bx lr", "bx lr"]);
+    expect(arm32.stderr).toBe("");
+
+    // Every width that this Rizin's arch plugins declare is one REA admits,
+    // so a build with another width fails here rather than losing it. La
+    // prints a feature column, the widths and the plugin name: 0.9.1 has five
+    // feature letters and one space (`adAeI 16 32 64   arm`), 0.7.4 four and
+    // two (`adAe  16 32 64   arm`). Laj is not valid JSON in either version.
+    const { lines: plugins } = await runRizin({ command: "La" }, THUMB_RETURNS);
+    // La prints no header, so every non-empty line is a plugin row. A row this
+    // parser does not read fails here rather than leaving its widths unchecked.
+    const rows = plugins.filter((line) => line.trim() !== "");
+    const parsed = rows.map((line) => ({
+      line,
+      match: /^\S{4,5}\s+(\d+(?: \d+)*)\s{2,}(\S+)/u.exec(line),
+    }));
+    expect(
+      parsed.filter(({ match }) => match === null).map(({ line }) => line),
+      "La rows this parser does not read",
+    ).toEqual([]);
+    const declared = new Map(
+      parsed.flatMap(({ match }) =>
+        match === null
+          ? []
+          : [[match[2]!, match[1]!.split(" ").map(Number)] as const],
+      ),
+    );
+    expect(
+      declared.size,
+      `parsed no arch plugins from La:\n${plugins.join("\n")}`,
+    ).toBeGreaterThan(0);
+    expect(declared.get("arm")).toEqual([16, 32, 64]);
+    const admitted = new Set<number>(
+      rizinInputSchema.shape.asm_bits.unwrap().values,
+    );
+    for (const [plugin, widths] of declared)
+      for (const width of widths)
+        expect(admitted.has(width), `${plugin} declares ${width}`).toBe(true);
   },
 );
 
