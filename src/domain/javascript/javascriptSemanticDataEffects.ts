@@ -42,6 +42,7 @@ import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
+import { hostRefusesJavaScriptRequest } from "./javascriptHostRequestRefusals.js";
 
 interface DataEffectAnalysis {
   readonly configurationOperations: readonly JavaScriptSemanticConfigurationOperation[];
@@ -72,7 +73,11 @@ export const collectJavaScriptSemanticDataEffects = (
     ancestors: [],
   };
   const configuration = collectConfigurations(program, context);
-  const requests = collectRequests(program, context);
+  // A fetch or WebSocket the host refuses to construct sends nothing.
+  const requests = collectRequests(program, context).filter(
+    ({ node, operation }) =>
+      !hostRefusesJavaScriptRequest(node, operation.method),
+  );
   return {
     configurationOperations: [
       ...configuration.map(({ operation }) => operation),
