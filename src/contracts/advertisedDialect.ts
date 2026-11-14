@@ -103,7 +103,8 @@ export const ADVERTISED_INPUT_SCHEMA_MAX_BYTES = 13 * 1024;
 //
 // pattern := "^" alt "$"   (llama.cpp grammars require both anchors)
 // atom    := literal | escape | class | "(?:" alt ")" | "(" alt ")"
-// quant   := * + ? {n} {n,} {n,m}  with n, m <= 1000 and no lazy or possessive suffix
+// quant   := * + ? {n} {n,} {n,m}  with n, m <= 1000, no leading zeros and no
+//            lazy or possessive suffix
 // escape  := "\" one of ^$\.*+?()[]{}|  | \t \n \r \f \v | \x[0-7][0-9A-Fa-f]
 // class   := "[" "^"? item+ "]"  where "-" is a range only between two
 //            endpoints, "-" elsewhere is escaped, and no punctuator repeats.
@@ -294,6 +295,13 @@ export const portablePatternViolations = (
         index++;
         continue;
       }
+      // Go reads a bound with a leading zero, such as `{01}`, as literal text.
+      if (
+        [repeat[1], repeat[2]].some(
+          (bound) => bound !== undefined && /^0\d/u.test(bound),
+        )
+      )
+        found.add("repeat-leading-zero");
       const lower = Number(repeat[1]);
       const upper =
         repeat[2] === undefined || repeat[2] === "" ? lower : Number(repeat[2]);

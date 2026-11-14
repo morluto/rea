@@ -36,6 +36,8 @@ describe("portable regex grammar", () => {
     ["^\\p{L}+$", "unicode-property"],
     ["^a{1,1001}$", "repeat-above-1000"],
     ["^(?:a{32}){32}$", "nested-repeat-above-1000"],
+    ["^a{01}$", "repeat-leading-zero"],
+    ["^a{1,010}$", "repeat-leading-zero"],
     ["^\\/[^\\x00]*$", "escape:\\/"],
     ["^(?i)a$", "inline-flags-or-other-group"],
     ["^\\-$", "escaped-hyphen-outside-class"],
@@ -192,8 +194,13 @@ it("advertises every profile within the portable dialect or its recorded baselin
     input: { compact: [], full: [] },
     output: { full: [], compact: [], off: [] },
   });
-  expect(observed).toEqual({
-    input: ADVERTISED_INPUT_DIALECT_BASELINE,
-    output: ADVERTISED_OUTPUT_DIALECT_BASELINE,
-  });
+  // Absolute local paths are advertised with the host's pattern
+  // (`localPath.ts`): POSIX hosts advertise `^\/`, which the grammar counts,
+  // and Windows hosts a drive-or-root pattern, which it does not. Exact counts
+  // are recorded on POSIX; Windows still enforces them as upper bounds above.
+  if (process.platform !== "win32")
+    expect(observed).toEqual({
+      input: ADVERTISED_INPUT_DIALECT_BASELINE,
+      output: ADVERTISED_OUTPUT_DIALECT_BASELINE,
+    });
 });
