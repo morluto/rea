@@ -287,6 +287,19 @@ Complete traversal or inventory does not make unavailable values equal. A
 partial aggregate fingerprint difference cannot establish modification when
 omissions alone explain it; independently proven differences still survive.
 
+A byte-format parser reports failure with `ParseFailureError` from
+`src/domain/parseFailure.ts`: `malformed`, `truncated`, `unsupported`, or
+`limit`, with the format and, when known, the offset and field. Read bounded
+fields through `BinaryReader` (`src/native/metadata/BinaryContainer.ts`), which
+raises that failure instead of a bare `RangeError`. Providers project the
+failure with `parseFailureAnalysisError` rather than their own `instanceof`
+ladder; a `limit` stays with its producer, which knows the budget to name.
+`scripts/verify/architecture-guards.mjs` counts the remaining raw `Buffer` and
+`DataView` reads, plain `Error` throws in parser folders, and plain `JSON.parse`
+of parser input against `scripts/verify/architecture-guard-baselines.json`. A
+file may not exceed its count; after removing copies, run
+`node scripts/verify/architecture-guards.mjs --shrink-baselines`.
+
 Keep format recognition separate from provider admission. A recognizable header
 can supply useful observations while later structure remains unresolved or a
 provider cannot accept the artifact. Report the reason at the affected boundary

@@ -11,10 +11,8 @@ import type {
   WindowsShortcutStringField,
   WindowsShortcutUuidV1,
 } from "../../domain/native/windowsShortcut.js";
-import {
-  WindowsShortcutFormatFailure,
-  WindowsShortcutResourceFailure,
-} from "./WindowsShortcut.errors.js";
+import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
+import { malformedInput } from "../../domain/parseFailure.js";
 
 type Artifact = WindowsShortcut["artifact"];
 
@@ -1156,21 +1154,23 @@ export const parseWindowsShortcut = async (
 ): Promise<WindowsShortcut> => {
   assertArtifactReadActive(signal);
   if (bytes.length < HEADER_BYTES)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `File is ${String(bytes.length)} bytes, below the 76-byte ShellLinkHeader`,
     );
   const headerSize = bytes.readUInt32LE(0);
   if (headerSize !== HEADER_BYTES)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `HeaderSize ${String(headerSize)} is not 0x4C`,
+      { offset: 0, field: "HeaderSize" },
     );
   const clsid = formatGuid(bytes, 4);
   if (clsid !== SHELL_LINK_CLSID)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `LinkCLSID ${clsid} is not ${SHELL_LINK_CLSID}`,
+      { offset: 4, field: "LinkCLSID" },
     );
   const flags = bytes.readUInt32LE(20);
   const unicode = (flags & 0x00000080) !== 0;
