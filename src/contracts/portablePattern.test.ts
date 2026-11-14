@@ -94,6 +94,8 @@ const SOURCES = [
   "^\\p{L}+$",
   "^\\bcon\\b",
   "^a{2,1001}$",
+  "^a{01}$",
+  "^(?:ab){0,02}$",
   "^(?<word>[a-z]+)-x$",
   "^\\u0041\\u{42}\\cJ$",
   "^\\S\\W\\D$",
@@ -241,6 +243,56 @@ describe("advertised pattern presentation", () => {
     const validate = new Ajv2020({ strict: false }).compile(present(schema));
     expect(validate({ name: "con" })).toBe(true);
   });
+
+  it.each([
+    [
+      "input",
+      (schema: Record<string, unknown>) =>
+        presentInputJsonSchema(schema, () => undefined),
+    ],
+    ["output", presentOutputJsonSchema],
+  ] as const)(
+    "does not narrow %s through a URI naming this resource",
+    (_kind, present) => {
+      const schema = {
+        $id: "https://example.test/root",
+        $defs: { name: { type: "string", pattern: lookAround } },
+        type: "object",
+        properties: {
+          name: { not: { $ref: "https://example.test/root#/$defs/name" } },
+        },
+      };
+      const validate = new Ajv2020({ strict: false }).compile(present(schema));
+      expect(validate({ name: "con" })).toBe(true);
+    },
+  );
+
+  it.each([
+    [
+      "input",
+      (schema: Record<string, unknown>) =>
+        presentInputJsonSchema(schema, () => undefined),
+    ],
+    ["output", presentOutputJsonSchema],
+  ] as const)(
+    "keeps %s pointers valid when a widened oneOf becomes anyOf",
+    (_kind, present) => {
+      const schema = {
+        $defs: {
+          choice: {
+            oneOf: [
+              { type: "string", pattern: "^\\s+$" },
+              { type: "string", pattern: "^ok$" },
+            ],
+          },
+        },
+        type: "object",
+        properties: { value: { $ref: "#/$defs/choice/oneOf/1" } },
+      };
+      const validate = new Ajv2020({ strict: false }).compile(present(schema));
+      expect(validate({ value: "ok" })).toBe(true);
+    },
+  );
 
   it("relaxes references to nonportable schemas inside literal output data", () => {
     const literal = { type: "string", pattern: "^\\d+$" };

@@ -383,7 +383,9 @@ const normalizationContext = (
     }
     if (typeof schema.$ref === "string") {
       const target = references.resolve(scope, schema.$ref);
-      if (target.kind === "target") {
+      // A pointer through `oneOf` may lose its target when a widened branch
+      // renames that union to `anyOf`.
+      if (target.kind === "target" && !target.path.includes("oneOf")) {
         const dependency = factAt(target.value, scope);
         dependency?.dependents.add(fact);
         dependency?.evaluationDependents.add(fact);
@@ -393,9 +395,10 @@ const normalizationContext = (
           !sites.get(references.enter(target.value, scope))?.has(target.value)
         )
           fact.opaqueReference = dependency;
-      } else if (target.kind === "anchor") {
-        // Named references are not resolved by this owner. Relax them when
-        // normalizing so a widened target cannot make a negation stricter.
+      } else if (target.kind !== "unresolved") {
+        // Named anchors and pointers through `oneOf` are not followed by this
+        // owner. Relax them when normalizing so a widened or moved target
+        // cannot make a negation stricter or leave a dangling reference.
         fact.opaqueReference = fact;
         if (!fact.changed) {
           fact.changed = true;
