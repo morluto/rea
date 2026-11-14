@@ -14,26 +14,12 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
  * only shrink: migrate a file's commands, then lower or delete its entry.
  * Dynamic names such as `${domain}.enable` are not counted.
  */
-const UNTYPED_CDP_COMMAND_BASELINE: Readonly<Record<string, number>> = {
-  "src/browser/CdpCaptureStorage.ts": 4,
-  "src/browser/CdpCaptureStorageFingerprints.ts": 5,
-  "src/browser/CdpElectronInspection.ts": 1,
-  "src/browser/CdpElectronWorkers.ts": 1,
-  "src/browser/CdpEndpoint.ts": 2,
-  "src/browser/CdpObservationSession.ts": 1,
-  "src/browser/CdpPageCapture.ts": 5,
-  "src/browser/CdpPageCaptureWorkers.ts": 1,
-  "src/browser/CdpScreenshot.ts": 2,
-  "src/browser/CdpScriptSourceCapture.ts": 1,
-  "src/browser/CdpWebMcpDiscovery.ts": 1,
-  "src/browser/PlaywrightScenarioBrowser.ts": 13,
-  "src/browser/PlaywrightScenarioServiceWorkers.ts": 1,
-  "src/browser/PlaywrightScenarioStorage.ts": 1,
-  "src/browser/execution/CdpEventListeners.ts": 4,
-  "src/browser/execution/CdpExecutionCapture.ts": 2,
-  "src/browser/execution/CdpListenerSelector.ts": 2,
-  "src/browser/execution/CdpRuntimeSources.ts": 1,
-};
+const UNTYPED_CDP_COMMAND_BASELINE = JSON.parse(
+  readFileSync(
+    new URL("./CdpCommands.untyped-baseline.json", import.meta.url),
+    "utf8",
+  ),
+) as Record<string, Record<string, number>>;
 
 const protocolCommands = (): ReadonlySet<string> => {
   const protocol = readFileSync(
@@ -64,27 +50,44 @@ const sourceFiles = (directory: string): string[] =>
       : [];
   });
 
+const untypedCommands = (
+  text: string,
+  commands: ReadonlySet<string>,
+): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  for (const [, name] of text.matchAll(
+    /["'`]([A-Z][A-Za-z]*\.[a-z][A-Za-z]*)["'`]/gu,
+  )) {
+    if (name === undefined || !commands.has(name) || isCdpCommand(name))
+      continue;
+    counts[name] = (counts[name] ?? 0) + 1;
+  }
+  return counts;
+};
+
+it("distinguishes replacement untyped commands even when the total is unchanged", () => {
+  const commands = new Set(["Fixture.first", "Fixture.second"]);
+  expect(untypedCommands('send("Fixture.first")', commands)).not.toEqual(
+    untypedCommands('send("Fixture.second")', commands),
+  );
+});
+
 it("sends no new CDP command without a registered result schema", () => {
   const commands = protocolCommands();
   expect(commands.size).toBeGreaterThan(500);
-  const counts: Record<string, number> = {};
+  const counts: Record<string, Record<string, number>> = {};
   for (const path of sourceFiles(join(root, "src"))) {
     const text = readFileSync(path, "utf8");
-    for (const [, name] of text.matchAll(
-      /["'`]([A-Z][A-Za-z]*\.[a-z][A-Za-z]*)["'`]/gu,
-    )) {
-      if (name === undefined || !commands.has(name) || isCdpCommand(name))
-        continue;
-      const file = relative(root, path).split(sep).join("/");
-      counts[file] = (counts[file] ?? 0) + 1;
-    }
+    const found = untypedCommands(text, commands);
+    if (Object.keys(found).length > 0)
+      counts[relative(root, path).split(sep).join("/")] = found;
   }
   const sorted = Object.fromEntries(
     Object.entries(counts).sort(([left], [right]) =>
       left < right ? -1 : left > right ? 1 : 0,
     ),
   );
-  // An increase means a new untyped command: register its result schema in
+  // A new name or increase means a new untyped command: register its result schema in
   // CdpCommands.ts instead. A decrease means the baseline must be lowered.
   expect(sorted).toEqual(UNTYPED_CDP_COMMAND_BASELINE);
 });

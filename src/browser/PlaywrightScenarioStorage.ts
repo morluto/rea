@@ -13,7 +13,11 @@ import type { BrowserScenario } from "../domain/browserScenario.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
-import { admitCdpReply, type CdpSendResult } from "./protocol/CdpCommands.js";
+import {
+  admitCdpReply,
+  CdpMalformedReply,
+  type CdpSendResult,
+} from "./protocol/CdpCommands.js";
 import {
   releaseLateScenarioCommand,
   scenarioCommandPending,
@@ -457,7 +461,8 @@ export class PlaywrightScenarioStorage {
     // A child command deadline is already the caller-facing failure. Storing
     // it keeps the command name, selected deadline, and recovery advice.
     this.#failure ??=
-      cause instanceof BrowserObservationError && cause.reason === "timeout"
+      cause instanceof CdpMalformedReply ||
+      (cause instanceof BrowserObservationError && cause.reason === "timeout")
         ? cause
         : new BrowserObservationError(
             "capture_browser_scenario",
