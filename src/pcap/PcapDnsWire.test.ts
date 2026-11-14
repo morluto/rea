@@ -380,3 +380,36 @@ it("parses recorded DNS, mDNS and LLMNR trees with protocol-specific class seman
     expect(incomplete.incomplete_reasons?.length).toBeGreaterThan(0);
   }
 });
+
+it("does not assign address ownership for NXDOMAIN replies (RCODE 3)", () => {
+  const bytes = packet(label("61"), [rr(pointer, 1, address)]);
+  bytes.writeUInt16BE(0x8183, 2);
+  const facts = parse(bytes, ["a"], ["192.0.2.9"]);
+  expect(facts.assigned).toEqual([]);
+  expect(facts.unattributed).toEqual(["192.0.2.9"]);
+  expect(facts.incomplete).toBe(true);
+  expect(facts.incomplete_reasons).toContain(
+    "Question count, response flag, type or class does not establish Internet address ownership",
+  );
+});
+
+it("does not assign address ownership for STATUS opcode replies (opcode 2)", () => {
+  const bytes = packet(label("61"), [rr(pointer, 1, address)]);
+  bytes.writeUInt16BE(0x9180, 2);
+  const facts = parse(bytes, ["a"], ["192.0.2.9"]);
+  expect(facts.assigned).toEqual([]);
+  expect(facts.unattributed).toEqual(["192.0.2.9"]);
+  expect(facts.incomplete).toBe(true);
+  expect(facts.incomplete_reasons).toContain(
+    "Question count, response flag, type or class does not establish Internet address ownership",
+  );
+});
+
+it("still assigns address ownership for ordinary NOERROR QUERY replies (control)", () => {
+  const bytes = packet(label("61"), [rr(pointer, 1, address)]);
+  bytes.writeUInt16BE(0x8180, 2);
+  const facts = parse(bytes, ["a"], ["192.0.2.9"]);
+  expect(facts.assigned).toEqual([[0, "192.0.2.9"]]);
+  expect(facts.unattributed).toEqual([]);
+  expect(facts.incomplete).toBe(false);
+});

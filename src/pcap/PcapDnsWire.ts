@@ -271,6 +271,10 @@ const eligibleQuestion = (
 ): WireQuestion | null => {
   const question = decodedQuestions[0];
   if (
+    // Only a standard QUERY (opcode 0) with a NOERROR rcode can establish
+    // query-answer ownership (RFC 1035 section 4.1.1).
+    (flags & 0x7800) !== 0 ||
+    (flags & 0x000f) !== 0 ||
     (flags & 0x8000) === 0 ||
     decodedQuestions.length !== 1 ||
     question === undefined ||
