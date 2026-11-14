@@ -150,3 +150,24 @@ it("rejects an empty or NUL --snapshot option before analysis", async () => {
   });
   for (const run of runs) expect(run).not.toHaveBeenCalled();
 });
+
+it.each([
+  { argv: ["inspect-plist", ".", "--relative-path"], field: "relativePath" },
+  { argv: ["trace-dylib-resolution", ".", "--root"], field: "root" },
+])(
+  "rejects an empty or NUL $field option on the CLI and names that option",
+  async ({ argv, field }) => {
+    const { serve, runs } = registry();
+    for (const value of ["", "Contents/a\x00b"]) {
+      const result = (await serve([...argv, value])) as {
+        code: string;
+        fieldErrors: readonly { path: string }[];
+      };
+      expect(result.code).toBe("VALIDATION_ERROR");
+      expect(
+        new Set(result.fieldErrors.map(({ path }) => path.split(".")[0])),
+      ).toEqual(new Set([field]));
+    }
+    for (const run of runs) expect(run).not.toHaveBeenCalled();
+  },
+);
