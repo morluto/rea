@@ -217,6 +217,21 @@ describe("GodotPckArtifactReader format 1", () => {
   });
 });
 
+it.each([1, 2] as const)(
+  "rejects format %s members that begin before the embedded pack",
+  async (version) => {
+    const member = { path: "res://member.bin", data: "ELF" };
+    const pack =
+      version === 1
+        ? buildGodotPck1([{ ...member, offset: 1n }])
+        : buildGodotPck(2, [member], { packFlags: 0 });
+    if (version === 2) pack.writeBigUInt64LE(1n, 24);
+    await withReader(embedGodotPck(pack), async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  },
+);
+
 describe("GodotPckArtifactReader", () => {
   it.each([
     ["format 4 standalone", buildGodotPck(4, members), false],

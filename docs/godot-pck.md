@@ -75,6 +75,8 @@ The same CLI commands locate a PCK at the beginning of a file or through its
 payloads or discover packs behind additional trailing signatures. The root
 content SHA-256 covers the whole carrier; its content classification remains
 native, while the inventory records the PCK role and exact pack bounds.
+Each member's resolved file range must fit within those bounds, including
+when a format 1 offset or a format 2 file base uses carrier coordinates.
 An EOF marker is only a candidate: an invalid size or a pointed-to location
 without a `GDPC` header leaves native classification in place. Once the
 trailer points to a pack header, malformed or unsupported PCK content remains
