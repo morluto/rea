@@ -67,7 +67,6 @@ import type {
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
 import {
-  compactInputSchemaByDefault,
   registrationWriteBlocker,
   type SetupClient,
 } from "./SupportedClients.js";
@@ -940,15 +939,7 @@ const clientConfigurationDesired = async (
     "fragment",
   );
   if (!environment.ok) throw environment.error;
-  const registrationEnvironment =
-    compactInputSchemaByDefault(client) &&
-    snapshotEnvironment(environment.value).REA_MCP_INPUT_SCHEMA_PROFILE ===
-      undefined
-      ? {
-          ...environment.value,
-          REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
-        }
-      : environment.value;
+  const registrationEnvironment = environment.value;
   const registration = refreshClientRegistration(
     client,
     format,
