@@ -35,4 +35,5 @@ export type BrowserObservationFailureReason =
   | "process_ownership_unavailable"
   | "cleanup_failed"
   | "cancelled"
-  | "timeout";
+  | "timeout"
+  | "locator_zero_match";
