@@ -383,7 +383,8 @@ it.each([
       dotnetBundleFixture([
         {
           path: "compressed",
-          bytes: Buffer.from("hello ".repeat(1000)),
+          // Multiple decoder chunks expose cleanup errors after the size refusal.
+          bytes: Buffer.alloc(64 * 1024, 65),
           compressed: true,
           declaredSize: 3,
         },
