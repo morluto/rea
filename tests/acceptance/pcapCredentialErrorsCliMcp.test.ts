@@ -89,7 +89,6 @@ cliTest.skipIf(missingNative)(
         .digest("hex"),
     ).toBe(before);
   },
-  120_000,
 );
 
 it.skipIf(missingNative)(
@@ -141,5 +140,4 @@ it.skipIf(missingNative)(
       }
     }
   },
-  120_000,
 );

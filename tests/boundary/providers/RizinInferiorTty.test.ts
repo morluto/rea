@@ -304,7 +304,6 @@ it.skipIf(process.platform !== "linux")(
     });
     await expectCloseRejectedAndReleased(sessionId);
   },
-  4_000,
 );
 
 it("rejects changed or missing Rizin inferior identity during detach", () => {
