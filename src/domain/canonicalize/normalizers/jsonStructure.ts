@@ -38,35 +38,51 @@ const recognizes = (bytes: Buffer): boolean => {
   return byte === 0x7b /* { */ || byte === 0x5b; /* [ */
 };
 
+/** Code units of SHA-256 hex embedded to disambiguate a shortened segment or path. */
+const SHORT_HASH_UNITS = 12;
+
+const sha256Hex = (text: string): string =>
+  createHash("sha256").update(text, "utf8").digest("hex");
+
 /** JSON Pointer escaping so a key containing `/` cannot forge a nested path. */
 const escapeSegment = (segment: string): string =>
   segment.replace(/~/gu, "~0").replace(/\//gu, "~1");
 
-interface BoundedPath {
+interface ChildName {
   readonly path: string;
-  readonly truncated: boolean;
+  /** SHA-256 of the exact key when its name was shortened; null otherwise. */
+  readonly sha256: string | null;
 }
 
 /**
  * Build a child path, bounding each segment and the whole path. An artifact
  * controls key text, so an inflated key must never be repeated verbatim across
- * many fact names; when a segment or the path is shortened the fact carries a
- * digest of the exact key for reference.
+ * many fact names. A shortened segment embeds a short digest so two keys that
+ * share a prefix do not collapse to one name, and the fact carries the full
+ * key digest as an exact reference — identity stays separate from display.
  */
-const childPath = (parentPath: string, escaped: string): BoundedPath => {
-  let truncated = false;
+const childPath = (parentPath: string, rawSegment: string): ChildName => {
+  const escaped = escapeSegment(rawSegment);
+  let sha256: string | null = null;
   let segment = escaped;
   if (segment.length > MAX_SEGMENT_UNITS) {
-    segment = `${segment.slice(0, MAX_SEGMENT_UNITS)}…(${String(escaped.length)})`;
-    truncated = true;
+    sha256 = sha256Hex(rawSegment);
+    segment = `${segment.slice(0, MAX_SEGMENT_UNITS)}…#${sha256.slice(0, SHORT_HASH_UNITS)}(${String(escaped.length)})`;
   }
   let path = `${parentPath}/${segment}`;
   if (path.length > MAX_PATH_UNITS) {
-    path = `${path.slice(0, MAX_PATH_UNITS)}…`;
-    truncated = true;
+    const full = path;
+    path = `${path.slice(0, MAX_PATH_UNITS)}…#${sha256Hex(full).slice(0, SHORT_HASH_UNITS)}`;
+    sha256 ??= sha256Hex(full);
   }
-  return { path, truncated };
+  return { path, sha256 };
 };
+
+/** Array indices are short and need no escaping, bounding or digest. */
+const indexPath = (parentPath: string, index: number): ChildName => ({
+  path: `${parentPath}/${String(index)}`,
+  sha256: null,
+});
 
 const memberCount = (value: Container): number =>
   Array.isArray(value) ? value.length : Object.keys(value).length;
@@ -173,27 +189,17 @@ const admitChild = (
   state: WalkState,
   budget: NormalizerBudget,
   depth: number,
-  parentPath: string,
-  rawSegment: string,
-  isKey: boolean,
+  name: ChildName,
   child: unknown,
 ): boolean => {
   if (state.retained >= budget.maxFacts) return false;
-  const { path, truncated } = childPath(
-    parentPath,
-    isKey ? escapeSegment(rawSegment) : rawSegment,
-  );
-  // Hash the exact (unbounded) key once, only when its name was shortened.
-  const sha256 = truncated
-    ? createHash("sha256").update(rawSegment, "utf8").digest("hex")
-    : null;
   if (isContainer(child)) {
-    state.core.push(containerSummaryFact(path, child, sha256));
+    state.core.push(containerSummaryFact(name.path, child, name.sha256));
     state.retained += 1;
-    state.stack.push({ value: child, depth: depth + 1, path });
+    state.stack.push({ value: child, depth: depth + 1, path: name.path });
     return true;
   }
-  state.core.push(leafFact(path, child, budget.sampleUnits, sha256));
+  state.core.push(leafFact(name.path, child, budget.sampleUnits, name.sha256));
   state.retained += 1;
   return true;
 };
@@ -249,9 +255,7 @@ const processFrame = (
           state,
           budget,
           frame.depth,
-          frame.path,
-          String(index),
-          false,
+          indexPath(frame.path, index),
           frame.value[index],
         )
       )
@@ -271,9 +275,7 @@ const processFrame = (
         state,
         budget,
         frame.depth,
-        frame.path,
-        key,
-        true,
+        childPath(frame.path, key),
         (frame.value as Record<string, unknown>)[key],
       )
     )

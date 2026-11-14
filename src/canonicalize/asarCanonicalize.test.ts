@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { CANONICALIZE_SAMPLE_UNITS } from "../domain/canonicalize/canonicalizeArtifact.js";
 import type { NormalizerBudget } from "../domain/canonicalize/normalizer.js";
 import { canonicalizeAsarBytes, looksLikeAsar } from "./asarCanonicalize.js";
@@ -26,19 +25,19 @@ const asarArchiveRaw = (
 };
 
 describe("canonicalizeAsarBytes header decoding", () => {
-  it("rejects an invalid-UTF-8 header via the owning reader's decoder", async () => {
+  it("rejects invalid UTF-8 in an otherwise valid header, by UTF-8 failure", async () => {
+    // The invalid byte sits inside an otherwise valid filename and a
+    // structurally valid header. A lossy decoder would turn it into U+FFFD and
+    // succeed, so only strict decoding rejects it — the assertion pins that.
     const header = Buffer.concat([
-      Buffer.from('{"files":{"x":"', "utf8"),
-      Buffer.from([0xff, 0xfe]),
-      Buffer.from('"}}', "utf8"),
+      Buffer.from('{"files":{"a', "utf8"),
+      Buffer.from([0xff]),
+      Buffer.from('b":{"size":1,"offset":"0"}}}', "utf8"),
     ]);
     const bytes = asarArchiveRaw(header);
-    // The framing and leading object token make this look like an ASAR...
     expect(looksLikeAsar(bytes)).toBe(true);
-    // ...but the shared strict decoder refuses the invalid bytes rather than
-    // replacing them and returning a changed header.
-    await expect(canonicalizeAsarBytes(bytes, budget)).rejects.toBeInstanceOf(
-      ArtifactReaderFailure,
+    await expect(canonicalizeAsarBytes(bytes, budget)).rejects.toThrow(
+      /not valid UTF-8/iu,
     );
   });
 });

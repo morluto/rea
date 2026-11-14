@@ -43,6 +43,19 @@ export interface AsarClassificationContext {
 
 /** Maximum distinct per-entry limitation strings surfaced before summarizing. */
 const MAX_ENTRY_LIMITATIONS = 64;
+/** Maximum code units kept for one limitation note before it is retained by digest. */
+const MAX_LIMITATION_UNITS = 512;
+
+/**
+ * Bound one reader-supplied limitation note. A note can embed an artifact's full
+ * integrity declaration (a multi-megabyte hash), which must not reach the
+ * result unbounded and overflow the MCP response budget; an oversized note is
+ * shortened and retained by digest.
+ */
+const boundLimitation = (text: string): string =>
+  text.length <= MAX_LIMITATION_UNITS
+    ? text
+    : `${text.slice(0, MAX_LIMITATION_UNITS)}… (${String(text.length)} units; sha256 ${createHash("sha256").update(text, "utf8").digest("hex")})`;
 
 /** An unknown declared size must stay distinct from a genuine zero-byte member. */
 const sizeSuffix = (entry: AsarInventoryEntry): string =>
@@ -234,7 +247,7 @@ export const classifyAsarInventory = (
         entryLimitationsOverflow = true;
         break;
       }
-      entryLimitations.add(limitation);
+      entryLimitations.add(boundLimitation(limitation));
     }
   limitations.push(...entryLimitations);
   if (entryLimitationsOverflow)

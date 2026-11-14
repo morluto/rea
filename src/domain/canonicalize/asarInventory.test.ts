@@ -111,6 +111,19 @@ describe("classifyAsarInventory", () => {
     expect(facts.limitations.join(" ")).toMatch(/negative size/iu);
   });
 
+  it("bounds an oversized per-entry limitation and retains it by digest", () => {
+    const huge = "x".repeat(2_000_000);
+    const facts = classifyAsarInventory(
+      [entry("a.js", 1, [huge])],
+      budget(),
+      context({ reachable: new Set(["a.js"]) }),
+    );
+    const joined = facts.limitations.join("");
+    // The multi-megabyte note cannot reach the result unbounded.
+    expect(joined.length).toBeLessThan(10_000);
+    expect(joined).toMatch(/sha256 [a-f0-9]{64}/u);
+  });
+
   it("reports a truncated listing with the reader's own guidance", () => {
     const facts = classifyAsarInventory([], budget(), {
       reachable: new Set(),

@@ -291,6 +291,26 @@ describe("json-structure normalizer", () => {
     expect(names).toContain("$/a~1b");
     expect(names).toContain("$/a/b");
   });
+
+  it("disambiguates shortened parent keys so children keep distinct names", () => {
+    const shared = "p".repeat(128);
+    const keyA = `${shared}${"A".repeat(100)}`;
+    const keyB = `${shared}${"B".repeat(100)}`;
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(
+        JSON.stringify({ [keyA]: { x: 1 }, [keyB]: { x: 2 } }),
+        "utf8",
+      ),
+      "json",
+      budget(),
+    );
+    const childNames = facts.core
+      .map((fact) => fact.name)
+      .filter((name): name is string => name !== null && name.endsWith("/x"));
+    expect(childNames).toHaveLength(2);
+    // Two keys that share their first 128 units must not collapse to one name.
+    expect(new Set(childNames).size).toBe(2);
+  });
 });
 
 // --- Fallback -------------------------------------------------------------
