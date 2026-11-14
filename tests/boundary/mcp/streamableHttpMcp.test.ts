@@ -13,8 +13,6 @@ import {
 import { processTest } from "../../support/process/processFixture.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 
-const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
-
 const openSession = async (url: URL, name: string) => {
   const transport = new StreamableHTTPClientTransport(url);
   const client = new Client({ name, version: "1" });
@@ -95,7 +93,6 @@ describe("rea mcp --http", () => {
       await expectIdentity(second);
       await second.transport.terminateSession();
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 
   processTest(
@@ -140,7 +137,6 @@ describe("rea mcp --http", () => {
         "MCP HTTP session replaced by a new client",
       );
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 
   processTest(
@@ -150,6 +146,5 @@ describe("rea mcp --http", () => {
       const refused = await expectForeignHostRefused(url);
       expect(refused.body).not.toContain("127.0.0.1");
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 });

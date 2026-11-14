@@ -371,7 +371,6 @@ process.stdout.write("unexpected stdin EOF\\n");
     expect(commands.cleanupResources).toEqual([]);
     expect(existsSync(directory)).toBe(true);
   },
-  10_000,
 );
 
 it.skipIf(process.platform === "win32")(
@@ -521,7 +520,6 @@ it.skipIf(process.platform === "win32")(
       }
     }
   },
-  15_000,
 );
 
 it.skipIf(process.platform === "win32")(

@@ -66,7 +66,6 @@ cliCaptureTest(
       expect(capture.exit, name).toMatchObject(expected);
     }
   },
-  60_000,
 );
 
 captureTest(
@@ -94,5 +93,4 @@ captureTest(
       reason: "exited",
     });
   },
-  30_000,
 );

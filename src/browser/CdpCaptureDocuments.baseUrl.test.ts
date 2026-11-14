@@ -1367,5 +1367,5 @@ describe("XML namespace resolution ordering and capacity", () => {
     expect(result.urls).toEqual([
       approvedHref(elements.length, `${origin}/deep`),
     ]);
-  }, 30_000);
+  });
 });
