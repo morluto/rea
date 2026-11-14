@@ -2,23 +2,17 @@ import { expect, it } from "vitest";
 
 import { HOPPER_OPERATIONS } from "./HopperProviderMetadata.js";
 import {
-  HOPPER_OPERATIONS_WITHOUT_REPLY_CONTRACT,
-  hopperReplySchemas,
+  hasHopperReplyContract,
+  hopperBridgeMethod,
   parseHopperReply,
 } from "./HopperReplyContracts.js";
 
-it("assigns every Hopper operation either a reply contract or the shrinking pending list", () => {
-  const contracted = Object.keys(hopperReplySchemas);
-  const pending: readonly string[] = HOPPER_OPERATIONS_WITHOUT_REPLY_CONTRACT;
+it("gives every Hopper operation's bridge method a reply contract", () => {
+  const missing = HOPPER_OPERATIONS.map(hopperBridgeMethod).filter(
+    (method) => !hasHopperReplyContract(method),
+  );
 
-  expect(
-    [...contracted, ...pending].sort(),
-    "each operation is listed exactly once",
-  ).toEqual([...HOPPER_OPERATIONS].sort());
-  expect(
-    pending.length,
-    "the pending list only shrinks; add a reply contract instead of an entry",
-  ).toBeLessThanOrEqual(9);
+  expect(missing, "no Hopper reply reaches Evidence unvalidated").toEqual([]);
 });
 
 it("returns the validated source reply without dropping unlisted fields", () => {

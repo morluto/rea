@@ -45,6 +45,7 @@ import { HopperClient } from "./HopperClient.js";
 import { projectHopperNameInventory } from "./HopperNameInventory.js";
 import {
   hasHopperReplyContract,
+  hopperBridgeMethod,
   parseHopperReply,
 } from "./HopperReplyContracts.js";
 import { hopperMachOImageSchema } from "./HopperMachOImage.js";
@@ -420,20 +421,17 @@ export class HopperProvider implements AnalysisProviderCandidate {
               operation === "analyze_function" ||
               (operation === "procedure_references" &&
                 parameters.direction === "incoming");
-            const result =
+            const isRegexSearch =
               (operation === "search_strings" ||
                 operation === "search_procedures") &&
-              parameters.mode === "regex"
-                ? await regexSearch.execute(operation, parameters, options)
-                : await client.callTool(
-                    operation === "procedure_callers"
-                      ? "rea_caller_base"
-                      : operation,
-                    parameters,
-                    willReconcile
-                      ? reconciliationChildOptions(options)
-                      : options,
-                  );
+              parameters.mode === "regex";
+            const result = isRegexSearch
+              ? await regexSearch.execute(operation, parameters, options)
+              : await client.callTool(
+                  hopperBridgeMethod(operation),
+                  parameters,
+                  willReconcile ? reconciliationChildOptions(options) : options,
+                );
             if (!result.ok)
               return operation === "procedure_callers"
                 ? err(
@@ -445,23 +443,31 @@ export class HopperProvider implements AnalysisProviderCandidate {
                   )
                 : result;
             // Each bridge reply is validated once against its method contract.
-            // Regex search rows come from an inventory validated when read.
+            // Reconciliation validates the replies it reads, and regex search
+            // rows come from an inventory validated when it was read.
             const names =
               operation === "list_names"
                 ? parseHopperReply(operation, result.value)
                 : undefined;
             if (names !== undefined && !names.ok) return names;
+            const offset =
+              operation === "address_to_file_offset"
+                ? parseHopperReply(operation, result.value)
+                : undefined;
+            if (offset !== undefined && !offset.ok) return offset;
             if (
               names === undefined &&
-              hasHopperReplyContract(operation) &&
-              parameters.mode !== "regex"
+              offset === undefined &&
+              !willReconcile &&
+              !isRegexSearch &&
+              hasHopperReplyContract(operation)
             ) {
               const replied = parseHopperReply(operation, result.value);
               if (!replied.ok) return replied;
             }
             const mapped =
-              operation === "address_to_file_offset"
-                ? await mapHopperFileOffset(target, result.value, {
+              offset !== undefined
+                ? await mapHopperFileOffset(target, offset.value, {
                     ...(options?.signal === undefined
                       ? {}
                       : { signal: options.signal }),

@@ -16,7 +16,7 @@ const isLegacyObjcClassObjectLabel = (value: string): boolean =>
  * The rows are a `list_names` reply already validated by its reply contract.
  */
 export const projectHopperNameInventory = (
-  rows: HopperReply<"list_names"> & JsonValue,
+  rows: HopperReply<"list_names">,
 ): { readonly result: JsonValue; readonly changed: boolean } => {
   let changed = false;
   const result = rows.map((entry) => {

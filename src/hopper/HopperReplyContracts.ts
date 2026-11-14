@@ -7,12 +7,65 @@ import {
   nativeInventoryRowsSchemas,
 } from "../domain/native/nativeInventory.js";
 import { nativeObservationSourceSchemas } from "../domain/native/nativeObservation.js";
+import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
+import { nativeCallClassificationSchema } from "../domain/native/nativeCallReference.js";
+import {
+  functionDossierSchema,
+  functionInstructionWindowSchema,
+} from "../domain/native/functionDossier.js";
+import {
+  referenceEdgeSchema,
+  unresolvedCallSchema,
+} from "../domain/native/nativeReference.js";
+import { nativeSegmentListSchema } from "../domain/native/nativeSegments.js";
+import {
+  procedureIdentitySchema,
+  procedureInfoSchema,
+} from "../domain/native/procedureInfo.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { HOPPER_OPERATIONS } from "./HopperProviderMetadata.js";
 
 type HopperOperation = (typeof HOPPER_OPERATIONS)[number];
 
+/** The bridge method that serves an analyst operation. */
+export const hopperBridgeMethod = (operation: string): string =>
+  operation === "procedure_callers" ? "rea_caller_base" : operation;
+
+/** Every bridge method whose reply REA reads. */
+type HopperBridgeMethod =
+  | Exclude<HopperOperation, "procedure_callers">
+  | "rea_caller_base"
+  | "rea_caller_scan_page"
+  | "rea_caller_scan_target";
+
 const nullableText = z.string().nullable();
+
+/** The native file mapping before REA binds it to the admitted source bytes. */
+const fileOffsetObservationSchema = z.strictObject({
+  address: z.string().regex(/^0x[0-9a-f]+$/u),
+  provider_file_offset: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  provider_source_path: z.string().nullable(),
+  provider_image_header_hex: z
+    .string()
+    .regex(/^[a-f0-9]{24}$/u)
+    .nullable(),
+});
+const compactEdgeSchema = z.strictObject({
+  source_address: z.string(),
+  target_address: z.string(),
+  source_procedure: z.union([
+    z.literal("caller"),
+    procedureIdentitySchema,
+    z.null(),
+  ]),
+  target_procedure: z.string(),
+  call: nativeCallClassificationSchema,
+});
+const callerScanTargetSchema = z.strictObject({
+  target: procedureIdentitySchema,
+  instructions: z.array(z.string()),
+  instructions_complete: z.boolean(),
+});
 
 /**
  * Bridge reply contracts, keyed by method and built from the shared native
@@ -46,27 +99,41 @@ export const hopperReplySchemas = {
   search_procedures: nativeInventoryRowsSchemas.names,
   list_strings: nativeInventoryRowsSchemas.strings,
   search_strings: nativeInventoryRowsSchemas.strings,
-} as const satisfies Partial<Record<HopperOperation, z.ZodType>>;
-
-/**
- * Operations whose replies still reach Evidence without a client-side reply
- * contract. This list may only shrink: add each operation's contract above and
- * remove it here.
- */
-export const HOPPER_OPERATIONS_WITHOUT_REPLY_CONTRACT = Object.freeze([
-  "address_to_file_offset",
-  "analyze_function",
-  "list_segments",
-  "procedure_callers",
-  "procedure_info",
-  "procedure_references",
-  "read_bytes",
-  "read_function_instructions",
-  "resolve_containing_procedure",
-] as const satisfies readonly Exclude<
-  HopperOperation,
-  keyof typeof hopperReplySchemas
->[]);
+  list_segments: nativeSegmentListSchema,
+  procedure_info: procedureInfoSchema,
+  read_bytes: nativeByteReadSchema,
+  read_function_instructions: functionInstructionWindowSchema,
+  resolve_containing_procedure:
+    nativeObservationSourceSchemas.resolve_containing_procedure,
+  address_to_file_offset: fileOffsetObservationSchema,
+  analyze_function: functionDossierSchema,
+  procedure_references: z.strictObject({
+    procedure: procedureIdentitySchema,
+    direction: z.enum(["incoming", "outgoing"]),
+    reference_kinds_available: z.boolean(),
+    unresolved_calls: z.array(unresolvedCallSchema),
+    references: z.array(referenceEdgeSchema),
+  }),
+  // REA-private bridge methods behind procedure_callers reconciliation.
+  rea_caller_base: callerScanTargetSchema.extend({
+    callers: z.array(z.string()),
+    callers_complete: z.boolean(),
+  }),
+  rea_caller_scan_target: callerScanTargetSchema,
+  rea_caller_scan_page: z.strictObject({
+    start: z.int().nonnegative(),
+    next: z.int().nonnegative(),
+    total: z.int().nonnegative(),
+    oversized: z.boolean(),
+    items: z.array(
+      z.strictObject({
+        caller: procedureIdentitySchema,
+        callees: z.array(z.string()),
+        references: z.array(compactEdgeSchema),
+      }),
+    ),
+  }),
+} as const satisfies Record<HopperBridgeMethod, z.ZodType>;
 
 export type HopperReplyMethod = keyof typeof hopperReplySchemas;
 export type HopperReply<M extends HopperReplyMethod> = z.output<
@@ -86,12 +153,12 @@ export const parseHopperReply = <M extends HopperReplyMethod>(
   method: M,
   value: JsonValue,
   operation: string = method,
-): Result<HopperReply<M> & JsonValue, AnalysisOutputError> => {
+): Result<HopperReply<M>, AnalysisOutputError> => {
   const parsed = hopperReplySchemas[method].safeParse(value);
   return parsed.success
     ? // The schemas carry no transforms, so the validated source is the
       // parsed value without the object copy that drops unlisted fields.
-      ok(value as HopperReply<M> & JsonValue)
+      ok(value as HopperReply<M>)
     : err(
         new AnalysisOutputError(
           operation,
