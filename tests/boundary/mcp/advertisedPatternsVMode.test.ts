@@ -104,6 +104,7 @@ it("walks schema-valued JSON Schema positions without treating instance data as 
   collectPatterns(schema, "root", "fixture", patterns);
   expect(patterns.map(({ pattern }) => pattern)).toEqual([
     "^[A-Z]+$",
+    BASE64_QUARTET_LENGTH_PATTERN.source,
     "^[0-9]+$",
   ]);
 
