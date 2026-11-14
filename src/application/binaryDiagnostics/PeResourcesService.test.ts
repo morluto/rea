@@ -1022,6 +1022,59 @@ it.each(["invented", "unknown_value_type(999)", "unknown_value_type(01)"])(
   },
 );
 
+it("rejects a generic unknown value with a nonempty range", async () => {
+  const report = await reportWithSyntheticValue(
+    "vaInt32",
+    {
+      kind: "unknown",
+      reason: "stopped",
+      bytes_hex: "00000000",
+      truncated: false,
+    },
+    4,
+  );
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects an empty retained property name", async () => {
+  const report = await reportWithFormPrefix(0);
+  const form = report.delphi_forms[0];
+  if (form === undefined) throw new Error("Missing form");
+  const root = form.root;
+  const name = label("", root.location.offset + 13, form.code_page);
+  const valueOffset = name.location.offset + name.location.bytes;
+  const propertyEnd = valueOffset + 1;
+  report.delphi_forms = [
+    {
+      ...form,
+      root: stoppedRoot(report, form, propertyEnd, {
+        properties: [
+          {
+            name,
+            value_type: "vaNull",
+            value: {
+              kind: "null",
+              location: { offset: valueOffset, bytes: 1 },
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: propertyEnd - name.location.offset,
+            },
+          },
+        ],
+        children: [],
+      }),
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("rejects an unknown value whose preview omits bytes from a nonempty range", async () => {
   const report = await reportWithSyntheticValue(
     "vaInt8",
@@ -1809,6 +1862,32 @@ it("rejects a stopped collection item that claims bytes after its marker", async
       terminated: false,
     }),
     3,
+  );
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a list entry declared as the vaNull terminator", async () => {
+  const report = await reportWithBuiltSyntheticValue(
+    "vaList",
+    (location) => ({
+      kind: "list",
+      items: [
+        {
+          value_type: "vaNull",
+          marker_location: { offset: location.offset, bytes: 1 },
+          value: {
+            kind: "null",
+            location: { offset: location.offset, bytes: 1 },
+          },
+        },
+      ],
+      terminated: true,
+      location: { offset: location.offset, bytes: 2 },
+    }),
+    2,
   );
   expect(await inspectReport(report)).toMatchObject({
     ok: false,

@@ -139,30 +139,32 @@ const stoppedUnknownValue = (value: unknown): boolean =>
   zeroLength((value as Record<string, unknown>).location) &&
   (value as Record<string, unknown>).bytes_hex === "";
 
+const exactObjectSentinel = (node: object): boolean => {
+  const object = node as Record<string, unknown>;
+  const unknown = object.unknown as Record<string, unknown> | undefined;
+  return (
+    zeroLength(object.location) &&
+    arrayItems(node, "children").length === 0 &&
+    arrayItems(node, "properties").length === 0 &&
+    Array.isArray(object.flags) &&
+    object.flags.length === 0 &&
+    object.child_position === null &&
+    object.class_name === null &&
+    object.component_name === null &&
+    typeof unknown === "object" &&
+    unknown !== null &&
+    zeroLength(unknown.location) &&
+    unknown.bytes_hex === "" &&
+    unknown.truncated === false
+  );
+};
+
 /** A depth- or budget-overflow node is the decoder's explicit stop. */
 const terminalStoppedNode = (
   frame: Extract<FormTreeFrame, { depth: number }>,
   node: object,
 ): boolean => {
-  if (frame.kind === "object") {
-    const object = node as Record<string, unknown>;
-    const unknown = object.unknown as Record<string, unknown> | undefined;
-    return (
-      zeroLength(object.location) &&
-      arrayItems(node, "children").length === 0 &&
-      arrayItems(node, "properties").length === 0 &&
-      Array.isArray(object.flags) &&
-      object.flags.length === 0 &&
-      object.child_position === null &&
-      object.class_name === null &&
-      object.component_name === null &&
-      typeof unknown === "object" &&
-      unknown !== null &&
-      zeroLength(unknown.location) &&
-      unknown.bytes_hex === "" &&
-      unknown.truncated === false
-    );
-  }
+  if (frame.kind === "object") return exactObjectSentinel(node);
   if (frame.kind === "property")
     return stoppedUnknownValue((node as Record<string, unknown>).value);
   if (frame.kind === "value") return stoppedUnknownValue(node);
@@ -263,6 +265,12 @@ const formTreeWithinDepth = (report: unknown): boolean => {
         addText(counters, object.class_name);
         addText(counters, object.component_name);
         addPositionBytes(counters, object.child_position);
+        if (
+          counters.properties > MAX_DELPHI_FORM_PROPERTIES ||
+          counters.bytes > MAX_DELPHI_FORM_RETAINED_BYTES ||
+          counters.text > MAX_DELPHI_FORM_TEXT_BYTES
+        )
+          return false;
         // Nested components recurse one level deeper; property values share
         // the object's depth, exactly as readObject passes it to readValue.
         for (const child of arrayItems(node, "children"))
@@ -292,6 +300,12 @@ const formTreeWithinDepth = (report: unknown): boolean => {
           DELPHI_FORM_BYTE_CHARGES.item +
           properties * DELPHI_FORM_BYTE_CHARGES.property;
         addPositionBytes(counters, item.position);
+        if (
+          counters.properties > MAX_DELPHI_FORM_PROPERTIES ||
+          counters.bytes > MAX_DELPHI_FORM_RETAINED_BYTES ||
+          counters.text > MAX_DELPHI_FORM_TEXT_BYTES
+        )
+          return false;
         // A collection item's property values are read one level below the
         // collection value.
         for (const property of arrayItems(node, "properties"))
@@ -328,9 +342,18 @@ const formTreeWithinDepth = (report: unknown): boolean => {
         if (value.terminated === true) chargeText(counters, 0);
       } else if (value.kind === "collection")
         counters.values += arrayItems(value, "items").length;
+      if (
+        counters.values > MAX_DELPHI_FORM_VALUES + 1 ||
+        counters.bytes > MAX_DELPHI_FORM_RETAINED_BYTES ||
+        counters.text > MAX_DELPHI_FORM_TEXT_BYTES
+      )
+        return false;
       if (value.kind === "list") {
         const entries = arrayItems(value, "items");
+        if (counters.values + entries.length > MAX_DELPHI_FORM_VALUES + 1)
+          return false;
         counters.bytes += entries.length * DELPHI_FORM_BYTE_CHARGES.listEntry;
+        if (counters.bytes > MAX_DELPHI_FORM_RETAINED_BYTES) return false;
         for (const entry of entries) {
           if (typeof entry !== "object" || entry === null) continue;
           const record = entry as Record<string, unknown>;
@@ -344,13 +367,17 @@ const formTreeWithinDepth = (report: unknown): boolean => {
           });
         }
       }
-      if (value.kind === "collection")
-        for (const item of arrayItems(value, "items"))
+      if (value.kind === "collection") {
+        const items = arrayItems(value, "items");
+        // The item values were already added to the counter above.
+        if (counters.values > MAX_DELPHI_FORM_VALUES + 1) return false;
+        for (const item of items)
           stack.push({
             kind: "collection-item",
             value: item,
             depth: frame.depth,
           });
+      }
     }
     // A budget-exhausted read retains one terminal sentinel after the last
     // retained object; anything beyond that cannot come from the decoder.
@@ -529,7 +556,14 @@ const validReport = (
         form.root.location.offset === signatureEnd &&
         within(form.root.location) &&
         rootCoversPayload &&
-        insideLocations(form.root, within, form.code_page)
+        insideLocations(
+          form.root,
+          within,
+          form.code_page,
+          within,
+          true,
+          payloadEnd,
+        )
       );
     })
   );
@@ -572,6 +606,11 @@ const objectHasStop = (object: DelphiFormObject): boolean =>
  * A short Pascal label retains one length byte plus its source bytes, so its
  * text must be exactly the decode of those retained bytes under the form page.
  */
+const nonEmptyTextMatchesBytes = (
+  item: DelphiFormText,
+  codePage: string,
+): boolean => item.bytes_hex.length > 0 && textMatchesBytes(item, codePage);
+
 const textMatchesBytes = (item: DelphiFormText, codePage: string): boolean => {
   const raw = Buffer.from(item.bytes_hex, "hex");
   return (
@@ -757,6 +796,7 @@ const insideLocations = (
   codePage: string,
   payloadWithin: (range: { offset: number; bytes: number }) => boolean = within,
   isRoot = true,
+  payloadEnd = 0,
 ): boolean => {
   if (!within(object.location)) return false;
   if (
@@ -771,7 +811,12 @@ const insideLocations = (
       object.unknown.bytes_hex.length / 2 !==
         Math.min(object.unknown.location.bytes, MAX_DELPHI_FORM_HEX_BYTES) ||
       object.unknown.truncated !==
-        object.unknown.location.bytes > MAX_DELPHI_FORM_HEX_BYTES)
+        object.unknown.location.bytes > MAX_DELPHI_FORM_HEX_BYTES ||
+      // Ordinary stopped objects retain the suffix through the payload end;
+      // only the exact depth/budget sentinel may keep an empty child unknown.
+      (!exactObjectSentinel(object) &&
+        object.unknown.location.offset + object.unknown.location.bytes !==
+          payloadEnd))
   )
     return false;
   const text = (
@@ -811,6 +856,7 @@ const insideLocations = (
       (property) =>
         withinRange(property.location, object.location) &&
         text(property.name, property.location) &&
+        property.name.bytes_hex.length > 0 &&
         insideValue(
           property.value,
           (range) => withinRange(range, property.location),
@@ -825,6 +871,7 @@ const insideLocations = (
         codePage,
         payloadWithin,
         false,
+        payloadEnd,
       ),
     )
   );
@@ -1071,13 +1118,10 @@ const valueMatchesType = (
 ): boolean => {
   if (!isDelphiFormValueType(valueType)) return false;
   if (value.kind === "unknown")
-    // Unknown constructors retain the first up-to-128 bytes of the range they
-    // claim, so a missing byte, an extra byte or a zero-byte preview for a
-    // nonempty range cannot come from this decoder.
-    return (
-      value.bytes_hex.length / 2 ===
-      Math.min(value.location.bytes, MAX_DELPHI_FORM_HEX_BYTES)
-    );
+    // Fixed-width and unsupported reads fail before advancing the cursor, and
+    // partial strings/binary/containers stay typed. A generic unknown value is
+    // therefore the empty range at the failed read.
+    return value.location.bytes === 0 && value.bytes_hex === "";
   switch (valueType) {
     case "vaNull":
       return value.kind === "null" && value.location.bytes === 1;
@@ -1267,6 +1311,10 @@ const insideValue = (
       listEntriesFollowSource(value) &&
       value.items.every(
         (entry) =>
+          // A zero marker is the list terminator; every consumed nonzero
+          // marker maps to a named type or unknown_value_type(n).
+          entry.value_type !== "vaNull" &&
+          entry.value_type !== "unknown" &&
           withinRange(entry.marker_location, value.location) &&
           entry.marker_location.bytes === 1 &&
           valueMatchesType(entry.value_type, entry.value, codePage) &&
@@ -1284,7 +1332,7 @@ const insideValue = (
       value.names.every(
         (item) =>
           withinRange(item.location, value.location) &&
-          textMatchesBytes(item, codePage),
+          nonEmptyTextMatchesBytes(item, codePage),
       )
     );
   if (value.kind === "collection")
@@ -1301,7 +1349,7 @@ const insideValue = (
             (property) =>
               withinRange(property.location, item.location) &&
               withinRange(property.name.location, property.location) &&
-              textMatchesBytes(property.name, codePage) &&
+              nonEmptyTextMatchesBytes(property.name, codePage) &&
               insideValue(
                 property.value,
                 (range) => withinRange(range, property.location),
