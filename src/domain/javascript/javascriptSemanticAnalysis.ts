@@ -882,17 +882,7 @@ export function* indexJavaScriptElectronIdentitySteps(
   const originAvailableAtRead = (
     binding: JavaScriptSemanticBindingState,
     read: t.Node,
-  ): boolean => {
-    if (
-      binding.directOrigins.length > 0 ||
-      semanticStableInitializer(binding, state) === undefined
-    )
-      return true;
-    const access = semanticBindingAtRead(binding, read, state);
-    // An unresolved activation can still carry a possible identity, while an
-    // ordered read before its initializer cannot refer to that value.
-    return access.status !== "ordered" || access.hasDefiniteInitializer;
-  };
+  ): boolean => originAvailableAt(binding, read, state);
   const rootOrigin = (root: t.Node): readonly string[] | undefined => {
     if (t.isIdentifier(root)) {
       if (semanticResolutionBlocked(state, root, root.name)) return undefined;
@@ -1139,16 +1129,35 @@ const electronRequireOrigin = (
   semanticRequireOrigin(node, state) ??
   semanticBundledRequireOrigin(node, state);
 
+/** Whether a read can see the binding's stable origin rather than an earlier value. */
+const originAvailableAt = (
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    binding.directOrigins.length > 0 ||
+    semanticStableInitializer(binding, state) === undefined
+  )
+    return true;
+  const access = semanticBindingAtRead(binding, read, state);
+  // An unresolved activation can still carry a possible identity, while an
+  // ordered read before its initializer cannot refer to that value.
+  return access.status !== "ordered" || access.hasDefiniteInitializer;
+};
+
 /**
  * General provenance only knows literal `require`, so a bundled external held
  * in one binding and destructured from another (`const s=n(K);const{X}=s`)
  * is followed here through stable lexical aliases. Like provenance, a hop
- * stops at a rebindable binding that direct eval may have changed.
+ * stops at a rebindable binding that direct eval may have changed, and at an
+ * alias read that runs before the aliased binding's initializer. The chain has
+ * one alias per hop, so one visited set serves the whole walk.
  */
 const bindingOrigin = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
-  visited: ReadonlySet<string> = new Set(),
+  visited: Set<string> = new Set(),
 ): JavaScriptModuleOrigin | undefined => {
   if (binding.directOrigins.length > 0)
     return binding.directOrigins.length === 1
@@ -1172,13 +1181,14 @@ const bindingOrigin = (
       ? electronRequireOrigin(initializer.node, state)?.origin
       : visited.has(alias.bindingId) ||
           exhausted ||
+          !originAvailableAt(alias, source, state) ||
           [binding, alias].some(
             (hop) =>
               semanticBindingCanBeRebound(hop) &&
               semanticBindingMayHaveOpaqueEffect(hop, state),
           )
         ? undefined
-        : bindingOrigin(alias, state, new Set([...visited, binding.bindingId]));
+        : bindingOrigin(alias, state, visited.add(binding.bindingId));
   const projection = initializer.projection;
   return origin === undefined ||
     !projection.every((key): key is string => typeof key === "string")
