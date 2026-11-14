@@ -1,3 +1,4 @@
+import { configuredUpdateNoticeFactory } from "../server/UpdateNotices.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
@@ -219,6 +220,9 @@ export const runDeferred = async (
             );
             if (config.mcpToolCatalogProfile === "hot-cold")
               server.enableProgressiveCatalog();
+            server.updateNoticeFactory = configuredUpdateNoticeFactory(
+              dependencies.env,
+            );
             return server;
           });
           const previous = server.server.onclose;
