@@ -388,7 +388,7 @@ Collection counts are not capped. Per-value validation, the selected observation
 window, and CDP protocol limits still apply; any incomplete or truncated values
 are reported in the result.
 
-Call `list_browser_targets` first because target IDs are browser-instance-specific. REA rechecks the selected target's current type and origin immediately before attaching. Without an origin filter, discovery lists all eligible pages; an individual capture defaults to the selected page's current origin.
+Call `list_browser_targets` first because target IDs are browser-instance-specific. REA rechecks the selected target's current type and origin immediately before attaching. A refusal states whether the target is not a page, has no HTTP(S) origin, or is outside `allowed_origins`, and gives the repair for that case without exposing the target's URL; `allowed_origins` cannot admit a page without an HTTP(S) origin. Without an origin filter, discovery lists all eligible pages; an individual capture defaults to the selected page's current origin.
 
 REA establishes a main-frame origin boundary before enabling Runtime, Debugger, or Network observation, rechecks it before document capture, and validates it again afterward. If the main frame navigates during final capture, REA discards the mixed result and returns `target_changed`.
 An observed navigation also takes precedence over failures from stale

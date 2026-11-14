@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   inspectWebPageInputSchema,
@@ -8,6 +9,8 @@ import {
 } from "../../../src/domain/browserObservation.js";
 import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
+import { inspectWebEventListenersInputSchema } from "../../../src/domain/webEventListeners.js";
+import { observeWebExecutionInputSchema } from "../../../src/domain/webExecution.js";
 import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
 import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreenshot.js";
 import {
@@ -368,10 +371,13 @@ describe("CdpBrowserProvider: discovery authorization 2", () => {
 });
 
 describe("CdpBrowserProvider: target selection detail", () => {
-  it("keeps target selection detail for every target operation", async () => {
-    const browser = await startFakeCdpBrowser();
+  it("keeps target selection detail and its repair for every target operation", async () => {
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: "file:///opt/example/index.html",
+    });
     trackBrowser(browser);
     const provider = new CdpBrowserProvider();
+    const runtime = new CdpWebRuntimeProvider();
     const operations = [
       [
         "inspect_web_page",
@@ -406,10 +412,33 @@ describe("CdpBrowserProvider: target selection detail", () => {
             captureWebScreenshotInputSchema.parse(input),
           ),
       ],
+      [
+        "observe_web_execution",
+        (input) =>
+          runtime.observeExecution(
+            observeWebExecutionInputSchema.parse({
+              ...input,
+              observation_ms: 1,
+            }),
+          ),
+      ],
+      [
+        "inspect_web_event_listeners",
+        (input) =>
+          runtime.inspectEventListeners(
+            inspectWebEventListenersInputSchema.parse({
+              ...input,
+              selector: "#selected",
+            }),
+          ),
+      ],
     ] as const satisfies readonly (readonly [
       string,
       (input: Record<string, unknown>) => Promise<{ readonly ok: boolean }>,
     ])[];
+    // allowed_origins admits only HTTP(S) origins, so it cannot repair these.
+    const withoutHttpOrigin =
+      "allowed_origins accepts only HTTP(S) origins and cannot admit this page. Select an HTTP(S) page target from list_browser_targets for the same endpoint and retry with its target ID. For a local file:// page, such as an Electron renderer, list_electron_targets and inspect_electron_page provide a separate passive inspection.";
     const selections = [
       [
         "missing",
@@ -420,8 +449,26 @@ describe("CdpBrowserProvider: target selection detail", () => {
       [
         "disallowed-page",
         "target_not_allowed",
-        "Target disallowed-page must be an HTTP(S) page in the selected origin scope.",
-        "Target disallowed-page must be an HTTP(S) page in the selected origin scope.",
+        "Target disallowed-page is a page outside the selected allowed_origins.",
+        "Select a document within allowed_origins, or explicitly adjust allowed_origins if that document is intended, then retry.",
+      ],
+      [
+        "unsupported-page",
+        "target_not_allowed",
+        "Target unsupported-page is a page without an HTTP(S) origin.",
+        withoutHttpOrigin,
+      ],
+      [
+        "electron-page",
+        "target_not_allowed",
+        "Target electron-page is a page without an HTTP(S) origin.",
+        withoutHttpOrigin,
+      ],
+      [
+        "worker-1",
+        "target_not_allowed",
+        "Target worker-1 is not a page target.",
+        "Select a page target from list_browser_targets for the same endpoint and retry with its target ID.",
       ],
     ] as const;
     const inspected = new Map<string, unknown>();
@@ -441,6 +488,10 @@ describe("CdpBrowserProvider: target selection detail", () => {
           message: detail,
           remediation: { action: remediation },
         });
+        // Refused targets' URLs, titles and origins stay withheld.
+        expect(JSON.stringify(projected)).not.toMatch(
+          /private\.example|Must not leak|chrome:\/\/settings|\/opt\/example|secret=worker/u,
+        );
         // Only the attributed operation differs from the inspect projection.
         if (operation === "inspect_web_page")
           inspected.set(targetId, projected);
