@@ -48,6 +48,7 @@ import {
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   McpHttpUtf8Error,
@@ -533,7 +534,21 @@ export const createIdaMcpConnection = (
         "transport",
         `Upstream IDA MCP reply exceeded the ${bufferLimit[1]}-byte transport limit; no partial Evidence was returned.`,
         { max_response_bytes: Number(bufferLimit[1]) },
-        { cause, capturedOutput },
+        {
+          cause,
+          capturedOutput,
+          // The upstream MCP SDK owns this buffer; REA cannot raise it.
+          ...fixedAllowanceOptions(
+            `The upstream IDA MCP reply allowance of ${bufferLimit[1]} bytes`,
+            "bytes",
+            {
+              limit: Number(bufferLimit[1]),
+              unit: "bytes",
+              narrowing:
+                "Request a smaller result from IDA, such as a narrower address range or fewer items.",
+            },
+          ),
+        },
       );
     if (stderrBytes === 0) throw failure;
     throw new ProviderAdapterError("ida", "transport", {
