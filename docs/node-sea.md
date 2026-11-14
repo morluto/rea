@@ -72,6 +72,10 @@ Carrier byte order is independent of blob byte order.
 
 Malformed magic, truncation, unknown flags/extensions, invalid UTF-8, duplicate
 raw asset keys and conflicting blob declarations fail closed with named reasons.
+Exact aliases of one blob range are deduplicated before verification. Distinct
+copies must have equal lengths, and their total hashed bytes cannot exceed the
+carrier file size. Overlapping declarations that exceed this verification
+allowance fail with a capacity limit; this release has no runtime override.
 Zero padding after a complete blob is allowed. Producer admission defaults to
 a 256 MiB blob, 100,000 assets whose names total at most 8 MiB, and 4,096 exec
 arguments totaling at most 1 MiB of text. These are resource policies, not Node

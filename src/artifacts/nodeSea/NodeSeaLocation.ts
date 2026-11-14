@@ -22,7 +22,10 @@ import type { FileHandle } from "node:fs/promises";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 
 import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  artifactFixedLimitFailure,
+} from "../ArtifactReader.js";
 import {
   DEFAULT_NODE_SEA_READER_LIMITS,
   type NodeSeaReaderLimits,
@@ -217,6 +220,20 @@ const collapseRanges = async (
   const chosen = unique[0];
   if (chosen === undefined) return undefined;
   if (unique.length > 1) {
+    if (unique.some((range) => range.length !== chosen.length))
+      throw formatFailure(NODE_SEA_DUPLICATE_BLOB);
+    // Disjoint copies fit in the file; overlapping declarations must not
+    // multiply verification work by the number of native table entries.
+    let remainingBytes = carrier.fileSize;
+    for (const range of unique) {
+      if (range.length > remainingBytes)
+        throw artifactFixedLimitFailure(
+          "Node SEA duplicate-blob verification allowance",
+          carrier.fileSize,
+          "bytes",
+        );
+      remainingBytes -= range.length;
+    }
     const hashes = new Set<string>();
     for (const range of unique) {
       const hash = await hashArtifactRange(carrier, range.offset, range.length);
