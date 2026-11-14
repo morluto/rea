@@ -672,13 +672,28 @@ function* parseElfExports(
     width,
     "ELF dynamic symbols",
   );
-  // Entry zero is the reserved STN_UNDEF record. Skipping it is valid only
-  // after every field is observed as zero; neither ELF layout has padding.
-  if (bytes.subarray(table, table + width).some((byte) => byte !== 0))
-    throw new BinaryFormatFailure(
-      "malformed",
-      "ELF dynamic symbol table null entry has nonzero fields",
-    );
+  const issues: NativeExportIssue[] = [];
+  // Entry zero is the reserved STN_UNDEF record. The Rust/UniFFI linkers on
+  // some Android splits emit a nonzero st_name at this entry while every other
+  // semantic field is zero — a toolchain quirk real loaders tolerate. Accept
+  // and report it when the name field is the only nonzero word; otherwise the
+  // table is malformed in the same way it was before.
+  {
+    const entry = bytes.subarray(table, table + width);
+    const restZero = entry.subarray(4).every((byte) => byte === 0);
+    if (!restZero)
+      throw new BinaryFormatFailure(
+        "malformed",
+        "ELF dynamic symbol table null entry has nonzero fields",
+      );
+    if (entry.subarray(0, 4).some((byte) => byte !== 0))
+      issues.push({
+        code: "malformed_entry",
+        location: hex(table),
+        message:
+          "ELF dynamic symbol table null entry has a nonzero st_name with every other field zero; entry ignored (STN_UNDEF)",
+      });
+  }
   const nameRange = reader.fileRange(
     strings.offset,
     strings.size,
@@ -688,7 +703,6 @@ function* parseElfExports(
     nameRange.offset,
     nameRange.offset + nameRange.size,
   );
-  const issues: NativeExportIssue[] = [];
   const versym = sections.find(
     ({ type, link }) => type === SHT_GNU_VERSYM && link === dynsym.index,
   );

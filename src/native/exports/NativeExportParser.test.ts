@@ -1134,10 +1134,17 @@ describe("export inventory review regressions", () => {
             little,
             symbols: [{ name: "kept_export" }],
           });
-          bytes[0x100 + byte] = 1;
-          expect(() => parseNativeExports(bytes, artifact)).toThrow(
-            BinaryFormatFailure,
-          );
+          // st_name (bytes 0-3) may be nonzero on Android's Rust linkers;
+          // remaining bytes are the reserved region and must all be zero.
+          if (byte >= 4) {
+            bytes[0x100 + byte] = 1;
+            expect(() => parseNativeExports(bytes, artifact)).toThrow(
+              BinaryFormatFailure,
+            );
+          } else {
+            bytes[0x100 + byte] = 1;
+            expect(() => parseNativeExports(bytes, artifact)).not.toThrow();
+          }
         }
         expect(
           parse(
@@ -1296,3 +1303,41 @@ it.each(
     expect(parse(compressExportSection(bytes, 5))).toEqual(expected);
   },
 );
+
+describe("elf .dynsym null entry with nonzero st_name", () => {
+  const patchNullName = (image: Buffer, value: number): Buffer => {
+    const placed = Number(image.readBigUInt64LE(40));
+    const width = 64;
+    const dynsymAt = Number(image.readBigUInt64LE(placed + 1 * width + 24));
+    image.writeUInt32LE(value, dynsymAt);
+    return image;
+  };
+
+  it("still parses the table and reports the quirk as an issue instead of failing the artifact", () => {
+    const image = patchNullName(
+      elfExportImage({ symbols: [{ name: "export_me" }] }),
+      0x956,
+    );
+    const result = parse(image);
+    expect(result.exports.map(({ name }) => name)).toEqual(["export_me"]);
+    expect(
+      result.issues.some(
+        (issue) =>
+          issue.message.includes("st_name") &&
+          issue.message.includes("STN_UNDEF"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a null entry whose non-name fields are nonzero", () => {
+    const image = patchNullName(
+      elfExportImage({ symbols: [{ name: "export_me" }] }),
+      0x956,
+    );
+    const placed = Number(image.readBigUInt64LE(40));
+    const width = 64;
+    const dynsymAt = Number(image.readBigUInt64LE(placed + 1 * width + 24));
+    image.writeUInt8(1, dynsymAt + 4); // st_info != 0
+    expect(() => parse(image)).toThrow(/ELF dynamic symbol table null entry/u);
+  });
+});
