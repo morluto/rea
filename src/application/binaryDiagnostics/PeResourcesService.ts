@@ -761,9 +761,12 @@ const objectSectionsFollowSource = (
     const last = object.children.at(-1)!;
     const lastEnd = last.location.offset + last.location.bytes;
     if (objectHasStop(last)) return objectEnd === lastEnd;
-    // A root may have read every section before the top-level decoder kept
-    // the remaining payload bytes as an unknown suffix.
-    return objectEnd === lastEnd || (isRoot && objectEnd === lastEnd + 1);
+    // With complete children, a nonempty suffix would have invoked another
+    // child read; only EOF may end the object at the last child.
+    if (objectEnd === lastEnd) return object.unknown.location.bytes === 0;
+    // A root may have consumed the object terminator before keeping the
+    // remaining payload bytes as an unknown suffix.
+    return isRoot && objectEnd === lastEnd + 1;
   }
   if (object.properties.length > 0) {
     if (object.component_name === null) return false;
@@ -862,6 +865,7 @@ const insideLocations = (
           (range) => withinRange(range, property.location),
           codePage,
           property.value_type,
+          payloadEnd,
         ),
     ) &&
     object.children.every((child) =>
@@ -1048,6 +1052,8 @@ const stringMatchesType = (
     retained !== Math.min(available, projection.previewBytes)
   )
     return false;
+  // A source range cannot decode to more characters than it contains bytes.
+  if (value.text.length > available) return false;
   const raw = Buffer.from(value.bytes_hex, "hex");
   // When the preview covers every available byte the text must be its exact
   // decode; a capped preview must agree with the start of the text. The same
@@ -1297,6 +1303,7 @@ const insideValue = (
   within: (range: { offset: number; bytes: number }) => boolean,
   codePage: string,
   valueType: string | null = null,
+  payloadEnd = 0,
 ): boolean => {
   if (valueType !== null && !valueMatchesType(valueType, value, codePage))
     return false;
@@ -1322,8 +1329,14 @@ const insideValue = (
             entry.value,
             (range) => withinRange(range, value.location),
             codePage,
+            null,
+            payloadEnd,
           ),
-      )
+      ) &&
+      // A stopped list retains a final stopped entry unless it ended at EOF.
+      (value.terminated ||
+        value.items.some((entry) => valueHasStop(entry.value)) ||
+        value.location.offset + value.location.bytes === payloadEnd)
     );
   if (value.kind === "set")
     return (
@@ -1355,6 +1368,7 @@ const insideValue = (
                 (range) => withinRange(range, property.location),
                 codePage,
                 property.value_type,
+                payloadEnd,
               ),
           ),
       )

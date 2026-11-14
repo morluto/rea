@@ -2852,6 +2852,97 @@ it("publishes a capped UTF-8 preview that splits a multibyte sequence", async ()
   expect(await inspectReport(report)).toMatchObject({ ok: true });
 });
 
+it("rejects a capped string whose text exceeds its source range", async () => {
+  const report = await reportWithFormPrefix(0);
+  const index = report.resources.findIndex(
+    (resource) => resource.type.kind === "id" && resource.type.id === 10,
+  );
+  const resource = report.resources[index]!;
+  resource.code_page = 0;
+  const pages = codePageFields(0);
+  const name = label("Long", 8, pages.code_page);
+  const valueOffset = name.location.offset + name.location.bytes + 1;
+  const declared = 129;
+  const propertyEnd = valueOffset + 4 + declared;
+  resource.payload.location = { offset: 0, bytes: propertyEnd };
+  report.artifact.bytes = propertyEnd;
+  report.delphi_forms = [
+    {
+      resource_index: index,
+      signature: "TPF0",
+      version: "boVersion0",
+      signature_location: { offset: 0, bytes: 4 },
+      prefix: null,
+      ...pages,
+      root: {
+        location: { offset: 4, bytes: propertyEnd - 4 },
+        flags: [],
+        child_position: null,
+        class_name: label("A", 4, pages.code_page),
+        component_name: label("B", 6, pages.code_page),
+        properties: [
+          {
+            name,
+            value_type: "vaLString",
+            value: {
+              kind: "string",
+              text: "A".repeat(1024 * 1024),
+              bytes_hex: "41".repeat(128),
+              code_page: pages.code_page,
+              declared_bytes: declared,
+              truncated: true,
+              decode_truncated: false,
+              location: { offset: valueOffset, bytes: 4 + declared },
+            },
+            location: {
+              offset: name.location.offset,
+              bytes: propertyEnd - name.location.offset,
+            },
+          },
+        ],
+        children: [],
+        unknown: {
+          reason: "suffix",
+          bytes_hex: "",
+          truncated: false,
+          location: { offset: propertyEnd, bytes: 0 },
+        },
+      },
+    },
+  ];
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
+it("rejects a stopped list without a final stopped entry", async () => {
+  const report = await reportWithBuiltSyntheticValue(
+    "vaList",
+    (location) => ({
+      kind: "list",
+      items: [
+        {
+          value_type: "vaTrue",
+          marker_location: { offset: location.offset, bytes: 1 },
+          value: {
+            kind: "boolean",
+            value: true,
+            location: { offset: location.offset, bytes: 1 },
+          },
+        },
+      ],
+      terminated: false,
+      location: { offset: location.offset, bytes: 1 },
+    }),
+    1,
+  );
+  expect(await inspectReport(report)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("publishes a capped UTF-8 string that keeps its BOM", async () => {
   const report = await reportForPayload(
     delphiForm(
