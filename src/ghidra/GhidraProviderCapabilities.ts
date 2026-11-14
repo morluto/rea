@@ -186,6 +186,8 @@ export const limitationsFor = (
         ...common,
         "Pseudocode is Ghidra decompiler output, not original source and not text-equivalent to Hopper output.",
         "External functions and functions without an analyzable body return null; other decompiler failures remain explicit.",
+        "A decompiled body can stop at a call site whose callee Ghidra marked non-returning (a.k.a. an analyzer discovered the call site is a terminal one, common in a default import). Such a body's later instructions are simply absent; the site is recorded in facet_availability.pseudocode. To recover the complete body, analyze with REA_GHIDRA_DISABLED_ANALYZERS='Non-Returning Functions - Discovered' set in the server environment.",
+        "Ghidra's auto-analysis does not discover every non-returning call path; missing body content even after reanalysis is normal, not a bug REA can prove.",
       ];
     case "read_function_instructions":
       return [
