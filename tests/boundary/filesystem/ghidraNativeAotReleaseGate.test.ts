@@ -1,51 +1,89 @@
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import {
   SUPPORTED_GHIDRA_FLOOR_VERSION,
   SUPPORTED_GHIDRA_VERSION,
-  ghidraReleaseAccepted,
-  ghidraReleaseLine,
 } from "../../../src/ghidra/GhidraReleasePolicy.js";
 
-// The NativeAOT lane used to keep its own `12.1.x` gate, so raising the verified
-// build to 12.2 left that lane rejecting the release it was built for. It now
-// asks the same policy the provider does; these cases pin the line that lane
-// depends on and prove the two cannot drift apart again.
-describe("NativeAOT lane release admission", () => {
-  it("accepts the verified release", () => {
-    expect(ghidraReleaseAccepted(SUPPORTED_GHIDRA_VERSION)).toBe(true);
+const execute = promisify(execFile);
+
+/**
+ * Drives the NativeAOT build's own admission gate.
+ *
+ * The build runs end to end at import, so the gate is observed by importing it
+ * against a synthetic installation: a version the lane admits proceeds past the
+ * gate and fails later on the deliberately absent source tree, while a version
+ * it rejects fails with the gate's own message. Asserting on that difference is
+ * what keeps these cases honest — calling `ghidraReleaseAccepted` directly would
+ * stay green if the build went back to a hard-coded `12.1.x` check.
+ */
+const admission = async (
+  version: string,
+): Promise<{ admitted: boolean; message: string }> => {
+  const root = await mkdtemp(join(tmpdir(), "rea-nativeaot-gate-"));
+  const install = join(root, "ghidra");
+  await mkdir(join(install, "Ghidra"), { recursive: true });
+  await writeFile(
+    join(install, "Ghidra/application.properties"),
+    `application.version=${version}\napplication.java.min=25\n`,
+  );
+  const probe = join(root, "probe.mjs");
+  await writeFile(
+    probe,
+    [
+      "const build = " +
+        JSON.stringify(resolve("scripts/build-ghidra-nativeaot.mjs")) +
+        ";",
+      "try { await import(build); console.log('ADMITTED'); }",
+      "catch (error) {",
+      "  console.log('REJECTED:' + String(error.message).split('\\n')[0]);",
+      "}",
+    ].join("\n"),
+  );
+  const { stdout } = await execute(process.execPath, [probe], {
+    env: {
+      ...process.env,
+      GHIDRA_INSTALL_DIR: install,
+      REA_NATIVEAOT_SOURCE: join(root, "absent-source-tree"),
+    },
+    timeout: 60_000,
+  });
+  const line = stdout.trim().split("\n").at(-1) ?? "";
+  return {
+    admitted: line === "ADMITTED" || !line.includes("accepts Ghidra"),
+    message: line,
+  };
+};
+
+const GATE_MESSAGE = /NativeAOT build lane accepts Ghidra/u;
+
+describe("NativeAOT build admission", () => {
+  it("admits the verified release", async () => {
+    const { message } = await admission(SUPPORTED_GHIDRA_VERSION);
+    expect(message).not.toMatch(GATE_MESSAGE);
   });
 
-  it("keeps the accepted floor", () => {
-    expect(ghidraReleaseAccepted(`${SUPPORTED_GHIDRA_FLOOR_VERSION}.4`)).toBe(
-      true,
-    );
-    expect(ghidraReleaseAccepted("12.1.2")).toBe(true);
+  it("admits the accepted floor", async () => {
+    const { message } = await admission(`${SUPPORTED_GHIDRA_FLOOR_VERSION}.4`);
+    expect(message).not.toMatch(GATE_MESSAGE);
   });
 
-  it("accepts later releases on the same major", () => {
-    expect(ghidraReleaseAccepted("12.3")).toBe(true);
-    expect(ghidraReleaseAccepted("12.3.1")).toBe(true);
+  it("admits a later release on the same major", async () => {
+    const { message } = await admission("12.3");
+    expect(message).not.toMatch(GATE_MESSAGE);
   });
 
-  it("rejects releases below the accepted line", () => {
-    expect(ghidraReleaseAccepted("12.0.4")).toBe(false);
-    expect(ghidraReleaseAccepted("11.4")).toBe(false);
-  });
-
-  it("rejects another major", () => {
-    expect(ghidraReleaseAccepted("13.0")).toBe(false);
-    expect(ghidraReleaseAccepted("13.1")).toBe(false);
-  });
-
-  it("rejects a missing or malformed version", () => {
-    expect(ghidraReleaseAccepted(undefined)).toBe(false);
-    expect(ghidraReleaseAccepted(null)).toBe(false);
-    expect(ghidraReleaseAccepted("")).toBe(false);
-    expect(ghidraReleaseAccepted("latest")).toBe(false);
-  });
-
-  it("names the accepted line the lane reports", () => {
-    expect(ghidraReleaseLine()).toBe("12.x (>=12.1)");
-  });
+  it.each(["12.0.4", "11.4", "13.0"])(
+    "rejects %s at the gate",
+    async (version) => {
+      const { message } = await admission(version);
+      expect(message).toMatch(GATE_MESSAGE);
+      expect(message).toContain(version);
+    },
+  );
 });

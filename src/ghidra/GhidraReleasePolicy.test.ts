@@ -50,6 +50,11 @@ describe("ghidraReleaseAccepted", () => {
   it("rejects unsupported releases", () => {
     expect(ghidraReleaseAccepted("13.0")).toBe(false);
     expect(ghidraReleaseAccepted("latest")).toBe(false);
+    expect(ghidraReleaseAccepted("11.4")).toBe(false);
+    expect(ghidraReleaseAccepted("12.0.4")).toBe(false);
+    expect(ghidraReleaseAccepted(undefined)).toBe(false);
+    expect(ghidraReleaseAccepted(null)).toBe(false);
+    expect(ghidraReleaseAccepted("")).toBe(false);
   });
 });
 
